@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Regression tests for cuTile offset-slice load/store element offsets (Bug 16).
 
-The cuTile ``TileLoad`` / ``TileStore`` expansions build their per-lane element
+The cuTile ``TileGather`` / ``TileScatter`` expansions build their per-lane element
 index from the block id only (``ct.arange(W) + __pid*W`` / ``ct.load(index=pid)``),
 which reconstructs the block-aligned start but drops the constant offset carried
 by the memlet begin. A write/read through an offset slice (``B[1:-1]``, ``A[2:]``)

@@ -1,28 +1,33 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from collections import OrderedDict
 import copy
-import warnings
-from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
+import functools
 import json
 import pydoc
 import re
-import sympy as sp
+import warnings
+from collections import OrderedDict
+from collections.abc import Callable
+from functools import lru_cache
+from numbers import Number
+from typing import TYPE_CHECKING, Generic, TypeVar, Union, overload
+
 import numpy as np
-import dace.subsets as sbs
+import sympy
+from packaging.version import parse as parse_version
+
 import dace
 import dace.serialize
-from packaging.version import parse as parse_version
+import dace.subsets as sbs
 from dace import symbolic
-from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
-from numbers import Number
-from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from dace.frontend.python.astutils import TaskletFreeSymbolVisitor, unparse
+from dace.symbolic import pystr_to_symbolic
 
 if TYPE_CHECKING:
-    from dace.data import Data as dData
+    pass
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def _is_symbolic_converter(converter) -> bool:
@@ -33,13 +38,29 @@ def _is_symbolic_converter(converter) -> bool:
 def _is_symbolic_type(tp) -> bool:
     if tp is symbolic.SymExpr:
         return True
-    return isinstance(tp, type) and issubclass(tp, sp.Basic)
+    return isinstance(tp, type) and issubclass(tp, symbolic.SymbolicBasic)
 
 
 def _coerce_symbolic_property_value(value):
-    if isinstance(value, (symbolic.SymExpr, sp.Basic)):
+    if isinstance(value, (symbolic.SymExpr, symbolic.SymbolicBasic)):
         return value
     return pystr_to_symbolic(value, simplify=False)
+
+
+@functools.lru_cache(maxsize=16384)
+def _normalize_python_code(code: str) -> str:
+    """
+    Parses and unparses Python code that was already unparsed from an AST (e.g., ``CodeBlock.as_string``). The second
+    unparsing roundtrip avoids issues in AST parsing/unparsing of negative numbers, i.e., "(-1)" becomes "(- 1)".
+    The result only depends on the string, so it is cached.
+    """
+    return unparse(ast.parse(code))
+
+
+@functools.cache
+def _predates_symbolic_serialization(version: str) -> bool:
+    """Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format."""
+    return parse_version(version) < parse_version("2.0.0a4")
 
 
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
@@ -51,8 +72,15 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if _predates_symbolic_serialization(version):
+        # A `$`-escape below the wire version proves the stamp lied: no writer that old could emit one.
+        if symbolic.has_serialized_symbol_escape(value):
+            return symbolic.deserialize_symbolic(value)
         return pystr_to_symbolic(value, simplify=False)
+    # A plain decimal literal (most Range steps, tiles and starts) touches no rewrite regex and parses to
+    # ``Constant(int)``, which the wire parser returns as ``sympy.Integer``; skip the parse. "00" stays on the slow path.
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and (value[0] != "0" or value == "0"):
+        return sympy.Integer(int(value))
     return symbolic.deserialize_symbolic(value)
 
 
@@ -68,29 +96,53 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
 class PropertyError(Exception):
     """Exception type for errors related to internal functionality of
     these properties."""
+
     pass
 
 
 class Property(Generic[T]):
-    """ Class implementing properties of DaCe objects that conform to strong
-    typing, and allow conversion to and from strings to be edited. """
+    """Class implementing properties of DaCe objects that conform to strong
+    typing, and allow conversion to and from strings to be edited.
+
+    The ``category`` argument groups properties in viewers and editors. Categories are chosen by the
+    semantics of the property, so the same concept gets the same category everywhere (IR nodes, data
+    descriptors, library nodes, transformations, and passes). The vocabulary is:
+
+    * ``General``: identity and miscellanea (labels, names, connectors, data references, types, shapes).
+    * ``Semantics``: what an element computes or moves (code, subsets, ranges, conditions, math parameters).
+    * ``Memory``: storage, layout, and allocation (storage type, lifetime, strides, alignment, transience).
+    * ``Scheduling``: parallelism and hardware mapping (schedules, block sizes, OpenMP, unrolling).
+    * ``Code Generation``: affects only emitted/compiled code (implementations, extra code, build settings).
+    * ``Frontend``: populated by frontends (debug information, argument names, callback mappings).
+    * ``Instrumentation``: instrumentation types and conditions.
+    * ``Analysis``: facts filled in by analyses (execution counts, ranges, volumes, conditions).
+    * ``Parameters``: main knobs of transformations and passes (tile sizes, names, modes).
+    * ``Applicability``: where and how strictly a transformation or pass applies (filters, safety checks).
+    * ``Diagnostics``: user-facing validation and verbosity options.
+    * ``(Debug)``: internal bookkeeping (e.g., GUIDs, IDs, histories); hidden by viewers.
+    """
+
+    #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
+    attr_name: str | None = None
+    private_name: str | None = None
 
     def __init__(
-            self,
-            getter=None,
-            setter=None,
-            dtype: Type[T] = None,
-            default=None,
-            from_json=None,
-            to_json=None,
-            meta_to_json=None,
-            choices=None,  # Values must be present in this enum
-            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-            allow_none=False,
-            indirected=False,  # This property belongs to a different class
-            category='General',
-            desc="",
-            serialize_if=lambda _: True):  # By default serialize always
+        self,
+        getter=None,
+        setter=None,
+        dtype: type[T] | None = None,
+        default=None,
+        from_json=None,
+        to_json=None,
+        meta_to_json=None,
+        choices=None,  # Values must be present in this enum
+        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+        allow_none=False,
+        indirected=False,  # This property belongs to a different class
+        category="General",
+        desc="",
+        serialize_if=lambda _: True,
+    ):  # By default serialize always
 
         self._getter = getter
         self._setter = setter
@@ -102,13 +154,13 @@ class Property(Generic[T]):
             try:
                 self._default = dtype()
             except TypeError:
-                if hasattr(self, 'dtype'):
+                if hasattr(self, "dtype"):
                     try:
                         self._default = self.dtype()
                     except TypeError:
-                        raise TypeError('Default not properly defined for property')
+                        raise TypeError("Default not properly defined for property")
                 else:
-                    raise TypeError('Default not properly defined for property')
+                    raise TypeError("Default not properly defined for property")
 
         if choices is not None:
             for choice in choices:
@@ -145,7 +197,7 @@ class Property(Generic[T]):
                     "default": _default,
                 }
                 if self.indirected:
-                    mdict['indirected'] = True
+                    mdict["indirected"] = True
                 return mdict
 
             self._meta_to_json = tmp_func
@@ -164,61 +216,67 @@ class Property(Generic[T]):
             try:
                 dtype = self.dtype
                 if dtype is not None:
-                    self.__doc__ = "Object property of type %s" % dtype.__name__
+                    self.__doc__ = f"Object property of type {dtype.__name__}"
                 else:
-                    self.__doc__ = "Object property of type %s" % type(self).__name__
+                    self.__doc__ = f"Object property of type {type(self).__name__}"
             except (ImportError, AttributeError):
                 # Handle circular import case - defer docstring generation
-                self.__doc__ = "Object property of type %s" % type(self).__name__
+                self.__doc__ = f"Object property of type {type(self).__name__}"
 
     def __get__(self, obj, objtype=None) -> T:
         if obj is None:
             # Called on the class rather than an instance, so return the
             # property object itself
             return self
-        # If a custom getter is specified, use it
-        if self.getter:
-            return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
+        # ``_getter`` directly, not the ``getter`` Python property in front of it: this runs on every
+        # attribute read of every property-bearing object, and the wrapper is a whole frame per read.
+        if self._getter is not None:
+            return self._getter(obj)
         # Otherwise look for attribute prefixed by "_"
-        return getattr(obj, "_" + self.attr_name)
+        name = self.private_name
+        if name is None:
+            raise RuntimeError("Attribute name not set")
+        return getattr(obj, name)
 
     def __set__(self, obj, val):
-        # If custom setter is specified, use it
-        if self.setter:
-            return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
+        # ``_setter`` directly, for the same reason as ``_getter`` in ``__get__``.
+        if self._setter is not None:
+            return self._setter(obj, val)
+        private_name = self.private_name
+        if private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
-            raise ValueError("None not allowed for property {} in class {}".format(self.attr_name, type(obj).__name__))
+            raise ValueError(f"None not allowed for property {self.attr_name} in class {type(obj).__name__}")
 
         # Accept all DaCe/numpy typeclasses as Python native types
         if isinstance(val, np.number):
             val = val.item()
 
+        # Read once: every ``dtype`` override is a constant, and each read is a frame on every property write.
+        dtype = self.dtype
         # Edge cases for integer and float types
-        if isinstance(val, int) and self.dtype == float:
+        if isinstance(val, int) and dtype == float:
             val = float(val)
-        if isinstance(val, float) and self.dtype == int and val == int(val):
+        if isinstance(val, float) and dtype == int and val == int(val):
             val = int(val)
 
         # Check if type matches before setting
-        if (self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
+        if dtype is not None and not isinstance(val, dtype) and not (val is None and self.allow_none):
             if isinstance(val, str):
-                raise TypeError("Received str for property {} of type {}. Use "
-                                "from_string method of the property.".format(self.attr_name, self.dtype))
-            raise TypeError("Invalid type \"{}\" for property {}: expected {}".format(
-                type(val).__name__, self.attr_name, self.dtype.__name__))
+                raise TypeError(
+                    f"Received str for property {self.attr_name} of type {dtype}. Use from_string method of the property."
+                )
+            raise TypeError(
+                f'Invalid type "{type(val).__name__}" for property {self.attr_name}: expected {dtype.__name__}'
+            )
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None \
-                and isinstance(self.choices,(list, tuple, set)) \
-                and (val is not None or not self.allow_none):
-            if val not in self.choices:
-                raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, "_" + self.attr_name, val)
+        choices = self._choices
+        if choices is not None and isinstance(choices, (list, tuple, set)) and (val is not None or not self.allow_none):
+            if val not in choices:
+                raise ValueError(f"Value {val} not present in choices: {choices}")
+        setattr(obj, private_name, val)
 
     # Python Properties of this Property class
 
@@ -239,7 +297,7 @@ class Property(Generic[T]):
         self._setter = val
 
     @property
-    def dtype(self):
+    def dtype(self) -> type[T]:
         return self._dtype
 
     @property
@@ -258,7 +316,7 @@ class Property(Generic[T]):
                 try:
                     typestr = type(self).__name__
                 except:
-                    typestr = 'None'
+                    typestr = "None"
         return typestr
 
     @property
@@ -283,8 +341,7 @@ class Property(Generic[T]):
 
     @property
     def meta_to_json(self):
-        """ Returns a function to export meta information (type, description, default value).
-        """
+        """Returns a function to export meta information (type, description, default value)."""
         return self._meta_to_json
 
     @property
@@ -329,16 +386,21 @@ class Property(Generic[T]):
 
 
 def _property_generator(instance):
+    # Read the backing attribute (prop.private_name, precomputed) straight from __dict__ on the common
+    # path; only fall back to the descriptor (custom getter / default) when it is absent. Avoids the
+    # per-property hasattr try/except and the "_" + name string rebuild in this hot serialize loop.
+    idict = instance.__dict__
     for name, prop in type(instance).__properties__.items():
-        if hasattr(instance, "_" + name):
-            yield prop, getattr(instance, "_" + name)
+        pname = prop.private_name
+        if pname in idict:
+            yield prop, idict[pname]
         else:
             yield prop, getattr(instance, name)
 
 
 def make_properties(cls):
-    """ A decorator for objects that adds support and checks for strongly-typed
-        properties (which use the Property class).
+    """A decorator for objects that adds support and checks for strongly-typed
+    properties (which use the Property class).
     """
 
     # Extract all Property members of the class
@@ -346,6 +408,7 @@ def make_properties(cls):
     # Set the property name to its field name in the class
     for name, prop in properties.items():
         prop.attr_name = name
+        prop.private_name = "_" + name  # precomputed: __get__/__set__ must not rebuild it per access
         prop.owner = cls
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
@@ -353,8 +416,9 @@ def make_properties(cls):
         if hasattr(base, "__properties__"):
             duplicates = base.__properties__.keys() & own_properties.keys()
             if len(duplicates) != 0:
-                raise AttributeError("Duplicate properties in class {} deriving from {}: {}".format(
-                    cls.__name__, base.__name__, duplicates))
+                raise AttributeError(
+                    f"Duplicate properties in class {cls.__name__} deriving from {base.__name__}: {duplicates}"
+                )
             properties.update(base.__properties__)
     # Add the list of properties to the class
     cls.__properties__ = properties
@@ -371,25 +435,30 @@ def make_properties(cls):
         for name, prop in own_properties.items():
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
-            if hasattr(obj, '_' + name):
-                raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
+            if hasattr(obj, "_" + name):
+                raise PropertyError(f"Property {name} already assigned in {type(obj).__name__}")
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
                     setattr(obj, name, prop.default)
         # Now call vanilla __init__, which can initialize members
         init(obj, *args, **kwargs)
-        # Assert that all properties have been set
+        # Assert that all properties have been set. A stored backing field is exactly what the
+        # getter-less descriptor would read, so only the rest pay for the read.
+        stored = obj.__dict__
         for name, prop in properties.items():
+            if prop._getter is None and prop.private_name in stored:
+                continue
             try:
                 getattr(obj, name)
             except AttributeError:
                 if not prop.unmapped:
-                    raise PropertyError("Property {} is unassigned in __init__ for {}".format(name, cls.__name__))
+                    raise PropertyError(f"Property {name} is unassigned in __init__ for {cls.__name__}")
         # Assert that there are no fields in the object not captured by properties, unless they are prefixed with "_"
-        for name, prop in obj.__dict__.items():
-            if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
-                raise PropertyError("{} : Variable {} is neither a Property nor "
-                                    "an internal variable (prefixed with \"_\")".format(str(type(obj)), name))
+        for name, prop in stored.items():
+            if not name.startswith("_") and name not in properties and name not in dir(type(obj)):
+                raise PropertyError(
+                    f'{str(type(obj))} : Variable {name} is neither a Property nor an internal variable (prefixed with "_")'
+                )
 
     # Replace the __init__ method
     cls.__init__ = initialize_properties
@@ -419,13 +488,13 @@ def indirect_property(cls, f, prop, override):
 
     # Add the property to the class
     if not override and hasattr(cls, prop_name):
-        raise TypeError("Property \"{}\" already exists in class \"{}\"".format(prop_name, cls.__name__))
+        raise TypeError(f'Property "{prop_name}" already exists in class "{cls.__name__}"')
     setattr(cls, prop_name, prop_indirect)
 
 
 def indirect_properties(indirect_class, indirect_function, override=False):
-    """ A decorator for objects that provides indirect properties defined
-        in another class.
+    """A decorator for objects that provides indirect properties defined
+    in another class.
     """
 
     def indirection(cls):
@@ -436,7 +505,7 @@ def indirect_properties(indirect_class, indirect_function, override=False):
             if hasattr(base_cls, "__properties__"):
                 inherited_props.update(base_cls.__properties__)
         for name, prop in indirect_class.__properties__.items():
-            if (name in inherited_props and type(inherited_props[name]) == type(prop)):
+            if name in inherited_props and type(inherited_props[name]) == type(prop):
                 # Base class could already have indirected properties
                 continue
             indirect_property(cls, indirect_function, prop, override)
@@ -446,8 +515,7 @@ def indirect_properties(indirect_class, indirect_function, override=False):
 
 
 class OrderedDictProperty(Property):
-    """ Property type for ordered dicts
-    """
+    """Property type for ordered dicts"""
 
     def to_json(self, d):
 
@@ -468,11 +536,16 @@ class OrderedDictProperty(Property):
         return ret
 
 
-class ListProperty(Property[List[T]]):
-    """ Property type for lists.
-    """
+class ListProperty(Property[list[T]]):
+    """Property type for lists."""
 
-    def __init__(self, element_type: T, *args, **kwargs):
+    @overload
+    def __init__(self, element_type: type[T], *args, **kwargs) -> None: ...
+
+    @overload
+    def __init__(self, element_type: Callable[..., T], *args, **kwargs) -> None: ...
+
+    def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
 
@@ -484,7 +557,7 @@ class ListProperty(Property[List[T]]):
         :param kwargs: Other keyword arguments (inherited from Property).
         """
 
-        kwargs['dtype'] = list
+        kwargs["dtype"] = list
         super().__init__(*args, **kwargs)
         self.element_type = element_type
 
@@ -500,7 +573,7 @@ class ListProperty(Property[List[T]]):
             val = list(map(self.element_type, list(val)))
         elif isinstance(val, tuple):
             val = list(map(self.element_type, val))
-        super(ListProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     @staticmethod
     def to_string(l):
@@ -523,10 +596,10 @@ class ListProperty(Property[List[T]]):
         return list(map(str, l))
 
     def from_string(self, s):
-        if s.startswith('[') and s.endswith(']'):
+        if s.startswith("[") and s.endswith("]"):
             if _is_symbolic_type(self.element_type):
-                return [_coerce_symbolic_property_value(d.strip()) for d in s[1:-1].split(',')]
-            return [self.element_type(d.strip()) for d in s[1:-1].split(',')]
+                return [_coerce_symbolic_property_value(d.strip()) for d in s[1:-1].split(",")]
+            return [self.element_type(d.strip()) for d in s[1:-1].split(",")]
         else:
             return list(s)
 
@@ -534,7 +607,7 @@ class ListProperty(Property[List[T]]):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError('ListProperty expects a list input, got %s' % data)
+            raise TypeError(f"ListProperty expects a list input, got {data}")
         if _is_symbolic_type(self.element_type):
             return [_symbolic_deserializer(elem, context=context) for elem in data]
         if _is_symbolic_converter(self.element_type):
@@ -547,8 +620,7 @@ class ListProperty(Property[List[T]]):
 
 
 class TransformationHistProperty(Property):
-    """ Property type for transformation histories.
-    """
+    """Property type for transformation histories."""
 
     def __init__(self, *args, **kwargs):
         """
@@ -558,11 +630,11 @@ class TransformationHistProperty(Property):
         :param kwargs: Other keyword arguments (inherited from Property).
         """
 
-        kwargs['dtype'] = list
+        kwargs["dtype"] = list
         super().__init__(*args, **kwargs)
 
     def __set__(self, obj, val):
-        super(TransformationHistProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     def to_json(self, hist):
         if hist is None:
@@ -573,12 +645,18 @@ class TransformationHistProperty(Property):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError('TransformationHistProperty expects a list input, got %s' % data)
+            raise TypeError("TransformationHistProperty expects a list input, got %s" % data)
+        # A history entry names its transformation class, and both the serializer registry and
+        # subclass discovery only know classes whose module was imported. Local import because
+        # dace.transformation imports this module.
+        from dace.transformation.transformation import load_builtin_transformations
+
+        load_builtin_transformations()
         return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
 class DictProperty(Property):
-    """ Property type for dictionaries. """
+    """Property type for dictionaries."""
 
     def __init__(self, key_type, value_type, *args, **kwargs):
         """
@@ -593,11 +671,11 @@ class DictProperty(Property):
         :param args: Other arguments (inherited from Property).
         :param kwargs: Other keyword arguments (inherited from Property).
         """
-        kwargs['dtype'] = dict
+        kwargs["dtype"] = dict
         if not isinstance(key_type, type) and not callable(key_type):
-            raise TypeError("Expected type or callable, got: {}".format(key_type))
+            raise TypeError(f"Expected type or callable, got: {key_type}")
         if not isinstance(value_type, type) and not callable(value_type):
-            raise TypeError("Expected type or callable, got: {}".format(value_type))
+            raise TypeError(f"Expected type or callable, got: {value_type}")
         super().__init__(*args, **kwargs)
         self.key_type = key_type
         self.value_type = value_type
@@ -620,12 +698,20 @@ class DictProperty(Property):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
             val = {
-                (k if self.is_key(k) else (_coerce_symbolic_property_value(k) if _is_symbolic_type(self.key_type) else self.key_type(k))):
-                (v if self.is_value(v) else
-                 (_coerce_symbolic_property_value(v) if _is_symbolic_type(self.value_type) else self.value_type(v)))
+                (
+                    k
+                    if self.is_key(k)
+                    else (_coerce_symbolic_property_value(k) if _is_symbolic_type(self.key_type) else self.key_type(k))
+                ): (
+                    v
+                    if self.is_value(v)
+                    else (
+                        _coerce_symbolic_property_value(v) if _is_symbolic_type(self.value_type) else self.value_type(v)
+                    )
+                )
                 for k, v in val.items()
             }
-        super(DictProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     @staticmethod
     def to_string(d):
@@ -639,8 +725,7 @@ class DictProperty(Property):
         # If key knows how to convert itself, let it
         if _is_symbolic_type(self.key_type):
             saved_dictionary = {
-                symbolic.serialize_symbolic(_coerce_symbolic_property_value(k)): v
-                for k, v in saved_dictionary.items()
+                symbolic.serialize_symbolic(_coerce_symbolic_property_value(k)): v for k, v in saved_dictionary.items()
             }
         elif _is_symbolic_converter(self.key_type):
             saved_dictionary = {symbolic.serialize_symbolic(k): v for k, v in saved_dictionary.items()}
@@ -653,8 +738,7 @@ class DictProperty(Property):
         # Same as above, but for values
         if _is_symbolic_type(self.value_type):
             saved_dictionary = {
-                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v))
-                for k, v in saved_dictionary.items()
+                k: symbolic.serialize_symbolic(_coerce_symbolic_property_value(v)) for k, v in saved_dictionary.items()
             }
         elif _is_symbolic_converter(self.value_type):
             saved_dictionary = {k: symbolic.serialize_symbolic(v) for k, v in saved_dictionary.items()}
@@ -666,7 +750,7 @@ class DictProperty(Property):
             saved_dictionary = {k: self.value_type(v) for k, v in saved_dictionary.items()}
 
         # Sort by key before saving
-        return {k: v for k, v in sorted(saved_dictionary.items())} if None not in saved_dictionary else saved_dictionary
+        return dict(sorted(saved_dictionary.items())) if None not in saved_dictionary else saved_dictionary
 
     @staticmethod
     def from_string(s):
@@ -676,8 +760,7 @@ class DictProperty(Property):
         if data is None:
             return data
         if not isinstance(data, dict):
-            raise TypeError('DictProperty expects a dictionary input, got '
-                            '%s' % data)
+            raise TypeError(f"DictProperty expects a dictionary input, got {data}")
         # If element knows how to convert itself, let it
         key_json = hasattr(self.key_type, "from_json")
         value_json = hasattr(self.value_type, "from_json")
@@ -705,9 +788,8 @@ class DictProperty(Property):
 
 
 class EnumProperty(Property):
-
     def __init__(self, dtype, *args, **kwargs):
-        kwargs['dtype'] = dtype
+        kwargs["dtype"] = dtype
         super().__init__(*args, **kwargs)
 
         def f(s, *args, **kwargs):
@@ -715,12 +797,16 @@ class EnumProperty(Property):
                 return None
             if isinstance(s, dtype):
                 return s
+            if isinstance(s, dict) and issubclass(dtype, dace.attr_enum.ExtensibleAttributeEnum):
+                # An instance of a template member, stored with its attributes
+                self._undefined_val = None
+                return dtype.from_json(s)
             try:
                 self._undefined_val = None
                 return dtype[s]
             except KeyError:
                 self._undefined_val = s
-                return dtype['Undefined']
+                return dtype["Undefined"]
 
         self._choices = dtype
         self._from_json = f
@@ -729,17 +815,19 @@ class EnumProperty(Property):
         self._undefined_val = None
 
         def g(obj):
-            if self._undefined_val is None:
-                return dace.serialize.to_json(obj)
-            else:
+            if self._undefined_val is not None:
                 return self._undefined_val
+            if isinstance(obj, dace.attr_enum.ExtensibleAttributeEnum) and obj._is_template:
+                # The property knows its enumeration, so an uninstantiated template is stored as its name, like any
+                # other member (and as before the member became a template)
+                return obj._name_
+            return dace.serialize.to_json(obj)
 
         self._to_json = g
         self._to_string = g
 
 
 class SDFGReferenceProperty(Property):
-
     def to_json(self, obj):
         if obj is None:
             return None
@@ -766,17 +854,17 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
         try:
             return super().from_json(obj, context)
         except TypeError as ex:
-            warnings.warn(f'Could not deserialize optional SDFG ({type(ex).__name__}), defaulting to None: {str(ex)}')
+            warnings.warn(f"Could not deserialize optional SDFG ({type(ex).__name__}), defaulting to None: {str(ex)}")
             return None
 
 
-class RangeProperty(Property):
-    """ Custom Property type for `dace.subsets.Range` members. """
+class RangeProperty(Property[dace.subsets.Range]):
+    """Custom Property type for `dace.subsets.Range` members."""
 
-    def __set__(self, obj, value):
+    def __set__(self, obj, value: dace.subsets.Range | list[int]):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
-        super(RangeProperty, self).__set__(obj, value)
+        super().__set__(obj, value)
 
     @property
     def dtype(self):
@@ -792,14 +880,14 @@ class RangeProperty(Property):
 
 
 class DebugInfoProperty(Property):
-    """ Custom Property type for DebugInfo members. """
+    """Custom Property type for DebugInfo members."""
 
     def __init__(self, **kwargs):
-        if 'default' not in kwargs:
-            if kwargs.get('allow_none', False):
-                kwargs['default'] = None
+        if "default" not in kwargs:
+            if kwargs.get("allow_none", False):
+                kwargs["default"] = None
             else:
-                kwargs['default'] = DebugInfo(None)
+                kwargs["default"] = DebugInfo(None)
         super().__init__(dtype=DebugInfo, **kwargs)
 
     @property
@@ -866,33 +954,37 @@ class SetProperty(Property):
 
     Despite its name, the property models a `frozenset`, this means that the set can
     not be modified in place. Instead a new value has to be assigned to the property.
+    The stored value is a `frozenset` (see `__set__`), so it is handed out unprotected.
     """
 
     def __init__(
-            self,
-            element_type,
-            getter=None,
-            setter=None,
-            default=None,
-            from_json=None,
-            to_json=None,
-            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-            allow_none=False,
-            desc="",
-            **kwargs):
+        self,
+        element_type,
+        getter=None,
+        setter=None,
+        default=None,
+        from_json=None,
+        to_json=None,
+        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+        allow_none=False,
+        desc="",
+        **kwargs,
+    ):
         if to_json is None:
             to_json = self.to_json
-        super(SetProperty, self).__init__(getter=getter,
-                                          setter=setter,
-                                          dtype=frozenset,
-                                          default=default,
-                                          from_json=from_json,
-                                          to_json=to_json,
-                                          choices=None,
-                                          unmapped=unmapped,
-                                          allow_none=allow_none,
-                                          desc=desc,
-                                          **kwargs)
+        super().__init__(
+            getter=getter,
+            setter=setter,
+            dtype=frozenset,
+            default=default,
+            from_json=from_json,
+            to_json=to_json,
+            choices=None,
+            unmapped=unmapped,
+            allow_none=allow_none,
+            desc=desc,
+            **kwargs,
+        )
         self._element_type = element_type
 
     @property
@@ -916,44 +1008,36 @@ class SetProperty(Property):
     def to_json(self, l):
         if l is None:
             return None
-        return list(sorted(l))
+        return sorted(l)
 
     def from_json(self, l, sdfg=None):
         if l is None:
             return None
         return frozenset(l)
 
-    def __get__(self, obj, objtype=None):
-        val = super(SetProperty, self).__get__(obj, objtype)
-        if val is None:
-            return val
-
-        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
-        return val
-
     def __set__(self, obj, val):
         if val is None:
-            return super(SetProperty, self).__set__(obj, val)
+            return super().__set__(obj, val)
 
         # Check for uniqueness
         if isinstance(val, (frozenset, set)):
             pass
         elif len(val) != len(set(val)):
-            dups = set([x for x in val if val.count(x) > 1])
-            raise ValueError('Duplicates found in set: ' + str(dups))
+            dups = {x for x in val if val.count(x) > 1}
+            raise ValueError("Duplicates found in set: " + str(dups))
 
         # Cast to element type and ensure that it is a frozen set.
         try:
             new_set = frozenset(self._element_type(elem) for elem in val)
         except (TypeError, ValueError):
-            raise ValueError('Some elements could not be converted to %s' % (str(self._element_type)))
+            raise ValueError(f"Some elements could not be converted to {str(self._element_type)}")
 
-        super(SetProperty, self).__set__(obj, new_set)
+        super().__set__(obj, new_set)
 
 
 class LambdaProperty(Property):
-    """ Custom Property type that accepts a lambda function, with conversions
-        to and from strings. """
+    """Custom Property type that accepts a lambda function, with conversions
+    to and from strings."""
 
     @property
     def dtype(self):
@@ -966,17 +1050,19 @@ class LambdaProperty(Property):
     @staticmethod
     def to_string(obj):
         if obj is None:
-            return 'lambda: None'
+            return "lambda: None"
         if isinstance(obj, str):
             return unparse(ast.parse(obj))
         return unparse(obj)
 
     def to_json(self, obj):
-        if obj is None: return None
+        if obj is None:
+            return None
         return LambdaProperty.to_string(obj)
 
     def from_json(self, s, sdfg=None):
-        if s is None: return None
+        if s is None:
+            return None
         return LambdaProperty.from_string(s)
 
     def __set__(self, obj, val):
@@ -987,18 +1073,18 @@ class LambdaProperty(Property):
                 val = self.to_string(val)  # Store as string internally
             else:
                 raise TypeError("Lambda property must be either string or ast.Lambda")
-        super(LambdaProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
 
-class CodeBlock(object):
-    """ Helper class that represents code blocks with language.
-        Used in `CodeProperty`, implemented as a list of AST statements if
-        language is Python, or a string otherwise.
+class CodeBlock:
+    """Helper class that represents code blocks with language.
+    Used in `CodeProperty`, implemented as a list of AST statements if
+    language is Python, or a string otherwise.
     """
 
-    def __init__(self,
-                 code: Union[str, List[ast.AST], 'CodeBlock'],
-                 language: dace.dtypes.Language = dace.dtypes.Language.Python):
+    def __init__(
+        self, code: Union[str, list[ast.AST], "CodeBlock"], language: dace.dtypes.Language = dace.dtypes.Language.Python
+    ):
         if isinstance(code, CodeBlock):
             self.code = code.code
             self.language = code.language
@@ -1009,13 +1095,22 @@ class CodeBlock(object):
         # Convert to the right type
         if language == dace.dtypes.Language.Python and isinstance(code, str):
             self.code = ast.parse(code).body
-        elif (not isinstance(code, str) and language != dace.dtypes.Language.Python):
-            raise TypeError('Only strings are supported for languages other '
-                            'than Python')
+        elif not isinstance(code, str) and language != dace.dtypes.Language.Python:
+            raise TypeError("Only strings are supported for languages other than Python")
         else:
             self.code = code
 
-    def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
+    def __deepcopy__(self, memo):
+        # Same result as the generic ``__reduce_ex__`` copy, without its reconstruct machinery: every
+        # deserialized Tasklet deep-copies three empty C++ defaults.
+        result = object.__new__(type(self))
+        memo[id(self)] = result
+        copied = result.__dict__
+        for name, value in self.__dict__.items():
+            copied[name] = value if dace.serialize.deepcopy_returns_itself(value) else copy.deepcopy(value, memo)
+        return result
+
+    def get_free_symbols(self, defined_syms: set[str] = None) -> set[str]:
         """
         Returns the set of free symbol names in this code block, excluding
         the given symbol names.
@@ -1049,7 +1144,10 @@ class CodeBlock(object):
             self.code = code
 
     def __eq__(self, other):
-        if isinstance(other, str) or other is None:
+        if other is None:
+            # Only code that is None has no string representation
+            return self.code is None
+        if isinstance(other, str):
             return self.as_string == other
         elif isinstance(other, CodeBlock):
             return self.as_string == other.as_string and self.language == other.language
@@ -1060,11 +1158,11 @@ class CodeBlock(object):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if self.language == dace.dtypes.Language.Python and self.code is not None:
-            code = unparse(ast.parse(self.as_string))
+            code = _normalize_python_code(self.as_string)
         else:
             code = self.as_string
 
-        ret = {'string_data': code, 'language': self.language.name}
+        ret = {"string_data": code, "language": self.language.name}
         return ret
 
     @staticmethod
@@ -1075,7 +1173,7 @@ class CodeBlock(object):
             return tmp
 
         try:
-            lang = tmp['language']
+            lang = tmp["language"]
         except:
             lang = None
 
@@ -1094,7 +1192,7 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.MLIR
 
         try:
-            cdata = tmp['string_data']
+            cdata = tmp["string_data"]
         except:
             print("UNRECOGNIZED CODE JSON: " + str(tmp))
             cdata = ""
@@ -1103,7 +1201,7 @@ class CodeBlock(object):
 
 
 class CodeProperty(Property):
-    """ Custom Property type that accepts code in various languages. """
+    """Custom Property type that accepts code in various languages."""
 
     @property
     def dtype(self):
@@ -1116,11 +1214,11 @@ class CodeProperty(Property):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if obj.language == dace.dtypes.Language.Python and obj.code is not None:
-            code = unparse(ast.parse(obj.as_string))
+            code = _normalize_python_code(obj.as_string)
         else:
             code = obj.as_string
 
-        ret = {'string_data': code, 'language': obj.language.name}
+        ret = {"string_data": code, "language": obj.language.name}
         return ret
 
     def from_json(self, tmp, sdfg=None):
@@ -1131,7 +1229,7 @@ class CodeProperty(Property):
             return tmp
 
         try:
-            lang = tmp['language']
+            lang = tmp["language"]
         except:
             lang = None
 
@@ -1150,7 +1248,7 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.MLIR
 
         try:
-            cdata = tmp['string_data']
+            cdata = tmp["string_data"]
         except:
             print("UNRECOGNIZED CODE JSON: " + str(tmp))
             cdata = ""
@@ -1160,8 +1258,7 @@ class CodeProperty(Property):
     @staticmethod
     def from_string(string, language=None):
         if language is None:
-            raise TypeError("Must pass language as second argument to "
-                            "from_string method of CodeProperty")
+            raise TypeError("Must pass language as second argument to from_string method of CodeProperty")
         return CodeBlock(string, language)
 
     @staticmethod
@@ -1172,8 +1269,8 @@ class CodeProperty(Property):
 
 
 class SubsetProperty(Property):
-    """ Custom Property type that accepts any form of subset, and enables
-    parsing strings into multiple types of subsets. """
+    """Custom Property type that accepts any form of subset, and enables
+    parsing strings into multiple types of subsets."""
 
     @property
     def dtype(self):
@@ -1186,29 +1283,22 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)
-                and not isinstance(val, sbs.SubsetUnion)):
-            raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
-        super(SubsetProperty, self).__set__(obj, val)
+        if val is not None and not isinstance(val, (sbs.Range, sbs.SubsetUnion)):
+            raise TypeError(f"Subset property must be either Range or SubsetUnion: got {type(val).__name__}")
+        super().__set__(obj, val)
 
     @staticmethod
     def from_string(s):
-        if s is None or s == 'None' or len(s) == 0:
+        if s is None or s == "None" or len(s) == 0:
             return None
-        ranges = sbs.Range.from_string(s)
-        if ranges:
-            return ranges
-        else:
-            return sbs.Indices.from_string(s)
+        return sbs.Range.from_string(s)
 
     @staticmethod
     def to_string(val):
         if isinstance(val, sbs.Range):
             return sbs.Range.ndslice_to_string(val)
-        elif isinstance(val, sbs.Indices):
-            return sbs.Indices.__str__(val)
         elif val is None:
-            return 'None'
+            return "None"
         raise TypeError
 
     def to_json(self, val):
@@ -1224,20 +1314,21 @@ class SubsetProperty(Property):
 
 
 class SymbolicProperty(Property):
-    """ Custom Property type that accepts integers or Sympy expressions. """
+    """Custom Property type that accepts integers or Sympy expressions."""
 
     @property
     def dtype(self):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
-            raise TypeError(f"Property {self.attr_name} must be a literal "
-                            f"or symbolic expression, got: {type(val)}")
-        if isinstance(val, (Number, str)):
+        if val is not None and not isinstance(val, (symbolic.SymbolicExpr, Number, np.bool_, str)):
+            raise TypeError(f"Property {self.attr_name} must be a literal or symbolic expression, got: {type(val)}")
+        # A sympy number is a ``Number`` too, and re-parsing it through ``str`` ROUNDS it to 15
+        # significant digits -- loading an SDFG whose factor is 1/21 stored back a different double.
+        if isinstance(val, (Number, str)) and not isinstance(val, symbolic.SymbolicExpr):
             val = SymbolicProperty.from_string(str(val))
 
-        super(SymbolicProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     @staticmethod
     def from_string(s):
@@ -1260,11 +1351,11 @@ class SymbolicProperty(Property):
 
 
 class DataProperty(Property):
-    """ Custom Property type that represents a link to a data descriptor.
-        Needs the SDFG to be passed as an argument to `from_string` and
-        `choices`. """
+    """Custom Property type that represents a link to a data descriptor.
+    Needs the SDFG to be passed as an argument to `from_string` and
+    `choices`."""
 
-    def __init__(self, desc='', default=None, **kwargs):
+    def __init__(self, desc="", default=None, **kwargs):
         # Data can be None when no data is flowing, e.g., on a memlet with a
         # map that has no external inputs
         return super().__init__(dtype=str, allow_none=True, desc=desc, default=default, **kwargs)
@@ -1275,17 +1366,15 @@ class DataProperty(Property):
     @staticmethod
     def choices(sdfg=None):
         if sdfg is None:
-            raise TypeError("Must pass SDFG as second argument to "
-                            "choices method of ArrayProperty")
+            raise TypeError("Must pass SDFG as second argument to choices method of ArrayProperty")
         return list(sdfg.arrays.keys())
 
     @staticmethod
     def from_string(s, sdfg=None):
         if sdfg is None:
-            raise TypeError("Must pass SDFG as second argument to "
-                            "from_string method of ArrayProperty")
+            raise TypeError("Must pass SDFG as second argument to from_string method of ArrayProperty")
         if s not in sdfg.arrays:
-            raise ValueError("No data found in SDFG with name: {}".format(s))
+            raise ValueError(f"No data found in SDFG with name: {s}")
         return s
 
     @staticmethod
@@ -1301,34 +1390,33 @@ class DataProperty(Property):
         if isinstance(context, dace.SDFG):
             sdfg = context
         else:
-            sdfg = context['sdfg']
+            sdfg = context["sdfg"]
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
         if s not in sdfg.arrays:
             if s is None:
                 # This is fine
-                #return "null" # Every SDFG has a 'null' element
+                # return "null" # Every SDFG has a 'null' element
                 return None
-            raise ValueError("No data found in SDFG with name: {}".format(s))
+            raise ValueError(f"No data found in SDFG with name: {s}")
         return s
 
 
 class ReferenceProperty(Property):
-    """ Custom Property type that represents a link to another SDFG object.
-        Needs the SDFG to be passed as an argument to `from_string`."""
+    """Custom Property type that represents a link to another SDFG object.
+    Needs the SDFG to be passed as an argument to `from_string`."""
 
     @staticmethod
     def from_string(s, sdfg=None):
         if sdfg is None:
-            raise TypeError("Must pass SDFG as second argument to "
-                            "from_string method of ReferenceProperty")
+            raise TypeError("Must pass SDFG as second argument to from_string method of ReferenceProperty")
         for node in sdfg.states():
             if node.label == s:
                 return node
         for node, _ in sdfg.all_nodes_recursive():
             if node.label == s:
                 return node
-        raise ValueError("No node found in SDFG with name: {}".format(s))
+        raise ValueError(f"No node found in SDFG with name: {s}")
 
     @staticmethod
     def to_string(obj):
@@ -1336,7 +1424,7 @@ class ReferenceProperty(Property):
 
 
 class ShapeProperty(Property):
-    """ Custom Property type that defines a shape. """
+    """Custom Property type that defines a shape."""
 
     @property
     def dtype(self):
@@ -1366,13 +1454,12 @@ class ShapeProperty(Property):
         if isinstance(val, list):
             val = tuple(val)
         if isinstance(val, tuple):
-            val = tuple(dace.symbolic.UndefinedSymbol() if v == '?' else v for v in val)
-        super(ShapeProperty, self).__set__(obj, val)
+            val = tuple(dace.symbolic.UndefinedSymbol() if v == "?" else v for v in val)
+        super().__set__(obj, val)
 
 
 class TypeProperty(Property):
-    """ Custom Property type that finds a type according to the input string.
-    """
+    """Custom Property type that finds a type according to the input string."""
 
     @property
     def dtype(self):
@@ -1382,9 +1469,9 @@ class TypeProperty(Property):
     def from_string(s):
         dtype = pydoc.locate(s)
         if dtype is None:
-            raise ValueError("No type \"{}\" found.".format(s))
+            raise ValueError(f'No type "{s}" found.')
         if not isinstance(dtype, type):
-            raise ValueError("Object \"{}\" is not a type.".format(dtype))
+            raise ValueError(f'Object "{dtype}" is not a type.')
         return dtype
 
     @staticmethod
@@ -1394,15 +1481,22 @@ class TypeProperty(Property):
         if isinstance(obj, str):
             return TypeProperty.from_string(obj)
         else:
-            raise TypeError("Cannot parse type from: {}".format(obj))
+            raise TypeError(f"Cannot parse type from: {obj}")
 
 
-class TypeClassProperty(Property):
-    """ Custom property type for memory as defined in dace.types,
-        e.g. `dace.float32`. """
+@lru_cache(maxsize=None, typed=True)
+def typeclass_from_name(name: str) -> typeclass:
+    # ``pydoc.locate`` walks the import machinery per call (~150us); a name always resolves to one module global.
+    # A failed lookup raises, so it is never cached.
+    dtype = pydoc.locate(f"dace.dtypes.{name}")
+    if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
+        raise ValueError(f"Not a valid data type: {name}")
+    return dtype
 
-    def __get__(self, obj, objtype=None) -> typeclass:
-        return super().__get__(obj, objtype)
+
+class TypeClassProperty(Property[typeclass]):
+    """Custom property type for memory as defined in dace.types,
+    e.g. `dace.float32`."""
 
     @property
     def dtype(self):
@@ -1410,10 +1504,7 @@ class TypeClassProperty(Property):
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate("dace.dtypes.{}".format(s))
-        if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
-            raise ValueError("Not a valid data type: {}".format(s))
-        return dtype
+        return typeclass_from_name(s)
 
     @staticmethod
     def to_string(obj):
@@ -1436,26 +1527,25 @@ class TypeClassProperty(Property):
             # Let the deserializer handle this
             return dace.serialize.from_json(obj, context=context)
         else:
-            raise TypeError("Cannot parse type from: {}".format(obj))
+            raise TypeError(f"Cannot parse type from: {obj}")
 
 
-class NestedDataClassProperty(Property):
-    """ Custom property type for nested data. """
-
-    def __get__(self, obj, objtype=None) -> 'dData':
-        return super().__get__(obj, objtype)
+class NestedDataClassProperty(Property["dData"]):
+    """Custom property type for nested data."""
 
     @property
     def dtype(self):
         from dace import data as dt
+
         return dt.Data
 
     @staticmethod
     def from_string(s):
         from dace import data as dt
+
         dtype = getattr(dt, s, None)
         if dtype is None or not isinstance(dtype, dt.Data):
-            raise ValueError("Not a valid data type: {}".format(s))
+            raise ValueError(f"Not a valid data type: {s}")
         return dtype
 
     @staticmethod
@@ -1477,7 +1567,7 @@ class NestedDataClassProperty(Property):
             # Let the deserializer handle this
             return dace.serialize.from_json(obj, context=context)
         else:
-            raise TypeError("Cannot parse type from: {}".format(obj))
+            raise TypeError(f"Cannot parse type from: {obj}")
 
 
 class LibraryImplementationProperty(Property):
@@ -1501,7 +1591,7 @@ class DataclassProperty(Property):
 
     @staticmethod
     def from_string(s):
-        raise TypeError('Dataclasses cannot be loaded from a string, only JSON')
+        raise TypeError("Dataclasses cannot be loaded from a string, only JSON")
 
     def to_json(self, obj):
         if obj is None:

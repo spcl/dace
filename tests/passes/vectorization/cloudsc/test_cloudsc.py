@@ -1,22 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy
 import pytest
+
 # Unblocked 2026-06-12 per user direction (``enabling cloudsc tests and
 # gradually enabling more tests``). The walker-primary pipeline lands the
 # K-dim path e2e (gather + scatter passing); some legacy ``branch_mode`` /
 # ``emission_style`` parametrisations may still need triage.
 import dace
-import numpy
 from tests.passes.vectorization.helpers.harness import (
-    run_vectorization_test,
     N,
-    klev,
-    kfdia,
-    _get_cloudsc_snippet_three,
     _get_cloudsc_snippet_four,
+    _get_cloudsc_snippet_three,
+    kfdia,
+    klev,
+    run_vectorization_test,
 )
 
-_OPT_PARAMS = [(True, True), (True, False), (False, True), (False, False)]
+#: Only ``insert_copies`` was ever read out of this; the discarded first element made half of
+#: every parametrization an exact duplicate run.
+OPT_PARAMS = [True, False]
 
 # Also run the cloudsc snippets through the K-dim tile-op path
 # (VectorizeCPUMultiDim). The ``vectorize_config`` fixture (conftest) adds a
@@ -60,8 +63,8 @@ def cloudsc_snippet_two(
     for i in dace.map[0:N]:
         for j in dace.map[0:N]:
             B[i, j] = A[1, i, j] + A[0, i, j]
-            _if_cond_5 = B[i, j] > c
-            if _if_cond_5:
+            if_cond_5 = B[i, j] > c
+            if if_cond_5:
                 D[i, j] = B[i, j] / A[0, i, j]
                 E[i, j] = 1.0 - D[i, j]
             else:
@@ -69,33 +72,30 @@ def cloudsc_snippet_two(
                 E[i, j] = 0.0
 
 
-def test_snippet_from_cloudsc_two(tile_emit_mode, branch_mode, remainder_strategy, emission_style, vectorize_config):
-    insert_copies = tile_emit_mode
-    _S = 64
-    A = numpy.random.random((2, _S, _S))
-    B = numpy.random.random((_S, _S))
+def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_style, vectorize_config):
+    dim_size = 64
+    A = numpy.random.random((2, dim_size, dim_size))
+    B = numpy.random.random((dim_size, dim_size))
     c = 0.1
-    D = numpy.random.random((_S, _S))
-    E = numpy.random.random((_S, _S))
+    D = numpy.random.random((dim_size, dim_size))
+    E = numpy.random.random((dim_size, dim_size))
 
-    run_vectorization_test(dace_func=cloudsc_snippet_two,
-                           arrays={
-                               'A': A,
-                               'B': B,
-                               'D': D,
-                               'E': E,
-                           },
-                           params={
-                               'c': c,
-                               'N': _S
-                           },
-                           vector_width=8,
-                           sdfg_name="cloudsc_snippet_two",
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           emission_style=emission_style,
-                           insert_copies=insert_copies,
-                           vectorize_config=vectorize_config)
+    run_vectorization_test(
+        dace_func=cloudsc_snippet_two,
+        arrays={
+            "A": A,
+            "B": B,
+            "D": D,
+            "E": E,
+        },
+        params={"c": c, "N": dim_size},
+        vector_width=8,
+        sdfg_name="cloudsc_snippet_two",
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+        vectorize_config=vectorize_config,
+    )
 
 
 def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
@@ -106,28 +106,27 @@ def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
 
 
 def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_strategy):
-    _S = 64
-    A = numpy.random.random((2, _S, _S))
-    B = numpy.random.random((_S, _S))
+    dim_size = 64
+    A = numpy.random.random((2, dim_size, dim_size))
+    B = numpy.random.random((dim_size, dim_size))
     c = 0.1
-    D = numpy.random.random((_S, _S))
-    E = numpy.random.random((_S, _S))
+    D = numpy.random.random((dim_size, dim_size))
+    E = numpy.random.random((dim_size, dim_size))
 
-    vectorized_sdfg = run_vectorization_test(dace_func=cloudsc_snippet_two,
-                                             arrays={
-                                                 'A': A,
-                                                 'B': B,
-                                                 'D': D,
-                                                 'E': E,
-                                             },
-                                             params={
-                                                 'c': c,
-                                                 'N': _S
-                                             },
-                                             vector_width=8,
-                                             sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
-                                             branch_mode=branch_mode,
-                                             remainder_strategy=remainder_strategy)
+    vectorized_sdfg = run_vectorization_test(
+        dace_func=cloudsc_snippet_two,
+        arrays={
+            "A": A,
+            "B": B,
+            "D": D,
+            "E": E,
+        },
+        params={"c": c, "N": dim_size},
+        vector_width=8,
+        sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+    )
 
     # cloudsc_two reads ``A`` only at ``A[0, i, j]`` and ``A[1, i, j]``:
     # these differ solely in the dim-0 *constant* (0 vs 1) of a
@@ -147,15 +146,17 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
     # structurally that the kernel actually vectorized (a map strided by
     # the vector width exists), not a bogus union.
     vw_step_maps = [
-        n for n, _ in vectorized_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and any(str(s) == "8" for _b, _e, s in n.map.range)
+        n
+        for n, _ in vectorized_sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and any(str(s) == "8" for start, end, s in n.map.range)
     ]
-    assert vw_step_maps, ("cloudsc_two did not vectorize under fuse_overlapping_loads=True: no map strided by "
-                          "the vector width was produced")
+    assert vw_step_maps, (
+        "cloudsc_two did not vectorize under fuse_overlapping_loads=True: no map strided by "
+        "the vector width was produced"
+    )
 
 
-def test_snippet_from_cloudsc_one(tile_emit_mode, branch_mode, remainder_strategy, emission_style, vectorize_config):
-    insert_copies = tile_emit_mode
+def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_style, vectorize_config):
     klev = 64
     kfdia = 32
 
@@ -169,35 +170,35 @@ def test_snippet_from_cloudsc_one(tile_emit_mode, branch_mode, remainder_strateg
     rlmin = 0.1
     z1 = 1
 
-    run_vectorization_test(dace_func=cloudsc_snippet_one,
-                           arrays={
-                               'za': za,
-                               'zliqfrac': zliqfrac,
-                               'zicefrac': zicefrac,
-                               'zqx': zqx,
-                               'zli': zli,
-                           },
-                           params={
-                               'rlmin': rlmin,
-                               'z1': z1,
-                               'kfdia': kfdia,
-                               'klev': klev,
-                           },
-                           vector_width=8,
-                           sdfg_name="cloudsc_snippet_one",
-                           cleanup=True,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           emission_style=emission_style,
-                           insert_copies=insert_copies,
-                           vectorize_config=vectorize_config)
+    run_vectorization_test(
+        dace_func=cloudsc_snippet_one,
+        arrays={
+            "za": za,
+            "zliqfrac": zliqfrac,
+            "zicefrac": zicefrac,
+            "zqx": zqx,
+            "zli": zli,
+        },
+        params={
+            "rlmin": rlmin,
+            "z1": z1,
+            "kfdia": kfdia,
+            "klev": klev,
+        },
+        vector_width=8,
+        sdfg_name="cloudsc_snippet_one",
+        cleanup=True,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+        vectorize_config=vectorize_config,
+    )
 
 
-def test_snippet_from_cloudsc_four(tile_emit_mode, remainder_strategy, emission_style, vectorize_config):
+def test_snippet_from_cloudsc_four(remainder_strategy, emission_style, vectorize_config):
     """T1-restricted (drops branch_mode for axis distribution)."""
-    insert_copies = tile_emit_mode
     sdfg = _get_cloudsc_snippet_four()
-    sdfg.name = f"cloudsc_snippet_four"
+    sdfg.name = "cloudsc_snippet_four"
     sdfg.validate()
 
     # Symbolic values requested by the user
@@ -205,8 +206,8 @@ def test_snippet_from_cloudsc_four(tile_emit_mode, remainder_strategy, emission_
     klev = 64
     kidia = 1
     kfdia = 32
-    _for_it_92 = 0
-    _for_it_91 = 0
+    for_it_92 = 0
+    for_it_91 = 0
 
     # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
     arr_shapes = {
@@ -216,302 +217,164 @@ def test_snippet_from_cloudsc_four(tile_emit_mode, remainder_strategy, emission_
     }
 
     # Create Fortran-ordered NumPy arrays
-    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
+    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order="F") for name, shape in arr_shapes.items()}
     # Create scalars requested
     scalars = {
         "kfdia": numpy.int64(kfdia),
         "kidia": numpy.int64(kidia),
         "klev": numpy.int64(klev),
         "klon": numpy.int64(klon),
-        "_for_it_92": numpy.int64(_for_it_92),
-        "_for_it_91": numpy.int64(_for_it_91),
+        "_for_it_92": numpy.int64(for_it_92),
+        "_for_it_91": numpy.int64(for_it_91),
     }
 
     # Quick verification display: shape and contiguity / strides
-    run_vectorization_test(dace_func=sdfg,
-                           from_sdfg=True,
-                           arrays=arrays,
-                           params=scalars,
-                           vector_width=8,
-                           sdfg_name=sdfg.name,
-                           remainder_strategy=remainder_strategy,
-                           emission_style=emission_style,
-                           insert_copies=insert_copies,
-                           vectorize_config=vectorize_config)
+    run_vectorization_test(
+        dace_func=sdfg,
+        from_sdfg=True,
+        arrays=arrays,
+        params=scalars,
+        vector_width=8,
+        sdfg_name=sdfg.name,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+        vectorize_config=vectorize_config,
+    )
 
 
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
+#: The snippet-three fixture's array shapes, one spelling for every test that drives it.
+SNIPPET_THREE_SHAPES = {
+    "tendency_tmp_q": (64, 64),
+    "pa": (64, 64),
+    "pq": (64, 64),
+    "tendency_tmp_t": (64, 64),
+    "tendency_tmp_a": (64, 64),
+    "pt": (64, 64),
+    "zqx0": (64, 64, 5),
+    "zqx": (64, 64, 5),
+    "ztp1": (64, 64),
+    "zaorig": (64, 64),
+    "za": (64, 64),
+}
+
+
+def snippet_three_inputs(ralvdcp: float | None = None):
+    """Fortran-ordered arrays plus the scalar bindings for the snippet-three fixture.
+
+    :param ralvdcp: bind the extra scalar the ``add_scalar=True`` variant reads.
+    :returns: ``(arrays, scalars)`` for :func:`run_vectorization_test`.
+    """
+    arrays = {
+        name: numpy.random.random(shape).astype(numpy.float64, order="F")
+        for name, shape in SNIPPET_THREE_SHAPES.items()
+    }
+    scalars = {
+        "kfdia": numpy.int64(32),
+        "kidia": numpy.int64(1),
+        "ptsphy": numpy.float64(0.0),
+        "klev": numpy.int64(64),
+        "klon": numpy.int64(64),
+    }
+    if ralvdcp is not None:
+        scalars["ralvdcp"] = numpy.float64(ralvdcp)
+    return arrays, scalars
+
+
+@pytest.mark.parametrize("opt_parameters", OPT_PARAMS)
 def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
-    _, insert_copies = opt_parameters
-
+    insert_copies = opt_parameters
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)
     sdfg.name = "cloudsc_snippet_three"
     sdfg.validate()
+    arrays, scalars = snippet_three_inputs()
 
-    # Symbolic values requested by the user
-    klon = 64
-    klev = 64
-    kidia = 1
-    kfdia = 32
-
-    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
-    arr_shapes = {
-        "tendency_tmp_q": (klon, klev),
-        "pa": (klon, klev),
-        "pq": (klon, klev),
-        "tendency_tmp_t": (klon, klev),
-        "tendency_tmp_a": (klon, klev),
-        "pt": (klon, klev),
-        "zqx0": (klon, klev, 5),
-        "zqx": (klon, klev, 5),
-        "ztp1": (klon, klev),
-        "zaorig": (klon, klev),
-        "za": (klon, klev),
-    }
-
-    # Create Fortran-ordered NumPy arrays
-    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
-    # Create scalars requested
-    scalars = {
-        "kfdia": numpy.int64(kfdia),
-        "kidia": numpy.int64(kidia),
-        "ptsphy": numpy.float64(0.0),
-        "klev": numpy.int64(klev),
-        "klon": numpy.int64(klon),
-    }
-
-    # Quick verification display: shape and contiguity / strides
-    run_vectorization_test(dace_func=sdfg,
-                           from_sdfg=True,
-                           arrays=arrays,
-                           params=scalars,
-                           vector_width=8,
-                           sdfg_name=sdfg.name,
-                           insert_copies=insert_copies,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
+    run_vectorization_test(
+        dace_func=sdfg,
+        from_sdfg=True,
+        arrays=arrays,
+        params=scalars,
+        vector_width=8,
+        sdfg_name=sdfg.name,
+        insert_copies=insert_copies,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        vectorize_config=vectorize_config,
+        param_tag=f"param{OPT_PARAMS.index(opt_parameters)}",
+    )
 
 
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
-def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_mode, remainder_strategy,
-                                                        vectorize_config):
-    _, insert_copies = opt_parameters
-
+@pytest.mark.parametrize("opt_parameters", OPT_PARAMS)
+def test_snippet_from_cloudsc_three_with_partial_subset(
+    opt_parameters, branch_mode, remainder_strategy, vectorize_config
+):
+    """The map-range-dependent subset variant: the staged window moves with the tile base."""
+    insert_copies = opt_parameters
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
     sdfg.name = "cloudsc_snippet_three_with_partial_subset"
     sdfg.validate()
+    arrays, scalars = snippet_three_inputs()
 
-    # Symbolic values requested by the user
-    klon = 64
-    klev = 64
-    kidia = 1
-    kfdia = 32
-
-    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
-    arr_shapes = {
-        "tendency_tmp_q": (klon, klev),
-        "pa": (klon, klev),
-        "pq": (klon, klev),
-        "tendency_tmp_t": (klon, klev),
-        "tendency_tmp_a": (klon, klev),
-        "pt": (klon, klev),
-        "zqx0": (klon, klev, 5),
-        "zqx": (klon, klev, 5),
-        "ztp1": (klon, klev),
-        "zaorig": (klon, klev),
-        "za": (klon, klev),
-    }
-
-    # Create Fortran-ordered NumPy arrays
-    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
-    # Create scalars requested
-    scalars = {
-        "kfdia": numpy.int64(kfdia),
-        "kidia": numpy.int64(kidia),
-        "ptsphy": numpy.float64(0.0),
-        "klev": numpy.int64(klev),
-        "klon": numpy.int64(klon),
-    }
-
-    # Quick verification display: shape and contiguity / strides
-    run_vectorization_test(dace_func=sdfg,
-                           from_sdfg=True,
-                           arrays=arrays,
-                           params=scalars,
-                           vector_width=8,
-                           sdfg_name=sdfg.name,
-                           insert_copies=insert_copies,
-                           no_inline=True,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
+    run_vectorization_test(
+        dace_func=sdfg,
+        from_sdfg=True,
+        arrays=arrays,
+        params=scalars,
+        vector_width=8,
+        sdfg_name=sdfg.name,
+        insert_copies=insert_copies,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        vectorize_config=vectorize_config,
+        param_tag=f"param{OPT_PARAMS.index(opt_parameters)}",
+    )
 
 
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
-def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_parameters, branch_mode, remainder_strategy,
-                                                                       vectorize_config):
-    _, insert_copies = opt_parameters
-
-    sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
-    sdfg.name = "cloudsc_snippet_three_with_partial_subset_without_inline"
-    sdfg.validate()
-
-    # Symbolic values requested by the user
-    klon = 64
-    klev = 64
-    kidia = 1
-    kfdia = 32
-
-    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
-    arr_shapes = {
-        "tendency_tmp_q": (klon, klev),
-        "pa": (klon, klev),
-        "pq": (klon, klev),
-        "tendency_tmp_t": (klon, klev),
-        "tendency_tmp_a": (klon, klev),
-        "pt": (klon, klev),
-        "zqx0": (klon, klev, 5),
-        "zqx": (klon, klev, 5),
-        "ztp1": (klon, klev),
-        "zaorig": (klon, klev),
-        "za": (klon, klev),
-    }
-
-    # Create Fortran-ordered NumPy arrays
-    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
-    # Create scalars requested
-    scalars = {
-        "kfdia": numpy.int64(kfdia),
-        "kidia": numpy.int64(kidia),
-        "ptsphy": numpy.float64(0.0),
-        "klev": numpy.int64(klev),
-        "klon": numpy.int64(klon),
-    }
-
-    # Quick verification display: shape and contiguity / strides
-    run_vectorization_test(dace_func=sdfg,
-                           from_sdfg=True,
-                           arrays=arrays,
-                           params=scalars,
-                           vector_width=8,
-                           sdfg_name=sdfg.name,
-                           insert_copies=insert_copies,
-                           no_inline=True,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
-
-
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
-def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters, branch_mode, remainder_strategy,
-                                                         vectorize_config):
-    _, insert_copies = opt_parameters
-
-    sdfg = _get_cloudsc_snippet_three(add_scalar=False)
-    sdfg.name = "cloudsc_snippet_three_without_inline_sdfgs"
-    sdfg.validate()
-
-    # Symbolic values requested by the user
-    klon = 64
-    klev = 64
-    kidia = 1
-    kfdia = 32
-
-    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
-    arr_shapes = {
-        "tendency_tmp_q": (klon, klev),
-        "pa": (klon, klev),
-        "pq": (klon, klev),
-        "tendency_tmp_t": (klon, klev),
-        "tendency_tmp_a": (klon, klev),
-        "pt": (klon, klev),
-        "zqx0": (klon, klev, 5),
-        "zqx": (klon, klev, 5),
-        "ztp1": (klon, klev),
-        "zaorig": (klon, klev),
-        "za": (klon, klev),
-    }
-
-    # Create Fortran-ordered NumPy arrays
-    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
-    # Create scalars requested
-    scalars = {
-        "kfdia": numpy.int64(kfdia),
-        "kidia": numpy.int64(kidia),
-        "ptsphy": numpy.float64(0.0),
-        "klev": numpy.int64(klev),
-        "klon": numpy.int64(klon),
-    }
-
-    # Quick verification display: shape and contiguity / strides
-    run_vectorization_test(dace_func=sdfg,
-                           from_sdfg=True,
-                           arrays=arrays,
-                           params=scalars,
-                           vector_width=8,
-                           sdfg_name=sdfg.name,
-                           insert_copies=insert_copies,
-                           no_inline=True,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
-
-
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
+@pytest.mark.parametrize("opt_parameters", OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
-    _, insert_copies = opt_parameters
-
+    """The variant whose body also reads a lane-uniform scalar (``ralvdcp``)."""
+    insert_copies = opt_parameters
     sdfg = _get_cloudsc_snippet_three(add_scalar=True)
     sdfg.name = "cloudsc_snippet_three_with_scalar_use"
     sdfg.validate()
+    arrays, scalars = snippet_three_inputs(ralvdcp=2.3)
 
-    # Symbolic values requested by the user
-    klon = 64
-    klev = 64
-    kidia = 1
-    kfdia = 32
+    run_vectorization_test(
+        dace_func=sdfg,
+        from_sdfg=True,
+        arrays=arrays,
+        params=scalars,
+        vector_width=8,
+        sdfg_name=sdfg.name,
+        insert_copies=insert_copies,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+        vectorize_config=vectorize_config,
+        param_tag=f"param{OPT_PARAMS.index(opt_parameters)}",
+    )
 
-    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
-    arr_shapes = {
-        "tendency_tmp_q": (klon, klev),
-        "pa": (klon, klev),
-        "pq": (klon, klev),
-        "tendency_tmp_t": (klon, klev),
-        "tendency_tmp_a": (klon, klev),
-        "pt": (klon, klev),
-        "zqx0": (klon, klev, 5),
-        "zqx": (klon, klev, 5),
-        "ztp1": (klon, klev),
-        "zaorig": (klon, klev),
-        "za": (klon, klev),
-    }
 
-    # Create Fortran-ordered NumPy arrays
-    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
-    # Create scalars requested
-    scalars = {
-        "kfdia": numpy.int64(kfdia),
-        "kidia": numpy.int64(kidia),
-        "ptsphy": numpy.float64(0.0),
-        "klev": numpy.int64(klev),
-        "klon": numpy.int64(klon),
-        "ralvdcp": numpy.float64(2.3),
-    }
+# ``no_inline=True`` keeps snippet three's nested SDFGs as real nested SDFGs instead of
+# inlining them away, so the tile walker has to stage through an nsdfg boundary. That is
+# the only fact these two add, and the knob matrix above already covers the inlined form,
+# so they run once each rather than across ``opt_parameters x branch_mode x remainder``.
+@pytest.mark.parametrize("map_range_dependent_subset", [False, True])
+def test_snippet_three_vectorizes_through_a_nested_sdfg_boundary(map_range_dependent_subset, vectorize_config):
+    sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=map_range_dependent_subset)
+    sdfg.name = (
+        "cloudsc_snippet_three_with_partial_subset_without_inline"
+        if map_range_dependent_subset
+        else "cloudsc_snippet_three_without_inline_sdfgs"
+    )
+    sdfg.validate()
+    arrays, scalars = snippet_three_inputs()
 
-    # Quick verification display: shape and contiguity / strides
-    run_vectorization_test(dace_func=sdfg,
-                           from_sdfg=True,
-                           arrays=arrays,
-                           params=scalars,
-                           vector_width=8,
-                           sdfg_name=sdfg.name,
-                           insert_copies=insert_copies,
-                           branch_mode=branch_mode,
-                           remainder_strategy=remainder_strategy,
-                           vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
+    run_vectorization_test(
+        dace_func=sdfg,
+        from_sdfg=True,
+        arrays=arrays,
+        params=scalars,
+        vector_width=8,
+        sdfg_name=sdfg.name,
+        no_inline=True,
+        vectorize_config=vectorize_config,
+    )

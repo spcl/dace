@@ -1,11 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Optional
 from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -15,7 +15,7 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
     Prunes empty (or no-op) conditional branches from conditional blocks.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def __init__(self):
         super().__init__()
@@ -27,7 +27,7 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply(self, region: ControlFlowRegion, _) -> Optional[int]:
+    def apply(self, region: ControlFlowRegion, _) -> int | None:
         if not isinstance(region, ConditionalBlock):
             return None
         removed_branches = 0
@@ -36,8 +36,9 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
         new_else_cond = None
         for cond, branch in all_branches:
             branch_nodes = branch.nodes()
-            if (len(branch_nodes) == 0 or (len(branch_nodes) == 1 and isinstance(branch_nodes[0], SDFGState)
-                                           and len(branch_nodes[0].nodes()) == 0)):
+            if len(branch_nodes) == 0 or (
+                len(branch_nodes) == 1 and isinstance(branch_nodes[0], SDFGState) and len(branch_nodes[0].nodes()) == 0
+            ):
                 # Found a branch we can eliminate.
                 if has_else and branch is not all_branches[-1][1]:
                     # If this conditional has an else branch and that is not the branch being eliminated, we need to
@@ -66,6 +67,5 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
             region.parent_graph.remove_node(region)
 
         if removed_branches > 0:
-            region.reset_cfg_list()
             return removed_branches
         return None

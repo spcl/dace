@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -28,13 +29,13 @@ def test_xchg():
     for i in range(20):
         if A[i] == 1:
             if winner != -1:
-                raise ValueError('More than one thread read 1')
+                raise ValueError("More than one thread read 1")
             winner = i
         elif A[i] != 4:
-            raise ValueError('Values can be either 1 or 4')
+            raise ValueError("Values can be either 1 or 4")
     assert locked[0] == 4
-    print('PASS. Winner:', winner)
+    print("PASS. Winner:", winner)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_xchg()

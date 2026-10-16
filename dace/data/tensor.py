@@ -5,10 +5,9 @@ Tensor data descriptors for sparse tensor formats.
 This module contains classes for representing various sparse tensor storage formats
 based on the abstraction described in [https://doi.org/10.1145/3276493].
 """
-import enum
 
+import enum
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple, Union
 
 from dace import dtypes, serialize, symbolic
 from dace.data.core import Data, Scalar, Structure
@@ -27,6 +26,7 @@ class TensorIterationTypes(enum.Enum):
     with a compressed index, in which the pos array enables one to iterate over
     the positions in the crd array that hold the actual coordinates.
     """
+
     Value = enum.auto()
     Position = enum.auto()
 
@@ -43,6 +43,7 @@ class TensorAssemblyType(enum.Enum):
     on append order, this affects whether the index is ordered or not. This
     could be changed by sorting the index after assembly
     """
+
     NoAssembly = enum.auto()
     Insert = enum.auto()
     Append = enum.auto()
@@ -144,7 +145,7 @@ class TensorIndex(ABC):
         pass
 
     @abstractmethod
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         """
         Generates the fields needed for the index.
 
@@ -163,20 +164,20 @@ class TensorIndex(ABC):
     def from_json(cls, json_obj, context=None):
 
         # Selecting proper subclass
-        if json_obj['type'] == "TensorIndexDense":
+        if json_obj["type"] == "TensorIndexDense":
             self = TensorIndexDense.__new__(TensorIndexDense)
-        elif json_obj['type'] == "TensorIndexCompressed":
+        elif json_obj["type"] == "TensorIndexCompressed":
             self = TensorIndexCompressed.__new__(TensorIndexCompressed)
-        elif json_obj['type'] == "TensorIndexSingleton":
+        elif json_obj["type"] == "TensorIndexSingleton":
             self = TensorIndexSingleton.__new__(TensorIndexSingleton)
-        elif json_obj['type'] == "TensorIndexRange":
+        elif json_obj["type"] == "TensorIndexRange":
             self = TensorIndexRange.__new__(TensorIndexRange)
-        elif json_obj['type'] == "TensorIndexOffset":
+        elif json_obj["type"] == "TensorIndexOffset":
             self = TensorIndexOffset.__new__(TensorIndexOffset)
         else:
             raise TypeError(f"Invalid data type, got: {json_obj['type']}")
 
-        serialize.set_properties_from_json(self, json_obj['attributes'], context=context)
+        serialize.set_properties_from_json(self, json_obj["attributes"], context=context)
 
         return self
 
@@ -191,8 +192,8 @@ class TensorIndexDense(TensorIndex):
     index structure beyond the corresponding dimension size.
     """
 
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool)
+    _ordered = Property(dtype=bool, default=False, category="Memory")
+    _unique = Property(dtype=bool, category="Memory")
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -230,7 +231,7 @@ class TensorIndexDense(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {}
 
     def __repr__(self) -> str:
@@ -258,9 +259,9 @@ class TensorIndexCompressed(TensorIndex):
     array that holds the child coordinates corresponding the parent.
     """
 
-    _full = Property(dtype=bool, default=False)
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _full = Property(dtype=bool, default=False, category="Memory")
+    _ordered = Property(dtype=bool, default=False, category="Memory")
+    _unique = Property(dtype=bool, default=False, category="Memory")
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -299,7 +300,7 @@ class TensorIndexCompressed(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_pos": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
@@ -332,9 +333,9 @@ class TensorIndexSingleton(TensorIndex):
     coordinate but the first is encoded in this manner.
     """
 
-    _full = Property(dtype=bool, default=False)
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _full = Property(dtype=bool, default=False, category="Memory")
+    _ordered = Property(dtype=bool, default=False, category="Memory")
+    _unique = Property(dtype=bool, default=False, category="Memory")
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -373,7 +374,7 @@ class TensorIndexSingleton(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
@@ -406,8 +407,8 @@ class TensorIndexRange(TensorIndex):
     range of coordinates between max(0, -offset[i]) and min(N, M - offset[i]).
     """
 
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _ordered = Property(dtype=bool, default=False, category="Memory")
+    _unique = Property(dtype=bool, default=False, category="Memory")
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -445,7 +446,7 @@ class TensorIndexRange(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
@@ -474,8 +475,8 @@ class TensorIndexOffset(TensorIndex):
     coordinate j = i + offset[k].
     """
 
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
+    _ordered = Property(dtype=bool, default=False, category="Memory")
+    _unique = Property(dtype=bool, default=False, category="Memory")
 
     @property
     def iteration_type(self) -> TensorIterationTypes:
@@ -513,7 +514,7 @@ class TensorIndexOffset(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
@@ -541,23 +542,25 @@ class Tensor(Structure):
     This abstraction is based on [https://doi.org/10.1145/3276493].
     """
 
-    value_dtype = TypeClassProperty(default=dtypes.int32)
-    tensor_shape = ShapeProperty(default=[])
-    indices = ListProperty(element_type=TensorIndex)
-    index_ordering = ListProperty(element_type=symbolic.SymExpr)
-    value_count = SymbolicProperty(default=0)
+    value_dtype = TypeClassProperty(default=dtypes.int32, category="General")
+    tensor_shape = ShapeProperty(default=[], category="General")
+    indices = ListProperty(element_type=TensorIndex, category="Memory")
+    index_ordering = ListProperty(element_type=symbolic.SymExpr, category="Memory")
+    value_count = SymbolicProperty(default=0, category="Memory")
 
-    def __init__(self,
-                 value_dtype: dtypes.typeclass,
-                 tensor_shape,
-                 indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
-                 value_count: symbolic.SymExpr,
-                 name: str,
-                 transient: bool = False,
-                 storage: dtypes.StorageType = dtypes.StorageType.Default,
-                 location: Dict[str, str] = None,
-                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
+    def __init__(
+        self,
+        value_dtype: dtypes.typeclass,
+        tensor_shape,
+        indices: list[tuple[TensorIndex, int | symbolic.SymExpr]],
+        value_count: symbolic.SymExpr,
+        name: str,
+        transient: bool = False,
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        location: dict[str, str] = None,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+        debuginfo: dtypes.DebugInfo = None,
+    ):
         """
         Constructor for Tensor storage format.
 
@@ -667,9 +670,11 @@ class Tensor(Structure):
 
         # all tensor dimensions must occur exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):
-            raise TypeError((f"All tensor dimensions must be referenced exactly once in "
-                             f"tensor indices. (referenced dimensions: {dimension_order}; "
-                             f"tensor dimensions: {list(range(num_dims))})"))
+            raise TypeError(
+                f"All tensor dimensions must be referenced exactly once in "
+                f"tensor indices. (referenced dimensions: {dimension_order}; "
+                f"tensor dimensions: {list(range(num_dims))})"
+            )
 
         # assembling permanent and index specific fields
         fields = dict(
@@ -679,17 +684,17 @@ class Tensor(Structure):
             values=dtypes.float32[value_count],
         )
 
-        for (lvl, index) in enumerate(indices):
+        for lvl, index in enumerate(indices):
             fields.update(index.fields(lvl, value_count))
 
-        super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo)
+        super().__init__(fields, name, transient, storage, location, lifetime, debuginfo)
 
     def __repr__(self):
         return f"{self.name} (dtype: {self.value_dtype}, shape: {list(self.tensor_shape)}, indices: {self.indices})"
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != 'Tensor':
+        if json_obj["type"] != "Tensor":
             raise TypeError("Invalid data type")
 
         # Create dummy object

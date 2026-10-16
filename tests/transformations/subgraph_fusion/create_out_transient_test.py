@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-
 from util import fusion
 
-N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
+import dace
+
+N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
 
 @dace.program

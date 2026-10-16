@@ -1,12 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict, Iterator, Optional, Set, Tuple
+from collections.abc import Iterator
 
 from dace import SDFG, data, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -22,7 +23,7 @@ class OptionalArrayInference(ppl.Pass):
     * it is definitely (unconditionally) read or written in the SDFG.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
@@ -31,10 +32,7 @@ class OptionalArrayInference(ppl.Pass):
         # If connectivity or any edges were changed, some new descriptors may be marked as optional
         return modified & (ppl.Modifies.States)
 
-    def apply_pass(self,
-                   sdfg: SDFG,
-                   _,
-                   parent_arrays: Optional[Dict[str, bool]] = None) -> Optional[Set[Tuple[int, str]]]:
+    def apply_pass(self, sdfg: SDFG, _, parent_arrays: dict[str, bool] | None = None) -> set[tuple[int, str]] | None:
         """
         Infers the ``optional`` property of arrays in the SDFG and its nested SDFGs.
 
@@ -45,7 +43,7 @@ class OptionalArrayInference(ppl.Pass):
         :param parent_arrays: If not None, contains values of determined arrays from the parent SDFG.
         :return: A set of the modified array names as a 2-tuple (CFG ID, name), or None if nothing was changed.
         """
-        result: Set[Tuple[int, str]] = set()
+        result: set[tuple[int, str]] = set()
         parent_arrays = parent_arrays or {}
 
         cfg_id = sdfg.cfg_id
@@ -68,6 +66,9 @@ class OptionalArrayInference(ppl.Pass):
             for anode in state.data_nodes():
                 desc = anode.desc(sdfg)
                 if isinstance(desc, data.Array) and desc.optional is None:
+                    # Ordering-only (and isolated) nodes never dereference the pointer.
+                    if all(e.data.is_empty() for e in state.all_edges(anode)):
+                        continue
                     desc.optional = False
                     result.add((cfg_id, anode.data))
 
@@ -76,7 +77,7 @@ class OptionalArrayInference(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     # Create information about parent arrays
-                    pinfo: Dict[str, bool] = {}
+                    pinfo: dict[str, bool] = {}
                     for e in state.in_edges(node):
                         if e.data.is_empty():
                             continue
@@ -97,10 +98,9 @@ class OptionalArrayInference(ppl.Pass):
 
         return result or None
 
-    def traverse_unconditional_blocks(self,
-                                      cfg: ControlFlowRegion,
-                                      recursive: bool = True,
-                                      produce_nonstate: bool = False) -> Iterator[ControlFlowBlock]:
+    def traverse_unconditional_blocks(
+        self, cfg: ControlFlowRegion, recursive: bool = True, produce_nonstate: bool = False
+    ) -> Iterator[ControlFlowBlock]:
         """
         Traverse CFG and keep track of whether the block is executed unconditionally.
         """
@@ -131,5 +131,5 @@ class OptionalArrayInference(ppl.Pass):
         elif isinstance(curblock, SDFGState):
             yield curblock
 
-    def report(self, pass_retval: Set[Tuple[int, str]]) -> str:
-        return f'Inferred {len(pass_retval)} optional arrays.'
+    def report(self, pass_retval: set[tuple[int, str]]) -> str:
+        return f"Inferred {len(pass_retval)} optional arrays."

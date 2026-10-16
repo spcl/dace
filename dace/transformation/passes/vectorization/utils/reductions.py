@@ -12,11 +12,16 @@
 Both emitters return a single C++/Python expression string that the
 caller wraps with ``_out = ...``.
 """
+
 import ast
 from dataclasses import dataclass
-from typing import List, Optional
 
 import dace
+from dace.memlet import Memlet
+from dace.optionals import required
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -89,11 +94,9 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
     :returns: The balanced-tree reduction expression.
     """
     _validate(op, vector_width)
-    operands: List[str] = [f"{input_var}[{i}]" for i in range(vector_width)]
+    operands: list[str] = [f"{input_var}[{i}]" for i in range(vector_width)]
     while len(operands) > 1:
-        nxt: List[str] = []
-        for i in range(0, len(operands) - 1, 2):
-            nxt.append(_wrap_pair(op, operands[i], operands[i + 1]))
+        nxt: list[str] = [_wrap_pair(op, operands[i], operands[i + 1]) for i in range(0, len(operands) - 1, 2)]
         if len(operands) % 2 == 1:
             nxt.append(operands[-1])
         operands = nxt
@@ -104,21 +107,21 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
 # loop_to_reduce WCR tables but yields this module's short op token
 # rather than a ``lambda a, b: ...`` string (a different representation,
 # not duplicated behaviour). max / min are function calls, not infix.
-_AST_BINOP_TO_OP = {
+_AST_BINOP_TO_OP: dict[type[ast.operator], str] = {
     ast.Add: "+",
     ast.Mult: "*",
     ast.BitAnd: "&",
     ast.BitOr: "|",
     ast.BitXor: "^",
 }
-_AST_BOOLOP_TO_OP = {
+_AST_BOOLOP_TO_OP: dict[type[ast.boolop], str] = {
     ast.Or: "|",
     ast.And: "&",
 }
 _CALL_REDUCERS = {"max", "min"}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ReductionInfo:
     """Result of :func:`recognize_reduction` — data only, no behaviour.
 
@@ -139,18 +142,7 @@ class ReductionInfo:
     identity: str
 
 
-def _single_assignment(code: str) -> Optional[ast.Assign]:
-    """Parse ``code`` and return its body iff it is one bare ``Assign``."""
-    try:
-        tree = ast.parse((code or "").strip())
-    except SyntaxError:
-        return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    return tree.body[0]
-
-
-def _reduction_op_and_operands(rhs: ast.AST):
+def _reduction_op_and_operands(rhs: ast.AST) -> tuple[str, list[ast.expr]] | None:
     """``(op_token, [operand_ast, ...])`` for a reduction RHS, or ``None``.
 
     Recognises ``a <binop> b``, ``a and/or b``, and ``max(a, b)`` /
@@ -165,17 +157,21 @@ def _reduction_op_and_operands(rhs: ast.AST):
     if isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
         op = _AST_BOOLOP_TO_OP.get(type(rhs.op))
         return (op, list(rhs.values)) if op is not None else None
-    if (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in _CALL_REDUCERS
-            and len(rhs.args) == 2):
+    if (
+        isinstance(rhs, ast.Call)
+        and isinstance(rhs.func, ast.Name)
+        and rhs.func.id in _CALL_REDUCERS
+        and len(rhs.args) == 2
+    ):
         return (rhs.func.id, list(rhs.args))
     return None
 
 
-def _has_data(edge) -> bool:
+def _has_data(edge: MultiConnectorEdge[Memlet]) -> bool:
     return edge.data is not None and not edge.data.is_empty()
 
 
-def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") -> Optional[ReductionInfo]:
+def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") -> ReductionInfo | None:
     """Recognise a read-modify-write scalar reduction tasklet.
 
     Detects the canonical accumulation shape ``acc = acc <op> <expr>``
@@ -200,7 +196,7 @@ def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") 
         return None
     if tasklet.code.language != dace.dtypes.Language.Python:
         return None
-    assign = _single_assignment(tasklet.code.as_string)
+    assign = single_assignment(tasklet.code.as_string)
     if assign is None or len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
         return None
     parsed = _reduction_op_and_operands(assign.value)
@@ -231,7 +227,7 @@ def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") 
     return None
 
 
-@dataclass
+@dataclass(slots=True)
 class MapReductionInfo:
     """Result of :func:`recognize_map_reduction` — a per-iteration scalar
     reduction carried *across* an innermost map (the spmv "row reduction").
@@ -259,11 +255,11 @@ class MapReductionInfo:
     map_entry: "dace.nodes.MapEntry"
     map_exit: "dace.nodes.MapExit"
     body: "dace.nodes.Node"
-    read_edge: object
-    write_edge: object
+    read_edge: MultiConnectorEdge[Memlet]
+    write_edge: MultiConnectorEdge[Memlet]
 
 
-def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> Optional[str]:
+def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> str | None:
     """Reduction op of ``tasklet`` iff ``conn`` is an operand of its top-level
     associative binop (``__out = conn <op> other`` / ``op(conn, other)``).
 
@@ -276,7 +272,7 @@ def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> Opt
     """
     if not isinstance(tasklet, dace.nodes.Tasklet) or tasklet.code.language != dace.dtypes.Language.Python:
         return None
-    assign = _single_assignment(tasklet.code.as_string)
+    assign = single_assignment(tasklet.code.as_string)
     if assign is None or len(assign.targets) != 1:
         return None
     parsed = _reduction_op_and_operands(assign.value)
@@ -290,7 +286,12 @@ def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> Opt
     return None
 
 
-def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge, write_edge) -> Optional[str]:
+def _op_through_body(
+    state: "dace.SDFGState",
+    body: "dace.nodes.Node",
+    read_edge: MultiConnectorEdge[Memlet],
+    write_edge: MultiConnectorEdge[Memlet],
+) -> str | None:
     """Recover the reduction op combining the accumulator inside ``body``.
 
     ``body`` is either a flat tasklet (delegate to :func:`recognize_reduction`)
@@ -314,23 +315,27 @@ def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge
         return None
     inner = body.sdfg
     for st in inner.states():
-        for an in st.data_nodes():
-            if an.data != cin:
-                continue
+        # A view of the connector (the No-View form of a sliced connector) reads the same element.
+        frontier = [an for an in st.data_nodes() if an.data == cin]
+        while frontier:
+            an = frontier.pop()
             for oe in st.out_edges(an):
+                if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(oe.dst.desc(inner), dace.data.View):
+                    frontier.append(oe.dst)
+                    continue
                 op = _reduction_op_for_connector(oe.dst, oe.dst_conn)
                 if op is not None:
                     return op
     return None
 
 
-def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry") -> Optional[MapReductionInfo]:
+def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry") -> MapReductionInfo | None:
     """Recognise a scalar reduction carried across an innermost map.
 
     The shape (the spmv ``for idx: tmp = tmp + data[idx]*x[indices[idx]]``
     row reduction): a single-param, unit-step innermost map whose scope is one
-    body node that *reads* a scalar ``acc[0]`` at the entry and *writes* the
-    same ``acc[0]`` at the exit — a loop-carried read-modify-write. The body is
+    body node that *reads* a fixed element ``acc[c]`` at the entry and *writes* the
+    same ``acc[c]`` at the exit — a loop-carried read-modify-write. The body is
     an opaque indirect-access NSDFG (the gather cannot be inlined), so the
     operator is recovered by peeking at the combining tasklet inside it.
 
@@ -347,7 +352,7 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
         return None
     map_exit = state.exit_node(map_entry)
     # Innermost only: no nested map in scope.
-    inner = state.all_nodes_between(map_entry, map_exit) or set()
+    inner = map_body_nodes(state, map_entry)
     if any(isinstance(n, dace.nodes.MapEntry) for n in inner):
         return None
     body_nodes = [n for n in inner if n not in (map_entry, map_exit)]
@@ -355,26 +360,38 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
         return None
     body = body_nodes[0]
 
-    def _scalar_slot(e) -> bool:
-        return (e.data is not None and e.data.data is not None and e.data.subset is not None
-                and e.data.subset.num_elements() == 1)
+    def _scalar_slot(e: MultiConnectorEdge[Memlet]) -> bool:
+        return (
+            e.data is not None
+            and e.data.data is not None
+            and e.data.subset is not None
+            and e.data.subset.num_elements() == 1
+        )
 
     reads = {e.data.data: e for e in state.out_edges(map_entry) if e.dst is body and _scalar_slot(e)}
     writes = {e.data.data: e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e)}
-    for acc in set(reads) & set(writes):
+    for acc in [a for a in writes if a in reads]:  # edge order, not hash order
         desc = state.sdfg.arrays.get(acc)
         if desc is None or not isinstance(desc, (dace.data.Scalar, dace.data.Array)):
             continue
         read_edge, write_edge = reads[acc], writes[acc]
+        # ``y[j] = y[j] + e`` is element-wise, not a reduction: the slot must be one fixed element
+        if (
+            read_edge.data.subset != write_edge.data.subset
+            or set(map_entry.map.params) & required(write_edge.data.subset).free_symbols
+        ):
+            continue
         op = _op_through_body(state, body, read_edge, write_edge)
         if op is None or op not in IDENTITY:
             continue
-        return MapReductionInfo(op=op,
-                                identity=IDENTITY[op],
-                                accumulator=acc,
-                                map_entry=map_entry,
-                                map_exit=map_exit,
-                                body=body,
-                                read_edge=read_edge,
-                                write_edge=write_edge)
+        return MapReductionInfo(
+            op=op,
+            identity=IDENTITY[op],
+            accumulator=acc,
+            map_entry=map_entry,
+            map_exit=map_exit,
+            body=body,
+            read_edge=read_edge,
+            write_edge=write_edge,
+        )
     return None

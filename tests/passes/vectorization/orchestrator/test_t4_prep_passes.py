@@ -8,14 +8,17 @@ the outer map scope alongside the original tasklets so downstream
 :class:`EmitTileOps` can wire the lib node chain without crossing a
 NestedSDFG boundary.
 """
+
 import pytest
 
 import dace
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
-    GenerateTileIterationMask, )
+    GenerateTileIterationMask,
+)
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
-    StrideMapByTileWidths, )
+    StrideMapByTileWidths,
+)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
 
 
@@ -30,14 +33,8 @@ def _build_k2_axpy_sdfg():
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "body",
-        {
-            "i": "0:M",
-            "j": "0:N"
-        },
-        {
-            "_a": dace.Memlet("A[i, j]"),
-            "_b": dace.Memlet("B[i, j]")
-        },
+        {"i": "0:M", "j": "0:N"},
+        {"_a": dace.Memlet("A[i, j]"), "_b": dace.Memlet("B[i, j]")},
         "_c = _a + _b",
         {"_c": dace.Memlet("C[i, j]")},
         external_edges=True,
@@ -85,7 +82,8 @@ def test_generate_tile_iteration_mask_allocates_in_body_nsdfg():
     """Mask placement moved INSIDE the body NSDFG (design 7.4, 2026-06-10) so the
     walker / converter can find it via the inner SDFG's arrays."""
     sdfg = _build_k2_axpy_sdfg()
-    from dace.transformation.passes.vectorization.nest_innermost_map_body import (NestInnermostMapBodyIntoNSDFG)
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+
     NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
     attached = GenerateTileIterationMask(widths=(4, 8)).apply_pass(sdfg, {})
     assert attached == 1

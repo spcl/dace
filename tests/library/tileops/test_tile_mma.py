@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for :class:`TileMMA` -- the K-dim register-tile MMA lib node.
 
-Mirrors cuTile's ``ct.mma(a, b, c)`` primitive with GEMM-style ``alpha`` /
-``beta`` compile-time scalar prefactors (matching :class:`Gemm` convention).
+A matrix multiply-accumulate of three register tiles with GEMM-style ``alpha`` / ``beta`` compile-time scalar
+prefactors (matching the :class:`Gemm` convention).
 
 Tests cover:
 
@@ -13,10 +13,11 @@ Tests cover:
 * Connector wiring with and without ``_c`` input (``beta == 0`` skips the in
   connector).
 """
-import dace
+
 import numpy as np
 import pytest
 
+import dace
 from dace.libraries.tileops import TileMMA
 
 
@@ -77,12 +78,15 @@ def test_connectors_include_cin_when_beta_nonzero():
     assert "_c" in node.out_connectors
 
 
-@pytest.mark.parametrize("alpha, beta", [
-    (1, 0),
-    (1, 1),
-    (2, 0),
-    (2, 3),
-])
+@pytest.mark.parametrize(
+    "alpha, beta",
+    [
+        (1, 0),
+        (1, 1),
+        (2, 0),
+        (2, 3),
+    ],
+)
 def test_pure_expansion_matches_numpy(alpha, beta):
     """Pure expansion produces bit-equivalent output to ``alpha * A @ B + beta * C``."""
     M, K_inner, N = 4, 8, 4
@@ -131,8 +135,7 @@ def test_validate_rejects_mixed_dtype():
 
 
 def test_pure_expansion_8x8():
-    """Standard 8x8 / 8x8 / 8x8 tile dimensions exercise the cuTile-friendly
-    power-of-2 sizes."""
+    """Standard 8x8 / 8x8 / 8x8 tile dimensions exercise the power-of-2 sizes."""
     M, K_inner, N = 8, 8, 8
     sdfg = _build_tile_mma_sdfg(M, K_inner, N, alpha=1, beta=1)
     sdfg.expand_library_nodes(recursive=True)

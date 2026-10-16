@@ -1,17 +1,19 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Classes to handle Einstein-notation sums (einsum) as a library node. """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Classes to handle Einstein-notation sums (einsum) as a library node."""
+
 from itertools import chain
 from string import ascii_letters
-from typing import Dict, List, Optional
 
 import numpy as np
+import sympy
 
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.utils import prod
-from dace.sdfg.nodes import AccessNode
-from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState, dealias
+from dace.sdfg.nodes import AccessNode
+from dace.sdfg.scope import is_devicelevel_gpu
+from dace.utils import prod
 
 
 def _is_sequential(index_list):
@@ -22,22 +24,21 @@ def _is_sequential(index_list):
     return index_list == list(range(smallest_elem, smallest_elem + len(index_list)))
 
 
-class EinsumParser(object):
-    """ String parser for einsum. """
+class EinsumParser:
+    """String parser for einsum."""
 
     def __init__(self, string):
-        inout = string.split('->')
+        inout = string.split("->")
         if len(inout) == 1:
-            inputs, output = string, ''
+            inputs, output = string, ""
         else:
             inputs, output = inout
 
         for char in chain(inputs, output):
-            if char not in ascii_letters + ',':
-                raise ValueError('Invalid einsum string, subscript must contain'
-                                 ' letters, commas, and "->".')
+            if char not in ascii_letters + ",":
+                raise ValueError('Invalid einsum string, subscript must contain letters, commas, and "->".')
 
-        inputs = inputs.split(',')
+        inputs = inputs.split(",")
 
         # No output given, assumed all "free" subscripts in inputs
         if len(inout) == 1:
@@ -47,11 +48,11 @@ class EinsumParser(object):
             free = set()
             for i, inp in enumerate(inputs):
                 for var in set(inp):
-                    if (all(var not in set(s) for s in inputs[i + 1:]) and var not in nonfree):
+                    if all(var not in set(s) for s in inputs[i + 1 :]) and var not in nonfree:
                         free.add(var)
                     else:
                         nonfree.add(var)
-            output = ''.join(sorted(free))
+            output = "".join(sorted(free))
 
         self.inputs = inputs
         self.output = output
@@ -66,8 +67,7 @@ class EinsumParser(object):
         ab_vars = a_vars.union(b_vars)
         c_vars = set(c)
         if not ab_vars.issuperset(c_vars):
-            raise ValueError('Einsum subscript string includes outputs that do'
-                             ' not appear as an input')
+            raise ValueError("Einsum subscript string includes outputs that do not appear as an input")
 
         batch_vars = a_vars.intersection(b_vars).intersection(c_vars)
         sum_vars = a_vars.intersection(b_vars) - c_vars
@@ -89,7 +89,33 @@ class EinsumParser(object):
     def is_bmm(self):
         if len(self.inputs) != 2:
             return False
-        for key, val in self.fields().items():
+        # An index private to one operand must survive into the output. ``sum_vars`` only collects
+        # indices shared by BOTH inputs, so a private index missing from the output -- ``j`` in
+        # ``ij,i->i`` (``y[i] += A[i,j] * x[i]``) -- is a contraction no GEMM/GEMV form expresses:
+        # that is a broadcast multiply followed by a reduction. Its operand ranks match ``ij,j->i``,
+        # so without this the level-2 path below builds a GEMV whose ``_x`` length is the output
+        # extent, which Gemv.validate rejects.
+        if len(self.a_only) != len(self.c_a_only) or len(self.b_only) != len(self.c_b_only):
+            return False
+        # Batched dot (``ik,ik->i``, ``xyzk,xyzk->xyz``): batched indices, and NEITHER operand has a
+        # private index -- ``C[batch] = sum_k A[batch,k] * B[batch,k]``, which no BLAS-2/3 form
+        # expresses. The GEMM path below would mint a degenerate M=N=1 batched MatMul whose operand
+        # views collapse under simplify to two equal 2-D shapes MatMul's dispatch rejects. The
+        # unbatched dot ``i,i->`` has no batched index and keeps its (working) BLAS path.
+        if self.a_batch and not self.a_only and not self.b_only:
+            return False
+        # The GEMM path strides the batch as the OUTERMOST dimension of every operand (``sAB`` is the
+        # extent after the last batch index). A batch index after a matrix index -- ``ij,kj->ikj``,
+        # an outer product per innermost ``j`` -- leaves no unit-stride matrix dimension, which no
+        # BLAS call takes (``get_gemm_opts``: "sCM or sCN should be 1").
+        for batch, rest in (
+            (self.a_batch, self.a_only + self.a_sum),
+            (self.b_batch, self.b_only + self.b_sum),
+            (self.c_batch, self.c_a_only + self.c_b_only),
+        ):
+            if batch and rest and max(batch) > min(rest):
+                return False
+        for val in self.fields().values():
             if not _is_sequential(val):
                 return False
         return True
@@ -108,7 +134,7 @@ class EinsumParser(object):
         return len(self.output) < len(input)
 
     def fields(self):
-        return {fname: fval for fname, fval in self.__dict__.items() if fname not in ('inputs', 'output')}
+        return {fname: fval for fname, fval in self.__dict__.items() if fname not in ("inputs", "output")}
 
     def __str__(self):
         return str(self.__dict__)
@@ -119,96 +145,111 @@ class EinsumParser(object):
 
 def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     #########################
-    sdfg = SDFG('einsum')
+    sdfg = SDFG("einsum")
     state = sdfg.add_state()
-    M, K, N = (symbolic.symbol(s) for s in ['M', 'K', 'N'])
-    BATCH, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (symbolic.symbol(s) if symbolic.issymbolic(
-        strides[s]) else strides[s] for s in ['BATCH', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB', 'sCM', 'sCN', 'sCB'])
+    M, K, N = (symbolic.symbol(s) for s in ["M", "K", "N"])
+    BATCH, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (
+        symbolic.symbol(s) if symbolic.issymbolic(strides[s]) else strides[s]
+        for s in ["BATCH", "sAM", "sAK", "sAB", "sBK", "sBN", "sBB", "sCM", "sCN", "sCB"]
+    )
 
-    batched = not symbolic.equal_valued(1, strides['BATCH'])
+    batched = not symbolic.equal_valued(1, strides["BATCH"])
 
-    _, xarr = sdfg.add_array('X',
-                             dtype=dtype,
-                             shape=[BATCH, M, K] if batched else [M, K],
-                             strides=[sAB, sAM, sAK] if batched else [sAM, sAK])
-    _, yarr = sdfg.add_array('Y',
-                             dtype=dtype,
-                             shape=[BATCH, K, N] if batched else [K, N],
-                             strides=[sBB, sBK, sBN] if batched else [sBK, sBN])
-    _, zarr = sdfg.add_array('Z',
-                             dtype=dtype,
-                             shape=[BATCH, M, N] if batched else [M, N],
-                             strides=[sCB, sCM, sCN] if batched else [sCM, sCN])
+    _, xarr = sdfg.add_array(
+        "X", dtype=dtype, shape=[BATCH, M, K] if batched else [M, K], strides=[sAB, sAM, sAK] if batched else [sAM, sAK]
+    )
+    _, yarr = sdfg.add_array(
+        "Y", dtype=dtype, shape=[BATCH, K, N] if batched else [K, N], strides=[sBB, sBK, sBN] if batched else [sBK, sBN]
+    )
+    _, zarr = sdfg.add_array(
+        "Z", dtype=dtype, shape=[BATCH, M, N] if batched else [M, N], strides=[sCB, sCM, sCN] if batched else [sCM, sCN]
+    )
 
-    gX = state.add_read('X')
-    gY = state.add_read('Y')
-    gZ = state.add_write('Z')
+    gX = state.add_read("X")
+    gY = state.add_read("Y")
+    gZ = state.add_write("Z")
 
-    import dace.libraries.blas as blas  # Avoid import loop
+    from dace.libraries import blas  # Avoid import loop
 
-    libnode = blas.MatMul('einsum_gemm')
-    libnode.alpha = alpha
-    libnode.beta = beta
+    libnode = blas.MatMul("einsum_gemm")
+    libnode.alpha = plain_coefficient(alpha)
+    libnode.beta = plain_coefficient(beta)
     state.add_node(libnode)
-    state.add_edge(gX, None, libnode, '_a', Memlet.from_array(gX.data, xarr))
-    state.add_edge(gY, None, libnode, '_b', Memlet.from_array(gY.data, yarr))
-    state.add_edge(libnode, '_c', gZ, None, Memlet.from_array(gZ.data, zarr))
+    state.add_edge(gX, None, libnode, "_a", Memlet.from_array(gX.data, xarr))
+    state.add_edge(gY, None, libnode, "_b", Memlet.from_array(gY.data, yarr))
+    state.add_edge(libnode, "_c", gZ, None, Memlet.from_array(gZ.data, zarr))
 
     return sdfg
 
 
-def create_einsum_sdfg(sdfg: SDFG,
-                       state: SDFGState,
-                       einsum_string: str,
-                       *arrays: str,
-                       dtype: Optional[dtypes.typeclass] = None,
-                       optimize: bool = False,
-                       output: Optional[str] = None,
-                       output_name: Optional[str] = None,
-                       alpha: Optional[symbolic.SymbolicType] = 1.0,
-                       beta: Optional[symbolic.SymbolicType] = 0.0):
-    return _create_einsum_internal(sdfg,
-                                   state,
-                                   str(einsum_string),
-                                   *arrays,
-                                   dtype=dtype,
-                                   optimize=optimize,
-                                   output=output,
-                                   output_name=output_name,
-                                   alpha=alpha,
-                                   beta=beta)[0]
+def plain_coefficient(value):
+    """``value`` as a Python number when it is a SymPy constant. MatMul/Gemm keep ``alpha``/``beta`` in untyped
+    properties, which serialize a SymPy number as its text and reload it as a ``str`` no expansion can compare."""
+    if isinstance(value, sympy.Integer):
+        return int(value)
+    if isinstance(value, sympy.Float):
+        return float(value)
+    return value
 
 
-def _build_einsum_views(tensors: str, dimension_dict: dict) -> List[np.ndarray]:
+def create_einsum_sdfg(
+    sdfg: SDFG,
+    state: SDFGState,
+    einsum_string: str,
+    *arrays: str,
+    dtype: dtypes.typeclass | None = None,
+    optimize: bool = False,
+    output: str | None = None,
+    output_name: str | None = None,
+    alpha: symbolic.SymbolicType | None = 1.0,
+    beta: symbolic.SymbolicType | None = 0.0,
+):
+    return _create_einsum_internal(
+        sdfg,
+        state,
+        str(einsum_string),
+        *arrays,
+        dtype=dtype,
+        optimize=optimize,
+        output=output,
+        output_name=output_name,
+        alpha=alpha,
+        beta=beta,
+    )[0]
+
+
+def _build_einsum_views(tensors: str, dimension_dict: dict) -> list[np.ndarray]:
     """
     Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
     Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
     """
     views = []
-    terms = tensors.split('->')[0].split(',')
+    terms = tensors.split("->")[0].split(",")
     for term in terms:
         dims = [dimension_dict[x] for x in term]
         views.append(np.random.rand(*dims))
     return views
 
 
-def _create_einsum_internal(sdfg: SDFG,
-                            state: SDFGState,
-                            einsum_string: str,
-                            *arrays: str,
-                            dtype: Optional[dtypes.typeclass] = None,
-                            optimize: bool = False,
-                            output: Optional[str] = None,
-                            output_name: Optional[str] = None,
-                            nodes: Optional[Dict[str, AccessNode]] = None,
-                            init_output: bool = None,
-                            alpha: Optional[symbolic.SymbolicType] = None,
-                            beta: Optional[symbolic.SymbolicType] = None):
+def _create_einsum_internal(
+    sdfg: SDFG,
+    state: SDFGState,
+    einsum_string: str,
+    *arrays: str,
+    dtype: dtypes.typeclass | None = None,
+    optimize: bool = False,
+    output: str | None = None,
+    output_name: str | None = None,
+    nodes: dict[str, AccessNode] | None = None,
+    init_output: bool = None,
+    alpha: symbolic.SymbolicType | None = None,
+    beta: symbolic.SymbolicType | None = None,
+):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
     if len(einsum.inputs) != len(arrays):
-        raise ValueError('Invalid number of arrays for einsum expression')
+        raise ValueError("Invalid number of arrays for einsum expression")
 
     if init_output is None:
         init_output = not symbolic.equal_valued(1, beta)
@@ -223,10 +264,13 @@ def _create_einsum_internal(sdfg: SDFG,
     for inp, inpname in zip(einsum.inputs, arrays):
         inparr = sdfg.arrays[inpname]
         if len(inp) != len(inparr.shape):
-            raise ValueError('Dimensionality mismatch in input "%s"' % inpname)
+            raise ValueError(f'Dimensionality mismatch in input "{inpname}"')
         for char, shp in zip(inp, inparr.shape):
-            if char in chardict and shp != chardict[char]:
-                raise ValueError('Dimension mismatch in einsum expression')
+            # Equalized, not raw '!=': one name can reach here as several sympy instances (a
+            # descriptor a layout pass rebuilt against one parsed from a string), which compare
+            # unequal by identity and would reject a shape that matches.
+            if char in chardict and symbolic.inequal_symbols(shp, chardict[char]):
+                raise ValueError("Dimension mismatch in einsum expression")
             chardict[char] = shp
 
     if optimize:
@@ -234,14 +278,15 @@ def _create_einsum_internal(sdfg: SDFG,
         try:
             import opt_einsum as oe
         except (ModuleNotFoundError, NameError, ImportError):
-            raise ImportError('To optimize einsum expressions, please install '
-                              'the "opt_einsum" package.')
+            raise ImportError('To optimize einsum expressions, please install the "opt_einsum" package.')
 
         for char, shp in chardict.items():
             if symbolic.issymbolic(shp):
-                raise ValueError('Einsum optimization cannot be performed '
-                                 'on symbolically-sized array dimension "%s" '
-                                 'for subscript character "%s"' % (shp, char))
+                raise ValueError(
+                    "Einsum optimization cannot be performed "
+                    f'on symbolically-sized array dimension "{shp}" '
+                    f'for subscript character "{char}"'
+                )
 
         # Create optimal contraction path
         # noinspection PyTypeChecker
@@ -252,33 +297,42 @@ def _create_einsum_internal(sdfg: SDFG,
 
         # Follow path and create a chain of operation SDFG states
         for pair, nonfree, expr, after, blas in path_info.contraction_list:
-            result, result_node = _create_einsum_internal(sdfg,
-                                                          state,
-                                                          expr,
-                                                          arrays[pair[0]],
-                                                          arrays[pair[1]],
-                                                          dtype=dtype,
-                                                          optimize=False,
-                                                          output=None,
-                                                          output_name=output_name,
-                                                          nodes=input_nodes,
-                                                          init_output=init_output,
-                                                          alpha=alpha,
-                                                          beta=beta)
-            arrays = ([a for i, a in enumerate(arrays) if i not in pair] + [result])
+            result, result_node = _create_einsum_internal(
+                sdfg,
+                state,
+                expr,
+                arrays[pair[0]],
+                arrays[pair[1]],
+                dtype=dtype,
+                optimize=False,
+                output=None,
+                output_name=output_name,
+                nodes=input_nodes,
+                init_output=init_output,
+                alpha=alpha,
+                beta=beta,
+            )
+            arrays = [a for i, a in enumerate(arrays) if i not in pair] + [result]
             input_nodes[result] = result_node
 
         return arrays[0], result_node
         # END of einsum optimization
 
-    input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
+    # An operand may repeat (``np.einsum('ik,ik->i', a, a)``): read it ONCE, otherwise the extra
+    # ``add_read`` the comprehension drops on the floor stays behind as an isolated node.
+    input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
 
     # Get output shape from chardict, or [1] for a scalar output
-    output_shape = list(map(lambda k: chardict[k], einsum.output)) or [1]
-    output_index = ','.join(o for o in einsum.output) or '0'
+    output_shape = [chardict[k] for k in einsum.output] or [1]
+    # The index letters name the parameters of the maps below. A bare letter that matches an SDFG
+    # symbol (``k`` contracted over a ``[..., k]``-shaped array) shadows it inside the map, emitting
+    # the self-referential bound ``k = 0:k`` -- zero iterations, silently. Prefix them instead.
+    param = {c: "__einsum_%s" % c for c in chardict}
+    output_index = ",".join(param[o] for o in einsum.output) or "0"
 
     if output is None:
-        dtype = dtype or sdfg.arrays[arrays[0]].dtype
+        # numpy's result type of every operand: a float64 x complex128 contraction is complex128.
+        dtype = dtype or dtypes.result_type_of(*(sdfg.arrays[array].dtype for array in arrays))
         if output_name is None:
             output, odesc = sdfg.add_temp_transient(output_shape, dtype)
         else:
@@ -293,70 +347,107 @@ def _create_einsum_internal(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if einsum.is_reduce() and symbolic.equal_valued(1, alpha) and (symbolic.equal_valued(0, beta)
-                                                                   or symbolic.equal_valued(1, beta)):
+    if (
+        einsum.is_reduce()
+        and symbolic.equal_valued(1, alpha)
+        and (symbolic.equal_valued(0, beta) or symbolic.equal_valued(1, beta))
+    ):
         from dace.libraries.standard.nodes.reduce import Reduce
+
         # Get reduce axes
         axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
-        rnode = Reduce('einsum_reduce')
+        rnode = Reduce("einsum_reduce")
         rnode.axes = axes
-        rnode.wcr = 'lambda a, b: a + b'
+        rnode.wcr = "lambda a, b: a + b"
         if symbolic.equal_valued(0, beta):
             rnode.identity = 0
 
         c = state.add_write(output)
         inode = next(iter(input_nodes.values()))
-        state.add_nedge(
-            inode, rnode,
-            dace.Memlet(data=inode.data, subset=subsets.Range([(0, chardict[k] - 1, 1) for k in einsum.inputs[0]])))
-        state.add_nedge(rnode, c, dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
+        state.add_edge(
+            inode,
+            None,
+            rnode,
+            "_in",
+            dace.Memlet(data=inode.data, subset=subsets.Range([(0, chardict[k] - 1, 1) for k in einsum.inputs[0]])),
+        )
+        state.add_edge(
+            rnode,
+            "_out",
+            c,
+            None,
+            dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])),
+        )
 
-    elif not einsum.is_bmm():
+    # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
+    elif not einsum.is_bmm() or any(sdfg.arrays[array].dtype != dtype for array in arrays):
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)
 
+        # A GPU-resident output needs device maps: the default schedule is host code, which cannot
+        # write GPU_Global memory, and validation rejects the graph (cp2k_density_matrix_trs4 on
+        # the canon GPU column, at the einsum_reset edge). Inside a kernel the same map would be a
+        # nested kernel, so there it stays sequential.
+        if is_devicelevel_gpu(sdfg, state, c):
+            schedule = dtypes.ScheduleType.Sequential
+        elif sdfg.arrays[output].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+            schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dtypes.ScheduleType.Default
+
         # Add state before this one to initialize the output value
         if to_init:
-            init_state = sdfg.add_state_before(state)
+            # The einsum state may live in a control-flow region (a loop body), not directly in the
+            # SDFG: prepend within its OWN parent graph, else looking up its predecessors fails.
+            # Prepending before the region's entry must also move the entry, otherwise the init is
+            # unreachable and the WCR accumulation reads stale values from the previous iteration.
+            region = state.parent_graph
+            init_state = region.add_state_before(state, is_start_block=state is region.start_block)
             if symbolic.equal_valued(0, beta):
                 inputs = {}
                 inputs_scalar = set()
-                code = f'out_{output} = 0'
+                code = f"out_{output} = 0"
             else:
-                inputs_scalar = {f'inp_{output}'}
-                inputs = {f'inp_{output}': Memlet.simple(output, output_index)}
-                code = f'out_{output} = {beta} * inp_{output}'
+                inputs_scalar = {f"inp_{output}"}
+                inputs = {f"inp_{output}": Memlet.simple(output, output_index)}
+                code = f"out_{output} = {beta} * inp_{output}"
 
             if len(einsum.output) > 0:
-                init_state.add_mapped_tasklet('einsum_reset', {k: '0:%s' % chardict[k]
-                                                               for k in einsum.output},
-                                              inputs,
-                                              code, {'out_%s' % output: Memlet.simple(output, output_index)},
-                                              external_edges=True)
+                init_state.add_mapped_tasklet(
+                    "einsum_reset",
+                    {param[k]: "0:%s" % chardict[k] for k in einsum.output},
+                    inputs,
+                    code,
+                    {"out_%s" % output: Memlet.simple(output, output_index)},
+                    schedule=schedule,
+                    external_edges=True,
+                )
             else:  # Scalar output
-                t = init_state.add_tasklet('einsum_reset', inputs_scalar, {'out_%s' % output}, code)
+                t = init_state.add_tasklet("einsum_reset", inputs_scalar, {f"out_{output}"}, code)
                 onode = init_state.add_write(output)
-                init_state.add_edge(t, 'out_%s' % output, onode, None, Memlet.simple(output, '0'))
+                init_state.add_edge(t, f"out_{output}", onode, None, Memlet.simple(output, "0"))
 
                 if not symbolic.equal_valued(0, beta):
                     inode = init_state.add_read(output)
-                    init_state.add_edge(inode, None, t, 'inp_%s' % output, Memlet.simple(output, '0'))
+                    init_state.add_edge(inode, None, t, f"inp_{output}", Memlet.simple(output, "0"))
 
-        wcr = 'lambda a,b: a+b' if is_conflicted else None
-        alphacode = '' if symbolic.equal_valued(1, alpha) else f'{alpha} * '
+        wcr = "lambda a,b: a+b" if is_conflicted else None
+        alphacode = "" if symbolic.equal_valued(1, alpha) else f"{alpha} * "
         # Pure einsum map
-        state.add_mapped_tasklet('einsum', {
-            k: '0:%s' % v
-            for k, v in chardict.items()
-        }, {
-            'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
-            for inp, arr in zip(einsum.inputs, arrays)
-        },
-                                 'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),
-                                 {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
-                                 input_nodes=input_nodes,
-                                 output_nodes={output: c},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            "einsum",
+            {param[k]: "0:%s" % v for k, v in chardict.items()},
+            {
+                "inp_%s" % arr: Memlet.simple(arr, ",".join(param[c] for c in inp))
+                for inp, arr in zip(einsum.inputs, arrays)
+            },
+            "out_%s = %s%s" % (output, alphacode, " * ".join("inp_%s" % arr for arr in arrays)),
+            {"out_%s" % output: Memlet.simple(output, output_index, wcr_str=wcr)},
+            input_nodes=input_nodes,
+            output_nodes={output: c},
+            schedule=schedule,
+            external_edges=True,
+        )
     else:
         # Represent einsum as a GEMM or batched GEMM (using library nodes)
         a_shape = sdfg.arrays[arrays[0]].shape
@@ -376,7 +467,8 @@ def _create_einsum_internal(sdfg: SDFG,
         # matrix*vector correctly. Matmul (2-D output) is untouched -- it keeps the GEMM.
         if len(c_shape) == 1 and sorted((len(a_shape), len(b_shape))) == [1, 2]:
             from dace.libraries.blas.nodes.gemv import Gemv
-            mat_node, vec_node, mat_sum = ((a, b, einsum.a_sum) if len(a_shape) == 2 else (b, a, einsum.b_sum))
+
+            mat_node, vec_node, mat_sum = (a, b, einsum.a_sum) if len(a_shape) == 2 else (b, a, einsum.b_sum)
             mat_desc = sdfg.arrays[mat_node.data]
             # GEMV's non-transposed form contracts the matrix's LAST index (``A[i, k]``
             # * ``x[k]``); ``transA`` when the contracted index is the FIRST instead.
@@ -391,61 +483,75 @@ def _create_einsum_internal(sdfg: SDFG,
             beta_nz = not symbolic.equal_valued(0, beta)
             gemv_dst, gemv_desc = (c, sdfg.arrays[output])
             if beta_nz:
-                buf_name, buf_desc = sdfg.add_transient('%s_gemv' % output, output_shape,
-                                                        sdfg.arrays[output].dtype, find_new_name=True)
+                buf_name, buf_desc = sdfg.add_transient(
+                    "%s_gemv" % output,
+                    output_shape,
+                    sdfg.arrays[output].dtype,
+                    storage=sdfg.arrays[output].storage,
+                    find_new_name=True,
+                )
                 state.remove_node(c)  # output is produced by the fold map below, not GEMV
                 gemv_dst, gemv_desc = (state.add_access(buf_name), buf_desc)
-            gemv = Gemv('einsum_gemv', transA=trans_a, alpha=alpha, beta=0)
+            gemv = Gemv("einsum_gemv", transA=trans_a, alpha=alpha, beta=0)
             state.add_node(gemv)
-            state.add_edge(mat_node, None, gemv, '_A', Memlet.from_array(mat_node.data, mat_desc))
-            state.add_edge(vec_node, None, gemv, '_x', Memlet.from_array(vec_node.data, sdfg.arrays[vec_node.data]))
-            state.add_edge(gemv, '_y', gemv_dst, None, Memlet.from_array(gemv_dst.data, gemv_desc))
+            state.add_edge(mat_node, None, gemv, "_A", Memlet.from_array(mat_node.data, mat_desc))
+            state.add_edge(vec_node, None, gemv, "_x", Memlet.from_array(vec_node.data, sdfg.arrays[vec_node.data]))
+            state.add_edge(gemv, "_y", gemv_dst, None, Memlet.from_array(gemv_dst.data, gemv_desc))
             if beta_nz:
                 c = state.add_write(output)
-                state.add_mapped_tasklet('gemv_beta_fold', {'_gi': '0:%s' % output_shape[0]}, {
-                    '_yin': Memlet.simple(output, '_gi'),
-                    '_b': Memlet.simple(gemv_dst.data, '_gi')
-                },
-                                         '_yout = (%s) * _yin + _b' % beta, {'_yout': Memlet.simple(output, '_gi')},
-                                         input_nodes={gemv_dst.data: gemv_dst},
-                                         output_nodes={output: c},
-                                         external_edges=True)
+                state.add_mapped_tasklet(
+                    "gemv_beta_fold",
+                    {"_gi": "0:%s" % output_shape[0]},
+                    {"_yin": Memlet.simple(output, "_gi"), "_b": Memlet.simple(gemv_dst.data, "_gi")},
+                    "_yout = (%s) * _yin + _b" % beta,
+                    {"_yout": Memlet.simple(output, "_gi")},
+                    input_nodes={gemv_dst.data: gemv_dst},
+                    output_nodes={output: c},
+                    external_edges=True,
+                )
             return output, c
 
         # Compute GEMM dimensions and strides
-        strides = dict(BATCH=prod([c_shape[dim] for dim in einsum.c_batch]),
-                       M=prod([a_shape[dim] for dim in einsum.a_only]),
-                       K=prod([a_shape[dim] for dim in einsum.a_sum]),
-                       N=prod([b_shape[dim] for dim in einsum.b_only]),
-                       sAM=prod(a_shape[einsum.a_only[-1] + 1:]) if einsum.a_only else 1,
-                       sAK=prod(a_shape[einsum.a_sum[-1] + 1:]) if einsum.a_sum else 1,
-                       sAB=prod(a_shape[einsum.a_batch[-1] + 1:]) if einsum.a_batch else 1,
-                       sBK=prod(b_shape[einsum.b_sum[-1] + 1:]) if einsum.b_sum else 1,
-                       sBN=prod(b_shape[einsum.b_only[-1] + 1:]) if einsum.b_only else 1,
-                       sBB=prod(b_shape[einsum.b_batch[-1] + 1:]) if einsum.b_batch else 1,
-                       sCM=prod(c_shape[einsum.c_a_only[-1] + 1:]) if einsum.c_a_only else 1,
-                       sCN=prod(c_shape[einsum.c_b_only[-1] + 1:]) if einsum.c_b_only else 1,
-                       sCB=prod(c_shape[einsum.c_batch[-1] + 1:]) if einsum.c_batch else 1)
+        strides = dict(
+            BATCH=prod([c_shape[dim] for dim in einsum.c_batch]),
+            M=prod([a_shape[dim] for dim in einsum.a_only]),
+            K=prod([a_shape[dim] for dim in einsum.a_sum]),
+            N=prod([b_shape[dim] for dim in einsum.b_only]),
+            sAM=prod(a_shape[einsum.a_only[-1] + 1 :]) if einsum.a_only else 1,
+            sAK=prod(a_shape[einsum.a_sum[-1] + 1 :]) if einsum.a_sum else 1,
+            sAB=prod(a_shape[einsum.a_batch[-1] + 1 :]) if einsum.a_batch else 1,
+            sBK=prod(b_shape[einsum.b_sum[-1] + 1 :]) if einsum.b_sum else 1,
+            sBN=prod(b_shape[einsum.b_only[-1] + 1 :]) if einsum.b_only else 1,
+            sBB=prod(b_shape[einsum.b_batch[-1] + 1 :]) if einsum.b_batch else 1,
+            sCM=prod(c_shape[einsum.c_a_only[-1] + 1 :]) if einsum.c_a_only else 1,
+            sCN=prod(c_shape[einsum.c_b_only[-1] + 1 :]) if einsum.c_b_only else 1,
+            sCB=prod(c_shape[einsum.c_batch[-1] + 1 :]) if einsum.c_batch else 1,
+        )
 
         # Complement strides to make matrices as necessary
         if len(a_shape) == 1 and len(einsum.a_sum) == 1:
-            strides['sAK'] = 1
-            strides['sAB'] = strides['sAM'] = strides['K']
+            strides["sAK"] = 1
+            strides["sAB"] = strides["sAM"] = strides["K"]
         if len(b_shape) == 1 and len(einsum.b_sum) == 1:
-            strides['sBN'] = 1
-            strides['sBK'] = 1
-            strides['sBB'] = strides['K']
+            strides["sBN"] = 1
+            strides["sBK"] = 1
+            strides["sBB"] = strides["K"]
         if len(c_shape) == 1 and len(einsum.a_sum) == len(einsum.b_sum):
-            strides['sCN'] = 1
-            strides['sCB'] = strides['sCM'] = strides['N']
+            strides["sCN"] = 1
+            strides["sCB"] = strides["sCM"] = strides["N"]
 
         # Transposed output, swap order
-        if symbolic.equal_valued(1, strides['sCM']):
-            strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
-            strides['M'], strides['N'] = strides['N'], strides['M']
-            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'],
-             strides['sBB']) = (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'],
-                                strides['sAB'])
+        if symbolic.equal_valued(1, strides["sCM"]):
+            strides["sCM"], strides["sCN"] = strides["sCN"], strides["sCM"]
+            strides["M"], strides["N"] = strides["N"], strides["M"]
+            (strides["sAM"], strides["sAK"], strides["sAB"], strides["sBK"], strides["sBN"], strides["sBB"]) = (
+                strides["sBN"],
+                strides["sBK"],
+                strides["sBB"],
+                strides["sAK"],
+                strides["sAM"],
+                strides["sAB"],
+            )
             a, b = b, a
 
         # Create nested SDFG for GEMM
@@ -475,9 +581,11 @@ def _create_einsum_internal(sdfg: SDFG,
             for s in symbolic.symlist(coeff).values():
                 if str(s) not in sym_mapping:
                     sym_mapping[str(s)] = s
-        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, sym_mapping)
-        state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
-        state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
-        state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))
+        nsdfg_node = state.add_nested_sdfg(nsdfg, {"X": None, "Y": None}, {"Z": None}, sym_mapping)
+
+        state.add_edge(a, None, nsdfg_node, "X", Memlet.from_array(a.data, a.desc(sdfg)))
+        state.add_edge(b, None, nsdfg_node, "Y", Memlet.from_array(b.data, b.desc(sdfg)))
+        state.add_edge(nsdfg_node, "Z", c, None, Memlet.from_array(c.data, c.desc(sdfg)))
+        dealias.integrate_nested_sdfg(nsdfg)
 
     return output, c

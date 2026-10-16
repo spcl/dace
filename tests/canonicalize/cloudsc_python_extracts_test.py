@@ -9,9 +9,9 @@ test asserts:
 
 * the SDFG canonicalizes without raising ``sdfg.validate()`` errors,
 * the numerical output matches a plain-numpy oracle (``equal_nan=True``),
-
-so a future regression in any canonicalize stage on these realistic
-shapes fails loudly.
+* the loop nest reached the shape the stage under test is supposed to
+  produce -- without that, every test here also passes when
+  ``canonicalize`` does nothing at all.
 
 Shapes covered:
 
@@ -33,19 +33,33 @@ Shapes covered:
   saturation block; multiple per-iteration scalar intermediates +
   clamps.
 """
+
 import numpy as np
 
 import dace
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-K = dace.symbol('K')
-L = dace.symbol('L')
-M = dace.symbol('M')
-KP1 = dace.symbol('KP1')
 
-# ---------------------------------------------------------------------------
+def nmaps(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+def nloops(sdfg: dace.SDFG) -> int:
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def nconds(sdfg: dace.SDFG) -> int:
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
+
+
+K = dace.symbol("K")
+L = dace.symbol("L")
+M = dace.symbol("M")
+KP1 = dace.symbol("KP1")
+
 # Kernel 1: 2D elementwise init of 5 sibling arrays
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -72,16 +86,18 @@ def test_init_loc_tendencies_2d_elementwise_multi_array():
     sdfg.validate()
     arrays = {
         n: np.full((kk, ll), 0.7, dtype=np.float64)
-        for n in ['tendency_loc_t', 'tendency_loc_q', 'tendency_loc_a', 'pcovptot', 'tendency_loc_cld_last']
+        for n in ["tendency_loc_t", "tendency_loc_q", "tendency_loc_a", "pcovptot", "tendency_loc_cld_last"]
     }
     sdfg(K=kk, L=ll, **arrays)
     for n, a in arrays.items():
-        assert np.allclose(a, 0.0), f'{n}: not zeroed'
+        assert np.allclose(a, 0.0), f"{n}: not zeroed"
+    # Five sibling constant stores over the same 2-D box: the nest lifts away entirely, each store
+    # becoming one whole-array assignment. A no-op canonicalize would leave the jk/jl loop pair.
+    assert nloops(sdfg) == 0, f"the elementwise zero-init kept a LoopRegion: {nloops(sdfg)}"
+    assert nmaps(sdfg) == 0, f"a constant store needs no Map either; got {nmaps(sdfg)}"
 
 
-# ---------------------------------------------------------------------------
 # Kernel 2: 3D elementwise init with timestep shift
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -110,11 +126,14 @@ def test_init_3d_inner_clv_elementwise_with_offset():
     sdfg.validate()
     sdfg(pclv=pclv.copy(), tendency_tmp_cld=tt.copy(), ztp1=z, ptsphy=ptsphy, M=mm, K=kk, L=ll)
     assert np.allclose(z, ref)
+    # The three axes are independent, so the jm/jk/jl nest collapses into ONE 3-D map.
+    assert nloops(sdfg) == 0, f"the elementwise init kept a LoopRegion: {nloops(sdfg)}"
+    assert nmaps(sdfg) == 1, f"expected one collapsed map, got {nmaps(sdfg)}"
+    params = [n.map.params for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(params[0]) == 3, f"the three axes did not collapse into one map: {params}"
 
 
-# ---------------------------------------------------------------------------
 # Kernel 3: 2D guarded multi-write (tidy small cloud water)
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -185,27 +204,33 @@ def test_tidy_small_cloud_water_guarded_multi_write():
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     sql, sqi, sqv, sa, stq, stt = ql.copy(), qi.copy(), qv.copy(), a.copy(), tq.copy(), tt.copy()
-    sdfg(zqx_ql=sql,
-         zqx_qi=sqi,
-         zqx_qv=sqv,
-         za=sa,
-         tendency_loc_q=stq,
-         tendency_loc_t=stt,
-         zqtmst=zqtmst,
-         ralvdcp=ralvdcp,
-         ralsdcp=ralsdcp,
-         rlmin=rlmin,
-         ramin=ramin,
-         K=kk,
-         L=ll)
-    for got, ref, name in [(sql, rql, 'ql'), (sqi, rqi, 'qi'), (sqv, rqv, 'qv'), (sa, ra, 'a'), (stq, rtq, 'tq'),
-                           (stt, rtt, 'tt')]:
-        assert np.allclose(got, ref), f'{name}: canon diverges from numpy'
+    sdfg(
+        zqx_ql=sql,
+        zqx_qi=sqi,
+        zqx_qv=sqv,
+        za=sa,
+        tendency_loc_q=stq,
+        tendency_loc_t=stt,
+        zqtmst=zqtmst,
+        ralvdcp=ralvdcp,
+        ralsdcp=ralsdcp,
+        rlmin=rlmin,
+        ramin=ramin,
+        K=kk,
+        L=ll,
+    )
+    for got, ref, name in [
+        (sql, rql, "ql"),
+        (sqi, rqi, "qi"),
+        (sqv, rqv, "qv"),
+        (sa, ra, "a"),
+        (stq, rtq, "tq"),
+        (stt, rtt, "tt"),
+    ]:
+        assert np.allclose(got, ref), f"{name}: canon diverges from numpy"
 
 
-# ---------------------------------------------------------------------------
 # Kernel 4: 3D phase-dispatched guarded multi-write
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -265,24 +290,31 @@ def test_clv_phase_dispatched_three_branch():
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     sx, sqv, stq, stt = zqx.copy(), qv.copy(), tq.copy(), tt.copy()
-    sdfg(zqx=sx,
-         zqx_qv=sqv,
-         tendency_loc_q=stq,
-         tendency_loc_t=stt,
-         iphase=iphase.copy(),
-         zqtmst=zqtmst,
-         ralvdcp=ralvdcp,
-         ralsdcp=ralsdcp,
-         rlmin=rlmin,
-         M=mm,
-         K=kk,
-         L=ll)
+    sdfg(
+        zqx=sx,
+        zqx_qv=sqv,
+        tendency_loc_q=stq,
+        tendency_loc_t=stt,
+        iphase=iphase.copy(),
+        zqtmst=zqtmst,
+        ralvdcp=ralvdcp,
+        ralsdcp=ralsdcp,
+        rlmin=rlmin,
+        M=mm,
+        K=kk,
+        L=ll,
+    )
     assert np.allclose(sx, rzqx) and np.allclose(sqv, rqv) and np.allclose(stq, rtq) and np.allclose(stt, rtt)
+    # All three guards survive: the outer ``zqx < rlmin`` plus the two ``iphase[jm] ==`` arms. They
+    # read per-iteration data, so hoisting or dropping one would change which cells are tidied.
+    assert nconds(sdfg) == 3, f"a data-dependent guard was lost or hoisted away: {nconds(sdfg)} left"
+    # jk/jl are independent and collapse into one 2-D map; jm carries the qv/tendency accumulation
+    # and must stay a sequential LoopRegion.
+    assert nmaps(sdfg) == 1, f"expected the one collapsed jk/jl map, got {nmaps(sdfg)}"
+    assert nloops(sdfg) == 1, f"the carried jm axis must stay sequential; got {nloops(sdfg)} loops"
 
 
-# ---------------------------------------------------------------------------
 # Kernel 5: 2D min-clamp + division chain (saturation block shape)
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -340,7 +372,7 @@ def test_2d_min_clamp_division_chain():
     assert np.allclose(qsm, rqsm) and np.allclose(qsi, rqsi) and np.allclose(qsl, rqsl)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_init_loc_tendencies_2d_elementwise_multi_array()
     test_init_3d_inner_clv_elementwise_with_offset()
     test_tidy_small_cloud_water_guarded_multi_write()

@@ -12,20 +12,26 @@ Covers:
 * 2-D sum   ``s += a[i, j]``            (multi-dim reduction into one scalar)
 * 1-D fused ``s += a[i] * b[i]``        (dot-product: reduce a compute, not a bare load)
 """
+
 import numpy
 import pytest
 
 import dace
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import BranchMode, RemainderStrategy
 from tests.passes.vectorization.helpers.harness import N, X, Y, run_vectorization_test
+
+#: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
+#: would SIGILL-refuse on an AVX2-only or ARM host.
+HOST_ISA = detect_host_isa()
 
 pytestmark = pytest.mark.tile_nodes
 
 
 @dace.program
 def sum_1d(a: dace.float64[N], s: dace.float64[1]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         s[0] += a[i]
 
 
@@ -37,12 +43,12 @@ def sum_2d(a: dace.float64[Y, X], s: dace.float64[1]):
 
 @dace.program
 def dot_1d(a: dace.float64[N], b: dace.float64[N], s: dace.float64[1]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         s[0] += a[i] * b[i]
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_sum_1d_reduction(branch_mode, remainder_strategy):
     """1-D reduction into a scalar -> per-lane partial sums + one horizontal TileReduce."""
     n = 60  # not a multiple of 8 -> remainder tile
@@ -58,7 +64,7 @@ def test_sum_1d_reduction(branch_mode, remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_sum_2d_reduction_into_scalar(branch_mode, remainder_strategy):
     """Multi-dim (2-D) reduction into ONE scalar -- the seq-map-privatized-accumulator shape."""
     yv, xv = 8, 60
@@ -80,15 +86,22 @@ def _vectorize_and_check_2d_reduction(widths):
     explicitly instead of auto-derived from the collapsed dimensionality."""
     import contextlib
     import io
+
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+
     yv, xv = 16, 24
     a = numpy.random.random((yv, xv))
     ref = a.sum()
     sdfg = sum_2d.to_sdfg(simplify=True)
     sdfg.name = f"sum2d_k{len(widths)}"
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=widths, target_isa=ISA.AVX512, remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=widths,
+            target_isa=HOST_ISA,
+            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     for s in {str(x) for x in sdfg.free_symbols}:
         if s not in sdfg.symbols:
@@ -101,7 +114,7 @@ def _vectorize_and_check_2d_reduction(widths):
 
 def test_sum_2d_reduction_1d_tiling():
     """Multi-dim reduction into a scalar, tiled K=1 (innermost dim only) -> partial sums + TileReduce."""
-    _vectorize_and_check_2d_reduction((8, ))
+    _vectorize_and_check_2d_reduction((8,))
 
 
 def test_sum_2d_reduction_2d_tiling():
@@ -110,7 +123,7 @@ def test_sum_2d_reduction_2d_tiling():
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_dot_1d_reduction(branch_mode, remainder_strategy):
     """Dot product ``s += a[i] * b[i]`` -- reduce a per-lane product, not a bare load."""
     n = 60

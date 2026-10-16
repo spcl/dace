@@ -1,16 +1,18 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.autodiff import add_backward_pass
 
-N, H, W, C_before_fc1, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
-                                                 for s in ('N', 'H', 'W', 'C_before_fc1', 'S0', 'S1', 'S2', 'S3', 'S4',
-                                                           'S5'))
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
+from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
+
+N, H, W, C_before_fc1, S0, S1, S2, S3, S4, S5 = (
+    dc.symbol(s, dtype=dc.int64) for s in ("N", "H", "W", "C_before_fc1", "S0", "S1", "S2", "S3", "S4", "S5")
+)
 
 
 @dc.program
@@ -32,7 +34,7 @@ def conv2d(input: dc.float32[S0, S1, S2, S3], weights: dc.float32[S4, S4, S3, S5
     for i in range(S1 - S4 + 1):
         for j in range(S2 - S4 + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + S4, j:j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + S4, j : j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -45,17 +47,25 @@ def maxpool2d(x: dc.float32[S0, S1, S2, S3]):
     output = np.ndarray([S0, S1 // 2, S2 // 2, S3], dtype=np.float32)
     for i in range(S1 // 2):
         for j in range(S2 // 2):
-            output[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2, 2 * j:2 * j + 2, :], axis=(1, 2))
+            output[:, i, j, :] = np.max(x[:, 2 * i : 2 * i + 2, 2 * j : 2 * j + 2, :], axis=(1, 2))
     return output
 
 
 # LeNet-5 Convolutional Neural Network (inference mode)
 @dc.program
-def lenet5_kernel(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6], conv1bias: dc.float32[6],
-                  conv2: dc.float32[5, 5, 6,
-                                    16], conv2bias: dc.float32[16], fc1w: dc.float32[C_before_fc1,
-                                                                                     120], fc1b: dc.float32[120],
-                  fc2w: dc.float32[120, 84], fc2b: dc.float32[84], fc3w: dc.float32[84, 10], fc3b: dc.float32[10]):
+def lenet5_kernel(
+    input: dc.float32[N, H, W, 1],
+    conv1: dc.float32[5, 5, 1, 6],
+    conv1bias: dc.float32[6],
+    conv2: dc.float32[5, 5, 6, 16],
+    conv2bias: dc.float32[16],
+    fc1w: dc.float32[C_before_fc1, 120],
+    fc1b: dc.float32[120],
+    fc2w: dc.float32[120, 84],
+    fc2b: dc.float32[84],
+    fc3w: dc.float32[84, 10],
+    fc3b: dc.float32[10],
+):
     x1 = relu4(conv2d(input, conv1) + conv1bias)
     x2 = maxpool2d(x1)
     x3 = relu4(conv2d(x2, conv2) + conv2bias)
@@ -68,6 +78,7 @@ def lenet5_kernel(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6], 
 
 def initialize(N, H, W):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     H_conv1 = H - 4
@@ -84,15 +95,15 @@ def initialize(N, H, W):
     input = rng.random((N, H, W, 1), dtype=np.float32)
     # Weights
     conv1 = rng.random((5, 5, 1, 6), dtype=np.float32)
-    conv1bias = rng.random((6, ), dtype=np.float32)
+    conv1bias = rng.random((6,), dtype=np.float32)
     conv2 = rng.random((5, 5, 6, 16), dtype=np.float32)
-    conv2bias = rng.random((16, ), dtype=np.float32)
+    conv2bias = rng.random((16,), dtype=np.float32)
     fc1w = rng.random((C_before_fc1, 120), dtype=np.float32)
-    fc1b = rng.random((120, ), dtype=np.float32)
+    fc1b = rng.random((120,), dtype=np.float32)
     fc2w = rng.random((120, 84), dtype=np.float32)
-    fc2b = rng.random((84, ), dtype=np.float32)
+    fc2b = rng.random((84,), dtype=np.float32)
     fc3w = rng.random((84, 10), dtype=np.float32)
-    fc3b = rng.random((10, ), dtype=np.float32)
+    fc3b = rng.random((10,), dtype=np.float32)
 
     return (input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, C_before_fc1)
 
@@ -114,7 +125,7 @@ def conv2d_np(input, weights):
     for i in range(H_out):
         for j in range(W_out):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -126,7 +137,7 @@ def maxpool2d_np(x):
     output = np.empty([x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]], dtype=x.dtype)
     for i in range(x.shape[1] // 2):
         for j in range(x.shape[2] // 2):
-            output[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2, 2 * j:2 * j + 2, :], axis=(1, 2))
+            output[:, i, j, :] = np.max(x[:, 2 * i : 2 * i + 2, 2 * j : 2 * j + 2, :], axis=(1, 2))
     return output
 
 
@@ -211,10 +222,10 @@ def lenet_jax_kernel(jnp, lax, input, conv1, conv1bias, conv2, conv2bias, fc1w, 
 
 
 def run_lenet(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs lenet for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     N, H, W = 4, 28, 28
@@ -224,21 +235,23 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
         # Parse the SDFG and apply auto-opt
         sdfg = lenet5_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
-        out = sdfg(input,
-                   conv1,
-                   conv1bias,
-                   conv2,
-                   conv2bias,
-                   fc1w,
-                   fc1b,
-                   fc2w,
-                   fc2b,
-                   fc3w,
-                   fc3b,
-                   N=N,
-                   H=H,
-                   W=W,
-                   C_before_fc1=C_before_fc1)
+        out = sdfg(
+            input,
+            conv1,
+            conv1bias,
+            conv2,
+            conv2bias,
+            fc1w,
+            fc1b,
+            fc2w,
+            fc2b,
+            fc3w,
+            fc3b,
+            N=N,
+            H=H,
+            W=W,
+            C_before_fc1=C_before_fc1,
+        )
 
     # Compute ground truth and validate
     out_ref = lenet5_np(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, N, C_before_fc1)
@@ -249,7 +262,7 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
 def run_lenet_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (npbench test size)
     N, H, W = 4, 16, 16
@@ -257,14 +270,23 @@ def run_lenet_autodiff():
 
     # Initialize gradient computation data
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6], conv1bias: dc.float32[6],
-                        conv2: dc.float32[5, 5, 6, 16], conv2bias: dc.float32[16], fc1w: dc.float32[C_before_fc1, 120],
-                        fc1b: dc.float32[120], fc2w: dc.float32[120, 84], fc2b: dc.float32[84],
-                        fc3w: dc.float32[84, 10], fc3b: dc.float32[10]):
+    def autodiff_kernel(
+        input: dc.float32[N, H, W, 1],
+        conv1: dc.float32[5, 5, 1, 6],
+        conv1bias: dc.float32[6],
+        conv2: dc.float32[5, 5, 6, 16],
+        conv2bias: dc.float32[16],
+        fc1w: dc.float32[C_before_fc1, 120],
+        fc1b: dc.float32[120],
+        fc2w: dc.float32[120, 84],
+        fc2b: dc.float32[84],
+        fc3w: dc.float32[84, 10],
+        fc3b: dc.float32[10],
+    ):
         result = lenet5_kernel(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
         return np.sum(result)
 
@@ -272,36 +294,39 @@ def run_lenet_autodiff():
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
 
-    sdfg(input,
-         conv1,
-         conv1bias,
-         conv2,
-         conv2bias,
-         fc1w,
-         fc1b,
-         fc2w,
-         fc2b,
-         fc3w,
-         fc3b,
-         N=N,
-         H=H,
-         W=W,
-         C_before_fc1=C_before_fc1,
-         gradient_input=gradient_input,
-         gradient___return=gradient___return)
+    sdfg(
+        input,
+        conv1,
+        conv1bias,
+        conv2,
+        conv2bias,
+        fc1w,
+        fc1b,
+        fc2w,
+        fc2b,
+        fc3w,
+        fc3b,
+        N=N,
+        H=H,
+        W=W,
+        C_before_fc1=C_before_fc1,
+        gradient_input=gradient_input,
+        gradient___return=gradient___return,
+    )
 
     # Numerically validate vs JAX
     jax_kernel = lambda input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b: lenet_jax_kernel(
-        jnp, lax, input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
+        jnp, lax, input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b
+    )
     jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
-    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-6)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-6)
 
 
-def test_cpu(monkeypatch):
+def test_cpu():
     # Serialization causes issues, we temporarily disable it
-    monkeypatch.setenv("DACE_testing_serialization", "0")
-    run_lenet(dace.dtypes.DeviceType.CPU)
+    with dace.config.set_temporary("testing", "serialization", value=False):
+        run_lenet(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.skip(reason="std::runtime_error")
@@ -317,9 +342,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

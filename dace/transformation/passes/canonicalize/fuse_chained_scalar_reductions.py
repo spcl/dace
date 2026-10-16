@@ -44,47 +44,43 @@ combined-increment tree is order-independent. ``min`` / ``max`` are associative
 too but arrive as a Call shape handled by ``ArgMaxLift``; this pass leaves them
 untouched.
 """
+
 import ast
 import copy
-from typing import List, Optional, Tuple
+from typing import Any
 
 from dace import SDFG, nodes, properties
+from dace.memlet import Memlet
+from dace.optionals import required
 from dace.sdfg import SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
-_FOLDABLE_OPS = {ast.Add: '+', ast.Mult: '*'}
+FOLDABLE_OPS: dict[type[ast.operator], str] = {ast.Add: "+", ast.Mult: "*"}
 
 
-def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
+def _binop_op(tasklet: nodes.Tasklet) -> type | None:
     """The AST binop type if ``tasklet`` is a single ``__out = a OP b`` with a
     foldable ``OP``; else ``None``."""
-    if tasklet.language.name != 'Python' or len(tasklet.code.code) != 1:
+    if tasklet.language.name != "Python" or len(tasklet.code.code) != 1:
         return None
     stmt = tasklet.code.code[0]
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
         return None
     rhs = stmt.value
-    if isinstance(rhs, ast.BinOp) and type(rhs.op) in _FOLDABLE_OPS:
+    if isinstance(rhs, ast.BinOp) and type(rhs.op) in FOLDABLE_OPS:
         return type(rhs.op)
     return None
 
 
-def _is_copy(tasklet: nodes.Tasklet) -> Optional[str]:
-    """Input connector if ``tasklet`` is a pure copy ``__out = __in``; else ``None``."""
-    if tasklet.language.name != 'Python' or len(tasklet.code.code) != 1:
-        return None
-    stmt = tasklet.code.code[0]
-    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
-        return None
-    if isinstance(stmt.value, ast.Name) and stmt.value.id in tasklet.in_connectors:
-        return stmt.value.id
-    return None
-
-
-def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
+def _chase_write_to_accum(
+    state: SDFGState, sdfg: SDFG, out_edge: MultiConnectorEdge[Memlet]
+) -> tuple[nodes.AccessNode, list[nodes.AccessNode], list[nodes.Tasklet]] | None:
     """From a binop's output edge, follow the staging chain forward to the
     AccessNode it ultimately writes. The frontend stages an accumulator write as
     ``binop -> tmp -> copy -> acc``; that copy is a copy TASKLET before
@@ -93,8 +89,8 @@ def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
     [intermediate_nodes], [copy_tasklets])`` or ``None`` if the chain is not a
     simple transient-copy staging into an AccessNode.
     """
-    intermediates: List = []
-    copies: List = []
+    intermediates: list = []
+    copies: list = []
     node = out_edge.dst
     while True:
         if not isinstance(node, nodes.AccessNode):
@@ -118,7 +114,7 @@ def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
             continue
         if not isinstance(nxt.dst, nodes.Tasklet):
             return node, intermediates, copies
-        copy_conn = _is_copy(nxt.dst)
+        copy_conn = _copy_input_connector(nxt.dst)
         if copy_conn is None or nxt.dst_conn != copy_conn:
             return node, intermediates, copies
         copy_tasklet = nxt.dst
@@ -133,7 +129,16 @@ def _chase_write_to_accum(state: SDFGState, sdfg: SDFG, out_edge):
 class _Step:
     """One ``acc[S] = acc[S] OP inc`` accumulation in the chain."""
 
-    def __init__(self, binop, acc_read_node, acc_read_edge, inc_edge, write_final, write_intermediates, write_copies):
+    def __init__(
+        self,
+        binop: nodes.Tasklet,
+        acc_read_node: nodes.AccessNode,
+        acc_read_edge: MultiConnectorEdge[Memlet],
+        inc_edge: MultiConnectorEdge[Memlet],
+        write_final: nodes.AccessNode,
+        write_intermediates: list[nodes.AccessNode],
+        write_copies: list[nodes.Tasklet],
+    ) -> None:
         self.binop = binop
         self.acc_read_node = acc_read_node  # AccessNode(acc) feeding the accumulator connector
         self.acc_read_edge = acc_read_edge  # acc_read_node -> binop (accumulator operand)
@@ -148,21 +153,22 @@ class _Step:
 class FuseChainedScalarReductions(ppl.Pass):
     """Re-associate a chain of same-accumulator ``+`` / ``*`` reductions into one."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for loop in [n for n in sd.all_control_flow_regions(recursive=True) if isinstance(n, LoopRegion)]:
+            # Not recursive: ``all_sdfgs_recursive`` already recurses; nesting here misplaces ``_fused_inc``.
+            for loop in [n for n in sd.all_control_flow_regions() if isinstance(n, LoopRegion)]:
                 if loop.pinned_sequential or not loop.loop_variable:
                     continue
-                for st in loop.all_states():
+                for st in loop.states():
                     fused += self._fuse_state(sd, st)
         return fused or None
 
@@ -174,17 +180,17 @@ class FuseChainedScalarReductions(ppl.Pass):
             count += 1
         return count
 
-    def _collect_chains(self, sdfg: SDFG, st: SDFGState) -> List[Tuple[type, List[_Step]]]:
+    def _collect_chains(self, sdfg: SDFG, st: SDFGState) -> list[tuple[type, list[_Step]]]:
         # Build the per-binop accumulation record: which acc node it reads and writes.
         steps_by_read = {}  # acc_read_node -> _Step
         steps_by_write = {}  # write_final_node -> _Step
-        all_steps: List[_Step] = []
+        all_steps: list[_Step] = []
         for tasklet in [n for n in st.nodes() if isinstance(n, nodes.Tasklet)]:
             op_type = _binop_op(tasklet)
             if op_type is None:
                 continue
-            in_edges = [e for e in st.in_edges(tasklet) if e.data is not None and not e.data.is_empty()]
-            out_edges = [e for e in st.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
+            in_edges = value_edges(st.in_edges(tasklet))
+            out_edges = value_edges(st.out_edges(tasklet))
             if len(in_edges) != 2 or len(out_edges) != 1:
                 continue
             chased = _chase_write_to_accum(st, sdfg, out_edges[0])
@@ -200,7 +206,10 @@ class FuseChainedScalarReductions(ppl.Pass):
             write_subset = wfin[0].data.subset
             # Identify the accumulator operand: the input edge reading acc_name at write_subset.
             acc_edges = [
-                e for e in in_edges if isinstance(e.src, nodes.AccessNode) and e.src.data == acc_name
+                e
+                for e in in_edges
+                if isinstance(e.src, nodes.AccessNode)
+                and e.src.data == acc_name
                 and str(e.data.subset) == str(write_subset)
             ]
             if len(acc_edges) != 1:
@@ -225,8 +234,8 @@ class FuseChainedScalarReductions(ppl.Pass):
             steps_by_write.setdefault(write_final, step)
 
         # Group steps that share the same accumulator/slot/op and form a linear chain.
-        chains: List[Tuple[type, List[_Step]]] = []
-        used = set()
+        chains: list[tuple[type, list[_Step]]] = []
+        used: dict = {}
         for step in all_steps:
             if step in used:
                 continue
@@ -236,21 +245,28 @@ class FuseChainedScalarReductions(ppl.Pass):
             guard = 0
             while head.acc_read_node in steps_by_write and guard < len(all_steps) + 1:
                 prev = steps_by_write[head.acc_read_node]
-                if (prev.acc_name != head.acc_name or prev.write_subset != head.write_subset
-                        or _binop_op(prev.binop) is not op_type):
+                if (
+                    prev.acc_name != head.acc_name
+                    or prev.write_subset != head.write_subset
+                    or _binop_op(prev.binop) is not op_type
+                ):
                     break
                 head = prev
                 guard += 1
             # Walk forward from head building the chain.
-            chain: List[_Step] = []
+            chain: list[_Step] = []
             cur = head
             guard = 0
             while cur is not None and guard < len(all_steps) + 1:
-                if (cur.acc_name != head.acc_name or cur.write_subset != head.write_subset
-                        or _binop_op(cur.binop) is not op_type or cur in used):
+                if (
+                    cur.acc_name != head.acc_name
+                    or cur.write_subset != head.write_subset
+                    or _binop_op(cur.binop) is not op_type
+                    or cur in used
+                ):
                     break
                 chain.append(cur)
-                used.add(cur)
+                used[cur] = None
                 nxt = steps_by_read.get(cur.write_final)
                 cur = nxt
                 guard += 1
@@ -261,7 +277,12 @@ class FuseChainedScalarReductions(ppl.Pass):
                     chains.append((op_type, chain))
         return chains
 
-    def _chain_is_clean(self, st: SDFGState, chain: List[_Step]) -> bool:
+    def _chain_is_clean(self, st: SDFGState, chain: list[_Step]) -> bool:
+        # remove_node would take a deleted chain node's ordering memlets with it.
+        for step in chain[1:]:
+            for node in (step.binop, *step.write_copies, *step.write_intermediates):
+                if any(e.data is not None and e.data.is_empty() for e in (*st.in_edges(node), *st.out_edges(node))):
+                    return False
         # Every intermediate accumulator node (written by step k, read by step k+1) must
         # have exactly one out edge (into step k+1's binop) and one in edge.
         for k in range(len(chain) - 1):
@@ -272,10 +293,10 @@ class FuseChainedScalarReductions(ppl.Pass):
                 return False
         return True
 
-    def _apply_fusion(self, sdfg: SDFG, st: SDFGState, op_type: type, chain: List[_Step]) -> None:
+    def _apply_fusion(self, sdfg: SDFG, st: SDFGState, op_type: type, chain: list[_Step]) -> None:
         from dace import Memlet
 
-        op_str = _FOLDABLE_OPS[op_type]
+        op_str = FOLDABLE_OPS[op_type]
         first = chain[0]
         last = chain[-1]
         acc_name = first.acc_name
@@ -297,23 +318,42 @@ class FuseChainedScalarReductions(ppl.Pass):
         for idx in range(1, len(inc_edges)):
             left_edge = inc_edges[idx - 1] if cur_scalar_node is None else None
             right_edge = inc_edges[idx]
-            fold_t = st.add_tasklet(f'_fuse_red_{idx}', {'__in1', '__in2'}, {'__out'},
-                                    f'__out = (__in1 {op_str} __in2)')
+            # Ordered dicts, not set literals: ``add_tasklet`` turns a set into the connector dict, so the
+            # set's hash order becomes the in_connectors order and codegen emits the connector declarations
+            # in that order -- byte-different C for the same input on every run. ``dict.fromkeys`` is the
+            # declared ``Dict[str, typeclass]`` form and matches what the set branch builds ({k: None}).
+            fold_t = st.add_tasklet(
+                f"_fuse_red_{idx}",
+                dict.fromkeys(["__in1", "__in2"]),
+                dict.fromkeys(["__out"]),
+                f"__out = (__in1 {op_str} __in2)",
+            )
             if cur_scalar_node is None:
-                st.add_edge(left_edge.src, left_edge.src_conn, fold_t, '__in1', copy.deepcopy(left_edge.data))
+                st.add_edge(
+                    required(left_edge).src,
+                    required(left_edge).src_conn,
+                    fold_t,
+                    "__in1",
+                    copy.deepcopy(required(left_edge).data),
+                )
             else:
                 run = cur_scalar_node.data
-                st.add_edge(cur_scalar_node, None, fold_t, '__in1', Memlet.from_array(run, sdfg.arrays[run]))
-            st.add_edge(right_edge.src, right_edge.src_conn, fold_t, '__in2', copy.deepcopy(right_edge.data))
-            fold_name = _fresh_scalar('_fused_inc')
+                st.add_edge(cur_scalar_node, None, fold_t, "__in1", Memlet.from_array(run, sdfg.arrays[run]))
+            st.add_edge(right_edge.src, right_edge.src_conn, fold_t, "__in2", copy.deepcopy(right_edge.data))
+            fold_name = _fresh_scalar("_fused_inc")
             fold_node = st.add_access(fold_name)
-            st.add_edge(fold_t, '__out', fold_node, None, Memlet.from_array(fold_name, sdfg.arrays[fold_name]))
+            st.add_edge(fold_t, "__out", fold_node, None, Memlet.from_array(fold_name, sdfg.arrays[fold_name]))
             cur_scalar_node = fold_node
 
         # 2. Re-plug the first step's binop increment operand to the folded increment.
         inc_conn = first.inc_edge.dst_conn
-        st.add_edge(cur_scalar_node, None, first.binop, inc_conn,
-                    Memlet.from_array(cur_scalar_node.data, sdfg.arrays[cur_scalar_node.data]))
+        st.add_edge(
+            cur_scalar_node,
+            None,
+            first.binop,
+            inc_conn,
+            Memlet.from_array(required(cur_scalar_node).data, sdfg.arrays[required(cur_scalar_node).data]),
+        )
 
         # 3. Redirect the first step's write path to the terminal accumulator node.
         #    The first step's write_final node is an intermediate; splice it out and
@@ -332,16 +372,16 @@ class FuseChainedScalarReductions(ppl.Pass):
         #    step wrote (which the next step read). ``remove_node`` drops incident edges,
         #    so the surviving first-step accumulation feeds ``term`` alone. ``term`` and
         #    the loop-carried input node (chain[0].acc_read_node) are preserved.
-        to_remove = set()
+        to_remove: dict = {}
         for s in chain[1:]:
-            to_remove.add(s.binop)
-            to_remove.update(s.write_copies)
-            to_remove.update(s.write_intermediates)
+            to_remove[s.binop] = None
+            to_remove.update(dict.fromkeys(s.write_copies))
+            to_remove.update(dict.fromkeys(s.write_intermediates))
         # Intermediate accumulator nodes: every step's write target except the terminal.
         for s in chain[:-1]:
-            to_remove.add(s.write_final)
-        to_remove.discard(term)
-        to_remove.discard(chain[0].acc_read_node)
+            to_remove[s.write_final] = None
+        to_remove.pop(term, None)
+        to_remove.pop(chain[0].acc_read_node, None)
         for n in list(to_remove):
             if n in st.nodes():
                 st.remove_node(n)
@@ -353,4 +393,4 @@ class FuseChainedScalarReductions(ppl.Pass):
                     st.remove_node(n)
 
 
-__all__ = ['FuseChainedScalarReductions']
+__all__ = ["FuseChainedScalarReductions"]

@@ -1,0 +1,71 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Block-collective copy into shared memory."""
+
+from typing import TYPE_CHECKING
+
+import dace
+from dace import dtypes, library, nodes
+from dace.libraries.standard.nodes.copy.common import (
+    INPUT_CONNECTOR_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    _build_shmem_collective_copy_code,
+)
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+from dace.sdfg.scope import is_in_scope
+from dace.transformation.transformation import ExpandTransformation
+
+if TYPE_CHECKING:
+    pass
+
+
+@library.register_expansion(CopyLibraryNode, "SharedMemoryCollective")
+class ExpandSharedMemoryCollective(ExpandTransformation):
+    """Block-collective Shared <-> Shared/Global copy.
+
+    A static 1-D transfer uses ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``; every other
+    shape up to rank 3 (after singleton dimensions collapse) uses ``dace::BlockCollective3D``, which
+    gives each wavefront a contiguous run of the fastest-varying axis. The node's ``sync`` property
+    (default True) decides whether that call ends in ``__syncthreads()``, so a staging pass can chain
+    several copies and pay for one barrier. Shapes outside that are refused, never lowered to
+    ``dace::CopyND``: a per-thread loop nest has every thread copy the whole region.
+
+    Caller must place this outside any enclosing ``GPU_ThreadBlock`` map -- this expansion *is*
+    the thread-block-level operation. Shared <-> Register goes through ``MappedTasklet`` instead
+    (auto selector routes it there)."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(
+            parent_sdfg, parent_state, allow_cross_storage=True
+        )
+
+        valid_storages = {dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global}
+        if inp.storage not in valid_storages or out.storage not in valid_storages:
+            raise ValueError(
+                f"SharedMemoryCollective requires GPU_Shared / GPU_Global storages "
+                f"(got {inp.storage} -> {out.storage}). Use MappedTasklet for "
+                "Shared <-> Register thread-level copies."
+            )
+        if inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared:
+            raise ValueError("SharedMemoryCollective requires at least one side to be GPU_Shared.")
+        if inp.dtype != out.dtype:
+            raise ValueError(
+                f"SharedMemoryCollective moves bytes and cannot convert {inp.dtype} to {out.dtype}; "
+                "use MappedTasklet, which emits the cast."
+            )
+
+        if is_in_scope(parent_sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]):
+            raise ValueError(
+                "SharedMemoryCollective IS the thread-block-level operation "
+                "and must not be nested inside a GPU_ThreadBlock map."
+            )
+
+        return nodes.Tasklet(
+            node.name,
+            inputs={INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)},
+            outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+            code=_build_shmem_collective_copy_code(node, parent_state, inp, in_subset, out, out_subset),
+            language=dace.Language.CPP,
+        )

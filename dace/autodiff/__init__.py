@@ -25,19 +25,19 @@ Key Features
 
 """
 
-from .base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
-from .backward_pass_generator import BackwardPassGenerator
-from .autodiff import add_backward_pass
+from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
+from dace.autodiff.backward_pass_generator import BackwardPassGenerator
+from dace.autodiff.autodiff import add_backward_pass
 
 try:
-    from .torch import make_backward_function
+    from dace.autodiff.torch import make_backward_function
+
     TORCH_INTEGRATION_AVAILABLE = True
 except ImportError:
     make_backward_function = None
     TORCH_INTEGRATION_AVAILABLE = False
 
-import sys
-from . import library
+from dace.autodiff import library
 
 __all__ = [
     # Main API
@@ -55,4 +55,4 @@ __all__ = [
 ]
 
 if TORCH_INTEGRATION_AVAILABLE:
-    __all__.append("make_backward_function")
+    __all__ += ["make_backward_function"]

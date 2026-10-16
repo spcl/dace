@@ -31,10 +31,15 @@ original WCR semantics).
 The init's seed-read AND the writeback are unconditional, so this stays
 value-preserving even if zero iterations of the map run.
 """
-from typing import Optional
 
-from dace import SDFG, data, memlet as mm, properties, subsets
+from typing import Any
+
+from dace import SDFG, data, properties, subsets
+from dace import memlet as mm
+from dace.optionals import required
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -46,15 +51,20 @@ class PrivatizeReductionAccumulator(ppl.Pass):
     """Convert WCR-on-array-element reductions to WCR-on-scalar + init + writeback."""
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.States
-                | ppl.Modifies.Descriptors)
+        return (
+            ppl.Modifies.CFG
+            | ppl.Modifies.Nodes
+            | ppl.Modifies.Memlets
+            | ppl.Modifies.States
+            | ppl.Modifies.Descriptors
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
-        for state in list(sdfg.all_states()):
+        for state in list(sdfg.states()):
             for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
                 # WCR writes are on the MapExit's IN-edges (tasklet -> MapExit
                 # IN_<name> connector); the matching OUT-edge then forwards the
@@ -65,7 +75,9 @@ class PrivatizeReductionAccumulator(ppl.Pass):
         return count or None
 
 
-def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, wcr_edge) -> bool:
+def privatize_reduction_accumulator(
+    state: SDFGState, map_exit: nodes.MapExit, wcr_edge: MultiConnectorEdge[mm.Memlet]
+) -> bool:
     """Rewrite a single Map's WCR-on-array-element write into WCR-on-scalar
     plus init + writeback.
 
@@ -111,14 +123,11 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
     # if the slot were a function of the map parameter this wouldn't be a
     # reduction.)
     map_entry = state.entry_node(map_exit)
-    map_param_set = set(map_entry.map.params)
+    map_param_set = dict.fromkeys(as_map_entry(map_entry).map.params)
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
         return False
 
     parent_graph: ControlFlowRegion = state.parent_graph
-
-    # Allocate a transient scalar to hold the accumulator.
-    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
 
     # Is the seed value WRITTEN INSIDE THIS STATE (kernel's own ``acc[c] = init``
     # tasklet, fused with the map)? If so the seed source is that write's
@@ -132,7 +141,8 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
             continue
         if n is arr_node or n.data != arr_node.data:
             continue
-        if state.in_degree(n) == 0:
+        # Only a non-empty in-edge is a write: an ordering memlet initialises nothing.
+        if not any(e.data is not None and not e.data.is_empty() for e in state.in_edges(n)):
             continue
         # Reject the AN if any inbound edge is itself a WCR write (then it's a
         # different reduction target, not an init).
@@ -141,7 +151,17 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
         in_state_init_an = n
         break
 
-    # --- Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
+    # The cross-state writeback would run after any access to ``arr`` that follows the map in this state.
+    if in_state_init_an is None and any(
+        isinstance(n, nodes.AccessNode) and n.data == arr_node.data and (n is not arr_node or state.out_degree(n))
+        for n in state.bfs_nodes(map_exit)
+    ):
+        return False
+
+    # Allocate a transient scalar to hold the accumulator.
+    scalar_name, _ = sdfg.add_scalar(f"_priv_{arr_node.data}", dtype=desc.dtype, transient=True, find_new_name=True)
+
+    # Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
     # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
     wcr = wcr_edge.data.wcr
     wcr_edge.data.data = scalar_name
@@ -153,30 +173,49 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
         # writeback in the same state, going BACK into the original ``arr_node``.
         # No priv_init/priv_wb states needed.
         seed_an = state.add_access(scalar_name)
-        state.add_edge(in_state_init_an, None, seed_an, None,
-                       mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+        state.add_edge(
+            in_state_init_an,
+            None,
+            seed_an,
+            None,
+            mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
+        )
+        # The map's WCR accumulates onto the seed, so the seed must be written before the map starts.
+        state.add_nedge(seed_an, required(map_entry), mm.Memlet())
         # The map's WCR output now goes to a fresh _priv_dot AN ...
         new_scalar_an = state.add_write(scalar_name)
-        state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,
-                       mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)])))
+        state.add_edge(
+            map_exit,
+            oedge.src_conn,
+            new_scalar_an,
+            None,
+            mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)])),
+        )
         state.remove_edge(oedge)
         # ... then copy back to the post-map ``arr_node`` (writeback).
-        state.add_edge(new_scalar_an, None, arr_node, None,
-                       mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+        state.add_edge(
+            new_scalar_an,
+            None,
+            arr_node,
+            None,
+            mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))),
+        )
         return True
 
-    # --- Cross-state pattern (no in-state init): init state BEFORE the
+    # Cross-state pattern (no in-state init): init state BEFORE the
     # current state seeds ``_priv_dot`` from the surviving ``arr_node``;
     # writeback state AFTER copies back.
     init_state = parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")
     init_r = init_state.add_read(arr_node.data)
     init_w = init_state.add_write(scalar_name)
-    init_state.add_edge(init_r, None, init_w, None,
-                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+    init_state.add_edge(
+        init_r, None, init_w, None, mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset)))
+    )
 
     new_scalar_an = state.add_write(scalar_name)
-    state.add_edge(map_exit, oedge.src_conn, new_scalar_an, None,
-                   mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)])))
+    state.add_edge(
+        map_exit, oedge.src_conn, new_scalar_an, None, mm.Memlet(data=scalar_name, subset=subsets.Range([(0, 0, 1)]))
+    )
     state.remove_edge(oedge)
     if state.degree(arr_node) == 0:
         state.remove_node(arr_node)
@@ -184,7 +223,8 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
     wb_state = parent_graph.add_state_after(state, label=f"priv_wb_{scalar_name}")
     wb_r = wb_state.add_read(scalar_name)
     wb_w = wb_state.add_write(arr_node.data)
-    wb_state.add_edge(wb_r, None, wb_w, None,
-                      mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
+    wb_state.add_edge(
+        wb_r, None, wb_w, None, mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset)))
+    )
 
     return True

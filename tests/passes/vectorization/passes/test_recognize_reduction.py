@@ -9,9 +9,10 @@ read-modify-written under one of the associative ``IDENTITY`` ops.
 These tests build the tasklet shapes imperatively (no JSON fallback)
 and pin exactly what is and is not recognised.
 """
-import dace
+
 import pytest
 
+import dace
 from dace.transformation.passes.vectorization.utils.reductions import (
     ReductionInfo,
     recognize_reduction,
@@ -20,7 +21,7 @@ from dace.transformation.passes.vectorization.utils.reductions import (
 
 def _rmw_sdfg(code: str, *, extra_in: bool = False, lang=dace.dtypes.Language.Python):
     """One state: ``acc`` read + (optional ``b``) -> tasklet -> ``acc``."""
-    sdfg = dace.SDFG("rmw")
+    sdfg = dace.SDFG("rmw_rmw_sdfg")
     sdfg.add_scalar("acc", dace.float64, transient=True)
     sdfg.add_scalar("b", dace.float64, transient=True)
     st = sdfg.add_state()
@@ -52,13 +53,16 @@ def _no_rmw_sdfg(code: str):
     return sdfg, st, t
 
 
-@pytest.mark.parametrize("code,op,identity", [
-    ("o = a + b", "+", "0"),
-    ("o = a * b", "*", "1"),
-    ("o = a | b", "|", "0"),
-    ("o = a & b", "&", "~0"),
-    ("o = a ^ b", "^", "0"),
-])
+@pytest.mark.parametrize(
+    "code,op,identity",
+    [
+        ("o = a + b", "+", "0"),
+        ("o = a * b", "*", "1"),
+        ("o = a | b", "|", "0"),
+        ("o = a & b", "&", "~0"),
+        ("o = a ^ b", "^", "0"),
+    ],
+)
 def test_recognizes_infix_rmw(code, op, identity):
     sdfg, st, t = _rmw_sdfg(code, extra_in=True)
     info = recognize_reduction(st, t)
@@ -76,7 +80,7 @@ def test_recognizes_funcall_rmw_either_arg_position(code, op):
 def test_recognizes_compound_rhs_when_accumulator_is_direct_operand():
     # spmv-shaped post-SplitTasklets form: ``acc = acc + prod`` where the
     # *other* operand is itself a product/gather temp. Still a '+' RMW.
-    sdfg = dace.SDFG("cmp")
+    sdfg = dace.SDFG("cmp_recognizes_compound_rhs_when_accumulator_is_direct_operand")
     sdfg.add_scalar("acc", dace.float64, transient=True)
     sdfg.add_scalar("prod", dace.float64, transient=True)
     st = sdfg.add_state()

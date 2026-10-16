@@ -29,10 +29,10 @@ def test_fortran_frontend_array_attribute_no_offset():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 1
-    assert sdfg.data('d').shape[0] == 5
-    assert len(sdfg.data('d').offset) == 1
-    assert sdfg.data('d').offset[0] == -1
+    assert len(sdfg.data("d").shape) == 1
+    assert sdfg.data("d").shape[0] == 5
+    assert len(sdfg.data("d").offset) == 1
+    assert sdfg.data("d").offset[0] == -1
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -65,10 +65,10 @@ def test_fortran_frontend_array_attribute_offset():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 1
-    assert sdfg.data('d').shape[0] == 5
-    assert len(sdfg.data('d').offset) == 1
-    assert sdfg.data('d').offset[0] == -1
+    assert len(sdfg.data("d").shape) == 1
+    assert sdfg.data("d").shape[0] == 5
+    assert len(sdfg.data("d").offset) == 1
+    assert sdfg.data("d").offset[0] == -1
 
     a = np.full([60], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -101,10 +101,10 @@ def test_fortran_frontend_array_offset():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 1
-    assert sdfg.data('d').shape[0] == 5
-    assert len(sdfg.data('d').offset) == 1
-    assert sdfg.data('d').offset[0] == -1
+    assert len(sdfg.data("d").shape) == 1
+    assert sdfg.data("d").shape[0] == 5
+    assert len(sdfg.data("d").offset) == 1
+    assert sdfg.data("d").offset[0] == -1
 
     a = np.full([60], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -114,7 +114,6 @@ def test_fortran_frontend_array_offset():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_array_offset()
     test_fortran_frontend_array_attribute_no_offset()
     test_fortran_frontend_array_attribute_offset()

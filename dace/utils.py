@@ -5,12 +5,12 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-from typing import Iterable, Sequence, Union
+from collections.abc import Container, Iterable
 
 import sympy
 
 # Type alias for numeric or symbolic values
-NumericType = Union[int, float, sympy.Basic]
+NumericType = int | float | sympy.Basic
 
 
 def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType:
@@ -31,34 +31,37 @@ def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType
     return result
 
 
-def find_new_name(name: str, existing_names: Sequence[str]) -> str:
+def find_new_name(name: str, existing_names: Container[str]) -> str:
     """
     Returns a name that matches the given ``name`` as a prefix, but does not
     already exist in the given existing name set. The behavior is typically
     to append an underscore followed by a unique (increasing) number. If the
     name does not already exist in the set, it is returned as-is.
 
+    Only membership is ever tested, so ``existing_names`` may be any container --
+    including a view that answers ``in`` without materializing the names.
+
     :param name: The given name to find.
-    :param existing_names: The set of existing names.
+    :param existing_names: The existing names, as anything supporting ``in``.
     :return: A new name that is not in existing_names.
     """
     if name not in existing_names:
         return name
     cur_offset = 0
-    new_name = name + '_' + str(cur_offset)
+    new_name = name + "_" + str(cur_offset)
     while new_name in existing_names:
         cur_offset += 1
-        new_name = name + '_' + str(cur_offset)
+        new_name = name + "_" + str(cur_offset)
     return new_name
 
 
 def deduplicate(iterable):
-    """ Removes duplicates in the passed iterable. """
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    """Removes duplicates in the passed iterable."""
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 def until(val, substr):
-    """ Helper function that returns the substring of a string until a certain pattern. """
+    """Helper function that returns the substring of a string until a certain pattern."""
     if substr not in val:
         return val
-    return val[:val.find(substr)]
+    return val[: val.find(substr)]

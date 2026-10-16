@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 from common import compare_numpy_output
+
+import dace
 
 M = 10
 N = 20
@@ -36,6 +37,19 @@ def test_lhs_flat(A: dace.float64[M, N]):
 @compare_numpy_output()
 def test_astype(A: dace.int32[M, N]):
     return A.astype(np.float32)
+
+
+@compare_numpy_output()
+def test_astype_copy_false(A: dace.int32[M, N]):
+    # The copy is forced whichever value is passed: numpy's copy=False may return the operand
+    # ITSELF when the dtype matches, and an SDFG cannot hand back an alias. Here the dtype differs,
+    # so numpy copies too and the two agree. Missing the parameter raised TypeError outright.
+    return A.astype(np.float32, copy=False)
+
+
+@compare_numpy_output()
+def test_astype_copy_true(A: dace.int32[M, N]):
+    return A.astype(np.float32, copy=True)
 
 
 @compare_numpy_output()
@@ -125,7 +139,7 @@ def test_sum():
     A = np.array(np.random.rand(10, 20, 20, 10) + 0.1, dtype=np.float64, copy=True)
     ref = A.sum()
     res = testee(A)
-    assert res.shape == (1, )  # DaCe can not return scalars
+    assert res.shape == (1,)  # DaCe can not return scalars
     assert np.allclose(ref, res), f"Expected '{ref}' but got '{res[0]}'"
 
 
@@ -159,6 +173,8 @@ if __name__ == "__main__":
     test_copy()
     test_lhs_flat()
     test_astype()
+    test_astype_copy_false()
+    test_astype_copy_true()
     test_fill()
     test_fill2()
     test_fill3()

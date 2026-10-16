@@ -1,18 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from typing import Tuple, Union
 
+import dace
 from dace import nodes as dace_nodes
 from dace.transformation.helpers import isolate_nested_sdfg
 
 
-def count_node(sdfg: Union[dace.SDFG, dace.SDFGState], node_type, return_nodes: bool = False):
+def count_node(sdfg: dace.SDFG | dace.SDFGState, node_type, return_nodes: bool = False):
     states = [sdfg] if isinstance(sdfg, dace.SDFGState) else sdfg.states()
-    found_nodes = []
-    for state in states:
-        for node in state.nodes():
-            if isinstance(node, node_type):
-                found_nodes.append(node)
+    found_nodes = [node for state in states for node in state.nodes() if isinstance(node, node_type)]
 
     return found_nodes if return_nodes else len(found_nodes)
 
@@ -31,15 +26,14 @@ def count_writes(sdfg: dace.SDFG):
 
 
 def _make_nested_sdfg_simple() -> dace.SDFG:
-    """Make a simple nested SDFG.
-    """
+    """Make a simple nested SDFG."""
     sdfg = dace.SDFG("nested_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "AB":
         sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -56,15 +50,14 @@ def _make_nested_sdfg_simple() -> dace.SDFG:
 
 
 def _make_nested_sdfg_adding() -> dace.SDFG:
-    """Make an SDFG that adds the inputs together.
-    """
+    """Make an SDFG that adds the inputs together."""
     sdfg = dace.SDFG("adding_nested_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
     for name in "ABC":
         sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -83,16 +76,15 @@ def _make_nested_sdfg_adding() -> dace.SDFG:
     return sdfg
 
 
-def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Creates a nested SDFG that is already isolated.
-    """
+def _make_already_isloated_nested_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Creates a nested SDFG that is already isolated."""
     outer_sdfg = dace.SDFG("already_isolate_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "AB":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -111,16 +103,15 @@ def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dac
     return outer_sdfg, state, nsdfg
 
 
-def _make_non_empty_pre_set_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Generates an SDFG that has a non empty pre set.
-    """
+def _make_non_empty_pre_set_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Generates an SDFG that has a non empty pre set."""
     outer_sdfg = dace.SDFG("non_empty_pre_set_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABT":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -153,14 +144,14 @@ def _make_non_empty_pre_set_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     return outer_sdfg, state, nsdfg
 
 
-def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_non_empty_pre_set_sdfg_2() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     outer_sdfg = dace.SDFG("non_empty_pre_set_nested_sdfg_2")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABCT":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -195,16 +186,15 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
     return outer_sdfg, state, nsdfg
 
 
-def _make_non_empty_post_state_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Generates an SDFG that will have an non empty post state and an empty pre state.
-    """
+def _make_non_empty_post_state_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Generates an SDFG that will have an non empty post state and an empty pre state."""
     outer_sdfg = dace.SDFG("non_empty_post_set_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABT":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -236,14 +226,14 @@ def _make_non_empty_post_state_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_n
     return outer_sdfg, state, nsdfg
 
 
-def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_non_empty_post_state_sdfg_2() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     outer_sdfg = dace.SDFG("non_empty_post_set_nested_sdfg_2")
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "ABC":
         outer_sdfg.add_array(
             name=name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -274,9 +264,8 @@ def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace
     return outer_sdfg, state, nsdfg
 
 
-def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
-    """Creates an SDFG that has a path around the nested SDFG.
-    """
+def _make_multi_path_nested_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Creates an SDFG that has a path around the nested SDFG."""
     outer_sdfg = dace.SDFG("multi_path_nested_sdfg")
     state = outer_sdfg.add_state(is_start_block=True)
 
@@ -286,7 +275,7 @@ def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     for name in aname_small + aname_big:
         outer_sdfg.add_array(
             name=name,
-            shape=((10, ) if name in aname_small else (20, )),
+            shape=((10,) if name in aname_small else (20,)),
             dtype=dace.float64,
             transient=(len(name) != 1),
         )
@@ -553,7 +542,7 @@ def test_multi_path_islolation():
     assert all(me.map.label.startswith("comp_post") for me in post_me_nodes)
 
 
-def _make_data_name_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_data_name_ordering_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """Build a state with TWO separate AccessNodes for transient ``T``:
     one is written by a map that feeds an array name, the other is the
     NestedSDFG's input AccessNode. There is no direct edge between them
@@ -562,9 +551,9 @@ def _make_data_name_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nod
     outer_sdfg = dace.SDFG("data_name_ordering")
     state = outer_sdfg.add_state(is_start_block=True)
 
-    outer_sdfg.add_array("A", shape=(10, ), dtype=dace.float64, transient=False)
-    outer_sdfg.add_array("B", shape=(10, ), dtype=dace.float64, transient=False)
-    outer_sdfg.add_array("T", shape=(10, ), dtype=dace.float64, transient=True)
+    outer_sdfg.add_array("A", shape=(10,), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("B", shape=(10,), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("T", shape=(10,), dtype=dace.float64, transient=True)
 
     state.add_mapped_tasklet(
         "comp_pre",
@@ -606,7 +595,7 @@ def test_isolate_data_name_ordering():
     assert post_state.number_of_nodes() == 0
 
 
-def _make_data_name_ordering_pre_and_post_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_data_name_ordering_pre_and_post_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """Extend the previous case with a post-tasklet that reads the NSDFG's
     output ``B`` via a SEPARATE AccessNode and writes ``C``. The post
     tasklet must land in post_state.
@@ -614,10 +603,10 @@ def _make_data_name_ordering_pre_and_post_sdfg() -> Tuple[dace.SDFG, dace.SDFGSt
     outer_sdfg = dace.SDFG("data_name_ordering_pre_and_post")
     state = outer_sdfg.add_state(is_start_block=True)
 
-    outer_sdfg.add_array("A", shape=(10, ), dtype=dace.float64, transient=False)
-    outer_sdfg.add_array("B", shape=(10, ), dtype=dace.float64, transient=True)
-    outer_sdfg.add_array("C", shape=(10, ), dtype=dace.float64, transient=False)
-    outer_sdfg.add_array("T", shape=(10, ), dtype=dace.float64, transient=True)
+    outer_sdfg.add_array("A", shape=(10,), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("B", shape=(10,), dtype=dace.float64, transient=True)
+    outer_sdfg.add_array("C", shape=(10,), dtype=dace.float64, transient=False)
+    outer_sdfg.add_array("T", shape=(10,), dtype=dace.float64, transient=True)
 
     state.add_mapped_tasklet(
         "comp_pre",
@@ -671,7 +660,7 @@ def test_isolate_data_name_ordering_pre_and_post():
     assert post_me[0].map.label.startswith("comp_post")
 
 
-def _make_stencil_swap_sibling_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_stencil_swap_sibling_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """The stencil read-then-overwrite pair that produced the jacobi miscompile.
 
     A NestedSDFG reads ``A`` and writes ``B``; a SIBLING map then reads ``B``
@@ -686,7 +675,7 @@ def _make_stencil_swap_sibling_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_n
     state = outer_sdfg.add_state(is_start_block=True)
 
     for name in "AB":
-        outer_sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+        outer_sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
 
     inner_sdfg = _make_nested_sdfg_simple()  # reads A, writes B := A + 1
     nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
@@ -761,3 +750,139 @@ def test_isolate_stencil_swap_sibling_numerics():
     expected_A[1:9] = expected_B[1:9] * 2.0
     assert np.allclose(B, expected_B)
     assert np.allclose(A, expected_A)
+
+
+def _make_read_then_overwrite_sibling_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """A NestedSDFG and a sibling map both read the SAME ``A`` AccessNode; the sibling then overwrites ``A``
+    through a separate AccessNode ``a_out``. ``a_out`` is not reachable from the NSDFG, but it is reachable
+    from the NSDFG's input ``a_in``: the overwrite comes after every read of ``a_in``, the NSDFG's included.
+    This is CloudSC's ``zqxfgr_safe2 = where(zqxfg[2] != 0, zqxfg[2], 1)`` beside
+    ``zqxfg[2] = where(zllo2, zqxfg[2] - zevap2, zqxfg[2])``.
+    """
+    outer_sdfg = dace.SDFG("read_then_overwrite_sibling")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    for name in "AB":
+        outer_sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
+
+    inner_sdfg = _make_nested_sdfg_simple()  # reads A, writes B := A + 1
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
+    a_in = state.add_access("A")
+    state.add_edge(a_in, None, nsdfg, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(nsdfg, "B", state.add_access("B"), None, dace.Memlet("B[0:10]"))
+
+    me, mx = state.add_map("comp_overwrite", {"__i": "1:9"})
+    tasklet = state.add_tasklet("ovw", {"__in"}, {"__out"}, "__out = __in * 2.0")
+    a_out = state.add_access("A")
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(a_in, None, me, "IN_A", dace.Memlet("A[1:9]"))
+    state.add_edge(me, "OUT_A", tasklet, "__in", dace.Memlet("A[__i]"))
+    state.add_edge(tasklet, "__out", mx, "IN_A", dace.Memlet("A[__i]"))
+    state.add_edge(mx, "OUT_A", a_out, None, dace.Memlet("A[1:9]"))
+
+    outer_sdfg.validate()
+    return outer_sdfg, state, nsdfg
+
+
+def test_isolate_keeps_an_overwrite_of_the_input_after_the_nested_sdfg():
+    """The overwrite of the NSDFG's input array, downstream of the AccessNode the NSDFG reads, must not be
+    pulled into PRE: there it ran before the NSDFG, which then read the overwritten values."""
+    import numpy as np
+
+    sdfg, state, nsdfg_node = _make_read_then_overwrite_sibling_sdfg()
+    pre_state, middle_state, post_state = isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node)
+    sdfg.validate()
+
+    assert count_node(pre_state, dace_nodes.MapEntry) == 0, "the overwrite was moved before the NSDFG"
+    assert count_node(middle_state, dace_nodes.NestedSDFG) == 1
+    post_me = count_node(post_state, dace_nodes.MapEntry, return_nodes=True)
+    assert len(post_me) == 1 and post_me[0].map.label.startswith("comp_overwrite")
+
+    A = np.arange(10, dtype=np.float64) + 1.0
+    B = np.zeros(10, dtype=np.float64)
+    A0 = A.copy()
+    sdfg(A=A, B=B)
+    expected_B = np.zeros(10, dtype=np.float64)
+    expected_B[1:9] = A0[1:9] + 1.0
+    expected_A = A0.copy()
+    expected_A[1:9] = A0[1:9] * 2.0
+    assert np.allclose(B, expected_B), "the NSDFG read the overwritten A"
+    assert np.allclose(A, expected_A)
+
+
+def _make_overwrite_through_the_nested_sdfg_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """One ``A`` AccessNode feeds the NSDFG (``B := A + 1``) and a sibling map (``C := A * 3``); a second map
+    then overwrites ``A := B * 2`` from the NSDFG's output. Only the path through the NSDFG orders the sibling's
+    read before the overwrite, so a split that moves the NSDFG out of the state leaves the sibling and the
+    overwrite unordered in POST (CloudSC's ``zqxfgr_safe2`` read beside the ``zqxfg[2]`` update, the other of
+    its two ``np.minimum`` calls isolated).
+    """
+    outer_sdfg = dace.SDFG("overwrite_through_the_nested_sdfg")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    for name in "ABC":
+        outer_sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
+
+    inner_sdfg = _make_nested_sdfg_simple()  # reads A, writes B := A + 1
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
+    a_in = state.add_access("A")
+    b = state.add_access("B")
+    state.add_edge(a_in, None, nsdfg, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(nsdfg, "B", b, None, dace.Memlet("B[0:10]"))
+
+    def mapped(label: str, src: dace_nodes.AccessNode, dst: str, code: str) -> None:
+        me, mx = state.add_map(label, {"__i": "1:9"})
+        tasklet = state.add_tasklet(label + "_t", {"__in"}, {"__out"}, code)
+        me.add_in_connector("IN_1")
+        me.add_out_connector("OUT_1")
+        mx.add_in_connector("IN_1")
+        mx.add_out_connector("OUT_1")
+        state.add_edge(src, None, me, "IN_1", dace.Memlet(f"{src.data}[1:9]"))
+        state.add_edge(me, "OUT_1", tasklet, "__in", dace.Memlet(f"{src.data}[__i]"))
+        state.add_edge(tasklet, "__out", mx, "IN_1", dace.Memlet(f"{dst}[__i]"))
+        state.add_edge(mx, "OUT_1", state.add_access(dst), None, dace.Memlet(f"{dst}[1:9]"))
+
+    mapped("comp_sibling_read", a_in, "C", "__out = __in * 3.0")
+    mapped("comp_overwrite", b, "A", "__out = __in * 2.0")
+    outer_sdfg.validate()
+    return outer_sdfg, state, nsdfg
+
+
+def test_isolate_refuses_to_leave_a_read_unordered_before_an_overwrite():
+    """Isolating the NSDFG would put the sibling's read of ``A`` and the overwrite of ``A`` in POST with no path
+    between them; the split is refused instead, and the inliners keep the state's ordering."""
+    import numpy as np
+
+    from dace.transformation.passes.fusion_inline import InlineSDFGs
+
+    sdfg, state, nsdfg_node = _make_overwrite_through_the_nested_sdfg_sdfg()
+    assert not isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node, test_if_applicable=True)
+
+    InlineSDFGs().apply_pass(sdfg, {})
+    sdfg.validate()
+    A = np.arange(10, dtype=np.float64) + 1.0
+    B = np.zeros(10, dtype=np.float64)
+    C = np.zeros(10, dtype=np.float64)
+    A0 = A.copy()
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C[1:9], A0[1:9] * 3.0), "the sibling read the overwritten A"
+    assert np.allclose(B[1:9], A0[1:9] + 1.0)
+    assert np.allclose(A[1:9], (A0[1:9] + 1.0) * 2.0)
+
+
+if __name__ == "__main__":
+    test_already_isolated_sdfg()
+    test_non_empty_pre_set()
+    test_non_empty_pre_set_2()
+    test_non_empty_post_set()
+    test_non_empty_post_set_2()
+    test_multi_path_islolation()
+    test_isolate_data_name_ordering()
+    test_isolate_data_name_ordering_pre_and_post()
+    test_isolate_stencil_swap_sibling_to_post()
+    test_isolate_stencil_swap_sibling_numerics()
+    test_isolate_keeps_an_overwrite_of_the_input_after_the_nested_sdfg()
+    test_isolate_refuses_to_leave_a_read_unordered_before_an_overwrite()

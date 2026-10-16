@@ -20,12 +20,12 @@ import pytest
 
 import dace
 from dace.dtypes import ScheduleType
-from dace.libraries.tileops import TileLoad
-from dace.libraries.tileops._pure_codegen import cutile_tile_dim_offsets
+from dace.libraries.tileops import TileGather
+from dace.libraries.tileops.cutile import cutile_tile_dim_offsets
 
 
 def _node_in_cutile_map(map_ranges: dict) -> tuple:
-    """Build a ``TileLoad`` inside a CuTile-scheduled map.
+    """Build a ``TileGather`` inside a CuTile-scheduled map.
 
     :param map_ranges: Map parameter -> range string (e.g. ``{"__i0": "0:64:8"}``).
     :returns: ``(node, state, sdfg)`` for calling the offset helper.
@@ -36,7 +36,7 @@ def _node_in_cutile_map(map_ranges: dict) -> tuple:
     sdfg.add_array("out", (128, ), dace.float64)
     sdfg.add_array("dst", (8, ), dace.float64, transient=True)
     me, mx = state.add_map("m", map_ranges, schedule=ScheduleType.CuTile)
-    node = TileLoad(name="L", widths=(8, ))
+    node = TileGather(name="L", widths=(8, ))
     state.add_node(node)
     src = state.add_access("src")
     dst = state.add_access("dst")

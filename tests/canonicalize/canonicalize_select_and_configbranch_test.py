@@ -15,15 +15,17 @@
 
 Both are value-preserving against numpy oracles.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -34,14 +36,13 @@ def _ncond_blocks(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
 
 
-# ----------------------------------------------------------------------
 # Data-dependent MERGE / upwind select feeding a gather
-# ----------------------------------------------------------------------
 
 
 @dace.program
-def upwind_select_gather(vn: dace.float64[N], field: dace.float64[N], idx1: dace.int32[N], idx2: dace.int32[N],
-                         out: dace.float64[N]):
+def upwind_select_gather(
+    vn: dace.float64[N], field: dace.float64[N], idx1: dace.int32[N], idx2: dace.int32[N], out: dace.float64[N]
+):
     """``out[je] = field[ MERGE(idx1, idx2, vn>=0) ]`` -- the upwind
     neighbour is chosen per edge by the sign of ``vn``. Data-dependent
     select; must stay inside the per-edge Map."""
@@ -73,7 +74,7 @@ def test_upwind_select_gather_value_preserving():
     sdfg.validate()
     out = np.zeros(n)
     sdfg(vn=vn, field=field, idx1=idx1, idx2=idx2, out=out, N=n)
-    assert np.allclose(out, exp), 'upwind select mis-canonicalized'
+    assert np.allclose(out, exp), "upwind select mis-canonicalized"
 
 
 def test_upwind_select_stays_inside_map():
@@ -83,14 +84,12 @@ def test_upwind_select_stays_inside_map():
     sdfg = upwind_select_gather.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) >= 1, 'the per-edge select must keep a Map'
+    assert _nmaps(sdfg) >= 1, "the per-edge select must keep a Map"
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert not top_conds, 'data-dependent per-edge select must not be hoisted to SDFG top level'
+    assert not top_conds, "data-dependent per-edge select must not be hoisted to SDFG top level"
 
 
-# ----------------------------------------------------------------------
 # Config-flag selecting between two different-array branches
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -105,21 +104,28 @@ def config_two_array_branches(a: dace.float64[N], outA: dace.float64[N], outB: d
             outB[i] = a[i] + 1.0
 
 
-def test_config_two_array_branches_value_preserving():
+#: Prefill for the output the taken branch does NOT write. The arms write DIFFERENT arrays, so a
+#: guard canonicalize mis-hoisted (or dropped) shows up as this sentinel being overwritten -- which
+#: a check on the written array alone cannot see.
+UNWRITTEN = -7.0
+
+
+@pytest.mark.parametrize("scheme, written, unwritten", [(1, "outA", "outB"), (0, "outB", "outA")])
+def test_config_two_array_branches_writes_only_the_selected_output(scheme, written, unwritten):
     n = 12
     rng = np.random.default_rng(61)
     a = rng.standard_normal(n)
-    for scheme in (1, 0):
-        sdfg = config_two_array_branches.to_sdfg(simplify=True)
-        canonicalize(sdfg, validate=True)
-        sdfg.validate()
-        outA = np.zeros(n)
-        outB = np.zeros(n)
-        sdfg(a=a, outA=outA, outB=outB, scheme=np.int32(scheme), N=n)
-        if scheme == 1:
-            assert np.allclose(outA, a * 2.0), f'outA mismatch scheme={scheme}'
-        else:
-            assert np.allclose(outB, a + 1.0), f'outB mismatch scheme={scheme}'
+    sdfg = config_two_array_branches.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    outputs = {"outA": np.full(n, UNWRITTEN), "outB": np.full(n, UNWRITTEN)}
+    sdfg(a=a, scheme=np.int32(scheme), N=n, **outputs)
+
+    expected = a * 2.0 if written == "outA" else a + 1.0
+    assert np.allclose(outputs[written], expected), f"{written} mismatch at scheme={scheme}"
+    assert np.array_equal(outputs[unwritten], np.full(n, UNWRITTEN)), (
+        f"the un-taken branch wrote {unwritten} at scheme={scheme}"
+    )
 
 
 def test_config_two_array_branches_guard_present():
@@ -128,9 +134,14 @@ def test_config_two_array_branches_guard_present():
     correctness is the primary contract."""
     sdfg = config_two_array_branches.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
-    assert _ncond_blocks(sdfg) >= 1, 'the config-flag guard must survive to select the two branches'
+    assert _ncond_blocks(sdfg) == 1, f"expected exactly the one config-flag guard, got {_ncond_blocks(sdfg)}"
+    assert [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)], "the invariant guard did not hoist"
+    assert _nmaps(sdfg) == 2, f"each arm must keep its own parallel nest; got {_nmaps(sdfg)}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

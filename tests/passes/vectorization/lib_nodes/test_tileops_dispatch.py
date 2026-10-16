@@ -1,89 +1,64 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Truth-table tests for :func:`select_tile_implementation` (``_dispatch``).
-
-Locks the dispatch semantics: ``K >= 2`` always resolves to ``'pure'`` for
-EVERY ``target_isa`` (including ``CUTILE`` — cuTile lowering stamps
-``implementation = 'cutile'`` directly and never goes through dispatch);
-``K == 1`` maps ``target_isa`` through ``_ISA_TO_IMPL`` (``AUTO`` resolves
-via :func:`detect_host_isa`), falling back to ``'pure'`` when the ISA is
-unknown or the node does not define that implementation.
-"""
-from typing import Tuple
+"""Implementation selection for CPU and cuTile nodes."""
 
 import pytest
 
+import dace
 from dace.libraries.tileops import TileBinop, TileMaskGen
-from dace.libraries.tileops._dispatch import (
-    _ISA_TO_IMPL,
-    detect_host_isa,
-    select_tile_implementation,
-)
+from dace.libraries.tileops import dispatch
+from dace.libraries.tileops.dispatch import ISA, ISA_TO_IMPL, detect_host_isa, select_tile_implementation
 
 
-def _binop(widths: Tuple[int, ...], target_isa: str) -> TileBinop:
-    """Build a minimal :class:`TileBinop` with the given dispatch inputs.
+def wired_binop(widths: tuple[int, ...], isa: ISA) -> tuple[TileBinop, dace.SDFGState]:
+    sdfg = dace.SDFG("tile_dispatch")
+    state = sdfg.add_state()
+    for name in ("A", "B", "C"):
+        sdfg.add_array(name, widths, dace.float64, transient=True, storage=dace.StorageType.Register)
+    node = TileBinop("binop", widths, op="+")
+    node.target_isa = isa
+    state.add_node(node)
+    for name, connector in (("A", "_a"), ("B", "_b")):
+        state.add_edge(state.add_read(name), None, node, connector, dace.Memlet.from_array(name, sdfg.arrays[name]))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet.from_array("C", sdfg.arrays["C"]))
+    return node, state
 
-    :param widths: Per-dim tile widths (sets ``K = len(widths)``).
-    :param target_isa: Value stamped on ``node.target_isa``.
-    :returns: A standalone node (dispatch needs no SDFG context).
-    """
-    node = TileBinop(name="tb", widths=widths, op="+")
-    node.target_isa = target_isa
-    return node
 
-
-@pytest.mark.parametrize("target_isa", ["AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUTILE"])
+@pytest.mark.parametrize("isa", list(ISA))
 @pytest.mark.parametrize("widths", [(8, 4), (4, 4, 2)])
-def test_k_ge_2_is_always_pure(widths: Tuple[int, ...], target_isa: str):
-    """K >= 2 resolves to ``'pure'`` for every ISA — including ``CUTILE``."""
-    assert select_tile_implementation(_binop(widths, target_isa)) == "pure"
+def test_multidimensional_selection(widths: tuple[int, ...], isa: ISA):
+    node, state = wired_binop(widths, isa)
+    assert select_tile_implementation(node, state) == ("cutile" if isa is ISA.CUTILE else "pure")
 
 
-@pytest.mark.parametrize(
-    "target_isa, expected",
-    [
-        ("AVX512", "avx512"),
-        ("AVX2", "avx2"),
-        ("ARM_SVE", "sve"),
-        ("ARM_NEON", "neon"),
-        ("SCALAR", "scalar"),
-        ("CUTILE", "cutile"),
-    ],
-)
-def test_k1_maps_isa_to_node_implementation(target_isa: str, expected: str):
-    """K == 1 maps each known ISA to its per-node implementation name
-    (``TileBinop`` defines all of them, so no fallback kicks in)."""
-    assert select_tile_implementation(_binop((8, ), target_isa)) == expected
+@pytest.mark.parametrize("isa, expected", [*ISA_TO_IMPL.items(), (ISA.CUTILE, "cutile")])
+def test_single_dimensional_selection(isa: ISA, expected: str, monkeypatch):
+    # Selection only: no instructions from a foreign architecture are executed.
+    monkeypatch.setattr(dispatch, "host_supported_isas", lambda: frozenset(ISA))
+    node, state = wired_binop((8,), isa)
+    assert select_tile_implementation(node, state) == expected
 
 
-def test_k1_unknown_isa_falls_back_to_pure():
-    """K == 1 with an ISA outside ``_ISA_TO_IMPL`` falls back to ``'pure'``."""
-    assert select_tile_implementation(_binop((8, ), "FOO")) == "pure"
+def test_unknown_isa_is_rejected():
+    node, _ = wired_binop((8,), ISA.SCALAR)
+    with pytest.raises(TypeError):
+        node.target_isa = "FOO"
 
 
-def test_k1_unstamped_node_dispatches_as_scalar():
-    """A freshly constructed node (orchestrator never stamped ``target_isa``)
-    carries the property default ``'SCALAR'`` and dispatches accordingly."""
-    node = TileBinop(name="tb", widths=(8, ), op="+")
-    assert node.target_isa == "SCALAR"
-    assert select_tile_implementation(node) == "scalar"
+def test_default_is_scalar():
+    node, state = wired_binop((8,), ISA.SCALAR)
+    assert TileBinop("default", (8,)).target_isa is ISA.SCALAR
+    assert select_tile_implementation(node, state) == "scalar"
 
 
-def test_k1_auto_resolves_via_host_isa():
-    """``AUTO`` resolves through :func:`detect_host_isa`; on ``TileBinop``
-    (which defines every per-ISA expansion) the result is exactly the
-    host ISA's implementation name."""
-    expected = _ISA_TO_IMPL[detect_host_isa()]
-    assert select_tile_implementation(_binop((8, ), "AUTO")) == expected
+def test_auto_uses_host_isa():
+    node, state = wired_binop((8,), ISA.AUTO)
+    assert select_tile_implementation(node, state) == ISA_TO_IMPL[detect_host_isa()]
 
 
-def test_k1_cutile_on_node_with_cutile_impl_resolves_cutile():
-    """K == 1 + CUTILE on a node that defines ``'cutile'`` resolves to it,
-    even when the node lacks every CPU-ISA expansion (``TileMaskGen``)."""
-    node = TileMaskGen(name="tmg", widths=(8, ), iter_vars=("i", ), global_ubs=("N", ))
-    node.target_isa = "CUTILE"
-    assert select_tile_implementation(node) == "cutile"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_cutile_mask_selection():
+    sdfg = dace.SDFG("mask_dispatch")
+    state = sdfg.add_state()
+    node = TileMaskGen("mask", (8,), iter_vars=("i",), global_ubs=("N",))
+    node.target_isa = ISA.CUTILE
+    state.add_node(node)
+    assert select_tile_implementation(node, state) == "cutile"

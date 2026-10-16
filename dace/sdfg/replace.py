@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains functionality to perform find-and-replace of symbols in SDFGs. """
+"""Contains functionality to perform find-and-replace of symbols in SDFGs."""
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from collections.abc import Iterable
 from copy import deepcopy
+from typing import TYPE_CHECKING, Any, Optional
 
 import sympy as sp
 
@@ -18,10 +19,23 @@ from dace.sdfg import nodes
 if TYPE_CHECKING:
     from dace.sdfg.state import StateSubgraphView
 
-tokenize_cpp = re.compile(r'\b\w+\b')
+tokenize_cpp = re.compile(r"\b\w+\b")
+
+
+def _symbol_name(sym) -> str:
+    """``str(sym)``, without invoking the SymPy printer for plain symbols."""
+    if type(sym) is symbolic.symbol or type(sym) is sp.Symbol:
+        return sym.name
+    return str(sym)
 
 
 def _internal_replace(sym, symrepl):
+    # A SymExpr is a (exact, over-approximation) pair, not a sympy.Basic, so the guard below
+    # would hand it back untouched. Strip-mined bounds are SymExprs and sit in the same range
+    # tuple as plain ones, so skipping them renames a range's start and leaves its end naming
+    # the old symbol. Rewrite both halves; SymExpr collapses back when they agree.
+    if isinstance(sym, symbolic.SymExpr):
+        return symbolic.SymExpr(_internal_replace(sym.expr, symrepl), _internal_replace(sym.approx, symrepl))
     if not isinstance(sym, sp.Basic):
         return sym
 
@@ -29,19 +43,69 @@ def _internal_replace(sym, symrepl):
     fsyms = set(map(str, sym.free_symbols))
     # TODO/NOTE: Could we return the generated strings below as free symbols from Attr instead or ther will be issues?
     for s in set(fsyms):
-        if '.' in s:
-            tokens = s.split('.')
-            for i in range(1, len(tokens)):
-                fsyms.add('.'.join(tokens[:i]))
-    newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
+        if "." in s:
+            tokens = s.split(".")
+            fsyms.update(".".join(tokens[:i]) for i in range(1, len(tokens)))
+    newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym
 
     return sym.subs(newrepl)
 
 
+def symbol_names(exprs: Iterable[Any]) -> dict[str, None] | None:
+    """Names of every Symbol node in ``exprs``, bound or free, including the container of a ``Subscript``.
+
+    :param exprs: SymPy expressions, ``SymExpr`` pairs and plain numbers.
+    :return: The names, or ``None`` when an expression is of a type whose symbols cannot be listed.
+    """
+    names: dict[str, None] = {}
+    for expr in exprs:
+        if isinstance(expr, symbolic.SymExpr):
+            names.update(dict.fromkeys(atom.name for atom in expr.expr.atoms(sp.Symbol)))
+            names.update(dict.fromkeys(atom.name for atom in expr.approx.atoms(sp.Symbol)))
+        elif isinstance(expr, sp.Basic):
+            names.update(dict.fromkeys(atom.name for atom in expr.atoms(sp.Symbol)))
+        elif not isinstance(expr, (int, float)):
+            return None
+    return names
+
+
+def replacements_for(exprs: Iterable[Any], symrepl: dict[Any, Any]) -> dict[Any, Any]:
+    """The entries of ``symrepl`` that ``subs`` can apply to any of ``exprs``, in the order of ``symrepl``.
+
+    ``subs`` applies the entries one after another, so an entry counts if its key names a symbol of an expression or
+    of a value an earlier counted entry brings in. The dropped entries change nothing, so ``subs`` of the result
+    equals ``subs(symrepl)``. A key that is not a Symbol, a value that is a string, or an expression whose symbols
+    cannot be listed keeps the whole mapping.
+
+    :param exprs: The expressions ``symrepl`` is about to be substituted into.
+    :param symrepl: The symbolic replacement mapping.
+    :return: The entries that can apply; empty when none can.
+    """
+    if any(not isinstance(key, sp.Symbol) or isinstance(value, str) for key, value in symrepl.items()):
+        return symrepl
+    names = symbol_names(exprs)
+    if names is None:
+        return symrepl
+    chosen: dict[Any, None] = {}
+    grew = True
+    while grew:
+        grew = False
+        for key, value in symrepl.items():
+            if key in chosen or key.name not in names:
+                continue
+            value_names = symbol_names((value,))
+            if value_names is None:
+                return symrepl
+            names.update(value_names)
+            chosen[key] = None
+            grew = True
+    return {key: value for key, value in symrepl.items() if key in chosen}
+
+
 def _replsym(symlist, symrepl):
-    """ Helper function to replace symbols in various symbolic expressions. """
+    """Helper function to replace symbols in various symbolic expressions."""
     if symlist is None:
         return None
     if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
@@ -54,9 +118,20 @@ def _replsym(symlist, symrepl):
     return symlist
 
 
-def replace_dict(subgraph: 'StateSubgraphView',
-                 repl: Dict[str, str],
-                 symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
+def symbolic_replacements(repl: dict[str, Any], symbols: dict[str, "dace.dtypes.typeclass"]) -> dict:
+    """``repl`` as symbolic expressions, each name taking its dtype from ``symbols`` (its declaring SDFG)."""
+    with symbolic.serialization_symbol_dtypes(symbols, inherit=True):
+        return {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(v, str) else v
+            for k, v in repl.items()
+        }
+
+
+def replace_dict(
+    subgraph: "StateSubgraphView",
+    repl: dict[str, str],
+    symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
+):
     """
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
 
@@ -64,11 +139,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+    symrepl = symrepl or symbolic_replacements(repl, subgraph.sdfg.symbols)
 
     # Replace AccessNode with tasklet with constant value
     sdfg = subgraph.sdfg
@@ -91,21 +162,24 @@ def replace_dict(subgraph: 'StateSubgraphView',
                         repl_val = symrepl[node_data_symbolic]
                         # Skip when the replacement is a sympy symbol / expression (representing
                         # another array name, not a literal constant) -- wrapping in a constant
-                        # tasklet is the wrong transformation, and ``dtypes.typeclass(type(...))``
-                        # would raise ``KeyError`` on the sympy class anyway. The branch is for
-                        # literal-constant scalar inputs only.
-                        if isinstance(repl_val, (sp.Basic, dace.symbolic.SymExpr)):
+                        # tasklet is the wrong transformation. The branch is for literal-constant
+                        # scalar inputs only, which a sympy number (``pystr_to_symbolic('5')``) is too.
+                        if isinstance(repl_val, dace.symbolic.SymExpr) or (
+                            isinstance(repl_val, sp.Basic) and not repl_val.is_number
+                        ):
                             continue
-                        tasklet = state.add_tasklet(name="constant",
-                                                    inputs={},
-                                                    outputs={f'{node.data}_value'},
-                                                    code=f'{node.data}_value = {repl_val}')
-                        access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
-                                                                 dtypes.typeclass(type(repl_val)),
-                                                                 find_new_name=True)
+                        tasklet = state.add_tasklet(
+                            name="constant",
+                            inputs={},
+                            outputs={f"{node.data}_value"},
+                            code=f"{node.data}_value = {repl_val}",
+                        )
+                        # Type the container like the scalar it replaces, so connectors below keep matching
+                        access_node_name, _ = sdfg.add_transient(f"{node.data}", [1], desc.dtype, find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
-                        state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
-                                       Memlet.simple(access_node_name, '0'))
+                        state.add_edge(
+                            tasklet, f"{node.data}_value", tmp_an, None, Memlet.simple(access_node_name, "0")
+                        )
                         # Replace all edges that were passing through the original AccessNode with the new AccessNode which is
                         # connected to the tasklet. This is done to avoid ConstantPropagation from replacing the edges' data
                         # with the constant value, which would break the SDFG.
@@ -120,21 +194,23 @@ def replace_dict(subgraph: 'StateSubgraphView',
 
     # Replace in node properties
     for node in subgraph.nodes():
-        replace_properties_dict(node, repl, symrepl)
+        replace_properties_dict(node, repl, symrepl, sdfg)
 
     # Replace in memlets
     for edge in subgraph.edges():
         if edge.data.data in repl:
             edge.data.data = str(repl[edge.data.data])
-        if (edge.data.subset is not None and repl.keys() & edge.data.subset.free_symbols):
+        if edge.data.subset is not None and repl.keys() & edge.data.subset.free_symbols:
             edge.data.subset = _replsym(edge.data.subset, symrepl)
-        if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
+        if edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols:
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        if symrepl.keys() & edge.data.volume.free_symbols:
+        # By name, like the subsets above: symbol identity includes the dtype, and the keys are minted
+        # from bare names, so an intersection of instances would miss the very symbols to replace.
+        if repl.keys() & set(map(str, edge.data.volume.free_symbols)):
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
-def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
+def replace(subgraph: "StateSubgraphView", name: str, new_name: str):
     """
     Finds and replaces all occurrences of a symbol or array in the given subgraph.
 
@@ -147,27 +223,66 @@ def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
     replace_dict(subgraph, {name: new_name})
 
 
-def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], node: Optional[Any] = None):
+def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> str | None:
+    """C type ``name`` is declared with in ``sdfg``: a symbol's type, or a scalar's. ``None`` when
+    ``name`` is neither, as a map parameter is."""
+    if sdfg is None:
+        return None
+    if name in sdfg.symbols:
+        return sdfg.symbols[name].ctype
+    desc = sdfg.arrays.get(name)
+    if isinstance(desc, data.Scalar):
+        return desc.dtype.ctype
+    return None
+
+
+def inferred_ctype(expression: Any, sdfg: Optional["dace.SDFG"]) -> str | None:
+    """C type of ``expression`` from the types ``sdfg`` declares for the names in it; ``None`` when one of them
+    is undeclared (a map parameter) or the expression has no inferable type."""
+    if sdfg is None:
+        return None
+    from dace.sdfg.type_inference import infer_expr_type  # dace.sdfg.type_inference imports dace.sdfg
+
+    expr = symbolic.pystr_to_symbolic(expression) if isinstance(expression, str) else expression
+    if not all(str(free) in sdfg.symbols for free in getattr(expr, "free_symbols", ())):
+        return None
+    try:
+        dtype = infer_expr_type(str(expression), sdfg.symbols)
+    except (SyntaxError, TypeError, ValueError, KeyError):
+        return None
+    return dtype.ctype if isinstance(dtype, dtypes.typeclass) else None
+
+
+def replace_in_codeblock(
+    codeblock: properties.CodeBlock,
+    repl: dict[str, str],
+    node: Any | None = None,
+    sdfg: Optional["dace.SDFG"] = None,
+):
     code = codeblock.code
     if isinstance(code, str) and code:
         lang = codeblock.language
         if lang is dtypes.Language.CPP:  # Replace in C++ code
-            prefix = ''
+            prefix = ""
             tokenized = tokenize_cpp.findall(code)
             active_replacements = set()
             for name, new_name in repl.items():
                 if name not in tokenized:
                     continue
-                new_code = cppunparse.pyexpr2cpp(new_name)
-                if new_code == name:
-                    # Textual no-op: the replacement prints to the same token as the
-                    # name (e.g. rebuilding a symbol with only a different SymPy
-                    # assumption such as ``nonnegative=True``). Emitting the shadow
-                    # ``auto k = k;`` would be a self-referential declaration that
-                    # does not compile ("use of 'k' before deduction of 'auto'").
+                new_text = cppunparse.pyexpr2cpp(new_name)
+                if new_text == name:
+                    # A same-name rebind -- a symbol re-minted to carry new sympy assumptions
+                    # (``AssumeSymbolConstraints``) keeps its spelling. The C++ already names the
+                    # right thing, and shadowing it would emit ``int inc = inc;``: a local
+                    # initialized from ITSELF, i.e. an uninitialized read.
                     continue
-                # Use local variables and shadowing to replace
-                replacement = f'auto {name} = {new_code};\n'
+                # Shadow with the declared type: ``auto`` deduces from the replacement expression,
+                # so ``i = 2`` would narrow an int64 symbol to int. A name the SDFG does not declare
+                # (a nested SDFG's symbol, replaced by its mapping as it is inlined: einsum's ``M``
+                # by ``NQ * NR``) takes the type of the expression it becomes, spelled. A map
+                # parameter has no declared type here, and ``auto`` then copies the index variable's own.
+                ctype = declared_ctype(name, sdfg) or inferred_ctype(new_name, sdfg) or "auto"
+                replacement = f"{ctype} {name} = {new_text};\n"
                 prefix = replacement + prefix
                 active_replacements.add(name)
 
@@ -178,8 +293,9 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
                     node.ignored_symbols = node.ignored_symbols.union(active_replacements)
 
         else:
-            warnings.warn('Replacement of %s with %s was not made '
-                          'for string tasklet code of language %s' % (name, new_name, lang))
+            warnings.warn(
+                f"Replacement of {name} with {new_name} was not made for string tasklet code of language {lang}"
+            )
 
     elif codeblock.code is not None:
         afr = ASTFindReplace(repl)
@@ -187,14 +303,58 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
             afr.visit(stmt)
 
 
-def replace_properties_dict(node: Any,
-                            repl: Dict[str, str],
-                            symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        for symname, new_name in repl.items()
-    }
+def replace_list_property_item(
+    item: Any, element_type: type, repl: dict[str, str], symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType]
+) -> Any:
+    """
+    Applies a replacement to a single element of a ``ListProperty``.
+
+    List properties do not only hold symbolic expressions (e.g., booleans, C declarations, or arbitrary
+    objects), so the replacement is dispatched on the declared element type.
+
+    :param item: The list element to replace in.
+    :param element_type: The list property's declared element type.
+    :param repl: Mapping from names to replacements.
+    :param symrepl: Symbolic version of ``repl``.
+    :return: The replaced element, or ``item`` itself if nothing applies.
+    """
+    # ``bool`` is a subclass of ``int``, so check the value and not only the declared type
+    if isinstance(item, bool) or element_type is bool:
+        return item
+
+    if element_type is str:
+        # String lists hold names (e.g., ``Map.params``): replace whole identifiers only
+        if not isinstance(item, str) or item not in repl:
+            return item
+        new_name = str(repl[item])
+        return new_name if new_name.isidentifier() else item
+
+    is_symbolic_type = element_type is symbolic.SymExpr or (
+        isinstance(element_type, type) and issubclass(element_type, sp.Basic)
+    )
+    if element_type in (int, float) or is_symbolic_type:
+        try:
+            newitem = symbolic.pystr_to_symbolic(str(item))
+            newitem = newitem.subs(replacements_for((newitem,), symrepl))
+        except (AttributeError, TypeError, ValueError, SyntaxError, sp.SympifyError):
+            return item
+        if element_type in (int, float):
+            try:
+                return element_type(newitem)
+            except (AttributeError, TypeError, ValueError):
+                return item
+        return newitem
+
+    return item
+
+
+def replace_properties_dict(
+    node: Any,
+    repl: dict[str, str],
+    symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
+    sdfg: Optional["dace.SDFG"] = None,
+):
+    symrepl = symrepl or symbolic_replacements(repl, sdfg.symbols if sdfg is not None else {})
 
     for propclass, propval in node.properties():
         if propval is None:
@@ -203,38 +363,53 @@ def replace_properties_dict(node: Any,
         if isinstance(propclass, properties.SymbolicProperty):
             # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
-                setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
+                setattr(node, pname, _internal_replace(symbolic.pystr_to_symbolic(str(propval)), symrepl))
             else:
-                setattr(node, pname, propval.subs(symrepl))
+                setattr(node, pname, _internal_replace(propval, symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])
-        elif isinstance(propclass, (properties.RangeProperty, properties.ShapeProperty)):
+        elif isinstance(propclass, properties.RangeProperty):
+            # A Range is mutable: substitute in place, which keeps its tile sizes.
+            bounds = [
+                b
+                for (begin, end, step), tile in zip(propval.ranges, propval.tile_sizes)
+                for b in (begin, end, step, tile)
+            ]
+            range_repl = replacements_for(bounds, symrepl)
+            if range_repl:
+                propval.replace(range_repl)
+        elif isinstance(propclass, properties.ShapeProperty):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
             # Don't replace variables that appear as an input or an output
             # connector, as this should shadow the outer declaration.
             reduced_repl = set(repl.keys())
-            if hasattr(node, 'in_connectors'):
+            if isinstance(node, nodes.Node):
                 reduced_repl -= set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             reduced_repl = {k: repl[k] for k in reduced_repl}
-            replace_in_codeblock(propval, reduced_repl, node)
-        elif (isinstance(propclass, properties.DictProperty) and pname == 'symbol_mapping'):
+            replace_in_codeblock(propval, reduced_repl, node, sdfg)
+        elif isinstance(propclass, properties.DictProperty) and pname == "symbol_mapping":
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                try:
-                    propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
-                except AttributeError:  # If the symbolified value has no subs
-                    pass
+                # A string round trip re-mints every symbol in the value with the default dtype and no assumptions.
+                if not isinstance(sym_mapping, sp.Basic):
+                    sym_mapping = symbolic.pystr_to_symbolic(str(sym_mapping))
+                propval[symname] = _internal_replace(sym_mapping, symrepl)
+        elif isinstance(propclass, properties.ListProperty):
+            newval = [replace_list_property_item(item, propclass.element_type, repl, symrepl) for item in propval]
+            if any(new is not old for new, old in zip(newval, propval)):
+                setattr(node, pname, newval)
 
 
-def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str,
-                       new_name: str):
+def replace_properties(
+    node: Any, symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str, new_name: str
+):
     replace_properties_dict(node, {name: new_name}, symrepl)
 
 
-def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
-    """ Reduced form of replace which only replaces data descriptor names. """
+def replace_datadesc_names(sdfg: "dace.SDFG", repl: dict[str, str]):
+    """Reduced form of replace which only replaces data descriptor names."""
     # Replace in descriptor repository
     for aname, aval in list(sdfg.arrays.items()):
         if aname in repl:
@@ -255,11 +430,11 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
                 for node in block.data_nodes():
                     if node.data in repl:
                         node.data = repl[node.data]
-                    elif '.' in node.data:
+                    elif "." in node.data:
                         # Handle structure member accesses where the structure name is being replaced.
-                        parts = node.data.split('.')
+                        parts = node.data.split(".")
                         if parts[0] in repl:
-                            node.data = repl[parts[0]] + '.' + '.'.join(parts[1:])
+                            node.data = repl[parts[0]] + "." + ".".join(parts[1:])
 
                 # Replace in memlets
                 for edge in block.edges():
@@ -267,11 +442,11 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
                         continue
                     if edge.data.data in repl:
                         edge.data.data = repl[edge.data.data]
-                    elif '.' in edge.data.data:
+                    elif "." in edge.data.data:
                         # Handle structure member accesses where the structure name is being replaced.
-                        parts = edge.data.data.split('.')
+                        parts = edge.data.data.split(".")
                         if parts[0] in repl:
-                            edge.data.data = repl[parts[0]] + '.' + '.'.join(parts[1:])
+                            edge.data.data = repl[parts[0]] + "." + ".".join(parts[1:])
 
         # Replace in loop or branch conditions:
         cf.replace_meta_accesses(repl)

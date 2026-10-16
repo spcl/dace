@@ -4,17 +4,16 @@
 Manipulate Python expression / statement strings (CodeBlock bodies, interstate-edge assignment
 RHSs, loop and conditional-block conditions), round-tripped through ``ast.unparse``.
 """
-from typing import Optional, Set
 
 import dace
+from dace.sdfg.narrowing import as_basic
 from dace.symbolic import DaceSympyPrinter
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
-def offset_symbol_in_expression(expr_str: str,
-                                symbol_to_offset: str,
-                                offset: int,
-                                arrays: Optional[Set[str]] = None) -> str:
+def offset_symbol_in_expression(
+    expr_str: str, symbol_to_offset: str, offset: int, arrays: set[str] | None = None
+) -> str:
     """Return a new expression string with a symbol incremented by an offset.
 
     :param expr_str: The original expression as a string.
@@ -30,7 +29,7 @@ def offset_symbol_in_expression(expr_str: str,
         raise Exception(expr_str)
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
-    for free_sym in expr.free_symbols:
+    for free_sym in as_basic(expr).free_symbols:
         if str(free_sym) == symbol_to_offset:
             sym_to_change = free_sym
             break
@@ -41,11 +40,9 @@ def offset_symbol_in_expression(expr_str: str,
     return DaceSympyPrinter(arrays if arrays is not None else set()).doprint(offset_expr)
 
 
-def use_laneid_symbol_in_expression(expr_str: str,
-                                    symbol_to_offset: str,
-                                    offset: int,
-                                    vector_map_param: str = None,
-                                    arrays: Optional[Set[str]] = None) -> str:
+def use_laneid_symbol_in_expression(
+    expr_str: str, symbol_to_offset: str, offset: int, vector_map_param: str = None, arrays: set[str] | None = None
+) -> str:
     """Return a new expression string with a symbol replaced by its lane-id variant.
 
     ``sym1`` -> ``sym1_laneid_<offset>``, except ``vector_map_param`` -> ``(sym + offset)``.
@@ -64,7 +61,7 @@ def use_laneid_symbol_in_expression(expr_str: str,
         raise Exception(expr_str)
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
-    for free_sym in expr.free_symbols:
+    for free_sym in as_basic(expr).free_symbols:
         if str(free_sym) == symbol_to_offset:
             sym_to_change = free_sym
             break

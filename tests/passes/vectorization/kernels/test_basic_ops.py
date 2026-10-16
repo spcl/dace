@@ -1,23 +1,23 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
 # Un-frozen 2026-06-10 (walker-primary path complete). ReplaceSTD* imports + apply_pass calls
 # are stripped from log/exp/pow tests since the walker-primary pipeline handles log/exp/pow
 # directly (TileUnop("log") -> std::log, TileBinop("**") -> std::pow). Some failures expected
 # while we iterate.
-# pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration")
 import math
-import dace
-import numpy
-import pytest
+
 # Walker-primary path handles log / exp / pow directly via TileUnop / TileBinop;
 # ReplaceSTD* legacy passes are intentionally NOT applied in this file.
-from math import log, exp, pow  # noqa: A004 — used inside @dace.program bodies
+from math import exp, log, pow  # noqa: A004 — used inside @dace.program bodies
 
+import numpy
+import pytest
+
+import dace
 from tests.passes.vectorization.helpers.harness import (
-    run_vectorization_test,
     N,
     S,
+    run_vectorization_test,
 )
 
 # Core elementwise/op kernels — also exercise the K-dim tile-op config.
@@ -29,7 +29,7 @@ def add_sq_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N]:
-        B[i, j] = 3 * B[i, j]**2.0 + 2.0
+        B[i, j] = 3 * B[i, j] ** 2.0 + 2.0
 
 
 @dace.program
@@ -133,49 +133,56 @@ def test_memset_4d(remainder_strategy):
     A = numpy.random.random((N, N, N, N))
     c = 0.8
 
-    run_vectorization_test(dace_func=memset_4d,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                           },
-                           vector_width=8,
-                           sdfg_name="memset_4d",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=memset_4d,
+        arrays={
+            "A": A,
+        },
+        params={
+            "N": N,
+        },
+        vector_width=8,
+        sdfg_name="memset_4d",
+        canon_lift_copy=False,
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_v_const_subs_4d(remainder_strategy):
     N = 8
     A = numpy.random.random((N, N, N, N))
 
-    run_vectorization_test(dace_func=v_const_subs_4d,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                           },
-                           vector_width=8,
-                           sdfg_name="v_const_subs_4d",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=v_const_subs_4d,
+        arrays={
+            "A": A,
+        },
+        params={
+            "N": N,
+        },
+        vector_width=8,
+        sdfg_name="v_const_subs_4d",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_v_const_subs_4d_indirect_access(remainder_strategy):
     N = 8
     A = numpy.random.random((N, N, N, N))
 
-    run_vectorization_test(dace_func=v_const_subs_4d_indirect_access,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                               'c': 0,
-                           },
-                           vector_width=8,
-                           sdfg_name="v_const_subs_4d_indirect_access",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=v_const_subs_4d_indirect_access,
+        arrays={
+            "A": A,
+        },
+        params={
+            "N": N,
+            "c": 0,
+        },
+        vector_width=8,
+        sdfg_name="v_const_subs_4d_indirect_access",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def foo(A):
@@ -203,23 +210,22 @@ def max_with_constant_reversed_order(A: dace.float64[N, N], c: dace.float64):
             A[i, j] = max(A[i, j], c)
 
 
-@pytest.mark.simple  # canonical: test_max_with_constant_reversed_order (operand-order variant)
+# Overlaps test_max_with_constant_reversed_order (operand-order variant)
 def test_max_with_constant(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     c = 0.8
 
-    run_vectorization_test(dace_func=max_with_constant,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                               'c': c
-                           },
-                           vector_width=8,
-                           sdfg_name="max_with_constant",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=max_with_constant,
+        arrays={
+            "A": A,
+        },
+        params={"N": N, "c": c},
+        vector_width=8,
+        sdfg_name="max_with_constant",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_max_with_constant_reversed_order(remainder_strategy):
@@ -227,97 +233,104 @@ def test_max_with_constant_reversed_order(remainder_strategy):
     A = numpy.random.random((N, N))
     c = 0.8
 
-    run_vectorization_test(dace_func=max_with_constant_reversed_order,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                               'c': c
-                           },
-                           vector_width=8,
-                           sdfg_name="max_with_constant_reversed_order",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=max_with_constant_reversed_order,
+        arrays={
+            "A": A,
+        },
+        params={"N": N, "c": c},
+        vector_width=8,
+        sdfg_name="max_with_constant_reversed_order",
+        remainder_strategy=remainder_strategy,
+    )
 
 
-@pytest.mark.simple  # canonical: test_vsubs_two_cpu (2-input variant exercises more)
+# Overlaps test_vsubs_two_cpu (2-input variant exercises more)
 def test_vsubs_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=vsubs_cpu,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="vsubs_one",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=vsubs_cpu,
+        arrays={"A": A, "B": B},
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="vsubs_one",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_memset(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=memset,
-                           arrays={
-                               'A': A,
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="memset",
-                           exact=0.0,
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=memset,
+        arrays={
+            "A": A,
+        },
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="memset",
+        exact=0.0,
+        canon_lift_copy=False,
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_memset_with_fuse_and_copyin_enabled(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=memset,
-                           arrays={
-                               'A': A,
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="memset_with_fuse_and_copy_in_enabled",
-                           insert_copies=True,
-                           exact=0.0,
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=memset,
+        arrays={
+            "A": A,
+        },
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="memset_with_fuse_and_copy_in_enabled",
+        exact=0.0,
+        canon_lift_copy=False,
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=nested_memset,
-                           arrays={
-                               'A': A,
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
-                           insert_copies=True,
-                           simplify=False,
-                           exact=0.0,
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=nested_memset,
+        arrays={
+            "A": A,
+        },
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
+        simplify=False,
+        exact=0.0,
+        canon_lift_copy=False,
+        remainder_strategy=remainder_strategy,
+    )
 
 
-@pytest.mark.simple  # canonical: lib_nodes/test_tile_unop_pure covers exp
+# Overlaps lib_nodes/test_tile_unop_pure covers exp
 def test_vexp_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=vexp_cpu,
-                           arrays={
-                               'A': A,
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="vexp_one",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=vexp_cpu,
+        arrays={
+            "A": A,
+        },
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="vexp_one",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_vsubs_two_cpu(remainder_strategy):
@@ -325,56 +338,58 @@ def test_vsubs_two_cpu(remainder_strategy):
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=vsubs_two_cpu,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="vsubs_two",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=vsubs_two_cpu,
+        arrays={"A": A, "B": B},
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="vsubs_two",
+        remainder_strategy=remainder_strategy,
+    )
 
 
-@pytest.mark.simple  # canonical: test_v_const_subs_two_cpu (2-input variant)
+# Overlaps test_v_const_subs_two_cpu (2-input variant)
 def test_v_const_subs_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=v_const_subs_cpu,
-                           arrays={'A': A},
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="v_const_subs_one",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=v_const_subs_cpu,
+        arrays={"A": A},
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="v_const_subs_one",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_v_const_subs_two_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=v_const_subs_two_cpu,
-                           arrays={'A': A},
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="v_const_subs_two",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=v_const_subs_two_cpu,
+        arrays={"A": A},
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="v_const_subs_two",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_simple_cpu(remainder_strategy, vectorize_config):
     A = numpy.random.random((64, 64))
     B = numpy.random.random((64, 64))
 
-    run_vectorization_test(dace_func=add_sq_cpu,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={'N': 64},
-                           vector_width=4,
-                           sdfg_name="simple_cpu",
-                           remainder_strategy=remainder_strategy,
-                           vectorize_config=vectorize_config)
+    run_vectorization_test(
+        dace_func=add_sq_cpu,
+        arrays={"A": A, "B": B},
+        params={"N": 64},
+        vector_width=4,
+        sdfg_name="simple_cpu",
+        remainder_strategy=remainder_strategy,
+        vectorize_config=vectorize_config,
+    )
 
 
 @dace.program
@@ -394,61 +409,61 @@ def add_scalar_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c1: dace
         A[i, j] = A[i, j] + c5
 
 
-@pytest.mark.simple  # canonical: axpy / TSVC s000 family covers this
+# Overlaps axpy / TSVC s000 family covers this
 def test_vadd_with_unary_scalar_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
     B = numpy.random.random((N, N))
     c = numpy.float64(0.5)
 
-    run_vectorization_test(dace_func=add_unary_scalar_cpu,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={
-                               'N': N,
-                               'c': c
-                           },
-                           vector_width=8,
-                           sdfg_name="add_unary_scalar_cpu",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=add_unary_scalar_cpu,
+        arrays={"A": A, "B": B},
+        params={"N": N, "c": c},
+        vector_width=8,
+        sdfg_name="add_unary_scalar_cpu",
+        remainder_strategy=remainder_strategy,
+    )
 
 
-@pytest.mark.simple  # canonical: lib_nodes/test_tile_unop_pure covers abs
+# Overlaps lib_nodes/test_tile_unop_pure covers abs
 def test_vabs(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=abs_op,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                           },
-                           vector_width=8,
-                           sdfg_name="abs_op",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=abs_op,
+        arrays={
+            "A": A,
+        },
+        params={
+            "N": N,
+        },
+        vector_width=8,
+        sdfg_name="abs_op",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_unary_symbol(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(dace_func=unary_symbol,
-                           arrays={
-                               'A': A,
-                           },
-                           params={
-                               'N': N,
-                           },
-                           vector_width=8,
-                           sdfg_name="unary_symbol",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=unary_symbol,
+        arrays={
+            "A": A,
+        },
+        params={
+            "N": N,
+        },
+        vector_width=8,
+        sdfg_name="unary_symbol",
+        remainder_strategy=remainder_strategy,
+    )
 
 
-@pytest.mark.simple  # canonical: lib_nodes/test_tile_binop_pure[kind=Scalar] covers scalar binop
+# Overlaps lib_nodes/test_tile_binop_pure[kind=Scalar] covers scalar binop
 def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -456,36 +471,30 @@ def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
     c1 = numpy.float64(0.5)
     c2 = numpy.float64(0.7)
 
-    run_vectorization_test(dace_func=add_scalar_scalar_cpu,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={
-                               'N': N,
-                               'c1': c1,
-                               'c2': c2
-                           },
-                           vector_width=8,
-                           sdfg_name="add_scalar_scalar_cpu",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=add_scalar_scalar_cpu,
+        arrays={"A": A, "B": B},
+        params={"N": N, "c1": c1, "c2": c2},
+        vector_width=8,
+        sdfg_name="add_scalar_scalar_cpu",
+        remainder_strategy=remainder_strategy,
+    )
 
 
-@pytest.mark.simple  # canonical: test_vadd_with_scalars_int (harder; scalar broadcast)
+# Overlaps test_vadd_with_scalars_int (harder; scalar broadcast)
 def test_vadd_int(remainder_strategy):
     N = 64
-    A = numpy.random.random((N, N)).astype(numpy.int64)
-    B = numpy.random.random((N, N)).astype(numpy.int64)
+    A = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
+    B = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
 
-    run_vectorization_test(dace_func=add_int,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="add_int",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=add_int,
+        arrays={"A": A, "B": B},
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="add_int",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_vadd_with_different_types(remainder_strategy):
@@ -497,37 +506,31 @@ def test_vadd_with_different_types(remainder_strategy):
     A = numpy.random.randint(-1000, 1000, (N, N)).astype(numpy.int64)
     B = numpy.random.random((N, N)).astype(numpy.float64) * 10.0
 
-    run_vectorization_test(dace_func=add_mixed_types,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={'N': N},
-                           vector_width=8,
-                           sdfg_name="add_mixed_types",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=add_mixed_types,
+        arrays={"A": A, "B": B},
+        params={"N": N},
+        vector_width=8,
+        sdfg_name="add_mixed_types",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_vadd_with_scalars_int(remainder_strategy):
     N = 64
-    A = numpy.random.random((N, N)).astype(numpy.int64)
-    B = numpy.random.random((N, N)).astype(numpy.int64)
+    A = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
+    B = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
     c1 = numpy.int64(5)
     c2 = numpy.int64(7)
 
-    run_vectorization_test(dace_func=add_int_scalars,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={
-                               'N': N,
-                               'c1': c1,
-                               'c2': c2
-                           },
-                           vector_width=8,
-                           sdfg_name="add_int_scalars",
-                           remainder_strategy=remainder_strategy)
+    run_vectorization_test(
+        dace_func=add_int_scalars,
+        arrays={"A": A, "B": B},
+        params={"N": N, "c1": c1, "c2": c2},
+        vector_width=8,
+        sdfg_name="add_int_scalars",
+        remainder_strategy=remainder_strategy,
+    )
 
 
 @dace.program
@@ -550,71 +553,89 @@ def pow_implementations(A: dace.float64[S], B: dace.float64[S]):
 
 def test_log(remainder_strategy, emission_style):
     # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+    dim_size = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(dim_size,))
+    B = (
+        numpy.abs(
+            numpy.random.randn(
+                dim_size,
+            )
+        )
+        * 1e-4
+    )
 
     # Baseline SDFG
     log_implementations_std_sdfg = log_implementations.to_sdfg()
     # Walker-primary: TileUnop("log") -> std::log directly. ReplaceSTDLog* not needed.
 
-    run_vectorization_test(dace_func=log_implementations_std_sdfg,
-                           arrays={
-                               "A": A,
-                               "B": B
-                           },
-                           params={"S": _S},
-                           vector_width=8,
-                           sdfg_name=f"test_log",
-                           from_sdfg=True,
-                           remainder_strategy=remainder_strategy,
-                           emission_style=emission_style)
+    run_vectorization_test(
+        dace_func=log_implementations_std_sdfg,
+        arrays={"A": A, "B": B},
+        params={"S": dim_size},
+        vector_width=8,
+        sdfg_name="test_log",
+        from_sdfg=True,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+    )
 
 
 def test_exp(remainder_strategy, emission_style):
     # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+    dim_size = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(dim_size,))
+    B = (
+        numpy.abs(
+            numpy.random.randn(
+                dim_size,
+            )
+        )
+        * 1e-4
+    )
 
     # Baseline SDFG
     exp_implementations_std_sdfg = exp_implementations.to_sdfg()
     # Walker-primary: TileUnop("exp") -> std::exp directly. ReplaceSTDExp* not needed.
 
-    run_vectorization_test(dace_func=exp_implementations_std_sdfg,
-                           arrays={
-                               "A": A,
-                               "B": B
-                           },
-                           params={"S": _S},
-                           vector_width=8,
-                           sdfg_name=f"test_exp",
-                           from_sdfg=True,
-                           remainder_strategy=remainder_strategy,
-                           emission_style=emission_style)
+    run_vectorization_test(
+        dace_func=exp_implementations_std_sdfg,
+        arrays={"A": A, "B": B},
+        params={"S": dim_size},
+        vector_width=8,
+        sdfg_name="test_exp",
+        from_sdfg=True,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+    )
 
 
 def test_pow(remainder_strategy, emission_style):
     # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+    dim_size = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(dim_size,))
+    B = (
+        numpy.abs(
+            numpy.random.randn(
+                dim_size,
+            )
+        )
+        * 1e-4
+    )
 
     # Baseline SDFG
     pow_implementations_std_sdfg = pow_implementations.to_sdfg()
     # Walker-primary: TileBinop("**") -> std::pow directly. ReplaceSTDPow* not needed.
 
-    run_vectorization_test(dace_func=pow_implementations_std_sdfg,
-                           arrays={
-                               "A": A,
-                               "B": B
-                           },
-                           params={"S": _S},
-                           vector_width=8,
-                           sdfg_name=f"test_pow",
-                           from_sdfg=True,
-                           remainder_strategy=remainder_strategy,
-                           emission_style=emission_style)
+    run_vectorization_test(
+        dace_func=pow_implementations_std_sdfg,
+        arrays={"A": A, "B": B},
+        params={"S": dim_size},
+        vector_width=8,
+        sdfg_name="test_pow",
+        from_sdfg=True,
+        remainder_strategy=remainder_strategy,
+        emission_style=emission_style,
+    )
 
 
 @dace.program

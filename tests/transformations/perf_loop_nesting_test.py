@@ -6,13 +6,16 @@ into K copies, where K equals the number of top-level children in the
 inner state's dataflow. Each positive case is compiled and run against
 a NumPy reference to verify the transform is semantically sound.
 """
-import numpy as np
-import dace
-from dace import dtypes, memlet as mm, nodes
-from dace.sdfg import SDFG, SDFGState
-from dace.transformation.interstate import LoopToMap, StateFusion
 
+import numpy as np
+
+import dace
+from dace import dtypes, nodes
+from dace import memlet as mm
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
+from dace.transformation.interstate import LoopToMap, StateFusion
 
 
 def _force_sequential_maps(sdfg: dace.SDFG):
@@ -27,7 +30,7 @@ N = dace.symbol("N")
 
 
 def _outer_state(sdfg: dace.SDFG) -> SDFGState:
-    for s in sdfg.all_states():
+    for s in sdfg.states():
         if any(isinstance(n, nodes.MapEntry) and s.entry_node(n) is None for n in s.nodes()):
             return s
     return sdfg.start_state
@@ -53,7 +56,9 @@ def test_three_parallel_inner_maps_fission_into_three_parents():
     """
 
     @dace.program
-    def kernel(x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[N, M]):
+    def kernel_three_parallel_inner_maps_fission_into_three_parents(
+        x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[N, M]
+    ):
         for j in dace.map[0:M]:
             for i in range(N):
                 x[i, j] = 1.0
@@ -62,7 +67,7 @@ def test_three_parallel_inner_maps_fission_into_three_parents():
             for i in range(N):
                 z[i, j] = 3.0
 
-    sdfg: dace.SDFG = kernel.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = kernel_three_parallel_inner_maps_fission_into_three_parents.to_sdfg(simplify=False)
     _prepare_nested_single_state(sdfg)
 
     state = _outer_state(sdfg)
@@ -95,7 +100,9 @@ def test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map():
     """
 
     @dace.program
-    def kernel(x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[M]):
+    def kernel_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map(
+        x: dace.float64[N, M], y: dace.float64[N, M], z: dace.float64[M]
+    ):
         for j in dace.map[0:M]:
             for i in range(N):
                 x[i, j] = 1.0
@@ -103,7 +110,7 @@ def test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map():
             for i in range(N):
                 y[i, j] = 2.0
 
-    sdfg: dace.SDFG = kernel.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = kernel_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map.to_sdfg(simplify=False)
     _prepare_nested_single_state(sdfg)
 
     state = _outer_state(sdfg)
@@ -194,6 +201,7 @@ def test_two_state_nested_sdfg_is_rejected():
     ostate.add_edge(ns, "b_out", px, "IN_b_out", mm.Memlet("B_out[j, 0:N]"))
     ostate.add_edge(px, "OUT_a_out", Aw, None, mm.Memlet("A_out[0:M, 0:N]"))
     ostate.add_edge(px, "OUT_b_out", Bw, None, mm.Memlet("B_out[0:M, 0:N]"))
+    convert_legacy_nested_sdfgs(outer)
     outer.validate()
 
     applied = outer.apply_transformations_repeated(PerfLoopNesting)
@@ -223,7 +231,7 @@ def _build_velocity_for_it_35_pattern():
     IST = dace.symbol("IST")
     IEN = dace.symbol("IEN")
 
-    # -- Inner NSDFG (single state, two sibling inner maps) -------------
+    # Inner NSDFG (single state, two sibling inner maps)
     inner = SDFG("loop_body")
     inner.add_array("cfl_clipping", [NPROMA, KLEV], dace.int32)
     inner.add_array("z_w_con_c", [NPROMA, KLEV], dace.float64)
@@ -231,9 +239,9 @@ def _build_velocity_for_it_35_pattern():
     inner.add_scalar("dtime", dace.float64)
     inner.add_array("maxvcfl", [KLEV, NPROMA], dace.float64)
     inner.add_array("levmask", [NB, KLEV - 1], dace.int32)
-    inner.add_array("__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2],
-                    dace.float64,
-                    storage=dtypes.StorageType.CPU_Heap)
+    inner.add_array(
+        "__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2], dace.float64, storage=dtypes.StorageType.CPU_Heap
+    )
     inner.add_scalar("tmp_call_7", dace.float64, transient=True)
 
     ist = inner.add_state("single_state_body", is_start_block=True)
@@ -265,8 +273,9 @@ def _build_velocity_for_it_35_pattern():
 
     t36a = ist.add_tasklet("T_abs", {"z_in"}, {"t_out"}, "t_out = abs(z_in)")
     tmp7 = ist.add_access("tmp_call_7")
-    t36b = ist.add_tasklet("T_cmp", {"t_in", "lim_in", "ddqz_in"}, {"c_out"},
-                           "c_out = 1 if (t_in > (lim_in * ddqz_in)) else 0")
+    t36b = ist.add_tasklet(
+        "T_cmp", {"t_in", "lim_in", "ddqz_in"}, {"c_out"}, "c_out = 1 if (t_in > (lim_in * ddqz_in)) else 0"
+    )
 
     ist.add_edge(me36, "OUT_z_w_con_c", t36a, "z_in", mm.Memlet("z_w_con_c[0, 0]"))
     ist.add_edge(t36a, "t_out", tmp7, None, mm.Memlet("tmp_call_7[0]"))
@@ -295,9 +304,7 @@ def _build_velocity_for_it_35_pattern():
         "T_update",
         {"c_in", "zw_in", "mv_in", "dt_in", "ddqz_in"},
         {"lv_out", "mv_out", "zw_out"},
-        "lv_out = c_in\n"
-        "mv_out = mv_in + dt_in\n"
-        "zw_out = zw_in * ddqz_in",
+        "lv_out = c_in\nmv_out = mv_in + dt_in\nzw_out = zw_in * ddqz_in",
     )
     ist.add_edge(me37, "OUT_cfl_clipping", t37, "c_in", mm.Memlet("cfl_clipping[0, 0]"))
     ist.add_edge(me37, "OUT_z_w_con_c", t37, "zw_in", mm.Memlet("z_w_con_c[0, 0]"))
@@ -312,17 +319,19 @@ def _build_velocity_for_it_35_pattern():
     ist.add_edge(mx37, "OUT_maxvcfl", w_maxvcfl, None, mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
     ist.add_edge(mx37, "OUT_z_w_con_c", w_zwcon, None, mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
 
-    # -- Outer SDFG: parent _for_it_35 around the NSDFG ------------------
+    # Outer SDFG: parent _for_it_35 around the NSDFG
     outer = SDFG("velocity_for_it_35")
+    outer.add_symbol("LEV_LO", dace.int32)  # the map bounds read them
+    outer.add_symbol("LEV_HI", dace.int32)
     outer.add_array("cfl_clipping", [NPROMA, KLEV], dace.int32)
     outer.add_array("z_w_con_c", [NPROMA, KLEV], dace.float64)
     outer.add_scalar("cfl_w_limit", dace.float64)
     outer.add_scalar("dtime", dace.float64)
     outer.add_array("maxvcfl", [KLEV, NPROMA], dace.float64)
     outer.add_array("levmask", [NB, KLEV - 1], dace.int32)
-    outer.add_array("__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2],
-                    dace.float64,
-                    storage=dtypes.StorageType.CPU_Heap)
+    outer.add_array(
+        "__CG_p_metrics__m_ddqz_z_half", [DD0, KLEV, DD2], dace.float64, storage=dtypes.StorageType.CPU_Heap
+    )
 
     ostate = outer.add_state("outer_state", is_start_block=True)
 
@@ -346,7 +355,7 @@ def _build_velocity_for_it_35_pattern():
             "DD2": DD2,
             "IST": 0,
             "IEN": NPROMA - 1,
-            "_for_it_35": "_for_it_35"
+            "_for_it_35": "_for_it_35",
         },
     )
 
@@ -373,8 +382,13 @@ def _build_velocity_for_it_35_pattern():
     ostate.add_edge(pe, "OUT_cfl_w_limit", nsdfg, "cfl_w_limit", mm.Memlet("cfl_w_limit[0]"))
     ostate.add_edge(pe, "OUT_dtime", nsdfg, "dtime", mm.Memlet("dtime[0]"))
     ostate.add_edge(pe, "OUT_maxvcfl", nsdfg, "maxvcfl", mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
-    ostate.add_edge(pe, "OUT_ddqz", nsdfg, "__CG_p_metrics__m_ddqz_z_half",
-                    mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"))
+    ostate.add_edge(
+        pe,
+        "OUT_ddqz",
+        nsdfg,
+        "__CG_p_metrics__m_ddqz_z_half",
+        mm.Memlet("__CG_p_metrics__m_ddqz_z_half[0:DD0, 0:KLEV, 0:DD2]"),
+    )
 
     ostate.add_edge(nsdfg, "levmask", px, "IN_levmask", mm.Memlet("levmask[0:NB, 0:KLEV - 1]"))
     ostate.add_edge(nsdfg, "maxvcfl", px, "IN_maxvcfl", mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
@@ -428,6 +442,8 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     inner_sdfg, inner_state = _build_velocity_for_it_35_pattern()
 
     wrapper = SDFG("wrapper")
+    for name, stype in inner_sdfg.symbols.items():
+        wrapper.add_symbol(name, stype)
     for name, desc in inner_sdfg.arrays.items():
         wrapper.add_datadesc(name, desc.clone())
     wstate = wrapper.add_state("wstate", is_start_block=True)
@@ -448,7 +464,7 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     parent = None
     owning_sdfg = None
     for owner in wrapper.all_sdfgs_recursive():
-        for st in owner.all_states():
+        for st in owner.states():
             for n in st.nodes():
                 if isinstance(n, nodes.MapEntry) and "_for_it_35" in n.map.params:
                     parent, owning_sdfg = n, owner
@@ -477,3 +493,79 @@ if __name__ == "__main__":
     test_velocity_for_it_35_pattern_fissions_into_two_parents()
     test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg()
     print("OK")
+
+
+def _copied_out_children(chained: bool):
+    """``for j in map: b[j] = 2 * a[j]; d[j] = 3 * (b if chained else c)[j]``, each statement a bare
+    tasklet whose result reaches its container through a transient and a copy -- the frontend shape
+    of npbench cegterg's ``hc[i, j] = np.conj(hc[j, i]); sc[i, j] = np.conj(sc[j, i])``.
+    """
+    second_src = "b" if chained else "c"
+    inputs = ["a", second_src]
+    outputs = ["b", "d"]
+    inner = SDFG("copied_out_body")
+    for name in ("a", "b", "c", "d"):
+        if name in inputs or name in outputs:
+            inner.add_array(name, [N], dace.float64)
+    istate = inner.add_state("body", is_start_block=True)
+    for src, dst, factor in (("a", "b", 2), (second_src, "d", 3)):
+        inner.add_array(f"{src}_index", [1], dace.float64, transient=True)
+        inner.add_array(f"{dst}_value", [1], dace.float64, transient=True)
+        index = istate.add_access(f"{src}_index")
+        value = istate.add_access(f"{dst}_value")
+        tasklet = istate.add_tasklet(f"scale_{dst}", {"__in"}, {"__out"}, f"__out = {factor} * __in")
+        istate.add_edge(istate.add_read(src), None, index, None, mm.Memlet(f"{src}[j]", other_subset="0"))
+        istate.add_edge(index, None, tasklet, "__in", mm.Memlet(f"{src}_index[0]"))
+        istate.add_edge(tasklet, "__out", value, None, mm.Memlet(f"{dst}_value[0]"))
+        istate.add_edge(value, None, istate.add_write(dst), None, mm.Memlet(f"{dst}_value[0]", other_subset="j"))
+
+    outer = SDFG("copied_out_chained" if chained else "copied_out")
+    for name in ("a", "b", "c", "d"):
+        outer.add_array(name, [N], dace.float64)
+    state = outer.add_state("main", is_start_block=True)
+    nsdfg = state.add_nested_sdfg(
+        inner, dict.fromkeys(inputs), dict.fromkeys(outputs), symbol_mapping={"j": "j", "N": "N"}
+    )
+    entry, exit_ = state.add_map("parent", {"j": "0:N"})
+    for name in inputs:
+        state.add_memlet_path(state.add_read(name), entry, nsdfg, dst_conn=name, memlet=mm.Memlet(f"{name}[0:N]"))
+    for name in outputs:
+        state.add_memlet_path(nsdfg, exit_, state.add_write(name), src_conn=name, memlet=mm.Memlet(f"{name}[0:N]"))
+    outer.validate()
+    return outer, state
+
+
+def test_a_result_written_through_a_copy_survives_the_fission():
+    """Each duplicate kept its tasklet and the transient it writes, and dropped the copy on to the
+    container: cegterg never Hermitianized ``hc`` and ``sc`` and got every eigenvalue wrong."""
+    sdfg, state = _copied_out_children(chained=False)
+    assert sdfg.apply_transformations_repeated(PerfLoopNesting) == 1
+    sdfg.validate()
+    assert len(_top_level_map_entries(state)) == 2
+
+    _force_sequential_maps(sdfg)
+    a, c = np.arange(1.0, 6.0), np.arange(10.0, 15.0)
+    b, d = np.zeros(5), np.zeros(5)
+    sdfg(a=a, b=b, c=c, d=d, N=5)
+    np.testing.assert_array_equal(b, 2 * a)
+    np.testing.assert_array_equal(d, 3 * c)
+
+
+def test_a_container_written_through_a_copy_orders_its_reader_after_it():
+    """The second statement reads ``b``, which the first writes only through its copy. The conflict
+    is on the container at the end of the copy, not on the transient before it, so the reading
+    duplicate must still be ordered after the writing one."""
+    sdfg, state = _copied_out_children(chained=True)
+    assert sdfg.apply_transformations_repeated(PerfLoopNesting) == 1
+    sdfg.validate()
+    entries = _top_level_map_entries(state)
+    assert len(entries) == 2
+    ordering = [(e.src, e.dst) for e in state.edges() if e.data.is_empty() and isinstance(e.src, nodes.MapExit)]
+    assert len(ordering) == 1 and ordering[0][1] in entries, ordering
+
+    _force_sequential_maps(sdfg)
+    a = np.arange(1.0, 6.0)
+    b, c, d = np.zeros(5), np.zeros(5), np.zeros(5)
+    sdfg(a=a, b=b, c=c, d=d, N=5)
+    np.testing.assert_array_equal(b, 2 * a)
+    np.testing.assert_array_equal(d, 6 * a)

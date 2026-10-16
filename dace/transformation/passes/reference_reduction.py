@@ -1,11 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import defaultdict
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from collections import defaultdict
+from typing import Any
 
-from dace import SDFG, SDFGState, data, properties, Memlet
+from dace import SDFG, Memlet, SDFGState, data, properties
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
 
@@ -17,7 +19,7 @@ class ReferenceToView(ppl.Pass):
     Replaces Reference data descriptors that are only set to one source with views.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -28,7 +30,7 @@ class ReferenceToView(ppl.Pass):
     def depends_on(self):
         return [ap.FindAccessStates, ap.FindReferenceSources]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> set[str] | None:
         """
         Removes redundant arrays and access nodes.
 
@@ -38,20 +40,21 @@ class ReferenceToView(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
-        reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.cfg_id]
+        access_states: dict[str, set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
+        reference_sources: dict[str, set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.cfg_id]
 
         # Early exit if no references exist
         if not reference_sources:
             return None
 
         # Filter out multi-source references and tasklet-set references
-        candidates = set(k for k, v in reference_sources.items()
-                         if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode))
+        candidates = {
+            k for k, v in reference_sources.items() if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode)
+        }
 
         refsets = self.find_refsets(candidates, access_states)
 
-        result: Set[str] = self.find_candidates(sdfg, reference_sources, refsets, access_states)
+        result: set[str] = self.find_candidates(sdfg, reference_sources, refsets, access_states)
         if not result:
             return None
 
@@ -66,17 +69,18 @@ class ReferenceToView(ppl.Pass):
 
         return result or None
 
-    def report(self, pass_retval: Set[str]) -> str:
-        return f'Converted {len(pass_retval)} references to views: {pass_retval}.'
+    def report(self, pass_retval: set[str]) -> str:
+        return f"Converted {len(pass_retval)} references to views: {pass_retval}."
 
-    def find_refsets(self, candidates: Set[str],
-                     access_states: Dict[str, Set[SDFGState]]) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
+    def find_refsets(
+        self, candidates: set[str], access_states: dict[str, set[SDFGState]]
+    ) -> dict[str, list[tuple[SDFGState, nodes.AccessNode]]]:
         """
         Returns a dictionary of reference name to a list of tuples of (state, access node)
         where the reference is set via a memlet.
         """
-        result: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = defaultdict(list)
-        all_states_to_consider: Set[SDFGState] = set()
+        result: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = defaultdict(list)
+        all_states_to_consider: set[SDFGState] = set()
         for candidate in candidates:
             all_states_to_consider.update(access_states[candidate])
 
@@ -85,7 +89,7 @@ class ReferenceToView(ppl.Pass):
             for node in state.data_nodes():
                 if node.data not in candidates:
                     continue
-                for _ in state.in_edges_by_connector(node, 'set'):
+                for _ in state.in_edges_by_connector(node, "set"):
                     result[node.data].append((state, node))
                     break
 
@@ -94,16 +98,29 @@ class ReferenceToView(ppl.Pass):
     def find_candidates(
         self,
         sdfg: SDFG,
-        reference_sources: Dict[str, Set[Memlet]],
-        refsets: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]],
-        access_states: Dict[str, Set[SDFGState]],
-    ) -> Set[str]:
+        reference_sources: dict[str, set[Memlet]],
+        refsets: dict[str, list[tuple[SDFGState, nodes.AccessNode]]],
+        access_states: dict[str, set[SDFGState]],
+    ) -> set[str]:
         """
         Returns a set of candidates for conversion to views.
         """
         result = set(refsets.keys())
         if not result:  # Early return
             return result
+
+        # Safe: ``find_candidates`` only removes from ``result``, so the graph the helper walks is
+        # unchanged for the whole span. Worth memoizing because it enumerates SIMPLE PATHS between
+        # the two blocks -- exponential -- and the same pair recurs across candidates.
+        modified_between: dict[tuple[int, int], set[str]] = {}
+
+        def modified_syms(src, dst) -> set[str]:
+            key = (id(src), id(dst))
+            syms = modified_between.get(key)
+            if syms is None:
+                syms = modified_symbols_between(src, dst)
+                modified_between[key] = syms
+            return syms
 
         # If memlet does not depend on any symbol, it can be kept. Otherwise,
         # it may depend on a (free) symbol. There are multiple options:
@@ -120,7 +137,7 @@ class ReferenceToView(ppl.Pass):
                 # Check if any of the symbols is a scope symbol
                 entry = state.entry_node(node)
                 while entry is not None:
-                    if fsyms & entry.new_symbols(sdfg, state, {}).keys():
+                    if fsyms & entry.new_symbol_names(sdfg, state):
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)
@@ -132,7 +149,7 @@ class ReferenceToView(ppl.Pass):
                 for other_state in access_states[cand]:
                     if other_state is state:
                         continue
-                    if fsyms & modified_symbols_between(state, other_state):
+                    if fsyms & modified_syms(state, other_state):
                         result.remove(cand)
                         break
 
@@ -140,8 +157,8 @@ class ReferenceToView(ppl.Pass):
 
     def remove_refsets(
         self,
-        candidates: Set[str],
-        all_refsets: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]],
+        candidates: set[str],
+        all_refsets: dict[str, list[tuple[SDFGState, nodes.AccessNode]]],
     ):
         for ref, refsets in all_refsets.items():
             if ref not in candidates:
@@ -151,10 +168,10 @@ class ReferenceToView(ppl.Pass):
                 # set memlets, reconnecting the remaining surrounding nodes so as
                 # to not break scopes
                 edges_to_add = []
-                edges_to_remove = set()
-                nodes_to_remove = set()
-                affected_nodes = set()
-                for e in state.in_edges_by_connector(node, 'set'):
+                edges_to_remove = OrderedSet()
+                nodes_to_remove = OrderedSet()
+                affected_nodes = OrderedSet()
+                for e in state.in_edges_by_connector(node, "set"):
                     # This is a reference set edge. Consider scope and neighbors and remove set
                     if state.out_degree(e.dst) == 0:
                         edges_to_remove.add(e)
@@ -174,7 +191,7 @@ class ReferenceToView(ppl.Pass):
                             edges_to_add.append((scope, None, node, None, Memlet()))
                     else:  # Node has other neighbors, modify edge to become an empty memlet instead
                         e.dst_conn = None
-                        e.dst.remove_in_connector('set')
+                        e.dst.remove_in_connector("set")
                         e.data = Memlet()
 
                 # Modify the state graph as necessary
@@ -191,9 +208,14 @@ class ReferenceToView(ppl.Pass):
                     if state.degree(n) == 0:
                         state.remove_node(n)
 
-    def reconnect_views(self, sdfg: SDFG, candidates: Set[str], access_states: Dict[str, Set[SDFGState]],
-                        reference_sources: Dict[str, Set[Memlet]]):
-        all_states_to_consider: Set[SDFGState] = set()
+    def reconnect_views(
+        self,
+        sdfg: SDFG,
+        candidates: set[str],
+        access_states: dict[str, set[SDFGState]],
+        reference_sources: dict[str, set[Memlet]],
+    ):
+        all_states_to_consider: set[SDFGState] = set()
         for cand in candidates:
             all_states_to_consider.update(access_states[cand])
 
@@ -230,12 +252,12 @@ class ReferenceToView(ppl.Pass):
 
         # Use "views" connector to disambiguate potential corner cases
         if predecessor:
-            view.add_out_connector('views')
-            state.add_edge(view, 'views', node, None, copy.deepcopy(refsource))
+            view.add_out_connector("views")
+            state.add_edge(view, "views", node, None, copy.deepcopy(refsource))
         else:
-            view.add_in_connector('views')
-            state.add_edge(node, None, view, 'views', copy.deepcopy(refsource))
+            view.add_in_connector("views")
+            state.add_edge(node, None, view, "views", copy.deepcopy(refsource))
 
-    def change_ref_descriptors_to_views(self, sdfg: SDFG, names: Set[str]):
+    def change_ref_descriptors_to_views(self, sdfg: SDFG, names: set[str]):
         for name in names:
             sdfg.arrays[name] = data.View.view(sdfg.arrays[name])

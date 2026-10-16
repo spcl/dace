@@ -4,6 +4,7 @@
 All runtime tests require a GPU and CuPy, hence the ``@pytest.mark.gpu``
 marker.
 """
+
 import numpy as np
 import pytest
 
@@ -19,7 +20,7 @@ from dace.memlet import Memlet
 
 def _sanitize_name(name):
     """Replace characters invalid in SDFG names with underscores."""
-    return name.replace('.', '_').replace('-', '_')
+    return name.replace(".", "_").replace("-", "_")
 
 
 def _make_gemv_sdfg(dtype, M_val, N_val, transposed, alpha, beta):
@@ -93,7 +94,7 @@ def _make_ger_sdfg(dtype, M_val, N_val, alpha):
     a_node = state.add_read("A")
     res_node = state.add_write("res")
 
-    ger_node = blas.Ger("ger", alpha=alpha)
+    ger_node = blas.Ger("ger", m=M_val, n=N_val, alpha=alpha)
     ger_node.implementation = "CuPy"
 
     state.add_memlet_path(x_node, ger_node, dst_conn="_x", memlet=Memlet(f"x[0:{M_val}]"))
@@ -149,8 +150,7 @@ def test_gemv_cupy_notrans():
     sdfg(A=A, x=x, y=y)
 
     ref = A @ x
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 @pytest.mark.gpu
@@ -166,8 +166,7 @@ def test_gemv_cupy_trans():
     sdfg(A=A, x=x, y=y)
 
     ref = A.T @ x
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 @pytest.mark.gpu
@@ -184,8 +183,7 @@ def test_gemv_cupy_alpha():
     sdfg(A=A, x=x, y=y)
 
     ref = alpha * (A @ x)
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 @pytest.mark.gpu
@@ -203,8 +201,7 @@ def test_gemv_cupy_alpha_beta():
     sdfg(A=A, x=x, y=y)
 
     ref = alpha * (A @ x) + beta * y_orig
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 @pytest.mark.gpu
@@ -220,8 +217,7 @@ def test_gemv_cupy_float32():
     sdfg(A=A, x=x, y=y)
 
     ref = A @ x
-    assert np.allclose(y, ref, atol=1e-5), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-5), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 def _make_gemv_unit_dim_sdfg(dtype, NQ_val, NP_val, alpha=1, beta=0):
@@ -267,8 +263,7 @@ def test_gemv_cupy_unit_dim_operand():
     sdfg(A=A, x=x, y=y)
 
     ref = (A.reshape(NQ_val, NP_val) @ x).reshape(NQ_val, 1)
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 @pytest.mark.gpu
@@ -284,8 +279,7 @@ def test_gemv_cupy_unit_dim_operand_alpha_beta():
     sdfg(A=A, x=x, y=y)
 
     ref = 2.0 * (A.reshape(NQ_val, NP_val) @ x).reshape(NQ_val, 1) + 0.5 * y0
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 @pytest.mark.gpu
@@ -298,27 +292,27 @@ def test_matmul_specializes_unit_dim_to_gemv_runtime():
     from dace.libraries.blas.nodes.matmul import MatMul
 
     NQ_val, NP_val = 8, 10
-    sdfg = dace.SDFG('matmul_unitdim_gemv_routing')
+    sdfg = dace.SDFG("matmul_unitdim_gemv_routing")
     state = sdfg.add_state()
-    _, a_arr = sdfg.add_array('A', (NQ_val, 1, NP_val), dace.float64)
-    _, x_arr = sdfg.add_array('x', (NP_val, ), dace.float64)
-    _, y_arr = sdfg.add_array('y', (NQ_val, 1), dace.float64)
+    _, a_arr = sdfg.add_array("A", (NQ_val, 1, NP_val), dace.float64)
+    _, x_arr = sdfg.add_array("x", (NP_val,), dace.float64)
+    _, y_arr = sdfg.add_array("y", (NQ_val, 1), dace.float64)
 
-    rA = state.add_read('A')
-    rx = state.add_read('x')
-    wy = state.add_write('y')
-    mm_node = MatMul('mm')
+    rA = state.add_read("A")
+    rx = state.add_read("x")
+    wy = state.add_write("y")
+    mm_node = MatMul("mm")
     state.add_node(mm_node)
-    state.add_edge(rA, None, mm_node, '_a', Memlet.from_array('A', a_arr))
-    state.add_edge(rx, None, mm_node, '_b', Memlet.from_array('x', x_arr))
-    state.add_edge(mm_node, '_c', wy, None, Memlet.from_array('y', y_arr))
+    state.add_edge(rA, None, mm_node, "_a", Memlet.from_array("A", a_arr))
+    state.add_edge(rx, None, mm_node, "_b", Memlet.from_array("x", x_arr))
+    state.add_edge(mm_node, "_c", wy, None, Memlet.from_array("y", y_arr))
     sdfg.backend = dtypes.BackendLanguage.Python
 
     # First expansion: specialize -> Gemv; then stamp CuPy and expand fully.
     mm_node.expand(state)
     gemvs = [n for n in state.nodes() if isinstance(n, blas.Gemv)]
     assert len(gemvs) == 1, f"expected Gemv routing, got {state.nodes()}"
-    gemvs[0].implementation = 'CuPy'
+    gemvs[0].implementation = "CuPy"
     sdfg.expand_library_nodes()
 
     A = np.random.rand(NQ_val, 1, NP_val)
@@ -327,8 +321,7 @@ def test_matmul_specializes_unit_dim_to_gemv_runtime():
     sdfg(A=A, x=x, y=y)
 
     ref = (A.reshape(NQ_val, NP_val) @ x).reshape(NQ_val, 1)
-    assert np.allclose(y, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(y - ref))}"
+    assert np.allclose(y, ref, atol=1e-12), f"max diff = {np.max(np.abs(y - ref))}"
 
 
 # ---------------------------------------------------------------------------
@@ -402,8 +395,7 @@ def test_ger_cupy_alpha1():
     sdfg(x=x, y=y, A=A, res=res)
 
     ref = np.outer(x, y) + A
-    assert np.allclose(res, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(res - ref))}"
+    assert np.allclose(res, ref, atol=1e-12), f"max diff = {np.max(np.abs(res - ref))}"
 
 
 @pytest.mark.gpu
@@ -421,8 +413,7 @@ def test_ger_cupy_alpha_scaled():
     sdfg(x=x, y=y, A=A, res=res)
 
     ref = alpha * np.outer(x, y) + A
-    assert np.allclose(res, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(res - ref))}"
+    assert np.allclose(res, ref, atol=1e-12), f"max diff = {np.max(np.abs(res - ref))}"
 
 
 @pytest.mark.gpu
@@ -438,8 +429,7 @@ def test_ger_cupy_alpha0():
 
     sdfg(x=x, y=y, A=A, res=res)
 
-    assert np.allclose(res, A, atol=1e-14), \
-        f"max diff = {np.max(np.abs(res - A))}"
+    assert np.allclose(res, A, atol=1e-14), f"max diff = {np.max(np.abs(res - A))}"
 
 
 @pytest.mark.gpu
@@ -456,8 +446,7 @@ def test_ger_cupy_float32():
     sdfg(x=x, y=y, A=A, res=res)
 
     ref = np.outer(x, y) + A
-    assert np.allclose(res, ref, atol=1e-5), \
-        f"max diff = {np.max(np.abs(res - ref))}"
+    assert np.allclose(res, ref, atol=1e-5), f"max diff = {np.max(np.abs(res - ref))}"
 
 
 # ---------------------------------------------------------------------------
@@ -479,8 +468,7 @@ def test_axpy_cupy_basic():
     sdfg(x=x, y=y, res=res)
 
     ref = a_val * x + y
-    assert np.allclose(res, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(res - ref))}"
+    assert np.allclose(res, ref, atol=1e-12), f"max diff = {np.max(np.abs(res - ref))}"
 
 
 @pytest.mark.gpu
@@ -496,8 +484,7 @@ def test_axpy_cupy_a1():
     sdfg(x=x, y=y, res=res)
 
     ref = x + y
-    assert np.allclose(res, ref, atol=1e-12), \
-        f"max diff = {np.max(np.abs(res - ref))}"
+    assert np.allclose(res, ref, atol=1e-12), f"max diff = {np.max(np.abs(res - ref))}"
 
 
 @pytest.mark.gpu
@@ -512,8 +499,7 @@ def test_axpy_cupy_a0():
 
     sdfg(x=x, y=y, res=res)
 
-    assert np.allclose(res, y, atol=1e-14), \
-        f"max diff = {np.max(np.abs(res - y))}"
+    assert np.allclose(res, y, atol=1e-14), f"max diff = {np.max(np.abs(res - y))}"
 
 
 @pytest.mark.gpu
@@ -530,8 +516,7 @@ def test_axpy_cupy_float32():
     sdfg(x=x, y=y, res=res)
 
     ref = np.float32(a_val) * x + y
-    assert np.allclose(res, ref, atol=1e-5), \
-        f"max diff = {np.max(np.abs(res - ref))}"
+    assert np.allclose(res, ref, atol=1e-5), f"max diff = {np.max(np.abs(res - ref))}"
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +549,7 @@ def test_gemv_cupy_expansion_produces_sdfg():
     sdfg = _make_gemv_sdfg(dace.float64, 8, 4, transposed=False, alpha=1, beta=0)
     sdfg.expand_library_nodes()
     # After expansion, there should be no Gemv library nodes left.
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     lib_nodes = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.LibraryNode)]
     assert len(lib_nodes) == 0, "Library nodes should be expanded"
 
@@ -573,7 +558,7 @@ def test_dot_cupy_expansion_produces_sdfg():
     """Expanding Dot with CuPy should produce a nested SDFG."""
     sdfg = _make_dot_sdfg(dace.float64, 16)
     sdfg.expand_library_nodes()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     lib_nodes = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.LibraryNode)]
     assert len(lib_nodes) == 0
 
@@ -582,7 +567,7 @@ def test_ger_cupy_expansion_produces_sdfg():
     """Expanding Ger with CuPy should produce a nested SDFG."""
     sdfg = _make_ger_sdfg(dace.float64, 8, 6, alpha=1.0)
     sdfg.expand_library_nodes()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     lib_nodes = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.LibraryNode)]
     assert len(lib_nodes) == 0
 
@@ -591,7 +576,7 @@ def test_axpy_cupy_expansion_produces_sdfg():
     """Expanding Axpy with CuPy should produce a nested SDFG."""
     sdfg = _make_axpy_sdfg(dace.float64, 16, a_val=2.0)
     sdfg.expand_library_nodes()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     lib_nodes = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.LibraryNode)]
     assert len(lib_nodes) == 0
 

@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for ``NormalizeLoopsAndMaps``: every map range becomes ``0:trip:1``
-    while the result stays identical. Covers offset, non-unit, negative and
-    symbolic steps, and a mixed multi-dimensional map. Each test compares the
-    SDFG end-to-end against a deep-copied pre-pass reference run.
+"""Tests for ``NormalizeLoopsAndMaps``: every map range becomes ``0:trip:1``
+while the result stays identical. Covers offset, non-unit, negative and
+symbolic steps, and a mixed multi-dimensional map. Each test compares the
+SDFG end-to-end against a deep-copied pre-pass reference run.
 """
+
 import copy
 
 import numpy as np
@@ -17,7 +18,7 @@ from dace.transformation.passes.canonicalize.normalize_loops_and_maps import Nor
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 
-N, S = dace.symbol('N'), dace.symbol('S')
+N, S = dace.symbol("N"), dace.symbol("S")
 
 
 @dace.program
@@ -136,7 +137,7 @@ def test_offset_stride():
     exp = np.full(40, -1.0)
     for i in range(3, 31, 4):
         exp[i] = a[i] * 2.0 + 1.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_negative_step():
@@ -146,7 +147,7 @@ def test_negative_step():
     exp = np.full(40, -1.0)
     for i in range(20, 1, -2):
         exp[i] = a[i] - 3.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_symbolic_step():
@@ -157,7 +158,7 @@ def test_symbolic_step():
     exp = np.full(n, -1.0)
     for i in range(0, n, s):
         exp[i] = a[i] + 5.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_mixed_2d():
@@ -168,7 +169,7 @@ def test_mixed_2d():
     for i in range(2, 27, 3):
         for j in range(5, 25, 2):
             exp[i, j] = a[i, j] * 4.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_loop_offset_stride():
@@ -178,7 +179,7 @@ def test_loop_offset_stride():
     exp = np.full(40, -1.0)
     for i in range(3, 31, 4):
         exp[i] = a[i] * 2.0 + 1.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_loop_negative():
@@ -188,7 +189,7 @@ def test_loop_negative():
     exp = np.full(40, -1.0)
     for i in range(20, 1, -2):
         exp[i] = a[i] - 3.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_loop_symbolic():
@@ -199,7 +200,7 @@ def test_loop_symbolic():
     exp = np.full(n, -1.0)
     for i in range(0, n, s):
         exp[i] = a[i] + 5.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 def test_mixed_loop_and_map():
@@ -212,7 +213,7 @@ def test_mixed_loop_and_map():
         eb[i] = a[i] * 2.0
     for j in range(2, 38, 3):
         ec[j] = a[j] - 1.0
-    assert np.allclose(pre['B'], eb) and np.allclose(pre['C'], ec)
+    assert np.allclose(pre["B"], eb) and np.allclose(pre["C"], ec)
 
 
 def test_many_maps_varied_steps():
@@ -228,7 +229,7 @@ def test_many_maps_varied_steps():
         exp[i] = a[i] * 3.0
     for i in range(10, 50, 7):
         exp[i] = a[i] - 2.0
-    assert np.allclose(pre['B'], exp)
+    assert np.allclose(pre["B"], exp)
 
 
 @dace.program
@@ -244,6 +245,7 @@ def test_normalize_strided_maps_only_touches_strided_maps():
     leaves unit-step maps -- even with a non-zero base -- untouched (unlike the
     parent ``NormalizeLoopsAndMaps``, which also zero-bases them)."""
     from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+
     a = np.random.rand(64)
     sdfg = _strided_and_offset_maps.to_sdfg(simplify=False)
     ref = copy.deepcopy(sdfg)
@@ -263,20 +265,77 @@ def test_normalize_strided_maps_only_touches_strided_maps():
 
     post = dict(A=a.copy(), B=np.full(64, -1.0), C=np.full(64, -1.0))
     sdfg(**post)
-    assert np.allclose(post['B'], pre['B']) and np.allclose(post['C'], pre['C'])
+    assert np.allclose(post["B"], pre["B"]) and np.allclose(post["C"], pre["C"])
 
 
 def test_normalize_strided_maps_leaves_loops_untouched():
     """``NormalizeStridedMaps`` is map-only: a strided ``LoopRegion`` counter is
     left as-is (only maps are normalized)."""
     from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+
     sdfg = loop_offset_stride.to_sdfg(simplify=False)  # a strided for-loop, no maps
     changed = NormalizeStridedMaps().apply_pass(sdfg, {})
     assert changed is None, "strided LoopRegion was wrongly normalized by the map-only pass"
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(cfg, LoopRegion):
-            assert loop_analysis.get_loop_stride(cfg) != 1 or loop_analysis.get_init_assignment(cfg) != 0, \
+            assert loop_analysis.get_loop_stride(cfg) != 1 or loop_analysis.get_init_assignment(cfg) != 0, (
                 "loop counter was normalized"
+            )
+
+
+@dace.program
+def loop_bounds_unit(A: dace.float64[N]):
+    for i in range(2, N - 2):
+        A[i] = A[i - 1] + 1.0  # sequential (recurrence): stays a loop
+
+
+@dace.program
+def loop_bounds_strided(A: dace.float64[N]):
+    for i in range(1, N - 1, 2):
+        A[i] = A[i] * 3.0
+
+
+@dace.program
+def two_offset_loops(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(0, N - 2):  # 0:N-2
+        A[i + 1] = A[i] + B[i + 1]
+    for j in range(1, N - 1):  # 1:N-1  -- same extent, offset by 1
+        B[j] = B[j - 1] + A[j]
+
+
+def test_a_copy_memlets_other_subset_is_normalized_too():
+    """A two-sided (copy) memlet indexes the map parameter on BOTH sides; leaving `other_subset`
+    stale sends the copy to the row the unnormalized parameter named."""
+    sdfg = dace.SDFG("norm_other_subset")
+    sdfg.add_array("A", [10, 4], dace.float64)
+    sdfg.add_array("B", [10, 4], dace.float64)
+    st = sdfg.add_state("main")
+    a, b = st.add_access("A"), st.add_access("B")
+    me, mx = st.add_map("m", {"i": "2:9:3"})
+    inner = st.add_access("B")
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_b")
+    mx.add_out_connector("OUT_b")
+    st.add_edge(a, None, me, "IN_a", dace.Memlet("A[2:9, 0:4]"))
+    st.add_edge(me, "OUT_a", inner, None, dace.Memlet(data="A", subset="i, 0:4", other_subset="i, 0:4"))
+    st.add_edge(inner, None, mx, "IN_b", dace.Memlet("B[i, 0:4]"))
+    st.add_edge(mx, "OUT_b", b, None, dace.Memlet("B[2:9, 0:4]"))
+    sdfg.validate()
+
+    def run(g):
+        args = {"A": np.arange(40, dtype=np.float64).reshape(10, 4), "B": np.zeros((10, 4))}
+        g(**args)
+        return args["B"]
+
+    oracle = run(copy.deepcopy(sdfg))
+    assert sorted(set(np.nonzero(oracle)[0].tolist())) == [2, 5, 8]
+
+    assert NormalizeLoopsAndMaps().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    entry = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, nodes.MapEntry))
+    assert str(entry.map.range) == "0:3", str(entry.map.range)
+    assert np.array_equal(run(copy.deepcopy(sdfg)), oracle)
 
 
 if __name__ == "__main__":

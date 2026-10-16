@@ -1,32 +1,33 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Map fusion across guarded computations.
+"""Map fusion across guarded computations.
 
-    Branch-replicated fission produces several identical-condition guarded
-    maps. ``ConditionFusion`` merges the ConditionalBlocks but emits the full
-    cartesian product of branch combinations; ``LiftTrivialIf`` drops the
-    provably-unsatisfiable combinations (``c and not c``), after which the
-    co-located maps fuse. Each test pins the post-recipe map and conditional
-    counts and checks numerical equivalence (guard taken and not-taken)
-    against a deep-copied pre-pass run.
+Branch-replicated fission produces several identical-condition guarded
+maps. ``ConditionFusion`` merges the ConditionalBlocks but emits the full
+cartesian product of branch combinations; ``LiftTrivialIf`` drops the
+provably-unsatisfiable combinations (``c and not c``), after which the
+co-located maps fuse. Each test pins the post-recipe map and conditional
+counts and checks numerical equivalence (guard taken and not-taken)
+against a deep-copied pre-pass run.
 """
+
 import copy
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import ConditionalBlock
 from dace.sdfg import nodes
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
-from dace.transformation.interstate.condition_fusion import ConditionFusion
-from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
-from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+from dace.transformation.interstate.condition_fusion import ConditionFusion
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -74,8 +75,8 @@ def three_guarded(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C:
 def _with_M(sdfg):
     """A condition-only symbol is not auto-registered in ``sdfg.symbols``
     (frontend quirk); add it so the SDFG is callable."""
-    if 'M' not in sdfg.symbols:
-        sdfg.add_symbol('M', dace.int64)
+    if "M" not in sdfg.symbols:
+        sdfg.add_symbol("M", dace.int64)
     return sdfg
 
 
@@ -84,7 +85,7 @@ def _conds(sdfg):
 
 
 def _maps(sdfg):
-    return [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
 
 
 def _nonelse_conditions(sdfg):
@@ -105,8 +106,9 @@ def _fuse_recipe(sdfg):
 def test_two_identical_guards_fuse_to_one_map():
     """`if c: A` ; `if c: B` (the branch-replicated-fission shape) recombine
     into one guard whose two maps fuse: 1 map, 1 conditional."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(two_guarded.to_sdfg(simplify=True))
     assert len(_conds(base)) == 2 and len(_maps(base)) == 2
 
@@ -120,7 +122,7 @@ def test_two_identical_guards_fuse_to_one_map():
         assert len(_conds(sdfg)) == 1, f"guards not merged: {len(_conds(sdfg))}"
         # Identical guards must merge to the minimal predicate, not a
         # redundant ``(c) and (c)``.
-        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+        assert all("and" not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B = np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, N=n, M=mval)
@@ -133,8 +135,9 @@ def test_two_identical_guards_fuse_to_one_map():
 
 def test_two_maps_in_one_guard_fuse_to_one_map():
     """`if c: { A ; B }` -> the two guarded maps fuse: 1 map, 1 conditional."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(if_two_maps_inside.to_sdfg(simplify=True))
 
     for mval in (1, 0):
@@ -144,7 +147,7 @@ def test_two_maps_in_one_guard_fuse_to_one_map():
         sdfg = _with_M(if_two_maps_inside.to_sdfg(simplify=True))
         _fuse_recipe(sdfg)
         assert len(_maps(sdfg)) == 1 and len(_conds(sdfg)) == 1
-        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+        assert all("and" not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B = np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, N=n, M=mval)
@@ -156,8 +159,9 @@ def test_distinct_guards_merge_to_one_conditional_three_maps():
     ConditionalBlock but the maps cannot share a guard: the feasible
     cartesian combinations leave 3 maps, 1 conditional. Value-preserving
     across all (c1, c2) truth combinations."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(two_guarded_diff.to_sdfg(simplify=True))
 
     for mval in (6, 1, 0):  # (c1&c2), (c1&!c2), (!c1&!c2)
@@ -179,8 +183,9 @@ def test_distinct_guards_merge_to_one_conditional_three_maps():
 def test_three_identical_guards_fuse_to_one_map():
     """Three `if c: <map>` blocks collapse to 1 map, 1 conditional with a
     minimal predicate; value-preserving for c taken and not-taken."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
+    a = rng.random(n)
     base = _with_M(three_guarded.to_sdfg(simplify=True))
 
     for mval in (1, 0):
@@ -191,7 +196,7 @@ def test_three_identical_guards_fuse_to_one_map():
         _fuse_recipe(sdfg)
         assert len(_maps(sdfg)) == 1, f"maps not fused: {len(_maps(sdfg))}"
         assert len(_conds(sdfg)) == 1, f"guards not merged: {len(_conds(sdfg))}"
-        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+        assert all("and" not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B, out_C = np.full(n, 9.0), np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, C=out_C, N=n, M=mval)

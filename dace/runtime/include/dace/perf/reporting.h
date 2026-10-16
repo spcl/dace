@@ -64,29 +64,19 @@ class Report {
     this->_events.reserve(DACE_REPORT_BUFFER_SIZE);
   }
 
-  void add_counter(const char *name, const char *cat, const char *counter_name,
-                   unsigned long int counter_val) {
+  void add_counter(const char* name, const char* cat, const char* counter_name, unsigned long int counter_val) {
     std::thread::id thread_id = std::this_thread::get_id();
     size_t tid = std::hash<std::thread::id>{}(thread_id);
     add_counter(name, cat, counter_name, counter_val, tid, -1, -1, -1);
   }
 
-  void add_counter(const char *name, const char *cat, const char *counter_name,
-                   unsigned long int counter_val, size_t tid, int cfg_id,
-                   int state_id, int el_id) {
-    long unsigned int tstart =
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now().time_since_epoch())
-            .count();
+  void add_counter(const char* name, const char* cat, const char* counter_name, unsigned long int counter_val,
+                   size_t tid, int cfg_id, int state_id, int el_id) {
+    long unsigned int tstart = std::chrono::duration_cast<std::chrono::microseconds>(
+                                   std::chrono::high_resolution_clock::now().time_since_epoch())
+                                   .count();
     std::lock_guard<std::mutex> guard(this->_mutex);
-    struct TraceEvent event = {'C',
-                               "",
-                               "",
-                               tstart,
-                               0,
-                               tid,
-                               {cfg_id, state_id, el_id},
-                               {"", counter_val}};
+    struct TraceEvent event = {'C', "", "", tstart, 0, tid, {cfg_id, state_id, el_id}, {"", counter_val}};
     strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
     event.name[DACE_REPORT_EVENT_NAME_LEN - 1] = '\0';
     strncpy(event.cat, cat, DACE_REPORT_EVENT_CAT_LEN);
@@ -107,20 +97,17 @@ class Report {
    * @param state_id: State ID of the element associated with this event.
    * @param el_id:    ID of the element associated with this event.
    */
-  void add_completion(const char *name, const char *cat,
-                      unsigned long int tstart, unsigned long int tend,
-                      int cfg_id, int state_id, int el_id) {
+  void add_completion(const char* name, const char* cat, unsigned long int tstart, unsigned long int tend, int cfg_id,
+                      int state_id, int el_id) {
     std::thread::id thread_id = std::this_thread::get_id();
     size_t tid = std::hash<std::thread::id>{}(thread_id);
     add_completion(name, cat, tstart, tend, tid, cfg_id, state_id, el_id);
   }
 
-  void add_completion(const char *name, const char *cat,
-                      unsigned long int tstart, unsigned long int tend,
-                      size_t tid, int cfg_id, int state_id, int el_id) {
+  void add_completion(const char* name, const char* cat, unsigned long int tstart, unsigned long int tend, size_t tid,
+                      int cfg_id, int state_id, int el_id) {
     std::lock_guard<std::mutex> guard(this->_mutex);
-    struct TraceEvent event = {
-        'X', "", "", tstart, tend, tid, {cfg_id, state_id, el_id}, {"", 0}};
+    struct TraceEvent event = {'X', "", "", tstart, tend, tid, {cfg_id, state_id, el_id}, {"", 0}};
     strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
     event.name[DACE_REPORT_EVENT_NAME_LEN - 1] = '\0';
     strncpy(event.cat, cat, DACE_REPORT_EVENT_CAT_LEN);
@@ -133,14 +120,13 @@ class Report {
    * @param path: Path to folder where the output JSON file will be stored.
    * @param hash: Hash of the SDFG.
    */
-  void save(const char *path, const char *hash) {
+  void save(const char* path, const char* hash) {
     std::lock_guard<std::mutex> guard(this->_mutex);
 
     // Create report filename
     std::stringstream ss;
     std::chrono::milliseconds ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch());
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
     ss << path << "/" << "report-" << ms.count() << ".json";
 
     // Dump report as JSON
@@ -153,7 +139,7 @@ class Report {
 
       int pid = getpid();
 
-      for (const auto &event : this->_events) {
+      for (const auto& event : this->_events) {
         if (first)
           first = false;
         else
@@ -166,8 +152,7 @@ class Report {
 
         ofs << "\"ts\": " << event.tstart << ", ";
 
-        if (event.ph == 'X')
-          ofs << "\"dur\": " << event.tend - event.tstart << ", ";
+        if (event.ph == 'X') ofs << "\"dur\": " << event.tend - event.tstart << ", ";
 
         ofs << "\"pid\": " << pid << ", ";
         ofs << "\"tid\": " << event.tid << ", ";

@@ -1,22 +1,30 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import collections
+import atexit
 import copy
-from dataclasses import dataclass
+import functools
 import inspect
 import numbers
-import numpy
+import os
 import re
-import sympy
+import types
 import warnings
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import (
+    Any,
+)
 
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+import numpy
+import sympy
+
 import dace
 from dace import data, dtypes, symbolic
 from dace.config import Config
-from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
+from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
+from dace.sdfg import SDFG
+from dace.sdfg.sdfg import MPI_RANK_VARS
 
 
 class DaceRecursionError(Exception):
@@ -30,7 +38,7 @@ class DaceRecursionError(Exception):
         self.fid = fid
 
     def __str__(self) -> str:
-        return ('Non-analyzable recursion detected, function cannot be parsed as data-centric')
+        return "Non-analyzable recursion detected, function cannot be parsed as data-centric"
 
 
 @dataclass
@@ -39,11 +47,12 @@ class PreprocessedAST:
     Python AST and metadata of a preprocessed @dace.program/method, for use
     in parsing.
     """
+
     filename: str
     src_line: int
     src: str
     preprocessed_ast: ast.AST
-    program_globals: Dict[str, Any]
+    program_globals: dict[str, Any]
 
 
 class StructTransformer(ast.NodeTransformer):
@@ -67,21 +76,20 @@ class StructTransformer(ast.NodeTransformer):
         name = struct.name
         fields = {astutils.rname(arg.arg): arg.value for arg in node.keywords}
         if tuple(sorted(fields.keys())) != tuple(sorted(struct.fields.keys())):
-            raise SyntaxError('Mismatch in fields in struct definition')
+            raise SyntaxError("Mismatch in fields in struct definition")
 
         # Create custom node
-        #new_node = astutils.StructInitializer(name, fields)
-        #return ast.copy_location(new_node, node)
+        # new_node = astutils.StructInitializer(name, fields)
+        # return ast.copy_location(new_node, node)
 
-        node.func = ast.copy_location(ast.Name(id='__DACESTRUCT_' + name, ctx=ast.Load()), node.func)
+        node.func = ast.copy_location(ast.Name(id="__DACESTRUCT_" + name, ctx=ast.Load()), node.func)
 
         return node
 
 
 # Replaces instances of modules Y imported with "import X as Y" by X
 class ModuleResolver(ast.NodeTransformer):
-
-    def __init__(self, modules: Dict[str, str], always_replace=False):
+    def __init__(self, modules: dict[str, str], always_replace=False):
         self.modules = modules
         self.should_replace = False
         self.always_replace = always_replace
@@ -101,10 +109,21 @@ class ModuleResolver(ast.NodeTransformer):
         while isinstance(cnode.value, ast.Attribute):
             cnode = cnode.value
 
-        if (isinstance(cnode.value, ast.Name) and cnode.value.id in self.modules):
+        if isinstance(cnode.value, ast.Name) and cnode.value.id in self.modules:
             cnode.value.id = self.modules[cnode.value.id]
 
         return self.generic_visit(node)
+
+
+def as_sympy_truth(value: Any) -> sympy.Basic:
+    """``value``'s Python truth as a SymPy boolean: a number or non-boolean expression is true when nonzero."""
+    if isinstance(value, (sympy.logic.boolalg.Boolean, sympy.core.relational.Relational)) and not isinstance(
+        value, sympy.Symbol
+    ):
+        return value
+    if isinstance(value, sympy.Basic):
+        return sympy.Ne(value, 0)
+    return sympy.true if value else sympy.false
 
 
 class RewriteSympyEquality(ast.NodeTransformer):
@@ -114,7 +133,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
     result in False, even in indeterminate cases.
     """
 
-    def __init__(self, globals: Dict[str, Any]) -> None:
+    def __init__(self, globals: dict[str, Any]) -> None:
         super().__init__()
         self.globals = globals
 
@@ -123,12 +142,38 @@ class RewriteSympyEquality(ast.NodeTransformer):
             return self.generic_visit(node)
         left = astutils.evalnode(self.visit(node.left), self.globals)
         right = astutils.evalnode(self.visit(node.comparators[0]), self.globals)
-        if (isinstance(left, sympy.Basic) or isinstance(right, sympy.Basic)):
+        if isinstance(left, sympy.Basic) or isinstance(right, sympy.Basic):
+            # The result must stay an AST node: a NodeTransformer that returns a non-AST object from a
+            # list-valued field (e.g., ``BoolOp.values`` in "a == b or c == d") has it spliced into that
+            # list by ``ast.NodeTransformer.generic_visit``, and on a single-valued field it is planted in
+            # the tree. ``astutils.evalnode`` reads the value back out of the constant.
             if isinstance(node.ops[0], ast.Eq):
-                return sympy.Eq(left, right)
+                return astutils.create_constant(sympy.Eq(left, right), node)
             elif isinstance(node.ops[0], ast.NotEq):
-                return sympy.Ne(left, right)
+                return astutils.create_constant(sympy.Ne(left, right), node)
         return self.generic_visit(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        """``not x`` on a symbol: Python's ``not`` would fold the always-truthy symbol object to ``False``."""
+        if not isinstance(node.op, ast.Not):
+            return self.generic_visit(node)
+        node.operand = self.visit(node.operand)
+        operand = astutils.evalnode(node.operand, self.globals)
+        if isinstance(operand, sympy.Basic):
+            return astutils.create_constant(sympy.Not(as_sympy_truth(operand)), node)
+        return node
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> Any:
+        """``a and b`` / ``a or b`` with a symbolic operand: Python's short circuit would read the symbol as true."""
+        node.values = [self.visit(value) for value in node.values]
+        try:
+            values = [astutils.evalnode(value, self.globals) for value in node.values]
+        except SyntaxError:
+            return node  # Python's short circuit still folds a constant prefix (``False and unknown``)
+        if not any(isinstance(value, sympy.Basic) for value in values):
+            return node
+        combine = sympy.And if isinstance(node.op, ast.And) else sympy.Or
+        return astutils.create_constant(combine(*(as_sympy_truth(value) for value in values)), node)
 
     def visit_Constant(self, node):
         if isinstance(node.value, numpy.bool_):
@@ -138,12 +183,30 @@ class RewriteSympyEquality(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def _decide(condition: sympy.Basic, scope: dict[str, Any]) -> symbolic.Truth:
+    """Whether a comparison holds under what the program's own symbols (the symbols of ``scope``) were declared
+    with, as the frontend declares them in the SDFG."""
+    relation = symbolic.comparison_relation(condition)
+    if relation is None:
+        return symbolic.Truth.UNKNOWN
+    program_symbols = [value for value in scope.values() if isinstance(value, symbolic.symbol)]
+    facts = symbolic.Facts(
+        [
+            symbolic.predicate_relation(predicate, declared)
+            for declared in program_symbols
+            for predicate in sorted(declared.declaration.predicates, key=lambda p: p.name)
+        ],
+        frozenset(declared.name for declared in program_symbols if declared.declaration.dtype in dtypes.INTEGER_TYPES),
+    )
+    return symbolic.ask(relation, facts)
+
+
 class ConditionalCodeResolver(ast.NodeTransformer):
     """
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
 
-    def __init__(self, globals: Dict[str, Any]):
+    def __init__(self, globals: dict[str, Any]):
         super().__init__()
         self.globals_and_locals = copy.copy(globals)
 
@@ -155,11 +218,17 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     def visit_If(self, node: ast.If) -> Any:
         node = self.generic_visit(node)
         try:
-            test = RewriteSympyEquality(self.globals_and_locals).visit(node.test)
+            # Rewrite a copy: the rewrite replaces nodes in-place, and the symbolic objects it leaves
+            # behind are only meant for the evaluation below. The original test has to survive intact
+            # for the cases where the condition turns out to be indeterminate.
+            test = RewriteSympyEquality(self.globals_and_locals).visit(astutils.copy_tree(node.test))
             result = astutils.evalnode(test, self.globals_and_locals)
 
             # Check symbolic conditions separately
             if isinstance(result, sympy.Basic):
+                truth = _decide(result, self.globals_and_locals)
+                if truth is not symbolic.Truth.UNKNOWN:
+                    return node.body if truth is symbolic.Truth.TRUE else node.orelse
                 if result == True:
                     # Only return "if" body
                     return node.body
@@ -169,13 +238,12 @@ class ConditionalCodeResolver(ast.NodeTransformer):
                 else:
                     # Any other case is indeterminate, fall back to generic visit
                     return node
-            else:  # If not symbolic, check value directly
-                if result:
-                    # Only return "if" body
-                    return node.body
-                elif not result:
-                    # Only return "else" body
-                    return node.orelse
+            elif result:
+                # Only return "if" body
+                return node.body
+            elif not result:
+                # Only return "else" body
+                return node.orelse
 
         except SyntaxError:
             # Cannot evaluate if condition at compile time
@@ -219,13 +287,13 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
 
 
 class DeadCodeEliminator(ast.NodeTransformer):
-    """ Removes any code within scope after return/break/continue/raise. """
+    """Removes any code within scope after return/break/continue/raise."""
 
     def generic_visit(self, node: ast.AST):
         for field, old_value in ast.iter_fields(node):
             if isinstance(old_value, list):
                 # Scope fields
-                scope_field = field in ('body', 'orelse')
+                scope_field = field in ("body", "orelse")
 
                 new_values = []
                 for value in old_value:
@@ -236,7 +304,7 @@ class DeadCodeEliminator(ast.NodeTransformer):
                         elif not isinstance(value, ast.AST):
                             new_values.extend(value)
                             continue
-                        elif (scope_field and isinstance(value, (ast.Return, ast.Break, ast.Continue, ast.Raise))):
+                        elif scope_field and isinstance(value, (ast.Return, ast.Break, ast.Continue, ast.Raise)):
                             # Any AST node after this one is unreachable and
                             # not parsed by this transformer
                             new_values.append(value)
@@ -252,7 +320,7 @@ class DeadCodeEliminator(ast.NodeTransformer):
         return node
 
 
-def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node: Optional[ast.AST] = None) -> bool:
+def has_replacement(callobj: Callable, parent_object: Any | None = None, node: ast.AST | None = None) -> bool:
     """
     Returns True if the function/operator replacement repository
     has a registered replacement for the called function described by
@@ -269,7 +337,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
             mod = parent_object.__module__
         except AttributeError:
             pass
-    if mod and (mod == 'dace' or mod.startswith('dace.') or mod == 'math' or mod.startswith('math.')):
+    if mod and (mod == "dace" or mod.startswith("dace.") or mod == "math" or mod.startswith("math.")):
         return True
 
     # Attributes and methods
@@ -285,7 +353,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
             return True
 
     # NumPy ufuncs
-    if (isinstance(callobj, numpy.ufunc) or isinstance(parent_object, numpy.ufunc)):
+    if isinstance(callobj, numpy.ufunc) or isinstance(parent_object, numpy.ufunc):
         return True
 
     # Functions
@@ -294,7 +362,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
         cbqualname = astutils.rname(node)
         if oprepo.Replacements.get(cbqualname) is not None:
             return True
-    full_func_name = callobj.__module__ + '.' + callobj.__qualname__
+    full_func_name = callobj.__module__ + "." + callobj.__qualname__
     if oprepo.Replacements.get(full_func_name) is not None:
         return True
 
@@ -302,7 +370,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> Tuple[Callable, int]:
+def _create_unflatten_instruction(arg: ast.AST, global_vars: dict[str, Any]) -> tuple[Callable, int]:
     """
     Creates a lambda function for recreating the original Python object and returns the number of
     arguments to increment.
@@ -326,7 +394,7 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
         def make_remake(kwnames):
 
             def remake_dict(args):
-                return {k: a for k, a in zip(kwnames, args)}
+                return dict(zip(kwnames, args))
 
             return remake_dict
 
@@ -334,7 +402,7 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
         kwarg_names = []
         for kw in arg.keys:
             if not isinstance(kw, ast.Constant):
-                raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
+                raise NotImplementedError(f"Key type {type(kw).__name__} is not supported")
 
             kwarg_names.append(kw.value)
 
@@ -342,7 +410,7 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
     return (None, 1, False)
 
 
-def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]):
+def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]):
     """
     Creates a version of the function that has only marshallable arguments and no keyword arguments.
     Arguments in callback matches the number of arguments used exactly.
@@ -351,7 +419,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     """
 
     # Find out if any Python arguments should be flattened
-    unflatten_instructions: List[Tuple[int, Callable, int, bool]] = []
+    unflatten_instructions: list[tuple[int, Callable, int, bool]] = []
     curarg = 0
     instructions_exist = False
 
@@ -405,10 +473,10 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
                     if constant:
                         unflattened.append(unflatten())
                     else:
-                        unflattened.append(unflatten(all_args[i:i + skip]))
+                        unflattened.append(unflatten(all_args[i : i + skip]))
 
                 args = unflattened[:poscount]
-                kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
+                kwargs = dict(zip(keywords, unflattened[poscount:]))
                 return func(*args, **kwargs)
 
             return cb_func
@@ -418,7 +486,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
 
             def cb_func(*all_args):
                 args = all_args[:poscount]
-                kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
+                kwargs = dict(zip(keywords, all_args[poscount:]))
                 return func(*args, **kwargs)
 
             return cb_func
@@ -426,11 +494,29 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     return make_cb(keywords, poscount, unflatten_instructions)
 
 
-class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
-    """ Resolves global constants and lambda expressions if not
-        already defined in the given scope. """
+def own_buffer(value: Any) -> Any:
+    """Materialize a numpy view so it owns its buffer; anything else passes through."""
+    if isinstance(value, numpy.ndarray) and value.base is not None:
+        return numpy.copy(value)
+    return value
 
-    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
+
+def aliases_live_object(qualname: str) -> bool:
+    """True if the qualname is a name/attribute/subscript chain, so it names something the caller holds."""
+    try:
+        node = ast.parse(qualname, mode="eval").body
+    except SyntaxError:
+        return False
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
+class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
+    """Resolves global constants and lambda expressions if not
+    already defined in the given scope."""
+
+    def __init__(self, globals: dict[str, Any], resolve_functions: bool = False, default_args: set[str] = None):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.default_args = default_args or set()
@@ -446,7 +532,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return {k: v for k, v in self._globals.items() if k not in self.current_scope}
 
     def generic_visit(self, node: ast.AST):
-        if hasattr(node, 'body') or hasattr(node, 'orelse'):
+        if hasattr(node, "body") or hasattr(node, "orelse"):
             oldscope = self.current_scope
             self.current_scope = set()
             self.current_scope.update(oldscope)
@@ -456,22 +542,24 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         else:
             return super().generic_visit(node)
 
-    def _qualname_to_array_name(self, qualname: str, prefix: str = '__g_') -> str:
-        """ Converts a Python qualified attribute name to an SDFG array name. """
-        # We only support attributes and subscripts for now
-        sanitized = re.sub(r'[\.\[\]\'\",]', '_', qualname)
+    def _qualname_to_array_name(self, qualname: str, prefix: str = "__g_") -> str:
+        """Converts a Python qualified attribute name to an SDFG array name."""
+        # Every non-identifier character, not just the attribute/subscript punctuation: a qualname
+        # can be a whole call EXPRESSION -- ``numpy.arange(3 * M // M, dtype=np.int64)[None, :]`` --
+        # whose parentheses, spaces and operators survived the narrower substitution and then failed
+        # validation. An empty prefix can also leave a leading digit, which is not a valid name.
+        sanitized = re.sub(r"\W", "_", qualname)
+        if sanitized and sanitized[0].isdigit():
+            sanitized = "_" + sanitized
         if not dtypes.validate_name(sanitized):
-            raise NameError(f'Variable name "{sanitized}" is not sanitized '
-                            'properly during parsing. Please report this issue.')
+            raise NameError(
+                f'Variable name "{sanitized}" is not sanitized properly during parsing. Please report this issue.'
+            )
         return f"{prefix}{sanitized}"
 
-    def global_value_to_node(self,
-                             value,
-                             parent_node,
-                             qualname,
-                             recurse=False,
-                             detect_callables=False,
-                             keep_object=False):
+    def global_value_to_node(
+        self, value, parent_node, qualname, recurse=False, detect_callables=False, keep_object=False
+    ):
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -481,7 +569,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
         if isinstance(value, list):
             elts = [
-                self.global_value_to_node(v, parent_node, qualname + f'[{i}]', detect_callables=detect_callables)
+                self.global_value_to_node(v, parent_node, qualname + f"[{i}]", detect_callables=detect_callables)
                 for i, v in enumerate(value)
             ]
             if any(e is None for e in elts):
@@ -489,7 +577,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             newnode = ast.List(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, tuple):
             elts = [
-                self.global_value_to_node(v, parent_node, qualname + f'[{i}]', detect_callables=detect_callables)
+                self.global_value_to_node(v, parent_node, qualname + f"[{i}]", detect_callables=detect_callables)
                 for i, v in enumerate(value)
             ]
             if any(e is None for e in elts):
@@ -502,19 +590,19 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             newnode = ast.parse(symbolic.symstr(value)).body[0].value
         elif isinstance(value, ast.Name):
             newnode = ast.Name(id=value.id, ctx=ast.Load())
-        elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
+        elif dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, "__sdfg__"):
             # Could be a constant, an SDFG, or SDFG-convertible object
-            if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
+            if isinstance(value, SDFG) or hasattr(value, "__sdfg__"):
                 self.closure.closure_sdfgs[id(value)] = (qualname, value)
             elif isinstance(value, StringLiteral):
                 value = value.value
             else:
                 # If this is a function call to a None function, do not add its result to the closure
                 if isinstance(parent_node, ast.Call):
-                    fqname = getattr(parent_node.func, 'qualname', astutils.rname(parent_node.func))
+                    fqname = getattr(parent_node.func, "qualname", astutils.rname(parent_node.func))
                     if fqname in self.closure.closure_constants and self.closure.closure_constants[fqname] is None:
                         return None
-                    if hasattr(parent_node.func, 'n') and parent_node.func.n is None:
+                    if hasattr(parent_node.func, "n") and parent_node.func.n is None:
                         return None
 
                 self.closure.closure_constants[qualname] = value
@@ -523,7 +611,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             newnode = astutils.create_constant(value)
             newnode.qualname = qualname
 
-        elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
+        elif detect_callables and hasattr(value, "__call__") and hasattr(value.__call__, "__sdfg__"):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
         elif dtypes.is_array(value):
             # Arrays need to be stored as a new name and fed as an argument
@@ -531,11 +619,19 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 arrname = self.closure.array_mapping[id(value)]
             else:
                 arrname = self._qualname_to_array_name(qualname)
-                desc = data.create_datadescriptor(value)
-                if keep_object:
-                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: value, False)
+                if keep_object or aliases_live_object(qualname):
+                    # Names something the caller holds: hand back THAT object. A copy would drop the
+                    # kernel's writes, and a fresh one per call defeats the ``array_mapping`` dedup.
+                    desc = data.create_datadescriptor(value)
+                    evaluator = (lambda: value) if keep_object else (lambda: eval(qualname, self.globals))
                 else:
-                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
+                    # Hoisted out of an EXPRESSION (``np.arange(...)[None, :]``), so it is a temporary
+                    # nobody else holds -- and it can be a numpy VIEW, which the calling convention
+                    # refuses. Materialize it ONCE; re-evaluating would mint a new object per call.
+                    value = own_buffer(value)
+                    desc = data.create_datadescriptor(value)
+                    evaluator = lambda: value
+                self.closure.closure_arrays[arrname] = (qualname, desc, evaluator, False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
@@ -546,13 +642,18 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 from dace.frontend.python import parser  # Avoid import loops
 
                 parent_object = None
-                if hasattr(value, '__self__'):
+                if hasattr(value, "__self__"):
                     parent_object = value.__self__
 
                 # If it is a callable object
                 # NumPy array dispatchers have an _implementation field and are NOT regarded as functions by Python
-                if (not inspect.isfunction(value) and not inspect.ismethod(value) and not inspect.isbuiltin(value)
-                        and hasattr(value, '__call__') and not hasattr(value, '_implementation')):
+                if (
+                    not inspect.isfunction(value)
+                    and not inspect.ismethod(value)
+                    and not inspect.isbuiltin(value)
+                    and hasattr(value, "__call__")
+                    and not hasattr(value, "_implementation")
+                ):
                     parent_object = value
                     value = value.__call__
 
@@ -565,14 +666,14 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
                 # Store the handle to the original callable, in case parsing fails
                 if isinstance(parent_node, ast.Call):
-                    if hasattr(parent_node, 'qualname') and parent_node.qualname in self.closure.callbacks:
+                    if hasattr(parent_node, "qualname") and parent_node.qualname in self.closure.callbacks:
                         # Already parsed
                         return None
 
                     cbqualname = astutils.unparse(parent_node.func)
                 else:
                     cbqualname = astutils.rname(parent_node)
-                cbname = self._qualname_to_array_name(cbqualname, prefix='')
+                cbname = self._qualname_to_array_name(cbqualname, prefix="")
 
                 # Make a version of the callback without keyword arguments or Python literal objects (list, tuple, ...)
                 cb_func = flatten_callback(value, parent_node, self.globals)
@@ -615,7 +716,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 return newnode
         elif keep_object:
             # General object, keep in globals and give a unique name
-            objname = self._qualname_to_array_name(qualname, prefix='')
+            objname = self._qualname_to_array_name(qualname, prefix="")
             objname = data.find_new_name(objname, self._globals.keys())
             self._globals[objname] = value
             newnode = ast.Name(id=objname, ctx=ast.Load())
@@ -667,7 +768,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         self.ignore_node_ctx = oldvalue
 
         # Parse the rest of the fields
-        return self.generic_visit_filtered(node, {'target'})
+        return self.generic_visit_filtered(node, {"target"})
 
     def visit_Name(self, node: ast.Name):
         if not self.ignore_node_ctx and isinstance(node.ctx, ast.Store):
@@ -688,7 +789,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             node.arg = self.globals[node.arg].name
         return self.generic_visit(node)
 
-    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> Optional[ast.AST]:
+    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> ast.AST | None:
         # Try to evaluate the expression with only the globals
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -696,10 +797,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             return self.generic_visit(node)
 
         if not isinstance(global_val, dtypes.typeclass):
-            newnode = self.global_value_to_node(global_val,
-                                                parent_node=node,
-                                                qualname=astutils.unparse(node),
-                                                recurse=True)
+            newnode = self.global_value_to_node(
+                global_val, parent_node=node, qualname=astutils.unparse(node), recurse=True
+            )
             if newnode is not None:
                 return newnode
 
@@ -735,7 +835,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                         return self._visit_potential_constant(v, True)
             elif isinstance(node.value, (ast.List, ast.Tuple)):  # List & Tuple
                 # Loop over the list if slicing makes it a list
-                if isinstance(node.value.elts[gslice], List):
+                if isinstance(node.value.elts[gslice], list):
                     visited_list = astutils.copy_tree(node.value)
                     visited_list.elts.clear()
                     for v in node.value.elts[gslice]:
@@ -751,12 +851,14 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
-        from dace.frontend.python.interface import in_program, inline  # Avoid import loop
+        from dace.frontend.python.interface import in_program, inline, is_always_inline  # Avoid import loop
 
-        if hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible):
+        if hasattr(node.func, "value") and isinstance(node.func.value, SDFGConvertible):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
+        # Callees marked with ``@dace.always_inline`` are folded regardless of the ``resolve_functions`` setting
+        always_inline = False
         try:
             global_func = astutils.evalnode(node.func, self.globals)
 
@@ -767,33 +869,47 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             if global_func is inline:
                 return node
 
-            if self.resolve_functions:
+            always_inline = is_always_inline(global_func)
+            if self.resolve_functions or always_inline:
                 global_val = astutils.evalnode(node, self.globals)
             else:
                 global_val = node
         except SyntaxError:
+            if always_inline:
+                raise DaceSyntaxError(
+                    None,
+                    node,
+                    f'Cannot evaluate the call to "{astutils.unparse(node.func)}" at compile time, '
+                    "even though it is annotated with @dace.always_inline. Make sure all of its arguments are "
+                    "compile-time constants.",
+                )
             return self.generic_visit(node)
 
         newnode = None
-        if self.resolve_functions and global_val is not node:
+        if global_val is not node:
             # Without this check, casts don't generate code
             if not isinstance(global_val, dtypes.typeclass):
-                newnode = self.global_value_to_node(global_val,
-                                                    parent_node=node,
-                                                    qualname=astutils.unparse(node),
-                                                    recurse=True)
+                newnode = self.global_value_to_node(
+                    global_val, parent_node=node, qualname=astutils.unparse(node), recurse=True
+                )
                 if newnode is not None:
                     return newnode
+                if always_inline:
+                    raise DaceSyntaxError(
+                        None,
+                        node,
+                        f'The result of "{astutils.unparse(node.func)}" (of type '
+                        f"{type(global_val).__name__}) cannot be inlined into the program, even though the "
+                        "function is annotated with @dace.always_inline.",
+                    )
         elif not isinstance(global_func, dtypes.typeclass):
             callables = not self.do_not_detect_callables
-            newnode = self.global_value_to_node(global_func,
-                                                parent_node=node,
-                                                qualname=astutils.unparse(node),
-                                                recurse=True,
-                                                detect_callables=callables)
+            newnode = self.global_value_to_node(
+                global_func, parent_node=node, qualname=astutils.unparse(node), recurse=True, detect_callables=callables
+            )
             if newnode is not None:
                 node.func = newnode
-                if hasattr(newnode, 'oldnode'):
+                if hasattr(newnode, "oldnode"):
                     node.oldnode = newnode.oldnode
                 return self.generic_visit(node)
         return self.generic_visit(node)
@@ -802,11 +918,11 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         # Special case: for loop generators cannot be dace programs
         oldval = self.do_not_detect_callables
         self.do_not_detect_callables = True
-        self.generic_visit_field(node, 'target')
-        self.generic_visit_field(node, 'iter')
+        self.generic_visit_field(node, "target")
+        self.generic_visit_field(node, "iter")
         self.do_not_detect_callables = oldval
-        self.generic_visit_field(node, 'body')
-        self.generic_visit_field(node, 'orelse')
+        self.generic_visit_field(node, "body")
+        self.generic_visit_field(node, "orelse")
         return node
 
     def visit_TopLevelExpr(self, node: ast.Expr):
@@ -827,40 +943,43 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             try:
                 msg = astutils.evalnode(node.msg, self.globals)
                 if msg is not None:
-                    msg = '. Message: ' + msg
+                    msg = ". Message: " + msg
                 else:
-                    msg = '.'
+                    msg = "."
             except SyntaxError:
-                msg = ' (ERROR: could not statically evaluate message).'
+                msg = " (ERROR: could not statically evaluate message)."
 
-            raise AssertionError('Assertion failed statically at line '
-                                 f'{node.lineno} during compilation of DaCe '
-                                 'program' + msg)
+            raise AssertionError(
+                f"Assertion failed statically at line {node.lineno} during compilation of DaCe program" + msg
+            )
         except SyntaxError:
-            warnings.warn(f'Runtime assertion at line {node.lineno} could not'
-                          ' be checked in DaCe program, skipping check.')
+            warnings.warn(
+                f"Runtime assertion at line {node.lineno} could not be checked in DaCe program, skipping check."
+            )
         return None
 
     def visit_Raise(self, node: ast.Raise) -> Any:
-        warnings.warn(f'Runtime exception at line {node.lineno} is not supported and will be skipped.')
+        warnings.warn(f"Runtime exception at line {node.lineno} is not supported and will be skipped.")
         return None
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> Any:
         try:
             global_val = astutils.evalnode(node, self.globals)
-            return ast.copy_location(ast.Constant(kind='', value=global_val), node)
+            return ast.copy_location(ast.Constant(kind="", value=global_val), node)
         except SyntaxError:
-            warnings.warn(f'f-string at line {node.lineno} could not '
-                          'be fully evaluated in DaCe program, converting to '
-                          'partially-evaluated string.')
+            warnings.warn(
+                f"f-string at line {node.lineno} could not "
+                "be fully evaluated in DaCe program, converting to "
+                "partially-evaluated string."
+            )
             visited = self.generic_visit(node)
             parsed = [
                 not isinstance(v, ast.FormattedValue) or isinstance(v.value, ast.Constant) for v in visited.values
             ]
             values = [astutils.unparse(v.value) for v in visited.values]
             return ast.copy_location(
-                ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v for p, v in zip(parsed, values))),
-                node)
+                ast.Constant(kind="", value="".join((f"{{{v}}}") if not p else v for p, v in zip(parsed, values))), node
+            )
 
 
 class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
@@ -871,19 +990,19 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
     a return statement, or top-level break/continue statements.
     """
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
+    def __init__(self, globals: dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
         super().__init__()
-        self.with_statements: List[ast.With] = []
-        self.context_managers: Dict[ast.With, List[Tuple[str, Any]]] = {}
-        self.globals: Dict[str, Any] = globals
+        self.with_statements: list[ast.With] = []
+        self.context_managers: dict[ast.With, list[tuple[str, Any]]] = {}
+        self.globals: dict[str, Any] = globals
         self.filename = filename
         self.resolver = closure_resolver
-        self.names: Set[str] = set()
+        self.names: set[str] = set()
 
     def _visit_node_with_body(self, node):
-        node = self.generic_visit_filtered(node, {'body'})
+        node = self.generic_visit_filtered(node, {"body"})
         self.with_statements.append(node)
-        node = self.generic_visit_field(node, 'body')
+        node = self.generic_visit_field(node, "body")
         self.with_statements.pop()
         return node
 
@@ -899,7 +1018,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
             return node
         return newnode
 
-    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> List[ast.AST]:
+    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> list[ast.AST]:
         result = []
         if len(self.with_statements) == 0:
             return result
@@ -911,7 +1030,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
 
             for mgrname, mgr in reversed(self.context_managers[stmt]):
                 # Call __exit__ (without exception management all three arguments are set to None)
-                exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)
+                exit_call = ast.copy_location(ast.parse(f"{mgrname}.__exit__(None, None, None)").body[0], stmt)
                 exit_call.value = self._register_callback(exit_call.value, mgr.__exit__)
                 result.append(exit_call)
             if only_one:
@@ -919,7 +1038,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
 
         return result
 
-    def _add_entries(self, node: ast.With) -> List[ast.AST]:
+    def _add_entries(self, node: ast.With) -> list[ast.AST]:
         result = []
         ctx_mgr_names = []
         for i, item in enumerate(node.items):
@@ -936,23 +1055,27 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
                 else:
                     ctxmgr = astutils.evalnode(item.context_expr, self.globals)
             except SyntaxError:
-                raise ValueError(f'Cannot create context manager at {self.filename}:{node.lineno} - only compile-time '
-                                 'evaluatable context managers are supported.')
+                raise ValueError(
+                    f"Cannot create context manager at {self.filename}:{node.lineno} - only compile-time "
+                    "evaluatable context managers are supported."
+                )
 
             # Create manager as part of closure
             mgr_name = data.find_new_name(
-                f'__with_{item.context_expr.qualname if hasattr(item.context_expr, "qualname") else item.context_expr.id}',
-                self.names)
+                f"__with_{item.context_expr.qualname if hasattr(item.context_expr, 'qualname') else item.context_expr.id}",
+                self.names,
+            )
             mgr = self.resolver.global_value_to_node(ctxmgr, node, mgr_name, keep_object=True)
             ctx_mgr_names.append((mgr.id, ctxmgr))
             self.names.add(mgr_name)
 
             # Call __enter__
-            enter_call = ast.copy_location(ast.parse(f'{mgr.id}.__enter__()').body[0], node)
+            enter_call = ast.copy_location(ast.parse(f"{mgr.id}.__enter__()").body[0], node)
             enter_call.value = self._register_callback(enter_call.value, ctxmgr.__enter__)
             if item.optional_vars is not None:
                 enter_call = ast.copy_location(
-                    ast.Assign(targets=[item.optional_vars], value=enter_call.value, type_comment=None), node)
+                    ast.Assign(targets=[item.optional_vars], value=enter_call.value, type_comment=None), node
+                )
             result.append(enter_call)
 
         self.context_managers[node] = ctx_mgr_names
@@ -972,7 +1095,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         self.with_statements.append(node)
 
         # Make empty block
-        ifnode: ast.If = ast.parse('if True: pass').body[0]
+        ifnode: ast.If = ast.parse("if True: pass").body[0]
         ifnode = ast.copy_location(ifnode, node)
 
         # Make enter calls
@@ -980,7 +1103,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         ifnode.body = entries
 
         # Visit body
-        node = self.generic_visit_field(node, 'body')
+        node = self.generic_visit_field(node, "body")
         ifnode.body += node.body
 
         # Make exit calls
@@ -1026,6 +1149,7 @@ class LoopUnroller(ast.NodeTransformer):
         3. generator is one of the predetermined "stateless generators"
         4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
     """
+
     STATELESS_GENERATORS = [
         enumerate,
         zip,
@@ -1039,11 +1163,11 @@ class LoopUnroller(ast.NodeTransformer):
         range,
     ]
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+    def __init__(self, globals: dict[str, Any], filename: str, closure_resolver: GlobalResolver):
         super().__init__()
         self.globals = globals
         self.filename = filename
-        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
+        self.threshold = int(Config.get("frontend", "unroll_threshold"))
         self.resolver = closure_resolver
 
     def visit_For(self, node: ast.For) -> Any:
@@ -1054,13 +1178,13 @@ class LoopUnroller(ast.NodeTransformer):
             range,  # Handled in ProgramVisitor
             dace.map,
             dace.consume,
-            MapGenerator
+            MapGenerator,
         ]
 
         node = self.generic_visit(node)
 
         # If this node was already designated as a no-unroll node, continue
-        if getattr(node, 'nounroll', False):
+        if getattr(node, "nounroll", False):
             return node
 
         # First, skip loops that contain break/continue that is part of this
@@ -1124,11 +1248,12 @@ class LoopUnroller(ast.NodeTransformer):
                 genfunc = astutils.evalnode(nfunc, self.globals)
 
                 # If genfunc is a bound method, try to extract function from type
-                if hasattr(genfunc, '__self__'):
+                if hasattr(genfunc, "__self__"):
                     genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
 
-                if (self.threshold >= 0
-                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
+                if self.threshold >= 0 and (
+                    genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS
+                ):
                     implicit = True
                 elif genfunc in LoopUnroller.STATELESS_GENERATORS:
                     implicit = True
@@ -1178,7 +1303,7 @@ class LoopUnroller(ast.NodeTransformer):
 
         # Too verbose?
         if implicit and not explicitly_requested:
-            warnings.warn(f'Loop at {self.filename}:{node.lineno} will be implicitly unrolled.')
+            warnings.warn(f"Loop at {self.filename}:{node.lineno} will be implicitly unrolled.")
 
         ##########################################
         # Unroll loop
@@ -1201,19 +1326,16 @@ class LoopUnroller(ast.NodeTransformer):
                     elem[i] = newnode
                 else:
                     # Augment closure with new value
-                    eid_str = f'{eid}'
+                    eid_str = f"{eid}"
                     if len(elem) > 1:
-                        eid_str = f'{eid}_{i}'
-                    elem[i] = self.resolver.global_value_to_node(e,
-                                                                 node,
-                                                                 f'gen{node.lineno}_{eid_str}',
-                                                                 True,
-                                                                 keep_object=True)
+                        eid_str = f"{eid}_{i}"
+                    elem[i] = self.resolver.global_value_to_node(
+                        e, node, f"gen{node.lineno}_{eid_str}", True, keep_object=True
+                    )
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
-            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
-            for stmt in elembody:
-                new_body.append(replace.visit(stmt))
+            replace = astutils.ASTFindReplace(dict(zip(to_replace, elem)))
+            new_body.extend(replace.visit(stmt) for stmt in elembody)
 
         return new_body
 
@@ -1227,7 +1349,7 @@ class ExpressionInliner(ast.NodeTransformer):
     compile-time evaluated.
     """
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+    def __init__(self, globals: dict[str, Any], filename: str, closure_resolver: GlobalResolver):
         super().__init__()
         self.globals = globals
         self.filename = filename
@@ -1248,15 +1370,15 @@ class ExpressionInliner(ast.NodeTransformer):
             return node
 
         if len(node.args) != 1:
-            raise DaceSyntaxError(None, node, 'dace.inline must be called with one argument')
+            raise DaceSyntaxError(None, node, "dace.inline must be called with one argument")
 
         # Try to inline the expression on the current AST
         try:
             contents = astutils.evalnode(node.args[0], self.globals)
         except SyntaxError:
             raise DaceSyntaxError(
-                None, node, 'Cannot inline expression with dace.inline, it '
-                'cannot be evaluated at compile time.')
+                None, node, "Cannot inline expression with dace.inline, it cannot be evaluated at compile time."
+            )
 
         ##########################################
 
@@ -1268,28 +1390,26 @@ class ExpressionInliner(ast.NodeTransformer):
                 # Compatibility check since Python changed their AST nodes
                 newnode = astutils.create_constant(contents)
             elif isinstance(contents, (list, tuple, set)):
-                newnode = ast.copy_location(ast.Tuple(elts=[_convert_to_ast(c) for c in contents], ctx=ast.Load()),
-                                            node)
+                newnode = ast.copy_location(
+                    ast.Tuple(elts=[_convert_to_ast(c) for c in contents], ctx=ast.Load()), node
+                )
             else:
                 # Augment closure with new value
-                newnode = self.resolver.global_value_to_node(contents,
-                                                             node,
-                                                             f'inlined_{id(contents)}',
-                                                             True,
-                                                             keep_object=True)
+                newnode = self.resolver.global_value_to_node(
+                    contents, node, f"inlined_{id(contents)}", True, keep_object=True
+                )
             return newnode
 
         return _convert_to_ast(contents)
 
 
 class CallTreeResolver(ast.NodeVisitor):
-
-    def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
+    def __init__(self, closure: SDFGClosure, globals: dict[str, Any]) -> None:
         self.closure = closure
-        self.seen_calls: Set[str] = set()
+        self.seen_calls: set[str] = set()
         self.globals = globals
 
-    def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
+    def _eval_args(self, node: ast.Call) -> dict[str, Any]:
         res = {}
 
         # Evaluate positional arguments
@@ -1312,22 +1432,22 @@ class CallTreeResolver(ast.NodeVisitor):
 
         return res
 
-    def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
-        """ Returns a set of names of the given arguments from the positional and keyword arguments """
+    def _get_given_args(self, node: ast.Call, function: "DaceProgram") -> set[str]:
+        """Returns a set of names of the given arguments from the positional and keyword arguments"""
         from dace.frontend.python.parser import DaceProgram  # Avoid import loop
 
         posargs = node.args
         kwargs = [kwarg.arg for kwarg in node.keywords]
         result = set()
 
+        # "objname" holds the name of the "self" argument, if any
         if not isinstance(function, DaceProgram):
             # Make set of parameters from __sdfg_signature__
             parameters = [(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in function.__sdfg_signature__()[0]]
+            objname = False
         else:
             parameters = [(aname, arg.kind) for aname, arg in function.signature.parameters.items()]
-
-        # Handle "self" argument
-        objname = getattr(function, 'objname', False)
+            objname = function.objname
 
         nargs = len(posargs)
         arg_ind = 0
@@ -1340,12 +1460,12 @@ class CallTreeResolver(ast.NodeVisitor):
             # Variable-length arguments: obtain from the remainder of given_*
             if sig_kind is inspect.Parameter.VAR_POSITIONAL:
                 vargs = posargs[arg_ind:]
-                result.update({f'__arg{j}' for j, _ in enumerate(vargs)})
+                result.update({f"__arg{j}" for j, _ in enumerate(vargs)})
                 # Shift arg_ind to the end
                 arg_ind = len(posargs)
             elif sig_kind is inspect.Parameter.VAR_KEYWORD:
                 vargs = {k for k in kwargs.keys() if k not in result}
-                result.update({f'__kwarg_{k}' for k in vargs.keys()})
+                result.update({f"__kwarg_{k}" for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
             elif sig_kind is inspect.Parameter.POSITIONAL_ONLY:
                 if arg_ind < nargs:
@@ -1369,14 +1489,14 @@ class CallTreeResolver(ast.NodeVisitor):
         if not isinstance(node.func, ast.Constant):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
-        if hasattr(node.func, 'oldnode'):
+        if hasattr(node.func, "oldnode"):
             if isinstance(node.func.oldnode, ast.Call):
                 self.seen_calls.add(astutils.unparse(node.func.oldnode.func))
             else:
                 self.seen_calls.add(astutils.rname(node.func.oldnode))
         value = node.func.value
 
-        if not hasattr(value, '__sdfg__') or isinstance(value, SDFG):
+        if not hasattr(value, "__sdfg__") or isinstance(value, SDFG):
             return self.generic_visit(node)
 
         constant_args = self._eval_args(node)
@@ -1386,35 +1506,37 @@ class CallTreeResolver(ast.NodeVisitor):
         try:
             if id(value) in self.closure.closure_sdfgs:
                 qualname, _ = self.closure.closure_sdfgs[id(value)]
-            elif hasattr(node.func, 'qualname'):
+            elif hasattr(node.func, "qualname"):
                 qualname = node.func.qualname
             self.seen_calls.add(qualname)
-            if hasattr(value, 'closure_resolver'):
+            if hasattr(value, "closure_resolver"):
                 # Get given arguments from signature and args/kwargs
                 given_args = self._get_given_args(node, value)
 
                 self.closure.nested_closures.append(
-                    (qualname, value.closure_resolver(constant_args, given_args, self.closure)))
+                    (qualname, value.closure_resolver(constant_args, given_args, self.closure))
+                )
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
         except DaceRecursionError:  # Parsing failed in a nested context, raise
             raise
         except Exception as ex:  # Parsing failed (anything can happen here)
-            optional_qname = ''
+            optional_qname = ""
             if qualname is not None:
                 optional_qname = f' ("{qualname}")'
             warnings.warn(
-                f'Preprocessing SDFGConvertible {value}{optional_qname} failed with {type(ex).__name__}: {ex}')
-            if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
+                f"Preprocessing SDFGConvertible {value}{optional_qname} failed with {type(ex).__name__}: {ex}"
+            )
+            if Config.get_bool("frontend", "raise_nested_parsing_errors"):
                 raise
             if id(value) in self.closure.closure_sdfgs:
                 del self.closure.closure_sdfgs[id(value)]
             # Return old call AST instead
-            if not hasattr(node.func, 'oldnode'):
+            if not hasattr(node.func, "oldnode"):
                 raise
 
             # If callback exists, use callback name
-            if hasattr(node.func, 'cbname'):
+            if hasattr(node.func, "cbname"):
                 newnode = ast.Name(id=node.func.cbname, ctx=ast.Load())
                 newnode.oldnode = node.func.oldnode
                 node.func = ast.copy_location(newnode, node.func)
@@ -1426,10 +1548,9 @@ class CallTreeResolver(ast.NodeVisitor):
 
 
 class ArrayClosureResolver(ast.NodeVisitor):
-
     def __init__(self, closure: SDFGClosure):
         self.closure = closure
-        self.arrays: Set[str] = set()
+        self.arrays: set[str] = set()
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.closure.closure_arrays:
@@ -1445,14 +1566,16 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
 
     def __init__(self, filename: str) -> None:
         super().__init__()
-        self.visitor = collections.namedtuple('Visitor', 'filename')
-        self.visitor.filename = filename
+        self.visitor = types.SimpleNamespace(filename=filename)
 
     def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):
-        if hasattr(node, 'qualname'):
+        if hasattr(node, "qualname"):
             raise DaceSyntaxError(
-                self.visitor, parent_node, f'Trying to assign to a compile-time constant "{node.qualname}", which is '
-                'disallowed. Refer to the Frequently Asked Questions in the documentation on how to avoid this issue.')
+                self.visitor,
+                parent_node,
+                f'Trying to assign to a compile-time constant "{node.qualname}", which is '
+                "disallowed. Refer to the Frequently Asked Questions in the documentation on how to avoid this issue.",
+            )
 
     def visit_Assign(self, node: ast.Assign):
         for target in node.targets:
@@ -1474,12 +1597,13 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         if any(k.arg is None for k in node.keywords):
             raise DaceSyntaxError(
-                self.visitor, node, 'Double-starred (dictionary unpacking, e.g., `**a`) arguments are '
-                'currently unsupported.')
+                self.visitor,
+                node,
+                "Double-starred (dictionary unpacking, e.g., `**a`) arguments are currently unsupported.",
+            )
 
 
 class AugAssignExpander(ast.NodeTransformer):
-
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
         value = self.generic_visit(node.value)
@@ -1489,6 +1613,7 @@ class AugAssignExpander(ast.NodeTransformer):
 
 def find_disallowed_statements(node: ast.AST):
     from dace.frontend.python.newast import DISALLOWED_STMTS  # Avoid import loop
+
     # Skip everything until the function contents (in case there are disallowed statements in a decorator)
     if isinstance(node, ast.Module) and isinstance(node.body[0], ast.FunctionDef):
         nodes = node.body[0].body
@@ -1508,11 +1633,80 @@ def find_disallowed_statements(node: ast.AST):
     return None
 
 
-class MPIResolver(ast.NodeTransformer):
-    """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
+@functools.lru_cache(maxsize=1, typed=True)
+def mpi4py_is_usable() -> bool:
+    """Whether ``mpi4py.MPI`` can actually be imported.
 
-    def __init__(self, globals: Dict[str, Any]):
+    Installed is not the same as usable. An mpi4py wheel carries no MPI of its own -- it ``dlopen``s
+    ``libmpi`` when the ``MPI`` submodule is first imported -- so on a machine with the package but
+    no MPI runtime that import raises ``RuntimeError: cannot load MPI library``, NOT ``ImportError``.
+    A caller that only guards for ``ImportError`` then lets that escape, and every ``@dace.program``
+    fails to parse on a machine that merely has a stray ``pip install mpi4py``. Both cases mean the
+    same thing to DaCe -- there is no MPI -- so both answer False here.
+
+    Importing the submodule also runs ``MPI_Init`` unless ``mpi4py.rc`` says otherwise, which is why
+    ``ensure_mpi_initialized`` runs at import: on the parse path that bring-up must already be settled.
+    """
+    try:
+        from mpi4py import MPI  # noqa: F401
+    except Exception:  # noqa: BLE001 -- any failure to reach MPI means it is unavailable
+        return False
+    return True
+
+
+def ensure_mpi_initialized() -> None:
+    """Bring MPI up when a launcher started this process but mpi4py was told not to.
+
+    ``from mpi4py import MPI`` calls ``MPI_Init`` on import; ``MPI4PY_RC_INITIALIZE=0`` turns that
+    off, and callers export it to keep an unlaunched parse from bootstrapping a singleton MPI job,
+    whose bring-up stalls on a wedged transport and hangs the whole run. The switch is
+    process-global and one-way: nothing initializes MPI afterwards, so the first communicator call
+    -- dace's own, or the caller's -- aborts the entire job with ``MPI_Comm_rank() was called
+    before MPI_INIT`` and no Python traceback. One process setting it in a long-lived interpreter
+    therefore kills every later MPI user in it.
+
+    Under an MPI launcher the process IS a rank of a job, so that switch cannot be what the caller
+    meant, and MPI_Init is the thing the launcher already prepared. The launcher check comes first
+    because it is a dict lookup, while reaching MPI at all costs a ``dlopen`` of ``libmpi``.
+
+    ``mpi4py.rc`` is not the state to test: the environment switch is read inside the ``MPI``
+    submodule as it loads, never mirrored back into ``rc``, so ``rc.initialize`` stays True while
+    MPI is left down. Only ``MPI_Initialized`` knows.
+
+    The bring-up asks for ``MPI_THREAD_MULTIPLE``, which is what mpi4py's own automatic bring-up
+    asks for, so a rank that took this path is indistinguishable from one that did not. Bare
+    ``MPI_Init`` instead promises ``MPI_THREAD_SINGLE`` -- that the process has exactly one thread
+    -- and no DaCe process keeps that promise: its maps are OpenMP regions and its BLAS calls spawn
+    a pool. Which of the two paths a rank took should not be observable, and with ``MPI_Init`` it
+    was: the level differed by whether some earlier import had set ``MPI4PY_RC_INITIALIZE``.
+    """
+    if not any(os.environ.get(var) for var in MPI_RANK_VARS):
+        return  # no launcher: honour the switch, a singleton bring-up is what it guards against
+    try:
         from mpi4py import MPI
+    except Exception:  # noqa: BLE001 -- as in mpi4py_is_usable: no reachable MPI, nothing to bring up
+        return
+    if not MPI.Is_initialized():
+        MPI.Init_thread(MPI.THREAD_MULTIPLE)
+        atexit.register(finalize_mpi, MPI)
+
+
+def finalize_mpi(MPI) -> None:
+    """Close the MPI session ``ensure_mpi_initialized`` opened.
+
+    mpi4py finalizes only what it initialized itself, so an ``MPI_Init`` made here has no owner and
+    the job would end with MPI still up -- which Open MPI reports as an error from every rank.
+    """
+    if MPI.Is_initialized() and not MPI.Is_finalized():
+        MPI.Finalize()
+
+
+class MPIResolver(ast.NodeTransformer):
+    """Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD."""
+
+    def __init__(self, globals: dict[str, Any]):
+        from mpi4py import MPI
+
         self.globals = globals
         self.MPI = MPI
         self.parents = {}
@@ -1526,26 +1720,27 @@ class MPIResolver(ast.NodeTransformer):
             self.parent = self.parents[node]
         return node
 
-    def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
+    def visit_Name(self, node: ast.Name) -> ast.Name | ast.Attribute:
         self.generic_visit(node)
         if node.id in self.globals:
             obj = self.globals[node.id]
             if isinstance(obj, self.MPI.Comm):
-                lattr = ast.Attribute(ast.Name(id='mpi4py', ctx=ast.Load), attr='MPI')
+                lattr = ast.Attribute(ast.Name(id="mpi4py", ctx=ast.Load), attr="MPI")
                 if obj is self.MPI.COMM_NULL:
-                    newnode = ast.copy_location(ast.Attribute(value=lattr, attr='COMM_NULL'), node)
+                    newnode = ast.copy_location(ast.Attribute(value=lattr, attr="COMM_NULL"), node)
                     self.parents[newnode] = self.parents[node]
                     return newnode
         return node
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
         self.generic_visit(node)
-        if isinstance(node.attr, str) and node.attr == 'Request':
+        if isinstance(node.attr, str) and node.attr == "Request":
             try:
                 val = astutils.evalnode(node, self.globals)
                 if val is self.MPI.Request and not isinstance(self.parents[node], ast.Attribute):
                     newnode = ast.copy_location(
-                        ast.Attribute(value=ast.Name(id='dace', ctx=ast.Load), attr='MPI_Request'), node)
+                        ast.Attribute(value=ast.Name(id="dace", ctx=ast.Load), attr="MPI_Request"), node
+                    )
                     self.parents[newnode] = self.parents[node]
                     return newnode
             except SyntaxError:
@@ -1553,26 +1748,44 @@ class MPIResolver(ast.NodeTransformer):
         return node
 
 
-class ModuloConverter(ast.NodeTransformer):
-    """ Converts a % b expressions to (a + b) % b for C/C++ compatibility. """
-
-    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        if isinstance(node.op, ast.Mod):
-            left = self.generic_visit(node.left)
-            right = self.generic_visit(node.right)
-            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
-            node.left = newleft
-            return node
-        return self.generic_visit(node)
+def symbol_names(value: Any) -> set[str]:
+    """Names ``GlobalResolver`` inlines for a closure value: the free symbols of a symbolic value or of a list/tuple of them."""
+    if isinstance(value, (list, tuple)):
+        return set().union(*map(symbol_names, value))
+    if isinstance(value, sympy.Basic):
+        return {str(sym) for sym in value.free_symbols}
+    return set()
 
 
-def preprocess_dace_program(f: Callable[..., Any],
-                            argtypes: Dict[str, data.Data],
-                            global_vars: Dict[str, Any],
-                            modules: Dict[str, Any],
-                            resolve_functions: bool = False,
-                            parent_closure: Optional[SDFGClosure] = None,
-                            default_args: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
+def rename_locals_shadowing_closure_symbols(src_ast: ast.AST, closure: dict[str, Any]) -> None:
+    """Give a fresh name to every local that shares its name with a symbol a used closure value inlines to.
+
+    Inlining replaces a captured extent by its symbol's name, so an extent printing as ``k`` would otherwise be
+    read as a local counter ``k`` wherever it lands inside that counter's loop. Renames in place.
+    """
+    names = [node for node in ast.walk(src_ast) if isinstance(node, ast.Name)]
+    local = {node.id for node in names if isinstance(node.ctx, ast.Store)}
+    captured = set().union(
+        *(symbol_names(closure[node.id]) for node in names if node.id in closure and node.id not in local)
+    )
+    taken = local | captured | closure.keys() | {node.id for node in names}
+    renames: dict[str, str] = {}
+    for name in sorted(local & captured):
+        renames[name] = data.find_new_name(name, taken)
+        taken.add(renames[name])
+    for node in names:
+        node.id = renames.get(node.id, node.id)
+
+
+def preprocess_dace_program(
+    f: Callable[..., Any],
+    argtypes: dict[str, data.Data],
+    global_vars: dict[str, Any],
+    modules: dict[str, Any],
+    resolve_functions: bool = False,
+    parent_closure: SDFGClosure | None = None,
+    default_args: set[str] | None = None,
+) -> tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -1602,21 +1815,20 @@ def preprocess_dace_program(f: Callable[..., Any],
     src_ast = ModuleResolver(modules).visit(src_ast)
     # Convert modules after resolution
     for mod, modval in modules.items():
-        if mod == 'builtins':
+        if mod == "builtins":
             continue
         newmod = global_vars[mod]
-        #del global_vars[mod]
+        # del global_vars[mod]
         global_vars[modval] = newmod
 
-    try:
+    # Guard the availability check only, so a genuine error inside the visitor still surfaces.
+    if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    except (ImportError, ModuleNotFoundError):
-        pass
-    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
-    resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != '_'}
+    resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != "_"}
+    rename_locals_shadowing_closure_symbols(src_ast, resolved)
     closure_resolver = GlobalResolver(resolved, resolve_functions, default_args=default_args)
 
     # Append element to call stack and handle max recursion depth
@@ -1624,21 +1836,25 @@ def preprocess_dace_program(f: Callable[..., Any],
         fid = id(f)
         if fid in parent_closure.callstack:
             raise DaceRecursionError(fid)
-        if len(parent_closure.callstack) > Config.get('frontend', 'implicit_recursion_depth'):
-            raise TypeError('Implicit (automatically parsed) recursion depth '
-                            'exceeded. Functions below this call will not be '
-                            'parsed. To change this setting, modify the value '
-                            '`frontend.implicit_recursion_depth` in .dace.conf')
+        if len(parent_closure.callstack) > Config.get("frontend", "implicit_recursion_depth"):
+            raise TypeError(
+                "Implicit (automatically parsed) recursion depth "
+                "exceeded. Functions below this call will not be "
+                "parsed. To change this setting, modify the value "
+                "`frontend.implicit_recursion_depth` in .dace.conf"
+            )
 
         closure_resolver.closure.callstack = parent_closure.callstack + [fid]
 
     # Find disallowed AST nodes
     disallowed = find_disallowed_statements(src_ast)
     if disallowed:
-        raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
-                        f'keyword: {disallowed}')
+        raise TypeError(
+            f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
+            f"keyword: {disallowed}"
+        )
 
-    passes = int(Config.get('frontend', 'preprocessing_passes'))
+    passes = int(Config.get("frontend", "preprocessing_passes"))
     if passes >= 0:
         gen = range(passes)
     else:  # Run until the code stops changing
@@ -1667,8 +1883,8 @@ def preprocess_dace_program(f: Callable[..., Any],
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
-            if Config.get_bool('frontend', 'verbose_errors'):
-                print(f'VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:')
+            if Config.get_bool("frontend", "verbose_errors"):
+                print(f"VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:")
                 print(astutils.unparse(src_ast))
             raise
 
@@ -1677,7 +1893,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
-            raise TypeError('Parsing failed due to recursion in a data-centric context called from this function')
+            raise TypeError("Parsing failed due to recursion in a data-centric context called from this function")
         else:
             raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)
@@ -1685,14 +1901,12 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     # Filter out arrays that are not used after dead code elimination
     closure_resolver.closure.closure_arrays = {
-        k: v
-        for k, v in closure_resolver.closure.closure_arrays.items() if k in used_arrays.arrays
+        k: v for k, v in closure_resolver.closure.closure_arrays.items() if k in used_arrays.arrays
     }
 
     # Filter out callbacks that were removed after dead code elimination
     closure_resolver.closure.callbacks = {
-        k: v
-        for k, v in closure_resolver.closure.callbacks.items() if k in ctr.seen_calls
+        k: v for k, v in closure_resolver.closure.callbacks.items() if k in ctr.seen_calls
     }
 
     # Filter remaining global variables according to type and scoping rules

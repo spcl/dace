@@ -2,27 +2,30 @@
 """End-to-end numerical tests where the kernel size is NOT divisible by the tile widths.
 
 All previous e2e tests used sizes that divide the widths cleanly (mask all-True). This
-file exercises the masked-tail path: TileLoad / TileStore / Tile{Binop, Unop, ITE,
+file exercises the masked-tail path: TileGather / TileScatter / Tile{Binop, Unop, ITE,
 Reduce} must honour the iter_mask to skip out-of-range lanes.
 
 Per the walker pipeline's ``GenerateTileIterationMask`` placement (inside the body
 NSDFG, design 7.4): the mask is computed per outer-tile-iteration as
 ``mask[l] = (ii + l < N)`` and consumed by every masked lib node.
 """
+
 import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 
 def _build_k1_axpy(N):
     """``B[i] = A[i] * 2.0 + C[i]`` -- K=1, varying N."""
     sdfg = dace.SDFG("k1_axpy_nd")
-    sdfg.add_array("A", (N, ), dace.float64, transient=False)
-    sdfg.add_array("B", (N, ), dace.float64, transient=False)
-    sdfg.add_array("C", (N, ), dace.float64, transient=False)
+    sdfg.add_array("A", (N,), dace.float64, transient=False)
+    sdfg.add_array("B", (N,), dace.float64, transient=False)
+    sdfg.add_array("C", (N,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": f"0:{N}"})
     a = state.add_access("A")
@@ -66,7 +69,8 @@ def test_k1_axpy_non_divisible_matches_reference(N):
     ref.name = f"k1_axpy_nd_ref_{N}"
     vec = _build_k1_axpy(N)
     vec.name = f"k1_axpy_nd_vec_{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(A=a.copy(), C=c.copy(), B=b_ref)
     vec.compile()(A=a.copy(), C=c.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -88,7 +92,8 @@ def test_k2_axpy_non_divisible_matches_reference(M, N):
     ref.name = f"k2_axpy_nd_ref_{M}x{N}"
     vec = _build_k2_axpy(M, N)
     vec.name = f"k2_axpy_nd_vec_{M}x{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(A=a.copy(), C=c.copy(), B=b_ref)
     vec.compile()(A=a.copy(), C=c.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)

@@ -1,19 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CloudSC / ICON loopnest snippets for the canonicalization sweep.
 
-The full CloudSC SDFG is far too large for a fast canonicalization check, so this
+The full CloudSC SDFG is far too large for a quick canonicalization check, so this
 loader reuses the *characteristic loopnest snippets* already maintained as faithful
 ``@dace.program`` ports under ``tests/passes/vectorization/cloudsc/`` (the same ones
 the vectorization tests exercise). Each snippet is a self-contained ``@dace.program``;
 its argument shapes/dtypes are introspected from the function annotations.
 
 Like polybench, these snippets carry no numpy oracle -- correctness here is
-*value-preserving*: a canonicalized (or fast-canonicalized) SDFG is compared against
+*value-preserving*: a canonicalized SDFG is compared against
 the untransformed baseline SDFG run on identical inputs.
 """
+
 import importlib
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -48,9 +48,9 @@ def _program(s: Snippet) -> DaceProgram:
     return vars(mod)[s.program_name]
 
 
-def collect(name: Optional[str] = None) -> List[Snippet]:
+def collect(name: str | None = None) -> list[Snippet]:
     """Discover the snippet ``@dace.program`` objects across the snippet modules."""
-    snippets: List[Snippet] = []
+    snippets: list[Snippet] = []
     seen = set()
     for modpath in SNIPPET_MODULES:
         try:
@@ -67,16 +67,16 @@ def collect(name: Optional[str] = None) -> List[Snippet]:
     return snippets
 
 
-def _symbol_values(prog: DaceProgram) -> Dict[str, int]:
+def _symbol_values(prog: DaceProgram) -> dict[str, int]:
     """Every free symbol in every argument shape -> the uniform ``SIZE``."""
     syms = set()
     for t in prog.f.__annotations__.values():
         for dim in getattr(t, "shape", ()):  # scalars have no shape
             syms |= {str(s) for s in dace.symbolic.pystr_to_symbolic(dim).free_symbols}
-    return {s: SIZE for s in syms}
+    return dict.fromkeys(syms, SIZE)
 
 
-def make_inputs(prog: DaceProgram) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+def make_inputs(prog: DaceProgram) -> tuple[dict[str, np.ndarray], dict[str, int]]:
     """Allocate + initialize one input set; return ``(call_arrays, symbol_values)``.
 
     Integer arrays are filled with ``randint(0, SIZE)`` (valid gather indices for any
@@ -85,7 +85,7 @@ def make_inputs(prog: DaceProgram) -> Tuple[Dict[str, np.ndarray], Dict[str, int
     """
     rng = np.random.default_rng(42)
     symvals = _symbol_values(prog)
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     for argname, t in prog.f.__annotations__.items():
         if argname == "return":
             continue
@@ -108,7 +108,7 @@ def fresh_sdfg(prog: DaceProgram, *, simplify: bool = True) -> dace.SDFG:
     return sdfg
 
 
-def reference(prog: DaceProgram, call_arrays: Dict[str, np.ndarray], symvals: Dict[str, int]) -> Dict[str, np.ndarray]:
+def reference(prog: DaceProgram, call_arrays: dict[str, np.ndarray], symvals: dict[str, int]) -> dict[str, np.ndarray]:
     """Run the untransformed baseline SDFG on copies of the inputs (value-preserving ground truth)."""
     base = fresh_sdfg(prog)
     out = {n: (a.copy() if isinstance(a, np.ndarray) else a) for n, a in call_arrays.items()}
@@ -116,17 +116,15 @@ def reference(prog: DaceProgram, call_arrays: Dict[str, np.ndarray], symvals: Di
     return {n: v for n, v in out.items() if isinstance(v, np.ndarray)}
 
 
-def run(sdfg: dace.SDFG, call_arrays: Dict[str, np.ndarray], symvals: Dict[str, int]) -> Dict[str, np.ndarray]:
+def run(sdfg: dace.SDFG, call_arrays: dict[str, np.ndarray], symvals: dict[str, int]) -> dict[str, np.ndarray]:
     out = {n: (a.copy() if isinstance(a, np.ndarray) else a) for n, a in call_arrays.items()}
     sdfg.compile()(**out, **symvals)
     return {n: v for n, v in out.items() if isinstance(v, np.ndarray)}
 
 
-def outputs_match(ref: Dict[str, np.ndarray],
-                  got: Dict[str, np.ndarray],
-                  *,
-                  rtol: float = 1e-9,
-                  atol: float = 1e-9) -> bool:
+def outputs_match(
+    ref: dict[str, np.ndarray], got: dict[str, np.ndarray], *, rtol: float = 1e-9, atol: float = 1e-9
+) -> bool:
     for name, r in ref.items():
         g = got[name]
         if np.issubdtype(r.dtype, np.floating):

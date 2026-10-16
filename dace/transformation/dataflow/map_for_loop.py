@@ -1,19 +1,41 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement a map->for loop transformation.
-"""
+"""This module contains classes that implement a map->for loop transformation."""
 
 import copy
 
 import dace
 from dace import properties, symbolic
-from dace.data import View
+from dace.data import Scalar, View
 from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
-from typing import Tuple, Optional
+
+
+def dynamic_range_ref(sdfg: SDFG, memlet: Memlet) -> str:
+    """SDFG-level expression that reads the single value a dynamic map range carries on ``memlet``.
+
+    The result is spliced into a ``LoopRegion``'s init / condition / update statement, which is
+    PYTHON source over SDFG names -- not C++. A ``Scalar`` has no indexable dimension there: its
+    value is the bare name (this is what ``InterstateEdgeUnparser._Name`` lowers, and what the
+    frontend itself emits for ``for i in range(n1 - 1, N, n3)`` with a scalar ``n1``). Subscripting
+    it instead (``n1[0]``) breaks TWICE -- the emitted C++ indexes a by-value ``int64_t n1``, and
+    any later pass that re-reads the statement into a symbolic map range carries a
+    ``Subscript(n1, 0)`` term into every expression derived from it, including array shapes.
+
+    An ``Array`` keeps the ``cpp_array_expr`` form: a single element of one is genuinely a
+    subscript, and it is what ``InterstateEdgeUnparser._Subscript`` expects.
+
+    :param sdfg: SDFG owning ``memlet``'s descriptor.
+    :param memlet: Memlet on the dynamic map range's input edge.
+    :return: Source text reading that value.
+    """
+    from dace.codegen.targets.cpp import cpp_array_expr
+
+    if isinstance(sdfg.arrays[memlet.data], Scalar):
+        return memlet.data
+    return cpp_array_expr(sdfg, memlet)
 
 
 def _wcr_index_is_data_dependent(subset, containing_sdfg: SDFG) -> bool:
@@ -57,19 +79,39 @@ class MapToForLoop(transformation.SingleStateTransformation):
     + :class:`~dace.transformation.interstate.multistate_inline.InlineMultistateSDFG`
     so the LoopRegion lands directly at the parent CFR. Set
     ``inline_after=False`` to keep the legacy wrapped form.
+
+    Sequentializing a map is always LEGAL, reductions included, so by default the
+    only refusal is the structural one (a single map parameter). Canonicalization
+    additionally does not *want* a surviving reduction serialized; it opts into that
+    preference with ``keep_reductions_parallel``.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    loop_region: Optional[LoopRegion] = None
+    loop_region: LoopRegion | None = None
 
-    inline_after = properties.Property(dtype=bool,
-                                       default=True,
-                                       desc='Flatten the wrapping NestedSDFG via '
-                                       'ExpandNestedSDFGInputs + InlineMultistateSDFG so the resulting LoopRegion '
-                                       'lives at the parent CFR. On by default so canonicalization sees a clean '
-                                       'CFR nest without spurious NSDFG boundaries. Set to False to keep the '
-                                       'legacy wrapped form (e.g., when a downstream test asserts on the NSDFG).')
+    #: State holding the dataflow that stayed outside the loop, set by ``apply``. With
+    #: ``inline_after`` that is a fresh successor of the state passed in, not the state itself.
+    target_state: SDFGState | None = None
+
+    keep_reductions_parallel = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Refuse a map whose surviving WCR output is a genuine parallel reduction, so it stays a "
+        "map and codegens to an OpenMP reduction instead of a sequential loop. A canonicalization "
+        "PREFERENCE, not a legality condition: off by default so that consumers which mechanically "
+        "need the map->loop rewrite (DoubleBuffering, StencilTiling) are not silently refused.",
+    )
+
+    inline_after = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Flatten the wrapping NestedSDFG via "
+        "ExpandNestedSDFGInputs + InlineMultistateSDFG so the resulting LoopRegion "
+        "lives at the parent CFR. On by default so canonicalization sees a clean "
+        "CFR nest without spurious NSDFG boundaries. Set to False to keep the "
+        "legacy wrapped form (e.g., when a downstream test asserts on the NSDFG).",
+    )
 
     @staticmethod
     def annotates_memlets():
@@ -84,34 +126,38 @@ class MapToForLoop(transformation.SingleStateTransformation):
         if len(self.map_entry.map.params) > 1:
             return False
 
-        # Refuse a map that still has a WCR (reduction) output. By this point
-        # WCRToAugAssign has rewritten every conflict-free (injective) WCR into an
-        # explicit RMW, so a surviving WCR output is a genuine parallel reduction.
-        # Lowering it to a sequential loop serializes the reduction AND severs an
-        # in-state-consumed accumulator; keep it a parallel map so it codegens to an
-        # OpenMP reduction and the producer->consumer edge is preserved.
-        map_exit = graph.exit_node(self.map_entry)
-        for e in graph.out_edges(map_exit):
-            if e.data is not None and e.data.wcr is not None:
-                return False
+        # Everything below is the canonicalization PREFERENCE, not legality -- see
+        # ``keep_reductions_parallel``.
+        if self.keep_reductions_parallel:
+            # Refuse a map that still has a WCR (reduction) output. By this point
+            # WCRToAugAssign has rewritten every conflict-free (injective) WCR into an
+            # explicit RMW, so a surviving WCR output is a genuine parallel reduction.
+            # Lowering it to a sequential loop serializes the reduction AND severs an
+            # in-state-consumed accumulator; keep it a parallel map so it codegens to an
+            # OpenMP reduction and the producer->consumer edge is preserved.
+            map_exit = graph.exit_node(self.map_entry)
+            for e in graph.out_edges(map_exit):
+                if e.data is not None and e.data.wcr is not None:
+                    return False
 
-        # Refuse a map whose body carries a DATA-DEPENDENT (indirect) scatter reduction,
-        # i.e. a surviving WCR write ``A[bin] (wcr)= ...`` whose index ``bin`` is computed
-        # from input data (a histogram / bincount ``np.add.at`` shape). The reduction WCR
-        # here is buried inside the body (a nested SDFG), so the map-exit scan above misses
-        # it. Such a scatter is a genuine parallel reduction that codegens soundly as an
-        # atomic-WCR parallel map, but -- unlike an affine/structured reduction (covariance,
-        # gemm) -- canon CANNOT re-parallelize it once serialized to a loop: LoopToReduce
-        # needs a scalar/affine accumulator and ScatterToGuardedMaps needs a precomputed
-        # index ARRAY, neither of which matches a computed index. Lowering it would strand
-        # the loop as sequential; keep it the parallel scatter map instead.
-        if _map_body_has_data_dependent_wcr(graph, self.map_entry):
-            return False
+            # Refuse a map whose body carries a DATA-DEPENDENT (indirect) scatter reduction,
+            # i.e. a surviving WCR write ``A[bin] (wcr)= ...`` whose index ``bin`` is computed
+            # from input data (a histogram / bincount ``np.add.at`` shape). The reduction WCR
+            # here is buried inside the body (a nested SDFG), so the map-exit scan above misses
+            # it. Such a scatter is a genuine parallel reduction that codegens soundly as an
+            # atomic-WCR parallel map, but -- unlike an affine/structured reduction (covariance,
+            # gemm) -- canon CANNOT re-parallelize it once serialized to a loop: LoopToReduce
+            # needs a scalar/affine accumulator and ScatterToGuardedMaps needs a precomputed
+            # index ARRAY, neither of which matches a computed index. Lowering it would strand
+            # the loop as sequential; keep it the parallel scatter map instead.
+            if _map_body_has_data_dependent_wcr(graph, self.map_entry):
+                return False
 
         return True
 
-    def _copy_boundary_views(self, graph: SDFGState, nsdfg_node: nodes.NestedSDFG, nsdfg: SDFG,
-                             nstate: SDFGState) -> None:
+    def _copy_boundary_views(
+        self, graph: SDFGState, nsdfg_node: nodes.NestedSDFG, nsdfg: SDFG, nstate: SDFGState
+    ) -> None:
         """Repair boundary Views left dangling by ``nest_state_subgraph``.
 
         ``nest_state_subgraph`` copies a boundary AccessNode's descriptor verbatim. For a
@@ -121,7 +167,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
         node keeps its View semantics (the ``an -> view`` pair is copied, not flattened).
         """
         views = [
-            n for n in nstate.nodes() if isinstance(n, nodes.AccessNode) and isinstance(nsdfg.arrays.get(n.data), View)
+            n
+            for n in nstate.nodes()
+            if isinstance(n, nodes.AccessNode)
+            and isinstance(nsdfg.arrays.get(n.data), View)
             and sdutil.get_view_edge(nstate, n) is None
         ]
         for vnode in views:
@@ -170,9 +219,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
                 graph.add_edge(nsdfg_node, newname, viewed, None, bmem)
                 nsdfg_node.remove_out_connector(vname)
 
-    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
-        """ Applies the transformation and returns a tuple with the new nested
-            SDFG node and the main state in the for-loop. """
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> tuple[nodes.NestedSDFG, SDFGState]:
+        """Applies the transformation and returns a tuple with the new nested
+        SDFG node and the main state in the for-loop."""
 
         # Avoid import loop
         from dace.transformation.helpers import nest_state_subgraph
@@ -180,6 +229,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # Retrieve map entry and exit nodes.
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
+        self.target_state = graph
 
         loop_idx = map_entry.map.params[0]
         loop_from, loop_to, loop_step = map_entry.map.range[0]
@@ -198,30 +248,30 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # If map range is dynamic, replace loop expressions with memlets
         param_to_edge = {}
         for edge in nstate.in_edges(map_entry):
-            if edge.dst_conn and not edge.dst_conn.startswith('IN_'):
-                param = '__DACE_P%d' % len(param_to_edge)
+            if edge.dst_conn and not edge.dst_conn.startswith("IN_"):
+                param = "__DACE_P%d" % len(param_to_edge)
                 repldict = {symbolic.pystr_to_symbolic(edge.dst_conn): param}
                 param_to_edge[param] = edge
                 loop_from = loop_from.subs(repldict)
                 loop_to = loop_to.subs(repldict)
                 loop_step = loop_step.subs(repldict)
 
-        # Avoiding import loop
-        from dace.codegen.targets.cpp import cpp_array_expr
-
         def replace_param(param):
             param = symbolic.symstr(param, cpp_mode=False)
             for p, pval in param_to_edge.items():
-                # TODO: Correct w.r.t. connector type
-                param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
+                param = param.replace(p, dynamic_range_ref(nsdfg, pval.data))
             return param
 
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_region = LoopRegion('loop_' + map_entry.map.label, '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                                 loop_idx, '%s = %s' % (loop_idx, replace_param(loop_from)),
-                                 '%s = %s + %s' % (loop_idx, loop_idx, replace_param(loop_step)))
+        loop_region = LoopRegion(
+            "loop_" + map_entry.map.label,
+            f"{loop_idx} < {replace_param(loop_to + 1)}",
+            loop_idx,
+            f"{loop_idx} = {replace_param(loop_from)}",
+            f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
+        )
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)
         loop_region.add_node(nstate, is_start_block=True)
@@ -247,7 +297,6 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # create object field for external nsdfg access
         self.nsdfg = nsdfg
 
-        sdfg.reset_cfg_list()
         # Ensure the SDFG is marked as containing CFG regions
         sdfg.root_sdfg.using_explicit_control_flow = True
 
@@ -273,49 +322,52 @@ class MapToForLoop(transformation.SingleStateTransformation):
             from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
             parent_cfr = graph.parent_graph
-            target_state = graph
-            if parent_cfr is not None:
-                was_start = parent_cfr.start_block is graph
-                target_state = parent_cfr.add_state(label=f"{graph.label}_for_inline")
-                # Move ``graph``'s INTRA-state dataflow to ``target_state``.
-                nodes_to_move = list(graph.nodes())
-                edges_to_move = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in graph.edges()]
-                for n in nodes_to_move:
-                    graph.remove_node(n)
-                for n in nodes_to_move:
-                    target_state.add_node(n)
-                for src, sc, dst, dc, data in edges_to_move:
-                    target_state.add_edge(src, sc, dst, dc, data)
-                # Reparent every existing ``graph -> *`` INTERSTATE edge to
-                # ``target_state -> *``. Otherwise the placeholder ``graph``
-                # would end up with both the new ``graph -> target_state``
-                # edge AND the original successor edges, giving it multiple
-                # unconditional out-edges that later trip
-                # ``control_flow_raising`` (else-not-last) and
-                # ``DeadStateElimination`` validation.
-                successor_edges = list(parent_cfr.out_edges(graph))
-                for e in successor_edges:
-                    parent_cfr.remove_edge(e)
-                    parent_cfr.add_edge(target_state, e.dst, e.data)
-                parent_cfr.add_edge(graph, target_state, dace.InterstateEdge())
-                if was_start:
-                    parent_cfr.start_block = parent_cfr.node_id(graph)
 
             expand = ExpandNestedSDFGInputs()
             expand.nested_sdfg = node
             expand.expr_index = 0
-            if expand.can_be_applied(target_state, 0, sdfg, permissive=False):
-                expand.apply(target_state, sdfg)
+            if expand.can_be_applied(graph, 0, sdfg, permissive=False):
+                expand.apply(graph, sdfg)
             inline = InlineMultistateSDFG()
             inline.nested_sdfg = node
             inline.expr_index = 0
-            if inline.can_be_applied(target_state, 0, sdfg, permissive=False):
+            # Migrate ONLY once the inline is known to apply. Splitting the state to protect a
+            # reference and then not inlining leaves an empty placeholder behind, which any
+            # later simplify deletes -- the reference is lost anyway, minus the dataflow.
+            if inline.can_be_applied(graph, 0, sdfg, permissive=False):
+                target_state = graph
+                if parent_cfr is not None:
+                    was_start = parent_cfr.start_block is graph
+                    target_state = parent_cfr.add_state(label=f"{graph.label}_for_inline")
+                    # Move ``graph``'s INTRA-state dataflow to ``target_state``.
+                    nodes_to_move = list(graph.nodes())
+                    edges_to_move = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in graph.edges()]
+                    for n in nodes_to_move:
+                        graph.remove_node(n)
+                    for n in nodes_to_move:
+                        target_state.add_node(n)
+                    for src, sc, dst, dc, data in edges_to_move:
+                        target_state.add_edge(src, sc, dst, dc, data)
+                    # Reparent every existing ``graph -> *`` INTERSTATE edge to
+                    # ``target_state -> *``. Otherwise the placeholder ``graph``
+                    # would end up with both the new ``graph -> target_state``
+                    # edge AND the original successor edges, giving it multiple
+                    # unconditional out-edges that later trip
+                    # ``control_flow_raising`` (else-not-last) and
+                    # ``DeadStateElimination`` validation.
+                    successor_edges = list(parent_cfr.out_edges(graph))
+                    for e in successor_edges:
+                        parent_cfr.remove_edge(e)
+                        parent_cfr.add_edge(target_state, e.dst, e.data)
+                    parent_cfr.add_edge(graph, target_state, dace.InterstateEdge())
+                    if was_start:
+                        parent_cfr.start_block = parent_cfr.node_id(graph)
+                    self.target_state = target_state
                 inline.apply(target_state, sdfg)
                 # After inline, the NSDFG node is gone and the LoopRegion
                 # has been hoisted into the parent CFR. Clear the stale
                 # nsdfg reference; ``self.loop_region`` is still valid
                 # (it was reparented, not destroyed).
                 self.nsdfg = None
-            sdfg.reset_cfg_list()
 
         return node, nstate

@@ -1,15 +1,16 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the generalized ``MoveIfIntoMap`` transformation.
+"""Tests for the generalized ``MoveIfIntoMap`` transformation.
 
-    A conditional that guards inner maps inside an outer map's body is pushed
-    into each inner map, exposing the maps to fusion/collapse. The pass now
-    accepts the common Python-frontend shape where inner ``dace.map`` bodies
-    are plain ``Tasklet`` subgraphs (normalized into a ``NestedSDFG`` first),
-    and pushes a condition that depends on an outer-map parameter down into the
-    inner map (the guard sits above the inner map, so per-iteration evaluation
-    inside it is value-identical to the original whole-inner-map guard). All
-    kernels use the dace Python frontend only.
+A conditional that guards inner maps inside an outer map's body is pushed
+into each inner map, exposing the maps to fusion/collapse. The pass now
+accepts the common Python-frontend shape where inner ``dace.map`` bodies
+are plain ``Tasklet`` subgraphs (normalized into a ``NestedSDFG`` first),
+and pushes a condition that depends on an outer-map parameter down into the
+inner map (the guard sits above the inner map, so per-iteration evaluation
+inside it is value-identical to the original whole-inner-map guard). All
+kernels use the dace Python frontend only.
 """
+
 import copy
 
 import numpy as np
@@ -19,7 +20,7 @@ import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 
-N, M = dace.symbol('N'), dace.symbol('M')
+N, M = dace.symbol("N"), dace.symbol("M")
 
 
 @dace.program
@@ -41,8 +42,9 @@ def guarded_one(flag: dace.int32, A: dace.float64[N, M], B: dace.float64[N, M]):
 
 
 @dace.program
-def guarded_three(flag: dace.int32, A: dace.float64[N, M], B: dace.float64[N, M], C: dace.float64[N, M],
-                  D: dace.float64[N, M]):
+def guarded_three(
+    flag: dace.int32, A: dace.float64[N, M], B: dace.float64[N, M], C: dace.float64[N, M], D: dace.float64[N, M]
+):
     for j in dace.map[0:M]:
         if flag > 0:
             for i in dace.map[0:N]:
@@ -62,13 +64,15 @@ def guarded_by_outer_param(A: dace.float64[N, M], B: dace.float64[N, M]):
 
 
 def _num_conditional_blocks(sdfg: dace.SDFG) -> int:
-    return sum(1 for s in sdfg.all_sdfgs_recursive() for b in s.all_control_flow_blocks()
-               if isinstance(b, ConditionalBlock))
+    return sum(
+        1 for s in sdfg.all_sdfgs_recursive() for b in s.all_control_flow_blocks() if isinstance(b, ConditionalBlock)
+    )
 
 
 def test_two_sibling_guarded_maps_pushed_in():
+    rng = np.random.default_rng(42)
     n, m = 6, 5
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_two.to_sdfg(simplify=True)
 
     def run(s, flag):
@@ -100,8 +104,9 @@ def test_two_sibling_guarded_maps_pushed_in():
 
 
 def test_single_guarded_map_pushed_in():
+    rng = np.random.default_rng(42)
     n, m = 7, 4
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_one.to_sdfg(simplify=True)
 
     ref = np.zeros((n, m))
@@ -122,8 +127,9 @@ def test_condition_on_outer_param_pushed_in():
     (the outer param, constant across the inner iterations) threaded in. This
     reproduces the original whole-inner-map guard exactly, so the push is
     sound and value-preserving."""
+    rng = np.random.default_rng(42)
     n, m = 5, 6
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_by_outer_param.to_sdfg(simplify=True)
 
     ref = np.zeros((n, m))
@@ -145,8 +151,9 @@ def test_condition_on_outer_param_pushed_in():
 
 
 def test_three_sibling_guarded_maps_pushed_in():
+    rng = np.random.default_rng(42)
     n, m = 5, 4
-    a = np.random.rand(n, m)
+    a = rng.random((n, m))
     sdfg = guarded_three.to_sdfg(simplify=True)
 
     def run(s, flag):

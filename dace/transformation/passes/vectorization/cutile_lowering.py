@@ -3,6 +3,7 @@
 implementation stamping for the Python/cuTile backend.
 
 """
+
 import warnings
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Type
 
@@ -29,10 +30,11 @@ def _tile_node_types() -> Tuple[Type[nodes.LibraryNode], ...]:
     Imported lazily to keep the transformation package importable without
     pulling in the tileops library at module-import time.
 
-    :returns: :data:`dace.libraries.tileops.nodes.TILEOPS_NODE_TYPES`.
+    :returns: :data:`dace.libraries.tileops.nodes.TILE_NODES`.
     """
-    from dace.libraries.tileops.nodes import TILEOPS_NODE_TYPES
-    return TILEOPS_NODE_TYPES
+    from dace.libraries.tileops.nodes import TILE_NODES
+
+    return TILE_NODES
 
 
 def _collect_tile_nodes(sdfg: SDFG) -> List[Tuple[nodes.LibraryNode, SDFGState]]:
@@ -59,8 +61,11 @@ def _collect_non_tile_library_nodes(sdfg: SDFG) -> List[Tuple[nodes.LibraryNode,
         SDFGState that owns the node.
     """
     tile_types = _tile_node_types()
-    return [(node, graph) for node, graph in sdfg.all_nodes_recursive()
-            if isinstance(node, nodes.LibraryNode) and not isinstance(node, tile_types)]
+    return [
+        (node, graph)
+        for node, graph in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.LibraryNode) and not isinstance(node, tile_types)
+    ]
 
 
 def _collect_tileops_adjacent_edges(sdfg: SDFG) -> Tuple[Set[int], Set[int]]:
@@ -198,16 +203,22 @@ def clamp_propagated_oob_memlets(sdfg: SDFG) -> int:
                 if memlet.other_subset is not None and isinstance(memlet.other_subset, sbs.Range):
                     path = state.memlet_path(e)
                     src_node, dst_node = path[0].src, path[-1].dst
-                    other_node = (dst_node if isinstance(dst_node, nodes.AccessNode) and memlet.data != dst_node.data
-                                  else src_node)
+                    other_node = (
+                        dst_node
+                        if isinstance(dst_node, nodes.AccessNode) and memlet.data != dst_node.data
+                        else src_node
+                    )
                     if isinstance(other_node, nodes.AccessNode) and other_node.data in nsdfg.arrays:
                         cand = nsdfg.arrays[other_node.data]
                         if memlet.other_subset.dims() == len(cand.shape):
                             other_desc = cand
 
                 new_subset, n_sub = _clamp_subset_to_shape(subset, desc)
-                new_other, n_other = (_clamp_subset_to_shape(memlet.other_subset, other_desc)
-                                      if other_desc is not None else (memlet.other_subset, 0))
+                new_other, n_other = (
+                    _clamp_subset_to_shape(memlet.other_subset, other_desc)
+                    if other_desc is not None
+                    else (memlet.other_subset, 0)
+                )
                 if n_sub == 0 and n_other == 0:
                     continue
 
@@ -220,10 +231,12 @@ def clamp_propagated_oob_memlets(sdfg: SDFG) -> int:
                 if not (memlet.allow_oob or id(e) in adjacent):
                     # Genuine OOB with no tileops mask anywhere: leave it
                     # for validation to reject loudly.
-                    warnings.warn(f"clamp_propagated_oob_memlets: memlet '{memlet}' (edge {e.src} -> {e.dst}, "
-                                  f"state '{state.label}', SDFG '{nsdfg.label}') is provably out-of-bounds but is "
-                                  "neither tileops-adjacent nor marked allow_oob; not clamping -- validation "
-                                  "will reject it")
+                    warnings.warn(
+                        f"clamp_propagated_oob_memlets: memlet '{memlet}' (edge {e.src} -> {e.dst}, "
+                        f"state '{state.label}', SDFG '{nsdfg.label}') is provably out-of-bounds but is "
+                        "neither tileops-adjacent nor marked allow_oob; not clamping -- validation "
+                        "will reject it"
+                    )
                     continue
 
                 if n_sub:
@@ -235,9 +248,9 @@ def clamp_propagated_oob_memlets(sdfg: SDFG) -> int:
     return clamped
 
 
-def _enclosing_map_chain(node: nodes.Node,
-                         state: SDFGState,
-                         scope_cache: Optional[_ScopeCache] = None) -> List[Tuple[nodes.MapEntry, SDFGState]]:
+def _enclosing_map_chain(
+    node: nodes.Node, state: SDFGState, scope_cache: Optional[_ScopeCache] = None
+) -> List[Tuple[nodes.MapEntry, SDFGState]]:
     """Walk the chain of enclosing map scopes of ``node``, across NestedSDFGs.
 
     The in-state scope chain comes from ``state.scope_dict()`` (cached per
@@ -379,7 +392,9 @@ def _demote_residual_gpu_device_maps(sdfg: SDFG, strict: bool, pass_name: str) -
                 f"'{map_node.map.label}' (state '{graph.label}', volume {volume}) to "
                 "Sequential: it compiles to a per-element host loop over GPU data "
                 "(one device round-trip per element), which is pathological for "
-                "anything but tiny scalar-control maps", strict)
+                "anything but tiny scalar-control maps",
+                strict,
+            )
         map_node.map.schedule = dtypes.ScheduleType.Sequential
         _promote_demoted_scope_transients(graph, map_node)
         demoted += 1
@@ -420,8 +435,13 @@ def _promote_demoted_scope_transients(state: SDFGState, map_entry: nodes.MapEntr
             if not isinstance(node, nodes.AccessNode):
                 continue
             desc = st.sdfg.arrays.get(node.data)
-            if (desc is None or not desc.transient or not isinstance(desc, data.Array) or isinstance(desc, data.View)
-                    or desc.storage != dtypes.StorageType.Register):
+            if (
+                desc is None
+                or not desc.transient
+                or not isinstance(desc, data.Array)
+                or isinstance(desc, data.View)
+                or desc.storage != dtypes.StorageType.Register
+            ):
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
             promoted += 1
@@ -450,15 +470,19 @@ def _diagnose_no_anchors(pass_name: str, sdfg: SDFG, strict: bool) -> None:
     """
     non_tile = _collect_non_tile_library_nodes(sdfg)
     if non_tile:
-        warnings.warn(f"{pass_name}: no tileops library nodes found, but {len(non_tile)} non-tileops "
-                      "library node(s) are present (BLAS-only configuration); proceeding -- "
-                      "CuTileSetLibraryImplementations lowers them")
+        warnings.warn(
+            f"{pass_name}: no tileops library nodes found, but {len(non_tile)} non-tileops "
+            "library node(s) are present (BLAS-only configuration); proceeding -- "
+            "CuTileSetLibraryImplementations lowers them"
+        )
     else:
         _warn_or_raise(
             f"{pass_name}: no tileops library nodes found and no other library nodes present; "
             "the SDFG appears not to have been vectorized -- run VectorizeCuTile (or "
             "VectorizeMultiDim with a target_isa=ISA.CUTILE, expand_tile_nodes=False config) "
-            "first", strict)
+            "first",
+            strict,
+        )
 
 
 @properties.make_properties
@@ -471,10 +495,11 @@ class _CuTileLoweringPass(ppl.Pass):
 
     CATEGORY: str = "Vectorization"
 
-    strict = properties.Property(dtype=bool,
-                                 default=False,
-                                 desc="When True, precondition violations raise ValueError "
-                                 "instead of emitting a UserWarning.")
+    strict = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="When True, precondition violations raise ValueError instead of emitting a UserWarning.",
+    )
 
     def __init__(self, strict: bool = False):
         """Initialize the pass.
@@ -529,9 +554,11 @@ class CuTileValidateTiles(_CuTileLoweringPass):
         for node, _ in anchors:
             for width in node.widths:
                 if not _is_power_of_two(width):
-                    raise ValueError(f"{type(node).__name__} '{node.label}': tile width {width} in "
-                                     f"widths={list(node.widths)} is not a power of 2 "
-                                     "(cuda.tile runtime requirement)")
+                    raise ValueError(
+                        f"{type(node).__name__} '{node.label}': tile width {width} in "
+                        f"widths={list(node.widths)} is not a power of 2 "
+                        "(cuda.tile runtime requirement)"
+                    )
         return len(anchors)
 
 
@@ -571,13 +598,17 @@ class CuTileSetTileStorage(_CuTileLoweringPass):
             if not _collect_tile_nodes(sdfg) and _collect_non_tile_library_nodes(sdfg):
                 # BLAS-only configuration: no cuTile kernels exist by design;
                 # there is nothing to stamp. Informational, never raises.
-                warnings.warn("CuTileSetTileStorage: no CuTile-scheduled map and no tileops anchors, "
-                              "but non-tileops library nodes are present (BLAS-only configuration); "
-                              "nothing to stamp")
+                warnings.warn(
+                    "CuTileSetTileStorage: no CuTile-scheduled map and no tileops anchors, "
+                    "but non-tileops library nodes are present (BLAS-only configuration); "
+                    "nothing to stamp"
+                )
             else:
                 _warn_or_raise(
                     "CuTileSetTileStorage: no CuTile-scheduled map found; run "
-                    "sdfg.apply_gpu_transformations() + GPUDeviceToCuTile first", self.strict)
+                    "sdfg.apply_gpu_transformations() + GPUDeviceToCuTile first",
+                    self.strict,
+                )
             return None
 
         scope_cache: _ScopeCache = {}
@@ -589,6 +620,27 @@ class CuTileSetTileStorage(_CuTileLoweringPass):
                 desc.storage = dtypes.StorageType.CuTile_Tile
                 stamped.add(id(desc))
 
+        # Host driver loops can own array temporaries shared by several kernels.
+        # Python host code can read GPU arrays, so keep those buffers on the device.
+        for tile, state in _collect_tile_nodes(sdfg):
+            owner = state.sdfg
+            parent = owner.parent_nsdfg_node
+            if parent is not None and any(
+                entry.map.schedule == dtypes.ScheduleType.CuTile
+                for entry, _ in _enclosing_map_chain(parent, owner.parent, scope_cache)
+            ):
+                continue
+            for edge in (*state.in_edges(tile), *state.out_edges(tile)):
+                desc = owner.arrays.get(edge.data.data)
+                if (
+                    isinstance(desc, data.Array)
+                    and not isinstance(desc, data.View)
+                    and desc.transient
+                    and desc.storage == dtypes.StorageType.CPU_Heap
+                ):
+                    desc.storage = dtypes.StorageType.GPU_Global
+                    stamped.add(id(desc))
+
         # Rule (a): AccessNodes adjacent to tileops anchors.
         for node, state in _collect_tile_nodes(sdfg):
             owning_arrays = state.sdfg.arrays
@@ -597,7 +649,35 @@ class CuTileSetTileStorage(_CuTileLoweringPass):
                 if not isinstance(neighbor, nodes.AccessNode):
                     continue
                 desc = owning_arrays.get(neighbor.data)
-                if (isinstance(desc, data.Array) and desc.transient and desc.storage == dtypes.StorageType.Register):
+                if isinstance(desc, data.Array) and desc.transient and desc.storage == dtypes.StorageType.Register:
+                    _stamp(desc)
+
+        # Fusion can leave a widened kernel-local tile in GPU_Global storage.
+        for tile, state in _collect_tile_nodes(sdfg):
+            for edge in (*state.in_edges(tile), *state.out_edges(tile)):
+                desc = state.sdfg.arrays.get(edge.data.data)
+                if not (
+                    isinstance(desc, data.Array)
+                    and desc.transient
+                    and desc.storage == dtypes.StorageType.GPU_Global
+                    and tuple(desc.shape) == tuple(tile.widths)
+                ):
+                    continue
+                accesses = [
+                    (node, graph)
+                    for node, graph in state.sdfg.all_nodes_recursive()
+                    if isinstance(node, nodes.AccessNode) and node.data == edge.data.data and graph.sdfg is state.sdfg
+                ]
+                kernels = []
+                for access, graph in accesses:
+                    chain = _enclosing_map_chain(access, graph, scope_cache)
+                    kernels.append(
+                        next(
+                            (entry for entry, _ in reversed(chain) if entry.map.schedule == dtypes.ScheduleType.CuTile),
+                            None,
+                        )
+                    )
+                if kernels and kernels[0] is not None and all(kernel is kernels[0] for kernel in kernels):
                     _stamp(desc)
 
         # Rule (b): NSDFG boundary propagation (fixpoint).
@@ -616,8 +696,9 @@ class CuTileSetTileStorage(_CuTileLoweringPass):
                         continue
                     outer_arrays = graph.sdfg.arrays
                     inner_arrays = node.sdfg.arrays
-                    boundary = ([(e.dst_conn, e) for e in graph.in_edges(node)] + [(e.src_conn, e)
-                                                                                   for e in graph.out_edges(node)])
+                    boundary = [(e.dst_conn, e) for e in graph.in_edges(node)] + [
+                        (e.src_conn, e) for e in graph.out_edges(node)
+                    ]
                     for conn, edge in boundary:
                         if conn is None or edge.data.data is None:
                             continue
@@ -625,12 +706,18 @@ class CuTileSetTileStorage(_CuTileLoweringPass):
                         inner_desc = inner_arrays.get(conn)
                         if outer_desc is None or inner_desc is None:
                             continue
-                        if (outer_desc.storage == dtypes.StorageType.CuTile_Tile and isinstance(inner_desc, data.Array)
-                                and inner_desc.storage != dtypes.StorageType.CuTile_Tile):
+                        if (
+                            outer_desc.storage == dtypes.StorageType.CuTile_Tile
+                            and isinstance(inner_desc, data.Array)
+                            and inner_desc.storage != dtypes.StorageType.CuTile_Tile
+                        ):
                             _stamp(inner_desc)
-                        elif (inner_desc.storage == dtypes.StorageType.CuTile_Tile
-                              and isinstance(outer_desc, data.Array) and outer_desc.transient
-                              and outer_desc.storage == dtypes.StorageType.Register):
+                        elif (
+                            inner_desc.storage == dtypes.StorageType.CuTile_Tile
+                            and isinstance(outer_desc, data.Array)
+                            and outer_desc.transient
+                            and outer_desc.storage == dtypes.StorageType.Register
+                        ):
                             _stamp(outer_desc)
                 changed = len(stamped) > before
 
@@ -714,10 +801,19 @@ class GPUDeviceToCuTile(_CuTileLoweringPass):
                 _warn_or_raise(
                     f"GPUDeviceToCuTile: tileops node '{node.label}' has no "
                     "enclosing map at any level; it cannot be placed inside "
-                    "a cuTile kernel", self.strict)
+                    "a cuTile kernel",
+                    self.strict,
+                )
                 continue
-            outermost_entry = chain[-1][0]
-            if outermost_entry.map.schedule == dtypes.ScheduleType.GPU_Device:
+            outermost_entry = next(
+                (
+                    entry
+                    for entry, _ in reversed(chain)
+                    if entry.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.CuTile)
+                ),
+                None,
+            )
+            if outermost_entry is not None and outermost_entry.map.schedule == dtypes.ScheduleType.GPU_Device:
                 outermost_entry.map.schedule = dtypes.ScheduleType.CuTile
                 cutile_entries.add(outermost_entry)
 
@@ -758,14 +854,20 @@ class CuTileSetImplementations(_CuTileLoweringPass):
         if not anchors:
             _warn_or_raise(
                 "CuTileSetImplementations: no tileops library nodes found (already expanded?); "
-                "this pass must run before sdfg.expand_library_nodes()", self.strict)
+                "this pass must run before sdfg.expand_library_nodes()",
+                self.strict,
+            )
             return None
         for node, _ in anchors:
             if "cutile" not in node.implementations:
-                raise ValueError(f"{type(node).__name__} '{node.label}' has no 'cutile' implementation; "
-                                 "a tileops node type must ship a cuTile expansion before it can be "
-                                 "lowered for the cuTile backend")
-            node.target_isa = "CUTILE"
+                raise ValueError(
+                    f"{type(node).__name__} '{node.label}' has no 'cutile' implementation; "
+                    "a tileops node type must ship a cuTile expansion before it can be "
+                    "lowered for the cuTile backend"
+                )
+            from dace.libraries.tileops.dispatch import ISA
+
+            node.target_isa = ISA.CUTILE
             node.implementation = "cutile"
         return len(anchors)
 
@@ -800,7 +902,7 @@ class CuTileSetLibraryImplementations(_CuTileLoweringPass):
     """
 
     #: Implementations to try, in priority order, for a non-tileops node.
-    PREFERRED_IMPLEMENTATIONS: Tuple[str, ...] = ("CuPy", "pure")
+    PREFERRED_IMPLEMENTATIONS: Tuple[str, ...] = ("Python", "CuPy", "pure")
 
     def _select_implementation(self, node: nodes.LibraryNode) -> Optional[str]:
         """Return the highest-priority available implementation, or ``None``.
@@ -838,7 +940,9 @@ class CuTileSetLibraryImplementations(_CuTileLoweringPass):
                     _warn_or_raise(
                         f"CuTileSetLibraryImplementations: {type(node).__name__} '{node.label}' "
                         f"exposes none of {self.PREFERRED_IMPLEMENTATIONS} nor 'specialize'; the "
-                        "Python/cuTile backend cannot code-generate it", self.strict)
+                        "Python/cuTile backend cannot code-generate it",
+                        self.strict,
+                    )
                     continue
                 node.implementation = impl
                 node.expand(state, impl)

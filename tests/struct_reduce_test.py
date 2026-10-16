@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-vec3d = dace.struct('vec3d', x=dace.float32, y=dace.float32, z=dace.float32)
+import dace
+
+vec3d = dace.struct("vec3d", x=dace.float32, y=dace.float32, z=dace.float32)
 
 
 @dace.program
@@ -10,7 +11,7 @@ def sredtest(A: vec3d[1]):
     with dace.tasklet:
         a >> A(1, lambda a, b: vec3d(x=a.x + b.x, y=a.y + b.y, z=a.z + b.z))[0]
 
-        a = vec3d(x=float(1.0), y=float(2.0), z=float(3.0))
+        a = vec3d(x=1.0, y=2.0, z=3.0)
 
 
 def test():
@@ -22,7 +23,7 @@ def test():
     expected = (5.0, 7.0, 9.0)
     diff = tuple(abs(x - y) for x, y in zip(inout[0], expected))
 
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert all(d <= 1e-5 for d in diff)
 
 

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -15,5 +16,5 @@ def test_implicit():
     assert np.allclose(B, A * 5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_implicit()

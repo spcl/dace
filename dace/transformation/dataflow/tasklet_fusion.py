@@ -1,27 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that fuse Tasklets """
+"""Contains classes that fuse Tasklets"""
 
 import ast
 import re
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 import astunparse
+
 import dace
 from dace.dtypes import Language
-from dace.properties import make_properties, Property
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 
 
 class PythonConnectorRenamer(ast.NodeTransformer):
-    """ Renames connector names in Tasklet code.
-    """
+    """Renames connector names in Tasklet code."""
 
-    def __init__(self, repl_dict: Dict[str, str]) -> None:
-        """ Initializes AST transformer.
+    def __init__(self, repl_dict: dict[str, str]) -> None:
+        """Initializes AST transformer.
 
-            :param repl_dict: Replacement dictionary.
+        :param repl_dict: Replacement dictionary.
         """
         self.repl_dict = repl_dict
 
@@ -32,20 +32,18 @@ class PythonConnectorRenamer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class CPPConnectorRenamer():
-
-    def __init__(self, repl_dict: Dict[str, str]) -> None:
+class CPPConnectorRenamer:
+    def __init__(self, repl_dict: dict[str, str]) -> None:
         self.repl_dict = repl_dict
 
     def rename(self, code: str) -> str:
         new_code = code
         for old_val, new_val in self.repl_dict.items():
-            new_code = re.sub(r'\b%s\b' % re.escape(old_val), new_val, new_code)
+            new_code = re.sub(rf"\b{re.escape(old_val)}\b", new_val, new_code)
         return new_code
 
 
 class PythonInliner(ast.NodeTransformer):
-
     def __init__(self, target_id, target_ast):
         self.target_id = target_id
         self.target_ast = target_ast
@@ -57,124 +55,58 @@ class PythonInliner(ast.NodeTransformer):
             return self.generic_visit(node)
 
 
-class CPPInliner():
-
+class CPPInliner:
     def __init__(self, inline_target, inline_val):
         self.inline_target = inline_target
         self.inline_val = inline_val
 
     def inline(self, code: str):
-        return re.sub(r'\b%s\b' % re.escape(self.inline_target), '(' + self.inline_val + ')', code)
+        return re.sub(rf"\b{re.escape(self.inline_target)}\b", "(" + self.inline_val + ")", code)
 
 
 @make_properties
 class TaskletFusion(pm.SingleStateTransformation):
     """
-    Fuses two connected Tasklets.
-
-    The transformation always fuses the second Tasklet (`t2`) to the first one (`t1`), removing any AccessNode (`data`)
-    that may be between the two and is not used anywhere else.
-
-    In the following examples, the pre- and post-transformation subgraphs are described with the following syntax:
-    - Tasklets <name: inputs, ouputs, code>
-    - Edges <name: src, src_conn, dst, dst_conn, memlet>
-
-    Names and memlets in [square brackets] are not part of the subgraph.
-
-    Example 1:
-    Pre-transformation Subgraph
-    `t1: {'__in1', '__in2'}, {'__out'}, "__out = __in1 + __in2"`
-    `t2: {'__in1', '__in2'}, {'__out'}, "__out = __in1 * __in2"`
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e3: t1, '__out', t2, '__in1', Memlet()`
-    `e4: [s3], [sc3], t2, '__in2', [m3]`
-    `e5: t2, '__out', [d1], [dc1], [m4]`
-    Post-transformation Subgraph
-    ```
-    t1: {'__in1', '__in2', '__in3'}, {'__out_0'},
-        "__out = __in1 + __in2\n__out_0 = __out * __in3"
-    ```
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e4: [s3], [sc3], t1, '__in3', [m3]`
-    `e5: t1, '__out_0', [d1], [dc1], [m4]`
-
-    Example 2:
-    Pre-transformation Subgraph
-    ```
-    t1: {'__in1', '__in2'}, {'__out', __out1},
-        "__out = __in1 + __in2\n__out1 = __out"
-    ```
-    `t2: {'__in1', '__in2'}, {'__out'}, "__out = __in1 * __in2"`
-    `t3: {'__in1', '__in2'}, {'__out'}, "__out = __in1 - __in2"`
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e3: t1, '__out', t2, '__in1', Memlet()`
-    `e4: t1, '__out1', t3, '__in1', Memlet()`
-    `e5: [s3], [sc3], t2, '__in2', [m3]`
-    `e6: [s4], [sc4], t3, '__in2', [m4]`
-    `e7: t3, '__out', [d1], [dc1], [m5]`
-    Post-first-transformation Subgraph
-    ```
-    t1: {'__in1', '__in2', '__in3'}, {'__out1', '__out_0'},
-        "__out = __in1 + __in2\n__out1 = __out\n__out_0 = __out * __in3"
-    ```
-    `t3: {'__in1', '__in2'}, {'__out'}, "__out = __in1 - __in2"`
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e4: t1, '__out1', t3, '__in1', Memlet()`
-    `e5: [s3], [sc3], t1, '__in3', [m3]`
-    `e6: [s4], [sc4], t3, '__in2', [m4]`
-    `e7: t3, '__out', [d1], [dc1], [m5]`
-    Post-second-transformation Sugraph (`t3` fused to `t1`)
-    ```
-    t1: {'__in1', '__in2', '__in3', '__in4'}, {'__out_1'},
-        "__out = __in1 + __in2\n__out1 = __out\n__out_0 = __out * __in3\n"
-        "__out_1 = __out1 - __in4"
-    ```
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e5: [s3], [sc3], t1, '__in3', [m3]`
-    `e6: [s4], [sc4], t1, '__in4', [m4]`
-    `e7: t1, '__out_1', [d1], [dc1], [m5]`
+    Fuses a Tasklet into the Tasklet that writes its input through a scalar AccessNode, removing the AccessNode if
+    nothing else uses it.
     """
 
     t1 = pm.PatternNode(nodes.Tasklet)
     data = pm.PatternNode(nodes.AccessNode)
     t2 = pm.PatternNode(nodes.Tasklet)
 
-    new_name = Property(dtype=str,
-                        default=None,
-                        allow_none=True,
-                        desc='New name to give tasklet. If None, fuses tasklet names')
+    new_name = Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        category="Parameters",
+        desc="New name to give tasklet. If None, fuses tasklet names",
+    )
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.t1, cls.data, cls.t2), sdutil.node_path_graph(cls.t1, cls.t2)]
+        return [sdutil.node_path_graph(cls.t1, cls.data, cls.t2)]
 
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
         t1 = self.t1
-        data = self.data if self.expr_index == 0 else None
+        data = self.data
         t2 = self.t2
 
         # Both Tasklets must have the same language.
         if t1.language != t2.language:
             return False
 
-        # If there is an AccessNode between the Tasklets, ensure it is a scalar.
-        if data is not None and data.desc(sdfg).total_size != 1:
+        # The AccessNode between the Tasklets must be a scalar.
+        if data.desc(sdfg).total_size != 1:
             return False
 
-        # The first Tasklet must not be used anywhere else. If the Tasklet leads into an AccessNode, that AccessNode in
-        # turn cannot be used anywhere else.
-        if graph.out_degree(t1) != 1 or (data is not None and graph.out_degree(data) != 1):
+        # Neither the first Tasklet nor the AccessNode may be used anywhere else.
+        if graph.out_degree(t1) != 1 or graph.out_degree(data) != 1:
             return False
-        if data is not None:
-            access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
-            access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
-            if access_node_count > 1:
-                return False
+        access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
+        access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
+        if access_node_count > 1:
+            return False
 
         # Try to parse the code to check that there is not more than one assignment.
         try:
@@ -184,7 +116,7 @@ class TaskletFusion(pm.SingleStateTransformation):
                 if len(t1.code.code[0].targets) != 1:
                     return False
             elif t1.language == Language.CPP:
-                if not re.match(r'^[_A-Za-z0-9]+\s*=[^;]*;?$', t1.code.as_string):
+                if not re.match(r"^[_A-Za-z0-9]+\s*=[^;]*;?$", t1.code.as_string):
                     return False
         except:
             return False
@@ -193,11 +125,11 @@ class TaskletFusion(pm.SingleStateTransformation):
 
     def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         t1 = self.t1
-        data = self.data if self.expr_index == 0 else None
+        data = self.data
         t2 = self.t2
 
         # Determine the edge leading to the second Tasklet.
-        t2_in_edge = graph.out_edges(data if data is not None else t1)[0]
+        t2_in_edge = graph.out_edges(data)[0]
 
         # Remove the connector from the second Tasklet.
         inputs = {k: v for k, v in t2.in_connectors.items() if k != t2_in_edge.dst_conn}
@@ -213,7 +145,6 @@ class TaskletFusion(pm.SingleStateTransformation):
 
             # Check if there is a conflict.
             if in_edge.dst_conn in all_conns:
-
                 # Check for conflicts with the second tasklet's output connectors
                 if in_edge.dst_conn in t2.out_connectors:
                     in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
@@ -231,8 +162,12 @@ class TaskletFusion(pm.SingleStateTransformation):
                             break
                 else:
                     t2edge = conflict_edges[0]
-                if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data
-                                           or in_edge.data is None or in_edge.data.data is None):
+                if t2edge is not None and (
+                    in_edge.data != t2edge.data
+                    or in_edge.data.data != t2edge.data.data
+                    or in_edge.data is None
+                    or in_edge.data.data is None
+                ):
                     in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
                     repldict[old_value] = in_edge.dst_conn
                 else:
@@ -249,7 +184,7 @@ class TaskletFusion(pm.SingleStateTransformation):
                 assigned_value = PythonConnectorRenamer(repldict).visit(assigned_value)
 
             new_code = [PythonInliner(t2_in_edge.dst_conn, assigned_value).visit(line) for line in t2.code.code]
-            new_code_str = '\n'.join(astunparse.unparse(line) for line in new_code)
+            new_code_str = "\n".join(astunparse.unparse(line) for line in new_code)
         elif t1.language == Language.CPP:
             assigned_value = t1.code.as_string
             if repldict:
@@ -258,35 +193,37 @@ class TaskletFusion(pm.SingleStateTransformation):
             # Extract the assignment's left and right hand sides to properly inline into the next Tasklet.
             lhs = None
             rhs = None
-            lhs_matches = re.findall(r'[\s\t\n\r]*([\w]*)[\s\t]*=', assigned_value)
+            lhs_matches = re.findall(r"[\s\t\n\r]*([\w]*)[\s\t]*=", assigned_value)
             if lhs_matches:
                 lhs = lhs_matches[0]
-                rhs_matches = re.findall(r'%s[\s\t]*=[\s\t]*([^=]*);' % lhs, assigned_value)
+                rhs_matches = re.findall(rf"{lhs}[\s\t]*=[\s\t]*([^=]*);", assigned_value)
                 if rhs_matches:
                     rhs = rhs_matches[0]
 
             if rhs:
                 new_code_str = CPPInliner(t2_in_edge.dst_conn, rhs).inline(t2.code.as_string)
         else:
-            raise ValueError(f'Cannot inline tasklet with language {t1.language}')
+            raise ValueError(f"Cannot inline tasklet with language {t1.language}")
 
         if self.new_name:
             new_name = self.new_name
         else:
-            new_name = t1.label + '_fused_' + t2.label
+            new_name = t1.label + "_fused_" + t2.label
 
-        new_tasklet = graph.add_tasklet(new_name,
-                                        inputs,
-                                        t2.out_connectors,
-                                        new_code_str,
-                                        t1.language,
-                                        state_fields=t1.state_fields + t2.state_fields,
-                                        code_global=t1.code_global.code + t2.code_global.code,
-                                        code_init=t1.code_init.code + t2.code_init.code,
-                                        code_exit=t1.code_exit.code + t2.code_exit.code,
-                                        location=_merge_dicts(t1.location, t2.location),
-                                        side_effects=t1.side_effects or t2.side_effects,
-                                        debuginfo=_merge_debuginfo(t1.debuginfo, t2.debuginfo))
+        new_tasklet = graph.add_tasklet(
+            new_name,
+            inputs,
+            t2.out_connectors,
+            new_code_str,
+            t1.language,
+            state_fields=t1.state_fields + t2.state_fields,
+            code_global=t1.code_global.code + t2.code_global.code,
+            code_init=t1.code_init.code + t2.code_init.code,
+            code_exit=t1.code_exit.code + t2.code_exit.code,
+            location=_merge_dicts(t1.location, t2.location),
+            side_effects=t1.side_effects or t2.side_effects,
+            debuginfo=_merge_debuginfo(t1.debuginfo, t2.debuginfo),
+        )
 
         for in_edge in graph.in_edges(t1):
             if in_edge.src_conn is None and isinstance(in_edge.src, dace.nodes.EntryNode):
@@ -305,13 +242,12 @@ class TaskletFusion(pm.SingleStateTransformation):
             graph.add_edge(new_tasklet, out_edge.src_conn, out_edge.dst, out_edge.dst_conn, out_edge.data)
 
         graph.remove_node(t1)
-        if data is not None:
-            graph.remove_node(data)
+        graph.remove_node(data)
 
         graph.remove_node(t2)
 
 
-def _merge_dicts(a: Optional[Dict[Any, Any]], b: Optional[Dict[Any, Any]]):
+def _merge_dicts(a: dict[Any, Any] | None, b: dict[Any, Any] | None):
     if a is None and b is not None:
         return b
     if b is None and a is not None:
@@ -322,7 +258,7 @@ def _merge_dicts(a: Optional[Dict[Any, Any]], b: Optional[Dict[Any, Any]]):
     return result
 
 
-def _merge_sets(a: Optional[Set[Any]], b: Optional[Set[Any]]):
+def _merge_sets(a: set[Any] | None, b: set[Any] | None):
     if a is None and b is not None:
         return b
     if b is None and a is not None:
@@ -333,7 +269,7 @@ def _merge_sets(a: Optional[Set[Any]], b: Optional[Set[Any]]):
     return result
 
 
-def _merge_debuginfo(a: Optional[dace.DebugInfo], b: Optional[dace.DebugInfo]):
+def _merge_debuginfo(a: dace.DebugInfo | None, b: dace.DebugInfo | None):
     if a is None and b is not None:
         return b
     if b is None and a is not None:

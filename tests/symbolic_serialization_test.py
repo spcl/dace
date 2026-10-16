@@ -1,35 +1,39 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import gzip
+import json
+import os
+import warnings
+
 import numpy as np
-import threading
 import pytest
+import sympy
+from packaging.version import parse as parse_version
+from sympy.core.cache import clear_cache
 
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
-from dace.properties import DictProperty, ListProperty
+from dace.properties import DictProperty, ListProperty, SymbolicProperty
 from dace.sdfg.infer_types import infer_connector_types
-import sympy
-import json
 
 
-def test_symbolic_serialization_roundtrip_preserves_metadata():
-    typed_sym = symbolic.symbol('test_sym', dtype=dace.uint64, nonnegative=True)
-    expr = symbolic.SymExpr(typed_sym + symbolic.TypedConstant(np.int16(2)),
-                            typed_sym + symbolic.TypedConstant(np.int16(4)))
+def test_symbolic_serialization_roundtrip_preserves_constant_types():
+    typed_sym = symbolic.symbol("test_sym", dtype=dace.uint64, nonnegative=True)
+    expr = symbolic.SymExpr(
+        typed_sym + symbolic.TypedConstant(np.int16(2)), typed_sym + symbolic.TypedConstant(np.int16(4))
+    )
 
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)
 
-    assert serialized.startswith('SymExpr(')
-    assert '$test_sym' in serialized
+    assert serialized.startswith("SymExpr(")
+    assert "$test_sym" in serialized
     assert isinstance(restored, symbolic.SymExpr)
 
     restored_sym = next(iter(restored.expr.free_symbols))
     assert isinstance(restored_sym, symbolic.symbol)
-    assert restored_sym.name == 'test_sym'
-    assert restored_sym.dtype == dace.uint64
-    assert restored_sym.is_nonnegative
+    assert restored_sym.name == "test_sym"
 
     constants = [atom for atom in restored.expr.atoms() if isinstance(atom, symbolic.TypedConstant)]
     assert len(constants) == 1
@@ -38,9 +42,17 @@ def test_symbolic_serialization_roundtrip_preserves_metadata():
 
 
 def test_range_json_roundtrip_uses_symbolic_deserializer():
-    sym = symbolic.symbol('N', dtype=dace.uint64, nonnegative=True)
-    rng = subsets.Range([(symbolic.TypedConstant(np.int16(2)), sym + symbolic.TypedConstant(np.int16(6)),
-                          symbolic.TypedConstant(np.int16(2)), symbolic.TypedConstant(np.uint8(4)))])
+    sym = symbolic.symbol("N", dtype=dace.uint64, nonnegative=True)
+    rng = subsets.Range(
+        [
+            (
+                symbolic.TypedConstant(np.int16(2)),
+                sym + symbolic.TypedConstant(np.int16(6)),
+                symbolic.TypedConstant(np.int16(2)),
+                symbolic.TypedConstant(np.uint8(4)),
+            )
+        ]
+    )
 
     restored = subsets.Range.from_json(rng.to_json(), {"version": dace.__version__})
     start, end, step = restored.ranges[0]
@@ -52,8 +64,7 @@ def test_range_json_roundtrip_uses_symbolic_deserializer():
 
     restored_sym = next(iter(end.free_symbols))
     assert isinstance(restored_sym, symbolic.symbol)
-    assert restored_sym.dtype == dace.uint64
-    assert restored_sym.is_nonnegative
+    assert restored_sym.name == "N"
 
     assert isinstance(step, symbolic.TypedConstant)
     assert step.dtype == dace.int16
@@ -62,90 +73,82 @@ def test_range_json_roundtrip_uses_symbolic_deserializer():
 
 
 def test_symstr_codegen_for_typed_constants():
-    expr = symbolic.deserialize_symbolic('2i16 + $N')
+    expr = symbolic.deserialize_symbolic("2i16 + $N")
 
     python_expr = symbolic.symstr(expr)
     cpp_expr = symbolic.symstr(expr, cpp_mode=True)
 
-    assert 'dace.int16(2)' in python_expr
-    assert 'int16_t(2)' in cpp_expr
+    assert "dace.int16(2)" in python_expr
+    assert "int16_t(2)" in cpp_expr
 
 
 def test_symbol_name_clash_roundtrip():
-    expr = symbolic.symbol('sin', dtype=dace.uint64, nonnegative=True) + symbolic.TypedConstant(np.uint64(1))
+    expr = symbolic.symbol("sin", dtype=dace.uint64, nonnegative=True) + symbolic.TypedConstant(np.uint64(1))
 
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)
 
     restored_sym = next(iter(restored.free_symbols))
     assert isinstance(restored_sym, symbolic.symbol)
-    assert restored_sym.name == 'sin'
-    assert restored_sym.dtype == dace.uint64
+    assert restored_sym.name == "sin"
 
 
-def test_complex_symbol_roundtrip_preserves_dtype():
-    expr = symbolic.symbol('c', dtype=dace.complex128)
-
-    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
-
-    restored_sym = next(iter(restored.free_symbols))
-    assert isinstance(restored_sym, symbolic.symbol)
-    assert restored_sym.name == 'c'
-    assert restored_sym.dtype == dace.complex128
-
-
-@pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128])
-def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
+def test_suffixless_dtype_constant_roundtrips_via_cast_form():
     """A constant whose dtype has no literal suffix (complex) serializes
-    via the parseable ``dace.<dtype>(value)`` form and round-trips."""
-    tc = symbolic.deserialize_symbolic(f'dace.{dtype.to_string()}(5)')
-    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dtype
+    via the parseable ``dace.<dtype>(value)`` form and round-trips.
+
+    The point is the real-valued cast argument (``_cast_symbolic_value`` takes its
+    ``sympy.Integer`` branch); ``c64`` vs ``c128`` only picks a suffix string, which
+    ``test_typed_constant_canonical_form_roundtrips`` pins for both.
+    """
+    tc = symbolic.deserialize_symbolic("dace.complex128(5)")
+    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
 
     serialized = symbolic.serialize_symbolic(tc)
     restored = symbolic.deserialize_symbolic(serialized)
     assert isinstance(restored, symbolic.TypedConstant)
-    assert restored.dtype == dtype and int(restored.value) == 5
+    assert restored.dtype == dace.complex128 and int(restored.value) == 5
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
 def test_complex_literal_parses_as_complex128():
-    tc = symbolic.deserialize_symbolic('4j')
+    tc = symbolic.deserialize_symbolic("4j")
     assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
     assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(0, 4)
 
 
 def test_complex_constant_parse_save_roundtrip():
-    tc = symbolic.deserialize_symbolic('complex(3.0, 4.2)')
+    tc = symbolic.deserialize_symbolic("complex(3.0, 4.2)")
     assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
     assert complex(sympy.re(tc.value), sympy.im(tc.value)) == complex(3.0, 4.2)
 
     serialized = symbolic.serialize_symbolic(tc)
-    assert serialized == '(3.0 + 4.2j)c128'
+    assert serialized == "(3.0 + 4.2j)c128"
     restored = symbolic.deserialize_symbolic(serialized)
     assert restored.dtype == dace.complex128
     assert symbolic.serialize_symbolic(restored) == serialized
 
     c64 = symbolic.TypedConstant(complex(1, 2), dace.complex64)
     s64 = symbolic.serialize_symbolic(c64)
-    assert s64 == '(1.0 + 2.0j)c64'
+    assert s64 == "(1.0 + 2.0j)c64"
     r64 = symbolic.deserialize_symbolic(s64)
     assert r64.dtype == dace.complex64 and symbolic.serialize_symbolic(r64) == s64
 
 
 def test_sym2cpp_emits_uint64_literals():
-    expr = symbolic.TypedConstant(np.uint64(1)) + symbolic.symbol('N', dtype=dace.uint64)
+    expr = symbolic.TypedConstant(np.uint64(1)) + symbolic.symbol("N", dtype=dace.uint64)
 
     cpp_expr = sym2cpp(expr)
 
-    assert '1ULL' in cpp_expr
+    assert "1ULL" in cpp_expr
 
 
 def test_sym2cpp_emits_float32_literals():
-    expr = symbolic.TypedConstant(np.float32(1.5)) + symbolic.symbol('N', dtype=dace.float32)
+    expr = symbolic.TypedConstant(np.float32(1.5)) + symbolic.symbol("N", dtype=dace.float32)
 
     cpp_expr = sym2cpp(expr)
 
-    assert '1.5f' in cpp_expr
+    assert "1.5f" in cpp_expr
 
 
 def test_undefined_symbol_serialization_uses_dollar_prefix():
@@ -154,46 +157,33 @@ def test_undefined_symbol_serialization_uses_dollar_prefix():
     serialized = symbolic.serialize_symbolic(undefined)
     restored = symbolic.deserialize_symbolic(serialized)
 
-    assert serialized == '$?'
+    assert serialized == "$?"
     assert isinstance(restored, symbolic.UndefinedSymbol)
 
 
-def test_symbol_assumption_roundtrip_preserves_bool_metadata():
-    serialized = 'symbol($i, nonnegative=True)'
-
-    restored = symbolic.deserialize_symbolic(serialized)
-
-    assert symbolic.serialize_symbolic(restored) == serialized
-
-
-def test_same_name_symbols_with_different_dtypes_serialize_independently():
-    typed = symbolic.symbol('i', dtype=dace.int16)
-    default = symbolic.symbol('i')
-
-    assert symbolic.serialize_symbolic(typed) == 'symbol($i, dtype=dace.int16)'
-    assert symbolic.serialize_symbolic(default) == '$i'
+def test_symbol_serializes_as_its_bare_name():
+    """Dtype and assumptions belong to the SDFG's symbol repository, never to the wire form of a symbol."""
+    for sym in (symbolic.symbol("i"), symbolic.symbol("i", dtype=dace.int16), symbolic.symbol("i", positive=True)):
+        assert symbolic.serialize_symbolic(sym) == "$i"
+        assert symbolic.serialize_symbolic(sym + 1) == "1 + $i"
 
 
-def test_typed_symbol_deserialization_does_not_strip_dtype():
-    # Input may not be in canonical order, but dtype must survive a round-trip
-    original = '2*(1 + symbol($M, dtype=dace.int16))*symbol($M, dtype=dace.int16)'
-    restored = symbolic.deserialize_symbolic(original)
-    reserialized = symbolic.serialize_symbolic(restored)
+def test_symbol_identity_is_its_name():
+    """A symbol is its name: declarations of the same name with other dtypes or assumptions are the same symbol, so
+    expressions built from either cancel and a string round trip gives the symbol back."""
+    default = symbolic.symbol("dtype_alias_sym")
+    typed = symbolic.symbol("dtype_alias_sym", dtype=dace.int64, positive=True)
 
-    # Dtype still appears in the output
-    assert 'symbol($M, dtype=dace.int16)' in reserialized
-
-    # The round-trip is now a fixed point (deterministic)
-    assert symbolic.serialize_symbolic(symbolic.deserialize_symbolic(reserialized)) == reserialized
-
-    # Also verify the symbol object itself has the correct dtype
-    from dace import int16
-    syms = {s.name: s for s in restored.free_symbols}
-    assert 'M' in syms and syms['M'].dtype == int16
+    assert default == typed
+    assert hash(default) == hash(typed)
+    assert typed - default == 0
+    assert symbolic.pystr_to_symbolic("dtype_alias_sym") == typed
+    assert symbolic.serialize_symbolic(typed + 2) == "2 + $dtype_alias_sym"
+    assert symbolic.deserialize_symbolic(symbolic.serialize_symbolic(typed + 2)) == default + 2
 
 
 def test_rational_addition_roundtrip_preserves_serialization():
-    serialized = '-10/3 + 1/3*$i'
+    serialized = "-10/3 + 1/3*$i"
 
     restored = symbolic.deserialize_symbolic(serialized)
 
@@ -202,129 +192,156 @@ def test_rational_addition_roundtrip_preserves_serialization():
 
 def test_pystr_to_symbolic_preserves_typed_symbols():
     # Prime the parser cache with an equal untyped SymPy expression.
-    cache_seed_expr = symbolic.deserialize_symbolic('-1 + $N')
+    cache_seed_expr = symbolic.deserialize_symbolic("-1 + $N")
     cache_seed_restored = symbolic.pystr_to_symbolic(cache_seed_expr)
-    typed_expr = symbolic.deserialize_symbolic('-1 + symbol($N, dtype=dace.int16)')
+    typed_expr = symbolic.symbol("N", dtype=dace.int16) - 1
 
     typed_restored = symbolic.pystr_to_symbolic(typed_expr)
 
     assert cache_seed_restored is cache_seed_expr
-    assert symbolic.serialize_symbolic(cache_seed_restored) == '-1 + $N'
+    assert symbolic.serialize_symbolic(cache_seed_restored) == "-1 + $N"
     assert typed_restored is typed_expr
-    assert symbolic.serialize_symbolic(typed_restored) == '-1 + symbol($N, dtype=dace.int16)'
+    assert symbolic.serialize_symbolic(typed_restored) == "-1 + $N"
 
 
-def test_power_deserialization_preserves_typed_symbols_after_plain_power():
-    plain_power = symbolic.deserialize_symbolic('$N**2')
+def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default():
+    # `simplify=False` is not a second case: `pystr_to_symbolic` tests `simplify is not True`.
+    expr = sympy.Add(symbolic.symbol("N"), 1, 1, evaluate=False)
 
-    typed_power = symbolic.deserialize_symbolic('symbol($N, dtype=dace.int16)**2')
-
-    assert symbolic.serialize_symbolic(plain_power) == '$N**2'
-    assert symbolic.serialize_symbolic(typed_power) == 'symbol($N, dtype=dace.int16)**2'
-
-
-@pytest.mark.parametrize('simplify', [None, False])
-def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default(simplify):
-    expr = sympy.Add(symbolic.symbol('N'), 1, 1, evaluate=False)
-
-    restored = symbolic.pystr_to_symbolic(expr, simplify=simplify)
+    restored = symbolic.pystr_to_symbolic(expr)
 
     assert restored is expr
     assert len(restored.args) == 3
 
 
 def test_pystr_to_symbolic_simplifies_basic_when_requested():
-    expr = sympy.Add(symbolic.symbol('N'), 1, 1, evaluate=False)
+    expr = sympy.Add(symbolic.symbol("N"), 1, 1, evaluate=False)
 
     restored = symbolic.pystr_to_symbolic(expr, simplify=True)
 
-    assert restored == symbolic.symbol('N') + 2
+    assert restored == symbolic.symbol("N") + 2
     assert len(restored.args) == 2
 
 
-def test_range_json_roundtrip_preserves_typed_symbol_minus_one():
+def test_range_json_roundtrip_preserves_symbol_minus_one():
     json_range = {
-        'type': 'Range',
-        'ranges': [{
-            'start': '0',
-            'end': '-1 + symbol($N, dtype=dace.int16)',
-            'step': '1',
-            'tile': '1',
-        }],
+        "type": "Range",
+        "ranges": [
+            {
+                "start": "0",
+                "end": "-1 + $N",
+                "step": "1",
+                "tile": "1",
+            }
+        ],
     }
 
     rng = subsets.Range.from_json(json_range, {"version": dace.__version__})
 
-    assert symbolic.serialize_symbolic(rng.ranges[0][0]) == '0'
-    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == '-1 + symbol($N, dtype=dace.int16)'
-    assert symbolic.serialize_symbolic(rng.ranges[0][2]) == '1'
-    assert symbolic.serialize_symbolic(rng.tile_sizes[0]) == '1'
+    assert symbolic.serialize_symbolic(rng.ranges[0][0]) == "0"
+    assert symbolic.serialize_symbolic(rng.ranges[0][1]) == "-1 + $N"
+    assert symbolic.serialize_symbolic(rng.ranges[0][2]) == "1"
+    assert symbolic.serialize_symbolic(rng.tile_sizes[0]) == "1"
 
 
 def test_scalar_memlet_connector_type_after_symbolic_range_roundtrip():
-    i = symbolic.symbol('i', dtype=dace.int64)
-    stencil_i = symbolic.symbol('stencil_i', dtype=dace.int64)
+    # The wire form carries no dtype, so the symbols are restored with the default one
+    i = symbolic.symbol("i")
+    stencil_i = symbolic.symbol("stencil_i")
     start = 2 * i - 2 * stencil_i + 1
     rng = subsets.Range([(start, start, 1)])
     restored = subsets.Range.from_json(rng.to_json(), {"version": dace.__version__})
     restored.replace({i: stencil_i})
 
-    assert 'i' not in restored.free_symbols
+    assert "i" not in restored.free_symbols
     assert restored.ranges[0][0] == 1
     assert restored.ranges[0][1] == 1
     assert restored.num_elements() == 1
 
-    sdfg = dace.SDFG('scalar_memlet_connector_after_symbolic_roundtrip')
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_scalar('B', dace.float64)
+    sdfg = dace.SDFG("scalar_memlet_connector_after_symbolic_roundtrip")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_scalar("B", dace.float64)
     state = sdfg.add_state()
-    read = state.add_read('A')
-    tasklet = state.add_tasklet('use_scalar', {'inp'}, {'out'}, 'out = inp')
-    write = state.add_write('B')
-    state.add_edge(read, None, tasklet, 'inp', dace.Memlet(data='A', subset=restored))
-    state.add_edge(tasklet, 'out', write, None, dace.Memlet('B[0]'))
+    read = state.add_read("A")
+    tasklet = state.add_tasklet("use_scalar", {"inp"}, {"out"}, "out = inp")
+    write = state.add_write("B")
+    state.add_edge(read, None, tasklet, "inp", dace.Memlet(data="A", subset=restored))
+    state.add_edge(tasklet, "out", write, None, dace.Memlet("B[0]"))
 
     infer_connector_types(sdfg)
 
-    assert tasklet.in_connectors['inp'] == dace.float64
+    assert tasklet.in_connectors["inp"] == dace.float64
 
 
 def test_list_property_symbolic_type_json_roundtrip_supports_plain_names():
     prop = ListProperty(element_type=sympy.Basic)
 
-    assert prop.to_json(['START']) == ['$START']
+    assert prop.to_json(["START"]) == ["$START"]
 
-    restored = prop.from_json(prop.to_json(['START']), {"version": dace.__version__})
+    restored = prop.from_json(prop.to_json(["START"]), {"version": dace.__version__})
 
     assert len(restored) == 1
-    assert restored[0] == symbolic.symbol('START')
+    assert restored[0] == symbolic.symbol("START")
 
 
 def test_dict_property_symbolic_type_json_roundtrip_supports_plain_names():
     prop = DictProperty(key_type=str, value_type=sympy.Basic)
 
-    assert prop.to_json({'N': 'N'}) == {'N': '$N'}
+    assert prop.to_json({"N": "N"}) == {"N": "$N"}
 
-    restored = prop.from_json(prop.to_json({'N': 'N'}), {"version": dace.__version__})
+    restored = prop.from_json(prop.to_json({"N": "N"}), {"version": dace.__version__})
 
-    assert restored == {'N': symbolic.symbol('N')}
+    assert restored == {"N": symbolic.symbol("N")}
 
 
-@pytest.mark.parametrize('expr', [
-    sympy.Add(symbolic.TypedConstant(np.int16(10)),
-              sympy.Mul(sympy.S.NegativeOne, symbolic.symbol('i'), evaluate=False),
-              evaluate=False),
-    sympy.Mul(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
-    sympy.Mul(symbolic.TypedConstant(np.int16(10)), sympy.Pow(symbolic.symbol('i'), -1, evaluate=False),
-              evaluate=False),
-    sympy.Pow(symbolic.TypedConstant(np.int16(10)), symbolic.symbol('i'), evaluate=False),
-    sympy.Mod(symbolic.symbol('i'), symbolic.TypedConstant(np.int16(3)), evaluate=False),
-])
+@pytest.mark.parametrize(
+    "expr",
+    [
+        sympy.Add(
+            symbolic.TypedConstant(np.int16(10)),
+            sympy.Mul(sympy.S.NegativeOne, symbolic.symbol("i"), evaluate=False),
+            evaluate=False,
+        ),
+        sympy.Mul(symbolic.TypedConstant(np.int16(10)), symbolic.symbol("i"), evaluate=False),
+        sympy.Mul(
+            symbolic.TypedConstant(np.int16(10)), sympy.Pow(symbolic.symbol("i"), -1, evaluate=False), evaluate=False
+        ),
+        sympy.Pow(symbolic.TypedConstant(np.int16(10)), symbolic.symbol("i"), evaluate=False),
+        sympy.Mod(symbolic.symbol("i"), symbolic.TypedConstant(np.int16(3)), evaluate=False),
+    ],
+)
 def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)
 
     assert symbolic.serialize_symbolic(restored) == serialized
+
+
+# Passes here because this branch folds a symbol's dtype into its sympy identity, so two same-name
+# symbols of different dtypes do not share a cache key. On main they do, and this fails.
+def test_symbol_dtype_survives_a_sympy_cache_eviction():
+    """A symbol's dtype is not part of what SymPy hashes it by, so two same-name symbols of different
+    dtypes share one cache key, and whichever built an expression first owns it.
+
+    That alone is symmetric -- both sides of a round-trip read the same wrong symbol and the
+    serialization still matches. The eviction below is what makes it observable: the expression the
+    caller holds keeps its own symbol, while the cache entry behind that key is rebuilt around the
+    other one, and the deserializer is handed that instead of what it asked for.
+    """
+    expr = sympy.Mod(symbolic.symbol("cache_probe"), symbolic.TypedConstant(np.int16(3)), evaluate=False)
+    try:
+        # A long enough session evicts this expression from SymPy's bounded cache ...
+        clear_cache()
+        # ... and the next builder of the same key is the same name at another dtype.
+        sympy.Mod(symbolic.symbol("cache_probe", dace.int64), symbolic.TypedConstant(np.int16(3)), evaluate=False)
+
+        serialized = symbolic.serialize_symbolic(expr)
+        assert serialized == "Mod($cache_probe, 3i16)"
+
+        # Reads back as Mod(symbol($cache_probe, dtype=dace.int64), 3i16).
+        assert symbolic.serialize_symbolic(symbolic.deserialize_symbolic(serialized)) == serialized
+    finally:
+        clear_cache()
 
 
 def test_plain_integer_roundtrip_converts_to_sympy_integer():
@@ -335,10 +352,10 @@ def test_plain_integer_roundtrip_converts_to_sympy_integer():
 
 
 def test_plain_sympy_integer_serializes_without_typed_suffix():
-    assert symbolic.serialize_symbolic(sympy.Integer(42)) == '42'
+    assert symbolic.serialize_symbolic(sympy.Integer(42)) == "42"
 
 
-@pytest.mark.parametrize('value', [-7, 2**80])
+@pytest.mark.parametrize("value", [-7, 2**80])
 def test_plain_python_integer_deserialization_uses_sympy_integer(value):
     restored = symbolic.deserialize_symbolic(value)
 
@@ -349,19 +366,20 @@ def test_plain_python_integer_deserialization_uses_sympy_integer(value):
 def test_untyped_literals_keep_plain_sympy_form():
     """Untyped literals deserialize to plain SymPy numbers (no implicit
     DaCe-typing)."""
-    assert symbolic.deserialize_symbolic('5') == sympy.Integer(5)
-    assert isinstance(symbolic.deserialize_symbolic('5'), sympy.Integer)
-    assert isinstance(symbolic.deserialize_symbolic('5.0'), sympy.Float)
+    assert symbolic.deserialize_symbolic("5") == sympy.Integer(5)
+    assert isinstance(symbolic.deserialize_symbolic("5"), sympy.Integer)
+    assert isinstance(symbolic.deserialize_symbolic("5.0"), sympy.Float)
 
 
 @pytest.mark.parametrize(
-    'text,ctype',
+    "text,ctype",
     [
-        ('double(5)', 'double'),  # float64 cast-wrapper form
-        ('int(5)', 'int'),  # int32 cast-wrapper form
-        ('float(5)', 'float'),  # float32
-        ('int64_t(5)', 'int64_t'),  # explicit-suffix dtype as a ctype cast
-    ])
+        ("double(5)", "double"),  # float64 cast-wrapper form
+        ("int(5)", "int"),  # int32 cast-wrapper form
+        ("float(5)", "float"),  # float32
+        ("int64_t(5)", "int64_t"),  # explicit-suffix dtype as a ctype cast
+    ],
+)
 def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     """``double(5)``/``int(5)`` (the C++ printer's cast fallback) must round-trip
     into a TypedConstant."""
@@ -370,121 +388,69 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     assert restored.dtype.ctype == ctype
 
 
-@pytest.mark.parametrize('op', ['Min', 'Max'])
-@pytest.mark.parametrize('literal', [
-    '5.0',
-    '5.0f64',
-    '5f32',
-    '7f64',
-])
+# Min and Max resolve through the same `_functions` entries and print through the same generic
+# StrPrinter path, so the op is an axis nothing branches on: each is paired with two literals
+# rather than swept against all four.
+@pytest.mark.parametrize(
+    "op,literal",
+    [
+        ("Min", "5.0"),  # untyped float
+        ("Max", "5.0f64"),  # float-valued typed literal
+        ("Min", "5f32"),  # integer-valued literal with a float suffix
+        ("Max", "7f64"),  # the normalized form test_minmax_with_ctype_cast_int_literal... produces
+    ],
+)
 def test_minmax_with_float_literal_roundtrip(op, literal):
-    serialized = f'{op}({literal}, $N)'
+    serialized = f"{op}({literal}, $N)"
     restored = symbolic.deserialize_symbolic(serialized)
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
 def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
-    first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic('Max(double(7), 5.0)'))
-    assert first == '7f64'
+    first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic("Max(double(7), 5.0)"))
+    assert first == "7f64"
     second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
     assert first == second
 
 
-@pytest.mark.parametrize('serialized', [
-    '5i16',
-    '7i64',
-    '5f32',
-    '5.0f64',
-    '(3.0 + 4.0j)c128',
-    '(3.0 - 4.0j)c128',
-    '(-3.0 + 4.0j)c128',
-    '(3.0 + 4.0j)c64',
-    '(4.0j)c128',
-    '(-4.0j)c128',
-    '(4.0j)c64',
-    '(-4.0j)c64',
-])
+@pytest.mark.parametrize(
+    "serialized",
+    [
+        "5i16",  # integer suffix (width is a table lookup, not a branch)
+        "5f32",  # float suffix, integer-valued: `looks_like_float` False
+        "5.0f64",  # float suffix, float-valued: `looks_like_float` True
+        "(3.0 + 4.0j)c128",
+        "(3.0 - 4.0j)c128",  # negative imaginary part: the `op` branch of the printer
+        "(-3.0 + 4.0j)c128",  # negative real part: the `-?` of the regex's `re` group
+        "(3.0 + 4.0j)c64",  # the c64/c128 suffix branch
+        "(4.0j)c128",  # zero real part: the pure-imaginary printer branch / absent `re` group
+        "(-4.0j)c128",  # ... and its sign branch
+    ],
+)
 def test_typed_constant_canonical_form_roundtrips(serialized):
     restored = symbolic.deserialize_symbolic(serialized)
     assert isinstance(restored, symbolic.TypedConstant)
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-@pytest.mark.parametrize('input_form,canonical', [
-    ('4j', '(4.0j)c128'),
-    ('-4j', '(-4.0j)c128'),
-    ('(0.0 + 4.0j)c128', '(4.0j)c128'),
-    ('complex(3.0, 4.0)', '(3.0 + 4.0j)c128'),
-    ('dace.complex128(complex(3.0, 4.0))', '(3.0 + 4.0j)c128'),
-    ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),
-    ('dace.complex128(complex(3.0, -4.0))', '(3.0 - 4.0j)c128'),
-])
+# `dace.complex128(complex(re, im))` is what `_rewrite_typed_complex` hands the AST parser for every
+# `(...)c128` literal, so `test_typed_constant_canonical_form_roundtrips` already drives that form
+# with both signs; `complex(3.0, 4.2)` unwrapped is driven by
+# `test_complex_constant_parse_save_roundtrip`. Only the forms no other test writes stay here.
+@pytest.mark.parametrize(
+    "input_form,canonical",
+    [
+        ("4j", "(4.0j)c128"),  # bare Python imaginary literal
+        ("-4j", "(-4.0j)c128"),  # ... negated, i.e. `_negate` on a complex TypedConstant
+        ("(0.0 + 4.0j)c128", "(4.0j)c128"),  # explicit zero real part collapses
+        ("dace.complex64(complex(3.0, 4.0))", "(3.0 + 4.0j)c64"),  # cast wrapper, non-default width
+    ],
+)
 def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonical):
     first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(input_form))
     assert first == canonical
     second = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(first))
     assert first == second
-
-
-def test_serialization_symbol_dtypes_isolation_multi_thread():
-    first_thread_waits_to_enter_context = threading.Event()
-    first_thread_has_entered_context = threading.Event()
-    second_thread_has_entered_context = threading.Event()
-    first_thread_has_serialized = threading.Event()
-    second_thread_has_serialized = threading.Event()
-    failures = []
-    lock = threading.Lock()
-
-    def worker(native_dtype, override_dtype, wait_to_enter_context, sig_entered_context, do_serialize, sig_serialize,
-               do_non_scoped_serialize):
-        try:
-            sym = symbolic.symbol('N', dtype=native_dtype)
-            assert wait_to_enter_context.wait(timeout=10)
-            with symbolic.serialization_symbol_dtypes({'N': override_dtype}):
-                sig_entered_context.set()
-                assert do_serialize.wait(timeout=10)
-                assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{override_dtype.to_string()})'
-                sig_serialize.set()
-            assert do_non_scoped_serialize.wait(timeout=10)
-            assert symbolic.serialize_symbolic(sym) == f'symbol($N, dtype=dace.{native_dtype.to_string()})'
-        except BaseException as ex:
-            with lock:
-                failures.append(ex)
-
-    thread1 = threading.Thread(
-        target=worker,
-        args=(
-            dace.int64,  # native_dtype
-            dace.int16,  # override_dtype
-            first_thread_waits_to_enter_context,  # wait_to_enter_context
-            first_thread_has_entered_context,  # sig_entered_context
-            second_thread_has_entered_context,  # do_serializing
-            first_thread_has_serialized,  # sig_serialize
-            second_thread_has_serialized,  # do_non_scoped_serialize
-        ))
-    thread2 = threading.Thread(
-        target=worker,
-        args=(
-            dace.uint64,  # native_dtype
-            dace.uint32,  # override_dtype
-            first_thread_has_entered_context,  # wait_to_enter_context
-            second_thread_has_entered_context,  # sig_entered_context
-            first_thread_has_serialized,  # do_serialize
-            second_thread_has_serialized,  # sig_serialize
-            second_thread_has_serialized,  # do_non_scoped_serialize
-        ))
-
-    thread1.start()
-    thread2.start()
-
-    # To set it in motion we must allow the first thread to enter the context.
-    first_thread_waits_to_enter_context.set()
-
-    thread1.join()
-    thread2.join()
-
-    if failures:
-        raise failures[0]
 
 
 def _roundtrip(expr):
@@ -496,85 +462,97 @@ def _roundtrip(expr):
 
 
 def _ceiling_triangular():
-    tN1 = symbolic.symbol('tN1')
-    tk1 = symbolic.symbol('tk1', dace.int64)
+    tN1 = symbolic.symbol("tN1")
+    tk1 = symbolic.symbol("tk1", dace.int64)
     return sympy.ceiling(sympy.Rational(1, 2) * (1 + tk1) * tN1 - sympy.Rational(1, 2) * tN1 * tk1)
 
 
 def _floor_triangular():
-    tN2 = symbolic.symbol('tN2')
-    tk2 = symbolic.symbol('tk2', dace.int64)
+    tN2 = symbolic.symbol("tN2")
+    tk2 = symbolic.symbol("tk2", dace.int64)
     return sympy.floor(sympy.Rational(1, 2) * (1 + tk2) * tN2 - sympy.Rational(1, 2) * tN2 * tk2)
 
 
 def _mixed_unevaluated_sum():
-    ta1, tb1, tc1 = symbolic.symbol('ta1'), symbolic.symbol('tb1'), symbolic.symbol('tc1')
+    ta1, tb1, tc1 = symbolic.symbol("ta1"), symbolic.symbol("tb1"), symbolic.symbol("tc1")
     return sympy.Rational(1, 2) * (ta1 + tb1) * tc1 - sympy.Rational(1, 2) * tc1 * tb1 + ta1 * (tb1 + 1)
 
 
 def _nested_ceiling():
-    tN1 = symbolic.symbol('tN3')
-    tk1 = symbolic.symbol('tk3', dace.int64)
+    tN1 = symbolic.symbol("tN3")
+    tk1 = symbolic.symbol("tk3", dace.int64)
     inner = sympy.ceiling((tN1 - 1) * (1 + tk1) - tN1 * tk1)
     return sympy.ceiling(sympy.Rational(1, 2) * inner + tN1)
 
 
 def _stencil_bound_min():
-    tN5, tb2 = symbolic.symbol('tN4'), symbolic.symbol('tb2')
+    tN5, tb2 = symbolic.symbol("tN4"), symbolic.symbol("tb2")
     return sympy.Min(tN5 - 1, tb2 + 31) + 1
 
 
 def _max_of_integers():
-    ta3 = symbolic.symbol('t_out_range_0', integer=True)
-    tb3 = symbolic.symbol('t_out_range_1', integer=True)
+    ta3 = symbolic.symbol("t_out_range_0", integer=True)
+    tb3 = symbolic.symbol("t_out_range_1", integer=True)
     return sympy.Max(ta3, tb3)
 
 
 def _mul_with_transcendental_coeff():
     # An `is_number` factor (pi) must print as its own factor, not fold into the numeric
     # coefficient -- folding it makes the Mul printer recurse forever.
-    return 3 * sympy.pi * symbolic.symbol('ttrc')
+    return 3 * sympy.pi * symbolic.symbol("ttrc")
 
 
 def _mul_with_imaginary_unit():
     # Exercises both the Mul printer (I is `is_number`) and `I` deserialization.
-    return 2 * sympy.I * symbolic.symbol('timg')
+    return 2 * sympy.I * symbolic.symbol("timg")
 
 
 def _mul_with_sqrt_coeff():
     # sqrt(2) must deserialize back to the real Pow (not an undefined ``sqrt`` function),
     # otherwise its sort key flips against the symbol on the round-trip.
-    return 3 * sympy.sqrt(2) * symbolic.symbol('tsqrt')
+    return 3 * sympy.sqrt(2) * symbolic.symbol("tsqrt")
 
 
 CEILING_AND_SIMILAR = {
-    'ceiling_triangular': _ceiling_triangular,
-    'floor_triangular': _floor_triangular,
-    'mixed_unevaluated_sum': _mixed_unevaluated_sum,
-    'nested_ceiling': _nested_ceiling,
-    'stencil_bound_min': _stencil_bound_min,
-    'max_of_integers': _max_of_integers,
-    'mul_with_transcendental_coeff': _mul_with_transcendental_coeff,
-    'mul_with_imaginary_unit': _mul_with_imaginary_unit,
-    'mul_with_sqrt_coeff': _mul_with_sqrt_coeff,
+    "ceiling_triangular": _ceiling_triangular,
+    "floor_triangular": _floor_triangular,
+    "mixed_unevaluated_sum": _mixed_unevaluated_sum,
+    "nested_ceiling": _nested_ceiling,
+    "stencil_bound_min": _stencil_bound_min,
+    "max_of_integers": _max_of_integers,
+    "mul_with_transcendental_coeff": _mul_with_transcendental_coeff,
+    "mul_with_imaginary_unit": _mul_with_imaginary_unit,
+    "mul_with_sqrt_coeff": _mul_with_sqrt_coeff,
 }
 
 
-@pytest.mark.parametrize('build', CEILING_AND_SIMILAR.values(), ids=list(CEILING_AND_SIMILAR))
+@pytest.mark.parametrize("build", CEILING_AND_SIMILAR.values(), ids=list(CEILING_AND_SIMILAR))
 def test_serialization_is_fixed_point(build):
     """serialize -> parse -> serialize must be byte-identical (and idempotent)."""
     expr = build()
     s1, s2 = _roundtrip(expr)
-    assert s2 == s1, f'round-trip changed the serialization:\n  first: {s1!r}\n  again: {s2!r}'
+    assert s2 == s1, f"round-trip changed the serialization:\n  first: {s1!r}\n  again: {s2!r}"
     # A second pass must not drift either.
     # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     s3 = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(s2))
     assert s3 == s1
 
 
-@pytest.mark.parametrize('build', CEILING_AND_SIMILAR.values(), ids=list(CEILING_AND_SIMILAR))
-def test_roundtrip_preserves_free_symbol_names(build):
-    expr = build()
+#: A free symbol name can only be lost to the `$` escape or to an identifier the parser resolves to
+#: something that is not a symbol -- not to the arithmetic shape wrapped around it. These four cover
+#: the typed `symbol($x, dtype=...)` form, the bare `$x` form, and a symbol standing next to each of
+#: the two resolved constants (`pi`, `I`). Every entry of `CEILING_AND_SIMILAR` still runs above.
+NAME_PRESERVING_SHAPES = (
+    "ceiling_triangular",
+    "max_of_integers",
+    "mul_with_transcendental_coeff",
+    "mul_with_imaginary_unit",
+)
+
+
+@pytest.mark.parametrize("name", NAME_PRESERVING_SHAPES)
+def test_roundtrip_preserves_free_symbol_names(name):
+    expr = CEILING_AND_SIMILAR[name]()
     # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     assert {s.name for s in reparsed.free_symbols} == {s.name for s in expr.free_symbols}
@@ -582,51 +560,42 @@ def test_roundtrip_preserves_free_symbol_names(build):
 
 def test_standalone_fraction_deserializes_without_stray_identity():
     """A numeric quotient must fold to a reduced Number, not ``Mul(1, 1/3)``."""
-    reparsed = symbolic.deserialize_symbolic('1/3')
+    reparsed = symbolic.deserialize_symbolic("1/3")
     assert not isinstance(reparsed, sympy.Mul)
     assert reparsed == sympy.Rational(1, 3)
 
 
 def test_imaginary_unit_roundtrips():
     """The serializer emits ``I`` for ``sympy.I``; it must deserialize back to it."""
-    assert symbolic.deserialize_symbolic('I') is sympy.I
+    assert symbolic.deserialize_symbolic("I") is sympy.I
     expr = 3 + 4 * sympy.I
     assert symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr)) == expr
 
 
 def test_sqrt_deserializes_to_real_sqrt():
     """``sqrt(2)`` must parse to the real Pow, not an opaque ``Function('sqrt')``."""
-    reparsed = symbolic.deserialize_symbolic('sqrt(2)')
+    reparsed = symbolic.deserialize_symbolic("sqrt(2)")
     assert not isinstance(reparsed, sympy.core.function.AppliedUndef)
     assert reparsed == sympy.sqrt(2)
 
 
 def test_add_order_independent_of_arg_order():
     """Pinpoints the printer: term order must not depend on Add arg order."""
-    N = symbolic.symbol('N')
-    k = symbolic.symbol('k', dace.int64)
+    N = symbolic.symbol("N")
+    k = symbolic.symbol("k", dace.int64)
     t1 = sympy.Rational(1, 2) * (1 + k) * N
     t2 = -sympy.Rational(1, 2) * N * k
-    assert (symbolic.serialize_symbolic(sympy.Add(t1, t2, evaluate=False)) == symbolic.serialize_symbolic(
-        sympy.Add(t2, t1, evaluate=False)))
+    assert symbolic.serialize_symbolic(sympy.Add(t1, t2, evaluate=False)) == symbolic.serialize_symbolic(
+        sympy.Add(t2, t1, evaluate=False)
+    )
 
 
-def test_integer_symbol_assumptions_preserved():
-    """No extra explicit assumptions (e.g. commutative) may leak in on reparse."""
+def test_reparsed_symbols_carry_no_extra_assumptions():
+    """No assumption may leak in on reparse: a symbol is real and nothing else, whatever was declared for it."""
     expr = _max_of_integers()
-    # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     assert sympy.srepr(reparsed) == sympy.srepr(expr)
-    assert all(s.is_integer for s in reparsed.free_symbols)
-
-
-def test_int64_symbol_dtype_preserved():
-    k = symbolic.symbol('k', dace.int64)
-    # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
-    reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(k))
-    (rk, ) = reparsed.free_symbols
-    assert rk.name == 'k'
-    assert rk.dtype == dace.int64
+    assert all(s.assumptions0 == symbolic.symbol(s.name).assumptions0 for s in reparsed.free_symbols)
 
 
 def test_sdfg_json_roundtrip_is_fixed_point():
@@ -637,19 +606,241 @@ def test_sdfg_json_roundtrip_is_fixed_point():
     your branch, attach `volume` to a Memlet's `volume` instead and round-trip
     that Memlet's `to_json` / `from_json`.
     """
-    N = symbolic.symbol('N', dace.int64)
-    k = symbolic.symbol('k', dace.int64)
+    N = symbolic.symbol("N", dace.int64)
+    k = symbolic.symbol("k", dace.int64)
     volume = sympy.ceiling(sympy.Rational(1, 2) * (1 + k) * N - sympy.Rational(1, 2) * N * k)
 
-    sdfg = dace.SDFG('roundtrip_determinism')
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_symbol('k', dace.int64)
-    sdfg.add_array('A', [volume], dace.float64)
+    sdfg = dace.SDFG("roundtrip_determinism")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("A", [volume], dace.float64)
 
     j1 = sdfg.to_json()
     j2 = dace.SDFG.from_json(j1).to_json()
     assert json.dumps(j1, sort_keys=True) == json.dumps(j2, sort_keys=True)
 
 
-if __name__ == '__main__':
+def test_a_float_symbolic_property_keeps_its_value_through_a_load():
+    """Loading sets every property again, and setting one used to re-parse it through ``str``.
+
+    ``str`` prints a 53-bit ``Float`` at 15 significant digits, so a value needing 17 came back as a
+    DIFFERENT double: the FFT node's ``factor`` of 1/21 loaded as 0.0476190476190476. The value is
+    checked, not only the JSON, because the wire text is written through ``float()`` and would have
+    hidden the rounding until the loaded SDFG was saved again.
+    """
+    sdfg = dace.SDFG("float_property_roundtrip")
+    sdfg.add_array("A", [21], dace.float64)
+    state = sdfg.add_state()
+    edge = state.add_edge(state.add_read("A"), None, state.add_write("A"), None, dace.Memlet("A[0:21]"))
+    edge.data.volume = 1 / 21
+
+    j1 = sdfg.to_json()
+    loaded = dace.SDFG.from_json(j1)
+    (loaded_edge,) = list(loaded.states())[0].edges()
+
+    assert float(loaded_edge.data.volume) == 1 / 21
+    assert json.dumps(j1, sort_keys=True) == json.dumps(loaded.to_json(), sort_keys=True)
+
+
+def test_stale_version_stamp_with_dollar_escape_still_deserializes():
+    """A `$name` escape can only come from a writer at/after the wire version that introduced it
+    (see `DaceSympySerializer._print_Symbol`): a DaCe symbol name is a valid Python identifier, so
+    no older writer could ever emit one. A file stamped below that wire version but carrying the
+    escape anyway has a lying stamp, and the old-format branch must still parse it correctly
+    instead of raising a SympifyError and falling back to a `SerializableObject` placeholder.
+    """
+    json_range = {
+        "type": "Range",
+        "ranges": [{"start": "0", "end": "-1 + $klon", "step": "1", "tile": "1"}],
+    }
+    restored = subsets.Range.from_json(json_range, {"version": "2.0.0a3"})
+    assert isinstance(restored, subsets.Range)
+    _, end, _ = restored.ranges[0]
+    (end_sym,) = end.free_symbols
+    assert isinstance(end_sym, symbolic.symbol)
+    assert end_sym.name == "klon"
+
+
+def test_stale_version_stamp_numeric_values_still_deserialize():
+    """Companion to the `$`-escape regression: a symbolic property on the sub-2.0.0a4 branch also
+    receives plain JSON numbers (not just strings) for e.g. a Memlet volume or a loop's `executions`.
+    The `$`-escape sniff must stay a no-op for those instead of calling a string-only regex on them.
+    """
+    prop = SymbolicProperty(default=0)
+    stale_context = {"version": "2.0.0a3"}
+    assert prop.from_json(5, context=stale_context) == 5
+    assert float(prop.from_json(2.5, context=stale_context)) == 2.5
+
+
+_CLOUDSC = os.path.join(os.path.dirname(__file__), "sdfg", "data", "sdfg_reconstruction", "cloudsc_simplified.sdfgz")
+
+
+@pytest.mark.skipif(not os.path.exists(_CLOUDSC), reason="CloudSC fixture not present")
+def test_cloudsc_fixture_deserializes_to_real_sdfg_despite_stale_version_stamp():
+    """Regression test for the actual fixture: it is stamped `dace_version=2.0.0a3` (below the
+    typed-wire cutoff) yet its shape/stride expressions already carry `$name` escapes -- the
+    combination that used to warn `Failed to deserialize element` 8000+ times and then hand back a
+    `SerializableObject` in place of a `ControlFlowBlock`.
+    """
+    with gzip.open(_CLOUDSC, "rt") as f:
+        stamp = json.loads(f.read())["dace_version"]
+    assert parse_version(stamp) < parse_version("2.0.0a4"), (
+        "fixture must still carry a stale stamp for this regression to be meaningful"
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sdfg = dace.SDFG.from_file(_CLOUDSC)
+
+    assert isinstance(sdfg, dace.SDFG)
+    for node, _ in sdfg.all_nodes_recursive():
+        assert not isinstance(node, dace.serialize.SerializableObject)
+
+
+def test_typed_symbol_survives_a_poisoned_sympy_cache():
+    """A same-name symbol of another dtype must not be handed back by SymPy's global ``@cacheit`` LRUs."""
+    sympy.Mod(symbolic.symbol("cached_i", dace.int64), symbolic.TypedConstant(np.int16(3)))
+    expr = sympy.Mod(symbolic.symbol("cached_i"), symbolic.TypedConstant(np.int16(3)), evaluate=False)
+
+    assert symbolic.serialize_symbolic(expr) == "Mod($cached_i, 3i16)"
+
+
+def test_operator_derived_int_floor_roundtrip_preserves_integerness():
+    """The ``__int_floor`` class that Python ``//`` parses to must survive
+    ``serialize_symbolic`` -> ``deserialize_symbolic`` with its ``is_integer``
+    assumption intact, so downstream simplifications and type inferences that
+    rely on the floor being an integer are not silently lost."""
+    expr = symbolic.pystr_to_symbolic("upper_i // 2")
+    assert expr.func.__name__ == "__int_floor"
+    assert expr.is_integer is True
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert restored.func is expr.func
+    assert restored.is_integer is True
+
+
+@pytest.mark.parametrize("expr_str", ["a // b", "a & b", "a | b", "a ^ b", "~a", "a << b", "a >> b"])
+def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
+    """Every ``__``-prefixed operator-derived class must round-trip through
+    serialization to the same class (not an opaque ``sympy.Function``),
+    so the printer's ``name.startswith('__')`` check still recognizes them
+    as operators."""
+    expr = symbolic.pystr_to_symbolic(expr_str)
+    assert type(expr).__name__.startswith("__")
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert type(restored) is type(expr)
+
+
+@pytest.mark.parametrize("cast_name", ["int64", "uint16", "bool_", "float32"])
+def test_typecast_roundtrip_preserves_class_identity(cast_name):
+    """A ``dace.<type>(x)`` cast deserializes to its cast class, not an opaque ``sympy.Function`` of unknown kind."""
+    expr = symbolic.pystr_to_symbolic(f"{cast_name}(a)")
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert type(restored) is type(expr)
+    assert type(expr).__name__ == cast_name
+    assert restored.is_integer is expr.is_integer
+
+
+def test_ceiling_of_roundtripped_floor_division_simplifies():
+    """The symbolic expression: ``ceiling(__int_floor(a, b) - c)`` must collapse
+    back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip:
+    the round-tripped ``__int_floor`` is still integer, and ``c`` is an integer
+    by the facts the expression is simplified under."""
+    # ``symbol // 2`` is SymPy's ``floor`` (only ``SymExpr`` defines ``__floordiv__``), which is
+    # integer on its own; the operator class only appears when the expression is parsed.
+    expr = symbolic.pystr_to_symbolic("upper_i // 2 - lower_i")
+    assert any(type(f).__name__ == "__int_floor" for f in expr.atoms(sympy.Function))
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+    integers = symbolic.Facts((), frozenset({"upper_i", "lower_i"}))
+
+    assert symbolic.simplify(sympy.ceiling(restored), integers) == restored
+
+
+def test_stored_ceiling_in_map_bound_lowers_to_an_integer_expression():
+    """A stored ``ceiling`` must not reach the loop bound as a call.
+
+    An SDFG saved before the operator classes round-tripped carries ``ceiling(__int_floor(...))``
+    where the live expression had folded it. ``ceil`` breaks OpenMP's canonical loop form by
+    returning ``double``, and the runtime's ``ceiling`` has no overload for 64-bit integers.
+    """
+    sdfg = dace.SDFG("stored_ceiling")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [dace.symbol("N", dace.int64)], dace.float64)
+    state = sdfg.add_state()
+    end = symbolic.deserialize_symbolic("ceiling(__int_floor($N, 2)) - 1")
+    assert end.atoms(sympy.ceiling)
+    me, mx = state.add_map("m", {"i": subsets.Range([(0, end, 1)])})
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    state.add_edge(me, None, tasklet, None, dace.Memlet())
+    state.add_edge(tasklet, "o", mx, None, dace.Memlet("A[i]"))
+    state.add_edge(mx, None, state.add_write("A"), None, dace.Memlet("A[0:N]"))
+
+    code = sdfg.generate_code()[0].clean_code
+    loops = [line.strip() for line in code.splitlines() if "for (int64_t i" in line]
+    assert loops
+    assert all("ceil" not in line for line in loops), loops
+
+
+def unevaluated_execution_count() -> sympy.Sum:
+    # The shape StatePropagation leaves on a skewed inner loop: ``doit`` cannot sum over a Min bound.
+    n = symbolic.symbol("N", dtype=dace.int64)
+    it = symbolic.symbol("it", dtype=dace.int64)
+    return sympy.Sum(sympy.Min(n - 1, it + 64) - it, (it, 0, n - 1))
+
+
+def filled_sdfg_counting_executions_as_a_sum(name: str) -> dace.SDFG:
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [dace.symbol("N", dace.int64)], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet("fill", {"i": "0:N"}, {}, "o = i", {"o": dace.Memlet("A[i]")}, external_edges=True)
+    state.executions = unevaluated_execution_count()
+    return sdfg
+
+
+def test_a_state_counting_its_executions_as_an_unevaluated_sum_survives_json():
+    sdfg = filled_sdfg_counting_executions_as_a_sum("sum_executions_json")
+    expected = unevaluated_execution_count()
+
+    restored = dace.SDFG.from_json(sdfg.to_json()).start_block.executions
+
+    assert isinstance(restored, sympy.Sum)
+    assert restored == expected
+    assert restored.limits == expected.limits
+    assert symbolic.serialize_symbolic(restored) == symbolic.serialize_symbolic(expected)
+
+
+def test_an_sdfg_whose_state_executions_is_an_unevaluated_sum_compiles_under_the_serialization_check():
+    sdfg = filled_sdfg_counting_executions_as_a_sum("sum_executions_compile")
+    values = np.zeros(8)
+
+    with dace.config.set_temporary("testing", "serialization", value=True):
+        sdfg(A=values, N=8)
+
+    assert np.array_equal(values, np.arange(8, dtype=np.float64))
+
+
+def test_a_loaded_sum_or_product_equals_the_one_built_in_memory():
+    """sympy compares an Add or a Mul by its argument tuple, so a loaded ``klon*(klev + 1)`` whose factors come
+    back in another order is unequal to the same product built in memory, and a loaded container no longer
+    matches the nested SDFG connector that describes it."""
+    klon, klev, n = dace.symbol("klon"), dace.symbol("klev"), dace.symbol("n")
+    for built in (klon * (klev + 1), 2 * klon * (klev + 1) - 3, 3 * n**2 + klon * (n + 1) * (klev - 2)):
+        loaded = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(built))
+        assert loaded == built
+        assert loaded.args == built.args
+
+    sdfg = dace.SDFG("loaded_strides")
+    sdfg.add_array("a", [5, klev + 1, klon], dace.float64)
+    loaded = dace.SDFG.from_json(sdfg.to_json()).arrays["a"]
+    assert loaded.strides == sdfg.arrays["a"].strides
+    assert loaded.is_equivalent(sdfg.arrays["a"])
+
+
+if __name__ == "__main__":
     pytest.main([__file__])

@@ -1,17 +1,16 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.subgraph import SubgraphFusion
-import dace.sdfg.utils as utils
-import dace.subsets as subsets
-import numpy as np
-
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
 
-from dace.sdfg.graph import SubgraphView
-
+import numpy as np
 from util import fusion
 
-N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
+import dace
+from dace import subsets
+from dace.sdfg import utils
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
+
+N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
 A = np.random.rand(50, 60, 70).astype(np.float64)
 B = np.random.rand(50, 60, 70).astype(np.float64)
@@ -59,37 +58,44 @@ def fix_sdfg(sdfg, graph):
             nested_original = node
             for edge in itertools.chain(graph.in_edges(node), graph.out_edges(node)):
                 for e in graph.memlet_tree(edge):
-                    if 'z' in e.data.subset.free_symbols:
+                    if "z" in e.data.subset.free_symbols:
                         new_subset = str(e.data.subset)
-                        new_subset = new_subset.replace('z', '0:O')
+                        new_subset = new_subset.replace("z", "0:O")
                         e.data.subset = subsets.Range.from_string(new_subset)
 
     # next up replace sdfg
     inner_sdfg = helper_sdfg.to_sdfg()
-    nnode = graph.add_nested_sdfg(inner_sdfg, {'AA', 'BB', 'CC'}, {'CC'})
+    nnode = graph.add_nested_sdfg(inner_sdfg, {"AA", "BB", "CC"}, {"CC"})
     # redirect edges
-    connectors = []
-    for e in graph.in_edges(nested_original):
-        connectors.append(e.dst_conn)
+    connectors = [e.dst_conn for e in graph.in_edges(nested_original)]
     connectors.sort()
 
     for e in graph.in_edges(nested_original):
         if e.dst_conn == connectors[0]:
-            graph.add_edge(e.src, e.src_conn, e.dst, 'AA', e.data)
+            graph.add_edge(e.src, e.src_conn, e.dst, "AA", e.data)
             graph.remove_edge(e)
         if e.dst_conn == connectors[1]:
-            graph.add_edge(e.src, e.src_conn, e.dst, 'BB', e.data)
+            graph.add_edge(e.src, e.src_conn, e.dst, "BB", e.data)
             graph.remove_edge(e)
         if e.dst_conn == connectors[2]:
-            graph.add_edge(e.src, e.src_conn, e.dst, 'CC', e.data)
+            graph.add_edge(e.src, e.src_conn, e.dst, "CC", e.data)
             graph.remove_edge(e)
     e = graph.out_edges(nested_original)[0]
-    graph.add_edge(e.src, 'CC', e.dst, e.dst_conn, e.data)
+    graph.add_edge(e.src, "CC", e.dst, e.dst_conn, e.data)
     graph.remove_edge(e)
 
     utils.change_edge_dest(graph, nested_original, nnode)
     utils.change_edge_src(graph, nested_original, nnode)
     graph.remove_node(nested_original)
+
+    # Each connector stands for one row of its container, read and written alike: a connector reached through two
+    # different windows (such as ``C[i, j, 0]`` and ``C[i, j, 1:O]``) has no one container to stand for
+    for edge in itertools.chain(graph.in_edges(nnode), graph.out_edges(nnode)):
+        for e in graph.memlet_tree(edge):
+            e.data.subset = subsets.Range.from_string("i, j, 0:O" if nnode in (e.src, e.dst) else "0:N, 0:M, 0:O")
+
+    nnode.integrate_into_parent()
+
     sdfg.validate()
 
 
@@ -115,7 +121,7 @@ def _test_quantitatively(sdfg, graph):
     del csdfg
 
     assert np.allclose(C1, C2)
-    print('PASS')
+    print("PASS")
 
 
 def test_invariant_dim():
@@ -126,5 +132,5 @@ def test_invariant_dim():
     _test_quantitatively(sdfg, graph)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_invariant_dim()

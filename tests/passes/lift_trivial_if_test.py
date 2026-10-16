@@ -1,42 +1,69 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``LiftTrivialIf`` simplification pass."""
-import dace
-from dace import InterstateEdge
-from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
-from dace import ControlFlowRegion
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+
+import ast
+import copy
+
 import pytest
 
-# Conditions the pass must recognize as constant ``True``.
+import dace
+from dace import ControlFlowRegion, InterstateEdge
+from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
+
+# Conditions the pass must recognize as constant ``True``. One per syntactic family (bool literal,
+# relational fold, unary ``not``, function call): the pass runs the same single check on all of them,
+# so extra members of a family (``2 > 1``, ``2 + 2 == 4``, ``max(1, 2, 3) == 3``) only re-test sympy.
 _ALWAYS_TRUE = [
     "True",
     "1 == 1",
-    "2 > 1",
-    "5 >= 5",
     "not False",
-    "2 + 2 == 4",
     "abs(-5) == 5",
-    "max(1, 2, 3) == 3",
 ]
 
-# Conditions the pass must recognize as constant ``False``.
+# Conditions the pass must recognize as constant ``False`` -- same four families, opposite verdict.
 _ALWAYS_FALSE = [
     "False",
     "1 == 2",
-    "5 < 3",
-    "10 <= 9",
     "not True",
-    "2 + 2 == 5",
     "abs(-5) == -5",
 ]
 
-# Conditions that reference unbound symbols -- the pass must leave these alone.
-_CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
+# Condition that references an unbound symbol -- the pass must leave it alone. Every relational over a
+# free symbol raises the same way inside the check, so one representative covers the family.
+_CANT_EVAL = ["a < 5"]
 
 # Conditions where pystr_to_symbolic yields an unevaluated symbolic expression
 # (Function/Indexed/Symbol). bool() of such an expression is truthy, which would
 # mis-classify dynamic dataflow conditions like ``A[0]`` as trivially true.
-_DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
+_DYNAMIC_RUNTIME_COND = ["A[0]", "x", "x[0] + 1", "A[i, j]"]
+
+
+def _declare_condition_names(sdfg: dace.SDFG, *conditions: str) -> None:
+    """Declare the names the conditions read: subscripted ones as arrays, the others as symbols."""
+    for condition in conditions:
+        tree = ast.parse(condition)
+        data = {
+            node.value.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+        }
+        for name in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} - sdfg.arrays.keys()):
+            if name in data:
+                sdfg.add_array(name, [5], dace.float64)
+            elif name not in sdfg.symbols:
+                sdfg.add_symbol(name, dace.int64)
 
 
 def _get_sdfg(condition: str):
@@ -46,12 +73,23 @@ def _get_sdfg(condition: str):
     :returns: The SDFG with the conditional as its start block.
     """
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    _, B = sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _, B = sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _declare_condition_names(sdfg, condition)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -73,12 +111,22 @@ def _get_if_else_sdfg(condition: str, body_in_else_branch: bool):
     :returns: The SDFG with the conditional as its start block.
     """
     sdfg = dace.SDFG("if_else_1")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    _, B = sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _, B = sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg_if_true = ControlFlowRegion(label="cfg_if_true", sdfg=cb.sdfg, parent=cb)
@@ -107,12 +155,23 @@ def _get_nested_sdfg(condition1: str, condition2: str):
     """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    _, B = sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _, B = sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _declare_condition_names(sdfg, condition1, condition2)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg1 = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -136,12 +195,22 @@ def _get_sdfg_with_many_states():
     """
     sdfg = dace.SDFG("nested1")
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    _, B = sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _, B = sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     so1 = sdfg.add_state("so1", is_start_block=True)
     so2 = sdfg.add_state("so2")
@@ -169,6 +238,7 @@ def test_single_condition(condition: str):
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+    assert_cfg_list_matches_reset(sdfg)
 
 
 @pytest.mark.parametrize("condition", _CANT_EVAL)
@@ -181,32 +251,32 @@ def test_single_condition_cant_eval(condition: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 1
 
 
-@pytest.mark.parametrize("condition1,condition2",
-                         [(_ALWAYS_TRUE[i], _ALWAYS_TRUE[i + 1]) for i in range(len(_ALWAYS_TRUE) - 1)])
-def test_nested_condition(condition1: str, condition2: str):
-    """Trivially-true ``if`` inside trivially-true ``if`` collapses to plain dataflow."""
-    sdfg = _get_nested_sdfg(condition1, condition2)
+def test_nested_condition():
+    """Trivially-true ``if`` inside trivially-true ``if`` collapses to plain dataflow.
+
+    Nesting is a structural axis: which true condition is used is already swept by
+    ``test_single_condition``, so one distinct pair suffices (distinct, to catch inner/outer mixups)."""
+    sdfg = _get_nested_sdfg("1 == 1", "2 > 1")
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-@pytest.mark.parametrize("condition1,condition2",
-                         [(_CANT_EVAL[i], _CANT_EVAL[i + 1]) for i in range(len(_CANT_EVAL) - 1)])
-def test_nested_condition_cant_eval(condition1: str, condition2: str):
+def test_nested_condition_cant_eval():
     """Nested unresolvable conditions are both preserved."""
-    sdfg = _get_nested_sdfg(condition1, condition2)
+    sdfg = _get_nested_sdfg("a < 5", "c == 0")
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 2
 
 
-@pytest.mark.parametrize("condition", _ALWAYS_TRUE)
-def test_if_else_cond_is_trivially_true(condition: str):
-    """``if/else`` with provably-true ``if`` keeps the ``if`` body."""
-    sdfg = _get_if_else_sdfg(condition, False)
+def test_if_else_cond_is_trivially_true():
+    """``if/else`` with provably-true ``if`` keeps the ``if`` body.
+
+    Structural axis only -- the condition families are swept by ``test_single_condition``."""
+    sdfg = _get_if_else_sdfg("1 == 1", False)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
@@ -235,7 +305,7 @@ def test_cfg_is_a_middle_node():
 # Fortran frontends emit conditions of the form ``(x == y) == 0/1`` (a
 # comparison of a comparison to an integer). Sympy fails to evaluate this due to mismatching types.
 # If these ever stop folding to True/False the pass would silently miss real trivial-if cases in Fortran SDFGs.
-@pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(2 == 2) == 1", "(0 == 1) == 0"])
+@pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(0 == 1) == 0"])
 def test_fortran_style_nested_comparison_true(condition: str):
     """The boolean-arithmetic fallback handles the Fortran-frontend ``(x == y) == k`` shape."""
     sdfg = _get_sdfg(condition)
@@ -260,6 +330,7 @@ def test_dynamic_runtime_cond_not_trivial(condition: str):
 def test_simplify_pipeline_includes_lift_trivial_if():
     """``SimplifyPass`` wires ``LiftTrivialIf`` in -- running simplify removes trivial ifs."""
     from dace.transformation.passes.simplify import SimplifyPass
+
     sdfg = _get_sdfg("True")
     sdfg.validate()
     SimplifyPass().apply_pass(sdfg, {})
@@ -270,11 +341,9 @@ def test_simplify_pipeline_includes_lift_trivial_if():
 from dace.sdfg.state import LoopRegion
 
 
-def _get_loop_with_conditional(branch_cond: str,
-                               with_else: bool = False,
-                               init: str = "i = 2",
-                               cond: str = "i < 10",
-                               update: str = "i = i + 1"):
+def _get_loop_with_conditional(
+    branch_cond: str, with_else: bool = False, init: str = "i = 2", cond: str = "i < 10", update: str = "i = i + 1"
+):
     """Build ``for i in [init..cond): if (branch_cond) [else ...]`` with real
     dataflow on the live arm, so the conditional sits inside a ``LoopRegion`` whose
     iteration range governs whether ``branch_cond`` is a range tautology/contradiction.
@@ -287,12 +356,9 @@ def _get_loop_with_conditional(branch_cond: str,
     sdfg = dace.SDFG("loopcond")
     _, A = sdfg.add_array("A", [10], dace.float64)
     sdfg.add_array("B", [10], dace.float64)
-    loop = LoopRegion(label="myloop",
-                      condition_expr=cond,
-                      loop_var="i",
-                      initialize_expr=init,
-                      update_expr=update,
-                      sdfg=sdfg)
+    loop = LoopRegion(
+        label="myloop", condition_expr=cond, loop_var="i", initialize_expr=init, update_expr=update, sdfg=sdfg
+    )
     sdfg.add_node(loop, is_start_block=True)
     cb = ConditionalBlock(label="cfb", sdfg=sdfg, parent=loop)
     loop.add_node(cb, is_start_block=True)
@@ -372,13 +438,13 @@ def test_iteration_range_symbolic_upper_bound():
     ``i == 0`` a contradiction and ``not(i == 1)`` a tautology, regardless of ``N``."""
     N = dace.symbol("N")
     contra = _get_loop_with_conditional("i == 0", cond="i < N")
-    contra.add_symbol("N", N.dtype)
+    contra.add_symbol("N", N.declaration.dtype)
     LiftTrivialIf().apply_pass(contra, {})
     contra.validate()
     assert _num_conditionals(contra) == 0
 
     tauto = _get_loop_with_conditional("not (i == 1)", cond="i < N")
-    tauto.add_symbol("N", N.dtype)
+    tauto.add_symbol("N", N.declaration.dtype)
     LiftTrivialIf().apply_pass(tauto, {})
     tauto.validate()
     assert _num_conditionals(tauto) == 0
@@ -394,20 +460,83 @@ def test_iteration_range_no_enclosing_loop_is_not_folded():
     assert _num_conditionals(sdfg) == 1
 
 
+def test_trivial_if_with_nested_sdfg_reparents_correctly():
+    """Lifting a trivial-if whose branch holds a NestedSDFG must leave that nested SDFG's parent
+    pointers consistent after the branch is spliced up -- the per-splice local repair. The SDFG
+    must still validate, and the nested SDFG must now be parented to the outer SDFG."""
+    inner = dace.SDFG("inner")
+    inner.add_array("A", [5], dace.float64)
+    ns = inner.add_state("ns", is_start_block=True)
+    t = ns.add_tasklet("w", set(), {"o"}, "o = 1.0")
+    ns.add_edge(t, "o", ns.add_access("A"), None, dace.memlet.Memlet("A[0]"))
+
+    sdfg = dace.SDFG("outer_ns")
+    sdfg.add_array("A", [5], dace.float64)
+    cb = ConditionalBlock(label="cfb", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb, is_start_block=True)
+    body = ControlFlowRegion(label="body", sdfg=sdfg, parent=cb)
+    cb.add_branch(condition=CodeBlock("1 == 1"), branch=body)
+    st = body.add_state("bs", is_start_block=True)
+    nnode = st.add_nested_sdfg(inner, set(), {"A"})
+    st.add_edge(nnode, "A", st.add_access("A"), None, dace.memlet.Memlet("A[0:5]"))
+
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert _num_conditionals(sdfg) == 0
+    found = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(found) == 1
+    assert found[0].sdfg.parent_sdfg is sdfg
+    assert found[0].sdfg.parent is not None
+    assert found[0].sdfg.parent_nsdfg_node is found[0]
+
+
+def test_trivial_cond_check_is_cached():
+    """The per-condition check is memoized (module-level, ``typed=True``) so repeated guards -- across
+    conditionals and across FixedPointPipeline re-invocations -- skip the sympy work without changing
+    the verdict."""
+    from dace.transformation.passes.lift_trivial_if import _trivial_cond_check_cached
+
+    _trivial_cond_check_cached.cache_clear()
+    assert _trivial_cond_check_cached("1 == 1", True) is True
+    base = _trivial_cond_check_cached.cache_info()
+    for _ in range(5):
+        assert _trivial_cond_check_cached("1 == 1", True) is True
+    after = _trivial_cond_check_cached.cache_info()
+    assert after.hits - base.hits == 5  # repeats served from cache
+    assert after.misses == base.misses  # no new sympy evaluation
+    # Distinct string and distinct truth value are distinct keys, and verdicts are still correct.
+    assert _trivial_cond_check_cached("1 == 2", True) is False
+    assert _trivial_cond_check_cached("1 == 1", False) is False
+
+
+def test_should_reapply_only_on_block_count_change():
+    """The pass re-runs only when the number of control-flow blocks changed (a conditional added or
+    removed, or a loop peel shifting an enclosing range), not when interstate-edge contents change --
+    those never create or destroy a conditional."""
+    from dace.transformation import pass_pipeline as ppl
+
+    p = LiftTrivialIf()
+    assert p.should_reapply(ppl.Modifies.States)
+    assert p.should_reapply(ppl.Modifies.CFG)  # CFG includes States
+    assert not p.should_reapply(ppl.Modifies.InterstateEdges)
+    assert not p.should_reapply(ppl.Modifies.Nothing)
+    assert not p.should_reapply(ppl.Modifies.Symbols | ppl.Modifies.Memlets)
+
+
 if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
 
-    for i in range(len(_ALWAYS_TRUE) - 1):
-        c1 = _ALWAYS_TRUE[i]
-        c2 = _ALWAYS_TRUE[i + 1]
-        test_nested_condition(c1, c2)
-
-    for c in _ALWAYS_TRUE:
-        test_if_else_cond_is_trivially_true(c)
+    test_nested_condition()
+    test_if_else_cond_is_trivially_true()
 
     for c in _ALWAYS_FALSE:
         test_if_else_cond_is_trivially_false(c)
 
     test_cfg_is_a_middle_node()
     test_simplify_pipeline_includes_lift_trivial_if()
+    test_trivial_if_with_nested_sdfg_reparents_correctly()
+    test_trivial_cond_check_is_cached()
+    test_should_reapply_only_on_block_count_change()

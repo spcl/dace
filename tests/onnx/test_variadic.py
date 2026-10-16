@@ -6,11 +6,13 @@ import numpy as np
 
 import dace
 import dace.libraries.onnx as donnx
+from tests.ml_gpu_utils import DEVICES, run_sdfg
 
 
 @pytest.mark.onnx
-def test_sum():
-    sdfg = dace.SDFG("test_sum")
+@pytest.mark.parametrize("device", DEVICES)
+def test_sum(device):
+    sdfg = dace.SDFG(f"test_sum_{device}")
 
     sdfg.add_array("A_arr", [2, 2], dace.float32)
     sdfg.add_array("B_arr", [2, 2], dace.float32)
@@ -28,7 +30,7 @@ def test_sum():
 
     state.add_node(op_node)
     for i in range(3):
-        op_node.add_in_connector("data_0__{}".format(i))
+        op_node.add_in_connector(f"data_0__{i}")
     state.add_edge(access_A, None, op_node, "data_0__0", sdfg.make_array_memlet("A_arr"))
     state.add_edge(access_B, None, op_node, "data_0__1", sdfg.make_array_memlet("B_arr"))
     state.add_edge(access_C, None, op_node, "data_0__2", sdfg.make_array_memlet("C_arr"))
@@ -41,13 +43,14 @@ def test_sum():
 
     sdfg.validate()
 
-    result = sdfg(A_arr=A, B_arr=B, C_arr=C)
+    result = run_sdfg(sdfg, device, A_arr=A, B_arr=B, C_arr=C)
 
     numpy_result = A + B + C
 
-    assert np.allclose(result,
-                       numpy_result), f"Variadic sum mismatch: max diff = {np.max(np.abs(result - numpy_result))}"
+    assert np.allclose(result, numpy_result), (
+        f"Variadic sum mismatch: max diff = {np.max(np.abs(result - numpy_result))}"
+    )
 
 
 if __name__ == "__main__":
-    test_sum()
+    test_sum(device="cpu")

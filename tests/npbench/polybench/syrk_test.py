@@ -1,27 +1,29 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # M, N
 sizes = {"mini": (20, 30), "small": (60, 80), "medium": (200, 240), "large": (1000, 1200), "extra-large": (2000, 2600)}
 
-M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
+M, N = (dc.symbol(s, dtype=dc.int32) for s in ("M", "N"))
 
 
 @dc.program
 def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N], A: dc.float32[N, M]):
 
     for i in range(N):
-        C[i, :i + 1] *= beta
+        C[i, : i + 1] *= beta
         for k in range(M):
-            C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
+            C[i, : i + 1] += alpha * A[i, k] * A[: i + 1, k]
 
 
 def init_data(N, M):
@@ -85,9 +87,9 @@ def syrk_jax_kernel(jnp, lax, alpha, beta, C, A):
 def ground_truth(N, M, alpha, beta, C, A):
 
     for i in range(N):
-        C[i, :i + 1] *= beta
+        C[i, : i + 1] *= beta
         for k in range(M):
-            C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
+            C[i, : i + 1] += alpha * A[i, k] * A[: i + 1, k]
 
 
 def run_syrk(device_type: dace.dtypes.DeviceType):
@@ -117,7 +119,7 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
 def run_syrk_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size) - note the order swap for this test
     M, N = sizes["mini"]
@@ -125,7 +127,7 @@ def run_syrk_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -162,9 +164,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

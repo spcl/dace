@@ -1,14 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import json
+import warnings
+
 import numpy as np
 
 import dace
-from dace.properties import Property, make_properties, ListProperty
+from dace.properties import ListProperty, Property, make_properties
 from dace.serialize import all_properties_to_json, set_properties_from_json
 
 
 @make_properties
-class MyObject(object):
+class MyObject:
     float_prop = Property(dtype=float, default=0.0)
 
     def __init__(self, p: float):
@@ -26,7 +28,7 @@ class MyObject(object):
 
 
 @make_properties
-class MyListObject(object):
+class MyListObject:
     list_prop = ListProperty(element_type=int)
 
     def __init__(self, p):
@@ -48,7 +50,7 @@ def test_serialize_int_float():
     assert obj.float_prop == 1.0
     json_obj = obj.to_json()
     # Force casting to int
-    json_obj['float_prop'] = int(json_obj['float_prop'])
+    json_obj["float_prop"] = int(json_obj["float_prop"])
     obj = MyObject.from_json(json_obj)
     assert obj.float_prop == 1.0
 
@@ -71,7 +73,7 @@ def test_serialize_infinity():
 
     sdfg = reduction_infinity_1.to_sdfg()
     json_string = json.dumps(sdfg.to_json())
-    assert (json_string.find('Infinity') == -1)
+    assert json_string.find("Infinity") == -1
 
     @dace.program
     def reduction_infinity_2(a: dace.float64[3]):
@@ -79,10 +81,37 @@ def test_serialize_infinity():
 
     sdfg = reduction_infinity_1.to_sdfg()
     json_string = json.dumps(sdfg.to_json())
-    assert (json_string.find('Infinity') == -1)
+    assert json_string.find("Infinity") == -1
 
 
-if __name__ == '__main__':
+def test_keys_no_property_consumes_are_reported_unless_ignored_or_metadata():
+    loaded = MyObject(0.0)
+    json_obj = {"float_prop": 1.5, "stray": 1, "_meta_note": "editor", "skipped": 2}
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        set_properties_from_json(loaded, json_obj, ignore_properties={"skipped"})
+
+    assert [str(w.message) for w in caught] == ["Unused properties: stray"]
+    assert loaded.float_prop == 1.5
+
+
+def test_tasklets_missing_a_code_property_do_not_share_its_default():
+    json_obj = {"type": "Tasklet", "label": "t", "attributes": {"label": "t", "code": {"string_data": "b = a"}}}
+    default = dace.sdfg.nodes.Tasklet.__properties__["code_global"].default
+
+    first = dace.serialize.from_json(json_obj)
+    second = dace.serialize.from_json(json_obj)
+
+    assert first.code_global is not second.code_global
+    assert first.code_global is not default and second.code_global is not default
+    assert first.code_global.as_string == default.as_string
+    assert first.code_global.language == dace.dtypes.Language.CPP
+
+
+if __name__ == "__main__":
     test_serialize_int_float()
     test_serialize_list_int64()
     test_serialize_infinity()
+    test_keys_no_property_consumes_are_reported_unless_ignored_or_metadata()
+    test_tasklets_missing_a_code_property_do_not_share_its_default()

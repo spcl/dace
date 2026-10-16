@@ -8,6 +8,7 @@ of :class:`~dace.libraries.sort.nodes.integer_sort.IntegerSort` can declare an
 ``#include <dace/ska_sort.hpp>`` and have the codegen pull the runtime header in.
 No extra CMake packages, libraries, or flags are needed -- it is header-only.
 """
+
 import dace.library
 
 
@@ -16,16 +17,16 @@ class SkaSort:
     """Pulls in the bundled ``dace/ska_sort.hpp`` header. No external deps."""
 
     cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
-    cmake_compile_flags = []
-    cmake_link_flags = []
-    cmake_files = []
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
+    cmake_includes: list[str] = []
+    cmake_libraries: list[str] = []
+    cmake_compile_flags: list[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
-    headers = {'frame': ['dace/ska_sort.hpp']}
-    state_fields = []
+    headers = {"frame": ["dace/ska_sort.hpp"]}
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies = []
+    dependencies: list[str] = []

@@ -15,6 +15,7 @@ The canonicalized SDFG + inputs + reference are computed once per kernel and sha
 (``auto_optimize`` phases are intentionally omitted -- canon+vectorize is the
 must-pass path here.)
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -26,55 +27,89 @@ import copy
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason=
-    "WIP corpus: run-phase at preset-S is heavy and xfails not yet populated; canon passes on ~49/54 kernels. Enable after size-cap + full sweep. See project memory."
-)
-
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.polybench import polybench
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 
-_KERNELS = [k.name for k in polybench.collect()]
-_PHASES = ("canon", "canon_vec")
+KERNELS = [k.name for k in polybench.collect()]
+LAPACK_KERNELS = frozenset(k.name for k in polybench.collect() if k.lapack)
+PHASES = ("canon", "canon_vec")
+
+#: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
+#: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
+UNTILED_KERNELS = frozenset(
+    {
+        "adi",
+        "atax",
+        "bicg",
+        "correlation",
+        "doitgen",
+        "k3mm",
+        # Canonicalized to a skewed wavefront (WavefrontSkew + ReconstructWavefrontNest): the parallel map walks
+        # an anti-diagonal, so no axis is unit-stride and no map passes the tile-candidate gate.
+        "seidel_2d",
+        "syr2k",
+        "syrk",
+        "trisolv",
+    }
+)
+
+
+def _cases():
+    return [
+        pytest.param(name, phase, id=f"{name}-{phase}", marks=pytest.mark.lapack if name in LAPACK_KERNELS else ())
+        for name in KERNELS
+        for phase in PHASES
+    ]
+
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the
-# TSVC / npbench corpus tests.
-_MULTIDIM_KNOBS = [
-    dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa="AVX512", remainder_strategy="full_mask", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
+# TSVC / npbench corpus tests. The SIMD ISA is the HOST's best runnable one
+# (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a
+# hardcoded AVX-512: vectorization enforces arch-native, so a forced non-host ISA
+# would SIGILL at runtime (see ``dace.libraries.tileops.dispatch.host_supported_isas``).
+HOST_ISA = detect_host_isa()
+MULTIDIM_KNOBS = [
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE, branch_mode=BranchMode.MERGE),
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.FULL_MASK, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.FP_FACTOR),
 ]
 
-_BASE: dict = {}
+BASE: dict = {}
 
 
 def _multidim_pass(name):
-    knobs = _MULTIDIM_KNOBS[_KERNELS.index(name) % len(_MULTIDIM_KNOBS)]
-    return VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), **knobs))
+    knobs = MULTIDIM_KNOBS[KERNELS.index(name) % len(MULTIDIM_KNOBS)]
+    return VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), **knobs))
 
 
 def _base(name):
     """Memoized ``(canon_sdfg, call_arrays, psize, reference)`` for one kernel."""
-    if name not in _BASE:
+    if name not in BASE:
         kernel = polybench.collect(name=name)[0]
         call_arrays, psize = polybench.make_inputs(kernel)
         ref = polybench.reference(kernel, call_arrays, psize)
         sdfg = polybench.fresh_sdfg(kernel)
         canonicalize(sdfg, validate=True)
-        _BASE[name] = (sdfg, call_arrays, psize, ref)
-    return _BASE[name]
+        BASE[name] = (sdfg, call_arrays, psize, ref)
+    return BASE[name]
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("phase", _PHASES)
+@pytest.mark.parametrize("name,phase", _cases())
 def test_polybench_corpus(name, phase):
     canon, call_arrays, psize, ref = _base(name)
     sdfg = copy.deepcopy(canon)
     if phase == "canon_vec":
         _multidim_pass(name).apply_pass(sdfg, {})
+        assert_tiled_unless_pinned(sdfg, canon, name, UNTILED_KERNELS)
+    # Per-(kernel, phase) name: concurrent xdist builds must not share .dacecache (race -> spurious
+    # CompilationError), matching the ``*_simplify_multidim`` sibling.
+    sdfg.name = f"{sdfg.name}_{phase}"
     sdfg.validate()
     got = polybench.run(sdfg, call_arrays, psize)
     assert polybench.outputs_match(ref, got), f"{name}/{phase}: output diverges from baseline"

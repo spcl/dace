@@ -1,28 +1,31 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the BufferTiling transformation. """
+"""Contains classes that implement the BufferTiling transformation."""
 
+from dace.properties import ShapeProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.properties import ShapeProperty, make_properties
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import transformation
-from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusionVertical, TrivialMapElimination
+from dace.transformation.dataflow import MapFusionVertical, MapTiling, MapTilingWithOverlap, TrivialMapElimination
 
 
 @make_properties
 class BufferTiling(transformation.SingleStateTransformation):
-    """ Implements the buffer tiling transformation.
+    """Implements the buffer tiling transformation.
 
-        BufferTiling tiles a buffer that is in between two maps, where the preceding map
-        writes to the buffer and the succeeding map reads from it.
-        It introduces additional computations in exchange for reduced memory footprint.
-        Commonly used to make use of shared memory on GPUs.
+    BufferTiling tiles a buffer that is in between two maps, where the preceding map
+    writes to the buffer and the succeeding map reads from it.
+    It introduces additional computations in exchange for reduced memory footprint.
+    Commonly used to make use of shared memory on GPUs.
     """
 
     map1_exit = transformation.PatternNode(nodes.MapExit)
     array = transformation.PatternNode(nodes.AccessNode)
     map2_entry = transformation.PatternNode(nodes.MapEntry)
 
-    tile_sizes = ShapeProperty(dtype=tuple, default=(128, 128, 128), desc="Tile size per dimension")
+    tile_sizes = ShapeProperty(
+        dtype=tuple, default=(128, 128, 128), category="Parameters", desc="Tile size per dimension"
+    )
 
     # Returns a list of graphs that represent the pattern
     @classmethod
@@ -57,7 +60,7 @@ class BufferTiling(transformation.SingleStateTransformation):
             # Check that the data consumed is provided.
             provided = graph.in_edges(buf)[0].data.subset
             consumed = graph.out_edges(buf)[0].data.subset
-            if not provided.covers(consumed):
+            if not provided.covers(consumed, SymbolResolver().facts_at(graph, buf)):
                 return False
 
             # Check that buffers occur only once in this state.
@@ -78,19 +81,17 @@ class BufferTiling(transformation.SingleStateTransformation):
         upper_extents = tuple(a - b for a, b in zip(map1_entry.range.max_element(), map2_entry.range.max_element()))
 
         # Tile the first map with overlap
-        MapTilingWithOverlap.apply_to(sdfg,
-                                      map_entry=map1_entry,
-                                      options={
-                                          'tile_sizes': self.tile_sizes,
-                                          'lower_overlap': lower_extents,
-                                          'upper_overlap': upper_extents
-                                      })
+        MapTilingWithOverlap.apply_to(
+            sdfg,
+            map_entry=map1_entry,
+            options={"tile_sizes": self.tile_sizes, "lower_overlap": lower_extents, "upper_overlap": upper_extents},
+        )
         tile_map1_exit = graph.out_edges(map1_exit)[0].dst
         tile_map1_entry = graph.entry_node(tile_map1_exit)
-        tile_map1_entry.label = 'BufferTiling'
+        tile_map1_entry.label = "BufferTiling"
 
         # Tile the second map
-        MapTiling.apply_to(sdfg, map_entry=map2_entry, options={'tile_sizes': self.tile_sizes, 'tile_trivial': True})
+        MapTiling.apply_to(sdfg, map_entry=map2_entry, options={"tile_sizes": self.tile_sizes, "tile_trivial": True})
         tile_map2_entry = graph.in_edges(map2_entry)[0].src
 
         # Fuse maps
@@ -109,8 +110,9 @@ class BufferTiling(transformation.SingleStateTransformation):
             for r, l_ext, u_ext, ts in zip(map1_entry.range.ranges, lower_extents, upper_extents, self.tile_sizes)
         ]
 
-        map2_entry.range.ranges = [(r[0], r[0], r[2]) if ts == 1 else r
-                                   for r, ts in zip(map2_entry.range.ranges, self.tile_sizes)]
+        map2_entry.range.ranges = [
+            (r[0], r[0], r[2]) if ts == 1 else r for r, ts in zip(map2_entry.range.ranges, self.tile_sizes)
+        ]
 
         if any(ts == 1 for ts in self.tile_sizes):
             if any(r[0] == r[1] for r in map1_entry.map.range):

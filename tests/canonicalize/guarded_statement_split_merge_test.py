@@ -24,7 +24,7 @@ must canonicalize through the full split -> fuse -> merge -> hoist chain:
 The canonical form is therefore always ONE parallel map carrying BOTH
 statements under ONE conditional block -- never two split maps or two
 un-merged guards. Each test asserts that structure and numerical equality to a
-numpy oracle (guard taken and not taken), for both full and fast canonicalize.
+numpy oracle (guard taken and not taken).
 """
 
 import numpy as np
@@ -33,14 +33,13 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
-# --------------------------------------------------------------------------
 # Kernels
-# --------------------------------------------------------------------------
 @dace.program
 def guarded_independent(cond: dace.int32, a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     """Two data-independent outputs under a map-invariant guard."""
@@ -71,14 +70,10 @@ def guarded_forward_read_war(cond: dace.int32, a: dace.float64[N], d: dace.float
             a[i] = a[i] * 2.0
 
 
-# --------------------------------------------------------------------------
 # Structural helpers
-# --------------------------------------------------------------------------
 def _top_map_entries(sdfg: dace.SDFG):
     """Top-level (non-nested) MapEntry nodes across every state."""
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def _conditional_blocks(sdfg: dace.SDFG):
@@ -89,7 +84,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
     """A ConditionalBlock whose branch body contains a top-level map (guard hoisted out)."""
     for cb in _conditional_blocks(sdfg):
         for _, branch in cb.branches:
-            for st in branch.all_states():
+            for st in branch.states():
                 if any(isinstance(n, nodes.MapEntry) and st.entry_node(n) is None for n in st.nodes()):
                     return True
     return False
@@ -97,7 +92,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
 
 def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     """A ConditionalBlock inside a NestedSDFG that sits under a map scope (guard in-map)."""
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None:
                 if any(isinstance(b, ConditionalBlock) for b in n.sdfg.all_control_flow_regions(recursive=True)):
@@ -105,21 +100,22 @@ def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     return False
 
 
-def _canon(fast: bool):
-    return lambda s: canonicalize(s, validate=True, fast=fast)
+def _canon():
+    return lambda s: canonicalize(s, validate=True)
 
 
-CANON = [pytest.param(_canon(False), id='full'), pytest.param(_canon(True), id='fast')]
+CANON = [pytest.param(_canon(), id="full")]
 
 
-# --------------------------------------------------------------------------
 # Item 1 (independent) + Item 2 (hoist-out merge)
-# --------------------------------------------------------------------------
-@pytest.mark.parametrize('canon', CANON)
+@pytest.mark.parametrize("canon", CANON)
 def test_guarded_independent_hoists_and_merges(canon):
     n = 16
     sdfg = guarded_independent.to_sdfg(simplify=False)
     canon(sdfg)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     # ONE parallel map carrying both statements, ONE merged guard, hoisted out.
     assert len(_top_map_entries(sdfg)) == 1, "the two guarded statements must fuse into one map"
@@ -138,7 +134,7 @@ def test_guarded_independent_hoists_and_merges(canon):
         assert np.allclose(c, c_ref), f"c mismatch cond={cond}"
 
 
-@pytest.mark.parametrize('canon', CANON)
+@pytest.mark.parametrize("canon", CANON)
 def test_guarded_index_dependent_merges_in_map(canon):
     n = 16
     sdfg = guarded_index_dependent.to_sdfg(simplify=False)
@@ -160,14 +156,15 @@ def test_guarded_index_dependent_merges_in_map(canon):
     assert np.allclose(c, np.where(even, a * 2.0, 0.0)), "c mismatch"
 
 
-# --------------------------------------------------------------------------
 # Item 1 (data-dependent but splittable)
-# --------------------------------------------------------------------------
-@pytest.mark.parametrize('canon', CANON)
+@pytest.mark.parametrize("canon", CANON)
 def test_guarded_forward_read_war_splits_and_merges(canon):
     n = 16
     sdfg = guarded_forward_read_war.to_sdfg(simplify=False)
     canon(sdfg)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     # The WAR is snapshot-broken so the body fissions, then re-fuses: one map,
     # one merged guard hoisted out.

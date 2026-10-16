@@ -1,13 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import environments
+from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -25,7 +27,6 @@ class ExpandGetrfPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGetrfOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -34,26 +35,25 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(lapack_complex_float*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(lapack_complex_double*)"
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetrfMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -62,80 +62,111 @@ class ExpandGetrfMKL(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(MKL_Complex8*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(MKL_Complex16*)"
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
-class ExpandGetrfCuSolverDn(ExpandTransformation):
+class ExpandGetrfGPUSolver(ExpandTransformation):
+    """LU factorization on a vendor GPU solver.
 
-    environments = [environments.cusolverdn.cuSolverDn]
+    Emitted per dialect rather than through a format string for the same reason as ``potrf``:
+    cuSolverDn sizes and allocates a workspace first, rocSOLVER takes none.
+    """
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
-        func = func + 'getrf'
+        func = func + "getrf"
 
         n = n or node.n
         if veclen != 1:
             n /= veclen
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
-                int __dace_workspace_size = 0;
-                {cuda_type}* __dace_workspace;
-                cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, &__dace_workspace_size);
-                cudaMalloc<{cuda_type}>(
-                    &__dace_workspace,
-                    sizeof({cuda_type}) * __dace_workspace_size);
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, __dace_workspace, _ipiv, _res);
-                cudaFree(__dace_workspace);
-                """)
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_x, cols_x, stride_x)
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == "_res" else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGetrfCuSolverDn(ExpandGetrfGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def call(cls, func, ctype, rows, cols, stride) -> str:
+        return f"""
+                int __dace_workspace_size = 0;
+                {ctype}* __dace_workspace;
+                cusolverDn{func}_bufferSize(
+                    __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, &__dace_workspace_size);
+                gpuMalloc<{ctype}>(
+                    &__dace_workspace,
+                    sizeof({ctype}) * __dace_workspace_size);
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, __dace_workspace, _ipiv, _res);
+                gpuFree(__dace_workspace);
+                """
+
+
+@dace.library.expansion
+class ExpandGetrfRocSolver(ExpandGetrfGPUSolver):
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @classmethod
+    def call(cls, func, ctype, rows, cols, stride) -> str:
+        # rocSOLVER manages its own workspace, so there is nothing to size, allocate or free.
+        ctype = blas_helpers.rocblas_type(ctype)
+        return f"""
+                dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
+                    __dace_rocblas_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, _ipiv, _res));
+                """
+
+
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrfOpenBLAS,
+        "MKL": ExpandGetrfMKL,
+        "cuSolverDn": ExpandGetrfCuSolverDn,
+        "rocSOLVER": ExpandGetrfRocSolver,
+    }
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(("_xout", "_ipiv", "_res")), **kwargs)
 
     def validate(self, sdfg, state):
         """

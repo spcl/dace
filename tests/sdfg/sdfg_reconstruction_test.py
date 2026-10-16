@@ -7,7 +7,6 @@ that the rebuilt SDFG validates and (where runnable) produces the same
 output as the original.
 """
 
-import ctypes
 import pathlib
 import textwrap
 
@@ -25,31 +24,6 @@ from dace.sdfg.state import (
 from dace.sdfg.to_python import sdfg_to_python
 
 _DATA_DIR = pathlib.Path(__file__).parent / "data" / "sdfg_reconstruction"
-
-
-def _ensure_libgomp_loaded():
-    """Pre-load libgomp into the process so generated SDFG ``.so``s, which
-    don't directly link it on this system's CMake/OpenMP setup, can resolve
-    ``omp_get_max_threads`` via the global symbol table.
-
-    This is a host-build-environment workaround, not a correctness bug in
-    the emitter. Skips silently if libgomp can't be located.
-    """
-    candidates = (
-        "libgomp.so.1",
-        "/usr/lib/x86_64-linux-gnu/libgomp.so.1",
-        "/lib/x86_64-linux-gnu/libgomp.so.1",
-    )
-    for cand in candidates:
-        try:
-            ctypes.CDLL(cand, mode=ctypes.RTLD_GLOBAL)
-            return True
-        except OSError:
-            continue
-    return False
-
-
-_ensure_libgomp_loaded()
 
 
 def _exec_emitted(src: str) -> SDFG:
@@ -98,9 +72,7 @@ def _assert_runs_equivalent(original: SDFG, rebuilt: SDFG, **call_args):
             np.testing.assert_allclose(a, b, err_msg=f"Mismatch on {k!r}")
 
 
-# ---------------------------------------------------------------------
 # Smoke tests
-# ---------------------------------------------------------------------
 
 
 def test_empty_sdfg_with_single_state():
@@ -132,9 +104,7 @@ def test_descriptors_round_trip():
     assert rebuilt.arrays["q"].buffer_size == sdfg.arrays["q"].buffer_size
 
 
-# ---------------------------------------------------------------------
 # Mapped tasklet — covers state, map, tasklet, memlet
-# ---------------------------------------------------------------------
 
 
 def _build_mapped_increment() -> SDFG:
@@ -164,16 +134,13 @@ def test_mapped_tasklet_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # LoopRegion — for-loop with state inside, interstate edges before/after
-# ---------------------------------------------------------------------
 
 
 def _build_loop_region() -> SDFG:
     sdfg = dace.SDFG("loop_fill")
     sdfg.using_explicit_control_flow = True
     sdfg.add_array("A", [10], dace.float32)
-    sdfg.add_symbol("i", dace.int32)
 
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion(
@@ -206,9 +173,7 @@ def test_loop_region_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # Interstate edge with assignments + condition
-# ---------------------------------------------------------------------
 
 
 def test_interstate_edge_with_assignment_and_condition():
@@ -230,9 +195,7 @@ def test_interstate_edge_with_assignment_and_condition():
     assert "k" in assign_edges[0].data.assignments
 
 
-# ---------------------------------------------------------------------
 # ConditionalBlock — covers branches
-# ---------------------------------------------------------------------
 
 
 def test_conditional_block_round_trip():
@@ -260,9 +223,7 @@ def test_conditional_block_round_trip():
     assert region.label == "if_body"
 
 
-# ---------------------------------------------------------------------
 # NestedSDFG — covers recursive emission
-# ---------------------------------------------------------------------
 
 
 def _build_nested_increment() -> SDFG:
@@ -299,9 +260,7 @@ def test_nested_sdfg_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # Reduce (LibraryNode) — covers LibraryNode imperative emission
-# ---------------------------------------------------------------------
 
 
 def _build_reduce_sum() -> SDFG:
@@ -312,8 +271,8 @@ def _build_reduce_sum() -> SDFG:
     a = state.add_access("A")
     b = state.add_access("B")
     red = state.add_reduce("lambda x, y: x + y", None, 0)
-    state.add_edge(a, None, red, None, dace.Memlet("A[0:16]"))
-    state.add_edge(red, None, b, None, dace.Memlet("B[0]"))
+    state.add_edge(a, None, red, "_in", dace.Memlet("A[0:16]"))
+    state.add_edge(red, "_out", b, None, dace.Memlet("B[0]"))
     return sdfg
 
 
@@ -330,15 +289,12 @@ def test_reduce_library_node_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # Break/Continue/Return inside a loop region
-# ---------------------------------------------------------------------
 
 
 def test_break_continue_blocks_inside_loop():
     sdfg = dace.SDFG("brk_cnt")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_array("A", [1], dace.float32)
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion(
@@ -360,28 +316,28 @@ def test_break_continue_blocks_inside_loop():
     assert any(isinstance(b, ContinueBlock) for b in rebuilt_loop.nodes())
 
 
-# ---------------------------------------------------------------------
 # Sanity: emitter never produces from_json / set_properties_from_json
-# ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("builder", [
-    _build_mapped_increment,
-    _build_loop_region,
-    _build_nested_increment,
-    _build_reduce_sum,
-])
+@pytest.mark.parametrize(
+    "builder",
+    [
+        _build_mapped_increment,
+        _build_loop_region,
+        _build_nested_increment,
+        _build_reduce_sum,
+    ],
+)
 def test_emitter_uses_imperative_api_only(builder):
     src = sdfg_to_python(builder())
     forbidden = ("from_json", "set_properties_from_json", "dace.serialize")
     for token in forbidden:
-        assert token not in src, (f"Emitter leaked non-imperative token {token!r}; output:\n" +
-                                  textwrap.indent(src, "    "))
+        assert token not in src, f"Emitter leaked non-imperative token {token!r}; output:\n" + textwrap.indent(
+            src, "    "
+        )
 
 
-# ---------------------------------------------------------------------
 # Velocity stage1 SDFGs (real-world ICON dycore artifacts)
-# ---------------------------------------------------------------------
 # Four stage1 SDFGs from the velocity tendencies pipeline. Each is hundreds
 # of arrays / dozens of states / multiple nesting levels — exercises every
 # major surface of the emitter on production-shaped graphs.
@@ -410,15 +366,17 @@ def test_velocity_stage1_round_trip(filename):
     rebuilt = _exec_emitted(src)
 
     # Signature equivalence: the exported argument list must match.
-    assert original.signature_arglist() == rebuilt.signature_arglist(), (f"signature mismatch for {filename}\n"
-                                                                         f"original: {original.signature_arglist()}\n"
-                                                                         f"rebuilt:  {rebuilt.signature_arglist()}")
+    assert original.signature_arglist() == rebuilt.signature_arglist(), (
+        f"signature mismatch for {filename}\n"
+        f"original: {original.signature_arglist()}\n"
+        f"rebuilt:  {rebuilt.signature_arglist()}"
+    )
 
     # Structural equivalence: arrays, symbols, state count.
     assert set(original.arrays.keys()) == set(rebuilt.arrays.keys())
     assert set(original.symbols.keys()) == set(rebuilt.symbols.keys())
-    orig_states = sum(1 for _ in original.all_states())
-    rebuilt_states = sum(1 for _ in rebuilt.all_states())
+    orig_states = original.num_states()
+    rebuilt_states = rebuilt.num_states()
     assert orig_states == rebuilt_states
 
     # Compile both — failure here surfaces real codegen breakage.
@@ -429,9 +387,7 @@ def test_velocity_stage1_round_trip(filename):
     rebuilt.compile()
 
 
-# ---------------------------------------------------------------------
 # CloudSC kernel — full numerical correctness round-trip
-# ---------------------------------------------------------------------
 # Adapted from a real CloudSC ice-nucleation/deposition kernel.
 # This is a real CloudSC ice-nucleation/deposition kernel; build SDFG via
 # @dace.program, emit Python source, exec to rebuild, compile both, run on
@@ -489,7 +445,7 @@ def _cloudsc_kernel(
             zadd = (1.6666666666667 * rlstt * (rlstt / (rv * ztp1[it_47]) - 1.0)) / ztp1[it_47]
             zbdd = (0.452488687782805 * pap[it_47] * rv * ztp1[it_47]) / zvpice
 
-            tmp_call_49 = (zicenuclei[it_47] / zrho[it_47])
+            tmp_call_49 = zicenuclei[it_47] / zrho[it_47]
             zcvds = (7.8 * tmp_call_49 * (zvpliq - zvpice)) / (zvpice * (zadd + zbdd))
 
             zice0 = max(riceinit * zicenuclei[it_47] / zrho[it_47], zicecld[it_47])
@@ -531,17 +487,17 @@ def _cloudsc_inputs(n: int):
         "rtt": np.float64(273.15),
         "rv": np.float64(461.5),
         "N": np.int64(n),
-        "pap": u(1.0, 2.0, (n, )),
-        "za": u(0.9, 1.5, (n, )),
-        "ztp1": u(260.0, 280.0, (n, )),
-        "zqxfg": u(5.0, 11.0, (n, )),
-        "zsolqa": u(5.0, 11.0, (n, )),
-        "zdp": u(0.5, 2.0, (n, )),
-        "zfokoop": u(0.95, 1.05, (n, )),
-        "zicecld": u(10.0, 11.0, (n, )),
-        "zrho": u(0.9, 1.2, (n, )),
-        "zcldtopdist": u(0.1, 1.0, (n, )),
-        "zicenuclei": u(1e2, 1e4, (n, )),
+        "pap": u(1.0, 2.0, (n,)),
+        "za": u(0.9, 1.5, (n,)),
+        "ztp1": u(260.0, 280.0, (n,)),
+        "zqxfg": u(5.0, 11.0, (n,)),
+        "zsolqa": u(5.0, 11.0, (n,)),
+        "zdp": u(0.5, 2.0, (n,)),
+        "zfokoop": u(0.95, 1.05, (n,)),
+        "zicecld": u(10.0, 11.0, (n,)),
+        "zrho": u(0.9, 1.2, (n,)),
+        "zcldtopdist": u(0.1, 1.0, (n,)),
+        "zicenuclei": u(1e2, 1e4, (n,)),
     }
 
 
@@ -580,9 +536,7 @@ def test_cloudsc_kernel_numerical_round_trip():
         )
 
 
-# ---------------------------------------------------------------------
 # Full CloudSC SDFG (the real one, not the pattern_one loop-nest)
-# ---------------------------------------------------------------------
 # Loads cloudsc_simplified.sdfgz from the SC26 layout artifacts — the
 # full IFS cloud-microphysics scheme as a single DaCe program. This test
 # exercises every emitter codepath at production scale: 2300+ arrays,
@@ -615,8 +569,8 @@ def test_full_cloudsc_round_trip():
     assert set(original.arrays.keys()) == set(rebuilt.arrays.keys())
     assert set(original.symbols.keys()) == set(rebuilt.symbols.keys())
 
-    orig_states = sum(1 for _ in original.all_states())
-    rebuilt_states = sum(1 for _ in rebuilt.all_states())
+    orig_states = original.num_states()
+    rebuilt_states = rebuilt.num_states()
     assert orig_states == rebuilt_states
 
 

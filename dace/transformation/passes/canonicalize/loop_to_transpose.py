@@ -42,7 +42,9 @@ is not the full array the operands are routed through strided Views (whose strid
 encode the per-axis step) so the library node still sees a dense operand. Only when
 every axis covers its whole array are plain full-array memlets emitted.
 """
-from typing import Dict, List, Optional, Tuple
+
+from collections.abc import Sequence
+from typing import Any
 
 import sympy
 
@@ -50,22 +52,25 @@ import dace
 from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.transformation.transformation import explicit_cf_compatible
 
 
-def _const_pos_int(value) -> Optional[int]:
+def _const_pos_int(value: symbolic.SymbolicType) -> int | None:
     """``value`` as a positive Python ``int`` if constant, else ``None``."""
     try:
         s = symbolic.simplify(symbolic.pystr_to_symbolic(str(value)))
     except Exception:
         return None
-    return int(s) if s.is_Integer and int(s) > 0 else None
+    return int(as_expr(s)) if as_basic(s).is_Integer and int(as_expr(s)) > 0 else None
 
 
-def _single_child_loop(region: ControlFlowRegion) -> Optional[LoopRegion]:
+def _single_child_loop(region: ControlFlowRegion) -> LoopRegion | None:
     """The region's one child ``LoopRegion`` if every other block is an empty
     state (perfect nest with connective tissue tolerated), else ``None`` (also
     ``None`` when the region holds a non-empty compute state -- i.e. is the
@@ -84,7 +89,7 @@ def _single_child_loop(region: ControlFlowRegion) -> Optional[LoopRegion]:
     return loop
 
 
-def _single_body_state(loop: LoopRegion) -> Optional[SDFGState]:
+def _single_body_state(loop: LoopRegion) -> SDFGState | None:
     """The loop's one non-empty body state, or ``None`` if not a single compute
     state (empty connective states tolerated)."""
     blocks = list(loop.nodes())
@@ -94,12 +99,12 @@ def _single_body_state(loop: LoopRegion) -> Optional[SDFGState]:
     return non_empty[0] if len(non_empty) == 1 else None
 
 
-def _descend_perfect_nest(outer: LoopRegion) -> Tuple[Optional[List[LoopRegion]], Optional[SDFGState]]:
+def _descend_perfect_nest(outer: LoopRegion) -> tuple[list[LoopRegion] | None, SDFGState | None]:
     """Descend a chain of perfectly nested ``LoopRegion`` s from ``outer`` to the
     innermost compute loop. Returns ``(loops, body_state)`` where ``loops`` is the
     outer-to-inner list and ``body_state`` is the innermost loop's single body
     state, or ``(None, None)`` on any structural deviation."""
-    loops: List[LoopRegion] = []
+    loops: list[LoopRegion] = []
     cur = outer
     while True:
         loops.append(cur)
@@ -113,7 +118,7 @@ def _descend_perfect_nest(outer: LoopRegion) -> Tuple[Optional[List[LoopRegion]]
     return loops, body
 
 
-def _is_copy_tasklet(node) -> bool:
+def _is_copy_tasklet(node: nodes.Node) -> bool:
     """Whether ``node`` is a single-input pure-copy tasklet ``__out = __inp``."""
     if not isinstance(node, nodes.Tasklet):
         return False
@@ -121,30 +126,43 @@ def _is_copy_tasklet(node) -> bool:
     if code.count("=") != 1:
         return False
     lhs, rhs = (s.strip() for s in code.split("=", 1))
-    return len(node.in_connectors) == 1 and len(node.out_connectors) == 1 and rhs in node.in_connectors and \
-        lhs in node.out_connectors
+    return (
+        len(node.in_connectors) == 1
+        and len(node.out_connectors) == 1
+        and rhs in node.in_connectors
+        and lhs in node.out_connectors
+    )
 
 
-def _node_side_subset(edge, node, array: str):
-    """The subset of ``edge`` on ``node``'s side, where ``node`` is an AccessNode
-    of ``array``. For a same-array self-copy DaCe puts the source region in
-    ``subset`` and the destination in ``other_subset``; otherwise the ``array``
-    side is whichever of ``subset`` / ``other_subset`` matches ``memlet.data``."""
+def _node_side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], node: nodes.Node) -> subsets.Subset | None:
+    """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``.
+
+    Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
+    ``_is_data_src`` flag, NOT by the endpoint names -- when both ends name the same array (an
+    intermediate scratch reusing the operand's name) a name test cannot disambiguate at all.
+    ``get_src_subset`` / ``get_dst_subset`` are the only correct readers of the pair."""
     mem = edge.data
-    other = edge.dst if node is edge.src else edge.src
-    if isinstance(other, nodes.AccessNode) and other.data == array:
-        return mem.subset if node is edge.src else mem.other_subset
-    return mem.subset if mem.data == array else mem.other_subset
+    return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
-def _extract_permutation_copy(state: SDFGState):
-    """Match a pure cross-array copy of one ``d``-D array to a DISTINCT ``d``-D
-    array in ``state``: read one array at a single point, pass the value through
-    only copy-passthrough nodes (transient scratch AccessNodes and/or
-    ``__out = __inp`` copy tasklets), and write a DIFFERENT array at a single
-    point.
+def single_source_and_sink(
+    state: SDFGState, access: list[nodes.AccessNode]
+) -> tuple[nodes.AccessNode, nodes.AccessNode] | None:
+    """The unique ``(source, sink)`` pair among ``access`` (in-degree 0 / out-degree 0), else ``None``."""
+    sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
+    sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
+    if len(sources) != 1 or len(sinks) != 1:
+        return None
+    return sources[0], sinks[0]
 
-    :returns: ``(in_array, out_array, read_subset, write_subset)`` or ``None``.
+
+def match_copy_chain(
+    state: SDFGState,
+) -> tuple[nodes.AccessNode, nodes.AccessNode, subsets.Subset | None, subsets.Subset | None] | None:
+    """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined
+    only by transient scratch AccessNodes and ``__out = __inp`` copy tasklets.
+
+    :returns: ``(src, sink, read_subset, write_subset)`` or ``None``.
     """
     sdfg = state.sdfg
     access = [n for n in state.nodes() if isinstance(n, nodes.AccessNode)]
@@ -152,37 +170,50 @@ def _extract_permutation_copy(state: SDFGState):
     # Every non-access node must be a pure copy tasklet (rejects arithmetic bodies).
     if any(not _is_copy_tasklet(n) for n in others):
         return None
-    sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
-    sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
-    if len(sources) != 1 or len(sinks) != 1:
+    ends = single_source_and_sink(state, access)
+    if ends is None:
         return None
-    src, sink = sources[0], sinks[0]
-    if src.data == sink.data:
-        return None  # in-place -- LoopToSymmetrize's domain
-    in_array, out_array = src.data, sink.data
-    # Any intermediate access node must be a transient scratch (not an operand).
+    src, sink = ends
     for n in access:
         if n is src or n is sink:
             continue
         desc = sdfg.arrays.get(n.data)
         if desc is None or not desc.transient:
             return None
-    src_oes = [e for e in state.out_edges(src) if e.data is not None and not e.data.is_empty()]
-    sink_ies = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
+    src_oes = value_edges(state.out_edges(src))
+    sink_ies = value_edges(state.in_edges(sink))
     if len(src_oes) != 1 or len(sink_ies) != 1:
         return None
-    read_subset = _node_side_subset(src_oes[0], src, in_array)
-    write_subset = _node_side_subset(sink_ies[0], sink, out_array)
+    return src, sink, _node_side_subset(state, src_oes[0], src), _node_side_subset(state, sink_ies[0], sink)
+
+
+def _extract_permutation_copy(state: SDFGState) -> tuple[str, str, subsets.Subset, subsets.Subset] | None:
+    """Match a pure copy chain from one ``d``-D array to a DISTINCT one, both at a single point.
+
+    :returns: ``(in_array, out_array, read_subset, write_subset)`` or ``None``.
+    """
+    m = match_copy_chain(state)
+    if m is None:
+        return None
+    src, sink, read_subset, write_subset = m
+    if src.data == sink.data:
+        return None  # in-place -- LoopToSymmetrize's domain
     if read_subset is None or write_subset is None:
         return None
-    return in_array, out_array, read_subset, write_subset
+    return src.data, sink.data, read_subset, write_subset
 
 
-def _axis_affine(idx, loop_var_syms):
+def _axis_affine(
+    idx: symbolic.SymbolicType, loop_var_syms: Sequence[sympy.Symbol]
+) -> tuple[sympy.Symbol, int, symbolic.SymbolicType] | None:
     """Classify a single-point index expression ``idx``. Returns
     ``(loop_var_sym, coeff, off)`` if ``idx`` is affine in EXACTLY one loop
     variable (``coeff*v + off``, ``coeff`` a positive integer constant, ``off``
     loop-variable-free), else ``None``."""
+    # Equalized first: membership, diff and the subtraction below all go through symbol IDENTITY,
+    # and the loop variable reaches here as a different instance than the one inside idx. Unequalized,
+    # diff silently returns 0 and the offset check below misses a loop variable it must reject.
+    idx, *loop_var_syms = symbolic.equalize_symbols_across(idx, *loop_var_syms)
     used = [v for v in loop_var_syms if v in idx.free_symbols]
     if len(used) != 1:
         return None
@@ -192,14 +223,16 @@ def _axis_affine(idx, loop_var_syms):
         off = symbolic.simplify(idx - coeff * v)
     except Exception:
         return None
-    if not (coeff.is_Integer and int(coeff) > 0):
+    if not (as_basic(coeff).is_Integer and int(as_expr(coeff)) > 0):
         return None
-    if any(lv in off.free_symbols for lv in loop_var_syms):
+    if any(lv in as_basic(off).free_symbols for lv in loop_var_syms):
         return None
-    return v, int(coeff), off
+    return v, int(as_expr(coeff)), off
 
 
-def _classify_side(subset, loop_var_syms, ndims: int):
+def _classify_side(
+    subset: subsets.Subset, loop_var_syms: Sequence[sympy.Symbol], ndims: int
+) -> tuple[dict[sympy.Symbol, int], dict[sympy.Symbol, int], dict[sympy.Symbol, symbolic.SymbolicType]] | None:
     """Match every axis of ``subset`` (a point subset of ``ndims`` axes) to one
     loop variable. Returns ``(axis_of_var, coeff_of_var, off_of_var)`` -- dicts
     keyed by loop-variable symbol -- forming a bijection loop-var <-> axis, or
@@ -208,9 +241,9 @@ def _classify_side(subset, loop_var_syms, ndims: int):
     ndr = list(subset.ndrange())
     if len(ndr) != ndims:
         return None
-    axis_of_var: Dict[object, int] = {}
-    coeff_of_var: Dict[object, int] = {}
-    off_of_var: Dict[object, object] = {}
+    axis_of_var: dict[sympy.Symbol, int] = {}
+    coeff_of_var: dict[sympy.Symbol, int] = {}
+    off_of_var: dict[sympy.Symbol, symbolic.SymbolicType] = {}
     for axis, (lo, hi, st) in enumerate(ndr):
         if symbolic.simplify(lo - hi) != 0 or symbolic.simplify(st - 1) != 0:
             return None  # not a single point
@@ -223,7 +256,7 @@ def _classify_side(subset, loop_var_syms, ndims: int):
         axis_of_var[v] = axis
         coeff_of_var[v] = coeff
         off_of_var[v] = off
-    if set(axis_of_var.keys()) != set(loop_var_syms):
+    if dict.fromkeys(axis_of_var) != dict.fromkeys(loop_var_syms):
         return None
     return axis_of_var, coeff_of_var, off_of_var
 
@@ -231,7 +264,16 @@ def _classify_side(subset, loop_var_syms, ndims: int):
 class _Plan:
     """Everything needed to emit the transpose libnode for a matched nest."""
 
-    def __init__(self, in_array, out_array, axes, read_range, write_range, in_full, out_full):
+    def __init__(
+        self,
+        in_array: str,
+        out_array: str,
+        axes: list[int],
+        read_range: subsets.Range,
+        write_range: subsets.Range,
+        in_full: bool,
+        out_full: bool,
+    ) -> None:
         self.in_array = in_array
         self.out_array = out_array
         self.axes = axes
@@ -253,10 +295,10 @@ class LoopToTranspose(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for cfg in list(sd.all_control_flow_regions(recursive=True)):
+            for cfg in list(sd.all_control_flow_regions()):
                 for outer in list(cfg.nodes()):
                     if isinstance(outer, LoopRegion) and self._try_lift(cfg, outer, sd):
                         count += 1
@@ -276,8 +318,8 @@ class LoopToTranspose(ppl.Pass):
             return False
 
         # Per-loop (init, last-inclusive, stride); stride must be a positive int constant.
-        ranges: Dict[object, Tuple[object, object, int]] = {}
-        loop_var_syms: List[object] = []
+        ranges: dict[sympy.Symbol, tuple[symbolic.SymbolicType, symbolic.SymbolicType, int]] = {}
+        loop_var_syms: list[sympy.Symbol] = []
         for loop in loops:
             if not loop.loop_variable:
                 return False
@@ -294,6 +336,14 @@ class LoopToTranspose(ppl.Pass):
                 return False  # duplicated iterator name -- not a clean nest
             ranges[v] = (symbolic.pystr_to_symbolic(str(lo)), symbolic.pystr_to_symbolic(str(last)), inc_i)
             loop_var_syms.append(v)
+
+        # A bound naming another iterator makes the nest triangular, and a triangular window is not a
+        # transposable box: the lift would splice that iterator into the view subsets, stranding it as a
+        # free symbol (`for j in range(i+1, M)` -> `B[..., _loop_it_0 + 1:M]`).
+        nest_syms = set(loop_var_syms)
+        for lo, last, _ in ranges.values():
+            if (as_basic(lo).free_symbols | as_basic(last).free_symbols) & nest_syms:
+                return False
 
         d = len(loops)
         extracted = _extract_permutation_copy(body)
@@ -325,34 +375,68 @@ class LoopToTranspose(ppl.Pass):
             return False  # identity permutation -- a plain copy, not a transpose
 
         # Per-axis accessed ranges (the exact lo:hi:inc sub-grid, incl. affine coeff/off).
-        def _side_ranges(axis_of_var, coeff_of_var, off_of_var, ndims):
+        def _side_ranges(
+            axis_of_var: dict[sympy.Symbol, int],
+            coeff_of_var: dict[sympy.Symbol, int],
+            off_of_var: dict[sympy.Symbol, symbolic.SymbolicType],
+            ndims: int,
+        ) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
             var_at_axis = {a: v for v, a in axis_of_var.items()}
-            out = []
+            out: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]] = []
             for a in range(ndims):
                 v = var_at_axis[a]
                 c, off = coeff_of_var[v], off_of_var[v]
                 lo_v, last_v, inc_v = ranges[v]
-                out.append((symbolic.simplify(c * lo_v + off), symbolic.simplify(c * last_v + off),
-                            symbolic.simplify(c * inc_v)))
+                out.append(
+                    (
+                        symbolic.simplify(c * lo_v + off),
+                        symbolic.simplify(c * last_v + off),
+                        symbolic.simplify(c * inc_v),
+                    )
+                )
             return out
 
         in_ranges = _side_ranges(in_axis, in_coeff, in_off, d)
         out_ranges = _side_ranges(out_axis, out_coeff, out_off, d)
 
-        def _is_full(rng_list, desc) -> bool:
+        def _is_full(
+            rng_list: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]],
+            desc: dace.data.Data,
+        ) -> bool:
             for (lo, hi, st), sz in zip(rng_list, desc.shape):
-                if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
-                        symbolic.simplify(hi - (sz - 1)) != 0:
+                # Bounds are rebuilt from the loop's reparsed ranges, the shape carries the declared
+                # assumptions: two instances of one name that never cancel.
+                end, sz_eq = symbolic.equalize_symbols_across(hi, sz)
+                if (
+                    symbolic.simplify(lo) != 0
+                    or symbolic.simplify(st - 1) != 0
+                    or symbolic.simplify(end - (sz_eq - 1)) != 0
+                ):
                     return False
             return True
 
-        plan = _Plan(in_array, out_array, axes, subsets.Range(in_ranges), subsets.Range(out_ranges),
-                     _is_full(in_ranges, in_desc), _is_full(out_ranges, out_desc))
+        plan = _Plan(
+            in_array,
+            out_array,
+            axes,
+            subsets.Range(in_ranges),
+            subsets.Range(out_ranges),
+            _is_full(in_ranges, in_desc),
+            _is_full(out_ranges, out_desc),
+        )
         self._replace(cfg, outer, sdfg, plan, in_desc, out_desc, d)
         return True
 
-    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG, plan: _Plan, in_desc, out_desc,
-                 d: int) -> None:
+    def _replace(
+        self,
+        cfg: ControlFlowRegion,
+        outer: LoopRegion,
+        sdfg: dace.SDFG,
+        plan: _Plan,
+        in_desc: dace.data.Data,
+        out_desc: dace.data.Data,
+        d: int,
+    ) -> None:
         """Splice ``outer`` out, replacing the nest with a state holding the
         transpose library node wired to the operand arrays (directly for a
         full-array access, via strided Views otherwise)."""
@@ -374,10 +458,20 @@ class LoopToTranspose(ppl.Pass):
 
         if plan.full:
             # Whole-array access on every axis: plain full-array memlets.
-            state.add_edge(state.add_read(plan.in_array), None, node, in_conn,
-                           Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))))
-            state.add_edge(node, out_conn, state.add_write(plan.out_array), None,
-                           Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))))
+            state.add_edge(
+                state.add_read(plan.in_array),
+                None,
+                node,
+                in_conn,
+                Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
+            )
+            state.add_edge(
+                node,
+                out_conn,
+                state.add_write(plan.out_array),
+                None,
+                Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
+            )
         else:
             # Offset / strided sub-grid: route each operand through a strided View whose
             # per-axis stride is the array stride times the access step, so the library
@@ -385,28 +479,42 @@ class LoopToTranspose(ppl.Pass):
             # correct elements. The connecting memlet carries the lo:hi:inc origin+extent.
             in_steps = [r[2] for r in plan.read_range.ndrange()]
             out_steps = [r[2] for r in plan.write_range.ndrange()]
-            iv_name, _ = sdfg.add_view(plan.in_array + "_tview",
-                                       list(plan.read_range.size()),
-                                       in_desc.dtype,
-                                       storage=in_desc.storage,
-                                       strides=[in_desc.strides[a] * in_steps[a] for a in range(d)],
-                                       find_new_name=True)
-            ov_name, _ = sdfg.add_view(plan.out_array + "_tview",
-                                       list(plan.write_range.size()),
-                                       out_desc.dtype,
-                                       storage=out_desc.storage,
-                                       strides=[out_desc.strides[b] * out_steps[b] for b in range(d)],
-                                       find_new_name=True)
+            iv_name, _ = sdfg.add_view(
+                plan.in_array + "_tview",
+                list(plan.read_range.size()),
+                in_desc.dtype,
+                storage=in_desc.storage,
+                strides=[in_desc.strides[a] * in_steps[a] for a in range(d)],
+                find_new_name=True,
+            )
+            ov_name, _ = sdfg.add_view(
+                plan.out_array + "_tview",
+                list(plan.write_range.size()),
+                out_desc.dtype,
+                storage=out_desc.storage,
+                strides=[out_desc.strides[b] * out_steps[b] for b in range(d)],
+                find_new_name=True,
+            )
             iv = state.add_access(iv_name)
             ov = state.add_access(ov_name)
             in_dense = subsets.Range([(0, s - 1, 1) for s in plan.read_range.size()])
             out_dense = subsets.Range([(0, s - 1, 1) for s in plan.write_range.size()])
-            state.add_edge(state.add_read(plan.in_array), None, iv, "views",
-                           Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))))
+            state.add_edge(
+                state.add_read(plan.in_array),
+                None,
+                iv,
+                "views",
+                Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
+            )
             state.add_edge(iv, None, node, in_conn, Memlet(data=iv_name, subset=in_dense))
             state.add_edge(node, out_conn, ov, None, Memlet(data=ov_name, subset=out_dense))
-            state.add_edge(ov, "views", state.add_write(plan.out_array), None,
-                           Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))))
+            state.add_edge(
+                ov,
+                "views",
+                state.add_write(plan.out_array),
+                None,
+                Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
+            )
 
         for e in in_edges:
             cfg.add_edge(e.src, state, e.data)

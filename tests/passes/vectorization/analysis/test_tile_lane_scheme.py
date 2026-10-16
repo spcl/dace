@@ -8,6 +8,7 @@ K>=2 under one scheme. The v2 K-dim tile-op track never mints per-lane
 scalars; this audit is the load-bearing invariant that catches accidental
 leaks from a buggy prep pass.
 """
+
 import pytest
 
 import dace
@@ -18,8 +19,9 @@ from dace.transformation.passes.vectorization.utils.name_schemes import (
 )
 
 
-@pytest.mark.parametrize("chunks", [((0, 0), ), ((0, 3), ), ((0, 1), (1, 2)), ((0, 0), (1, 1), (2, 7)),
-                                    ((0, 4), (1, 0), (2, 2))])
+@pytest.mark.parametrize(
+    "chunks", [((0, 0),), ((0, 3),), ((0, 1), (1, 2)), ((0, 0), (1, 1), (2, 7)), ((0, 4), (1, 0), (2, 2))]
+)
 def test_make_multi_parse_chunks_roundtrip(chunks):
     """``make_multi`` ∘ ``parse_chunks`` is the identity for K ∈ {1, 2, 3}."""
     encoded = LaneIdScheme.make_multi("foo", chunks)
@@ -74,7 +76,7 @@ def test_tile_name_scheme_is_tile_transient():
 def test_assert_no_laneid_passes_on_clean_sdfg():
     """A trivial SDFG with no per-lane names triggers no failure."""
     sdfg = dace.SDFG("clean")
-    sdfg.add_array("A", (8, ), dace.float64)
+    sdfg.add_array("A", (8,), dace.float64)
     state = sdfg.add_state("main")
     state.add_access("A")
     assert_no_laneid_in_tile_path(sdfg)
@@ -83,7 +85,7 @@ def test_assert_no_laneid_passes_on_clean_sdfg():
 def test_assert_no_laneid_flags_legacy_1d_lane_in_arrays():
     """The audit catches a leaked 1D ``_laneid_<i>`` array name."""
     sdfg = dace.SDFG("leaked_1d")
-    sdfg.add_array("a_laneid_3", (1, ), dace.float64)
+    sdfg.add_array("a_laneid_3", (1,), dace.float64)
     with pytest.raises(AssertionError, match="leaked"):
         assert_no_laneid_in_tile_path(sdfg)
 
@@ -99,9 +101,9 @@ def test_assert_no_laneid_flags_chunked_form_in_symbols():
 def test_assert_no_laneid_walks_nested_sdfgs():
     """A leak inside a nested SDFG is also caught."""
     outer = dace.SDFG("outer_clean")
-    outer.add_array("X", (4, ), dace.float64)
+    outer.add_array("X", (4,), dace.float64)
     inner = dace.SDFG("inner_leaked")
-    inner.add_array("y_laneid_0", (1, ), dace.float64)
+    inner.add_array("y_laneid_0", (1,), dace.float64)
     state = outer.add_state("main")
     state.add_nested_sdfg(inner, inputs=set(), outputs=set())
     with pytest.raises(AssertionError, match="leaked"):

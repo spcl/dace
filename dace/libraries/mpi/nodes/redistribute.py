@@ -1,16 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library, properties, subsets, symbolic
+from dace.codegen.targets import cpp
+from dace.libraries.mpi import environments
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.codegen.targets import cpp
-from dace import subsets
-from dace.libraries.mpi.nodes.node import MPINode
 
 
 @library.expansion
 class ExpandRedistribute(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -34,14 +32,18 @@ class ExpandRedistribute(ExpandTransformation):
         out_repl = ""
         for i, s in enumerate(out_symbols):
             out_repl += f"int {s} = __state->{node.redistr}_self_dst[__idx * {len(out_buffer.shape)} + {i}];\n"
-        copy_args = ", ".join([
-            f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
-            for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
-        ])
+        copy_args = ", ".join(
+            [
+                f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
+                for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
+            ]
+        )
+
+        comm = resolve_comm(node, parent_state)
 
         code = f"""
             int myrank;
-            MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+            MPI_Comm_rank({comm}, &myrank);
             MPI_Request* req = new MPI_Request[__state->{node._redistr}_sends];
             MPI_Status* status = new MPI_Status[__state->{node._redistr}_sends];
             MPI_Status recv_status;
@@ -49,7 +51,7 @@ class ExpandRedistribute(ExpandTransformation):
                 for (auto __idx = 0; __idx < __state->{node._redistr}_sends; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I send to %d\\n", myrank, __state->{node._redistr}_dst_ranks[__idx]);
                     // fflush(stdout);
-                    MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &req[__idx]);
+                    MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, {comm}, &req[__idx]);
                 }}
             }}
             if (__state->{array_b.pgrid}_valid) {{
@@ -65,7 +67,7 @@ class ExpandRedistribute(ExpandTransformation):
                 for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
                     // fflush(stdout);
-                    MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &recv_status);
+                    MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, {comm}, &recv_status);
                 }}
             }}
             if (__state->{array_a.pgrid}_valid) {{
@@ -78,23 +80,28 @@ class ExpandRedistribute(ExpandTransformation):
 
         """
 
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class Redistribute(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandRedistribute,
     }
     default_implementation = "MPI"
 
-    redistr = properties.DataProperty(default='tmp')
+    redistr = properties.DataProperty(default="tmp", category="General")
 
-    def __init__(self, name, redistr='tmp', *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+    def __init__(self, name, redistr="tmp", *args, **kwargs):
+        super().__init__(name, *args, inputs=["_inp_buffer"], outputs=["_out_buffer"], **kwargs)
         self.redistr = redistr
 
     def validate(self, sdfg, state):

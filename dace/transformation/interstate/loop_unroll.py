@@ -1,36 +1,66 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop unroll transformation """
+"""Loop unroll transformation"""
 
 import ast
 import copy
-from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic, serialize, version
-from dace.properties import Property, make_properties
-from dace.sdfg import InterstateEdge, utils as sdutil
-from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace import data, dtypes, symbolic
+from dace import sdfg as sd
 from dace.frontend.python.astutils import ASTFindReplace
+from dace.ordered import OrderedSet
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, InterstateEdge
+from dace.sdfg import utils as sdutil
+from dace.sdfg.nodes import NestedSDFG
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+
+
+def loop_local_view_names(loop: LoopRegion, sdfg: SDFG) -> OrderedSet:
+    """Views only ``loop`` binds, so each unrolled copy can own one.
+
+    Codegen emits a View's binding once per allocation scope, so copies sharing a descriptor all use
+    the first one's binding. A view an outer block also names must keep its own.
+
+    :param loop: The loop about to be unrolled.
+    :param sdfg: The SDFG holding ``loop``.
+    :returns: The view names safe to uniquify per unrolled copy.
+    """
+    body = set(loop.states())
+    names = OrderedSet()
+    for state in body:
+        for node in state.data_nodes():
+            if isinstance(sdfg.arrays[node.data], data.View):
+                names.add(node.data)
+    for state in sdfg.states():
+        if state in body:
+            continue
+        for node in state.data_nodes():
+            names.discard(node.data)
+    return names
 
 
 @make_properties
 @xf.explicit_cf_compatible
 class LoopUnroll(xf.MultiStateTransformation):
-    """ Unrolls a for-loop into multiple individual control flow regions """
+    """Unrolls a for-loop into multiple individual control flow regions"""
 
     loop = xf.PatternNode(LoopRegion)
 
     count = Property(
         dtype=int,
         default=0,
-        desc='Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)',
+        category="Parameters",
+        desc="Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)",
     )
 
-    inline_iterations = Property(dtype=bool,
-                                 default=True,
-                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
+    inline_iterations = Property(
+        dtype=bool,
+        default=True,
+        category="Parameters",
+        desc="Whether or not to inline individual iterations' CFGs after unrolling",
+    )
 
     @classmethod
     def expressions(cls):
@@ -44,9 +74,15 @@ class LoopUnroll(xf.MultiStateTransformation):
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
             return False
+        # An unrolled iteration has no loop left for its break or continue to jump out of.
+        if loop_analysis.loop_jumps(self.loop):
+            return False
 
         # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(step, sdfg.constants):
+            return False
+        # A zero stride never advances the iterate, so there is no finite unrolling to emit.
+        if symbolic.evaluate(step, sdfg.constants) == 0:
             return False
         # If loop range diff is not constant-sized, fail
         if symbolic.issymbolic(end - start, sdfg.constants):
@@ -65,22 +101,47 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         try:
             stride = symbolic.evaluate(stride, sdfg.constants)
-            loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
-            is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
+            loop_diff = int(symbolic.evaluate(end - start, sdfg.constants))
         except TypeError:
-            raise TypeError('Loop difference and strides cannot be symbolic.')
+            raise TypeError("Loop difference and strides cannot be symbolic.")
+
+        # ``get_loop_end`` reports the INCLUSIVE last value of the iterate, so the iterate offsets are
+        # ``0, stride, 2*stride, ...`` up to and including ``loop_diff``. A Python ``range`` takes an
+        # EXCLUSIVE bound, which therefore has to sit one unit PAST ``loop_diff`` in the direction of
+        # travel: above it while ascending, but BELOW it while descending. Hardcoding ``+1`` here left a
+        # descending loop's bound two units short of where it belongs and silently truncated the last
+        # ``ceil(2 / |stride|)`` iterations (2 of them at stride -1, 1 at stride -2). A loop that runs
+        # zero times still yields an empty range under either sign: the bound then lies on the wrong
+        # side of the start for the given stride.
+        offsets = range(0, loop_diff + (1 if stride > 0 else -1), stride)
+
+        # A start-block loop has no in-edges, so the unrolled chain would inherit none and leave the
+        # parent with an ambiguous start. Prepend an empty ``pre -> loop`` start state so the loop is a
+        # normal interior block; ``pre`` stays the single start and is absorbed by the following fusion.
+        # Guard on the ITERATION COUNT, not on the sign of ``loop_diff``, which is negative for every
+        # descending loop that does have iterations; a zero-trip loop instead gets its own start state
+        # below.
+        if len(offsets) > 0 and graph.start_block is self.loop:
+            pre_state = graph.add_state(self.loop.label + "_unroll_pre", is_start_block=True)
+            graph.add_edge(pre_state, self.loop, sd.InterstateEdge())
 
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
-        unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
-        for i in range(0, loop_diff, stride):
+        local_views = loop_local_view_names(self.loop, sdfg)
+        unrolled_iterations: list[ControlFlowRegion | SDFGState] = []
+        for position, i in enumerate(offsets):
             # Instantiate loop contents as a new control flow region with iterate value.
+            # `position` (0, 1, 2, ...) is instantiate_loop_iteration's label-safety fallback,
+            # NOT `i` itself: for a decrementing loop (negative stride) `i` walks 0, -1, -2, ...
+            # and is just as unsafe to embed in a name as a symbolic iterate value would be.
             current_index = start + i
-            is_symbolic |= symbolic.issymbolic(current_index)
-            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
-                                                               str(i) if is_symbolic else None)
+            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, position)
+            if position > 0 and local_views:
+                # Copy 0 keeps the originals; later copies need one binding each.
+                repl = {v: sdfg.add_datadesc(v, sdfg.arrays[v].clone(), find_new_name=True) for v in local_views}
+                iteration_region.replace_dict(repl)
             iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
-            iteration_region.replace_meta_accesses({self.loop.loop_variable: str(current_index)})
+            iteration_region.replace_meta_accesses({self.loop.loop_variable: symbolic.symstr(current_index)})
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
@@ -103,18 +164,8 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert oe.dst in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # If we removed the region's start block, its replacement is the head of the
-        # unrolled chain (``unrolled_iterations[0]``), which carries the loop's former
-        # in-edges. Capture that head now: when the iteration regions are inlined below,
-        # the first one is spliced out and replaced by its own internal start block
-        # (added to ``graph`` as-is), which is then the chain head. (The previous logic
-        # promoted the loop's *successor* instead, severing the chain whenever the loop
-        # preceded sibling blocks.)
-        was_start_block = graph.start_block == self.loop
-        new_start_block = None
-        if was_start_block:
-            head = unrolled_iterations[0]
-            new_start_block = head.start_block if (self.inline_iterations and not isinstance(head, SDFGState)) else head
+        # The loop is never the start block here (a start-block loop got an empty ``pre`` predecessor
+        # above), so removing it cannot orphan the parent's start -- no start-block re-designation needed.
         graph.remove_node(self.loop)
 
         if self.inline_iterations:
@@ -124,34 +175,61 @@ class LoopUnroll(xf.MultiStateTransformation):
                     continue
                 it.inline()
 
-        # Re-designate the start block explicitly so the region's start stays
-        # unambiguous (inlining the former start region leaves the previous start-block
-        # index stale).
-        if was_start_block and new_start_block in graph.nodes():
-            graph.start_block = graph.node_id(new_start_block)
-
-    def instantiate_loop_iteration(self,
-                                   graph: ControlFlowRegion,
-                                   loop: LoopRegion,
-                                   value: symbolic.SymbolicType,
-                                   label_suffix: Optional[str] = None) -> ControlFlowRegion:
-        it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
-        iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
-
-        graph.add_node(iteration_region)
+    def instantiate_loop_iteration(
+        self,
+        graph: ControlFlowRegion,
+        loop: LoopRegion,
+        value: symbolic.SymbolicType,
+        index: int,
+        label_suffix: str | None = None,
+    ) -> ControlFlowRegion:
+        it_label = (
+            loop.label
+            + "_"
+            + loop.loop_variable
+            + (label_suffix if label_suffix is not None else symbolic.symstr(value))
+        )
+        if not dtypes.validate_name(it_label):
+            # A concrete (non-symbolic) iterate value can still render into an invalid
+            # identifier -- e.g. a negative int's ``str()`` contains a bare ``-``
+            # (confirmed on a real CloudSC loop counting down: label
+            # ``for_1260_jn-1`` rejected by validate_name). The enumeration index is
+            # always a small non-negative int, always identifier-safe; fall back to it
+            # rather than trying to enumerate every character ``str(value)`` could ever
+            # produce.
+            it_label = loop.label + "_" + loop.loop_variable + str(index)
+        # Assembled DETACHED and attached to ``graph`` once, at the end: adding a region to an attached
+        # region rebuilds the whole tree's ``cfg_list``, once per region-typed body block. A detached
+        # region rebuilds only its own subtree, and the final attach rebuilds the tree once.
+        iteration_region = ControlFlowRegion(it_label, graph.sdfg)
 
         block_map = {}
 
         for block in loop.nodes():
-            # Using to/from JSON is faster for copying blocks than deep copying.
-            new_block = serialize.from_json(serialize.to_json(block),
-                                            context={
-                                                'sdfg': graph.sdfg,
-                                                'version': version.__version__,
-                                            })
+            # A deepcopy copies a block ~9x faster than a to/from JSON round-trip (measured on a
+            # CloudSC loop body: 0.38ms vs 3.37ms). ``ControlFlowBlock.__deepcopy__`` detaches the
+            # parent SDFG on the whole subtree, where the old JSON path carried it in via the
+            # deserialization context. Restore the two pointers deepcopy drops, before
+            # ``replace_dict`` dereferences them:
+            #  * every control-flow block's ``.sdfg``. ``all_control_flow_blocks`` (non-recursive)
+            #    reaches nested regions at any depth but stops at nested-SDFG boundaries, whose
+            #    states must keep pointing at their own SDFG.
+            #  * each DIRECT nested SDFG's ``parent_sdfg``: the block's own memo had no reference to
+            #    the outer SDFG, so ``SDFG.__deepcopy__`` nulled it (``parent`` and
+            #    ``parent_nsdfg_node`` survived via the memo). Deeper nested SDFGs, whose parents
+            #    were inside the memo, keep their own SDFG. Mirrors ``SDFGState.add_node``.
+            new_block = copy.deepcopy(block)
+            cfg_blocks = [new_block]
+            if isinstance(new_block, AbstractControlFlowRegion):
+                cfg_blocks.extend(new_block.all_control_flow_blocks())
+            for cfg_block in cfg_blocks:
+                cfg_block.sdfg = graph.sdfg
+                if isinstance(cfg_block, SDFGState):
+                    for nsdfg_node in cfg_block.nodes():
+                        if isinstance(nsdfg_node, NestedSDFG):
+                            nsdfg_node.sdfg.parent_sdfg = graph.sdfg
             assert block not in block_map
             block_map[block] = new_block
-            # The JSON copy is created with SDFG context, so replacement can run before insertion.
             new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
@@ -162,6 +240,11 @@ class LoopUnroll(xf.MultiStateTransformation):
             data = copy.deepcopy(edge.data)
             iteration_region.add_edge(src, dst, data)
 
+        # A raw str() on a symbolic expression can misrender it (e.g. an operator-function like
+        # ``__right_shift`` prints as its sympy class name, not the operator) -- symstr renders
+        # the DaCe-printable form, so the substituted code stays parseable either way.
+        value_str = symbolic.symstr(value)
+
         # Replace occurences of the loop variables on all interstate edges
         for edge, parent_graph in iteration_region.all_edges_recursive():  # Recursion needed for nested SDFGs
             if isinstance(edge.data, InterstateEdge):
@@ -170,25 +253,31 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert src in parent_graph.nodes()
                 assert dst in parent_graph.nodes()
                 if not edge.data.is_unconditional():
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(edge.data.condition)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(edge.data.condition)
 
                 new_assignments = dict()
                 for k, v in edge.data.assignments.items():
                     k_ast = ast.parse(k)
                     v_ast = ast.parse(v)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(k_ast)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(v_ast)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(k_ast)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(v_ast)
                     new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
                 edge.data.assignments = new_assignments
 
         for node in iteration_region.all_nodes_recursive():
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
-                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
-                        loop.loop_variable: str(value)
-                    }).visit(node.symbol_mapping[loop.loop_variable])
+                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({loop.loop_variable: value_str}).visit(
+                        node.symbol_mapping[loop.loop_variable]
+                    )
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
 
-        graph.reset_cfg_list()
+        # ``ensure_unique_name``: the label is derived from the loop label + iterate value, which is
+        # NOT unique when several sibling loops share a label (e.g. many deepcopies of one inner loop
+        # left by unrolling an enclosing loop). Without this, every such loop emits the same
+        # ``<label>_<var><value>`` iteration regions into one parent -- a "multiple blocks with the
+        # same name" validation failure. On inline the unique region label prefixes its promoted
+        # children too, so the fix carries through both the inline and no-inline paths.
+        graph.add_node(iteration_region, ensure_unique_name=True)
         return iteration_region

@@ -1,10 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace import transformation as dace_transformation, properties as dace_properties
-from dace.sdfg import nodes as dace_nodes
-from typing import Any, Union
+from typing import Any
 
-N = dace.symbol('N')
+import dace
+from dace import properties as dace_properties
+from dace import transformation as dace_transformation
+from dace.sdfg import nodes as dace_nodes
+
+N = dace.symbol("N")
 
 
 @dace_properties.make_properties
@@ -20,7 +22,7 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
 
     def can_be_applied(
         self,
-        graph: Union[dace.SDFGState, dace.SDFG],
+        graph: dace.SDFGState | dace.SDFG,
         expr_index: int,
         sdfg: dace.SDFG,
         permissive: bool = False,
@@ -30,12 +32,13 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
 
     def apply(
         self,
-        graph: Union[dace.SDFGState, dace.SDFG],
+        graph: dace.SDFGState | dace.SDFG,
         sdfg: dace.SDFG,
     ) -> None:
         my_tasklet: dace_nodes.Tasklet = self.tasklet
-        my_tasklet.code = dace_properties.CodeBlock(my_tasklet.code.as_string.replace('1.0', '10.0'),
-                                                    language=my_tasklet.code.language)
+        my_tasklet.code = dace_properties.CodeBlock(
+            my_tasklet.code.as_string.replace("1.0", "10.0"), language=my_tasklet.code.language
+        )
 
 
 def sdfg_with_two_simple_maps():
@@ -98,9 +101,9 @@ def test_apply_transformations_once():
 
 def test_apply_transformations_once_no_order_by_transformation():
     sdfg = sdfg_with_two_simple_maps()
-    count = sdfg.apply_transformations_once_everywhere(DummyTransformation,
-                                                       validate=True,
-                                                       order_by_transformation=False)
+    count = sdfg.apply_transformations_once_everywhere(
+        DummyTransformation, validate=True, order_by_transformation=False
+    )
     assert count == 2
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace_nodes.Tasklet):

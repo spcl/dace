@@ -4,23 +4,137 @@ Various analyses concerning LopoRegions, and utility functions to get informatio
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, Tuple
-from dace.frontend.python import astutils
+from typing import TYPE_CHECKING, Optional
 
 import sympy
 
 from dace import symbolic
-from dace.sdfg.state import LoopRegion
+from dace.frontend.python import astutils
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+)
+
+if TYPE_CHECKING:
+    # Import-time only: ``dace.sdfg.state`` reaches back into this module (LoopRegion.new_symbols does
+    # the import inside the function body, "avoid cyclic import"), so importing the SDFG class here at
+    # module scope would close that cycle from the other side.
+    from dace.properties import CodeBlock
+    from dace.sdfg.sdfg import SDFG
 
 
-def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def symbol_use_sites(sdfg: "SDFG") -> tuple[dict[str, set[int]], set[str]]:
+    """One walk of ``sdfg`` indexing where each symbol is used: name -> ``id()`` of every block and
+    inter-state edge that references it, plus the set of names any data descriptor's shape or strides
+    mention (anywhere in the SDFG tree, since a nested descriptor is materialised just as eagerly).
+
+    Answering "is this symbol used outside that loop?" costs a full traversal, so a caller asking it per
+    loop pays it per loop. Build the index once and answer every loop from it.
+
+    Each block is enumerated individually, hence a REGION is asked only for the symbols it uses on
+    itself (``with_contents=False`` -- its condition / init / update); its contents arrive as their own
+    blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)`` returns
+    the empty set, which would silently hide every real use.
+    """
+    uses: dict[str, set[int]] = {}
+    for block in sdfg.all_control_flow_blocks():
+        with_contents = not isinstance(block, AbstractControlFlowRegion)
+        for name in block.used_symbols(all_symbols=True, with_contents=with_contents):
+            uses.setdefault(name, set()).add(id(block))
+    for edge in sdfg.all_interstate_edges():
+        for name in set(edge.data.free_symbols) | set(edge.data.assignments):
+            uses.setdefault(name, set()).add(id(edge))
+    descriptor_symbols: set[str] = set()
+    for nested in sdfg.all_sdfgs_recursive():
+        for desc in nested.arrays.values():
+            descriptor_symbols.update(str(s) for s in desc.free_symbols)
+    return uses, descriptor_symbols
+
+
+def symbol_used_outside(
+    name: str, inside_sites: set[int], use_sites: dict[str, set[int]], descriptor_symbols: set[str]
+) -> bool:
+    """Whether ``name`` is read or written at any site not in ``inside_sites``.
+
+    ``inside_sites`` holds the ``id()`` of every block and inter-state edge that counts as "inside";
+    ``use_sites`` / ``descriptor_symbols`` come from :func:`symbol_use_sites`. A name a data descriptor
+    mentions is used outside by definition -- the descriptor is materialised wherever the array is.
+    """
+    if name in descriptor_symbols:
+        return True
+    return any(site not in inside_sites for site in use_sites.get(name, ()))
+
+
+def counter_used_outside_loop(
+    name: str,
+    loop: LoopRegion,
+    sdfg: "SDFG",
+    use_sites: dict[str, set[int]] | None = None,
+    descriptor_symbols: set[str] | None = None,
+) -> bool:
+    """Whether ``name`` is read or written anywhere outside ``loop``.
+
+    A LoopRegion counter is NOT scoped to its loop the way a map parameter is scoped to its map: DaCe
+    leaks its final value to subsequent blocks, and the default ``eager`` declaration placement hoists
+    its ``int64_t i;`` to the top of the generated function. So any question of the form "may I treat
+    this counter as loop-local?" -- scoping its declaration into the ``for``-init clause, dropping its
+    value at a nesting boundary -- has to ask this, not assume it.
+
+    Pass ``use_sites`` / ``descriptor_symbols`` from :func:`symbol_use_sites` when asking about several
+    loops of the same SDFG; omitted, the index is built here for this one query.
+    """
+    if use_sites is None or descriptor_symbols is None:
+        use_sites, descriptor_symbols = symbol_use_sites(sdfg)
+    inside = {id(loop)}
+    # Another loop that binds the same counter outright reads its own value, not this loop's
+    for other in [loop] + [b for b in sdfg.all_control_flow_blocks() if b is not loop and rebinds_counter(b, name)]:
+        inside.add(id(other))
+        inside.update(id(block) for block in other.all_control_flow_blocks())
+        inside.update(id(edge) for edge in other.all_interstate_edges())
+    return symbol_used_outside(name, inside, use_sites, descriptor_symbols)
+
+
+def rebinds_counter(block: ControlFlowBlock, name: str) -> bool:
+    """Whether ``block`` is a loop over ``name`` whose init sets it from scratch (``i = 0``, not ``i = i + 1``)."""
+    if not isinstance(block, LoopRegion) or block.loop_variable != name or not block.init_statement:
+        return False
+    init = get_init_assignment(block)
+    return init is not None and name not in symbolic.free_symbols_and_functions(init)
+
+
+def loop_jumps(loop: LoopRegion) -> list[ControlFlowBlock]:
+    """The ``break`` and ``continue`` blocks that target ``loop``.
+
+    A jump targets its innermost enclosing loop, so the walk descends through conditional branches
+    and plain regions but not into nested loops.
+    """
+    jumps: list[ControlFlowBlock] = []
+    stack = list(loop.nodes())
+    while stack:
+        block = stack.pop()
+        if isinstance(block, (BreakBlock, ContinueBlock)):
+            jumps.append(block)
+        elif isinstance(block, ConditionalBlock):
+            for condition, branch in block.branches:
+                stack.extend(branch.nodes())
+        elif isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+            stack.extend(block.nodes())
+    return jumps
+
+
+def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
-    if loop.loop_variable is None or loop.loop_variable == '':
+    if loop.loop_variable is None or loop.loop_variable == "":
         return None
-    end: Optional[symbolic.SymbolicType] = None
-    a = sympy.Wild('a')
+    end: symbolic.SymbolicType | None = None
+    a = sympy.Wild("a")
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
     match = condition.match(itersym < a)
@@ -41,63 +155,108 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return end
 
 
-def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def assignment_text(stmt: Optional["CodeBlock"], variable: str | None) -> str | None:
+    """
+    The right-hand side text a loop's init or update statement assigns to ``variable``.
+
+    :param stmt: The statement, e.g. ``loop.init_statement``.
+    :param variable: The assigned name, e.g. ``loop.loop_variable``.
+    :return: ``None`` without a statement, when a name is assigned more than once, or when ``variable`` is not.
+    """
+    if stmt is None:
+        return None
+    assignments: dict[str, str] = {}
+    for code in stmt.code if isinstance(stmt.code, list) else [stmt.code]:
+        visitor = astutils.FindAssignment()
+        visitor.visit(code)
+        if visitor.multiple:
+            return None
+        for assign in visitor.assignments:
+            if assign in assignments:
+                return None
+            assignments[assign] = visitor.assignments[assign]
+    return assignments.get(variable)
+
+
+def get_init_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's init statement to identify the exact init assignment expression.
     """
-    init_stmt = loop.init_statement
-    if init_stmt is None:
-        return None
-
-    init_codes_list = init_stmt.code if isinstance(init_stmt.code, list) else [init_stmt.code]
-    assignments: Dict[str, str] = {}
-    for code in init_codes_list:
-        visitor = astutils.FindAssignment()
-        visitor.visit(code)
-        if visitor.multiple:
-            return None
-        for assign in visitor.assignments:
-            if assign in assignments:
-                return None
-            assignments[assign] = visitor.assignments[assign]
-
-    if loop.loop_variable in assignments:
-        return symbolic.pystr_to_symbolic(assignments[loop.loop_variable])
-
-    return None
+    text = assignment_text(loop.init_statement, loop.loop_variable)
+    return None if text is None else symbolic.pystr_to_symbolic(text)
 
 
-def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_update_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's update statement to identify the exact update assignment expression.
     """
-    update_stmt = loop.update_statement
-    if update_stmt is None:
-        return None
-
-    update_codes_list = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
-    assignments: Dict[str, str] = {}
-    for code in update_codes_list:
-        visitor = astutils.FindAssignment()
-        visitor.visit(code)
-        if visitor.multiple:
-            return None
-        for assign in visitor.assignments:
-            if assign in assignments:
-                return None
-            assignments[assign] = visitor.assignments[assign]
-
-    if loop.loop_variable in assignments:
-        return symbolic.pystr_to_symbolic(assignments[loop.loop_variable])
-
-    return None
+    text = assignment_text(loop.update_statement, loop.loop_variable)
+    return None if text is None else symbolic.pystr_to_symbolic(text)
 
 
-def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_loop_stride(loop: LoopRegion) -> symbolic.SymbolicType | None:
     update_assignment = get_update_assignment(loop)
     if update_assignment:
         return update_assignment - symbolic.pystr_to_symbolic(loop.loop_variable)
     return None
+
+
+def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
+    """Prove ``a <= b`` under ``facts`` soundly, returning ``False`` when it cannot be decided (never a guess)."""
+    return symbolic.provably_le(sympy.sympify(a), sympy.sympify(b), facts)
+
+
+def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
+    """Whether ``loop`` provably runs at most once (zero or one iterations).
+
+    Such a loop carries no cross-iteration dependence by construction, so it is trivially DOALL --
+    a ``LoopToMap`` can map it without any dependence analysis. Restricted to the unit ascending
+    stride so the inclusive trip count is exactly ``end - start + 1``; the loop runs at most once iff
+    ``end <= start``. Conservative: returns ``False`` whenever the bound cannot be proven.
+    """
+    start = get_init_assignment(loop)
+    end = get_loop_end(loop)  # inclusive
+    step = get_loop_stride(loop)
+    # A loop not yet placed in an SDFG has no facts beyond its own bounds
+    facts = loop.sdfg.facts() if loop.sdfg is not None else symbolic.Facts.none()
+    if start is None or end is None or step is None or symbolic.simplify(step, facts) != 1:
+        return False
+    return _provably_le(symbolic.simplify(end, facts), symbolic.simplify(start, facts), facts)
+
+
+def loop_provably_at_least_one_iteration(loop: LoopRegion) -> bool:
+    """Whether ``loop`` provably runs at least one iteration.
+
+    Needed by any must-def reasoning that wants to carry a write out of a loop body: a write
+    inside a loop that may run zero times defines nothing after the loop. The mirror image of
+    :func:`loop_provably_at_most_one_iteration`, and conservative in the same direction --
+    ``False`` whenever the entry test cannot be decided.
+
+    Decided under the facts of the loop's SDFG: an extent known nonnegative gives ``N >= 0``, not ``N >= 1``,
+    so the ubiquitous ``for i in range(N)`` is correctly REFUSED; only a concrete (or otherwise
+    provably nonempty) bound is accepted.
+
+    :param loop: The loop region to test.
+    :returns: ``True`` only if at least one iteration is proven to execute.
+    """
+    # An inverted (do-while) loop runs its body before the condition is ever observed, so the
+    # first iteration is unconditional whatever the bound says.
+    if loop.inverted:
+        return True
+    start = get_init_assignment(loop)
+    end = get_loop_end(loop)  # inclusive bound of the entry condition
+    step = get_loop_stride(loop)
+    if start is None or end is None or step is None:
+        return False
+    facts = loop.sdfg.facts()
+    step = symbolic.simplify(step, facts)
+    # The direction of the entry test follows the sign of the stride, so an unknown or zero stride
+    # decides nothing.
+    if not step.is_number or step == 0:
+        return False
+    start = symbolic.simplify(start, facts)
+    end = symbolic.simplify(end, facts)
+    return _provably_le(start, end, facts) if step > 0 else _provably_le(end, start, facts)
 
 
 @dataclass(frozen=True)
@@ -116,21 +275,22 @@ class InductionVariable:
     The ``basis``, ``scale`` and ``offset`` fields are retained for diagnostic
     inspection but callers should generally rely on ``start`` / ``step``.
     """
+
     name: str
     start: symbolic.SymbolicType
     step: symbolic.SymbolicType
     loop: LoopRegion
     kind: str  # 'basic' | 'derived'
-    basis: Optional['InductionVariable'] = None
-    scale: Optional[symbolic.SymbolicType] = None
-    offset: Optional[symbolic.SymbolicType] = None
+    basis: Optional["InductionVariable"] = None
+    scale: symbolic.SymbolicType | None = None
+    offset: symbolic.SymbolicType | None = None
 
 
 def affine_in_iv(
     expr: symbolic.SymbolicType,
-    ivs: Dict[str, 'InductionVariable'],
-    invariant_syms: Optional[Set[str]] = None,
-) -> Optional[Tuple[Optional[str], symbolic.SymbolicType, symbolic.SymbolicType]]:
+    ivs: dict[str, "InductionVariable"],
+    invariant_syms: set[str] | None = None,
+) -> tuple[str | None, symbolic.SymbolicType, symbolic.SymbolicType] | None:
     """
     If ``expr`` equals ``scale * iv + offset`` for some iv in ``ivs`` with
     loop-invariant ``scale`` and ``offset``, return a triple
@@ -148,7 +308,7 @@ def affine_in_iv(
     """
     if expr is None:
         return None
-    e = sympy.sympify(expr)
+    e = symbolic.pystr_to_symbolic(expr)
     iv_names = set(ivs)
     # DaCe uses its own ``symbolic.symbol`` subclass; sympy treats it as a
     # distinct Symbol from ``sympy.Symbol(name)``, so match by name string.
@@ -159,25 +319,63 @@ def affine_in_iv(
     if not referenced:
         if invariant_syms is not None and not (free <= invariant_syms):
             return None
-        return (None, sympy.Integer(0), e)
+        return (None, symbolic.pystr_to_symbolic(0), e)
 
     for iv_name in referenced:
         iv_sym = sym_by_name[iv_name]
+        # ``sympy.simplify`` is a sledgehammer for deciding this: reaching it through a comparison
+        # sends it into ``equals``/``is_constant``, which samples numerically via mpmath PSLQ and
+        # dominates the whole IV pass. Distribution alone settles almost every affine split, so
+        # ``expand`` screens first and ``simplify`` is only consulted when the cheap form still
+        # leaves the IV in the scale or the remainder.
+        #
+        # The screen decides only WHETHER to fold. What actually gets folded is always recomputed
+        # with ``simplify`` below, because ``scale``/``offset`` are substituted into the SDFG
+        # verbatim -- an expanded-but-unsimplified form would be equal in value yet different in
+        # text, changing emitted subsets for every fold this pass performs.
+        scale = offset = None
+        screened_by_expand = False
+        # Differentiate once; both normalize forms and the screened_by_expand recompute reuse it.
         try:
-            scale = sympy.simplify(sympy.diff(e, iv_sym))
+            raw_diff = sympy.diff(e, iv_sym)
         except Exception:
             continue
+        for normalize in (sympy.expand, symbolic.simplify):
+            try:
+                cand_scale = normalize(raw_diff)
+                cand_offset = normalize(e - cand_scale * iv_sym)
+            except Exception:
+                break
+            cand_scale_free = {str(s) for s in cand_scale.free_symbols}
+            cand_offset_free = {str(s) for s in cand_offset.free_symbols}
+            if cand_scale_free & iv_names or iv_name in cand_offset_free or cand_offset_free & iv_names:
+                # An IV the expression mentions inside a function application -- an array subscript
+                # ``ztp1[i - 1, j - 1]``, an ``int_floor`` -- differentiates to an UNEVALUATED
+                # ``Subs``/``Derivative`` node, which is sympy's way of saying it has no derivative
+                # to give. ``simplify`` cannot turn that into an IV-free scale (its ``doit`` only
+                # rewrites ``Subs(Derivative(f(x), x), x, a)`` to ``Derivative(f(a), a)``, still
+                # naming the IV), so the refusal above is already final and the second round is dead
+                # work on the most expensive input there is. CLOUDSC: 615 of these reach the round
+                # and not one ever produced a split ``expand`` had not already refused.
+                if normalize is sympy.expand and (
+                    cand_scale.has(sympy.Subs, sympy.Derivative) or cand_offset.has(sympy.Subs, sympy.Derivative)
+                ):
+                    break
+                continue
+            scale, offset = cand_scale, cand_offset
+            screened_by_expand = normalize is sympy.expand
+            break
+        if scale is None:
+            continue
+        if screened_by_expand:
+            try:
+                scale = symbolic.simplify(raw_diff)
+                offset = symbolic.simplify(e - scale * iv_sym)
+            except Exception:
+                continue
         scale_free = {str(s) for s in scale.free_symbols}
-        if scale_free & iv_names:
-            continue
-        try:
-            offset = sympy.simplify(e - scale * iv_sym)
-        except Exception:
-            continue
         offset_free = {str(s) for s in offset.free_symbols}
-        if iv_name in offset_free:
-            continue
-        if offset_free & iv_names:
+        if scale_free & iv_names or iv_name in offset_free or offset_free & iv_names:
             continue
         if invariant_syms is not None:
             if not ((scale_free | offset_free) <= invariant_syms):
@@ -187,7 +385,7 @@ def affine_in_iv(
     return None
 
 
-def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> None:
+def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: dict[str, str]) -> None:
     """
     Populate ``pending`` with single-assignment Python tasklets in the loop's
     start state that write to a scalar data descriptor. The key is the data
@@ -195,9 +393,9 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
     understand this refers to a data descriptor, not a DaCe symbol.
     """
     # Local imports to avoid import cycles at module load.
+    from dace import dtypes
     from dace.sdfg import nodes
     from dace.sdfg.state import SDFGState
-    from dace import dtypes
 
     try:
         start = loop.start_block
@@ -226,13 +424,13 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
         out_data = oe.dst.data
         # Must be the only writer to that data anywhere in the loop.
         writers = 0
-        for state in loop.all_states():
+        for state in loop.states():
             for nn in state.data_nodes():
                 if nn.data == out_data and state.in_degree(nn) > 0:
                     writers += 1
         if writers != 1:
             continue
-        code = n.code.code if hasattr(n.code, 'code') else n.code
+        code = n.code.code if hasattr(n.code, "code") else n.code
         if not isinstance(code, list) or len(code) != 1:
             continue
         stmt = code[0]
@@ -244,7 +442,7 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
         pending.setdefault(out_data, rhs_str)
 
 
-def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]:
+def detect_induction_variables(loop: LoopRegion) -> dict[str, InductionVariable]:
     """
     Classify induction variables of ``loop``: the loop variable itself as a
     basic IV, plus any symbol assigned on an interstate edge within the loop,
@@ -260,14 +458,14 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
     exits. Callers that need trip-count accuracy should combine this with
     ``get_loop_end``.
     """
-    ivs: Dict[str, InductionVariable] = {}
+    ivs: dict[str, InductionVariable] = {}
     if not loop.loop_variable:
         return ivs
     start = get_init_assignment(loop)
     step = get_loop_stride(loop)
     if start is None or step is None:
         return ivs
-    if loop.loop_variable in {str(s) for s in sympy.sympify(step).free_symbols}:
+    if loop.loop_variable in {str(s) for s in symbolic.pystr_to_symbolic(step).free_symbols}:
         return ivs
 
     ivs[loop.loop_variable] = InductionVariable(
@@ -275,12 +473,12 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
         start=start,
         step=step,
         loop=loop,
-        kind='basic',
+        kind="basic",
     )
 
     # Collect candidate derived IV assignments.
-    pending: Dict[str, str] = {}
-    rejected: Set[str] = set()
+    pending: dict[str, str] = {}
+    rejected: set[str] = set()
     for e in loop.all_interstate_edges():
         for name, rhs in e.data.assignments.items():
             if name == loop.loop_variable:
@@ -308,7 +506,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
                 continue
             # Reject self-referential assignments like ``j = j + i``: the RHS
             # must not mention the name being classified.
-            if name in {str(s) for s in sympy.sympify(rhs_sym).free_symbols}:
+            if name in {str(s) for s in symbolic.pystr_to_symbolic(rhs_sym).free_symbols}:
                 pending.pop(name)
                 continue
             result = affine_in_iv(rhs_sym, ivs)
@@ -326,7 +524,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
                 start=scale * basis_iv.start + offset,
                 step=scale * basis_iv.step,
                 loop=loop,
-                kind='derived',
+                kind="derived",
                 basis=basis_iv,
                 scale=scale,
                 offset=offset,

@@ -1,19 +1,21 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
 and class AccessStack which which corresponds to the stack used to compute the stack distance.
-Further, provides a curve fitting method and plotting function. """
-from __future__ import annotations
+Further, provides a curve fitting method and plotting function."""
+
 import warnings
-from dace.data import Array
-import sympy as sp
-from collections import deque
-from scipy.optimize import curve_fit
+
 import numpy as np
-from dace import symbol
+import sympy as sp
+from scipy.optimize import curve_fit
+
+from dace import symbolic
+from dace.data import Array
+from dace.symbolic import pystr_to_symbolic, symbol
 
 
 class CacheLineTracker:
-    """ A CacheLineTracker maps data container accesses to the corresponding accessed cache line. """
+    """A CacheLineTracker maps data container accesses to the corresponding accessed cache line."""
 
     def __init__(self, L) -> None:
         self.array_info = {}
@@ -27,37 +29,31 @@ class CacheLineTracker:
             self.array_info[name] = a
             self.start_lines[name] = self.next_free_line
             # increase next_free_line
-            self.next_free_line += (a.total_size.subs(mapping) * a.dtype.bytes + self.L - 1) // self.L  # ceil division
+            self.next_free_line += symbolic.int_ceil(a.total_size_in_bytes.subs(mapping), self.L)
 
     def cache_line_id(self, name: str, access: [int], mapping):
         arr = self.array_info[name]
         one_d_index = 0
         for dim in range(len(access)):
             i = access[dim]
-            one_d_index += (i + sp.sympify(arr.offset[dim]).subs(mapping)) * sp.sympify(arr.strides[dim]).subs(mapping)
+            one_d_index += (i + pystr_to_symbolic(arr.offset[dim]).subs(mapping)) * pystr_to_symbolic(
+                arr.strides[dim]
+            ).subs(mapping)
 
         # divide by L to get the cache line id
-        return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
-
-    def copy(self):
-        new_clt = CacheLineTracker(self.L)
-        new_clt.array_info = dict(self.array_info)
-        new_clt.start_lines = dict(self.start_lines)
-        new_clt.next_free_line = self.next_free_line
-        return new_clt
+        return self.start_lines[name] + symbolic.int_floor(one_d_index * arr.dtype.bytes, self.L)
 
 
 class Node:
-
     def __init__(self, val: int, n=None) -> None:
         self.v = val
         self.next = n
 
 
 class AccessStack:
-    """ A stack of cache line ids. For each memory access, we search the corresponding cache line id
+    """A stack of cache line ids. For each memory access, we search the corresponding cache line id
     in the stack, report its distance and move it to the top of the stack. If the id was not found,
-    we report a distance of -1. """
+    we report a distance of -1."""
 
     def __init__(self, C) -> None:
         self.top = None
@@ -96,41 +92,7 @@ class AccessStack:
 
         return distance
 
-    def in_cache_as_list(self):
-        """
-        Returns a list of cache ids currently in cache. Index 0 is the most recently used.
-        """
-        res = deque()
-        curr = self.top
-        dist = 0
-        while curr is not None and dist < self.C:
-            res.append(curr.v)
-            curr = curr.next
-            dist += 1
-        return res
-
-    def debug_print(self):
-        # prints the whole stack
-        print('\n')
-        curr = self.top
-        while curr is not None:
-            print(curr.v, end=', ')
-            curr = curr.next
-        print('\n')
-
-    def copy(self):
-        new_stack = AccessStack(self.C)
-        cache_content = self.in_cache_as_list()
-        if len(cache_content) > 0:
-            new_top_value = cache_content.popleft()
-            new_stack.top = Node(new_top_value)
-            curr = new_stack.top
-            for x in cache_content:
-                curr.next = Node(x)
-                curr = curr.next
-        return new_stack
-
-    def replace_self(self, other: AccessStack):
+    def replace_self(self, other: "AccessStack"):
         self.top = other.top
         self.num_calls = other.num_calls
         self.lengh = other.length
@@ -138,15 +100,14 @@ class AccessStack:
 
 
 def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, element, name):
-    plt = None
+    # matplotlib is an optional dependency, imported lazily so the rest of the module works without it.
     try:
-        import matplotlib.pyplot as plt_import
-        plt = plt_import
+        import matplotlib.pyplot as plt
     except ModuleNotFoundError:
-        pass
+        plt = None
 
     if plt is None:
-        warnings.warn('Plotting only possible with matplotlib installed')
+        warnings.warn("Plotting only possible with matplotlib installed")
         return
 
     work_map = work_map[element]
@@ -157,10 +118,8 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
     a = np.linspace(1, max(x) + 5, max(x) * 4)
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-    ax[0].scatter(x, cache_misses, label=f'C={C*L}, L={L}')
-    b = []
-    for curr in a:
-        b.append(sp.N(sp.sympify(sympy_f).subs(symbol_name, curr)))
+    ax[0].scatter(x, cache_misses, label=f"C={C * L}, L={L}")
+    b = [sp.N(pystr_to_symbolic(sympy_f).subs(symbol_name, curr)) for curr in a]
     ax[0].plot(a, b)
 
     c = []
@@ -173,23 +132,23 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
             c.append(work_map[0].subs(symbol_name, curr) / (cache_misses[i] * L))
     c = np.array(c).astype(np.float64)
 
-    ax[1].scatter(x, c, label=f'C={C*L}, L={L}')
+    ax[1].scatter(x, c, label=f"C={C * L}, L={L}")
     b = []
     for curr in a:
-        b.append(sp.N(sp.sympify(op_in_map).subs(symbol_name, curr)))
+        b.append(sp.N(pystr_to_symbolic(op_in_map).subs(symbol_name, curr)))
     ax[1].plot(a, b)
 
     ax[0].set_ylim(bottom=0, top=max(cache_misses) + max(cache_misses) / 10)
     ax[0].set_xlim(left=0, right=max(x) + 1)
     ax[0].set_xlabel(symbol_name)
-    ax[0].set_ylabel('Number of Cache Misses')
+    ax[0].set_ylabel("Number of Cache Misses")
     ax[0].set_title(name)
     ax[0].legend(fancybox=True, framealpha=0.5)
 
     ax[1].set_ylim(bottom=0, top=max(c) + max(c) / 10)
     ax[1].set_xlim(left=0, right=max(x) + 1)
     ax[1].set_xlabel(symbol_name)
-    ax[1].set_ylabel('Operational Intensity')
+    ax[1].set_ylabel("Operational Intensity")
     ax[1].set_title(name)
 
     fig.show()
@@ -211,7 +170,7 @@ def r_squared(pred, y):
 
 
 def find_best_model(x, y, I, J, symbol_name):
-    """ Find the best model out of all combinations of (i, j) from I and J via leave-one-out cross validation. """
+    """Find the best model out of all combinations of (i, j) from I and J via leave-one-out cross validation."""
     min_error = None
     for i in I:
         for j in J:
@@ -263,8 +222,9 @@ def find_best_model(x, y, I, J, symbol_name):
     if best_i_j[0] == 0 and best_i_j[1] == 0:
         sympy_f = final_p[0]
     else:
-        sympy_f = sp.simplify(final_p[0] * symbol(symbol_name)**best_i_j[0] *
-                              sp.log(symbol(symbol_name), 2)**best_i_j[1] + final_p[1])
+        sympy_f = sp.simplify(
+            final_p[0] * symbol(symbol_name) ** best_i_j[0] * sp.log(symbol(symbol_name), 2) ** best_i_j[1] + final_p[1]
+        )
     # compute r^2
     r_s = r_squared(final_f(x), y)
     return final_f, sympy_f, r_s

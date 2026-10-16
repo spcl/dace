@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+
 import dace
 from dace.sdfg.state import NamedRegion
 from dace.transformation.passes.simplify import SimplifyPass
@@ -18,7 +19,7 @@ def test_named_region_no_name():
     SimplifyPass(no_inline_function_call_regions=True, no_inline_named_regions=True).apply_pass(sdfg, {})
     named_region = sdfg.nodes()[0]
     assert isinstance(named_region, NamedRegion)
-    A = np.zeros(shape=(1, ))
+    A = np.zeros(shape=(1,))
     assert sdfg(A) == 20
 
 

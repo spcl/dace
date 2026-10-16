@@ -10,8 +10,9 @@ name and another parses it differently:
 - ``TileNameScheme`` — K-dim tile-transient names (``<base>_tile``, ``<base>_tile_idx``,
   ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
 """
+
 import re
-from typing import Iterable, Iterator, List, Optional, Tuple
+from collections.abc import Iterable, Iterator
 
 import dace
 from dace.sdfg import SDFG
@@ -33,21 +34,18 @@ class LaneIdScheme:
 
     :cvar LEGACY_SUFFIX: Legacy 1D infix ``_laneid_``. Reserved for substring searches in callers
         pre-dating Option B; new code should use :meth:`is_lane_fanned` or :meth:`parse`.
-    :cvar SUFFIX: Alias of :attr:`LEGACY_SUFFIX` (back-compat for callers reading
-        ``LaneIdScheme.SUFFIX`` directly).
     """
 
-    LEGACY_SUFFIX = "_laneid_"
-    SUFFIX = LEGACY_SUFFIX
+    LEGACY_SUFFIX: str = "_laneid_"
 
     # Trailing-chunk matcher anchored to end of string (chunked form).
-    _CHUNK_TAIL_RE = re.compile(r"_lane(\d+)id_(\d+)$")
+    _CHUNK_TAIL_RE: re.Pattern[str] = re.compile(r"_lane(\d+)id_(\d+)$")
     # Legacy 1D form, full name.
-    _LEGACY_RE = re.compile(r"^(.*)_laneid_(\d+)$")
+    _LEGACY_RE: re.Pattern[str] = re.compile(r"^(.*)_laneid_(\d+)$")
     # Substring scanner: matches a lane chunk anywhere in a string (canonical or legacy form). Used
     # by audit passes scanning memlet subset strings / interstate expressions for accidentally
     # fanned-out lanes without parsing the whole symbol.
-    LANE_INFIX_RE = re.compile(r"_lane(?:\d+id|id)_\d+")
+    LANE_INFIX_RE: re.Pattern[str] = re.compile(r"_lane(?:\d+id|id)_\d+")
 
     @staticmethod
     def make(base: str, lane: int) -> str:
@@ -74,7 +72,7 @@ class LaneIdScheme:
         return f"{base}_lane{dim}id_{lane}"
 
     @staticmethod
-    def make_multi(base: str, chunks: Iterable[Tuple[int, int]]) -> str:
+    def make_multi(base: str, chunks: Iterable[tuple[int, int]]) -> str:
         """Build a multi-dim lane-encoded name with one chunk per dim.
 
         :param base: Un-encoded symbol base.
@@ -85,7 +83,7 @@ class LaneIdScheme:
         return base + "".join(f"_lane{d}id_{n}" for d, n in chunks)
 
     @staticmethod
-    def parse(name: str) -> Optional[Tuple[str, int]]:
+    def parse(name: str) -> tuple[str, int] | None:
         """Peel one trailing lane chunk off ``name`` (legacy 1D shape).
 
         Accepts canonical ``<base>_lane<d>id_<n>`` AND legacy ``<base>_laneid_<n>``; both return
@@ -98,14 +96,14 @@ class LaneIdScheme:
         """
         m = LaneIdScheme._CHUNK_TAIL_RE.search(name)
         if m is not None and m.end() == len(name):
-            return name[:m.start()], int(m.group(2))
+            return name[: m.start()], int(m.group(2))
         lm = LaneIdScheme._LEGACY_RE.match(name)
         if lm is not None:
             return lm.group(1), int(lm.group(2))
         return None
 
     @staticmethod
-    def parse_chunks(name: str) -> Optional[Tuple[str, Tuple[Tuple[int, int], ...]]]:
+    def parse_chunks(name: str) -> tuple[str, tuple[tuple[int, int], ...]] | None:
         """Strip every trailing lane chunk off ``name``.
 
         Walks the trailing-chunk shape repeatedly so ``a_lane0id_3_lane1id_5`` decomposes to
@@ -115,13 +113,13 @@ class LaneIdScheme:
         :returns: ``(base, chunks)`` where ``chunks`` = per-dim ``(dim, lane)`` tuple in source
             order; ``None`` if ``name`` carries no recognised chunk.
         """
-        peeled: List[Tuple[int, int]] = []
+        peeled: list[tuple[int, int]] = []
         remaining = name
         while True:
             m = LaneIdScheme._CHUNK_TAIL_RE.search(remaining)
             if m is not None and m.end() == len(remaining):
                 peeled.append((int(m.group(1)), int(m.group(2))))
-                remaining = remaining[:m.start()]
+                remaining = remaining[: m.start()]
                 continue
             lm = LaneIdScheme._LEGACY_RE.match(remaining)
             if lm is not None:
@@ -168,7 +166,7 @@ class LaneIdScheme:
         return parsed[0] if parsed is not None else name
 
     @staticmethod
-    def peel_dim(name: str, dim: int) -> Optional[str]:
+    def peel_dim(name: str, dim: int) -> str | None:
         """Drop the chunk for tile dim ``dim`` from ``name``.
 
         Reassembles remaining chunks in source order (canonical form). Used when a downstream pass
@@ -188,18 +186,6 @@ class LaneIdScheme:
         if len(kept) == len(chunks):
             return None
         return LaneIdScheme.make_multi(base, kept)
-
-    @staticmethod
-    def contains_lane_chunk(text: str) -> bool:
-        """Whether ``text`` contains any lane-chunk substring.
-
-        Substring-only scanner for audit passes classifying memlet subset strings / interstate
-        expressions without parsing the whole symbol. Matches canonical + legacy forms.
-
-        :param text: Free-form text (e.g., ``str(memlet.subset)``).
-        :returns: True iff at least one lane-chunk present in ``text``.
-        """
-        return LaneIdScheme.LANE_INFIX_RE.search(text) is not None
 
     @staticmethod
     def varies_with_dim(name: str, dim: int) -> bool:
@@ -231,10 +217,10 @@ class TileNameScheme:
         ``TileMaskGen`` (paired with merge).
     """
 
-    TILE_SUFFIX = "_tile"
-    IDX_SUFFIX = "_tile_idx"
-    ITER_MASK = "_tile_iter_mask"
-    COND_MASK_SUFFIX = "_tile_cond_mask"
+    TILE_SUFFIX: str = "_tile"
+    IDX_SUFFIX: str = "_tile_idx"
+    ITER_MASK: str = "_tile_iter_mask"
+    COND_MASK_SUFFIX: str = "_tile_cond_mask"
 
     @staticmethod
     def make_tile(base: str) -> str:
@@ -274,9 +260,9 @@ class TileNameScheme:
         if name == TileNameScheme.ITER_MASK:
             return True
         for suffix in (
-                TileNameScheme.TILE_SUFFIX,
-                TileNameScheme.IDX_SUFFIX,
-                TileNameScheme.COND_MASK_SUFFIX,
+            TileNameScheme.TILE_SUFFIX,
+            TileNameScheme.IDX_SUFFIX,
+            TileNameScheme.COND_MASK_SUFFIX,
         ):
             if name.endswith(suffix):
                 return True
@@ -300,7 +286,7 @@ def sanitize_transient_name_hint(base: str, suffix: str = "") -> str:
         ``tile_<base without leading underscores>`` when it starts with
         ``__return``.
     """
-    if base.startswith('__return'):
+    if base.startswith("__return"):
         base = f"tile_{base.lstrip('_')}"
     return f"{base}{suffix}"
 
@@ -313,7 +299,7 @@ def _walk_sdfgs(sdfg: SDFG) -> Iterator[SDFG]:
         NestedSDFG nodes (``all_sdfgs_recursive`` only descends control-flow regions, not NSDFGs).
     """
     yield sdfg
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 yield from _walk_sdfgs(node.sdfg)
@@ -329,7 +315,7 @@ def _iter_all_symbol_strings(sdfg: SDFG) -> Iterator[str]:
     for inner in _walk_sdfgs(sdfg):
         yield from inner.arrays.keys()
         yield from inner.symbols.keys()
-        for state in inner.all_states():
+        for state in inner.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
                     yield from node.in_connectors.keys()
@@ -353,5 +339,7 @@ def assert_no_laneid_in_tile_path(sdfg: SDFG) -> None:
     """
     leaks = sorted({n for n in _iter_all_symbol_strings(sdfg) if LaneIdScheme.is_lane_fanned(n)})
     if leaks:
-        raise AssertionError(f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
-                             f"Lib-node emission must carry lane offsets implicitly — check the prep passes.")
+        raise AssertionError(
+            f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
+            f"Lib-node emission must carry lane offsets implicitly — check the prep passes."
+        )

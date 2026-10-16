@@ -4,7 +4,7 @@ Contains implementations of SDFG inlining and state fusion passes.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
@@ -22,13 +22,18 @@ class FuseStates(ppl.Pass):
     Fuses all possible states of an SDFG (and all sub-SDFGs).
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race condition checks.')
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+    permissive = properties.Property(
+        dtype=bool, default=False, category="Applicability", desc="If True, ignores some race condition checks."
+    )
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Diagnostics",
+        desc="Whether to print progress, or None for default (print after 5 seconds).",
+    )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
@@ -36,7 +41,7 @@ class FuseStates(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Fuses all possible states of an SDFG (and all sub-SDFGs).
 
@@ -48,7 +53,7 @@ class FuseStates(ppl.Pass):
         return fused or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Fused {pass_retval} states.'
+        return f"Fused {pass_retval} states."
 
 
 @dataclass(unsafe_hash=True)
@@ -59,14 +64,21 @@ class InlineSDFGs(ppl.Pass):
     Inlines all possible nested SDFGs (and sub-SDFGs).
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
-    multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
+    permissive = properties.Property(
+        dtype=bool, default=False, category="Applicability", desc="If True, ignores some checks on inlining."
+    )
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Diagnostics",
+        desc="Whether to print progress, or None for default (print after 5 seconds).",
+    )
+    multistate = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="If True, include multi-state inlining."
+    )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -74,7 +86,7 @@ class InlineSDFGs(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
 
@@ -86,7 +98,7 @@ class InlineSDFGs(ppl.Pass):
         return inlined or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Inlined {pass_retval} SDFGs.'
+        return f"Inlined {pass_retval} SDFGs."
 
 
 @dataclass(unsafe_hash=True)
@@ -97,23 +109,31 @@ class InlineControlFlowRegions(ppl.Pass):
     Inlines all control flow regions.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Diagnostics",
+        desc="Whether to print progress, or None for default (print after 5 seconds).",
+    )
 
-    no_inline_loops = properties.Property(dtype=bool, default=True, desc='Whether to prevent inlining loops.')
-    no_inline_conditional = properties.Property(dtype=bool,
-                                                default=True,
-                                                desc='Whether to prevent inlining conditional blocks.')
-    no_inline_function_call_regions = properties.Property(dtype=bool,
-                                                          default=True,
-                                                          desc='Whether to prevent inlining function call regions.')
-    no_inline_named_regions = properties.Property(dtype=bool,
-                                                  default=True,
-                                                  desc='Whether to prevent inlining named control flow regions.')
+    no_inline_loops = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Whether to prevent inlining loops."
+    )
+    no_inline_conditional = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Whether to prevent inlining conditional blocks."
+    )
+    no_inline_function_call_regions = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Whether to prevent inlining function call regions."
+    )
+    no_inline_named_regions = properties.Property(
+        dtype=bool,
+        default=True,
+        category="Applicability",
+        desc="Whether to prevent inlining named control flow regions.",
+    )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -121,7 +141,7 @@ class InlineControlFlowRegions(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
 
@@ -148,13 +168,10 @@ class InlineControlFlowRegions(ppl.Pass):
                 break
             inlined += inlined_in_iteration
 
-        if inlined:
-            sdfg.reset_cfg_list()
-            return inlined
-        return None
+        return inlined or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Inlined {pass_retval} regions.'
+        return f"Inlined {pass_retval} regions."
 
 
 @dataclass(unsafe_hash=True)
@@ -165,7 +182,7 @@ class FixNestedSDFGReferences(ppl.Pass):
     Fixes nested SDFG references to parent state/SDFG/node
     """
 
-    CATEGORY: str = 'Cleanup'
+    CATEGORY: str = "Cleanup"
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.NestedSDFGs)
@@ -173,7 +190,7 @@ class FixNestedSDFGReferences(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         modified = 0
         for node, state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.NestedSDFG) or node.sdfg is None:
@@ -195,4 +212,4 @@ class FixNestedSDFGReferences(ppl.Pass):
         return modified or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Fixed {pass_retval} nested SDFG references.'
+        return f"Fixed {pass_retval} nested SDFG references."

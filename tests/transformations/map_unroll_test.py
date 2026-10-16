@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
+import dace
 from dace.transformation.dataflow import MapUnroll
 
 
@@ -17,18 +18,12 @@ def test_map_unroll():
     entry_inner, exit_inner = outer_state.add_map("map_inner", {"k": "0:2"})
     nsdfg = dace.SDFG("unroll_nested")
     nsdfg_node = outer_state.add_nested_sdfg(nsdfg, {"x"}, {"y"})
-    outer_state.add_memlet_path(read,
-                                entry_outer,
-                                entry_inner,
-                                nsdfg_node,
-                                dst_conn="x",
-                                memlet=dace.Memlet(f"input_array[i, k, j]"))
-    outer_state.add_memlet_path(nsdfg_node,
-                                exit_inner,
-                                exit_outer,
-                                write,
-                                src_conn="y",
-                                memlet=dace.Memlet(f"output_array[j, k, i]"))
+    outer_state.add_memlet_path(
+        read, entry_outer, entry_inner, nsdfg_node, dst_conn="x", memlet=dace.Memlet("input_array[i, k, j]")
+    )
+    outer_state.add_memlet_path(
+        nsdfg_node, exit_inner, exit_outer, write, src_conn="y", memlet=dace.Memlet("output_array[j, k, i]")
+    )
 
     nsdfg.add_array("x", [1], dace.int32)
     nsdfg.add_array("y", [1], dace.int32)
@@ -36,8 +31,10 @@ def test_map_unroll():
     tasklet = inner_state.add_tasklet("tasklet", {"_x"}, {"_y"}, "_y = _x + 1")
     read = inner_state.add_read("x")
     write = inner_state.add_write("y")
-    inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet(f"x[0]"))
-    inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet(f"y[0]"))
+    inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet("x[0]"))
+    inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet("y[0]"))
+
+    nsdfg_node.integrate_into_parent()
 
     assert sdfg.apply_transformations_repeated(MapUnroll) == 4
 
@@ -49,5 +46,30 @@ def test_map_unroll():
             assert input_array[i, k, 0] + 1 == output_array[0, k, i]
 
 
+def test_gpu_map_declined_unless_permissive():
+    """A GPU map is declined by default (a device map IS the kernel launch) and offered under permissive."""
+    sdfg = dace.SDFG("gpu_unroll")
+    sdfg.add_array("A", [4], dace.float64, transient=True)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet(
+        "fill",
+        dict(i="0:4"),
+        {},
+        "out = 1.0",
+        dict(out=dace.Memlet("A[i]")),
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    entry = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry))
+
+    assert not MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
+    assert MapUnroll.can_be_applied_to(sdfg, permissive=True, map_entry=entry)
+
+    # Same map on a CPU schedule is offered either way -- the GPU schedule alone is the precondition.
+    entry.map.schedule = dace.ScheduleType.Sequential
+    assert MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
+
+
 if __name__ == "__main__":
     test_map_unroll()
+    test_gpu_map_declined_unless_permissive()

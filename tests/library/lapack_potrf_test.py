@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.libraries.lapack as lapack
-import dace.libraries.linalg as linalg
 import numpy as np
 import pytest
 
+import dace
+import dace.libraries.lapack as lapack
+import dace.libraries.linalg as linalg
+from dace.libraries.linalg.nodes.cholesky import SOLVER_BLAS
 from dace.memlet import Memlet
 
 ###############################################################################
@@ -12,6 +13,7 @@ from dace.memlet import Memlet
 
 def generate_matrix(size, dtype):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     A = rng.random((size, size), dtype=dtype)
     return (0.5 * A @ A.T).copy()
@@ -24,14 +26,14 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_choleskyfact_potrf_{}_{}".format(implementation, str(dtype)))
+    sdfg = dace.SDFG(f"matrix_choleskyfact_potrf_{implementation}_{str(dtype)}")
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n], dtype, storage=dace.StorageType.Default)
 
     if transient:
         x_arr = sdfg.add_array("x" + suffix, [n, n], dtype, storage=storage, transient=transient)
-        xt_arr = sdfg.add_array('xt' + suffix, [n, n], dtype, storage=storage, transient=transient)
+        xt_arr = sdfg.add_array("xt" + suffix, [n, n], dtype, storage=storage, transient=transient)
     sdfg.add_array("result" + suffix, [1], dace.dtypes.int32, storage=storage, transient=transient)
 
     if transient:
@@ -42,15 +44,15 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         xin = state.add_access("xt" + suffix)
         xout = state.add_access("xt" + suffix)
         transpose_in = linalg.Transpose("transpose_in", dtype=dtype)
-        transpose_in.implementation = "cuBLAS"
+        transpose_in.implementation = SOLVER_BLAS[implementation]
         transpose_out = linalg.Transpose("transpose_out", dtype=dtype)
-        transpose_out.implementation = "cuBLAS"
+        transpose_out.implementation = SOLVER_BLAS[implementation]
         state.add_nedge(xhi, xi, Memlet.from_array(*xhost_arr))
         state.add_nedge(xo, xho, Memlet.from_array(*xhost_arr))
-        state.add_memlet_path(xi, transpose_in, dst_conn='_inp', memlet=Memlet.from_array(*x_arr))
-        state.add_memlet_path(transpose_in, xin, src_conn='_out', memlet=Memlet.from_array(*xt_arr))
-        state.add_memlet_path(xout, transpose_out, dst_conn='_inp', memlet=Memlet.from_array(*xt_arr))
-        state.add_memlet_path(transpose_out, xo, src_conn='_out', memlet=Memlet.from_array(*x_arr))
+        state.add_memlet_path(xi, transpose_in, dst_conn="_inp", memlet=Memlet.from_array(*x_arr))
+        state.add_memlet_path(transpose_in, xin, src_conn="_out", memlet=Memlet.from_array(*xt_arr))
+        state.add_memlet_path(xout, transpose_out, dst_conn="_inp", memlet=Memlet.from_array(*xt_arr))
+        state.add_memlet_path(transpose_out, xo, src_conn="_out", memlet=Memlet.from_array(*x_arr))
     else:
         xin = state.add_access("x" + suffix)
         xout = state.add_access("x" + suffix)
@@ -61,10 +63,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     state.add_memlet_path(xin, potrf_node, dst_conn="_xin", memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n * n))
     state.add_memlet_path(potrf_node, result, src_conn="_res", memlet=Memlet.simple(result, "0", num_accesses=1))
-    state.add_memlet_path(potrf_node,
-                          xout,
-                          src_conn="_xout",
-                          memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n * n))
+    state.add_memlet_path(
+        potrf_node, xout, src_conn="_xout", memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n * n)
+    )
 
     return sdfg
 
@@ -72,14 +73,19 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, storage",
+    [
+        pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    ],
+)
 def test_potrf(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     potrf_sdfg = sdfg.compile()
@@ -100,6 +106,27 @@ def test_potrf(implementation, dtype, storage):
     else:
         raise NotImplementedError
     assert (np.linalg.norm(cholesky_ref - np.tril(A)) / np.linalg.norm(cholesky_ref)) < rtol
+
+
+N_COMPLEX = dace.symbol("N_COMPLEX", dtype=dace.int64)
+
+
+@dace.program
+def complex_cholesky(a: dace.complex128[N_COMPLEX, N_COMPLEX], out: dace.complex128[N_COMPLEX, N_COMPLEX]):
+    out[:] = np.linalg.cholesky(a)
+
+
+@pytest.mark.lapack
+def test_a_complex_cholesky_compiles_against_lapacke_and_matches_numpy():
+    """LAPACKE's complex routines take ``lapack_complex_double*``, which C++ does not convert from
+    ``dace::complex128*``: cegterg's complex Cholesky failed to compile without the cast."""
+    rng = np.random.default_rng(0)
+    m = rng.random((4, 4)) + 1j * rng.random((4, 4))
+    a = m @ m.conj().T + 4 * np.eye(4)
+    out = np.zeros((4, 4), dtype=np.complex128)
+    complex_cholesky(a=a.copy(), out=out, N_COMPLEX=4)
+    want = np.linalg.cholesky(a)
+    assert np.allclose(out, want, rtol=1e-12, atol=1e-12), out - want
 
 
 ###############################################################################

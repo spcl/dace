@@ -1,17 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
-import dace
 import numpy
 import pytest
+
+import dace
+from dace.libraries.tileops import TileGather
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from tests.passes.vectorization.helpers.harness import (
-    run_vectorization_test,
     N,
-    ssym,
     X,
     Y,
+    run_vectorization_test,
+    ssym,
 )
 
 # Strided / gather / scatter patterns — also exercise the K-dim tile-op config.
@@ -20,13 +22,13 @@ pytestmark = pytest.mark.tile_nodes
 
 @dace.program
 def vecscale_unit_stride(src: dace.float64[N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i] * scale
 
 
 @dace.program
 def gather_load(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[idx[i]] * scale
 
 
@@ -38,43 +40,43 @@ def gather_load_matrix_specialized(A: dace.float32[4, 8192], B: dace.int32[4, 81
 
 @dace.program
 def strided_load_stride_2(src: dace.float64[2 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i * 2] * scale
 
 
 @dace.program
 def strided_load_stride_ssym(src: dace.float64[ssym * 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
+    for (i,) in dace.map[0 : 8 * N : 1]:
         dst[i] = src[i * ssym] * scale
 
 
 @dace.program
 def strided_load_stride_3(src: dace.float64[3 * N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i * 3] * scale
 
 
 @dace.program
 def scatter_store(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[idx[i]] = src[i] * scale
 
 
 @dace.program
 def strided_store_stride_2(src: dace.float64[N], dst: dace.float64[2 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i * 2] = src[i] * scale
 
 
 @dace.program
 def strided_store_stride_ssym(src: dace.float64[8 * N], dst: dace.float64[ssym * 8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
+    for (i,) in dace.map[0 : 8 * N : 1]:
         dst[i * ssym] = src[i] * scale
 
 
 @dace.program
 def strided_store_stride_3(src: dace.float64[N], dst: dace.float64[3 * N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i * 3] = src[i] * scale
 
 
@@ -84,14 +86,8 @@ def test_vecscale_unit_stride(emission_style, vectorize_config):
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=vecscale_unit_stride,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
         sdfg_name="vecscale_unit_stride",
         emission_style=emission_style,
@@ -106,15 +102,8 @@ def test_gather_load(emission_style):
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "idx": idx, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
         sdfg_name="gather_load",
         emission_style=emission_style,
@@ -130,11 +119,7 @@ def test_gather_load_matrix_specialized():
 
     run_vectorization_test(
         dace_func=gather_load_matrix_specialized,
-        arrays={
-            "A": A,
-            "B": B,
-            "C": C
-        },
+        arrays={"A": A, "B": B, "C": C},
         params={},
         vector_width=32,
         sdfg_name="gather_load_matrix_specialized",
@@ -147,14 +132,8 @@ def test_strided_load_stride_2(emission_style):
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=strided_load_stride_2,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
         sdfg_name="strided_load_stride_2",
         emission_style=emission_style,
@@ -163,21 +142,18 @@ def test_strided_load_stride_2(emission_style):
 
 def test_strided_load_stride_ssym():
     N = 64
-    _ssym = 2
-    src = numpy.random.random(_ssym * N)
+    ssym_value = 2
+    src = numpy.random.random(ssym_value * N)
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=strided_load_stride_ssym,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
+        arrays={"src": src, "dst": dst},
         params={
             # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N // 8,
             "scale": 1.5,
-            "ssym": _ssym
+            "ssym": ssym_value,
         },
         vector_width=8,
         sdfg_name="strided_load_stride_ssym",
@@ -190,14 +166,8 @@ def test_strided_load_stride_3(emission_style):
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=strided_load_stride_3,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
         sdfg_name="strided_load_stride_3",
         emission_style=emission_style,
@@ -211,18 +181,14 @@ def test_scatter_store(emission_style):
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=scatter_store,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "idx": idx, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
         sdfg_name="scatter_store",
         emission_style=emission_style,
+        # ``idx`` is a permutation, so the scatter is conflict-free and may parallelise; without
+        # this canonicalize leaves a sequential loop and there is no innermost map to tile.
+        loop_to_map_permissive=True,
     )
 
 
@@ -232,40 +198,11 @@ def test_strided_store_stride_2(emission_style):
     dst = numpy.zeros(2 * N)
     run_vectorization_test(
         dace_func=strided_store_stride_2,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
         sdfg_name="strided_store_stride_2",
         emission_style=emission_style,
-    )
-
-
-def test_strided_store_stride_ssym():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(2 * N)
-    _ssym = numpy.int64(2)
-    run_vectorization_test(
-        dace_func=strided_store_stride_ssym,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
-            # and the trip is provably divisible by W=8 (no remainder).
-            "N": N // 8,
-            "scale": 1.5,
-            "ssym": _ssym
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_ssym",
     )
 
 
@@ -275,16 +212,9 @@ def test_strided_store_stride_3(emission_style):
     dst = numpy.zeros(3 * N)
     run_vectorization_test(
         dace_func=strided_store_stride_3,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N, "scale": 1.5},
         vector_width=8,
-        insert_copies=True,
         emission_style=emission_style,
         sdfg_name="strided_store_stride_3",
     )
@@ -292,21 +222,18 @@ def test_strided_store_stride_3(emission_style):
 
 def test_strided_store_stride_ssym():
     N = 64
-    _ssym = 2
+    ssym_value = 2
     src = numpy.random.random(N)
     dst = numpy.zeros(2 * N)
     run_vectorization_test(
         dace_func=strided_store_stride_ssym,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
+        arrays={"src": src, "dst": dst},
         params={
             # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N // 8,
             "scale": 1.5,
-            "ssym": _ssym
+            "ssym": ssym_value,
         },
         vector_width=8,
         sdfg_name="strided_store_stride_ssym",
@@ -325,7 +252,7 @@ def nested_matrix_gather_load_specialized(A: dace.float32[Y, X], B: dace.int32[Y
         C[i, j] = A[i, B[i, j]] * 2.0
 
 
-@pytest.mark.simple  # canonical: test_nested_matrix_gather_load_specialized (harder)
+# Overlaps test_nested_matrix_gather_load_specialized (harder)
 def test_nested_matrix_gather_load():
     X_val = 32
     Y_val = 32
@@ -339,11 +266,7 @@ def test_nested_matrix_gather_load():
             "B": B,
             "C": C,
         },
-        params={
-            "X": X_val,
-            "Y": Y_val,
-            "scale": 2.0
-        },
+        params={"X": X_val, "Y": Y_val, "scale": 2.0},
         vector_width=8,
         sdfg_name="nested_matrix_gather_load",
     )
@@ -377,37 +300,37 @@ def test_nested_matrix_gather_load_specialized():
 
 @dace.program
 def diagonal_gather_load(A: dace.float64[N, N], dst: dace.float64[N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = A[i, i] * scale
 
 
 @dace.program
 def diagonal_scatter_store(src: dace.float64[N], A: dace.float64[N, N], scale: dace.float64):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         A[i, i] = src[i] * scale
 
 
 @dace.program
 def gather_load_2i_i(A: dace.float64[2 * 8 * N, 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
+    for (i,) in dace.map[0 : 8 * N : 1]:
         dst[i] = A[2 * i, i] * scale
 
 
 @dace.program
 def scatter_store_2i_i(src: dace.float64[8 * N], A: dace.float64[2 * 8 * N, 8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
+    for (i,) in dace.map[0 : 8 * N : 1]:
         A[2 * i, i] = src[i] * scale
 
 
 @dace.program
 def gather_load_i_2i(A: dace.float64[8 * N, 2 * 8 * N], dst: dace.float64[8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
+    for (i,) in dace.map[0 : 8 * N : 1]:
         dst[i] = A[i, 2 * i] * scale
 
 
 @dace.program
 def scatter_store_i_2i(src: dace.float64[8 * N], A: dace.float64[8 * N, 2 * 8 * N], scale: dace.float64):
-    for i, in dace.map[0:8 * N:1]:
+    for (i,) in dace.map[0 : 8 * N : 1]:
         A[i, 2 * i] = src[i] * scale
 
 
@@ -417,14 +340,8 @@ def test_diagonal_gather_load():
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=diagonal_gather_load,
-        arrays={
-            "A": A,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"A": A, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name="diagonal_gather_load",
     )
@@ -436,14 +353,8 @@ def test_diagonal_scatter_store():
     A = numpy.zeros((N_val, N_val))
     run_vectorization_test(
         dace_func=diagonal_scatter_store,
-        arrays={
-            "src": src,
-            "A": A
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"src": src, "A": A},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name="diagonal_scatter_store",
     )
@@ -455,15 +366,12 @@ def test_gather_load_2i_i():
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=gather_load_2i_i,
-        arrays={
-            "A": A,
-            "dst": dst
-        },
+        arrays={"A": A, "dst": dst},
         params={
             # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N_val // 8,
-            "scale": 1.5
+            "scale": 1.5,
         },
         vector_width=8,
         sdfg_name="gather_load_2i_i",
@@ -476,15 +384,12 @@ def test_scatter_store_2i_i():
     A = numpy.zeros((2 * N_val, N_val))
     run_vectorization_test(
         dace_func=scatter_store_2i_i,
-        arrays={
-            "src": src,
-            "A": A
-        },
+        arrays={"src": src, "A": A},
         params={
             # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N_val // 8,
-            "scale": 1.5
+            "scale": 1.5,
         },
         vector_width=8,
         sdfg_name="scatter_store_2i_i",
@@ -497,15 +402,12 @@ def test_gather_load_i_2i():
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=gather_load_i_2i,
-        arrays={
-            "A": A,
-            "dst": dst
-        },
+        arrays={"A": A, "dst": dst},
         params={
             # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N_val // 8,
-            "scale": 1.5
+            "scale": 1.5,
         },
         vector_width=8,
         sdfg_name="gather_load_i_2i",
@@ -518,15 +420,12 @@ def test_scatter_store_i_2i():
     A = numpy.zeros((N_val, 2 * N_val))
     run_vectorization_test(
         dace_func=scatter_store_i_2i,
-        arrays={
-            "src": src,
-            "A": A
-        },
+        arrays={"src": src, "A": A},
         params={
             # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N_val // 8,
-            "scale": 1.5
+            "scale": 1.5,
         },
         vector_width=8,
         sdfg_name="scatter_store_i_2i",
@@ -539,27 +438,24 @@ def test_scatter_store_i_2i():
 
 @dace.program
 def halve_index_gather(src: dace.float64[N], dst: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i // 2]
 
 
 @dace.program
 def halve_index_s4117(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         a[i] = b[i] + c[i // 2] * d[i]
 
 
-@pytest.mark.simple  # canonical: test_halve_index_s4117 (TSVC-style chained ops, harder)
+# Overlaps test_halve_index_s4117 (TSVC-style chained ops, harder)
 def test_halve_index_gather(emission_style):
     N_val = 64
     src = numpy.random.rand(N_val)
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=halve_index_gather,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
+        arrays={"src": src, "dst": dst},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="halve_index_gather",
@@ -575,12 +471,7 @@ def test_halve_index_s4117():
     d = numpy.random.rand(N_val)
     run_vectorization_test(
         dace_func=halve_index_s4117,
-        arrays={
-            "a": a,
-            "b": b,
-            "c": c,
-            "d": d
-        },
+        arrays={"a": a, "b": b, "c": c, "d": d},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="halve_index_s4117",
@@ -597,23 +488,23 @@ DV = dace.symbol("DV")
 
 @dace.program
 def div_index_const3(src: dace.float64[N], dst: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i // 3]
 
 
 @dace.program
 def div_index_const4(src: dace.float64[N], dst: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i // 4]
 
 
 @dace.program
 def div_index_symbol(src: dace.float64[N], dst: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i // DV]
 
 
-@pytest.mark.simple  # canonical: test_div_index_symbol (symbolic divisor, harder)
+# Overlaps test_div_index_symbol (symbolic divisor, harder)
 def test_div_index_const3():
     """``src[i // 3]`` — a STATIC divisor that does NOT divide W=8. The contiguous
     box load ``_src[__l/3]`` over ``&src[i/3]`` is correct only when every tile
@@ -623,26 +514,20 @@ def test_div_index_const3():
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_const3,
-        arrays={
-            "src": numpy.random.rand(N_val),
-            "dst": numpy.zeros(N_val)
-        },
+        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="div_index_const3",
     )
 
 
-@pytest.mark.simple  # canonical: test_div_index_symbol (symbolic divisor, harder)
+# Overlaps test_div_index_symbol (symbolic divisor, harder)
 def test_div_index_const4():
     """``src[i // 4]`` — divisor divides W=8 (phase 0)."""
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_const4,
-        arrays={
-            "src": numpy.random.rand(N_val),
-            "dst": numpy.zeros(N_val)
-        },
+        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="div_index_const4",
@@ -659,14 +544,8 @@ def test_div_index_symbol(dv):
     N_val = 64
     run_vectorization_test(
         dace_func=div_index_symbol,
-        arrays={
-            "src": numpy.random.rand(N_val),
-            "dst": numpy.zeros(N_val)
-        },
-        params={
-            "N": N_val,
-            "DV": dv
-        },
+        arrays={"src": numpy.random.rand(N_val), "dst": numpy.zeros(N_val)},
+        params={"N": N_val, "DV": dv},
         vector_width=8,
         sdfg_name=f"div_index_symbol_{dv}",
     )
@@ -678,13 +557,13 @@ def test_div_index_symbol(dv):
 
 @dace.program
 def gather_load_fp32(src: dace.float32[N], idx: dace.int64[N], dst: dace.float32[N], scale: dace.float32):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[idx[i]] * scale
 
 
 @dace.program
 def strided_load_stride_2_fp32(src: dace.float32[2 * N], dst: dace.float32[N], scale: dace.float32):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i * 2] * scale
 
 
@@ -695,15 +574,8 @@ def test_gather_load_fp32(emission_style):
     dst = numpy.zeros(N_val, dtype=numpy.float32)
     run_vectorization_test(
         dace_func=gather_load_fp32,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": numpy.float32(1.5)
-        },
+        arrays={"src": src, "idx": idx, "dst": dst},
+        params={"N": N_val, "scale": numpy.float32(1.5)},
         vector_width=8,
         sdfg_name="gather_load_fp32",
         emission_style=emission_style,
@@ -716,14 +588,8 @@ def test_strided_load_stride_2_fp32(emission_style):
     dst = numpy.zeros(N_val, dtype=numpy.float32)
     run_vectorization_test(
         dace_func=strided_load_stride_2_fp32,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": numpy.float32(1.5)
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N_val, "scale": numpy.float32(1.5)},
         vector_width=8,
         sdfg_name="strided_load_stride_2_fp32",
         emission_style=emission_style,
@@ -744,15 +610,8 @@ def test_gather_load_nondiv(remainder_strategy):
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=gather_load,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"src": src, "idx": idx, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name=f"gather_load_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -767,18 +626,13 @@ def test_scatter_store_nondiv(remainder_strategy):
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=scatter_store,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"src": src, "idx": idx, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name=f"scatter_store_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        # Permutation index: conflict-free, see ``test_scatter_store``.
+        loop_to_map_permissive=True,
     )
 
 
@@ -789,14 +643,8 @@ def test_strided_load_stride_2_nondiv(remainder_strategy):
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=strided_load_stride_2,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name=f"strided_load_stride_2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -810,14 +658,8 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
     dst = numpy.zeros(2 * N_val)
     run_vectorization_test(
         dace_func=strided_store_stride_2,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name=f"strided_store_stride_2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -829,7 +671,7 @@ def test_strided_store_stride_2_nondiv(remainder_strategy):
 
 @dace.program
 def strided_load_stride_2_fp32_nondiv(src: dace.float32[2 * N], dst: dace.float32[N], scale: dace.float32):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         dst[i] = src[i * 2] * scale
 
 
@@ -840,14 +682,8 @@ def test_strided_load_fp32_stride_2_nondiv(remainder_strategy):
     dst = numpy.zeros(N_val, dtype=numpy.float32)
     run_vectorization_test(
         dace_func=strided_load_stride_2_fp32_nondiv,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": numpy.float32(1.5)
-        },
+        arrays={"src": src, "dst": dst},
+        params={"N": N_val, "scale": numpy.float32(1.5)},
         vector_width=8,
         sdfg_name=f"sl_fp32_s2_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -865,14 +701,8 @@ def test_diagonal_gather_load_masked(remainder_strategy):
     dst = numpy.zeros(N_val)
     run_vectorization_test(
         dace_func=diagonal_gather_load,
-        arrays={
-            "A": A,
-            "dst": dst
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"A": A, "dst": dst},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name=f"diag_gather_masked_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -886,14 +716,8 @@ def test_diagonal_scatter_store_masked(remainder_strategy):
     A = numpy.zeros((N_val, N_val))
     run_vectorization_test(
         dace_func=diagonal_scatter_store,
-        arrays={
-            "src": src,
-            "A": A
-        },
-        params={
-            "N": N_val,
-            "scale": 1.5
-        },
+        arrays={"src": src, "A": A},
+        params={"N": N_val, "scale": 1.5},
         vector_width=8,
         sdfg_name=f"diag_scatter_masked_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
@@ -914,50 +738,12 @@ def test_strided_through_nsdfg(remainder_strategy, branch_mode):
     b = numpy.random.rand(2 * n + 8).astype(numpy.float64)
     run_vectorization_test(
         dace_func=strided_through_nsdfg,
-        arrays={
-            "a": a,
-            "b": b
-        },
+        arrays={"a": a, "b": b},
         params={"N": n},
         sdfg_name="strided_through_nsdfg",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
     )
-
-
-# collapse_laneid_index_loads knob: the laneid index fan collapses to a
-# direct ``_idx`` index-slice read; laneid symbols/ISE drop. Default OFF.
-
-
-def _assert_laneid_fan_collapsed(vec_sdfg):
-    """No laneid symbol / interstate assignment survives, and every gather
-    tasklet reads its indices through an ``_idx`` connector."""
-    from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
-
-    residual_syms = [s for sd in vec_sdfg.all_sdfgs_recursive() for s in sd.symbols if LaneIdScheme.is_laneid(s)]
-    assert not residual_syms, f"laneid symbols survived the collapse: {residual_syms}"
-    residual_ise = [
-        k for sd in vec_sdfg.all_sdfgs_recursive() for e in sd.edges() for k in (e.data.assignments or {})
-        if LaneIdScheme.is_laneid(k)
-    ]
-    assert not residual_ise, f"laneid interstate-edge assignments survived: {residual_ise}"
-    fan_tasklets = [
-        n for n, _ in vec_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and ("gather" in n.label or "scatter" in n.label)
-    ]
-    assert fan_tasklets, "expected at least one collapsed gather/scatter tasklet"
-    for t in fan_tasklets:
-        assert "_idx" in t.in_connectors, (f"{t.label} did not get an _idx connector; "
-                                           f"in_connectors={set(t.in_connectors)}")
-        assert not LaneIdScheme.contains_lane_chunk(
-            t.code.as_string), (f"{t.label} still references a laneid symbol (legacy or Option B chunked): "
-                                f"{t.code.as_string!r}")
-
-
-@dace.program
-def gather_load_i32(src: dace.float64[N], idx: dace.int32[N], dst: dace.float64[N]):
-    for i in dace.map[0:N]:
-        dst[i] = src[idx[i]] + 1.0
 
 
 # Scatter side. For-loop scatter needs loop_to_map_permissive=True
@@ -975,25 +761,30 @@ def test_scatter_loop_permissive_tile(n):
     """For-loop data scatter ``dst[idx[i]] = src[i] + 1.0`` tiles on the v2
     path: ``loop_to_map_permissive`` parallelises the scatter loop (the write is
     not uniquely indexed, so plain LoopToMap refuses) and the body descent routes
-    the ``dst[idx[i]]`` store through a :class:`TileStore` (scatter). The result matches
+    the ``dst[idx[i]]`` store through a :class:`TileScatter` (scatter). The result matches
     the unvectorized reference (``n=17`` exercises the masked tail).
 
     Driven through the orchestrator directly (not ``run_vectorization_test``)
     because the harness's pre-orchestrator ``_innermost_map_K`` skip-check fires
     on a for-loop kernel before LoopToMap has created the map."""
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+
     src = numpy.random.random(n)
     idx = numpy.random.permutation(n).astype(numpy.int64)
     ref = scatter_loop_stencil.to_sdfg(simplify=True)
     ref.name = f"scatter_loop_ref_{n}"
     vec = scatter_loop_stencil.to_sdfg(simplify=True)
     vec.name = f"scatter_loop_vec_{n}"
+    # The caller parallelizes; permissive because only the test knows ``idx`` is a permutation.
+    ParallelizeLoops(permissive=True).apply_pass(vec, {})
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                        branch_mode=BranchMode.MERGE,
-                        loop_to_map_permissive=True)).apply_pass(vec, {})
+        VectorizeConfig(
+            widths=(8,),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(vec, {})
     vec.validate()
     d_ref, d_vec = numpy.zeros(n), numpy.zeros(n)
     ref.compile()(src=src.copy(), idx=idx.copy(), dst=d_ref, N=n)
@@ -1010,40 +801,25 @@ def gather_fp32_data(src: dace.float32[N], idx: dace.int64[N], dst: dace.float32
         dst[i] = src[idx[i]] + 1.0
 
 
-@dace.program
-def two_gathers(a: dace.float64[N], ia: dace.int64[N], b: dace.float64[N], ib: dace.int64[N], c: dace.float64[N]):
-    for i in dace.map[0:N]:
-        c[i] = a[ia[i]] + b[ib[i]]
-
-
-@dace.program
-def no_indirection(src: dace.float64[N], dst: dace.float64[N], scale: dace.float64):
-    for i in dace.map[0:N]:
-        dst[i] = src[i] * scale
-
-
-def test_gather_collapse_laneid_fp32_data(vectorize_config):
-    """fp32 data array + int64 idx: direct-pass gather<float>.
-
-    fp32 runs on the multidim backend, where correctness is checked.
-    ``collapse_laneid`` is a no-op on the tile path, so the multidim arm relies
-    on the harness's vectorized-vs-reference correctness comparison.
-    """
+def test_gather_fp32_data_lowers_the_indirection_to_a_tile_load(vectorize_config):
+    """fp32 data + int64 idx: ``src[idx[i]]`` becomes a ``TileGather``, not a per-lane fan."""
     N_val = 64
     src = numpy.random.rand(N_val).astype(numpy.float32)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
     dst = numpy.zeros(N_val, dtype=numpy.float32)
-    run_vectorization_test(
+    vectorized = run_vectorization_test(
         dace_func=gather_fp32_data,
-        arrays={
-            "src": src,
-            "idx": idx,
-            "dst": dst
-        },
+        arrays={"src": src, "idx": idx, "dst": dst},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_collapse_laneid_fp32data",
         vectorize_config=vectorize_config,
+    )
+
+    loads = [n for n, node_state in vectorized.all_nodes_recursive() if isinstance(n, TileGather)]
+    assert loads, (
+        "the indirect read did not lower to a TileGather; the harness only proves SOME tile op "
+        "was emitted, which the store alone would satisfy"
     )
 
 
@@ -1081,11 +857,7 @@ def test_gather_strided_index_2_knob_off():
     idx = numpy.random.permutation(2 * N_val).astype(numpy.int64)
     run_vectorization_test(
         dace_func=gather_strided_index_2,
-        arrays={
-            "a": a,
-            "b": b,
-            "idx": idx
-        },
+        arrays={"a": a, "b": b, "idx": idx},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_strided_index_2_knoboff",
@@ -1101,11 +873,7 @@ def test_gather_strided_index_3_knob_off():
     idx = numpy.random.permutation(3 * N_val).astype(numpy.int64)
     run_vectorization_test(
         dace_func=gather_strided_index_3,
-        arrays={
-            "a": a,
-            "b": b,
-            "idx": idx
-        },
+        arrays={"a": a, "b": b, "idx": idx},
         params={"N": N_val},
         vector_width=8,
         sdfg_name="gather_strided_index_3_knoboff",

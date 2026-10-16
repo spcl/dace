@@ -6,8 +6,8 @@ from util import expand_maps, expand_reduce, fusion
 
 import dace
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 @dace.program

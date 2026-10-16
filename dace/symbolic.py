@@ -1,53 +1,149 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import contextlib
-from collections import Counter
-from functools import lru_cache
+import contextvars
 import math
-import sympy
-import threading
 import pickle
 import re
+import threading
 import types
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING, List
+import weakref
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
+from functools import cache, lru_cache
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    NamedTuple,
+    Optional,
+    TypeAlias,
+    TypeVar,
+    Union,
+)
+
 import numpy
-import math
+import packaging.version as packaging_version
+import sympy
 import sympy.abc
+import sympy.parsing.sympy_parser
 import sympy.printing.str
 
-import packaging.version as packaging_version
+from dace import cpf_lowering, dtypes, symbolic_engine
+from dace.symbolic_engine import Basic as SymbolicBasic
 
-from dace import dtypes
+# Re-exported so a consumer asks `symbolic` for a backend-neutral head instead of naming sympy.
+# Unreferenced HERE, and `ruff-check --fix` runs in pre-commit -- without the noqa it deletes them.
+from dace.symbolic_engine import Boolean as SymbolicBoolean  # noqa: F401
+from dace.symbolic_engine import Expr as SymbolicExpr  # noqa: F401
+from dace.symbolic_engine import native_parse, to_sympy
+
+#: The OpenMP thread count, defined by frame code rather than passed in. Sizing a per-thread
+#: buffer needs the value at ALLOCATION time, but the count is an OpenMP runtime property and must
+#: not enter the ABI -- ``SDFG.arglist`` drops every ``__dace``-prefixed name, so this is usable in
+#: a shape without appearing in any signature. Always defined, so a pass may use it unconditionally.
+NUM_THREADS_SYMBOL = "__dace_num_threads"
+
+# Re-exported so callers reach the facts API as ``symbolic.ask``, ``symbolic.Facts``, ...
+from dace.symbolic_facts import (  # noqa: F401
+    Facts,
+    InconsistentAssumptionsError,
+    Predicate,
+    Relation,
+    RelationKind,
+    Scale,
+    Truth,
+    ask,
+    cached_proof,
+    comparison_relation,
+    is_small,
+    predicate_relation,
+    provably_le,
+    provably_nonnegative,
+    relation_names,
+)
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
-class _SymbolDTypeContext(threading.local):
+class AuthorityKey:
+    """Content fingerprint of one authority level, hashed once at push: a parse-cache lookup hashes its key per call.
 
+    Interned by content (:meth:`of`), so a re-pushed authority compares by identity instead of entry by entry."""
+
+    __slots__ = ("entries", "digest", "__weakref__")
+
+    def __init__(self, entries: tuple[tuple[str, str], ...]) -> None:
+        self.entries = entries
+        self.digest = hash(entries)
+
+    @staticmethod
+    def of(entries: tuple[tuple[str, str], ...]) -> "AuthorityKey":
+        key = INTERNED_AUTHORITY_KEYS.get(entries)
+        if key is None:
+            key = AuthorityKey(entries)
+            INTERNED_AUTHORITY_KEYS[entries] = key
+        return key
+
+    def __hash__(self) -> int:
+        return self.digest
+
+    def __eq__(self, other: object) -> bool:
+        return self is other or (
+            isinstance(other, AuthorityKey) and self.digest == other.digest and self.entries == other.entries
+        )
+
+
+INTERNED_AUTHORITY_KEYS: "weakref.WeakValueDictionary[tuple[tuple[str, str], ...], AuthorityKey]" = (
+    weakref.WeakValueDictionary()
+)
+
+
+class _SymbolDTypeContext(threading.local):
     def __init__(self):
 
         # The lowest level in the stack is reserved for "no stack active".
-        self.ctx_stack: List[types.MappingProxyType[str, 'dtypes.typeclass']] = [types.MappingProxyType({})]
+        self.ctx_stack: list[types.MappingProxyType[str, dtypes.typeclass]] = [types.MappingProxyType({})]
+        # Parallel stack of hashable fingerprints. ``pystr_to_symbolic`` is cached on the text
+        # alone, but the same text names a different symbol under a different authority, so the
+        # fingerprint goes in the key. Maintained on push/pop -- computing it per parse would put
+        # a sort on one of the hottest paths in the compiler.
+        self.key_stack: list[AuthorityKey] = [AuthorityKey.of(())]
 
-    def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
+    def prepare(self, authority: dict[str, "dtypes.typeclass"]) -> tuple[types.MappingProxyType, "AuthorityKey"]:
+        """The stack level and fingerprint ``push`` would add for ``authority``; a caller pushing the same authority
+        many times prepares it once and pushes it with :meth:`push_prepared`."""
+        level = types.MappingProxyType({n: dt for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)})
+        return level, AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+
+    def push_prepared(self, prepared: tuple[types.MappingProxyType, "AuthorityKey"]) -> types.MappingProxyType:
+        """Adds a level :meth:`prepare` built."""
+        self.ctx_stack.append(prepared[0])
+        self.key_stack.append(prepared[1])
+        return self.ctx_stack[-1]
+
+    def push(self, authority: dict[str, "dtypes.typeclass"]) -> types.MappingProxyType[str, "dtypes.typeclass"]:
         """
         Adds a new level of authoritative dtype to the context.
 
         :param authority: Mapping from symbol name to its authoritative dtype.
         """
-        new_stack_level = types.MappingProxyType({
-            n: dt
-            for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
-        })
-        self.ctx_stack.append(new_stack_level)
-        return self.ctx_stack[-1]
+        return self.push_prepared(self.prepare(authority))
 
     def pop(self) -> "_SymbolDTypeContext":
         """Remove the current active level of authoritative dtype."""
         if len(self.ctx_stack) == 1:
             raise IndexError("Tried to `pop()` from an empty symbol type stack.")
         self.ctx_stack.pop()
+        self.key_stack.pop()
         return self
+
+    def declare(self, name: str, dtype: "dtypes.typeclass") -> None:
+        """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
+        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
+            level = {**self.ctx_stack[-1], name: dtype}
+            self.ctx_stack[-1] = types.MappingProxyType(level)
+            self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -55,8 +151,12 @@ class _SymbolDTypeContext(threading.local):
             raise IndexError("Symbol type stack is empty.")
         return self.ctx_stack[-1]
 
+    def cache_key(self) -> AuthorityKey:
+        """Hashable stand-in for the active authority, for use in a parse cache key."""
+        return self.key_stack[-1]
+
     @staticmethod
-    def _is_scalar_symbol_dtype(dtype: 'dtypes.typeclass') -> bool:
+    def _is_scalar_symbol_dtype(dtype: "dtypes.typeclass") -> bool:
         """
         Whether a dtype is a concrete scalar that can override a symbol's serialized
         dtype: a plain :class:`~dace.dtypes.typeclass` with a real numpy scalar type.
@@ -77,8 +177,35 @@ class _SymbolDTypeContext(threading.local):
 _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 
 
+def declare_symbol_dtype(name: str, dtype: "dtypes.typeclass") -> None:
+    """Makes the active symbol-dtype authority (if any) know ``name``, declared while it is active."""
+    _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
+
+
+def declared_symbol_dtype(name: str) -> Optional["dtypes.typeclass"]:
+    """The dtype the active symbol-dtype authority declares for ``name``, or ``None``."""
+    return _SERIALIZATION_SYMBOL_DTYPES.get().get(name)
+
+
+def symbol_dtype(atom: "symbol") -> "dtypes.typeclass":
+    """The dtype of the symbol ``atom`` names: the enclosing scope's (the SDFG being generated or serialized) when it
+    declares the name, else the one ``atom`` was declared with. A symbol is its name, so SymPy's cache can hand back a
+    same-named object declared at another dtype; only the scope knows the name's type."""
+    return declared_symbol_dtype(atom.name) or atom.dtype
+
+
+def prepare_serialization_symbol_dtypes(authority: dict[str, "dtypes.typeclass"]):
+    """``authority`` prepared once for repeated :func:`serialization_symbol_dtypes` scopes (``prepared=``)."""
+    return _SERIALIZATION_SYMBOL_DTYPES.prepare(authority)
+
+
+def symbol_dtype_authority_active() -> bool:
+    """Whether an enclosing scope already declares the symbol dtypes that parsing uses."""
+    return len(_SERIALIZATION_SYMBOL_DTYPES.ctx_stack) > 1
+
+
 @contextlib.contextmanager
-def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
+def serialization_symbol_dtypes(authority: dict[str, "dtypes.typeclass"], inherit: bool = False, prepared=None):
     """
     Temporarily override, while serializing symbolic expressions, the dtype used for
     each scope-declared symbol, restoring the previous mapping on exit. Only concrete
@@ -86,44 +213,66 @@ def serialization_symbol_dtypes(authority: Dict[str, 'dtypes.typeclass']):
     out so that symbol keeps its own dtype.
 
     :param authority: Mapping from symbol name to its authoritative dtype.
+    :param inherit: Keep the enclosing level's entries that ``authority`` does not override.
+    :param prepared: ``authority`` already passed through :func:`prepare_serialization_symbol_dtypes`.
     """
-    _SERIALIZATION_SYMBOL_DTYPES.push(authority)
+    if prepared is not None:
+        _SERIALIZATION_SYMBOL_DTYPES.push_prepared(prepared)
+    else:
+        if inherit:
+            authority = {**_SERIALIZATION_SYMBOL_DTYPES.get(), **authority}
+        _SERIALIZATION_SYMBOL_DTYPES.push(authority)
     try:
         yield
     finally:
         _SERIALIZATION_SYMBOL_DTYPES.pop()
 
 
-_NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
-_SERIALIZED_SYMBOL_PREFIX = '__DACE_SERIALIZED_SYMBOL_'
-_SERIALIZED_UNDEFINED_SYMBOL = '__DACE_SERIALIZED_UNDEFINED_SYMBOL'
-_SERIALIZED_SYMBOL = re.compile(r'\$(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)')
-_SERIALIZED_TYPED_CONSTANT_VALUE = r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+'
-_SERIALIZED_TYPED_CONSTANT_SUFFIX = r'|'.join(
-    sorted((re.escape(suffix) for suffix in dtypes.LITERAL_SUFFIX_TO_TYPECLASS), key=len, reverse=True))
-_SERIALIZED_TYPED_CONSTANT = re.compile(
-    rf'(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b'
+_NAME_TOKENS = re.compile(r"[a-zA-Z_][a-zA-Z_0-9]*")
+_SERIALIZED_SYMBOL_PREFIX = "__DACE_SERIALIZED_SYMBOL_"
+_SERIALIZED_UNDEFINED_SYMBOL = "__DACE_SERIALIZED_UNDEFINED_SYMBOL"
+_SERIALIZED_SYMBOL = re.compile(r"\$(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)")
+_SERIALIZED_TYPED_CONSTANT_VALUE = r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\d+"
+_SERIALIZED_TYPED_CONSTANT_SUFFIX = r"|".join(
+    sorted((re.escape(suffix) for suffix in dtypes.LITERAL_SUFFIX_TO_TYPECLASS), key=len, reverse=True)
 )
-_SERIALIZED_COMPLEX_FLOAT = r'-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?'
-_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(rf'\(\s*(?:(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*)?'
-                                                rf'(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)(?P<csuffix>c64|c128)\b')
+_SERIALIZED_TYPED_CONSTANT = re.compile(
+    rf"(?<![A-Za-z0-9_\.])(?P<value>{_SERIALIZED_TYPED_CONSTANT_VALUE})(?P<suffix>{_SERIALIZED_TYPED_CONSTANT_SUFFIX})\b"
+)
+_SERIALIZED_COMPLEX_FLOAT = r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+_SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(
+    rf"\(\s*(?:(?P<re>{_SERIALIZED_COMPLEX_FLOAT})\s*(?P<op>[+-])\s*)?"
+    rf"(?P<im>{_SERIALIZED_COMPLEX_FLOAT})j\s*\)(?P<csuffix>c64|c128)\b"
+)
 # Tokens in a Python expression string that require AST-based rewriting before
 # being handed to SymPy (boolean ops, comparisons, bitwise ops, attribute/subscript, etc.).
 # The ``.`` matches attribute access only (not a numeric decimal point): routing a float
 # literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
+    r"\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|%|\.(?![0-9])|[\[]|[\]]"
+)
+
+
+def has_serialized_symbol_escape(expr) -> bool:
+    """True if `expr` carries the `$name` wire escape (see `DaceSympySerializer._print_Symbol`).
+
+    A DaCe symbol name is a valid Python identifier, so no writer predating the escape could ever have
+    emitted a `$`: its presence in a file stamped below the escape's wire version means the stamp is
+    wrong, not that the content is old. Takes any value because a symbolic property deserializes ints
+    and floats through the same path, and only a string can carry the escape.
+    """
+    return isinstance(expr, str) and bool(_SERIALIZED_SYMBOL.search(expr))
 
 
 def _is_sympy_number(expr) -> bool:
-    return bool(getattr(expr, 'is_Number', False) or getattr(expr, 'is_number', False))
+    return bool(getattr(expr, "is_Number", False) or getattr(expr, "is_number", False))
 
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
-_sympy_clash = {k: v if v else getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
+_sympy_clash = {k: v or getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
 
 # SymPy 1.13 changes the behavior of `==` such that floats with different precisions
 # are always different.
@@ -139,45 +288,87 @@ else:
     equal_valued = sympy.core.numbers.equal_valued
 
 
-class symbol(sympy.Symbol):
-    """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
-        information. """
+def _symbol_spec(name, dtype) -> tuple[str, "dtypes.typeclass"]:
+    """The validated name and dtype of a symbol, shared so the backend factory and the sympy class cannot disagree on
+    what a legal symbol is. Assumptions are not part of it: a symbol is its name, and what holds of it are the facts
+    of the SDFG it is used in."""
+    if dtype is None:
+        dtype = DEFAULT_SYMBOL_TYPE
+    if name is None:
+        # Set name dynamically
+        name = "sym_" + str(symbol.s_currentsymbol)
+        symbol.s_currentsymbol += 1
+    elif name.startswith("__DACE"):
+        raise NameError("Symbols cannot start with __DACE")
+    elif not dtypes.validate_name(name):
+        raise NameError('Invalid symbol name "%s"' % name)
+
+    if not isinstance(dtype, dtypes.typeclass):
+        raise TypeError("dtype must be a DaCe type, got %s" % str(dtype))
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        raise TypeError(f'Symbol "{name}" cannot be complex: symbols are real scalars')
+    return name, dtype
+
+
+class SymbolMeta(type(sympy.Symbol)):
+    """`symbol` as a backend-neutral isinstance head: a native symbol IS a DaCe symbol.
+
+    `symbol` only -- `UndefinedSymbol` subclasses it and no engine mints the `?` sentinel.
+
+    NOT also the symbol FACTORY (T18): redirecting construction to the engine costs 41 gate failures
+    against the 1 it fixes, because DaCe pickles symbols (a PyO3 handle cannot), requires same-name
+    different-dtype instances (the engine forbids shadowing by design), and does frontend arithmetic
+    on them. Those three are prerequisites, not details.
+    """
+
+    def __instancecheck__(cls, obj) -> bool:
+        return super().__instancecheck__(obj) or (cls is symbol and symbolic_engine.is_native_symbol(obj))
+
+
+# Installed only when a foreign backend can produce values: a Python `__instancecheck__` frame
+# measured 288ns vs 34ns, and the redirect could never fire on the default path (cf. `_HEAD_META`).
+_SYMBOL_META = SymbolMeta if symbolic_engine.NATIVE_EXPR is not None else type(sympy.Symbol)
+
+
+class SymbolDeclaration(NamedTuple):
+    """What ``dace.symbol(name, dtype, **assumptions)`` declares. Only the creator of the object reads it (the
+    frontend, from the program's own symbols): an object found inside an expression may be any symbol of its name,
+    so the type of a name comes from the SDFG's symbols."""
+
+    dtype: dtypes.typeclass
+    predicates: frozenset[Predicate]
+    scale: Scale
+
+
+class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
+    """Defines a symbolic variable. Extends SymPy symbols with DaCe-related
+    information."""
 
     s_currentsymbol = 0
+    declaration: SymbolDeclaration
 
     def __new__(cls, name=None, dtype=None, **assumptions):
-        if dtype is None:
-            dtype = DEFAULT_SYMBOL_TYPE
-        if name is None:
-            # Set name dynamically
-            name = "sym_" + str(symbol.s_currentsymbol)
-            symbol.s_currentsymbol += 1
-        elif name.startswith('__DACE'):
-            raise NameError('Symbols cannot start with __DACE')
-        elif not dtypes.validate_name(name):
-            raise NameError('Invalid symbol name "%s"' % name)
-
-        if not isinstance(dtype, dtypes.typeclass):
-            raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
-
-        dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
-        is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
-
-        # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
-        # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
-        assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
-        if 'integer' not in assumptions and numpy.any(is_integer):
-            assumptions['integer'] = True
-        # Using __xnew__ as the regular __new__ is cached, which leads
-        # to modifying different references of symbols with the same name.
-        self = sympy.Symbol.__xnew__(cls, name, **assumptions)
-
-        self.dtype = dtype
+        name, dtype = _symbol_spec(name, dtype)
+        # A symbol is its name: SymPy sees the same assumption on every symbol (a scalar, so real), so equal names are
+        # equal symbols everywhere. The declaration travels with this object only to ``SDFG.add_symbol``; integrality
+        # and signs come from the facts where an expression is simplified.
+        self = sympy.Symbol.__xnew__(cls, name, real=True)
+        self.declaration = SymbolDeclaration(
+            dtype,
+            frozenset(predicate for predicate in Predicate if assumptions.get(predicate.name.lower())),
+            Scale.SMALL if assumptions.get("small") else Scale.DEFAULT,
+        )
         self._constraints = []
         return self
 
     def __getstate__(self):
-        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
+        return {"declaration": self.declaration, "_constraints": self._constraints}
+
+    @property
+    def dtype(self) -> dtypes.typeclass:
+        """The dtype this object was DECLARED with. Transitional: the type of a name is the SDFG's
+        (``sdfg.symbols``); code reading it off an object found inside an expression is being moved there."""
+        return self.declaration.dtype
 
     def _eval_subs(self, old, new):
         """
@@ -224,13 +415,22 @@ class symbol(sympy.Symbol):
                     fail = constraint
                     break
             except (AttributeError, TypeError, ValueError):
-                raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
+                raise RuntimeError(f"Cannot validate constraint {str(constraint)} for symbol {self.name}")
         if fail is not None:
-            raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
+            raise RuntimeError(f"Value {str(value)} invalidates constraint {str(fail)} for symbol {self.name}")
+
+    def __floordiv__(self, other: Any) -> sympy.Expr:
+        """``//`` on a symbol yields ``int_floor``, as ``pystr_to_symbolic`` and :class:`SymExpr`
+        already do; sympy's inherited ``floor(x/y)`` compares unequal to both."""
+        return operator_int_floor(self, other)
+
+    def __rfloordiv__(self, other: Any) -> sympy.Expr:
+        """``other // self``; see :meth:`__floordiv__`."""
+        return operator_int_floor(other, self)
 
     # Type stubs for arithmetic operators (inherited from sympy.Symbol at runtime)
     if TYPE_CHECKING:
-        # yapf: disable
+        # fmt: off
         def __add__(self, other: Any) -> sympy.Expr: ...
         def __radd__(self, other: Any) -> sympy.Expr: ...
         def __sub__(self, other: Any) -> sympy.Expr: ...
@@ -239,15 +439,31 @@ class symbol(sympy.Symbol):
         def __rmul__(self, other: Any) -> sympy.Expr: ...
         def __truediv__(self, other: Any) -> sympy.Expr: ...
         def __rtruediv__(self, other: Any) -> sympy.Expr: ...
-        def __floordiv__(self, other: Any) -> sympy.Expr: ...
-        def __rfloordiv__(self, other: Any) -> sympy.Expr: ...
         def __mod__(self, other: Any) -> sympy.Expr: ...
         def __rmod__(self, other: Any) -> sympy.Expr: ...
         def __pow__(self, other: Any) -> sympy.Expr: ...
         def __rpow__(self, other: Any) -> sympy.Expr: ...
         def __neg__(self) -> sympy.Expr: ...
         def __pos__(self) -> sympy.Expr: ...
-        # yapf: enable
+        # fmt: on
+
+
+def sympy_symbol(name=None, dtype=None, **assumptions) -> symbol:
+    """DaCe symbol as a genuine sympy object, bypassing the backend factory.
+
+    Sympy island only: the value-to-sympy converter (the factory would recurse forever) and the
+    printers/serializers, where a foreign leaf grafted into a sympy tree just converts straight back.
+    """
+    return symbol.__new__(symbol, name, dtype, **assumptions)
+
+
+def is_symbol_leaf(value) -> bool:
+    """Plain DaCe symbol leaf carrying an authoritative `.dtype`.
+
+    Exact-kind, not `isinstance`: `UndefinedSymbol` subclasses `symbol` and a dtype must not be read
+    off the `?` sentinel. Replaces `type(value).__name__ == 'symbol'`, False for every native value.
+    """
+    return type(value) is symbol or symbolic_engine.is_native_symbol(value)
 
 
 #: Sentinel symbol for tile-shape broadcast dimensions in the K-dim
@@ -258,14 +474,37 @@ class symbol(sympy.Symbol):
 #: replicated -- not collapse-and-fold-out. Transformations that special-case
 #: literal-1 dims (length-1-array-to-scalar conversion, soft-squeeze in cpp
 #: codegen, ``to_unsqueeze`` in schedule trees) skip dims marked ``ONE`` via
-#: a sympy free-symbol identity check (``ONE in shape.free_symbols``).
+#: :func:`has_one_marker`.
 #:
 #: Final lowering substitutes ``ONE -> 1`` at the bottom of the per-arch
 #: codegen pipeline, so the C++ literal is unchanged for actual indexing.
 #: User direction 2026-06-10: name is literally ``"ONE"``; full-tile idx
 #: arrays always carry ``ONE`` for non-dependent dims so the gather lib
 #: nodes' broadcast lowering is uniform across CPU and GPU expansions.
-ONE = symbol('ONE', dtype=dtypes.int32, integer=True, positive=True)
+ONE = symbol("ONE", dtype=dtypes.int32, integer=True, positive=True)
+
+#: The marker's name -- the only part of :data:`ONE` that survives storage in an SDFG.
+ONE_NAME = "ONE"
+
+
+def has_one_marker(s) -> bool:
+    """Whether expression ``s`` carries the :data:`ONE` broadcast marker.
+
+    Matches on the symbol NAME, not on sympy object identity. A same-named ``ONE`` reparsed from
+    a subset or shape string carries no assumptions, so it is a different sympy object than
+    :data:`ONE` (which carries ``positive=True``) and compares unequal. The name is what the
+    marker contract is written on (user direction 2026-06-10).
+
+    :param s: A shape entry: Python int, sympy ``Basic``, :class:`SymExpr`, or native expression.
+    :returns: ``True`` iff a free symbol named ``ONE`` occurs in ``s``.
+    """
+    if to_sympy is not None:
+        converted = to_sympy(s)
+        if converted is not None:
+            s = converted
+    if not isinstance(s, sympy.Basic):
+        return False
+    return any(isinstance(fs, sympy.Symbol) and fs.name == ONE_NAME for fs in s.free_symbols)
 
 
 def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
@@ -279,10 +518,10 @@ def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
       ``ONE``-marker firewall in :class:`ConvertLengthOneArraysToScalars`)
       keep working. ``(8, 1)`` -> ``(8,)``; ``(8, ONE)`` -> ``(8, ONE)``.
 
-    * **Opt-in** (``treat_one_symbol_as_one=True``): also drops dims whose
-      ``free_symbols`` contains :data:`ONE`. Used by sites that need the
+    * **Opt-in** (``treat_one_symbol_as_one=True``): also drops dims that
+      :func:`has_one_marker` accepts. Used by sites that need the
       "structural-equivalent" view (e.g. ``resolve_gather_deps`` in
-      :mod:`dace.libraries.tileops._pure_codegen`, the GatherLift tile-shape
+      :mod:`dace.libraries.tileops.lanes`, the GatherLift tile-shape
       lookup, and test assertions). ``(8, ONE)`` -> ``(8,)`` here.
 
     :param shape: A shape tuple / list / sequence; entries may be Python
@@ -291,18 +530,16 @@ def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
     :returns: A new tuple with the requested entries removed in source order.
     """
 
-    def _is_dropped(s):
+    def is_dropped(s):
         if s == 1:
             return True
-        if treat_one_symbol_as_one and isinstance(s, sympy.Basic) and ONE in s.free_symbols:
-            return True
-        return False
+        return treat_one_symbol_as_one and has_one_marker(s)
 
-    return tuple(s for s in shape if not _is_dropped(s))
+    return tuple(s for s in shape if not is_dropped(s))
 
 
 class UndefinedSymbol(symbol):
-    """ Defines an undefined symbolic expression whose value is deferred to runtime.
+    """Defines an undefined symbolic expression whose value is deferred to runtime.
 
     Similar to NaN values, any operation on an undefined symbol results in an
     undefined symbol. When used in code generation, an informative exception
@@ -329,7 +566,7 @@ class UndefinedSymbol(symbol):
             dtype = DEFAULT_SYMBOL_TYPE
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
-        self.dtype = dtype
+        self.declaration = SymbolDeclaration(dtype, frozenset(), Scale.DEFAULT)
         self._constraints = []
         return self
 
@@ -342,37 +579,37 @@ class UndefinedSymbol(symbol):
         return super()._eval_subs(old, new)
 
     def __abs__(self):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __add__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __radd__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __sub__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rsub__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __mul__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rmul__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __truediv__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rtruediv__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __pow__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rpow__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     # Comparisons always return False to indicate indeterminate equality
     def __eq__(self, other):
@@ -393,6 +630,10 @@ class UndefinedSymbol(symbol):
     def __hash__(self):
         # Make UndefinedSymbol hashable as required by SymPy
         return hash(self.name)
+
+
+#: The name every :class:`UndefinedSymbol` carries. Not a valid symbol name, so nothing else claims it.
+UNDEFINED_NAME = UndefinedSymbol().name
 
 
 class TypedConstant(sympy.AtomicExpr):
@@ -418,7 +659,7 @@ class TypedConstant(sympy.AtomicExpr):
             value = value.value
         dtype = dtype or _infer_typed_constant_dtype(value)
         if not isinstance(dtype, dtypes.typeclass):
-            raise TypeError(f'dtype must be a DaCe type, got {dtype!r}')
+            raise TypeError(f"dtype must be a DaCe type, got {dtype!r}")
 
         self = sympy.AtomicExpr.__new__(cls)
         self.value = _sympy_constant_value(value)
@@ -426,10 +667,11 @@ class TypedConstant(sympy.AtomicExpr):
         return self
 
     def _hashable_content(self):
-        return (self.value, self.dtype)
+        # ``ctype``, not the typeclass: SymPy orders terms by comparing these tuples element-wise.
+        return (self.value, self.dtype.ctype)
 
     def _sympystr(self, printer):
-        if hasattr(printer, '_print_TypedConstant'):
+        if hasattr(printer, "_print_TypedConstant"):
             return printer._print_TypedConstant(self)
         return printer.doprint(self.value)
 
@@ -468,11 +710,10 @@ class TypedConstant(sympy.AtomicExpr):
         return self.dtype(self.value)
 
 
-class SymExpr(object):
-    """ Symbolic expressions with support for an overapproximation expression.
-    """
+class SymExpr:
+    """Symbolic expressions with support for an overapproximation expression."""
 
-    def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
+    def __init__(self, main_expr: Union[str, "SymExpr"], approx_expr: Union[str, "SymExpr"] | None = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
             self._approx_expr = self._main_expr
@@ -482,14 +723,14 @@ class SymExpr(object):
     def __new__(cls, *args, **kwargs):
         main_expr, approx_expr = None, None
         if len(args) == 0:
-            if 'main_expr' in kwargs:
-                main_expr = kwargs['main_expr']
-            if 'approx_expr' in kwargs:
-                approx_expr = kwargs['approx_expr']
+            if "main_expr" in kwargs:
+                main_expr = kwargs["main_expr"]
+            if "approx_expr" in kwargs:
+                approx_expr = kwargs["approx_expr"]
         if len(args) == 1:
             main_expr = args[0]
-            if 'approx_expr' in kwargs:
-                approx_expr = kwargs['approx_expr']
+            if "approx_expr" in kwargs:
+                approx_expr = kwargs["approx_expr"]
         if len(args) == 2:
             main_expr, approx_expr = args
         # If values are equivalent, create a normal symbolic expression
@@ -497,7 +738,7 @@ class SymExpr(object):
             if isinstance(main_expr, str):
                 return pystr_to_symbolic(main_expr)
             return main_expr
-        return super(SymExpr, cls).__new__(cls)
+        return super().__new__(cls)
 
     @property
     def expr(self):
@@ -565,9 +806,9 @@ class SymExpr(object):
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(self.expr // other.expr, self.approx // other.approx)
+            return SymExpr(int_floor(self.expr, other.expr), int_floor(self.approx, other.approx))
         if isinstance(other, sympy.Expr):
-            return SymExpr(self.expr // other, self.approx // other)
+            return SymExpr(int_floor(self.expr, other), int_floor(self.approx, other))
         return self // pystr_to_symbolic(other)
 
     def __mod__(self, other):
@@ -582,7 +823,7 @@ class SymExpr(object):
             return SymExpr(self.expr**other.expr, self.approx**other.approx)
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr**other, self.approx**other)
-        return self**pystr_to_symbolic(other)
+        return self ** pystr_to_symbolic(other)
 
     def __eq__(self, other):
         if isinstance(other, sympy.Expr):
@@ -625,7 +866,7 @@ def _sympy_constant_value(value):
         return sympy.Float(value.real) + sympy.Float(value.imag) * sympy.I
     if isinstance(value, sympy.Expr) and value.is_number and value.is_real is False:
         return value
-    raise TypeError(f'Unsupported typed constant value {value!r}')
+    raise TypeError(f"Unsupported typed constant value {value!r}")
 
 
 def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
@@ -643,14 +884,14 @@ def _infer_typed_constant_dtype(value) -> dtypes.typeclass:
         return dtypes.float64
     if isinstance(value, (complex, numpy.complexfloating)):
         return dtypes.complex128
-    raise TypeError(f'Cannot infer a DaCe dtype for {value!r}')
+    raise TypeError(f"Cannot infer a DaCe dtype for {value!r}")
 
 
 def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
     try:
         return dtypes.typeclass_to_literal_suffix(dtype)
     except KeyError as ex:
-        raise TypeError(f'Unsupported typed constant dtype {dtype.to_string()}') from ex
+        raise TypeError(f"Unsupported typed constant dtype {dtype.to_string()}") from ex
 
 
 def _format_float(value: float) -> str:
@@ -659,54 +900,39 @@ def _format_float(value: float) -> str:
     # save->load->save and at most 17 significant digits for fp64.
     f = float(value)
     s = repr(f)
-    if 'e' in s or 'E' in s:
+    if "e" in s or "E" in s:
         return s
-    if '.' not in s:
+    if "." not in s:
         # Keep one fractional digit so an integer-valued float stays floating-point.
-        return s + '.0'
-    int_part, frac_part = s.split('.')
-    return f'{int_part}.{frac_part.rstrip("0") or "0"}'
+        return s + ".0"
+    int_part, frac_part = s.split(".")
+    return f"{int_part}.{frac_part.rstrip('0') or '0'}"
 
 
 def _typed_constant_to_string(expr: TypedConstant) -> str:
     if expr.dtype in (dtypes.complex64, dtypes.complex128):
         re = float(sympy.re(expr.value))
         im = float(sympy.im(expr.value))
-        suffix = 'c64' if expr.dtype == dtypes.complex64 else 'c128'
+        suffix = "c64" if expr.dtype == dtypes.complex64 else "c128"
         if re == 0.0 and im != 0.0:
-            sign = '-' if im < 0 else ''
-            return f'({sign}{_format_float(abs(im))}j){suffix}'
-        op = '+' if im >= 0 else '-'
-        return f'({_format_float(re)} {op} {_format_float(abs(im))}j){suffix}'
+            sign = "-" if im < 0 else ""
+            return f"({sign}{_format_float(abs(im))}j){suffix}"
+        op = "+" if im >= 0 else "-"
+        return f"({_format_float(re)} {op} {_format_float(abs(im))}j){suffix}"
     if isinstance(expr.value, sympy.Float):
         value = _format_float(float(expr.value))
     else:
         value = sympy.printing.str.sstr(expr.value)
     if expr.dtype in dtypes.TYPECLASS_TO_LITERAL_SUFFIX:
-        return f'{value}{_typed_constant_suffix(expr.dtype)}'
-    return f'dace.{expr.dtype.to_string()}({value})'
-
-
-def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
-    return symbol(expr.name, dtype=expr.dtype).assumptions0
-
-
-def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
-    kwargs = {}
-    if dtype != DEFAULT_SYMBOL_TYPE:
-        kwargs['dtype'] = f'dace.{dtype.to_string()}'
-
-    default_assumptions = _symbol_default_assumptions(symbol(expr.name, dtype=dtype))
-    for key, value in sorted(expr.assumptions0.items()):
-        if key == 'commutative' or key.startswith('extended_'):
-            continue
-        if value is True and default_assumptions.get(key) != value:
-            kwargs[key] = value
-    return kwargs
+        return f"{value}{_typed_constant_suffix(expr.dtype)}"
+    return f"dace.{expr.dtype.to_string()}({value})"
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
+SymbolicType: TypeAlias = sympy.Basic | SymExpr
+
+#: A sympy object that keeps its own type through an operation that only renames symbols.
+SympyT = TypeVar("SympyT", bound=sympy.Basic)
 
 
 # http://stackoverflow.com/q/3844948/
@@ -714,21 +940,30 @@ def _checkEqualIvo(lst):
     return not lst or lst.count(lst[0]) == len(lst)
 
 
-def symtype(expr):
-    """ Returns the inferred symbol type from a symbolic expression. """
-    stypes = [s.dtype for s in symlist(expr).values()]
+def symtype(expr, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
+    """The type shared by the symbols of a symbolic expression, typed by name in ``symbols``.
+
+    :raise KeyError: If ``symbols`` does not type a symbol of the expression.
+    :raise TypeError: If the symbols have different types.
+    """
+    stypes = {name: symbols[name] for name in symlist(expr)}
     if len(stypes) == 0:
         return DEFAULT_SYMBOL_TYPE
-    elif _checkEqualIvo(stypes):
-        return stypes[0]
+    elif _checkEqualIvo(list(stypes.values())):
+        return next(iter(stypes.values()))
     else:
-        raise TypeError('Cannot infer symbolic type from expression "%s"'
-                        ' with symbols [%s]' %
-                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
+        raise TypeError(
+            'Cannot infer symbolic type from expression "%s" with symbols [%s]'
+            % (str(expr), ", ".join(f"{name}: {stype}" for name, stype in stypes.items()))
+        )
+
+
+#: Bound types that provably carry no free symbol, so the traversal can be skipped outright.
+_NUMERIC_TYPES = (int, float, sympy.Number)
 
 
 def symlist(values):
-    """ Finds symbol dependencies of expressions. """
+    """Finds symbol dependencies of expressions."""
     result = {}
     try:
         values = iter(values)
@@ -738,12 +973,19 @@ def symlist(values):
     skip = set()
 
     for expr in values:
+        if isinstance(expr, _NUMERIC_TYPES):
+            # A numeric bound has no free symbols; skip the traversal.
+            continue
         if isinstance(expr, SymExpr):
             true_expr = expr.expr
-        elif isinstance(expr, sympy.Basic):
-            true_expr = expr
         else:
-            continue
+            true_expr = expr
+            if to_sympy is not None:
+                converted = to_sympy(true_expr)
+                if converted is not None:
+                    true_expr = converted
+            if not isinstance(true_expr, sympy.Basic):
+                continue
         for atom in sympy.preorder_traversal(true_expr):
             if atom in skip:
                 continue
@@ -762,8 +1004,120 @@ def symlist(values):
     return result
 
 
-def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
-                                                                 Union[int, float]]) -> Union[int, float, numpy.number]:
+def free_symbol_names(values, result: dict[str, None] | None = None) -> dict[str, None]:
+    """
+    Name-only counterpart of :func:`symlist`, for callers that discard the symbol instances.
+
+    Skips exactly what :func:`symlist` skips, but never materializes the name-to-instance map.
+    Keys are inserted in the same order, so ``set(free_symbol_names(v)) == set(symlist(v))`` holds
+    with the same iteration order.
+
+    :param values: An expression or an iterable of expressions.
+    :param result: Optional dictionary to accumulate the names into, so a multi-bound caller keeps one dictionary.
+    :return: ``result``, or a fresh dictionary mapping every free symbol name to ``None``.
+    """
+    if result is None:
+        result = {}
+    try:
+        values = iter(values)
+    except TypeError:
+        values = [values]
+
+    skip = set()
+
+    for expr in values:
+        if isinstance(expr, _NUMERIC_TYPES):
+            # A numeric bound has no free symbols; skip the traversal.
+            continue
+        if isinstance(expr, SymExpr):
+            true_expr = expr.expr
+        else:
+            true_expr = expr
+            if to_sympy is not None:
+                converted = to_sympy(true_expr)
+                if converted is not None:
+                    true_expr = converted
+            if not isinstance(true_expr, sympy.Basic):
+                continue
+        for atom in sympy.preorder_traversal(true_expr):
+            if atom in skip:
+                continue
+            if isinstance(atom, Attr):
+                # Skip attributes
+                skip.add(atom.args[1])
+                continue
+            if isinstance(atom, Subscript):
+                # Only the indices are free symbols; skip the whole head subtree.
+                skip.update(sympy.preorder_traversal(atom.args[0]))
+                continue
+            if isinstance(atom, symbol):
+                result[atom.name] = None
+    return result
+
+
+def symbols_in(values: Iterable[Any]) -> dict[str, "symbol"]:
+    """
+    Maps symbol names to the symbol instances that occur in ``values``.
+
+    A symbol's identity includes its dtype, so an instance minted from a bare name need not match the equally-named
+    one an expression already carries. Resolving names through this map keeps both sides on a single instance,
+    whatever the dtype. Earlier values win, so pass the authoritative ones first.
+
+    :param values: Subsets or symbolic expressions.
+    :return: Mapping from symbol name to the instance found for it.
+    """
+    pool: dict[str, symbol] = {}
+    for value in values:
+        try:
+            found = value.symbols
+        except AttributeError:
+            found = symlist(value)
+        for name, sym in found.items():
+            pool.setdefault(name, sym)
+    return pool
+
+
+def resolve_symbol(name: str | sympy.Basic | None, pool: dict[str, "symbol"]) -> sympy.Basic:
+    """
+    Resolves a symbol name to the instance ``pool`` holds for it, parsing it as usual when the pool has none.
+
+    :param name: A symbol name, or anything :func:`pystr_to_symbolic` accepts.
+    :param pool: Name-to-instance mapping, as returned by :func:`symbols_in`.
+    """
+    resolved = pool.get(str(name))
+    return pystr_to_symbolic(name) if resolved is None else resolved
+
+
+def same_value(a: Any, b: Any) -> bool:
+    """
+    Compares symbolic expressions, or sequences of them, without looking at symbol dtypes or
+    assumptions.
+
+    Symbol identity includes the dtype and the SymPy assumptions, but the value a symbol stands
+    for changes with neither: a name denotes ONE value in an SDFG. Comparisons that are about
+    values -- shapes, strides, extents -- must use this, since the same name routinely carries
+    different dtypes across a nested SDFG boundary and different assumptions between an
+    annotated descriptor and a bound reparsed from a string.
+    """
+    if a is b or a == b:
+        return True
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        # Sequence type is part of the comparison, as it is for ``==``: a list never equals a tuple.
+        if type(a) is not type(b) or len(a) != len(b):
+            return False
+        return all(same_value(x, y) for x, y in zip(a, b))
+    if not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
+        return False
+    # Structural comparison with every symbol stripped down to its bare name: dtype and
+    # assumptions both drop out.
+    plain = [
+        expr.subs({s: sympy.Symbol(s.name) for s in expr.free_symbols if isinstance(s, sympy.Symbol)})
+        for expr in (a, b)
+    ]
+    return bool(plain[0] == plain[1])
+
+
+def evaluate(expr: sympy.Basic | int | float, symbols: dict[symbol | str, int | float]) -> int | float | numpy.number:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -790,12 +1144,14 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
         return expr.cast_value()
 
     # Evaluate all symbols
-    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)): sval for sname, sval in symbols.items()}
+    # A str key NAMES a symbol; anything else already IS one. Testing for `sympy.Symbol` instead
+    # made every non-sympy symbol object -- an idxalg one, say -- fall into `symbol(sname)`, which
+    # then indexes it as a name string and raised `AttributeError: no attribute 'startswith'`.
+    syms = {(symbol(sname) if isinstance(sname, str) else sname): sval for sname, sval in symbols.items()}
 
     # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
     syms = {
-        k: v
-        for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
+        k: v for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
     }
     # Convert strings to SymPy symbols (for SymPy 1.12)
     syms = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in syms.items()}
@@ -804,13 +1160,17 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
 
 
 def issymbolic(value, constants=None):
-    """ Returns True if an expression is symbolic with respect to its contents
-        and a given dictionary of constant values. """
+    """Returns True if an expression is symbolic with respect to its contents
+    and a given dictionary of constant values."""
     constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
     if isinstance(value, UndefinedSymbol):
         return True
+    if to_sympy is not None:
+        converted = to_sympy(value)
+        if converted is not None:
+            value = converted
     if isinstance(value, (sympy.Symbol, symbol)) and value.name not in constants:
         return True
     if isinstance(value, sympy.Basic):
@@ -820,6 +1180,42 @@ def issymbolic(value, constants=None):
             if isinstance(atom, (sympy.Symbol, symbol)) and atom.name not in constants:
                 return True
     return False
+
+
+def align(value: SymbolicType | int, alignment: SymbolicType | int) -> SymbolicType | int:
+    """
+    Rounds a value up to the nearest multiple of an alignment.
+
+    :param value: The (possibly symbolic) non-negative value to align.
+    :param alignment: The (possibly symbolic) positive alignment.
+    :return: The smallest multiple of ``alignment`` that is not less than ``value``, as an integer if neither is
+             symbolic.
+    :note: Symbolic values are rounded with ``int_ceil``, never ``//``: ``(N + a - 1) // a`` builds a sympy
+           ``floor(...)``, whose argument ``symstr`` prints without the floor, truncating each term (N=1, a=8
+           would give 0, not 8).
+    """
+    if issymbolic(value) or issymbolic(alignment):
+        return int_ceil(value, alignment) * alignment
+    return ((int(value) + int(alignment) - 1) // int(alignment)) * int(alignment)
+
+
+def is_multiple(value: SymbolicType | int, alignment: SymbolicType | int) -> bool:
+    """
+    Returns whether a value is provably a multiple of an alignment.
+
+    :param value: The (possibly symbolic) value to check.
+    :param alignment: The (possibly symbolic) positive alignment.
+    :return: True if ``value`` is a multiple of ``alignment`` for every value of its symbols, False otherwise
+             (including if it cannot be proven). For a ``SymExpr``, its exact expression is checked.
+    """
+    if isinstance(value, SymExpr):
+        value = value.expr
+    if isinstance(alignment, SymExpr):
+        alignment = alignment.expr
+    if issymbolic(value) or issymbolic(alignment):
+        # Multiples are of integers, so the symbols are integers here
+        return sympy.Mod(_as_integers(sympy.sympify(value)), _as_integers(sympy.sympify(alignment))) == 0
+    return int(value) % int(alignment) == 0
 
 
 def overapproximate(expr):
@@ -832,42 +1228,51 @@ def overapproximate(expr):
     return _overapproximate(expr)
 
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=2048, typed=True)
 def _overapproximate(expr):
     if isinstance(expr, SymExpr):
         if expr.expr != expr.approx:
             return expr.approx
         else:
             return overapproximate(expr.expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
     if isinstance(expr, (sympy.Number, TypedConstant)):
         return expr
 
-    a = sympy.Wild('a')
-    b = sympy.Wild('b')
-    c = sympy.Wild('c')
+    # Unification is MILLISECONDS against a microsecond structural test, so refuse on the head
+    # first (measured 4.6x on the miss path). NOT gated on ``is_Add``: the trailing ``+ c`` is a
+    # Wild that happily binds 0, so ``Min(4, N)`` matches the first pattern with no Add in sight.
+    if expr.has(sympy.Min):
+        a = sympy.Wild("a")
+        b = sympy.Wild("b")
+        c = sympy.Wild("c")
 
-    # If Min(x, N-y), return the non-symbolic of the two components
-    match = expr.match(sympy.Min(a, b) + c)
-    if match is not None and len(match) == 3:
-        # First, construct the min expression with "c" inline
-        newexpr = sympy.Min(match[a] + match[c], match[b] + match[c])
-        # Match again
-        match = newexpr.match(sympy.Min(a, b))
+        # If Min(x, N-y), return the non-symbolic of the two components
+        match = expr.match(sympy.Min(a, b) + c)
+        if match is not None and len(match) == 3:
+            # First, construct the min expression with "c" inline
+            newexpr = sympy.Min(match[a] + match[c], match[b] + match[c])
+            # Match again
+            match = newexpr.match(sympy.Min(a, b))
+            if match is not None and len(match) == 2:
+                if issymbolic(match[a]) and not issymbolic(match[b]):
+                    return match[b]
+                if issymbolic(match[b]) and not issymbolic(match[a]):
+                    return match[a]
+
+    if expr.has(sympy.ceiling):
+        # If ceiling((k * ((N - 1) / k))) + k), return N
+        a = sympy.Wild("a", properties=[lambda k: k.is_Symbol or k.is_Integer])
+        b = sympy.Wild("b", properties=[lambda k: k.is_Symbol or k.is_Integer])
+        int_floor = sympy.Function("int_floor")
+        match = expr.match(sympy.ceiling(b * int_floor(a - 1, b)) + b)
         if match is not None and len(match) == 2:
-            if issymbolic(match[a]) and not issymbolic(match[b]):
-                return match[b]
-            if issymbolic(match[b]) and not issymbolic(match[a]):
-                return match[a]
-
-    # If ceiling((k * ((N - 1) / k))) + k), return N
-    a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    int_floor = sympy.Function('int_floor')
-    match = expr.match(sympy.ceiling(b * int_floor(a - 1, b)) + b)
-    if match is not None and len(match) == 2:
-        return match[a]
+            return match[a]
 
     return expr
 
@@ -895,29 +1300,32 @@ def resolve_symbol_to_constant(symb, start_sdfg):
 
 
 def symbols_in_ast(tree: ast.AST):
-    """ Walks an AST and finds all names, excluding function names. """
+    """Walks an AST and finds all names, excluding function names."""
     symbols = []
     skip = set()
     for node in ast.walk(tree):
         if node in skip:
             continue
         if isinstance(node, ast.Call):
-            skip.add(node.func)
+            # Skip the entire callee, not just its root node: an attribute call like ``dace.int64(x)``
+            # has callee ``dace.int64`` whose base ``dace`` is a module, not a free symbol. Adding only
+            # ``node.func`` (the Attribute) still left its inner ``Name`` (here ``dace``) collected.
+            skip.update(ast.walk(node.func))
         if isinstance(node, ast.Name):
             symbols.append(node.id)
     return dtypes.deduplicate(symbols)
 
 
 def symbol_name_or_value(val):
-    """ Returns the symbol name if symbol, otherwise the value as a string. """
+    """Returns the symbol name if symbol, otherwise the value as a string."""
     if isinstance(val, symbol):
         return val.name
     return str(val)
 
 
 def sympy_to_dace(exprs, symbol_map=None):
-    """ Convert all `sympy.Symbol`s to DaCe symbols, according to
-        `symbol_map`. """
+    """Convert all `sympy.Symbol`s to DaCe symbols, according to
+    `symbol_map`."""
     repl = {}
     symbol_map = symbol_map or {}
 
@@ -931,22 +1339,77 @@ def sympy_to_dace(exprs, symbol_map=None):
     exprs = list(exprs)
 
     for i, expr in enumerate(exprs):
+        if to_sympy is not None:
+            converted = to_sympy(expr)
+            if converted is not None:
+                expr = converted
         if isinstance(expr, sympy.Basic):
             for atom in expr.atoms():
                 if isinstance(atom, sympy.Symbol):
                     try:
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
-                        # Symbol is not in map, create a DaCe symbol with same assumptions
-                        repl[atom] = symbol(atom.name, **atom.assumptions0)
-            exprs[i] = expr.subs(repl)
+                        # Substituted back into a sympy tree: a foreign leaf converts straight back.
+                        # DTYPE FROM THE ENCLOSING SCOPE, not the default. A symbol's dtype is part
+                        # of its identity (``symbol._hashable_content``), and a bound recovered from
+                        # a STRING-backed property (a loop's init / condition / update) is re-parsed
+                        # here, so minting it at ``DEFAULT_SYMBOL_TYPE`` puts a second ``N`` in a
+                        # graph whose descriptors carry the declared one. ``N - N`` then never
+                        # cancels -- not even under ``simplify`` -- and every proof that compares a
+                        # bound against a subset fails on a well-formed program: the modular-wrap
+                        # split rejects its own split point (ext_modular_wrap, 250x slower) and the
+                        # 2-D arg-reduce match rejects a nest that does cover the whole array
+                        # (TSVC s3110 / s13110). The authority only ever OVERRIDES: a name no
+                        # enclosing scope declares keeps the default, so an unscoped parse is
+                        # unchanged.
+                        declared = _SERIALIZATION_SYMBOL_DTYPES.get().get(atom.name)
+                        repl[atom] = sympy_symbol(atom.name, declared, **atom.assumptions0)
+            exprs[i] = rename_symbols(expr, repl)
     if oneelem:
         return exprs[0]
     return exprs
 
 
+#: ``_eval_subs`` hooks that decline a Symbol ``old`` and leave ``subs`` to rebuild the arguments, which is all
+#: ``xreplace`` does. Any other hook (``Piecewise``, ``Derivative``, ``Infinity``, ...) keeps ``subs``.
+ARGUMENT_REBUILDING_EVAL_SUBS = frozenset(
+    {
+        sympy.Basic._eval_subs,
+        sympy.Add._eval_subs,
+        sympy.Mul._eval_subs,
+        sympy.Pow._eval_subs,
+        sympy.Number._eval_subs,
+        sympy.Symbol._eval_subs,
+        sympy.core.function.Application._eval_subs,
+        symbol._eval_subs,
+        UndefinedSymbol._eval_subs,
+    }
+)
+
+
+def renames_in_one_rebuild(expr: sympy.Basic, repl: dict[sympy.Symbol, Any]) -> bool:
+    """Whether ``expr.subs(repl)`` equals ``expr.xreplace(repl)``.
+
+    ``subs`` substitutes key by key. With distinct key names (``symbol._eval_subs`` matches by name), same-named
+    Symbol values and only argument-rebuilding hooks in the tree, no substitution can see another's result."""
+    names = dict.fromkeys(key.name for key in repl)
+    if len(names) != len(repl):
+        return False
+    if any(not isinstance(value, sympy.Symbol) or value.name != key.name for key, value in repl.items()):
+        return False
+    return all(type(node)._eval_subs in ARGUMENT_REBUILDING_EVAL_SUBS for node in sympy.preorder_traversal(expr))
+
+
+def rename_symbols(expr: sympy.Basic, repl: dict[sympy.Symbol, Any]) -> sympy.Basic:
+    """``expr.subs(repl)``, as one ``xreplace`` rebuild instead of one walk per key where the two agree."""
+    if not renames_in_one_rebuild(expr, repl):
+        return expr.subs(repl)
+    # ``subs`` skips a pair whose value is identical to its key; rebuilding around it could re-evaluate the tree.
+    return expr.xreplace({key: value for key, value in repl.items() if not (type(key) is type(value) and key == value)})
+
+
 def is_sympy_userfunction(expr):
-    """ Returns True if the expression is a SymPy function. """
+    """Returns True if the expression is a SymPy function."""
     try:
         return issubclass(type(type(expr)), sympy.core.function.UndefinedFunction)
     except AttributeError:
@@ -954,9 +1417,9 @@ def is_sympy_userfunction(expr):
 
 
 def swalk(expr, enter_functions=False):
-    """ Walk over a symbolic expression tree (similar to `ast.walk`).
-        Returns an iterator that yields the values and recurses into functions,
-        if specified.
+    """Walk over a symbolic expression tree (similar to `ast.walk`).
+    Returns an iterator that yields the values and recurses into functions,
+    if specified.
     """
     yield expr
     for arg in expr.args:
@@ -967,8 +1430,34 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'ipow', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND',
-    'OR', 'pow', 'round', 'ITE'
+    "int_floor",
+    "int_ceil",
+    "int_sqrt",
+    "ipow",
+    "fma",
+    "abs",
+    "Abs",
+    "min",
+    "Min",
+    "max",
+    "Max",
+    "not",
+    "Not",
+    "Eq",
+    "NotEq",
+    "Ne",
+    "AND",
+    "OR",
+    "pow",
+    "round",
+    "ITE",
+    "merge",
+    "int32",
+    "int64",
+    "float32",
+    "float64",
+    "conj",
+    "abort",
 }
 
 
@@ -988,7 +1477,11 @@ def builtin_userfunctions() -> frozenset:
 
 
 def contains_sympy_functions(expr):
-    """ Returns True if expression contains Sympy functions. """
+    """Returns True if expression contains Sympy functions."""
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if isinstance(expr, Subscript):
         # A subscript is a data-container access.
         return True
@@ -1004,7 +1497,7 @@ def contains_sympy_functions(expr):
     return False
 
 
-def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+def free_symbols_and_functions(expr: SymbolicType | str) -> set[str]:
     """
     Return the names of the free symbols and (non-builtin) functions in an expression.
 
@@ -1019,17 +1512,21 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
         if dtypes.validate_name(expr):
             return {expr}
         expr = pystr_to_symbolic(expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return set()
 
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
-        if (is_sympy_userfunction(atom) and str(atom.func) not in _builtin_userfunctions):
+        if is_sympy_userfunction(atom) and str(atom.func) not in _builtin_userfunctions:
             result.add(str(atom.func))
     return result
 
 
-def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
+def arrays(expr: SymbolicType | str) -> set[str]:
     """
     Return the names of the containers accessed via ``Subscript`` (e.g. ``A`` in ``A[i]``).
 
@@ -1041,12 +1538,16 @@ def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
     """
     if isinstance(expr, str):
         expr = pystr_to_symbolic(expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return set()
     return {str(node.args[0]) for node in expr.atoms(Subscript)}
 
 
-def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[str]:
+def scalars(expr: SymbolicType | str, descriptors: dict[str, Any]) -> set[str]:
     """
     Return the names of the rank-0 scalar containers referenced by name.
 
@@ -1060,13 +1561,18 @@ def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[
     """
     if isinstance(expr, str):
         expr = pystr_to_symbolic(expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return set()
     from dace import data  # avoid import loop
+
     return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
-def is_undefined(expr: Union[SymbolicType, str]) -> bool:
+def is_undefined(expr: SymbolicType | str) -> bool:
     """
     Checks if a symbolic expression contains any UndefinedSymbol atoms.
 
@@ -1079,6 +1585,11 @@ def is_undefined(expr: Union[SymbolicType, str]) -> bool:
     if isinstance(expr, UndefinedSymbol):
         return True
 
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
+
     if not isinstance(expr, sympy.Basic):
         return False
 
@@ -1090,9 +1601,149 @@ def is_undefined(expr: Union[SymbolicType, str]) -> bool:
     return False
 
 
+#: Symbol-leaf assumptions that govern index reasoning; a full dump differs between engines by
+#: construction (sympy derives dozens of facts, a typed engine carries a range).
+_STRUCTURAL_ASSUMPTIONS = ("integer", "real", "nonnegative", "positive")
+
+
+def head_name(expr) -> str | None:
+    """DaCe head-class name of `expr`, for any backend's value; `None` if not symbolic.
+
+    `type(x).__name__` is wrong under a backend that holds the head as node data and wraps every node
+    in one class -- a caller comparing to `'__int_floor'` silently takes its not-a-floordiv branch.
+    """
+    if symbolic_engine.NATIVE_EXPR is not None and isinstance(expr, symbolic_engine.NATIVE_EXPR):
+        # DaCe head first: the engine holds `int_floor(a, b)` structurally, as a division node named
+        # `floor`, and only the converter knows that spelling. `None` = plain algebra, no DaCe class.
+        return symbolic_engine.dace_head_name(expr) or str(expr.func)
+    return type(expr).__name__ if isinstance(expr, SymbolicBasic) else None
+
+
+#: One head spelled several ways: sympy's numeric/boolean singletons and its DaCe symbol subclass.
+#: Collapsed so a tree deserialized as sympy compares against a natively built one -- leaf values and
+#: assumption flags still have to match, so a real difference stays visible.
+_HEAD_ALIASES = {
+    "Zero": "Integer",
+    "One": "Integer",
+    "NegativeOne": "Integer",
+    "symbol": "Symbol",
+    "BooleanTrue": "Boolean",
+    "BooleanFalse": "Boolean",
+}
+
+
+def structural_repr(expr) -> str:
+    """Head/args/assumption tree as text; a structural comparator across backends.
+
+    `sympy.srepr` renders a foreign object by its Python class name, so a non-sympy expression
+    collapses to `Expr(Expr(), ...)` -- noise comparing equal to other noise.
+    """
+    head = head_name(expr)
+    head = _HEAD_ALIASES.get(head, head)
+    if head is None:
+        return repr(expr)
+    args = expr.args
+    if args:
+        return f"{head}({', '.join(structural_repr(a) for a in args)})"
+    if head != "Symbol":
+        # A number's assumptions follow from its head and value. Rendering them would compare sympy's
+        # LAZY `assumptions0` cache, which is empty on a `Number` nothing has queried yet.
+        return f"{head}({expr})"
+    flags = "".join(f", {k}=True" for k in _STRUCTURAL_ASSUMPTIONS if expr.assumptions0.get(k))
+    return f"{head}({expr}{flags})"
+
+
+def numeric_bounds(expr: sympy.Basic) -> tuple[Any, Any]:
+    """``(lower, upper)`` numeric bounds of the sympy expression ``expr``, each ``None`` where unknown.
+
+    Interval arithmetic over sums, numeric multiples, ``Min`` and ``Max``, after every rounding term is
+    split into its exact part and a bounded remainder -- ``int_ceil(a, b)`` is ``a/b + t`` with ``t`` in
+    ``[0, 1]``, ``int_floor(a, b)`` and ``floor(x)`` subtract such a ``t``, ``ceiling(x)`` adds one, and
+    ``Mod(a, b)`` lies in ``[0, b]`` -- so the exact parts cancel against the rest of the expression:
+    ``N/64 + 1 - int_ceil(N, 64)`` is ``1 - t``. sympy's assumption engine bounds none of these heads, so
+    it cannot see that a peeled first trip ``14:Min(14, N - 1) + 1`` has at most one iteration. A symbol is
+    bounded below only by its own assumptions (``positive`` integer from 1, ``nonnegative`` from 0).
+    """
+    if any(isinstance(atom, UndefinedSymbol) for atom in expr.atoms(sympy.Symbol)):
+        # An undefined symbol is no number at all, and expanding around one never settles.
+        return None, None
+    remainders: dict[Any, tuple[Any, Any]] = {}
+
+    def remainder(lower: Any, upper: Any) -> sympy.Dummy:
+        t = sympy.Dummy("t")
+        remainders[t] = (sympy.Integer(lower), sympy.Integer(upper))
+        return t
+
+    def split(node: sympy.Basic) -> sympy.Basic:
+        args = [split(arg) for arg in node.args]
+        if isinstance(node, (int_floor, int_ceil)) and args[1].is_Number and args[1] > 0:
+            exact = args[0] / args[1]
+            return exact - remainder(0, 1) if isinstance(node, int_floor) else exact + remainder(0, 1)
+        if isinstance(node, sympy.floor):
+            return args[0] - remainder(0, 1)
+        if isinstance(node, sympy.ceiling):
+            return args[0] + remainder(0, 1)
+        if isinstance(node, sympy.Mod) and args[1].is_Number and args[1] > 0:
+            return remainder(0, args[1])
+        return node.func(*args) if args and args != list(node.args) else node
+
+    return _interval(sympy.expand(split(expr)), remainders)
+
+
+def _interval(expr: Any, remainders: dict[Any, tuple[Any, Any]]) -> tuple[Any, Any]:
+    """:func:`numeric_bounds` of an expression whose rounding terms are already ``remainders``."""
+    if expr.is_Number:
+        # ``oo`` is a sympy Number too: an infinite bound is no bound, and ``oo - oo`` would make it ``nan``.
+        return (expr, expr) if expr.is_finite else (None, None)
+    if expr.is_Symbol:
+        if expr in remainders:
+            return remainders[expr]
+        if expr.is_positive and expr.is_integer:
+            return sympy.Integer(1), None
+        if expr.is_nonnegative:
+            return sympy.Integer(0), None
+        return None, None
+    if expr.is_Add:
+        parts = [_interval(arg, remainders) for arg in expr.args]
+        lower = None if any(lo is None for lo, _ in parts) else sympy.Add(*(lo for lo, _ in parts))
+        upper = None if any(hi is None for _, hi in parts) else sympy.Add(*(hi for _, hi in parts))
+        return lower, upper
+    if expr.is_Mul:
+        coefficient, rest = expr.as_coeff_Mul()
+        if coefficient == 1 or not coefficient.is_Number:
+            return None, None
+        lower, upper = _interval(rest, remainders)
+        if coefficient < 0:
+            lower, upper = upper, lower
+        return (None if lower is None else coefficient * lower), (None if upper is None else coefficient * upper)
+    if isinstance(expr, (sympy.Min, sympy.Max)):
+        parts = [_interval(arg, remainders) for arg in expr.args]
+        lowers = [lo for lo, _ in parts if lo is not None]
+        uppers = [hi for _, hi in parts if hi is not None]
+        if isinstance(expr, sympy.Min):
+            # Below every argument: at most the least known upper bound, at least the least lower one.
+            return (min(lowers) if len(lowers) == len(parts) else None), (min(uppers) if uppers else None)
+        return (max(lowers) if lowers else None), (max(uppers) if len(uppers) == len(parts) else None)
+    return None, None
+
+
+def apply_head(name: str, *args):
+    """Apply the DaCe symbolic head class `name` to `args`, in the ACTIVE backend's representation.
+
+    Calling the sympy class directly sympifies a native operand, dragging the whole expression back
+    onto the sympy island where its symbols hash differently from the engine's.
+    """
+    if symbolic_engine.NATIVE_EXPR is not None and any(isinstance(a, symbolic_engine.NATIVE_EXPR) for a in args):
+        return symbolic_engine.Function(name)(*args)
+    cls = _PYSTR2SYM_locals.get(name)
+    if not isinstance(cls, type):
+        raise ValueError(f"no DaCe symbolic head named {name!r}")
+    return cls(*args)
+
+
 def sympy_numeric_fix(expr):
-    """ Fix for printing out integers as floats with ".00000000".
-        Converts the float constants in a given expression to integers. """
+    """Fix for printing out integers as floats with ".00000000".
+    Converts the float constants in a given expression to integers."""
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
         # Preserve a finite float -- sympy.Float, Python float, or numpy float --
         # so an integer-valued float like 1.0 stays 1.0 and is never collapsed to
@@ -1120,8 +1771,118 @@ def sympy_numeric_fix(expr):
     return expr
 
 
-class int_floor(sympy.Function):
+class DaceFunctionMeta(sympy.core.function.FunctionClass):
+    """Metaclass making a DaCe symbolic head an isinstance target for ANY backend's values.
 
+    These classes state a DaCe contract -- "this expression is an ``ITE``", "this one is the operator
+    spelling of ``bitwise_or``" -- rather than a sympy implementation detail. So the contract has to
+    hold whichever engine represents the value, and a value from a non-sympy backend can never be an
+    instance of a sympy class by type. Membership is decided from the head NAME through the existing
+    class hierarchy, so ``__bitwise_or`` still tests as a ``bitwise_or`` (it subclasses it) while
+    ``bitwise_or`` does NOT test as the ``__`` variant, and no second table can drift.
+
+    Without this, a pass asking ``isinstance(x, Subscript)`` silently took its NOT-a-subscript branch
+    for every value the other backend built -- a wrong answer, not an error (the map-range array
+    bound went un-hoisted; the vectorizer could not classify a gather index).
+    """
+
+    def __instancecheck__(cls, obj) -> bool:
+        if super().__instancecheck__(obj):
+            return True
+        # The converter's own class, not a name looked up in `_PYSTR2SYM_locals`: that table is keyed
+        # by PARSER spellings (`'And'`, `'Or'`, `'round'`) while the classes are `AND`, `OR`, `ROUND`,
+        # and `fma`/`logical_*_shift` have no key at all -- so every `And`/`Or` guard, which is
+        # what the converter mints for the commonest shape there is, answered False.
+        head = symbolic_engine.dace_head_class(obj)
+        return head is not None and issubclass(head, cls)
+
+
+# Only installed when a foreign backend can actually produce values. Under the default backend the
+# override could never fire, and paying a Python `__instancecheck__` frame per `isinstance` to learn
+# that measured 288ns against 34ns for the plain check -- so the default path keeps sympy's own
+# metaclass and is bit-identical to having none of this.
+_HEAD_META = DaceFunctionMeta if symbolic_engine.NATIVE_EXPR is not None else sympy.core.function.FunctionClass
+
+
+class DaceFunction(sympy.Function, metaclass=_HEAD_META):
+    """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
+
+    if TYPE_CHECKING:
+
+        def __new__(cls, *args: Any, **options: Any) -> sympy.Expr:  # sympy's stub claims ``type[AppliedUndef]``
+            ...
+
+
+def _as_integers(expr: sympy.Expr) -> sympy.Expr:
+    """``expr`` over integer symbols of the same names, for operands that are integers by definition. A ``Dummy`` (a
+    proof's slack) stays distinct from every other one: two slacks share a name, not a value."""
+    return expr.xreplace(
+        {
+            s: sympy.Dummy(s.name, integer=True) if isinstance(s, sympy.Dummy) else sympy.Symbol(s.name, integer=True)
+            for s in expr.free_symbols
+            if isinstance(s, sympy.Symbol)
+        }
+    )
+
+
+def _integral(quotient: sympy.Expr) -> bool:
+    """Whether a quotient of integer division operands is an integer: the operands are integers by definition."""
+    return _as_integers(quotient).is_integer is True
+
+
+def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
+    """``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range."""
+    if step == 1 and _integral(numerator):
+        return numerator
+    quotient = numerator / step
+    # Over integer operands the ceiling folds an exact quotient and an integer part (``ceil(N - 1/2) = N``)
+    names = {s.name: s for s in quotient.free_symbols if isinstance(s, sympy.Symbol)}
+    folded = sympy.ceiling(_as_integers(quotient))
+    return folded.xreplace({s: names[s.name] for s in folded.free_symbols if isinstance(s, sympy.Symbol)})
+
+
+def split_divisible_terms(x, y) -> tuple[sympy.Basic, sympy.Basic] | None:
+    """Split ``x`` into ``(quotient, remainder)`` with ``x == quotient * y + remainder``, ``quotient``
+    a provable integer and ``remainder`` everything that did not divide, or None if no term divides.
+
+    Splitting per TERM is what reaches a symbolic divisor at all: sympy cancels a monomial against a
+    monomial but never a sum, so ``(S*(K - 1) + S) / S`` does not report itself as an integer while
+    each of its terms does.
+
+    The caller decides what the split is worth. A zero remainder is exact and needs no assumption
+    about either operand -- nothing is rounded, so truncation, floor and ceiling all agree. A
+    remainder is only safe to leave behind where truncation IS flooring; see the callers.
+
+    The whole quotient is tried first: a divisor that is itself a sum, as :func:`simplify_under` writes a positive
+    ``P`` (``s + 1``), divides ``N*(s + 1) + s + 1`` while none of its terms does.
+    """
+    whole = sympy.cancel(x / y)
+    if _integral(whole):
+        return whole, sympy.S.Zero
+    quotient, remainder = sympy.S.Zero, sympy.S.Zero
+    for term in sympy.Add.make_args(x):
+        candidate = term / y
+        if _integral(candidate):
+            quotient += candidate
+        else:
+            remainder += term
+    return None if quotient.is_zero else (quotient, remainder)
+
+
+def rounds_like_flooring(x, y, remainder) -> bool:
+    """True where C's truncating ``/`` computes the floor for both divisions the split produces.
+
+    ``int_floor`` emits C ``/``, which truncates toward zero, so ``floor((q*y + r)/y) == q +
+    floor(r/y)`` is an identity about a function DaCe does not generate: pulling ``-2*S`` out of
+    ``int_floor(-2*S + 3, S)`` answers -2 where the program, at ``S = 5``, computes ``-7/5 == -1``.
+    A nonnegative numerator over a positive divisor is where the two agree, and it is common --
+    extents, shapes and strides are declared ``positive`` or ``nonnegative`` -- so the split is worth
+    having as long as the assumptions are actually there to prove it, and refused when they are not.
+    """
+    return bool(y.is_positive and x.is_nonnegative and remainder.is_nonnegative)
+
+
+class int_floor(DaceFunction):
     @classmethod
     def eval(cls, x, y):
         """
@@ -1133,22 +1894,111 @@ class int_floor(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return x // y
-        if y.is_Number and y == 1:
-            return x
+        if y.is_Number:
+            if y == 1:
+                return x
+            if y == -1:
+                return -x
+            # Exact division is not a rounding operation at all -- return the quotient itself, so the
+            # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
+            quotient = x / y
+            if _integral(quotient):
+                return quotient
+        # A divisor that may be zero divides nothing: folding ``int_floor(i, i)`` to 1 asserts
+        # ``i != 0``, which no assumption established, and it costs the expression its only symbol.
+        if y.is_nonzero is not True:
+            return None
+        split = split_divisible_terms(x, y)
+        if split is None:
+            return None
+        quotient, remainder = split
+        if remainder.is_zero:
+            return quotient
+        # A constant remainder folds exactly once the whole quotient is known to be a floor: over a
+        # nonnegative numerator and positive divisor C's ``/`` floors, and ``floor((q*y + r)/y)`` is
+        # ``q + floor(r/y)`` for integer ``q``, so ``int_floor(2*N - 1, 2)`` is ``N - 1`` for positive ``N``.
+        if remainder.is_Number and y.is_positive and x.is_nonnegative:
+            return quotient + remainder // y
+        return quotient + cls(remainder, y) if rounds_like_flooring(x, y, remainder) else None
 
     def _eval_is_integer(self):
         return True
 
+    def _eval_is_nonnegative(self):
+        x, y = self.args
+        if x.is_nonnegative and y.is_positive:
+            return True
+
 
 class __int_floor(int_floor):
-    """ Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
-        it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
-        ``int_floor(a, b)`` keeps its function spelling. """
+    """Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
+    it round-trips to ``//`` (Python) / ``/`` (C++), while an explicit
+    ``int_floor(a, b)`` keeps its function spelling."""
+
     pass
 
 
-class int_ceil(sympy.Function):
+#: Unmangled alias: ``__int_floor`` named inside a class body becomes ``_symbol__int_floor``.
+operator_int_floor = __int_floor
 
+#: Python's modulo, the meaning of ``%``: the quotient is floored, so the result takes the sign of the divisor, which is
+#: SymPy's ``Mod``.
+PyMod = sympy.Mod
+
+
+class CMod(DaceFunction):
+    """C's modulo, asked for explicitly (Fortran's ``MOD``, ``numpy.fmod``): the quotient is truncated, so the result
+    takes the sign of the dividend (``fmod`` for floating point)."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and y != 0:
+            quotient = x / y
+            return x - y * (sympy.floor(quotient) if quotient >= 0 else sympy.ceiling(quotient))
+        if x.is_nonnegative and y.is_positive:
+            return PyMod(x, y)  # both roundings agree, so simplification sees a single form
+        return None
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
+# Fortran's MOD truncates and MODULO floors, like C and Python
+FtnMod = CMod
+FtnModulo = PyMod
+
+# Python's ``//`` floors
+PyFloor = int_floor
+
+# Spellings of the modulo and floor-division functions in symbolic strings
+MODULO_FUNCTIONS = {
+    "PyMod": PyMod,
+    "CMod": CMod,
+    "FtnMod": CMod,
+    "FtnModulo": PyMod,
+    "PyFloor": int_floor,
+    "Mod": sympy.Mod,
+}
+
+
+class int_sqrt(DaceFunction):
+    """The largest ``r`` with ``r*r <= n`` (the floor of ``sqrt(n)``), and ``-1`` for a negative ``n``: exact on every
+    integer, unlike a floating ``sqrt``, so ``i*i < q`` is ``i < int_sqrt(q - 1) + 1`` for every ``q``."""
+
+    @classmethod
+    def eval(cls, n):
+        if n.is_Integer:
+            return sympy.Integer(math.isqrt(int(n)) if n >= 0 else -1)
+        return None
+
+    def _eval_is_integer(self):
+        return True
+
+    def _eval_is_nonnegative(self):
+        return True if self.args[0].is_nonnegative else None
+
+
+class int_ceil(DaceFunction):
     @classmethod
     def eval(cls, x, y):
         """
@@ -1160,12 +2010,52 @@ class int_ceil(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return sympy.ceiling(x / y)
+        if y.is_Number:
+            # Mirrors int_floor: dividing by 1 is a no-op. Without this an unpadded (alignment == 1)
+            # descriptor keeps an int_ceil(N, 1) that never folds back to N.
+            if y == 1:
+                return x
+            # Exact division has nothing to round up, so it is just the quotient.
+            quotient = x / y
+            if _integral(quotient):
+                return quotient
+        if y.is_nonzero is not True:
+            return None
+        split = split_divisible_terms(x, y)
+        if split is not None:
+            quotient, remainder = split
+            if remainder.is_zero:
+                return quotient
+            # Mirrors int_floor: over a nonnegative numerator and positive divisor the biased C division
+            # is the ceiling, and ``ceil((q*y + r)/y)`` is ``q + ceil(r/y)`` for integer ``q``.
+            if remainder.is_Number and y.is_positive and x.is_nonnegative:
+                return quotient - ((-remainder) // y)
+            if rounds_like_flooring(x, y, remainder):
+                return quotient + cls(remainder, y)
+        # ``dace::math::int_ceil`` IS ``(x + y - 1) / y`` (runtime/include/dace/math.h), so a
+        # numerator that divides exactly once biased is already the value the program computes and
+        # the rounding this node exists for never happens. Folds a strided slice's extent
+        # ``int_ceil(s*(k - 1) + 1, s)``, whose biased numerator is ``s*k``, to the trip count ``k``.
+        if y.is_positive:
+            biased = split_divisible_terms(x + y - 1, y)
+            if biased is not None and biased[1].is_zero:
+                return biased[0]
 
     def _eval_is_integer(self):
         return True
 
+    def _eval_is_nonnegative(self):
+        x, y = self.args
+        if x.is_nonnegative and y.is_positive:
+            return True
 
-class ipow(sympy.Function):
+    def _eval_is_positive(self):
+        x, y = self.args
+        if x.is_positive and y.is_positive:
+            return True
+
+
+class ipow(DaceFunction):
     """Integer power ``base ** exp`` with a non-negative integer exponent, lowered
     to ``dace::math::ipow`` (repeated multiply, exact integer) -- valid where
     ``dace::math::pow`` (libm ``double``) is not: an array size, subscript or loop
@@ -1173,8 +2063,11 @@ class ipow(sympy.Function):
 
     @classmethod
     def eval(cls, base, exp):
-        """Fold a literal non-negative integer power; stay symbolic otherwise."""
-        if base.is_Number and exp.is_Number and exp.is_integer and exp.is_nonnegative:
+        # A negative constant is a reciprocal, which is a ``Pow``, not an ``ipow``; an exponent of unknown
+        # sign is the caller's to prove
+        if exp.is_Number and exp.is_negative:
+            raise ValueError(f"ipow exponent must be non-negative, got {exp}")
+        if base.is_Number and exp.is_Number:
             return base**exp
 
     def _eval_is_integer(self):
@@ -1203,44 +2096,118 @@ class ipow(sympy.Function):
         return sympy.Pow(base, exp)
 
 
-class OR(sympy.Function):
+def relax_ipow(expr: SymbolicType) -> SymbolicType:
+    """Rewrite every ``ipow(b, e)`` back to ``b ** e`` -- the inverse of ``RelaxIntegerPowers``.
 
+    ``ipow`` is a bare ``Function`` to SymPy, so it never simplifies against an equal ``Pow``: a packed
+    stride respelled ``ipow(N, 2)`` by canonicalization compares unequal to ``N**2`` and the array is
+    misread as padded. Normalize both sides through this before comparing or solving.
+    """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    return expr.rewrite(sympy.Pow)
+
+
+def relax_int_floor(expr: SymbolicType) -> SymbolicType:
+    """Rewrite ``int_floor``/``int_ceil`` to sympy's ``floor``/``ceiling`` so solvers can invert them.
+
+    Both are bare ``Function`` heads to SymPy, which refuses to solve through one
+    (``NotImplementedError: equal function with more than 1 argument``).
+    """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    expr = expr.replace(int_floor, lambda x, y: sympy.floor(x / y))
+    return expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
+
+
+class fma(DaceFunction):
+    """Fused multiply-add ``a * b + c``.
+
+    Minted by the vectorizer's FMA-fusion pass from an ``a * b + c`` chain so the tile-op
+    lowering can emit a single fused multiply-add -- ``std::fma`` (scalar), ``__hfma2`` (CUDA
+    fp16), ``_mm*_fmadd`` (AVX), ``vfmaq`` (NEON), ``svmla`` (SVE) -- where the ISA supports
+    it, and multiply-then-add where it does not. A residual (non-tiled) ``fma`` tasklet lowers
+    to ``dace::math::fma``, which forwards to ``std::fma``. The argument order matches C
+    ``fma(a, b, c) == a*b + c``."""
+
+    @classmethod
+    def eval(cls, a, b, c):
+        """Fold a fully-constant multiply-add; stay symbolic otherwise."""
+        if a.is_Number and b.is_Number and c.is_Number:
+            return a * b + c
+
+    def _eval_is_real(self):
+        if all(arg.is_real for arg in self.args):
+            return True
+
+    def _eval_rewrite_as_Add(self, a, b, c, **kwargs):
+        # ``fma(a, b, c)`` is exactly ``a*b + c`` as a value; expose it on request so a caller
+        # that needs ordinary arithmetic reasoning can ``.rewrite(sympy.Add)`` without changing
+        # how ``fma`` lowers (a single fused multiply-add) at codegen.
+        return a * b + c
+
+
+class OR(DaceFunction):
     @classmethod
     def eval(cls, x, y):
         """
-        Evaluates logical or.
+        Evaluates logical or. A LITERAL arm short-circuits even when the other arm is an
+        unresolved relational (whose ``is_Boolean`` sympy leaves False): ``OR(True, x)`` is True
+        and ``OR(False, x)`` is ``x``. Fires only on evaluating construction -- the parser builds
+        these nodes with ``evaluate=False``, so parse trees stay verbatim.
 
         :param x: First operand.
         :param y: Second operand.
         :return: Return value (literal or symbolic).
         """
-        if x.is_Boolean and y.is_Boolean:
-            return x or y
+        if x is sympy.true or y is sympy.true:
+            return sympy.true
+        if x is sympy.false:
+            return y
+        if y is sympy.false:
+            return x
+        # Nothing else folds: Python's ``x or y`` on two symbolic booleans is ``x`` whenever ``x`` is
+        # truthy, which dropped a disjunct -- ``(not p) or (not q)`` became ``not p``.
 
     def _eval_is_boolean(self):
         return True
 
 
-class AND(sympy.Function):
-
+class AND(DaceFunction):
     @classmethod
     def eval(cls, x, y):
         """
-        Evaluates logical and.
+        Evaluates logical and. A LITERAL arm short-circuits even when the other arm is an
+        unresolved relational (whose ``is_Boolean`` sympy leaves False): ``AND(False, x)`` is
+        False and ``AND(True, x)`` is ``x``. Fires only on evaluating construction -- the parser
+        builds these nodes with ``evaluate=False``, so parse trees stay verbatim.
 
         :param x: First operand.
         :param y: Second operand.
         :return: Return value (literal or symbolic).
         """
-        if x.is_Boolean and y.is_Boolean:
-            return x and y
+        if x is sympy.false or y is sympy.false:
+            return sympy.false
+        if x is sympy.true:
+            return y
+        if y is sympy.true:
+            return x
+        # Nothing else folds: Python's ``x and y`` on two symbolic booleans is ``y`` whenever ``x`` is
+        # truthy, which dropped a conjunct -- ``(not p) and (not q)`` became ``not q``.
 
     def _eval_is_boolean(self):
         return True
 
 
-class IfExpr(sympy.Function):
-
+class IfExpr(DaceFunction):
     @classmethod
     def eval(cls, x, y, z):
         """
@@ -1252,7 +2219,7 @@ class IfExpr(sympy.Function):
         :return: Return value (literal or symbolic).
         """
         if x.is_Boolean:
-            return (y if x else z)
+            return y if x else z
 
     def _eval_is_real(self):
         if self.args[1].is_real is True and self.args[2].is_real is True:
@@ -1279,7 +2246,19 @@ class IfExpr(sympy.Function):
             return False
 
 
-class ITE(sympy.Function):
+def refold_booleans(expr):
+    """``expr`` with its ``AND``/``OR`` nodes re-constructed EVALUATING, so literal arms fold
+    (``AND(False, x)`` becomes False). :func:`pystr_to_symbolic` deliberately builds these nodes
+    with ``evaluate=False`` to keep parse trees verbatim for serialization; a consumer asking
+    "is this condition constant?" calls this first. Non-boolean subtrees are left untouched."""
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    if str(expr.func) in ("AND", "OR"):
+        return expr.func(*[refold_booleans(arg) for arg in expr.args])
+    return expr
+
+
+class ITE(DaceFunction):
     """Ternary blend: ``ITE(c, a, b)`` returns ``a`` when ``c`` is truthy,
     ``b`` otherwise. Lowered to a one-line C++ helper in
     ``dace/runtime/include/dace/ITE.h`` and recognized by the vectorizer's
@@ -1303,6 +2282,18 @@ class ITE(sympy.Function):
         if c is sympy.false:
             return b
 
+    def _pythoncode(self, printer, **kwargs):
+        """Print verbatim, as every other DaCe head does under ``allow_unknown_functions``.
+
+        Needed only because sympy HAS an ``ITE`` of its own, so its Python code printer finds a
+        ``_print_ITE`` by class name and rewrites it to a ``Piecewise``. This class does not rewrite,
+        so that returns the same expression and the printer recurses until the stack ends. The
+        ``printmethod`` hook is consulted before the by-name lookup, which is what makes this the
+        place to say it. Reached from ``astutils.unparse`` on an interstate condition -- a
+        conditional expression used as an ``if`` test parses to this head.
+        """
+        return "ITE(%s)" % ", ".join(printer._print(argument) for argument in self.args)
+
 
 # ``merge`` is the legacy spelling of :class:`ITE` (same Python object). New
 # code should prefer ``ITE``; ``merge`` is retained for the existing C++
@@ -1311,23 +2302,125 @@ class ITE(sympy.Function):
 merge = ITE
 
 
-class bitwise_and(sympy.Function):
-    pass
+def _make_typecast_class(name: str) -> type:
+    """Build the first-grade symbolic typecast function ``<name>(x)`` -- the sympy spelling of a
+    ``dace.<name>(x)`` cast.
+
+    The frontend emits ``dace.<type>(x)`` for a numeric coercion in a tasklet body (cppunparse lowers the
+    ``dace`` attribute to ``dace::<type>(x)``). When the SAME coercion lands in an INTERSTATE-EDGE / memlet /
+    condition expression -- a float index symbol ``i = dace.int32(qm) + 1``, ``dace.uint16(byte & 1)`` in a
+    CRC step -- it must be sympy-parseable: ``dace.<type>`` is an attribute call sympy cannot evaluate
+    (``'Attr' object is not callable``). These functions are the symbolic spelling; the frontend drops the
+    ``dace.`` prefix in symbolic contexts so the cast survives, unevaluated, to C++ as ``dace::<type>(x)`` (a
+    TRUNCATING cast -- semantically exact, not a floored/stripped approximation).
+
+    The sympy assumption (``is_integer`` for int/uint/bool, ``is_real`` for float) is load-bearing: it lets
+    downstream reasoning -- Min/Max same-kind checks, index-dtype inference -- see the cast's result kind.
+    """
+    if name.startswith(("int", "uint", "bool")):
+        methods = {"nargs": 1, "_eval_is_integer": lambda self: True}
+    elif name.startswith(("float", "bfloat")):
+        methods = {"nargs": 1, "_eval_is_real": lambda self: True}
+    else:  # complex widths -- neither integer nor real
+        methods = {"nargs": 1}
+    # `DaceFunction`, not bare `sympy.Function`: a cast is a DaCe head, so it needs the neutral
+    # isinstance protocol. On `sympy.Function` alone, `isinstance(P('int32(a)'), int32)` was False for
+    # every value a non-sympy backend built -- while the head memo already paid for a cast-only key.
+    return type(name, (DaceFunction,), methods)
 
 
-class bitwise_or(sympy.Function):
-    pass
+# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``. ALL DaCe scalar typecasts
+# (every int/uint/float/complex width), built from the canonical typeclass->string map -- the SAME source
+# ``cppunparse._typecast_func_to_cpp`` uses, so a ``dace.<type>(x)`` cast parses and prints identically in a
+# tasklet body and in any symbolic context. A hardcoded subset (previously int32/int64/float32/float64) let
+# ``dace.uint16(x)`` & friends fall through to ``Attr(dace, uint16)(x)`` -> ``'Attr' object is not callable``.
+_TYPECAST_CPP = {s.split("::")[-1]: s for s in dtypes.TYPECLASS_TO_STRING.values()}
+
+# One symbolic typecast function per name, generated once. Exposed as module globals (``symbolic.int32`` ...
+# stay importable) and folded into the parse locals + built-in user-function set below.
+_CAST_CLASSES = {name: _make_typecast_class(name) for name in _TYPECAST_CPP}
+globals().update(_CAST_CLASSES)
+_builtin_userfunctions.update(_CAST_CLASSES)
 
 
-class bitwise_xor(sympy.Function):
-    pass
+class bitwise_and(DaceFunction):
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a bitwise AND.
+
+        :param x: Left operand.
+        :param y: Right operand.
+        :return: The folded literal if both operands are concrete integers, else ``None``.
+        """
+        # Fold concrete integers, exactly as ``left_shift``/``right_shift`` do. Without this the
+        # expression stays unevaluated and any consumer that unparses it to Python source and
+        # ``eval``s it (e.g. ``replacements.utils.sym_type``) raises ``NameError: bitwise_and``.
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) & int(y))
 
 
-class bitwise_invert(sympy.Function):
-    pass
+class bitwise_or(DaceFunction):
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a bitwise OR.
+
+        :param x: Left operand.
+        :param y: Right operand.
+        :return: The folded literal if both operands are concrete integers, else ``None``.
+        """
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) | int(y))
 
 
-class left_shift(sympy.Function):
+class bitwise_xor(DaceFunction):
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a bitwise XOR.
+
+        :param x: Left operand.
+        :param y: Right operand.
+        :return: The folded literal if both operands are concrete integers, else ``None``.
+        """
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) ^ int(y))
+
+
+class bitwise_invert(DaceFunction):
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
+    @classmethod
+    def eval(cls, x):
+        """
+        Evaluates a bitwise NOT.
+
+        :param x: Operand.
+        :return: The folded literal if the operand is a concrete integer, else ``None``.
+        """
+        if x.is_Integer:
+            return sympy.Integer(~int(x))
+
+
+class left_shift(DaceFunction):
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
 
     @classmethod
     def eval(cls, x, y):
@@ -1344,7 +2437,10 @@ class left_shift(sympy.Function):
             return x << y
 
 
-class right_shift(sympy.Function):
+class right_shift(DaceFunction):
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
 
     @classmethod
     def eval(cls, x, y):
@@ -1361,7 +2457,7 @@ class right_shift(sympy.Function):
             return x >> y
 
 
-class logical_left_shift(sympy.Function):
+class logical_left_shift(DaceFunction):
     """Logical (zero-fill) left shift -- the Fortran ``ISHFT`` lowering.
 
     Distinct from :class:`left_shift`: it shifts the unsigned bit pattern (no
@@ -1378,7 +2474,7 @@ class logical_left_shift(sympy.Function):
             return x << y
 
 
-class logical_right_shift(sympy.Function):
+class logical_right_shift(DaceFunction):
     """Logical (zero-fill) right shift -- the Fortran ``ISHFT`` (negative count)
     lowering.
 
@@ -1392,6 +2488,10 @@ class logical_right_shift(sympy.Function):
     def eval(cls, x, y):
         if x.is_Number and y.is_Number and x.is_nonnegative:
             return x >> y
+
+
+class conj(DaceFunction):
+    pass
 
 
 # Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
@@ -1422,8 +2522,21 @@ class __right_shift(right_shift):
     pass
 
 
-class ROUND(sympy.Function):
+# Symbolic counterpart of every Python bitwise/shift operator, keyed by the ``ast`` operator class
+# name. Holds the ``__``-prefixed variants so a parsed expression prints back as the operator and
+# therefore round-trips. Lives at module level because a ``__``-prefixed name written inside a class
+# body -- e.g. the serialized-SDFG parser's ``_binops`` table below -- would be name-mangled.
+BITWISE_OPERATOR_FUNCTIONS: dict[str, type[DaceFunction]] = {
+    "BitAnd": __bitwise_and,
+    "BitOr": __bitwise_or,
+    "BitXor": __bitwise_xor,
+    "Invert": __bitwise_invert,
+    "LShift": __left_shift,
+    "RShift": __right_shift,
+}
 
+
+class ROUND(DaceFunction):
     @classmethod
     def eval(cls, x):
         """
@@ -1439,15 +2552,24 @@ class ROUND(sympy.Function):
         return True
 
 
-class Is(sympy.Function):
+class abort(DaceFunction):
+    """Terminate the program: ``std::abort()`` in C and C++, a raised exception in Python.
+
+    Opaque on purpose, so no simplification folds it away: a guard ``if cond: abort()`` keeps its
+    call wherever the condition may hold."""
+
+    nargs = 0
+
+
+class Is(DaceFunction):
     pass
 
 
-class IsNot(sympy.Function):
+class IsNot(DaceFunction):
     pass
 
 
-class Attr(sympy.Function):
+class Attr(DaceFunction):
     """
     Represents a get-attribute call on a function, equivalent to ``a.b`` in Python.
     """
@@ -1460,13 +2582,13 @@ class Attr(sympy.Function):
         return {sympy.Symbol(f"{self.args[0]}.{self.args[1]}")}
 
     def __str__(self):
-        return f'{self.args[0]}.{self.args[1]}'
+        return f"{self.args[0]}.{self.args[1]}"
 
     def _subs(self, *args, **kwargs):
         return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
-class Subscript(sympy.Function):
+class Subscript(DaceFunction):
     """
     Represents a subscript expression, equivalent to ``a[i, j, ...]`` in Python.
 
@@ -1481,35 +2603,90 @@ class Subscript(sympy.Function):
         return set().union(*(a.free_symbols for a in self.args[1:])) if len(self.args) > 1 else set()
 
     def __str__(self):
-        indices = ', '.join(str(a) for a in self.args[1:])
-        return f'{self.args[0]}[{indices}]'
+        indices = ", ".join(str(a) for a in self.args[1:])
+        return f"{self.args[0]}[{indices}]"
 
     def _subs(self, *args, **kwargs):
         return Subscript(*(a.subs(*args, **kwargs) for a in self.args))
 
 
-def sympy_intdiv_fix(expr):
-    """ Fix for SymPy printing out reciprocal values when they should be
-        integral in "ceiling/floor" sympy functions.
+def recombined_fraction(arg):
+    """``arg`` as ``(numerator, integer denominator)`` when it is a sum of fractions sharing a
+    denominator, else ``None``.
+
+    sympy's ``//`` on symbolic integers builds ``floor(N/8 - 1/8)``, distributing the division over
+    the ``Add``. Matching that against ``floor(a/b)`` binds ``b = 1`` and leaves the ``Rational``s in
+    the numerator, where C++ truncates each term on its own (``1 / 8 -> 0``) and the bound silently
+    becomes ``N / 8`` instead of ``(N - 1) / 8``. Recombining first recovers the real denominator.
     """
+    try:
+        num, den = arg.together().as_numer_denom()
+        den_int = int(den)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    # 1 means nothing was recombined; 0 would be a division by zero downstream.
+    if den_int in (0, 1):
+        return None
+    return num, den_int
+
+
+def sympy_intdiv_fix(expr):
+    """Fix for SymPy printing out reciprocal values when they should be
+    integral in "ceiling/floor" sympy functions.
+    """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     nexpr = expr
     if not isinstance(expr, sympy.Basic):
         return expr
 
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
-    a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    c = sympy.Wild('c')
-    d = sympy.Wild('d')
-    e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
-    int_ceil = sympy.Function('int_ceil')
-    int_floor = sympy.Function('int_floor')
+    a = sympy.Wild("a", properties=[lambda k: k.is_Symbol or k.is_Integer])
+    # A denominator DaCe can divide by: a symbol, an integer, or a rounding call, which is itself
+    # an integer division and so is just as dividable. Admitting the rounding call here is what
+    # makes ``a / b`` and ``e / b`` cover a rounding over a rounding, of EITHER kind -- the four
+    # arms that used to name one head on both sides only ever matched the matching pair, so
+    # ``ceiling(N / int_floor(M, T))`` fell through all of them and survived.
+    # ``b != 1``: a rounding call with nothing to divide by is not an integer division. Without it
+    # ``floor(sin(x))`` matches ``floor(e / b)`` with ``b = 1`` and becomes ``int_floor(sin(x), 1)``,
+    # which prints as a division by one -- the rounding silently dropped (spcl/dace#2524).
+    b = sympy.Wild(
+        "b", properties=[lambda k: (k.is_Symbol or k.is_Integer or isinstance(k, (int_ceil, int_floor))) and k != 1]
+    )
+    c = sympy.Wild("c")
+    d = sympy.Wild("d")
+    e = sympy.Wild("e", properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
+    # Every rounding head named below -- in ``b``'s property and in the arms -- is the REAL class,
+    # never ``sympy.Function('int_ceil')``. An undefined function of the same name prints
+    # identically and reports the same ``.func`` name, but is a different class, so a pattern built
+    # from it matches nothing an SDFG carries. A surviving ``ceiling`` prints as C++ ``ceil()``
+    # wrapped around a TRUNCATING integer division (wrong when inexact, and a non-integer loop
+    # predicate OpenMP rejects), so such a miss is a silent miscompile, not a cosmetic one.
 
     processed = 1
     while processed > 0:
         processed = 0
         for ceil in nexpr.find(sympy.ceiling):
+            # A known-integer argument has nothing to round: the call is the identity. Resolving it
+            # HERE rather than only at print time means every consumer of the expression -- range
+            # propagation, validation, symbol comparison -- sees the integer form too, not just the
+            # emitted C++. ``is_integer`` is only trustworthy on a deserialized expression because
+            # the serializer preserves it (spcl/dace#2550); on a freshly built one it is None and
+            # the match arms below do the work instead.
+            if ceil.args[0].is_integer:
+                nexpr = nexpr.subs(ceil, ceil.args[0])
+                processed += 1
+                continue
+            # Before matching: a distributed rational sum would otherwise match ``a / b`` with
+            # ``b = 1`` and keep its Rationals, which C++ truncates term by term.
+            frac = recombined_fraction(ceil.args[0])
+            if frac is not None:
+                nexpr = nexpr.subs(ceil, int_ceil(frac[0], frac[1]))
+                processed += 1
+                continue
             # Simple ceiling
             m = ceil.match(sympy.ceiling(a / b))
             if m is not None:
@@ -1520,12 +2697,6 @@ def sympy_intdiv_fix(expr):
             m = ceil.match(sympy.ceiling(int_ceil(c, d) / b))
             if m is not None:
                 nexpr = nexpr.subs(ceil, int_ceil(int_ceil(m[c], m[d]), m[b]))
-                processed += 1
-                continue
-            # Ceiling of ceiling: "ceil(a / ceil(c/d))"
-            m = ceil.match(sympy.ceiling(a / int_ceil(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(ceil, int_ceil(m[a], int_ceil(m[c], m[d])))
                 processed += 1
                 continue
             # Match ceiling of multiplication with our custom integer functions
@@ -1546,6 +2717,18 @@ def sympy_intdiv_fix(expr):
                 processed += 1
                 continue
         for floor in nexpr.find(sympy.floor):
+            # See the ceiling branch: a known-integer argument makes the rounding the identity.
+            if floor.args[0].is_integer:
+                nexpr = nexpr.subs(floor, floor.args[0])
+                processed += 1
+                continue
+            # See the ceiling branch: recombine before matching, or the Rationals survive into the
+            # numerator and each truncates on its own in C++.
+            frac = recombined_fraction(floor.args[0])
+            if frac is not None:
+                nexpr = nexpr.subs(floor, int_floor(frac[0], frac[1]))
+                processed += 1
+                continue
             # Simple floor
             m = floor.match(sympy.floor(a / b))
             if m is not None:
@@ -1558,12 +2741,6 @@ def sympy_intdiv_fix(expr):
                 nexpr = nexpr.subs(floor, int_floor(int_floor(m[c], m[d]), m[b]))
                 processed += 1
                 continue
-            # Floor of floor: "floor(a / floor(c/d))"
-            m = floor.match(sympy.floor(a / int_floor(c, d)))
-            if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c], m[d])))
-                processed += 1
-                continue
             # floor with composite expression
             m = floor.match(sympy.floor(e / b))
             if m is not None:
@@ -1574,14 +2751,16 @@ def sympy_intdiv_fix(expr):
 
 
 def sympy_divide_fix(expr):
-    """ Fix SymPy printouts where integer division such as "tid/2" turns
-        into ".5*tid".
+    """Fix SymPy printouts where integer division such as "tid/2" turns
+    into ".5*tid".
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     nexpr = expr
     if not isinstance(expr, sympy.Basic):
         return expr
-
-    int_floor = sympy.Function('int_floor')
 
     processed = 1
     while processed > 0:
@@ -1595,12 +2774,34 @@ def sympy_divide_fix(expr):
                     break
             else:
                 continue
-            nexpr = nexpr.subs(
-                candidate,
-                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1:])), int(1 / candidate.args[ri])))
+            rest = sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :]))
+            # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half.
+            if not integral_index_expression(rest):
+                continue
+            # DaCe's ``int_floor``, not an undefined ``Function("int_floor")``: that one carries no
+            # integrality or sign, so no later query could reason about the quotient. Unevaluated, as the
+            # loop re-scans the expression and an exact quotient would fold back to the ``Mul``.
+            nexpr = nexpr.subs(candidate, int_floor(rest, int(1 / candidate.args[ri]), evaluate=False))
             processed += 1
 
     return nexpr
+
+
+@cache
+def _cached_sympy_pattern():
+    """
+    Cache sympy pattern for `min(a, b) + c`  and `max(a, b) + c`.
+
+    Those patterns are (surprisingly) costly to create. Since they are pattern (similar to a regex),
+    they can be constructed once and then re-used in subsequent calls. Greatly reduces the overhead
+    of `simplify_ext()`  (see below).
+    """
+    a = sympy.Wild("a")
+    b = sympy.Wild("b")
+    c = sympy.Wild("c")
+    min_pattern = sympy.Min(a, b) + c
+    max_pattern = sympy.Max(a, b) + c
+    return min_pattern, max_pattern, a, b, c
 
 
 def simplify_ext(expr):
@@ -1610,20 +2811,24 @@ def simplify_ext(expr):
     :param expr: A sympy expression.
     :return: Simplified version of the expression.
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
-    a = sympy.Wild('a')
-    b = sympy.Wild('b')
-    c = sympy.Wild('c')
 
     # Push expressions into both sides of min/max.
     # Example: Min(N, 4) + 1 => Min(N + 1, 5)
-    dic = expr.match(sympy.Min(a, b) + c)
-    if dic:
-        return sympy.Min(dic[a] + dic[c], dic[b] + dic[c])
-    dic = expr.match(sympy.Max(a, b) + c)
-    if dic:
-        return sympy.Max(dic[a] + dic[c], dic[b] + dic[c])
+    # Guarded by a quick check if `expr` is an addition because matching is an expensive operation.
+    if expr.is_Add:
+        min_ab_plus_c, max_ab_plus_c, a, b, c = _cached_sympy_pattern()
+        matches = expr.match(min_ab_plus_c)
+        if matches is not None:
+            return sympy.Min(matches[a] + matches[c], matches[b] + matches[c])
+        matches = expr.match(max_ab_plus_c)
+        if matches is not None:
+            return sympy.Max(matches[a] + matches[c], matches[b] + matches[c])
     return expr
 
 
@@ -1635,12 +2840,17 @@ def evaluate_optional_arrays(expr, sdfg):
     :param sdfg: SDFG that contains arrays.
     :return: A simplified version of the expression.
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
 
-    none = symbol('NoneSymbol')
+    # `expr` is sympy here; a foreign sentinel hashes differently and matches nothing.
+    none = sympy_symbol("NoneSymbol")
 
-    def _process_is(elem: Union[Is, IsNot]):
+    def _process_is(elem: Is | IsNot):
         if elem.args[0] == none:
             if elem.args[1] == none:  # Both arguments are None
                 return True
@@ -1649,12 +2859,11 @@ def evaluate_optional_arrays(expr, sdfg):
                 # Equivalent to `None is x` for a non-optional x
                 return False
 
-        else:  # elem.args[0] is not None
-            if elem.args[1] == none:
-                cand = str(elem.args[0])
-                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
-                    # Equivalent to `x is None` for a non-optional x
-                    return False
+        elif elem.args[1] == none:
+            cand = str(elem.args[0])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `x is None` for a non-optional x
+                return False
 
         # Neither argument is None
         return None
@@ -1692,7 +2901,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
 
 _SimpleASTNode = (ast.Constant, ast.Name)
-_SimpleASTNodeT = Union[ast.Constant, ast.Name]
+_SimpleASTNodeT = ast.Constant | ast.Name
 
 
 def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
@@ -1709,28 +2918,30 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     """
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
     """
+
     _ast_to_sympy_comparators = {
-        ast.Eq: 'Eq',
-        ast.Gt: 'Gt',
-        ast.GtE: 'Ge',
-        ast.Lt: 'Lt',
-        ast.LtE: 'Le',
-        ast.NotEq: 'Ne',
+        ast.Eq: "Eq",
+        ast.Gt: "Gt",
+        ast.GtE: "Ge",
+        ast.Lt: "Lt",
+        ast.LtE: "Le",
+        ast.NotEq: "Ne",
         # Python-specific
-        ast.In: 'In',
-        ast.Is: 'Is',
-        ast.IsNot: 'IsNot',
-        ast.NotIn: 'NotIn',
+        ast.In: "In",
+        ast.Is: "Is",
+        ast.IsNot: "IsNot",
+        ast.NotIn: "NotIn",
     }
 
     _ast_to_sympy_functions = {
-        ast.BitAnd: '__bitwise_and',
-        ast.BitOr: '__bitwise_or',
-        ast.BitXor: '__bitwise_xor',
-        ast.Invert: '__bitwise_invert',
-        ast.LShift: '__left_shift',
-        ast.RShift: '__right_shift',
-        ast.FloorDiv: '__int_floor',
+        ast.BitAnd: "__bitwise_and",
+        ast.BitOr: "__bitwise_or",
+        ast.BitXor: "__bitwise_xor",
+        ast.Invert: "__bitwise_invert",
+        ast.LShift: "__left_shift",
+        ast.RShift: "__right_shift",
+        ast.FloorDiv: "__int_floor",
+        ast.Mod: "PyMod",
     }
 
     def visit_UnaryOp(self, node):
@@ -1739,8 +2950,9 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
         elif isinstance(node.op, ast.Invert):
-            func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()),
-                                          node)
+            func_node = ast.copy_location(
+                ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node
+            )
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
 
@@ -1755,21 +2967,26 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         node.right = self._convert_boolop_to_ifexpr(node.right)
 
         if type(node.op) in self._ast_to_sympy_functions:
-            func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()),
-                                          node)
+            func_node = ast.copy_location(
+                ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node
+            )
 
-            new_node = ast.Call(func=func_node,
-                                args=[self.visit(value) for value in (node.left, node.right)],
-                                keywords=[])
+            new_node = ast.Call(
+                func=func_node, args=[self.visit(value) for value in (node.left, node.right)], keywords=[]
+            )
             return ast.copy_location(new_node, node)
         return self.generic_visit(node)
 
     def _convert_boolop_to_ifexpr(self, node: ast.AST):
         if isinstance(node, ast.Compare):
             return ast.copy_location(
-                ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load),
-                         args=[node, ast.Constant(value=1), ast.Constant(value=0)],
-                         keywords=[]), node)
+                ast.Call(
+                    func=ast.Name(id="IfExpr", ctx=ast.Load),
+                    args=[node, ast.Constant(value=1), ast.Constant(value=0)],
+                    keywords=[],
+                ),
+                node,
+            )
         return node
 
     def visit_BoolOp(self, node):
@@ -1789,6 +3006,23 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         if len(node.ops) > 1 or len(node.comparators) > 1:
             raise NotImplementedError
         op = node.ops[0]
+
+        # `X == True/False` and `X != True/False` against a boolean literal. SymPy folds such a
+        # comparison to a constant whenever the other operand is not a Symbol -- e.g. an array access
+        # `A[i] != True` collapses to `True` (relational.py: "only Booleans can equal Booleans"),
+        # silently dropping the guard on serialization/re-parse. Rewrite to pure boolean logic
+        # instead: the operand is boolean here (a comparison to a truth literal implies it), so
+        # `X == True`/`X != False` -> `X` and `X != True`/`X == False` -> `Not(X)`. This never folds
+        # and survives round-tripping. Only fires for a literal True/False operand; ordinary
+        # comparisons (`A[i] < rlmin`, `x == 1`) are untouched.
+        if isinstance(op, (ast.Eq, ast.NotEq)):
+            for literal, other in ((node.left, node.comparators[0]), (node.comparators[0], node.left)):
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, bool):
+                    visited = self.visit(other)
+                    if isinstance(op, ast.NotEq) == bool(literal.value):  # X != True or X == False
+                        visited = ast.Call(func=ast.Name(id="Not", ctx=ast.Load()), args=[visited], keywords=[])
+                    return ast.copy_location(visited, node)
+
         arguments = [node.left, node.comparators[0]]
 
         # Ensure constant values in boolean comparisons are interpreted als booleans.
@@ -1803,18 +3037,18 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
 
     def visit_Constant(self, node):
         if node.value is None:
-            return ast.copy_location(ast.Name(id='NoneSymbol', ctx=ast.Load()), node)
+            return ast.copy_location(ast.Name(id="NoneSymbol", ctx=ast.Load()), node)
         return self.generic_visit(node)
 
     def visit_NameConstant(self, node):
         return self.visit_Constant(node)
 
     def visit_IfExp(self, node):
-        new_node = ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load),
-                            args=[self.visit(node.test),
-                                  self.visit(node.body),
-                                  self.visit(node.orelse)],
-                            keywords=[])
+        new_node = ast.Call(
+            func=ast.Name(id="IfExpr", ctx=ast.Load),
+            args=[self.visit(node.test), self.visit(node.body), self.visit(node.orelse)],
+            keywords=[],
+        )
         return ast.copy_location(new_node, node)
 
     def visit_Subscript(self, node):
@@ -1829,38 +3063,132 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         # Range/slice expressions cannot be represented as symbolic expressions.
         for idx in indices:
             if isinstance(idx, ast.Slice):
-                raise SyntaxError(f'Range/slice expressions are not supported in symbolic expressions '
-                                  f'(got slice in subscript of "{ast.unparse(node)}")')
+                raise SyntaxError(
+                    f"Range/slice expressions are not supported in symbolic expressions "
+                    f'(got slice in subscript of "{ast.unparse(node)}")'
+                )
 
         # Recursively visit the subscripted value (handles attributes and nested
-        # subscripts via visit_Attribute / visit_Subscript).
-        value = self.visit(node.value)
+        # subscripts via visit_Attribute / visit_Subscript). A bare container name is spelled as a
+        # Symbol, so no parser-namespace entry (``input``, ``rf``) can stand in for it.
+        if isinstance(node.value, ast.Name):
+            value = ast.Call(
+                func=ast.Name(id="Symbol", ctx=ast.Load()), args=[ast.Constant(node.value.id)], keywords=[]
+            )
+        else:
+            value = self.visit(node.value)
 
-        new_node = ast.Call(func=ast.Name(id='Subscript', ctx=ast.Load),
-                            args=[value] + [self.visit(idx) for idx in indices],
-                            keywords=[])
+        new_node = ast.Call(
+            func=ast.Name(id="Subscript", ctx=ast.Load),
+            args=[value] + [self.visit(idx) for idx in indices],
+            keywords=[],
+        )
         return ast.copy_location(new_node, node)
+
+    def visit_Call(self, node):
+        # ``dace.int32(x)`` / ``dace.float64(x)`` -- an explicit numeric
+        # typecast.  The frontend emits the ``dace.<type>(x)`` spelling
+        # uniformly (cppunparse lowers it to ``dace::<type>(x)`` in a
+        # tasklet body); here in a sympy-parsed context the default
+        # ``visit_Attribute`` would turn ``dace.int32`` into ``Attr(dace,
+        # int32)`` and the surrounding call into ``Attr(...)(x)`` ->
+        # ``'Attr' object is not callable``.  Rewrite to the bare
+        # first-grade typecast function ``int32(x)`` (registered in
+        # ``_PYSTR2SYM_locals``) which parses cleanly and prints back to
+        # ``dace::int32(x)`` -- so the cast keeps its exact (truncating
+        # for int) semantics in EVERY symbolic context (interstate edge,
+        # memlet subset, condition).
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "dace"
+            and func.attr in _TYPECAST_CPP
+        ):
+            new_node = ast.Call(
+                func=ast.Name(id=func.attr, ctx=ast.Load), args=[self.visit(a) for a in node.args], keywords=[]
+            )
+            return ast.copy_location(new_node, node)
+        # ``math.sin(x)`` / ``numpy.sqrt(x)`` / ``np.exp(x)`` / ``dace.math.floor(x)`` -- a LIBRARY function,
+        # not a cast.  The module qualifier is noise in a symbolic context: strip it to the bare name
+        # (``sin``/``sqrt``/``floor`` are sympy's own functions) so the call parses, instead of falling to
+        # ``visit_Attribute`` -> ``Attr(math, sin)(x)`` -> ``'Attr' object is not callable``.  Same gap the
+        # dace-cast branch above closes, for the function modules.
+        mod = self._call_module(func)
+        if mod is not None:
+            new_node = ast.Call(
+                func=ast.Name(id=func.attr, ctx=ast.Load), args=[self.visit(a) for a in node.args], keywords=[]
+            )
+            return ast.copy_location(new_node, node)
+        self.generic_visit(node)
+        return node
+
+    @staticmethod
+    def _call_module(func) -> str | None:
+        """The math/numpy library-module qualifier of an attribute call ``<mod>.<fn>(...)`` to strip, or
+        ``None`` if ``func`` is not such a call. Handles the ``dace.math`` / ``dace.cmath`` nested spelling."""
+        if not isinstance(func, ast.Attribute):
+            return None
+        base = func.value
+        if isinstance(base, ast.Name) and base.id in ("math", "cmath", "numpy", "np"):
+            return base.id
+        if (
+            isinstance(base, ast.Attribute)
+            and isinstance(base.value, ast.Name)
+            and base.value.id == "dace"
+            and base.attr in ("math", "cmath")
+        ):
+            return "dace." + base.attr
+        return None
 
     def visit_Attribute(self, node):
-        new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
-                            args=[self.visit(node.value), ast.Name(id=node.attr, ctx=ast.Load)],
-                            keywords=[])
+        new_node = ast.Call(
+            func=ast.Name(id="Attr", ctx=ast.Load),
+            args=[self.visit(node.value), ast.Name(id=node.attr, ctx=ast.Load)],
+            keywords=[],
+        )
         return ast.copy_location(new_node, node)
+
+
+def _construct_function_uncached(func, *args, **kwargs):
+    # Construct without SymPy's ``@cacheit`` constructor caches (both
+    # ``Function.__new__`` and ``Application.__new__`` are cached, and ``eval``
+    # implementations re-enter them) and without evaluation, so that the
+    # deserialized tree is exactly the serialized one. Symbol-free arguments
+    # keep the regular (evaluating) constructors.
+    if (
+        isinstance(func, type)
+        and issubclass(func, sympy.core.function.Application)
+        and not (set(kwargs) - {"evaluate"})
+        and not kwargs.get("evaluate", False)
+        and any(isinstance(arg, sympy.Basic) and arg.free_symbols for arg in args)
+    ):
+        return sympy.Basic.__new__(func, *args)
+    return func(*args, **kwargs)
+
+
+# Operator-derived ``__``-prefixed variants for ``_SerializedSymbolicParser._functions``.
+# Defined at module level because Python name-mangles identifiers starting with ``__``
+# when they appear textually inside a class body.
+_SERIALIZED_OPERATOR_FUNCTIONS = {
+    "__int_floor": __int_floor,
+    "__bitwise_and": __bitwise_and,
+    "__bitwise_or": __bitwise_or,
+    "__bitwise_xor": __bitwise_xor,
+    "__bitwise_invert": __bitwise_invert,
+    "__left_shift": __left_shift,
+    "__right_shift": __right_shift,
+}
 
 
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
     :func:`serialize_symbolic`.
-    """
 
-    @staticmethod
-    def _python_bool(value):
-        if value is sympy.true:
-            return True
-        if value is sympy.false:
-            return False
-        return value
+    Mints via `sympy_symbol`, not the `symbol` factory: this reads the wire format the sympy
+    serializer wrote, and a foreign leaf in that tree would just convert straight back.
+    """
 
     @staticmethod
     def _flatten_args(expr_type, *args):
@@ -1872,13 +3200,25 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 result.append(arg)
         return result
 
-    @staticmethod
-    def _add(*args):
-        return sympy.Add._from_args(tuple(args))
+    @classmethod
+    def _canonical_args(cls, args, sort) -> tuple:
+        """Orders ``args`` as sympy's evaluating constructors do: the numeric coefficient first, the rest sorted.
 
-    @staticmethod
-    def _mul(*args):
-        return sympy.Mul._from_args(tuple(args))
+        The raw constructors below skip that evaluation, and sympy compares an Add or a Mul by its argument tuple: a
+        loaded ``klon*(klev + 1)`` must be equal to the same product built in memory.
+        """
+        coeffs = [arg for arg in args if _is_sympy_number(arg) and not isinstance(arg, TypedConstant)]
+        rest = [arg for arg in args if not (_is_sympy_number(arg) and not isinstance(arg, TypedConstant))]
+        sort(rest)
+        return tuple(coeffs + rest)
+
+    @classmethod
+    def _add(cls, *args):
+        return sympy.Add._from_args(cls._canonical_args(args, sympy.core.add._addsort))
+
+    @classmethod
+    def _mul(cls, *args):
+        return sympy.Mul._from_args(cls._canonical_args(args, sympy.core.mul._mulsort))
 
     @staticmethod
     def _pow(a, b):
@@ -1886,26 +3226,27 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         b = sympy.sympify(b)
         # Evaluate pure-numeric powers (8**-1 -> 1/8) so coefficients stay reduced Rationals; an
         # unevaluated Pow reorders surrounding Mul terms on round-trip. TypedConstants keep dtype.
-        if (_is_sympy_number(a) and _is_sympy_number(b) and not isinstance(a, TypedConstant)
-                and not isinstance(b, TypedConstant)):
+        if (
+            _is_sympy_number(a)
+            and _is_sympy_number(b)
+            and not isinstance(a, TypedConstant)
+            and not isinstance(b, TypedConstant)
+        ):
             return a**b
-        if hasattr(sympy.Pow, '_from_args'):
+        if hasattr(sympy.Pow, "_from_args"):
             return sympy.Pow._from_args((a, b))
-        if hasattr(sympy.Pow, '__xnew__'):
+        if hasattr(sympy.Pow, "__xnew__"):
             return sympy.Pow.__xnew__(sympy.Pow, a, b)
         return sympy.Pow.__new__.__wrapped__(sympy.Pow, a, b, evaluate=False)
 
     @staticmethod
     def _binop_add(a, b):
         flat = _SerializedSymbolicParser._flatten_args(sympy.Add, a, b)
-        flat.sort(key=sympy.default_sort_key)
         return _SerializedSymbolicParser._add(*flat)
 
     @staticmethod
     def _binop_mul(a, b):
         args = _SerializedSymbolicParser._flatten_args(sympy.Mul, a, b)
-        args.sort(key=sympy.default_sort_key)
-
         if len(args) > 1:
             args = [arg for arg in args if not _is_sympy_number(arg) or not equal_valued(arg, 1)]
 
@@ -1937,7 +3278,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     @staticmethod
     def _binop_sub(a, b):
         return _SerializedSymbolicParser._add(
-            *_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b)))
+            *_SerializedSymbolicParser._flatten_args(sympy.Add, a, _SerializedSymbolicParser._negate(b))
+        )
 
     @staticmethod
     def _binop_div(a, b):
@@ -1951,7 +3293,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return sympy.Mod(a, b, evaluate=False)
+        return _construct_function_uncached(PyMod, a, b, evaluate=False)
 
     @staticmethod
     def _unary_minus(a):
@@ -1964,13 +3306,21 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         ast.Div: _binop_div,
         ast.Pow: _binop_pow,
         ast.Mod: _binop_mod,
-        ast.FloorDiv: lambda a, b: int_floor(a, b),
+        ast.FloorDiv: lambda a, b: _construct_function_uncached(int_floor, a, b),
+        # A hand-written or hand-edited SDFG may spell a subset/range with the bitwise and shift
+        # operators rather than the serializer's function form; without these the parser raised
+        # ``KeyError: <class 'ast.BitAnd'>``. Mirrors what ``pystr_to_symbolic`` mints.
+        ast.BitAnd: BITWISE_OPERATOR_FUNCTIONS["BitAnd"],
+        ast.BitOr: BITWISE_OPERATOR_FUNCTIONS["BitOr"],
+        ast.BitXor: BITWISE_OPERATOR_FUNCTIONS["BitXor"],
+        ast.LShift: BITWISE_OPERATOR_FUNCTIONS["LShift"],
+        ast.RShift: BITWISE_OPERATOR_FUNCTIONS["RShift"],
     }
     _unaryops = {
         ast.UAdd: lambda a: +a,
         ast.USub: _unary_minus,
-        ast.Not: lambda a: sympy.Not(a),
-        ast.Invert: lambda a: bitwise_invert(a),
+        ast.Not: lambda a: _construct_function_uncached(sympy.Not, a),
+        ast.Invert: lambda a: _construct_function_uncached(bitwise_invert, a),
     }
     _comparators = {
         ast.Eq: sympy.Eq,
@@ -1983,64 +3333,66 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         ast.IsNot: IsNot,
     }
     _functions = {
-        'abs': sympy.Abs,
-        'Abs': sympy.Abs,
-        'min': sympy.Min,
-        'Min': sympy.Min,
-        'max': sympy.Max,
-        'Max': sympy.Max,
-        'floor': sympy.floor,
-        'ceil': sympy.ceiling,
-        'ceiling': sympy.ceiling,
-        'sqrt': sympy.sqrt,
-        'round': ROUND,
-        'And': AND,
-        'Or': OR,
-        'Not': sympy.Not,
-        'Eq': sympy.Eq,
-        'Ne': sympy.Ne,
-        'Gt': sympy.Gt,
-        'Ge': sympy.Ge,
-        'Lt': sympy.Lt,
-        'Le': sympy.Le,
-        'int_floor': int_floor,
-        'int_ceil': int_ceil,
-        'IfExpr': IfExpr,
-        'Mod': sympy.Mod,
-        'Attr': Attr,
-        'BitwiseAnd': bitwise_and,
-        'BitwiseOr': bitwise_or,
-        'BitwiseXor': bitwise_xor,
-        'BitwiseNot': bitwise_invert,
-        'bitwise_and': bitwise_and,
-        'bitwise_or': bitwise_or,
-        'bitwise_xor': bitwise_xor,
-        'bitwise_invert': bitwise_invert,
-        'LeftShift': left_shift,
-        'RightShift': right_shift,
-        'left_shift': left_shift,
-        'right_shift': right_shift,
-        'int_floor': int_floor,
-        'int_ceil': int_ceil,
-        'ipow': ipow,
-        'IfExpr': IfExpr,
-        'ITE': ITE,
-        'Mod': sympy.Mod,
-        'Attr': Attr,
-        'id': sympy.Symbol('id'),
-        'diag': sympy.Symbol('diag'),
-        'jn': sympy.Symbol('jn'),
+        "abort": abort,
+        "abs": sympy.Abs,
+        "Abs": sympy.Abs,
+        "min": sympy.Min,
+        "Min": sympy.Min,
+        "max": sympy.Max,
+        "Max": sympy.Max,
+        "floor": sympy.floor,
+        "ceil": sympy.ceiling,
+        "ceiling": sympy.ceiling,
+        "sqrt": sympy.sqrt,
+        "Sum": sympy.Sum,
+        "round": ROUND,
+        "And": AND,
+        "Or": OR,
+        "Not": sympy.Not,
+        "Eq": sympy.Eq,
+        "Ne": sympy.Ne,
+        "Gt": sympy.Gt,
+        "Ge": sympy.Ge,
+        "Lt": sympy.Lt,
+        "Le": sympy.Le,
+        "int_floor": int_floor,
+        "int_ceil": int_ceil,
+        "int_sqrt": int_sqrt,
+        "ipow": ipow,
+        "IfExpr": IfExpr,
+        **MODULO_FUNCTIONS,
+        "Attr": Attr,
+        "BitwiseAnd": bitwise_and,
+        "BitwiseOr": bitwise_or,
+        "BitwiseXor": bitwise_xor,
+        "BitwiseNot": bitwise_invert,
+        "bitwise_and": bitwise_and,
+        "bitwise_or": bitwise_or,
+        "bitwise_xor": bitwise_xor,
+        "bitwise_invert": bitwise_invert,
+        "LeftShift": left_shift,
+        "RightShift": right_shift,
+        "left_shift": left_shift,
+        "right_shift": right_shift,
+        "ITE": ITE,
+        "Mod": sympy.Mod,
+        "id": sympy.Symbol("id"),
+        "diag": sympy.Symbol("diag"),
+        "jn": sympy.Symbol("jn"),
+        **_SERIALIZED_OPERATOR_FUNCTIONS,
+        # ``int64(x)`` must come back as the cast class: an opaque ``Function`` loses ``is_integer``.
+        **_CAST_CLASSES,
     }
     _constants = {
-        'True': sympy.true,
-        'False': sympy.false,
-        'None': symbol('NoneSymbol'),
-        'NoneSymbol': symbol('NoneSymbol'),
-        'pi': sympy.pi,
-        'E': sympy.E,
-        'I': sympy.I,
-        'oo': sympy.oo,
-        'nan': sympy.nan,
+        "True": sympy.true,
+        "False": sympy.false,
+        "None": sympy_symbol("NoneSymbol"),
+        "NoneSymbol": sympy_symbol("NoneSymbol"),
+        "pi": sympy.pi,
+        "E": sympy.E,
+        "I": sympy.I,
+        "oo": sympy.oo,
+        "nan": sympy.nan,
     }
 
     def visit_Expression(self, node):
@@ -2052,7 +3404,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if node.id == _SERIALIZED_UNDEFINED_SYMBOL:
             return UndefinedSymbol()
         if node.id.startswith(_SERIALIZED_SYMBOL_PREFIX):
-            return symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX):])
+            return sympy_symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX) :])
         try:
             return getattr(dtypes, node.id)
         except AttributeError as ex:
@@ -2062,14 +3414,14 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.value, bool):
             return sympy.true if node.value else sympy.false
         if node.value is None:
-            return symbol('NoneSymbol')
+            return sympy_symbol("NoneSymbol")
         if isinstance(node.value, int):
             return sympy.Integer(node.value)
         if isinstance(node.value, float):
             return sympy.Float(node.value)
         if isinstance(node.value, complex):
             return TypedConstant(node.value, dtypes.complex128)
-        raise TypeError(f'Unsupported literal {node.value!r}')
+        raise TypeError(f"Unsupported literal {node.value!r}")
 
     def visit_UnaryOp(self, node):
         return self._unaryops[type(node.op)](self.visit(node.operand))
@@ -2082,23 +3434,27 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.op, ast.And):
             result = values[0]
             for value in values[1:]:
-                result = AND(result, value)
+                result = _construct_function_uncached(AND, result, value)
             return result
         result = values[0]
         for value in values[1:]:
-            result = OR(result, value)
+            result = _construct_function_uncached(OR, result, value)
         return result
 
     def visit_Compare(self, node):
         if len(node.ops) != 1 or len(node.comparators) != 1:
-            raise NotImplementedError('Chained comparisons are not supported in symbolic deserialization')
-        return self._comparators[type(node.ops[0])](self.visit(node.left), self.visit(node.comparators[0]))
+            raise NotImplementedError("Chained comparisons are not supported in symbolic deserialization")
+        return _construct_function_uncached(
+            self._comparators[type(node.ops[0])], self.visit(node.left), self.visit(node.comparators[0])
+        )
 
     def visit_IfExp(self, node):
-        return IfExpr(self.visit(node.test), self.visit(node.body), self.visit(node.orelse))
+        return _construct_function_uncached(
+            IfExpr, self.visit(node.test), self.visit(node.body), self.visit(node.orelse)
+        )
 
     def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id == '__dace_typed_const__':
+        if isinstance(node.func, ast.Name) and node.func.id == "__dace_typed_const__":
             value = ast.literal_eval(node.args[0])
             suffix = ast.literal_eval(node.args[1])
             try:
@@ -2107,32 +3463,32 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 raise TypeError(f'Invalid type suffix "{suffix}" in typed constant') from ex
             # Keep ``7f64`` integer-valued and ``7.0f64`` float-valued so each
             # form round-trips back to itself.
-            looks_like_float = any(c in value for c in '.eE')
+            looks_like_float = any(c in value for c in ".eE")
             if dtype in (dtypes.float16, dtypes.float32, dtypes.float64) and looks_like_float:
                 value = float(value)
             else:
                 value = int(value)
             return TypedConstant(value, dtype)
 
-        if isinstance(node.func, ast.Name) and node.func.id == 'symbol':
+        if isinstance(node.func, ast.Name) and node.func.id == "symbol":
             if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
-                raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
+                raise TypeError("symbol(...) expects its first argument to be a serialized symbol name")
             symname = node.args[0].id
             if not symname.startswith(_SERIALIZED_SYMBOL_PREFIX):
-                raise TypeError('symbol(...) expects its first argument to be a serialized symbol name')
-            symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
+                raise TypeError("symbol(...) expects its first argument to be a serialized symbol name")
+            symname = symname[len(_SERIALIZED_SYMBOL_PREFIX) :]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
-            dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
-            return symbol(symname, dtype=dtype, **kwargs)
+            dtype = kwargs.pop("dtype", DEFAULT_SYMBOL_TYPE)
+            return sympy_symbol(symname, dtype=dtype, **kwargs)
 
-        if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
+        if isinstance(node.func, ast.Name) and node.func.id == "SymExpr":
             args = [self.visit(arg) for arg in node.args]
             return SymExpr(*args)
 
-        if (isinstance(node.func, ast.Name) and node.func.id in dtypes.CTYPE_TO_TYPECLASS and len(node.args) == 1):
+        if isinstance(node.func, ast.Name) and node.func.id in dtypes.CTYPE_TO_TYPECLASS and len(node.args) == 1:
             return _cast_symbolic_value(self.visit(node.args[0]), dtypes.CTYPE_TO_TYPECLASS[node.func.id])
 
-        if isinstance(node.func, ast.Name) and node.func.id == 'complex' and len(node.args) == 2:
+        if isinstance(node.func, ast.Name) and node.func.id == "complex" and len(node.args) == 2:
             re = self.visit(node.args[0])
             im = self.visit(node.args[1])
             return TypedConstant(complex(float(re), float(im)), dtypes.complex128)
@@ -2141,24 +3497,26 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         args = [self.visit(arg) for arg in node.args]
         if isinstance(func, dtypes.typeclass):
             if len(args) != 1:
-                raise TypeError(f'Type conversion {func} expects one argument')
+                raise TypeError(f"Type conversion {func} expects one argument")
             return _cast_symbolic_value(args[0], func)
 
         kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
-        if kwargs:
-            return func(*args, **kwargs)
-        return func(*args)
+        return _construct_function_uncached(func, *args, **kwargs)
 
     def visit_Attribute(self, node):
-        if isinstance(node.value, ast.Name) and node.value.id == 'dace':
+        if isinstance(node.value, ast.Name) and node.value.id == "dace":
             try:
                 return getattr(dtypes, node.attr)
             except AttributeError as ex:
                 raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
-        return Attr(self.visit(node.value), symbol(node.attr))
+        return _construct_function_uncached(Attr, self.visit(node.value), symbol(node.attr))
+
+    def visit_Tuple(self, node: ast.Tuple) -> sympy.Tuple:
+        # The ``(var, lo, hi)`` limits sympy prints for a ``Sum`` a propagated execution count can hold.
+        return sympy.Tuple(*[self.visit(element) for element in node.elts])
 
     def generic_visit(self, node):
-        raise TypeError(f'Unsupported node in symbolic deserialization: {type(node).__name__}')
+        raise TypeError(f"Unsupported node in symbolic deserialization: {type(node).__name__}")
 
     def _resolve_function(self, node):
         if isinstance(node, ast.Name):
@@ -2169,41 +3527,28 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             resolved = self.visit(node)
             if isinstance(resolved, dtypes.typeclass):
                 return resolved
-        raise TypeError(f'Unsupported symbolic function {ast.dump(node)}')
+        raise TypeError(f"Unsupported symbolic function {ast.dump(node)}")
 
 
 def _cast_symbolic_value(value, dtype: dtypes.typeclass):
     if isinstance(value, SymExpr):
         return SymExpr(_cast_symbolic_value(value.expr, dtype), _cast_symbolic_value(value.approx, dtype))
-    if isinstance(value, symbol):
-        return symbol(value.name, dtype=dtype, **value.assumptions0)
     if isinstance(value, TypedConstant):
         return TypedConstant(value.value, dtype=dtype)
     if isinstance(value, (sympy.Integer, sympy.Float, int, float, numpy.generic)):
         return TypedConstant(value, dtype=dtype)
     # Non-constant composite expressions are preserved as explicit casts so they
     # can round-trip even when no constant/symbol dtype rewrite is possible.
-    return sympy.Function(f'dace.{dtype.to_string()}')(value)
+    return _construct_function_uncached(sympy.Function(f"dace.{dtype.to_string()}"), value)
 
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
-
     def _print_Symbol(self, expr):
-        if expr.name == '?':
-            return '$?'
-        if expr.name == 'NoneSymbol':
-            return 'None'
-        if isinstance(expr, symbol):
-            # Prefer the dtype the enclosing scope declares for this name over the
-            # instance's own (possibly cache-stale) dtype; a name the scope does not
-            # declare keeps the instance dtype (the authority only overrides).
-            dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
-            kwargs = _symbol_serializer_kwargs(expr, dtype)
-            if not kwargs:
-                return f'${expr.name}'
-            kwlist = ', '.join(f'{key}={value}' for key, value in kwargs.items())
-            return f'symbol(${expr.name}, {kwlist})'
-        return f'${expr.name}'
+        if expr.name == "?":
+            return "$?"
+        if expr.name == "NoneSymbol":
+            return "None"
+        return f"${expr.name}"
 
     def _print_TypedConstant(self, expr):
         return _typed_constant_to_string(expr)
@@ -2249,10 +3594,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 
             rendered = self._print(arg)
             if i == 0:
-                parts.append(f'-{rendered}' if negative else rendered)
+                parts.append(f"-{rendered}" if negative else rendered)
             else:
-                parts.append(f' {"-" if negative else "+"} {rendered}')
-        return ''.join(parts)
+                parts.append(f" {'-' if negative else '+'} {rendered}")
+        return "".join(parts)
 
     def _print_Mul(self, expr):
         sorted_args = sorted(expr.args, key=sympy.default_sort_key)
@@ -2291,14 +3636,18 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         for arg in flat_args:
             rendered = self._print(arg)
             if isinstance(arg, sympy.Add):
-                rendered = f'({rendered})'
+                rendered = f"({rendered})"
             parts.append(rendered)
-        return '*'.join(parts) if parts else '1'
+        return "*".join(parts) if parts else "1"
 
 
-def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
+# SymPy integer types that ``DaceSympySerializer`` prints as their value
+_PLAIN_INTEGER_TYPES = (sympy.Integer, type(sympy.S.One), type(sympy.S.Zero), type(sympy.S.NegativeOne))
+
+
+def _serialize_symbolic_uncached(expr: SymbolicType | int | float | numpy.number) -> str:
     if isinstance(expr, SymExpr):
-        return f'SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})'
+        return f"SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})"
     if isinstance(expr, TypedConstant):
         return _typed_constant_to_string(expr)
     if isinstance(expr, numpy.generic):
@@ -2312,15 +3661,33 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
         # the SDFG save->load->save equality check.
         return _format_float(expr)
     if isinstance(expr, sympy.Basic):
-        return DaceSympySerializer().doprint(expr)
+        # Fast paths for the most common expressions (integers and lone symbols), printed as the serializer would
+        expr_type = type(expr)
+        if expr_type in _PLAIN_INTEGER_TYPES:
+            return str(expr.p)
+        if expr_type is symbol or expr_type is sympy.Symbol:
+            return DaceSympySerializer()._print_Symbol(expr)
+        return _serialize_sympy_expression(expr)
     return str(expr)
 
 
+@lru_cache(maxsize=16384, typed=True)
+def _serialize_sympy_expression(expr: sympy.Basic) -> str:
+    """Serializes a SymPy expression; a symbol prints as its bare name, so the text depends on the expression only."""
+    return DaceSympySerializer().doprint(expr)
+
+
 def serialize_symbolic(expr):
+    # A natively-parsed expression serializes through the sympy serializer for the same reason it
+    # prints through the sympy printer: one implementation of DaCe's wire spellings, never two.
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     return _serialize_symbolic_uncached(expr)
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=16384, typed=True)
 def deserialize_symbolic(expr) -> SymbolicType:
     """Deserialize a string produced by :func:`serialize_symbolic`."""
     if isinstance(expr, (SymExpr, sympy.Basic)):
@@ -2333,84 +3700,171 @@ def deserialize_symbolic(expr) -> SymbolicType:
         return sympy.Float(expr)
     if not isinstance(expr, str):
         return expr
-    if expr in ('?', '$?'):
+    if expr in ("?", "$?"):
         return UndefinedSymbol()
 
     # Symbols are rewritten first because typed-literal replacement introduces
     # helper calls, and keeping the substitutions one-way avoids reparsing the
     # generated helper identifiers.
-    expr = expr.replace('$?', _SERIALIZED_UNDEFINED_SYMBOL)
-    expr = _SERIALIZED_SYMBOL.sub(lambda m: f'{_SERIALIZED_SYMBOL_PREFIX}{m.group("name")}', expr)
+    expr = expr.replace("$?", _SERIALIZED_UNDEFINED_SYMBOL)
+    expr = _SERIALIZED_SYMBOL.sub(lambda m: f"{_SERIALIZED_SYMBOL_PREFIX}{m.group('name')}", expr)
     expr = _SERIALIZED_TYPED_COMPLEX_CONSTANT.sub(_rewrite_typed_complex, expr)
     expr = _SERIALIZED_TYPED_CONSTANT.sub(
-        lambda m: f'__dace_typed_const__({m.group("value")!r}, {m.group("suffix")!r})', expr)
-    return _SerializedSymbolicParser().visit(ast.parse(expr, mode='eval'))
+        lambda m: f"__dace_typed_const__({m.group('value')!r}, {m.group('suffix')!r})", expr
+    )
+    return _SerializedSymbolicParser().visit(ast.parse(expr, mode="eval"))
 
 
 def _rewrite_typed_complex(m: re.Match) -> str:
-    dtype = 'complex64' if m.group('csuffix') == 'c64' else 'complex128'
-    re_val = m.group('re') or '0'
-    sign = '-' if m.group('op') == '-' else ''
-    return f'dace.{dtype}(complex({re_val}, {sign}{m.group("im")}))'
+    dtype = "complex64" if m.group("csuffix") == "c64" else "complex128"
+    re_val = m.group("re") or "0"
+    sign = "-" if m.group("op") == "-" else ""
+    return f"dace.{dtype}(complex({re_val}, {sign}{m.group('im')}))"
 
 
 _PYSTR2SYM_locals = {
-    'abs': sympy.Abs,
-    'min': sympy.Min,
-    'max': sympy.Max,
-    'True': sympy.true,
-    'False': sympy.false,
-    'GtE': sympy.Ge,
-    'LtE': sympy.Le,
-    'NotEq': sympy.Ne,
-    'floor': sympy.floor,
-    'ceil': sympy.ceiling,
-    'round': ROUND,
+    "abort": abort,
+    "abs": sympy.Abs,
+    "min": sympy.Min,
+    "max": sympy.Max,
+    "True": sympy.true,
+    "False": sympy.false,
+    "GtE": sympy.Ge,
+    "LtE": sympy.Le,
+    "NotEq": sympy.Ne,
+    "floor": sympy.floor,
+    "ceil": sympy.ceiling,
+    "round": ROUND,
     # Resolve infinity/NaN names so they survive inside expressions (e.g. ``a + inf``).
-    'inf': sympy.oo,
-    'nan': sympy.nan,
+    "inf": sympy.oo,
+    "nan": sympy.nan,
     # Convert and/or to special sympy functions to avoid boolean evaluation
-    'And': AND,
-    'Or': OR,
-    'var': sympy.Symbol('var'),
-    'root': sympy.Symbol('root'),
-    'arg': sympy.Symbol('arg'),
-    'Is': Is,
-    'IsNot': IsNot,
-    'BitwiseAnd': bitwise_and,
-    'BitwiseOr': bitwise_or,
-    'BitwiseXor': bitwise_xor,
-    'BitwiseNot': bitwise_invert,
-    'bitwise_and': bitwise_and,
-    'bitwise_or': bitwise_or,
-    'bitwise_xor': bitwise_xor,
-    'bitwise_invert': bitwise_invert,
-    '__bitwise_and': __bitwise_and,
-    '__bitwise_or': __bitwise_or,
-    '__bitwise_xor': __bitwise_xor,
-    '__bitwise_invert': __bitwise_invert,
-    'LeftShift': left_shift,
-    'left_shift': left_shift,
-    'RightShift': right_shift,
-    'right_shift': right_shift,
-    '__left_shift': __left_shift,
-    '__right_shift': __right_shift,
-    'int_floor': int_floor,
-    '__int_floor': __int_floor,
-    'int_ceil': int_ceil,
-    'ipow': ipow,
-    'IfExpr': IfExpr,
-    'ITE': ITE,
-    'Mod': sympy.Mod,
-    'Attr': Attr,
-    'Subscript': Subscript,
-    'id': sympy.Symbol('id'),
-    'diag': sympy.Symbol('diag'),
-    'jn': sympy.Symbol('jn'),
+    "And": AND,
+    "Or": OR,
+    "var": sympy.Symbol("var"),
+    "root": sympy.Symbol("root"),
+    "arg": sympy.Symbol("arg"),
+    "Is": Is,
+    "IsNot": IsNot,
+    "BitwiseAnd": bitwise_and,
+    "BitwiseOr": bitwise_or,
+    "BitwiseXor": bitwise_xor,
+    "BitwiseNot": bitwise_invert,
+    "bitwise_and": bitwise_and,
+    "bitwise_or": bitwise_or,
+    "bitwise_xor": bitwise_xor,
+    "bitwise_invert": bitwise_invert,
+    "__bitwise_and": __bitwise_and,
+    "__bitwise_or": __bitwise_or,
+    "__bitwise_xor": __bitwise_xor,
+    "__bitwise_invert": __bitwise_invert,
+    "LeftShift": left_shift,
+    "left_shift": left_shift,
+    "RightShift": right_shift,
+    "right_shift": right_shift,
+    "__left_shift": __left_shift,
+    "__right_shift": __right_shift,
+    "int_floor": int_floor,
+    "__int_floor": __int_floor,
+    "int_ceil": int_ceil,
+    "int_sqrt": int_sqrt,
+    "ipow": ipow,
+    "IfExpr": IfExpr,
+    "ITE": ITE,
+    **MODULO_FUNCTIONS,
+    "Attr": Attr,
+    "conj": conj,
+    "Subscript": Subscript,
+    "id": sympy.Symbol("id"),
+    "diag": sympy.Symbol("diag"),
+    "jn": sympy.Symbol("jn"),
+    "yn": sympy.Symbol("yn"),  # spherical Bessel Y_n; shadows a common size-symbol name (mirror of 'jn')
+    "rf": sympy.Symbol("rf"),  # RisingFactorial; shadows a container name (``rf[0, jl]``)
 }
 # _clash1 enables all one-letter variables like N as symbols
 # _clash also allows pi, beta, zeta and other common greek letters
+_PYSTR2SYM_locals.update(_CAST_CLASSES)  # int32/uint16/float64/... typecast functions (all widths)
 _PYSTR2SYM_locals.update(_sympy_clash)
+
+
+def sympy_parser_globals() -> dict[str, Any]:
+    """The namespace ``parse_expr`` builds when handed none, captured from sympy itself so it stays exact per version."""
+    captured: list[dict[str, Any]] = []
+
+    def capture(tokens: list[Any], local_dict: dict[str, Any], global_dict: dict[str, Any]) -> list[Any]:
+        captured.append(global_dict)
+        return tokens
+
+    sympy.parsing.sympy_parser.parse_expr("0", transformations=(capture,))
+    return captured[0]
+
+
+# ``sympify`` gives ``parse_expr`` no namespace, so each string parse re-ran ``from sympy import *``.
+SYMPY_PARSER_GLOBALS = sympy_parser_globals()
+SYMPIFY_TRANSFORMATIONS = sympy.parsing.sympy_parser.standard_transformations + (
+    sympy.parsing.sympy_parser.convert_xor,
+)
+
+
+def sympify_text(text: str, evaluate: bool | None) -> Any:
+    """``sympy.sympify(text, _PYSTR2SYM_locals, evaluate=evaluate)`` on the parser namespace built once."""
+    if evaluate is None:
+        evaluate = sympy.core.parameters.global_parameters.evaluate
+    text = text.replace("\n", "")
+    try:
+        return sympy.parsing.sympy_parser.parse_expr(
+            text,
+            local_dict=_PYSTR2SYM_locals,
+            transformations=SYMPIFY_TRANSFORMATIONS,
+            global_dict=SYMPY_PARSER_GLOBALS,
+            evaluate=evaluate,
+        )
+    except (sympy.parsing.sympy_parser.TokenError, SyntaxError) as exc:
+        raise sympy.SympifyError("could not parse %r" % text, exc)
+
+
+def symbol_replacements(
+    symbol_mapping: dict[str | sympy.Basic, Any] | None,
+) -> dict[str, sympy.Basic] | None:
+    """
+    Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that
+    ``replace_symbols`` replaces all at once. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols rather than
+    replacing both with one of them. Identity entries (e.g., ``{'N': 'N'}``) are left out.
+
+    The dictionary is keyed by symbol name: a mapping names its symbols, which have a type of their own that is part
+    of their identity (e.g., ``symbol('N')`` is not ``symbol('N', dtype=dace.int64)``).
+
+    :param symbol_mapping: A mapping from symbol names or symbols to expressions, or None.
+    :return: The replacement dictionary, or None if the mapping replaces nothing.
+    """
+    if not symbol_mapping:
+        return None
+    result = {}
+    for key, value in symbol_mapping.items():
+        key = str(key)
+        value = value if isinstance(value, sympy.Basic) else pystr_to_symbolic(value)
+        # Most entries map a symbol to itself; comparing names avoids a structural SymPy comparison
+        if isinstance(value, sympy.Symbol) and value.name == key:
+            continue
+        result[key] = value
+    return result or None
+
+
+def replace_symbols(expr: Any, replacements: Mapping[str, Any] | None) -> Any:
+    """
+    Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
+    whatever their types.
+
+    :param expr: The expression, or a non-symbolic value, which is returned as is.
+    :param replacements: Expressions to replace the symbols with, by symbol name, or None.
+    :return: The expression with the symbols replaced.
+    """
+    if not replacements or not isinstance(expr, sympy.Basic):
+        return expr
+    found = {
+        s: replacements[s.name] for s in expr.free_symbols if isinstance(s, sympy.Symbol) and s.name in replacements
+    }
+    return expr.xreplace(found) if found else expr
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
@@ -2420,20 +3874,27 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     typed-symbol metadata instead of depending on SymPy's automatic
     simplification and constructor caches.
     """
-    # Do not cache SymPy objects: SymPy equality/hash ignores DaCe symbol dtype metadata.
+    # SymPy objects bypass the string-keyed parse cache below and are returned as-is (or simplified).
     # Keep SymExpr intact even when simplify=True, as it carries exact and approximate forms.
     if isinstance(expr, SymExpr):
         return expr
-    if isinstance(expr, sympy.Basic):
-        return sympy.simplify(expr) if simplify is True else expr
+    # The umbrella also covers a genuine idxalg Expr; sympy.simplify(expr) on one would sympify it
+    # first via the `_sympy_()` protocol, silently downgrading an already-natively-parsed expression
+    # back to real sympy (the seam must never do that) -- use its own `.simplify()` instead.
+    if isinstance(expr, SymbolicBasic):
+        if simplify is not True:
+            return expr
+        return sympy.simplify(expr) if isinstance(expr, sympy.Basic) else expr.simplify()
     # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
-        return _pystr_to_symbolic_cached(expr, simplify)
+        # The authority is part of the key: the same text names a symbol of a different dtype under
+        # a different scope, and a cache keyed on the text alone would hand back the other scope's.
+        return _pystr_to_symbolic_cached(expr, simplify, _SERIALIZATION_SYMBOL_DTYPES.cache_key())
     return _pystr_to_symbolic_uncached(expr, symbol_map, simplify)
 
 
-@lru_cache(maxsize=16384)
-def _pystr_to_symbolic_cached(expr, simplify=None) -> sympy.Basic:
+@lru_cache(maxsize=16384, typed=True)
+def _pystr_to_symbolic_cached(expr, simplify, authority_key: AuthorityKey) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, None, simplify)
 
 
@@ -2454,7 +3915,10 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
             return UndefinedSymbol()
         if dtypes.validate_name(expr):
-            return symbol(expr)
+            # A bare name short-circuits the whole parse, so it needs the scope authority here too
+            # -- otherwise the commonest spelling of all (a loop bound that IS just ``N``) is the
+            # one place the stamping does not reach. See ``sympy_to_dace``.
+            return symbol(expr, _SERIALIZATION_SYMBOL_DTYPES.get().get(expr))
 
     symbol_map = symbol_map or {}
 
@@ -2464,8 +3928,19 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         if _NEEDS_AST_REWRITE.search(expr):
             expr = unparse(PythonOpToSympyConverter().visit(ast.parse(expr).body[0]))
 
+    # Under the idxalg backend, parse natively instead of building sympy objects. Without this the
+    # backend never engages: `pystr_to_symbolic` is the entry point for essentially every symbolic
+    # string in DaCe, so if it hands back sympy the selected engine is decorative and an A/B measures
+    # sympy against sympy. Restricted to the no-`symbol_map` case (the cached path, and the one that
+    # runs ~104k times per CloudSC load) because a caller-supplied map may hold sympy replacements.
+    if native_parse is not None and not symbol_map and isinstance(expr, str):
+        return native_parse(expr)
+
     # TODO: support SymExpr over-approximated expressions
-    result = sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify)
+    if isinstance(expr, str):
+        result = sympify_text(expr, simplify)
+    else:
+        result = sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify)
     if isinstance(result, bool):
         # SymPy parses the literals ``True``/``False`` to Python bools; keep them as
         # SymPy booleans so they stay distinct from the integers ``1``/``0``.
@@ -2473,28 +3948,237 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
     return sympy_to_dace(result, symbol_map)
 
 
-# ``typed=True`` is required: ``lru_cache`` keys entries by ``hash``/``==``, and
-# Python conflates booleans with integers (``hash(True) == hash(1)`` and
-# ``True == sympy.Integer(1)``). Without it, a cached ``simplify(True)`` would be
-# returned for a later ``simplify(sympy.Integer(1))`` (and vice versa), poisoning
-# the cache. ``typed=True`` keeps the ``bool`` and ``sympy.Integer`` entries
-# distinct. See ``tests/symbolic/test_simplify_cache_typed.py``.
-@lru_cache(maxsize=2048, typed=True)
-def simplify(expr: SymbolicType) -> SymbolicType:
-    return sympy.simplify(expr)
+@cached_proof
+def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
+    """``expr`` with every argument of a ``Min``/``Max`` that the facts prove is not the extremum dropped."""
+
+    def fold(extremum: sympy.Expr) -> sympy.Expr:
+        # For a Max, an argument is dominated by one at least as large; for a Min, by one at most as large
+        def dominated(arg: sympy.Expr, by: sympy.Expr) -> bool:
+            return provably_le(arg, by, facts) if isinstance(extremum, sympy.Max) else provably_le(by, arg, facts)
+
+        kept: list[sympy.Expr] = []
+        for arg in extremum.args:
+            if not any(dominated(arg, other) for other in kept):
+                kept = [other for other in kept if not dominated(other, arg)] + [arg]
+        return extremum.func(*kept)
+
+    return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
+
+
+@cached_proof
+def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
+    """Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
+    (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result
+    is written back in the original symbols (``s = N - 5``)."""
+    expr = fold_extrema(sympy.sympify(expr), facts)
+    names = {s.name: s for s in expr.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
+    solved = {str(target): value for target, value in facts.substitution.items()}
+    rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})
+    plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
+    assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
+    result = sympy.simplify(rewritten.xreplace(assumed)).xreplace(facts.slacks)
+    # A renamed outer symbol (its name holds ':') or a variable of the facts has no name inside the scope: keep the
+    # expression as it was
+    if any(":" in s.name or isinstance(s, sympy.Dummy) for s in result.free_symbols if isinstance(s, sympy.Symbol)):
+        return expr
+    return result.xreplace(
+        {
+            s: names[s.name] if s.name in names else symbol(s.name)
+            for s in result.free_symbols
+            if isinstance(s, sympy.Symbol)
+        }
+    )
+
+
+# Not cached itself: ``simplify_under`` is, and records the orders a cached proof relied on in each caller's facts, which
+#  a cache in front of it would skip.
+def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
+    """Simplifies ``expr`` under ``facts`` (:func:`simplify_under`). ``None`` is :meth:`Facts.none`, for a caller not
+    yet handed the facts of its scope: symbols are names only, so it proves nothing about their signs or integrality.
+    """
+    # Exact fast paths: sympy.simplify returns numbers, plain symbols, integer linear forms and integer monomials
+    # unchanged, and a Python int as its Integer. A zero or infinite symbol folds (1/oo -> 0) and unevaluated
+    # input can be rewritten, so both still reach sympy.
+
+    def is_plain_symbol(leaf: object) -> bool:
+        return (
+            isinstance(leaf, sympy.Symbol)
+            and leaf.is_commutative is True
+            and leaf.is_zero is not True
+            and leaf.is_infinite is not True
+        )
+
+    def is_integer_multiple(number: sympy.Basic, leaf: sympy.Basic) -> bool:
+        return isinstance(number, sympy.Integer) and (isinstance(leaf, sympy.Integer) or is_plain_symbol(leaf))
+
+    def is_fixed_point(node: object) -> bool:
+        kind = type(node)
+        if kind is sympy.Add:
+            pairs = [term.as_coeff_Mul() for term in node.args]
+        elif kind is sympy.Mul:
+            pairs = [(factor.exp, factor.base) if factor.is_Pow else (sympy.S.One, factor) for factor in node.args]
+        elif kind is sympy.Pow:
+            pairs = [(node.exp, node.base)]
+        else:
+            return False
+        return (
+            all(is_integer_multiple(*pair) for pair in pairs)
+            and sympy.core.parameters.global_parameters.evaluate
+            and kind(*node.args) == node
+        )
+
+    if type(expr) is int:
+        return sympy.Integer(expr)
+    if isinstance(expr, sympy.Number):
+        return expr
+    # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged
+    if (facts is None or not facts.substitution) and (is_plain_symbol(expr) or is_fixed_point(expr)):
+        return expr
+    return simplify_under(expr, facts if facts is not None else Facts.none())
+
+
+#: Rounding nodes a bound proof can relax: DaCe's integer division / ceiling division, and sympy's
+#: own ``floor`` / ``ceiling`` (what the two rewrite to so sympy's sign engine can see them).
+ROUNDING_FUNCTIONS = (int_floor, int_ceil, sympy.floor, sympy.ceiling)
+
+
+def has_rounding(expr) -> bool:
+    """Whether ``expr`` holds a rounding node (see :data:`ROUNDING_FUNCTIONS`).
+
+    The cheap pre-filter for :func:`provably_nonnegative`: an expression with no rounding node is
+    already decided by sympy's own assumption engine or not at all, so the relaxation cannot add an
+    answer there and a caller on a hot path should not pay to find that out.
+    """
+    if not isinstance(expr, sympy.Basic) or not expr.args:
+        return False
+    return bool(expr.atoms(*ROUNDING_FUNCTIONS))
+
+
+def guard_crossing(expr: SymbolicType | str, var: str, bound: SymbolicType | str, strict: bool) -> SymbolicType | None:
+    """The first integer ``var`` at which ``expr < bound`` (``strict``) or ``expr <= bound`` stops holding, for an ``expr``
+    increasing in ``var``: ``a*var + b`` with a positive number ``a`` and a nonnegative rational root, or ``var**2 + d`` (increasing
+    only for ``var >= 0``, which the caller establishes). Over the integers ``expr < bound`` is then ``var < result``,
+    spelled with exact integer rounding (``int_ceil``, ``int_floor``, ``int_sqrt``); ``None`` for any other shape.
+    """
+    difference = sympy.expand(pystr_to_symbolic(expr) - pystr_to_symbolic(bound))
+    symbol = next((s for s in difference.free_symbols if str(s) == var), None)
+    if symbol is None or not difference.is_polynomial(symbol):
+        return None
+    poly = sympy.Poly(difference, symbol)
+    coeffs = poly.all_coeffs()
+    if poly.degree() == 1 and coeffs[0].is_number and coeffs[0] > 0:
+        numerator, denominator = sympy.fraction(sympy.together(-coeffs[1] / coeffs[0]))
+        # The runtime rounds like C division, which is the ceiling / floor only for a nonnegative numerator.
+        if (
+            denominator.is_integer
+            and denominator.is_number
+            and denominator > 0
+            and provably_nonnegative(numerator, contract_facts(numerator))
+        ):
+            return int_ceil(numerator, denominator) if strict else int_floor(numerator, denominator) + 1
+        return None
+    if poly.degree() == 2 and coeffs[0] == 1 and coeffs[1] == 0 and _integral(-coeffs[2]):
+        square = -coeffs[2]
+        return int_sqrt(square - 1) + 1 if strict else int_sqrt(square) + 1
+    return None
+
+
+#: The facts at the code being printed, for the C++ printer to prove what SymPy's assumptions cannot (a registry symbol
+#: is a bare name). The code generator sets it around each node it generates; see :func:`printing_facts`.
+_printing_facts: "contextvars.ContextVar[Callable[[], Facts] | None]" = contextvars.ContextVar(
+    "printing_facts", default=None
+)
+
+
+@contextlib.contextmanager
+def printing_facts(provider: Callable[[], Facts]):
+    """Print C++ within the facts ``provider`` returns. It is called at most once, when a proof first needs it."""
+    token = _printing_facts.set(cache(provider))
+    try:
+        yield
+    finally:
+        _printing_facts.reset(token)
+
+
+def nonnegative_integers(dividend, divisor) -> bool:
+    """Whether C's ``%`` and ``/`` agree with the floored ones: on a nonnegative integer dividend and a positive integer
+    divisor. A zero divisor is excluded, where the floored helpers give 0 and C traps. Without SymPy assumptions, the
+    proof uses the facts set by :func:`printing_facts`."""
+    if (
+        dividend.is_integer
+        and divisor.is_integer
+        and divisor.is_positive
+        and (dividend.is_nonnegative or (has_rounding(dividend) and provably_nonnegative(dividend, Facts.none())))
+    ):
+        return True
+    provider = _printing_facts.get()
+    if provider is None:
+        return False
+    facts = provider()
+    names = {str(free) for operand in (dividend, divisor) for free in sympy.sympify(operand).free_symbols}
+    return (
+        names <= facts.integers
+        and _integral(dividend)
+        and _integral(divisor)
+        and provably_nonnegative(dividend, facts)
+        and provably_nonnegative(divisor - 1, facts)
+    )
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
-    """ Several notational corrections for integer math and C++ translation
-        that sympy.printing.cxxcode does not provide. """
+    """Several notational corrections for integer math and C++ translation
+    that sympy.printing.cxxcode does not provide."""
 
-    def __init__(self, arrays, cpp_mode=False, *args, **kwargs):
+    def __init__(
+        self,
+        arrays,
+        cpp_mode=False,
+        dialect=cpf_lowering.Dialect.RUNTIME,
+        fp_ctype=None,
+        reparsed=False,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
         self.cpp_mode = cpp_mode
+        # Whether this text is parsed again by the PYTHON parser before it is emitted.
+        # ``static_cast<T>(x)`` does not survive that: it re-parses as ``(static_cast < T) > (x)``.
+        self.reparsed = reparsed
+        # Which C++ vocabulary this printer may emit; see cpf_lowering.Dialect for why the
+        # dialect is threaded through as an argument rather than read from configuration.
+        self.dialect = dialect
+        # C++ floating type this expression evaluates in ('float' / 'double'), or None when the
+        # caller does not know or the context is integral. A sympy Rational is a fraction of two
+        # INTEGERS, and C++ divides integers with truncation: ``x + 1/2`` reaches the compiler as
+        # ``x + 0``. Naming the floating type is what lets the fraction be emitted as a division
+        # of that type instead -- and it has to be the OUTPUT's type, because a double literal in
+        # an fp32 kernel silently widens the whole computation. Left None, integer division is
+        # preserved, which is what index arithmetic (``N // 8``) requires.
+        self.fp_ctype = fp_ctype
+
+    def _mpr_call(self, name, arguments, types=None):
+        """The standalone spelling of a call, or ``None`` if this dialect emits it unchanged.
+
+        A helper with an inline definition is emitted as a plain call; which definitions a
+        translation unit needs is recovered from the finished text by
+        :func:`~dace.cpf_lowering.helpers_used`, because ``symstr`` is memoized and per-printer
+        state would not survive a cache hit. ``types`` are the arguments' C types (:meth:`c_type`),
+        which the C dialect names a typed helper after.
+        """
+        if self.dialect not in cpf_lowering.STANDALONE_DIALECTS:
+            return None
+        lowered = cpf_lowering.lowering_for(name, tuple(arguments), self.dialect, types)
+        if lowered is not None:
+            return lowered
+        if cpf_lowering.needs_definition(name, self.dialect):
+            return "%s(%s)" % (name, ", ".join(arguments))
+        return None
+
         # Print floats at the shortest precision that round-trips (``3.14`` instead of
         # ``3.14000000000000``); higher-precision values (e.g. HUGE) still print in full.
-        self._settings['full_prec'] = False
+        self._settings["full_prec"] = False
 
     def _print_Float(self, expr):
         # Shortest round-tripping form, always keeping one fractional digit so an
@@ -2512,60 +4196,306 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             literal = dtypes.cpp_typed_literal(expr.value, expr.dtype)
             if literal is not None:
                 return literal
-            return f'{expr.dtype.ctype}({value})'
-        return f'dace.{expr.dtype.to_string()}({value})'
+            return f"{expr.dtype.ctype}({value})"
+        return f"dace.{expr.dtype.to_string()}({value})"
 
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
-            return f'{expr.func}[{indices}]'
-        if str(expr.func) == 'AND':
-            return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
-        if str(expr.func) == 'OR':
-            return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
-        if str(expr.func) == 'Attr':
+            return f"{expr.func}[{indices}]"
+        # Explicit numeric typecasts (``int32(x)`` / ``float64(x)`` ...)
+        # -> the matching ``dace::<type>(x)`` C++ cast (the same form the
+        # tasklet-body ``dace.<type>(x)`` lowers to via cppunparse), so a
+        # kind coercion that landed in an interstate-edge / memlet
+        # expression keeps its exact (truncating for int) semantics.
+        if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
+            target = _TYPECAST_CPP[str(expr.func)]
+            if self.reparsed:
+                return "%s(%s)" % (str(expr.func), self._print(expr.args[0]))
+            if self.dialect is cpf_lowering.Dialect.STANDALONE_C:
+                # C has neither ``static_cast`` nor a functional cast.
+                return "((%s)(%s))" % (cpf_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
+            if self.dialect is cpf_lowering.Dialect.STANDALONE:
+                return "static_cast<%s>(%s)" % (cpf_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
+            return "%s(%s)" % (target, self._print(expr.args[0]))
+        # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
+        if self.cpp_mode and str(expr.func) in ("conj", "conjugate"):
+            # Typed in every standalone dialect: a real argument makes the conjugate the identity.
+            types = (
+                tuple(self.c_type(argument) for argument in expr.args)
+                if self.dialect in cpf_lowering.STANDALONE_DIALECTS
+                else None
+            )
+            lowered = self._mpr_call("conj", [self._print(expr.args[0])], types)
+            if lowered is not None:
+                return lowered
+            return "dace::math::conj(%s)" % self._print(expr.args[0])
+        # ``and`` / ``or`` are C++ alternative tokens; in C they are macros from ``<iso646.h>``,
+        # which CPF does not include, so the C dialect spells the operators. Python text keeps them.
+        if str(expr.func) == "AND":
+            keyword = "&&" if self.c_operators() else "and"
+            return f"(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))"
+        if str(expr.func) == "OR":
+            keyword = "||" if self.c_operators() else "or"
+            return f"(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))"
+        if str(expr.func) == "Attr":
             # TODO: We want to check that args[0] is a Structure.
             #       However, this is information is not currently passed from the code generator.
             if self.cpp_mode:
-                sep = '->'
+                sep = "->"
             else:
-                sep = '.'
+                sep = "."
             if isinstance(expr.args[1], sympy.Function):
-                attribute = f'{self._print(expr.args[1].func)}[{",".join(map(self._print, expr.args[1].args))}]'
+                attribute = f"{self._print(expr.args[1].func)}[{','.join(map(self._print, expr.args[1].args))}]"
             else:
                 attribute = self._print(expr.args[1])
-            return f'{self._print(expr.args[0])}{sep}{attribute}'
+            return f"{self._print(expr.args[0])}{sep}{attribute}"
             # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
-        if str(expr.func) == 'Subscript':
-            indices = ', '.join(self._print(a) for a in expr.args[1:])
-            return f'{self._print(expr.args[0])}[{indices}]'
+        if str(expr.func) == "Subscript":
+            # rank>=2 reparses as ast.Tuple downstream -> invalid std::make_tuple on a raw
+            # pointer; caller must lower the nested subscript to a flat index first.
+            if self.cpp_mode and len(expr.args) > 2:
+                raise NotImplementedError(
+                    "cpp_mode Subscript printing does not support rank>=2 indices "
+                    f"({expr}); lower the nested subscript to a flat index before printing."
+                )
+            indices = ", ".join(self._print(a) for a in expr.args[1:])
+            return f"{self._print(expr.args[0])}[{indices}]"
         # Operator-backed functions: the ``__``-prefixed variants (from the operators)
         # always print as the operator; the bare names do so only in C++ (Python keeps
         # the ``func(a, b)`` spelling so it round-trips).
         name = str(expr.func)
-        base = name[2:] if name.startswith('__') else name
-        as_operator = name.startswith('__') or self.cpp_mode
-        if base == 'bitwise_invert' and as_operator:
-            return '(~(%s))' % self._print(expr.args[0])
-        binop = {'bitwise_and': '&', 'bitwise_or': '|', 'bitwise_xor': '^', 'left_shift': '<<', 'right_shift': '>>'}
+        base = name.removeprefix("__")
+        as_operator = name.startswith("__") or self.cpp_mode
+        if base == "bitwise_invert" and as_operator:
+            return f"(~({self._print(expr.args[0])}))"
+        binop = {"bitwise_and": "&", "bitwise_or": "|", "bitwise_xor": "^", "left_shift": "<<", "right_shift": ">>"}
         if base in binop and as_operator:
-            return '((%s) %s (%s))' % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
-        # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
-        # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
-        if base == 'int_floor' and as_operator:
-            op = '/' if self.cpp_mode else '//'
-            return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
-        if str(expr.func) == 'ipow' and self.cpp_mode:
-            return 'dace::math::ipow(%s, %s)' % (self._print(expr.args[0]), self._print(expr.args[1]))
-        if str(expr.func) == 'IfExpr':
+            return "((%s) %s (%s))" % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
+        # ``int_floor`` floors: it divides with ``//`` in Python, and with C's ``/`` in C++ if that agrees (the bare
+        # name keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
+        if base == "int_floor" and as_operator:
+            if self.cpp_mode and not nonnegative_integers(*expr.args):
+                return self._print_binary_call("py_floor", expr)
+            op = "/" if self.cpp_mode else "//"
+            return f"(({self._print(expr.args[0])}) {op} ({self._print(expr.args[1])}))"
+        if str(expr.func) == "ipow" and self.cpp_mode:
+            arguments = [self._print(a) for a in expr.args]
+            lowered = self._mpr_call("ipow", arguments, self.c_argument_types(expr.args))
+            if lowered is not None:
+                return lowered
+            return "dace::math::ipow(%s, %s)" % (arguments[0], arguments[1])
+        if str(expr.func) == "IfExpr":
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:
-                return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
-            return '((%s) if (%s) else (%s))' % (tval, cond, fval)
+                return "((%s) ? (%s) : (%s))" % (cond, tval, fval)
+            return "((%s) if (%s) else (%s))" % (tval, cond, fval)
+        lowered = self._mpr_call(name, [self._print(a) for a in expr.args], self.c_argument_types(expr.args))
+        if lowered is not None:
+            return lowered
+        # ``exp``/``log``/``sqrt`` reaching C++ from a memlet subset or an interstate assignment
+        # must be qualified for the same reason a tasklet body's are (cpf_lowering states it): bare,
+        # they bind to ``std::``, whose overloads are ambiguous for a 16-bit float. The Pow path
+        # above already emits ``dace::math::sqrt`` for ``x**Rational(1, 2)``; this covers the same
+        # function arriving as a CALL -- ``math.sqrt(x)``, or a sympy ``exp`` from a substitution --
+        # which the base printer would otherwise write out under its bare sympy name.
+        qualified = cpf_lowering.RUNTIME_QUALIFIED_MATH.get(name) if self.cpp_mode else None
+        if qualified is not None:
+            return "%s(%s)" % (qualified, ", ".join(self._print(a) for a in expr.args))
         return super()._print_Function(expr)
 
+    def _print_ceiling(self, expr):
+        """sympy ``ceiling(...)`` printer, the counterpart of :meth:`_print_floor`.
+
+        Only a ceiling with nothing to divide by reaches here -- ``sympy_intdiv_fix`` turns every
+        real integer division into ``int_ceil(a, b)`` first. The runtime's one-argument
+        ``ceiling`` overload returns ``FLT_MAX``/``DBL_MAX`` for floating arguments (it exists for
+        the integer case, where it is the identity), so printing the sympy name unchanged would
+        emit a poison value rather than a rounding. Emit the math-library call instead.
+
+        ``ceil`` returns a DOUBLE, and an all-integer argument means this ceiling is index
+        arithmetic -- an extent, a range end, a shape. Left floating it is not merely slow: as a
+        map's range end it makes ``for (auto i = 0; i < ceil(...); ...)`` compare an integer
+        induction variable against a double, which is not OpenMP's canonical loop form, and the
+        compiler rejects the ``omp for`` with "invalid controlling predicate". Give the integer
+        case an integer type. Sympy has already folded away the cases it can prove integral
+        (``ceiling(N)`` -> ``N``), so what arrives here is the argument it could not, such as
+        ``R**(K - 1)`` with a symbolic exponent whose sign is unknown.
+        """
+        if not self.cpp_mode:
+            return super()._print_Function(expr)
+        # A known-integer argument has nothing to round up, so it stands on its own and
+        # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
+        # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
+        # and ``double`` overloads, so any wider integer type makes the call ambiguous.
+        if exact_integer(expr.args[0]):
+            return self._print(expr.args[0])
+        lowered = self._mpr_call("ceiling", [self._print(expr.args[0])], self.c_argument_types(expr.args))
+        if lowered is not None:
+            return lowered
+        rounded = "ceil(%s)" % self._print(expr.args[0])
+        if not integral_index_expression(expr.args[0]):
+            return rounded  # a genuinely floating quantity keeps its floating type
+        return "((int64_t)%s)" % rounded
+
+    def _print_Rational(self, expr):
+        """A sympy ``Rational``, which is a real number: an integer division is ``int_floor``.
+
+        Text divides by its operands' types, so a bare ``1/2`` reads back as integer division, 0 --
+        ``sqrt(x)`` round-tripped through an interstate edge as ``x ** (1/2)``, i.e. ``pow(x, 0)``.
+        Printed as a floating quotient instead: of ``fp_ctype`` when the caller named it, since a
+        double literal would widen an fp32 kernel, and of double otherwise. The cast is written on
+        BOTH operands rather than on the result: casting the result would divide first and truncate
+        before the conversion ever happened.
+        """
+        if self.cpp_mode and self.fp_ctype is not None:
+            if expr.q == 1:
+                return self._fp_literal(expr.p)
+            return "(%s / %s)" % (self._fp_literal(expr.p), self._fp_literal(expr.q))
+        if expr.q == 1:
+            return super()._print_Rational(expr)
+        return "(%d.0 / %d)" % (expr.p, expr.q)
+
+    def _fp_literal(self, value) -> str:
+        """``value`` converted to ``fp_ctype``: a functional cast in C++, a cast expression in C."""
+        if self.dialect is cpf_lowering.Dialect.STANDALONE_C:
+            return "((%s)(%s))" % (self.fp_ctype, value)
+        return "%s(%s)" % (self.fp_ctype, value)
+
+    def _print_Max(self, expr):
+        return self._print_minmax("Max", expr)
+
+    def _print_Min(self, expr):
+        return self._print_minmax("Min", expr)
+
+    def _print_minmax(self, name, expr):
+        """``Max``/``Min`` printer.
+
+        sympy derives these from ``Application`` rather than ``Function``, so ``_print_Function``
+        never sees them and the generic ``_print_Basic`` fallback prints the sympy spelling. That
+        is a call to the DaCe runtime's variadic ``Max``, which standalone output cannot resolve.
+        """
+        arguments = [self._print(argument) for argument in expr.args]
+        types = (
+            tuple(self.c_type(argument) for argument in expr.args)
+            if self.dialect is cpf_lowering.Dialect.STANDALONE_C
+            else None
+        )
+        lowered = self._mpr_call(name, arguments, types)
+        if lowered is not None:
+            return lowered
+        return "%s(%s)" % (name, ", ".join(arguments))
+
+    def c_argument_types(self, arguments) -> tuple[str | None, ...] | None:
+        """Each argument's C type (:meth:`c_type`) when printing the C dialect, else ``None``."""
+        if self.dialect is not cpf_lowering.Dialect.STANDALONE_C:
+            return None
+        return tuple(self.c_type(argument) for argument in arguments)
+
+    def c_power_types(self, expr) -> tuple[str | None, ...] | None:
+        """The C types of a printed ``pow``'s operands. A non-integer rational exponent prints as a
+        floating quotient (see :meth:`_print_Pow`), not as the integer fraction its sympy atom is."""
+        types = self.c_argument_types(expr.args)
+        if types is not None and isinstance(expr.args[1], sympy.Rational) and not expr.args[1].is_Integer:
+            types = (types[0], "float32" if self.fp_ctype == "float" else "float64")
+        return types
+
+    def c_type(self, expr) -> str | None:
+        """The dace type name the C dialect picks a typed helper by for ``expr``, or ``None``.
+
+        :param expr: a sympy expression this printer prints.
+        :returns: the type of the printed C expression under C's usual arithmetic conversions, with
+                  a symbol taken as :func:`~dace.cpf_lowering.c_symbol_type` says, or ``None``.
+        """
+        if isinstance(expr, symbol):
+            return cpf_lowering.c_symbol_type(symbol_dtype(expr).to_string())
+        if isinstance(expr, TypedConstant):
+            return expr.dtype.to_string()
+        if isinstance(expr, sympy.logic.boolalg.Boolean):
+            return "int32"
+        if isinstance(expr, sympy.Integer):
+            return "int32" if abs(int(expr)) < 2**31 else "int64"
+        if isinstance(expr, sympy.Rational):
+            return {"float": "float32", "double": "float64"}.get(self.fp_ctype, "int32")
+        if isinstance(expr, (sympy.Float, sympy.NumberSymbol)):
+            return "float64"
+        name = str(expr.func)
+        name = name.removeprefix("__")
+        if name in _TYPECAST_CPP:
+            return name
+        if isinstance(expr, sympy.Pow):
+            types = self.c_power_types(expr)
+            if types is None or any(dtype is None for dtype in types):
+                return None
+            if expr.exp.is_Integer:
+                return cpf_lowering.c_common_type(types[:1])
+            if expr.exp == sympy.Rational(1, 2):
+                return cpf_lowering.c_math_result_type("sqrt", types[:1])
+            return cpf_lowering.c_math_result_type("pow", types)
+        if isinstance(expr, (sympy.floor, sympy.ceiling)):
+            inner = self.c_type(expr.args[0])
+            if inner is None or expr.args[0].is_integer:
+                return inner
+            if integral_index_expression(expr.args[0]):
+                return "int64"
+            return inner if inner in cpf_lowering.C_FLOATING_RANKS else "float64"
+        spec = cpf_lowering.c_helper_spec(name, len(expr.args))
+        if spec is not None:
+            return cpf_lowering.c_helper_result_type(spec, tuple(self.c_type(argument) for argument in expr.args))
+        if name in cpf_lowering.C_TYPED_MATH:
+            types = tuple(self.c_type(argument) for argument in expr.args)
+            if any(dtype is None for dtype in types):
+                return None
+            return cpf_lowering.c_math_result_type(name, types)
+        operands = expr.args
+        if name == "IfExpr":
+            operands = expr.args[1:]
+        elif not (
+            isinstance(expr, (sympy.Add, sympy.Mul, sympy.Mod, sympy.Max, sympy.Min, sympy.Abs))
+            or name
+            in (
+                "int_floor",
+                "int_ceil",
+                "int_sqrt",
+                "int_floor_ni",
+                "py_floor",
+                "py_mod",
+                "CMod",
+                "bitwise_and",
+                "bitwise_or",
+                "bitwise_xor",
+                "bitwise_invert",
+                "left_shift",
+                "right_shift",
+            )
+        ):
+            return None
+        types = tuple(self.c_type(operand) for operand in operands)
+        if not types or any(dtype is None for dtype in types):
+            return None
+        return cpf_lowering.c_common_type(types)
+
+    def _print_binary_call(self, name: str, expr):
+        # Through the function printer, so that the dialect picks the helper's spelling
+        return self._print(sympy.Function(name)(*expr.args))
+
     def _print_Mod(self, expr):
-        return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        # In Python, ``%`` is floored. In C++ it is C's, which agrees only on nonnegative integers
+        if not self.cpp_mode or nonnegative_integers(*expr.args):
+            return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return self._print_binary_call("py_mod", expr)
+
+    def _print_CMod(self, expr):
+        if not self.cpp_mode:
+            return self._print_binary_call("CMod", expr)
+        # C has no ``%`` on floating point.
+        if self.dialect is cpf_lowering.Dialect.STANDALONE_C and self.c_type(expr) in cpf_lowering.C_FLOATING_RANKS:
+            return cpf_lowering.c_helper_call(
+                "c_mod", tuple(self._print(a) for a in expr.args), self.c_argument_types(expr.args)
+            )
+        if all(arg.is_integer for arg in expr.args):
+            return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return self._print_binary_call("c_mod", expr)
 
     def _print_floor(self, expr):
         """sympy ``floor(...)`` printer.
@@ -2584,6 +4514,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         """
         if not self.cpp_mode:
             return super()._print_Function(expr) if hasattr(super(), "_print_Function") else super()._print_floor(expr)
+        # The counterpart of the ceiling short-circuit: libm ``floor`` returns a double just as
+        # ``ceil`` does, so a known-integer argument must stand on its own here too. #2550 gave this
+        # to ceilings only, which left ``floor(int_floor(N, 2) + 1)`` emitting a floating call.
+        if exact_integer(expr.args[0]):
+            return self._print(expr.args[0])
         arg = expr.args[0]
         # Try to combine to a single ``Rational(num, den)``: when arg is
         # ``a/b + c/d + ...`` sympy's ``.together()`` rewrites to a
@@ -2600,77 +4535,287 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             except (TypeError, ValueError):
                 den_int = None
             if den_int is not None and den_int != 1 and den_int != 0:
-                return '((%s) / (%s))' % (self._print(num), self._print(den))
+                return "((%s) / (%s))" % (self._print(num), self._print(den))
         # Fallback: pure-real floor (e.g. ``floor(sin(x))``); emit the
         # math-library call.
-        return 'floor(%s)' % self._print(arg)
+        lowered = self._mpr_call("floor", [self._print(arg)], self.c_argument_types((arg,)))
+        if lowered is not None:
+            return lowered
+        return "floor(%s)" % self._print(arg)
 
     def _print_Equality(self, expr):
-        return '((%s) == (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) == ({self._print(expr.args[1])}))"
 
     def _print_Unequality(self, expr):
-        return '((%s) != (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) != ({self._print(expr.args[1])}))"
 
     def _print_Not(self, expr):
-        return '(not (%s))' % self._print(expr.args[0])
+        return "(%s (%s))" % ("!" if self.c_operators() else "not", self._print(expr.args[0]))
+
+    def c_operators(self) -> bool:
+        """Whether logical operators must be spelled with C's symbols rather than C++/Python keywords."""
+        return self.cpp_mode and self.dialect is cpf_lowering.Dialect.STANDALONE_C
 
     def _print_Infinity(self, expr):
         # Print as ``inf`` so it round-trips back to ``oo`` via ``pystr_to_symbolic``.
-        return 'INFINITY' if self.cpp_mode else 'inf'
+        return "INFINITY" if self.cpp_mode else "inf"
 
     def _print_NegativeInfinity(self, expr):
-        return '-INFINITY' if self.cpp_mode else '-inf'
+        return "-INFINITY" if self.cpp_mode else "-inf"
 
     def _print_NaN(self, expr):
-        return 'NAN' if self.cpp_mode else 'nan'
+        return "NAN" if self.cpp_mode else "nan"
 
     def _print_BooleanTrue(self, expr):
-        return 'true' if self.cpp_mode else 'True'
+        return "true" if self.cpp_mode else "True"
 
     def _print_BooleanFalse(self, expr):
-        return 'false' if self.cpp_mode else 'False'
+        return "false" if self.cpp_mode else "False"
 
     def _print_Symbol(self, expr):
-        if expr.name == 'NoneSymbol':
-            return 'nullptr' if self.cpp_mode else 'None'
+        if expr.name == "NoneSymbol":
+            return "nullptr" if self.cpp_mode else "None"
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
 
-        # Special case for square root
+        # Special case for square root. Decided on the sympy exponent, NOT on its printed form:
+        # ``Rational(1, 2)`` prints as ``1/2``, whose float() raises, so testing the text missed
+        # every symbolic sqrt and emitted ``pow(x, 1/2)`` -- and ``1/2`` is integer division in
+        # C++, i.e. ``pow(x, 0)``.
         if self.cpp_mode:
+            if expr.args[1] == sympy.Rational(1, 2):
+                lowered = self._mpr_call("sqrt", [base], self.c_argument_types(expr.args[:1]))
+                return lowered if lowered is not None else f"dace::math::sqrt({base})"
             try:
                 if float(exponent) == 0.5:
-                    return f'dace::math::sqrt({base})'
+                    lowered = self._mpr_call("sqrt", [base], self.c_argument_types(expr.args[:1]))
+                    return lowered if lowered is not None else f"dace::math::sqrt({base})"
             except ValueError:
                 pass
+            # A non-integer rational exponent must reach C++ as a FLOATING quotient; the bare
+            # ``p/q`` would truncate to an integer and silently change the power.
+            if isinstance(expr.args[1], sympy.Rational) and not expr.args[1].is_Integer:
+                saved, self.fp_ctype = self.fp_ctype, (self.fp_ctype or "double")
+                exponent = "(%s / %s)" % (self._fp_literal(expr.args[1].p), self._fp_literal(expr.args[1].q))
+                self.fp_ctype = saved
 
         # Special case for integer powers
         try:
             int_exp = int(exponent)
             if int_exp == 0:
-                return '1'
+                return "1"
             negative = int_exp < 0
             if negative:
                 int_exp = -int_exp
-            res = "({})".format(base)
+            res = f"({base})"
             for _ in range(1, int_exp):
-                res += " * ({})".format(base)
+                res += f" * ({base})"
+            if int_exp > 1:
+                # The product is ONE operand: bare, ``x / N**2`` prints as ``x/(N) * (N)``, which is ``x``.
+                res = f"({res})"
 
             if negative:
-                res = f'reciprocal({res})'
+                lowered = self._mpr_call("reciprocal", [res])
+                res = lowered if lowered is not None else f"reciprocal({res})"
             return res
         except ValueError:
             if self.cpp_mode:
-                return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+                lowered = self._mpr_call("pow", [base, exponent], self.c_power_types(expr))
+                if lowered is not None:
+                    return lowered
+                return f"dace::math::pow({base}, {exponent})"
             else:
-                return f'({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})'
+                return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
 
 
-@lru_cache(maxsize=16384)
-def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
+#: Node types an index expression is built from. A whitelist, not a list of floating functions to
+#: avoid: ``sin(n)`` over an integer symbol is a double, and so is any function added later, so
+#: anything unrecognized has to count as floating.
+INTEGRAL_INDEX_OPS = (
+    sympy.Add,
+    sympy.Mul,
+    sympy.Pow,
+    ipow,
+    sympy.Min,
+    sympy.Max,
+    sympy.Mod,
+    sympy.Abs,
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
+    bitwise_invert,
+    left_shift,
+    right_shift,
+)
+
+#: Rounding nodes that make ANY real argument an integer, regardless of whether the argument
+#: itself is integral -- a strided-slice extent such as ``ceiling((j - i) / step)`` stays integral
+#: even though ``(j - i) / step`` carries a Rational coefficient.
+ROUNDING_INDEX_OPS = (sympy.floor, sympy.ceiling, int_floor, int_ceil)
+
+
+def integral_index_expression(expr, rational_is_integer_division: bool = False) -> bool:
+    """Whether ``expr`` is integer arithmetic -- an extent, a range end, a shape.
+
+    Not the same question as :func:`infer_fp_ctype`, which reads the ATOMS: every atom of
+    ``sin(n)`` is an integer symbol, and the value is a double. Answered from the operations
+    instead, so an unrecognized function is floating by default.
+
+    :param rational_is_integer_division: Count a ``Rational`` such as the ``1/4`` of ``n/4`` as integral.
+                                         Without a floating context the printer emits it as C integer
+                                         division, which is how an array extent has always read it.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return False
+    if expr.is_integer:
+        return True
+    traversal = sympy.preorder_traversal(expr)
+    for node in traversal:
+        if isinstance(node, ROUNDING_INDEX_OPS) or (isinstance(node, sympy.Function) and node.is_integer):
+            traversal.skip()  # an integer-valued call such as ``int64(x)``: its argument need not be integral
+            continue
+        if isinstance(node, (symbol, TypedConstant)):
+            if (symbol_dtype(node) if isinstance(node, symbol) else node.dtype) not in dtypes.INTEGER_TYPES:
+                return False
+        elif isinstance(node, sympy.Integer):
+            continue
+        elif rational_is_integer_division and isinstance(node, sympy.Rational):
+            continue
+        elif isinstance(node, sympy.Symbol):
+            if node.is_integer is not True:
+                return False
+        elif not isinstance(node, INTEGRAL_INDEX_OPS):
+            return False
+    return True
+
+
+def exact_integer(expr) -> bool:
+    """Whether ``expr`` is an integer value: integer arithmetic (:func:`integral_index_expression`) with no ``Pow``,
+    whose exponent may be negative. ``ipow(R, K)`` is one; ``R**(K - 1)`` is a fraction for ``K = 0``."""
+    return expr.is_integer is True or (integral_index_expression(expr) and not expr.has(sympy.Pow))
+
+
+def infer_fp_ctype(expr) -> str | None:
+    """The C++ floating type ``expr`` evaluates in, or ``None`` if it is not a floating expression.
+
+    Read off the expression's own atoms -- a :class:`symbol` and a :class:`TypedConstant` each
+    carry a ``dtype``, and a sympy ``Float`` is a double literal -- combined by DaCe's own
+    promotion rule. No symbol table is needed, and nothing is imported from the code generators,
+    which ``dace.symbolic`` must not depend on.
+
+    This is what makes a ``Rational`` printable: sympy stores ``x + 1/2`` as an exact fraction of
+    two integers, and C++ divides integers with truncation, so the term reaches the compiler as
+    ``x + 0``. Knowing the surrounding floating type lets the fraction be emitted in that type --
+    and it must be the type of the WHOLE expression, since a ``double`` literal inside an ``fp32``
+    kernel widens the computation around it.
+
+    An all-integer expression returns ``None``, which is what keeps index arithmetic (``N // 8``,
+    ``floor(N / 8)``) an integer division.
+
+    :param expr: the symbolic expression about to be printed.
+    :returns: ``'float'`` / ``'double'`` (or another floating ctype), or ``None``.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return None
+    found: list[dtypes.typeclass] = []
+    for atom in expr.atoms():
+        if isinstance(atom, symbol):
+            found.append(symbol_dtype(atom))
+        elif isinstance(atom, TypedConstant):
+            found.append(atom.dtype)
+        elif isinstance(atom, sympy.Float):
+            found.append(dtypes.float64)
+    if not found:
+        return None
+    result = found[0] if len(found) == 1 else dtypes.result_type_of(found[0], *found[1:])
+    if not numpy.issubdtype(result.type, numpy.floating):
+        return None
+    return result.ctype
+
+
+def printing_context() -> tuple:
+    """A cache key for what printing reads from its surroundings: the scope's symbol types and the printing facts."""
+    return (_SERIALIZATION_SYMBOL_DTYPES.cache_key(), _printing_facts.get())
+
+
+@lru_cache(maxsize=16384, typed=True)
+def _symstr(
+    sym,
+    arrayexprs: frozenset[str] | None = None,
+    cpp_mode=False,
+    dialect: cpf_lowering.Dialect | None = None,
+    fp_ctype: str | None = None,
+    reparsed: bool = False,
+    context: tuple = (),
+) -> str:
+    """The memoized body of :func:`symstr`. Every argument reaches the cache key, ``dialect``
+    included, so nothing here may read an ambient value. What the printer does read ambiently -- the symbol types and
+    the printing facts -- is keyed by ``context`` (:func:`printing_context`, unused here): a modulo printed as C's
+    ``%`` where the facts proved it must not be served where they do not."""
+
+    # Inferred, not required from the caller: every consumer of a symbolic expression would
+    # otherwise have to thread a dtype down, and the one that forgot would silently emit a
+    # truncating integer division. An explicit fp_ctype still wins, for a caller that knows the
+    # surrounding type better than the expression does (a float32 accumulator over int operands).
+    if cpp_mode and fp_ctype is None:
+        fp_ctype = infer_fp_ctype(sym)
+
+    if isinstance(sym, SymExpr):
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode, dialect=dialect, fp_ctype=fp_ctype, reparsed=reparsed)
+
+    # A natively-parsed (idxalg) expression is rendered by converting back to sympy and reusing the
+    # printer below, rather than by a parallel printer that could drift from DaCe's spellings.
+    if to_sympy is not None:
+        converted = to_sympy(sym)
+        if converted is not None:
+            sym = converted
+
+    # Infinity, NaN and booleans are atomic constants: ``sympy_numeric_fix`` rejects
+    # the first two and booleans are not ``Number``s, so the generic path below would
+    # wrap them in parentheses that no longer round-trip. Print them bare instead.
+    if isinstance(
+        sym,
+        (
+            sympy.core.numbers.Infinity,
+            sympy.core.numbers.NegativeInfinity,
+            sympy.core.numbers.NaN,
+            sympy.logic.boolalg.BooleanAtom,
+        ),
+    ):
+        return DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype, reparsed).doprint(sym)
+
+    try:
+        sym = sympy_numeric_fix(sym)
+        sym = sympy_intdiv_fix(sym)
+        sym = sympy_divide_fix(sym)
+
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype, reparsed).doprint(sym)
+
+        if (
+            isinstance(sym, symbol)
+            or isinstance(sym, sympy.Symbol)
+            or isinstance(sym, (sympy.Number, TypedConstant))
+            or dtypes.isconstant(sym)
+        ):
+            return sstr
+        else:
+            return "(" + sstr + ")"
+    except (AttributeError, TypeError, ValueError):
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
+        return "(" + sstr + ")"
+
+
+def symstr(
+    sym,
+    arrayexprs: frozenset[str] | None = None,
+    cpp_mode=False,
+    dialect: cpf_lowering.Dialect | None = None,
+    fp_ctype: str | None = None,
+    reparsed: bool = False,
+) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
@@ -2679,38 +4824,46 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
                        user-functions back to array expressions.
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
+    :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
+                    (:func:`~dace.cpf_lowering.active_dialect`) in C++ mode and ``RUNTIME`` in
+                    Python mode, whose text DaCe parses again. Resolved HERE, in front of the
+                    memoized body, because the cache key is the ARGUMENTS: an omitted dialect
+                    resolved inside would give every ambient-dialect caller one shared entry, and
+                    a standalone render would then serve ``std::exp`` back to the runtime printer.
+                    This is the same shape ``dace.codegen.common.sym2cpp`` already has.
+    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
+                     becomes a division of THAT type rather than a truncating integer division
+                     (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
+                     integer division, which index arithmetic needs. In the cache key for the
+                     same reason ``dialect`` is.
+    :param reparsed: whether the caller hands this text to the PYTHON parser again before
+                     emitting it (``dace.codegen.common._sym2cpp`` does). Only a cast is spelled
+                     differently under it -- see :class:`DaceSympyPrinter`. In the cache key for
+                     the same reason ``dialect`` is.
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
-
-    if isinstance(sym, SymExpr):
-        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
-
-    # Infinity, NaN and booleans are atomic constants: ``sympy_numeric_fix`` rejects
-    # the first two and booleans are not ``Number``s, so the generic path below would
-    # wrap them in parentheses that no longer round-trip. Print them bare instead.
-    if isinstance(sym, (sympy.core.numbers.Infinity, sympy.core.numbers.NegativeInfinity, sympy.core.numbers.NaN,
-                        sympy.logic.boolalg.BooleanAtom)):
-        return DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
-
-    try:
-        sym = sympy_numeric_fix(sym)
-        sym = sympy_intdiv_fix(sym)
-        sym = sympy_divide_fix(sym)
-
-        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
-
-        if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
-                sym, (sympy.Number, TypedConstant)) or dtypes.isconstant(sym):
-            return sstr
-        else:
-            return '(' + sstr + ')'
-    except (AttributeError, TypeError, ValueError):
-        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
-        return '(' + sstr + ')'
+    if dialect is None:
+        dialect = cpf_lowering.active_dialect() if cpp_mode else cpf_lowering.Dialect.RUNTIME
+    return _symstr(
+        sym,
+        arrayexprs,
+        cpp_mode,
+        dialect,
+        fp_ctype,
+        reparsed,
+        printing_context(),
+    )
 
 
-def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str, str],
-                                           arrays: Set[str]) -> Tuple[str, Dict[str, str]]:
+#: The wrapper is what callers hold, so the cache controls have to live on it too -- clearing
+#: ``symstr``'s cache is what a dialect test does between primings.
+symstr.cache_clear = _symstr.cache_clear
+symstr.cache_info = _symstr.cache_info
+
+
+def replace_array_accesses_with_connectors(
+    rhs: str, arr_to_connector: dict[str, str], arrays: set[str]
+) -> tuple[str, dict[str, str]]:
     """
     Parse a Python expression where array reads use ``A[i, j]`` syntax, replace each
     ``A[...]`` whose name is in ``arr_to_connector`` with a bare connector name, and
@@ -2748,9 +4901,15 @@ def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str,
     expr = SymExpr(rhs)
     # SymExpr may wrap; unwrap to the underlying sympy expression for traversal.
     base = expr.expr if isinstance(expr, SymExpr) else expr
+    # A natively-parsed (idxalg) root is not sympy.Basic, so sympy.preorder_traversal below
+    # would degenerate to yielding only the root -- convert first, same as symstr/serialize_symbolic.
+    if to_sympy is not None:
+        converted = to_sympy(base)
+        if converted is not None:
+            base = converted
     printer = DaceSympyPrinter(arrays)
-    rewrites: Dict[sympy.Basic, sympy.Basic] = {}
-    arr_subsets: Dict[str, str] = {}
+    rewrites: dict[sympy.Basic, sympy.Basic] = {}
+    arr_subsets: dict[str, str] = {}
     for node in sympy.preorder_traversal(base):
         # Subscripted read ``arr[i, j]`` -> ``Subscript(arr, i, j)``. The head
         # (the array) is ``args[0]`` and the indices are ``args[1:]``; printing
@@ -2785,9 +4944,11 @@ def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str,
     return printer.doprint(new_base), arr_subsets
 
 
-def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],
-                 replace_callback: Callable[[Dict[str, str]], None],
-                 value_as_string: bool = False) -> None:
+def safe_replace(
+    mapping: dict[SymbolicType | str, SymbolicType | str],
+    replace_callback: Callable[[dict[str, str]], None],
+    value_as_string: bool = False,
+) -> None:
     """
     Safely replaces symbolic expressions that may clash with each other via a
     two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
@@ -2804,6 +4965,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
     repl = {}
     invrepl = {}
+    symbolic_repl = {}
     for k, v in mapping.items():
         # Degenerate
         if str(k) == str(v):
@@ -2830,8 +4992,28 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
             pass
 
         # Otherwise, symbolic replacement
-        repl[k] = f'__dacesym_{k}'
-        invrepl[f'__dacesym_{k}'] = v
+        symbolic_repl[str(k)] = v
+
+    # Two-step replacement is only needed when replaced keys (including ones mapped to constants) appear in the
+    # symbolic values (e.g., {M: N, N: M} or {M: N, N: 5}), as the callback may replace sequentially
+    if symbolic_repl:
+        keys = set(symbolic_repl.keys()) | {str(k) for k in repl.keys()}
+        overlap = False
+        for v in symbolic_repl.values():
+            try:
+                vsyms = {str(s) for s in pystr_to_symbolic(v).free_symbols}
+            except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+                overlap = True  # Cannot analyze, be safe
+                break
+            if keys & vsyms:
+                overlap = True
+                break
+        if overlap:
+            for k, v in symbolic_repl.items():
+                repl[k] = f"__dacesym_{k}"
+                invrepl[f"__dacesym_{k}"] = v
+        else:
+            repl.update(symbolic_repl)
 
     if len(repl) == 0:
         return
@@ -2843,7 +5025,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     replace_callback(invrepl)
 
 
-@lru_cache(16384)
+@lru_cache(maxsize=16384, typed=True)
 def _spickle(obj):
     return str(obj)
 
@@ -2859,7 +5041,10 @@ class SympyAwarePickler(pickle.Pickler):
     """
 
     def persistent_id(self, obj):
-        if isinstance(obj, sympy.Basic):
+        # The umbrella also matches a natively-parsed (idxalg) expression -- its own `str()`/
+        # `pystr_to_symbolic()` round-trip (below, via `_spickle`/`_sunpickle`) stays within
+        # whichever backend produced it, so no sympy conversion is needed here.
+        if isinstance(obj, SymbolicBasic):
             # Save sympy expression as srepr
             return ("DaCeSympyExpression", _spickle(obj))
         else:
@@ -2881,18 +5066,156 @@ class SympyAwareUnpickler(pickle.Unpickler):
             raise pickle.UnpicklingError("unsupported persistent object")
 
 
+def free_symbol_like(expr: Any, sym: Any) -> sympy.Symbol | None:
+    """The instance of `sym` that `expr` actually holds -- same NAME, whatever assumptions and dtype
+    it carries -- or ``None`` when `expr` does not depend on that name.
+
+    Sympy symbol identity folds in the assumptions AND (per :meth:`symbol._hashable_content`) the DaCe
+    dtype, so one SDFG legitimately holds both spellings of a name: ``a[i]`` keeps the plain ``i`` while
+    an ``a[N - i - 1]`` rebuilt by an assumption-setting pass carries a ``nonnegative``, ``int64`` one.
+    Queried with the wrong instance, ``sym in expr.free_symbols`` is silently ``False`` and
+    ``expr.coeff(sym, 1)`` silently ``0`` -- no error, just a predicate that quietly stops holding.
+    :meth:`symbol._eval_subs` already settles substitution by name; this is the same rule for the
+    membership / coefficient queries, which go through hash and ``__eq__`` and so bypass it.
+
+    Hands back the expression's OWN instance rather than rewriting `expr`, so nothing downstream loses
+    an assumption or has its index arithmetic silently retyped.
+
+    :param expr: The expression to look in; a non-symbolic value holds no symbol and gives ``None``.
+    :param sym: The symbol to look for. Only its name is used.
+    :returns: `expr`'s instance of that name, or ``None``.
+    """
+    if not isinstance(expr, SymbolicBasic):
+        return None
+    free = expr.free_symbols
+    if sym in free:
+        return sym  # identical spelling, the common case: settled by one hash lookup
+    matches = [s for s in free if s.name == sym.name]
+    if not matches:
+        return None
+    # `free_symbols` is a set, so pick deterministically when one name is split across variants.
+    return matches[0] if len(matches) == 1 else min(matches, key=structural_repr)
+
+
+def contract_facts(*exprs: Any, positive: AbstractSet[str] = frozenset()) -> Facts:
+    """Canonicalization's standing contract, stated as facts: every free symbol of ``exprs`` is a nonnegative integer
+    (``positive`` names a positive one). For a caller with no SDFG in reach; a caller that has one asks its facts
+    (``sdfg.facts()``, ``SymbolResolver().facts_at(...)``) instead, which is where this contract is meant to end up."""
+    names = sorted(
+        {
+            str(sym)
+            for expr in exprs
+            if isinstance(expr, sympy.Basic)
+            for sym in expr.free_symbols
+            if isinstance(sym, sympy.Symbol) and not isinstance(sym, UndefinedSymbol)
+        }
+        | set(positive)
+    )
+    return Facts(
+        [
+            predicate_relation(Predicate.POSITIVE if name in positive else Predicate.NONNEGATIVE, symbol(name))
+            for name in names
+        ],
+        frozenset(names),
+    )
+
+
+def tile_extent(max_elem: Any, min_elem: Any) -> Any:
+    """Extent of the range ``[min_elem, max_elem]``; a ``Min``-bounded tile yields its static width."""
+    if isinstance(max_elem, sympy.Min):
+        for arg in max_elem.args:
+            diff = simplify(arg - min_elem)
+            if diff.is_Integer and diff >= 0:
+                return diff + 1
+    return max_elem + 1 - min_elem
+
+
+def slabs_disjoint(stride: Any, begin: Any, end: Any, step: Any = 1, reach: Any = None) -> bool:
+    """Whether the range ``begin:end+1:step`` and its shifts by nonzero multiples of the integer ``stride`` provably
+    never share an element: the range fits in ``|stride|`` (each argument of a ``Min`` term of ``end`` bounds it),
+    or every shift, at most ``|reach|``, is shorter than ``step`` and so falls between two of its elements."""
+    clamps = [term for term in sympy.Add.make_args(end) if isinstance(term, sympy.Min)]
+    ends = [arg + end - clamps[0] for arg in clamps[0].args] if len(clamps) == 1 else [end]
+    if any(
+        provably_nonnegative(simplify(bound - last - 1 + begin), Facts.none())
+        for last in ends
+        for bound in (1, stride, -stride)
+    ):
+        return True
+    return reach is not None and any(
+        provably_nonnegative(simplify(step - 1 - r), Facts.none()) for r in (reach, -reach)
+    )
+
+
+def affine_coefficients(expr: Any, sym: Any) -> tuple[Any, Any] | None:
+    """``(a, b)`` with ``expr == a*sym + b`` and neither depending on `sym` (matched by name), else ``None``."""
+    expr = pystr_to_symbolic(expr)
+    var = free_symbol_like(expr, pystr_to_symbolic(sym))
+    if var is None:
+        return sympy.Integer(0), expr
+    lead, const = expr.coeff(var, 1), expr.coeff(var, 0)
+    if var in lead.free_symbols or simplify(expr - (lead * var + const)) != 0:
+        return None
+    return lead, const
+
+
+def symbol_merge_key(sym: Any) -> tuple[int, str, str]:
+    """Total order over same-named symbol instances, smallest = the one to keep.
+
+    Most DECLARED first: an instance that lost assumptions did so by being reparsed from a string,
+    which cannot know what the SDFG declared about the name. The rest of the key only has to break
+    ties, and must do so without reading `free_symbols` iteration order, which varies per run.
+    """
+    declared = sum(1 for k in _STRUCTURAL_ASSUMPTIONS if sym.assumptions0.get(k))
+    ctype = sym.dtype.ctype if is_symbol_leaf(sym) else ""
+    return (-declared, structural_repr(sym), ctype)
+
+
 def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
+    """`sym` with every group of same-named free symbols collapsed onto one instance.
+
+    A name denotes ONE value in an SDFG, but sympy symbol identity folds in the assumptions and (per
+    :meth:`symbol._hashable_content`) the DaCe dtype, so an expression can hold two instances of a
+    name -- a subset an assumption-setting pass rebuilt, against a bound reparsed from its
+    ``CodeBlock`` string -- which sympy then treats as independent variables that never cancel.
     """
-    If a symbol or symbolic expressions has multiple symbols with the same
-    name, it substitutes them with the last symbol (as they appear in
-    s.free_symbols).
-    """
-    symdict = {s.name: s for s in sym.free_symbols}
-    repldict = {s: symdict[s.name] for s in sym.free_symbols}
-    return sym.subs(repldict)
+    if not isinstance(sym, sympy.Basic):
+        return sym  # a plain int/float bound reaches here; nothing to merge, and it has no free_symbols
+    free: set = sym.free_symbols
+    by_name: dict[str, list] = {}
+    for s in free:
+        by_name.setdefault(s.name, []).append(s)
+    if len(by_name) == len(free):
+        return sym  # every name unique: nothing to merge, and no rebuild to pay for
+    repl = {}
+    for group in by_name.values():
+        if len(group) > 1:
+            keep = min(group, key=symbol_merge_key)
+            repl.update({s: keep for s in group if s is not keep})
+    return sym.xreplace(repl)
 
 
-def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
+def has_duplicate_symbol_names(sym: Any) -> bool:
+    """
+    Whether ``sym`` holds two symbols that share a name but not their dtype or assumptions.
+
+    Symbol identity in DaCe is the name, so such a pair always denotes one value -- but SymPy
+    compares assumptions too, keeps both atoms, and then ``k - k`` does not fold to zero.
+
+    :param sym: expression to check; anything that is not symbolic answers False.
+    :return: True if some name occurs on more than one symbol.
+    """
+    if not isinstance(sym, sympy.Basic):
+        return False
+    symbols = sym.free_symbols
+    if len(symbols) < 2:
+        return False
+    # A dict rather than a set: insertion order is defined, so the answer cannot depend on the
+    # hash seed the way a set's iteration would.
+    return len({symbol_atom.name: None for symbol_atom in symbols}) != len(symbols)
+
+
+def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
     """
     If the 2 input expressions use different symbols but with the same name,
     it substitutes the symbols of the second expressions with those of the
@@ -2911,10 +5234,65 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Ex
     return a, b
 
 
-def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> bool:
+def equalize_symbols_across(*exprs: SympyT) -> tuple[SympyT, ...]:
+    """The input expressions rewritten so every same-named free symbol is ONE instance across ALL of
+    them, chosen by :func:`symbol_merge_key`.
+
+    Use this before any operation that goes through symbol identity rather than name -- subtraction
+    that should cancel, ``.match`` against a ``Wild(exclude=[sym])``, ``sym in expr.free_symbols``,
+    ``expr.coeff(sym)`` -- whenever the expressions come from different sources (two memlets, a subset
+    against a reparsed loop bound). See :func:`equalize_symbol` for why one name yields several
+    instances; none of those operations raises when it happens, they just quietly answer wrong.
+
+    ⛔ Equalizing PAIRWISE is not the same as equalizing a GROUP, so this is not
+    :func:`equalize_symbols` applied repeatedly: three expressions equalized in pairs can still
+    disagree, and a linear system over them then puts one name in two monomials, making a solution
+    that exists unreachable. Unlike the 2-argument form, which keeps the FIRST expression's instance,
+    this picks the group's :func:`symbol_merge_key` minimum so the result does not depend on argument
+    order.
+    """
+    equalized = tuple(equalize_symbol(e) for e in exprs)
+    by_name: dict[str, list[sympy.Symbol]] = {}
+    for e in equalized:
+        # plain int/float bounds pass through untouched rather than raising on free_symbols
+        if not isinstance(e, sympy.Basic):
+            continue
+        for s in e.free_symbols:
+            by_name.setdefault(s.name, []).append(s)
+    repl = {}
+    for group in by_name.values():
+        keep = min(group, key=symbol_merge_key)
+        repl.update({s: keep for s in group if s is not keep})
+    if not repl:
+        return equalized
+    return tuple(e.xreplace(repl) if isinstance(e, sympy.Basic) else e for e in equalized)
+
+
+def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
+    """True iff two shape / extent sequences agree, each dimension compared by NAME.
+
+    Shapes reach a check from different sources -- a descriptor a layout pass rebuilt against a
+    bound reparsed from a string -- so one name arrives as several sympy instances that raw ``==``
+    calls different. Comparing with ``!=`` then rejects shapes that match, with a self-refuting
+    message naming the same symbol on both sides. Ranks are compared first, so this is also the
+    length check.
+    """
+    if len(shape_a) != len(shape_b):
+        return False
+    return not any(inequal_symbols(a, b) for a, b in zip(shape_a, shape_b))
+
+
+def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
     """
+    if to_sympy is not None:
+        converted_a = to_sympy(a)
+        if converted_a is not None:
+            a = converted_a
+        converted_b = to_sympy(b)
+        if converted_b is not None:
+            b = converted_b
     # Check for UndefinedSymbol in either expression
     if isinstance(a, sympy.Basic):
         for atom in a.atoms():
@@ -2928,7 +5306,7 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
-        a, b = equalize_symbols(a, b)
+        a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
         # NOTE: We simplify in an attempt to remove inconvenient methods, such
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation
@@ -2936,7 +5314,7 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
         return (a - b).simplify() != 0
 
 
-def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[bool, None]:
+def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | None:
     """
     Compares 2 symbolic expressions and returns True if they are equal, False if they are inequal,
     and None if the comparison is inconclusive.
@@ -2947,30 +5325,120 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
     """
 
     args = [arg.expr if isinstance(arg, SymExpr) else arg for arg in (a, b)]
+    if to_sympy is not None:
+        for i, arg in enumerate(args):
+            converted = to_sympy(arg)
+            if converted is not None:
+                args[i] = converted
 
     # Check for UndefinedSymbol in either expression
-    if isinstance(a, sympy.Basic):
-        for atom in a.atoms():
+    if isinstance(args[0], sympy.Basic):
+        for atom in args[0].atoms():
             if isinstance(atom, UndefinedSymbol):
                 return None
-    if isinstance(b, sympy.Basic):
-        for atom in b.atoms():
+    if isinstance(args[1], sympy.Basic):
+        for atom in args[1].atoms():
             if isinstance(atom, UndefinedSymbol):
                 return None
 
-    if any([args is None for args in args]):
+    if any(args is None for args in args):
         return False
 
+    # A NAME denotes one value in an SDFG, but sympy folds dtype and assumptions into symbol
+    # identity, so the same name minted twice (a bound reparsed from a CodeBlock vs a declared
+    # shape extent) yields two symbols that never cancel -- and this returns None, which every
+    # caller reading ``is True`` treats as "not equal" and silently refuses on. Equalize first, so
+    # the answer is about the VALUES rather than about which instance the caller happened to hold.
+    if all(isinstance(arg, sympy.Basic) for arg in args):
+        # relax_int_floor for the same reason: one extent reaches here as ``int_floor(x, y)`` from
+        # the parser and as ``floor(x/y)`` from Python's ``//``, and sympy relates neither head.
+        args = [relax_int_floor(arg) for arg in equalize_symbols_across(*args)]
+
+    if sympy.assumptions.global_assumptions:
+        return ask_equal.__wrapped__(*args, is_length)
+    return ask_equal(*args, is_length)
+
+
+def guards_equal(first: str, second: str) -> bool:
+    """Whether two branch guards are provably the same predicate. ``False`` when unknown or unparsable."""
+    try:
+        return bool(pystr_to_symbolic(first) == pystr_to_symbolic(second))
+    except Exception:  # noqa: BLE001 -- an unparsable guard is simply not provably equal
+        return False
+
+
+def guards_opposite(first: str, second: str) -> bool:
+    """Whether ``second`` is provably the negation of ``first``. ``False`` when unknown or unparsable."""
+    try:
+        a, b = pystr_to_symbolic(first), pystr_to_symbolic(second)
+        return simplify(sympy.Equivalent(sympy.Not(a), b)) == sympy.true
+    except Exception:  # noqa: BLE001 -- an unparsable guard is simply not provably opposite
+        return False
+
+
+@lru_cache(maxsize=16384, typed=True)
+def ask_equal(a: SymbolicType, b: SymbolicType, is_length: bool) -> bool | None:
+    """The assumption solver's verdict on ``a == b``, for :func:`equal`.
+
+    Cached: a pure function of its arguments while no global assumption is active, which :func:`equal`
+    checks, and one ``ask`` costs tens of milliseconds while codegen repeats the same few questions per
+    copy (CloudSC GPU: 958 zero-size tests of 3 distinct extents, 43 s).
+    """
     facts = []
     if is_length:
-        for arg in args:
+        for arg in (a, b):
             facts += [sympy.Q.integer(arg), sympy.Q.positive(arg)]
 
     with sympy.assuming(*facts):
-        return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
+        return sympy.ask(sympy.Q.is_true(sympy.Eq(a, b)))
 
 
-def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
+@lru_cache(maxsize=16384, typed=True)
+def name_tokens_in_code(code: str) -> frozenset[str]:
+    """Every identifier-like token in ``code``, minus the ``e`` of a scientific-notation literal.
+
+    Cached because the tokenize depends on nothing but the string, while its callers ask about one
+    symbol at a time: a pass scanning an SDFG for who reads symbol ``s`` re-tokenizes every
+    interstate condition and every tasklet body once per symbol it considers, and the graph's code
+    strings do not change between those queries. Frozen so a cached entry cannot be mutated through
+    a caller's reference -- :func:`symbols_in_code` copies before filtering.
+
+    :param code: The code string to tokenize.
+    :returns: The token set.
+    """
+    tokens_list = re.findall(_NAME_TOKENS, code)
+    token_counts = Counter(tokens_list)
+    tokens = set(tokens_list)
+
+    # Remove 'e' from tokens if it appears as part of scientific notation
+    for match in _NAME_TOKENS.finditer(code):
+        s, e = match.span()
+        token = match.group(0)
+
+        # Check prev. literal is a digit and the next digit involves a number or +/-
+        # Check if token starts with e e.g. `e`, `e5`
+        if token.startswith("e") and s > 0:
+            # If token directly has a digit to the left `1e5`, `1e-3`
+            if code[s - 1].isdigit():
+                if len(token) > 1:
+                    rest = token[1:]  # everything after 'e'
+                    # If the rest is `+/- then digits` or just digits then rm
+                    if rest and (rest[0] in "+-" and rest[1:].isdigit() or rest.isdigit()):
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
+                elif e < len(code) and s > 0:
+                    if code[s - 1].isdigit() and code[e] in "-+0123456789":
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
+
+    return frozenset(tokens)
+
+
+def symbols_in_code(code: str, potential_symbols: set[str] = None, symbols_to_ignore: set[str] = None) -> set[str]:
     """
     Tokenizes a code string for symbols and returns a set thereof.
 
@@ -2984,37 +5452,12 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
 
-    tokens_list = re.findall(_NAME_TOKENS, code)
-    token_counts = Counter(tokens_list)
-    tokens = set(tokens_list)
+    # A fresh set per call: the cached tokenization is shared, and callers mutate what they get
+    # back. Filtering after the scientific-notation pass rather than before is equivalent -- that
+    # pass discards purely by how often a token occurs in ``code``.
+    tokens = set(name_tokens_in_code(code))
     if potential_symbols is not None:
         tokens &= potential_symbols
-
-    # Remove 'e' from tokens if it appears as part of scientific notation
-    for match in _NAME_TOKENS.finditer(code):
-        s, e = match.span()
-        token = match.group(0)
-
-        # Check prev. literal is a digit and the next digit involves a number or +/-
-        # Check if token starts with e e.g. `e`, `e5`
-        if token.startswith('e') and s > 0:
-            # If token directly has a digit to the left `1e5`, `1e-3`
-            if code[s - 1].isdigit():
-                if len(token) > 1:
-                    rest = token[1:]  # everything after 'e'
-                    # If the rest is `+/- then digits` or just digits then rm
-                    if rest and (rest[0] in '+-' and rest[1:].isdigit() or rest.isdigit()):
-                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
-                        token_counts[token] -= 1
-                        if token_counts[token] == 0:
-                            tokens.discard(token)
-                else:
-                    if e < len(code) and s > 0:
-                        if code[s - 1].isdigit() and code[e] in '-+0123456789':
-                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
-                            token_counts[token] -= 1
-                            if token_counts[token] == 0:
-                                tokens.discard(token)
 
     if symbols_to_ignore is None:
         return tokens

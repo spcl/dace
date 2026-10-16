@@ -9,13 +9,14 @@ iterations (e.g. ``i=3`` writes ``A[15]`` via ``5*i`` and ``i=5`` writes
 ``LoopToMap`` must refuse this loop while still accepting a genuinely
 independent one.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program

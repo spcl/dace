@@ -1,20 +1,21 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" End-to-end value-preservation tests for ``NormalizeLoopsAndMaps`` on
-    indirect-gather kernels.
+"""End-to-end value-preservation tests for ``NormalizeLoopsAndMaps`` on
+indirect-gather kernels.
 
-    These mirror the ICON ``z_v_grad_w`` neighbour-gather pattern
-    (``out[i, j] = c1 * w[idx[i, 0], j] - c2 * w[idx[i, 1], j]``) where the
-    map parameter appears inside an indirect subscript in a subset of the
-    array dimensions only. The map ranges use non-trivial bounds: non-zero
-    start, non-unit stride, negative (reverse) step, a mixed
-    multi-dimensional combination, negative start/end bounds, and a
-    ``dace.symbol`` (run-time) stride. The ``LoopRegion`` path is exercised
-    too (negative-bound and symbolic-step ``range`` loops over the same
-    gather body). Each test proves the rewrite is value-preserving (numeric
-    equality vs a pure-numpy oracle and vs a deep-copied pre-pass SDFG run)
-    and that every map range is canonicalized to ``0:trip:1`` (and every
-    surviving ``LoopRegion`` to a ``0 : n : 1`` counter).
+These mirror the ICON ``z_v_grad_w`` neighbour-gather pattern
+(``out[i, j] = c1 * w[idx[i, 0], j] - c2 * w[idx[i, 1], j]``) where the
+map parameter appears inside an indirect subscript in a subset of the
+array dimensions only. The map ranges use non-trivial bounds: non-zero
+start, non-unit stride, negative (reverse) step, a mixed
+multi-dimensional combination, negative start/end bounds, and a
+``dace.symbol`` (run-time) stride. The ``LoopRegion`` path is exercised
+too (negative-bound and symbolic-step ``range`` loops over the same
+gather body). Each test proves the rewrite is value-preserving (numeric
+equality vs a pure-numpy oracle and vs a deep-copied pre-pass SDFG run)
+and that every map range is canonicalized to ``0:trip:1`` (and every
+surviving ``LoopRegion`` to a ``0 : n : 1`` counter).
 """
+
 import copy
 
 import numpy as np
@@ -28,7 +29,7 @@ from dace.transformation.passes.canonicalize.normalize_loops_and_maps import Nor
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 
-N, M, S = dace.symbol('N'), dace.symbol('M'), dace.symbol('S')
+N, M, S = dace.symbol("N"), dace.symbol("M"), dace.symbol("S")
 
 
 @dace.program
@@ -67,7 +68,7 @@ def gather_negative_start(w: dace.float64[N, M], cidx: dace.int32[N, 2], b: dace
     # gather subscript shifts it back in-range (``cidx[i + 3, 0]``), so the
     # normalization (``i -> -3 + 1*i``) must compose correctly with the
     # already-present ``+ 3`` index arithmetic.
-    for i, j in dace.map[-3:N - 3, 0:M]:
+    for i, j in dace.map[-3 : N - 3, 0:M]:
         b[i + 3, j] = w[cidx[i + 3, 0], j] + 1.0
 
 

@@ -5,14 +5,14 @@ from internal memory accesses and scope ranges).
 """
 
 import copy
+import enum
 import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Set
+from typing import TYPE_CHECKING, Optional, cast
 
 import sympy
-from sympy import Symbol, ceiling
 from sympy.concrete.summations import Sum
 
 from dace import data, dtypes, registry, subsets, symbolic
@@ -24,47 +24,55 @@ from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
-    from dace.sdfg.state import SDFGState
+    from dace.sdfg.state import SDFGState, SymbolResolver
 
 
 @registry.make_registry
-class MemletPattern(object):
+class MemletPattern:
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
 
-    def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range, orig_edges, facts: symbolic.Facts):
         raise NotImplementedError
 
-    def propagate(self, array, expressions, node_range):
+    def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         raise NotImplementedError
 
 
 @registry.make_registry
-class SeparableMemletPattern(object):
-    """ Memlet pattern that can be applied to each of the dimensions
-        separately. """
+class SeparableMemletPattern:
+    """Memlet pattern that can be applied to each of the dimensions
+    separately."""
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
         raise NotImplementedError
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
         raise NotImplementedError
 
 
 @registry.autoregister
 class SeparableMemlet(MemletPattern):
-    """ Meta-memlet pattern that applies all separable memlet patterns. """
+    """Meta-memlet pattern that applies all separable memlet patterns."""
 
-    def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range, orig_edges, facts: symbolic.Facts):
         # Assuming correct dimensionality in each of the expressions
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
 
-        overapprox_range = subsets.Range([(rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                                           re.approx if isinstance(re, symbolic.SymExpr) else re,
-                                           rs.approx if isinstance(rs, symbolic.SymExpr) else rs)
-                                          for rb, re, rs in node_range])
+        overapprox_range = subsets.Range(
+            [
+                (
+                    rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
+                    re.approx if isinstance(re, symbolic.SymExpr) else re,
+                    rs.approx if isinstance(rs, symbolic.SymExpr) else rs,
+                )
+                for rb, re, rs in node_range
+            ]
+        )
 
         for dim in range(data_dims):
             dexprs = []
@@ -73,44 +81,59 @@ class SeparableMemlet(MemletPattern):
                 if isinstance(expr_dim, symbolic.SymExpr):
                     dexprs.append(expr_dim.approx)
                 elif isinstance(expr_dim, tuple):
-                    dexprs.append((expr_dim[0].approx if isinstance(expr_dim[0], symbolic.SymExpr) else expr_dim[0],
-                                   expr_dim[1].approx if isinstance(expr_dim[1], symbolic.SymExpr) else expr_dim[1],
-                                   expr_dim[2].approx if isinstance(expr_dim[2], symbolic.SymExpr) else expr_dim[2]))
+                    dexprs.append(
+                        (
+                            expr_dim[0].approx if isinstance(expr_dim[0], symbolic.SymExpr) else expr_dim[0],
+                            expr_dim[1].approx if isinstance(expr_dim[1], symbolic.SymExpr) else expr_dim[1],
+                            expr_dim[2].approx if isinstance(expr_dim[2], symbolic.SymExpr) else expr_dim[2],
+                        )
+                    )
                 else:
                     dexprs.append(expr_dim)
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, overapprox_range, orig_edges, dim, data_dims):
+                if smpattern.can_be_applied(
+                    dexprs, variable_context, overapprox_range, orig_edges, dim, data_dims, facts
+                ):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
         return None not in self.patterns_per_dim
 
-    def propagate(self, array, expressions, node_range):
+    def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         result = [(None, None, None)] * len(self.patterns_per_dim)
 
-        overapprox_range = subsets.Range([(rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                                           re.approx if isinstance(re, symbolic.SymExpr) else re,
-                                           rs.approx if isinstance(rs, symbolic.SymExpr) else rs)
-                                          for rb, re, rs in node_range])
+        overapprox_range = subsets.Range(
+            [
+                (
+                    rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
+                    re.approx if isinstance(re, symbolic.SymExpr) else re,
+                    rs.approx if isinstance(rs, symbolic.SymExpr) else rs,
+                )
+                for rb, re, rs in node_range
+            ]
+        )
 
         for i, smpattern in enumerate(self.patterns_per_dim):
-
             dexprs = []
             for expr in expressions:
                 expr_i = expr[i]
                 if isinstance(expr_i, symbolic.SymExpr):
                     dexprs.append(expr_i.approx)
                 elif isinstance(expr_i, tuple):
-                    dexprs.append((expr_i[0].approx if isinstance(expr_i[0], symbolic.SymExpr) else expr_i[0],
-                                   expr_i[1].approx if isinstance(expr_i[1], symbolic.SymExpr) else expr_i[1],
-                                   expr_i[2].approx if isinstance(expr_i[2], symbolic.SymExpr) else expr_i[2],
-                                   expr.tile_sizes[i]))
+                    dexprs.append(
+                        (
+                            expr_i[0].approx if isinstance(expr_i[0], symbolic.SymExpr) else expr_i[0],
+                            expr_i[1].approx if isinstance(expr_i[1], symbolic.SymExpr) else expr_i[1],
+                            expr_i[2].approx if isinstance(expr_i[2], symbolic.SymExpr) else expr_i[2],
+                            expr.tile_sizes[i],
+                        )
+                    )
                 else:
                     dexprs.append(expr_i)
 
-            result[i] = smpattern.propagate(array, dexprs, overapprox_range)
+            result[i] = smpattern.propagate(array, dexprs, overapprox_range, facts)
 
         # TODO(later): Not necessarily Range (general integer sets)
         return subsets.Range(result)
@@ -118,21 +141,23 @@ class SeparableMemlet(MemletPattern):
 
 @registry.autoregister
 class AffineSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that matches affine expressions, i.e.,
-        of the form `a * {index} + b`.
+    """Separable memlet pattern that matches affine expressions, i.e.,
+    of the form `a * {index} + b`.
     """
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
 
         params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        defined_names = set(map(str, variable_context[-2]))
         # Create wildcards for multiplication and addition
-        a = sympy.Wild('a', exclude=params)
-        b = sympy.Wild('b', exclude=params)
+        a = sympy.Wild("a", exclude=params)
+        b = sympy.Wild("b", exclude=params)
 
         self.param = None
         self.paramind = None
-        self.mult = None
+        self.multiplier = None
         self.add_min = None
         self.add_max = None
         self.constant_min = None
@@ -180,7 +205,7 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # A parameter must match
                 if self.param is not None and param != self.param:
                     return False  # There can only be one parameter
-                if self.mult is not None and multiplier != self.mult:
+                if self.multiplier is not None and multiplier != self.multiplier:
                     return False  # Multiplier must be the same
 
                 self.param = param
@@ -199,21 +224,34 @@ class AffineSMemlet(SeparableMemletPattern):
                 self.internal_range.add((brb, bre))
 
             if step is not None:
-                if (symbolic.issymbolic(step) and self.param in step.free_symbols):
+                if symbolic.issymbolic(step) and self.param in step.free_symbols:
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
+            if node_re != node_re or node_rb != node_rb or node_rs != node_rs:
+                # UndefinedSymbol hangs in SymPy's expand(), fail early
+                return False
             result_begin = subexprs[0].subs(self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
                 if node_rb == result_begin and bre + 1 == node_rs and step == 1:
                     pass
+                # Special case: the same point in every edge, which strides with the map
+                elif (
+                    subexprs[0] == subexprs[1]
+                    and (step is None or step == 1)
+                    and len(set(dim_exprs)) == 1
+                    and multiplier.is_Integer
+                    and multiplier > 0
+                ):
+                    pass
                 else:
                     # Map ranges where the last index is not known
                     # exactly are not supported by this pattern.
                     return False
-            if (any(s not in defined_vars for s in node_rb.free_symbols)
-                    or any(s not in defined_vars for s in node_re.free_symbols)):
+            if any(str(s) not in defined_names for s in node_rb.free_symbols) or any(
+                str(s) not in defined_names for s in node_re.free_symbols
+            ):
                 # Cannot propagate variables only defined in this scope (e.g.,
                 # dynamic map ranges)
                 return False
@@ -221,9 +259,11 @@ class AffineSMemlet(SeparableMemletPattern):
         if self.param is None:  # and self.constant_min is None:
             return False
 
-        return True
+        # The ends of the image swap with the sign of the multiplier
+        self.negative = _is_negative(self.multiplier, facts)
+        return self.negative is not symbolic.Truth.UNKNOWN
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
         # Compute last index in map according to range definition
         node_rb, node_re, node_rs = node_range[self.paramind]  # node_rs = 1
         node_rlen = node_re - node_rb + 1
@@ -232,10 +272,9 @@ class AffineSMemlet(SeparableMemletPattern):
             dim_exprs = dim_exprs[0]
 
         if isinstance(dim_exprs, tuple):
-
             if len(dim_exprs) == 3:
                 rb, re, rs = dim_exprs
-                rt = '1'
+                rt = "1"
             elif len(dim_exprs) == 4:
                 rb, re, rs, rt = dim_exprs
             else:
@@ -254,21 +293,29 @@ class AffineSMemlet(SeparableMemletPattern):
         result_end = re.subs(self.param, node_re).expand()
 
         # Special case: multiplier < 0
-        if (self.multiplier < 0) == True:
+        if self.negative is symbolic.Truth.TRUE:
             result_begin, result_end = result_end, result_begin
 
-        # Special case: i:i+stride for a begin:end:stride range
-        if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
+        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
+        if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
+            return (result_begin, result_end, self.multiplier * node_rs, 1)
+
+        # Special case: i:i+stride for a begin:end:stride range. The multiplier must be one:
+        # for a single-element access ``(re - rb + 1)`` is 1, so with a unit map stride the length
+        # test below is trivially true, and ``a*i`` starting at a zero map begin also passes the
+        # ``result_begin`` test. Returning the map range verbatim then drops the multiplier, which
+        # UNDER-approximates the write set (``C[2*i]`` over ``i=0:N`` became ``C[0:N]``).
+        if self.multiplier == 1 and node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1:
             return (node_rb, node_re, 1, 1)
 
         # Experimental
         # This should be using sympy.floor
         memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
         memlet_rlen = memlet_start_pts.expand() * rt
-        interval_len = (result_end - result_begin + 1)
+        interval_len = result_end - result_begin + 1
         num_elements = node_rlen * memlet_rlen
 
-        if (interval_len == num_elements or interval_len.expand() == num_elements):
+        if interval_len == num_elements or interval_len.expand() == num_elements:
             # Continuous access
             result_skip = 1
             result_tile = 1
@@ -276,8 +323,7 @@ class AffineSMemlet(SeparableMemletPattern):
             if rt == 1:
                 result_skip = (result_end - result_begin - re + rb) / (node_re - node_rb)
                 try:
-                    if result_skip < 1:
-                        result_skip = 1
+                    result_skip = max(result_skip, 1)
                 except:
                     pass
                 result_tile = result_end - result_begin + 1 - (node_rlen - 1) * result_skip
@@ -285,7 +331,7 @@ class AffineSMemlet(SeparableMemletPattern):
                 candidate_skip = rs
                 candidate_tile = rt * node_rlen
                 candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-                if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1)) == candidate_skip:
+                if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1), facts) == candidate_skip:
                     result_skip = rs
                     result_tile = rt * node_rlen
                 else:
@@ -296,81 +342,77 @@ class AffineSMemlet(SeparableMemletPattern):
                 result_skip = 1
                 result_tile = 1
 
-        result_begin = simplify(result_begin)
-        result_end = simplify(result_end)
-        result_skip = simplify(result_skip)
-        result_tile = simplify(result_tile)
+        result_begin = simplify(result_begin, facts)
+        result_end = simplify(result_end, facts)
+        result_skip = simplify(result_skip, facts)
+        result_tile = simplify(result_tile, facts)
 
         return (result_begin, result_end, result_skip, result_tile)
 
 
 @registry.autoregister
 class ModuloSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that matches modulo expressions, i.e.,
-        of the form `f(x) % N`.
+    """Separable memlet pattern that matches modulo expressions, i.e.,
+    of the form `f(x) % N`.
 
-        Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
+    Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
     """
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
-        # Pattern does not support unions of expressions
-        if len(dim_exprs) > 1: return False
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
+        # Pattern does not support unions of expressions or ranges
+        if len(dim_exprs) > 1:
+            return False
         dexpr = dim_exprs[0]
-        # Pattern does not support ranges
-        if not isinstance(dexpr, sympy.Basic): return False
-
-        # Create wildcards
-        val = sympy.Wild('val')
-        mod = sympy.Wild('mod', exclude=variable_context[-1])
-
-        # Try to match an affine expression
-        matches = dexpr.match(val % mod)
-        if matches is None or len(matches) != 2:
+        if isinstance(dexpr, tuple) and dexpr[0] == dexpr[1]:
+            dexpr = dexpr[0]
+        if not isinstance(dexpr, sympy.Mod):
+            return False
+        params = variable_context[-1]
+        self.subexpr, self.modulo = cast(tuple[sympy.Expr, sympy.Expr], dexpr.args)
+        # A modulo of the parameters only; a constant one is a constant index
+        if self.modulo.has(*params) or not self.subexpr.has(*params):
+            return False
+        # A positive modulo wraps into [0, modulo - 1]
+        if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, sympy.Integer(0), self.modulo), facts) is not (
+            symbolic.Truth.TRUE
+        ):
             return False
 
-        self.subexpr = matches[val]
-        self.modulo = matches[mod]
+        for pattern_class in SeparableMemletPattern.extensions():
+            self.subpattern = pattern_class()
+            if self.subpattern.can_be_applied(
+                [self.subexpr], variable_context, node_range, orig_edges, dim_index, total_dims, facts
+            ):
+                return True
+        return False
 
-        self.subpattern = None
-        for pattern_class in SeparableMemletPattern.s_smpatterns:
-            smpattern = pattern_class()
-            if smpattern.can_be_applied([self.subexpr], variable_context, node_range, orig_edges, dim_index,
-                                        total_dims):
-                self.subpattern = smpattern
-
-        return self.subpattern is not None
-
-    def propagate(self, array, dim_exprs, node_range):
-        se_range = self.subpattern.propagate(array, [self.subexpr], node_range)
-
-        # Apply modulo on start and end ranges
-        try:
-            if se_range[0] < 0:
-                se_range = (0, self.modulo, se_range[2])
-        except TypeError:  # cannot determine truth value of Relational
-            print('WARNING: Cannot evaluate relational %s, assuming true.' % (se_range[0] < 0))
-        try:
-            if se_range[1] > self.modulo:
-                se_range = (0, self.modulo, se_range[2])
-        except TypeError:  # cannot determine truth value of Relational
-            print('WARNING: Cannot evaluate relational %s, assuming true.' % (se_range[1] > self.modulo))
-
-        return se_range
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
+        se_range = self.subpattern.propagate(array, [self.subexpr], node_range, facts)
+        last = self.modulo - 1
+        # The image keeps its shape only if no index wraps
+        if symbolic.provably_nonnegative(se_range[0], facts) and symbolic.provably_le(se_range[1], last, facts):
+            return se_range
+        return (sympy.Integer(0), last, 1)
 
 
 @registry.autoregister
 class ConstantSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that matches constant (i.e., unrelated to
-        current scope) expressions.
+    """Separable memlet pattern that matches constant (i.e., unrelated to
+    current scope) expressions.
     """
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
         # Pattern does not support unions of expressions. TODO: Support
-        if len(dim_exprs) > 1: return False
+        if len(dim_exprs) > 1:
+            return False
         dexpr = dim_exprs[0]
 
         # Create a wildcard that excludes current map's parameters
-        cst = sympy.Wild('cst', exclude=variable_context[-1])
+        cst = sympy.Wild("cst", exclude=variable_context[-1])
 
         # Range case
         if isinstance(dexpr, tuple) and len(dexpr) == 3:
@@ -385,18 +427,17 @@ class ConstantSMemlet(SeparableMemletPattern):
                 if matches[cst].free_symbols:
                     return False
 
-        else:  # Single element case
-            # Try to match a constant expression
-            if not dtypes.isconstant(dexpr):
-                matches = dexpr.match(cst)
-                if matches is None or len(matches) != 1:
-                    return False
-                if matches[cst].free_symbols:
-                    return False
+        # Try to match a constant expression
+        elif not dtypes.isconstant(dexpr):
+            matches = dexpr.match(cst)
+            if matches is None or len(matches) != 1:
+                return False
+            if matches[cst].free_symbols:
+                return False
 
         return True
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
         if isinstance(dim_exprs[0], tuple):
             return dim_exprs[0]  # Already in range format
         # Convert index to range format
@@ -405,10 +446,12 @@ class ConstantSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class GenericSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that detects any expression, and propagates
-        interval bounds. Used as a last resort. """
+    """Separable memlet pattern that detects any expression, and propagates
+    interval bounds. Used as a last resort."""
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
         dims = []
         for dim in dim_exprs:
             if isinstance(dim, tuple):
@@ -417,30 +460,39 @@ class GenericSMemlet(SeparableMemletPattern):
                 dims.append(dim)
 
         self.params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        defined_names = set(map(str, variable_context[-2]))
 
         used_symbols = set()
         for dim in dims:
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if (used_symbols & set(self.params)
-                and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
+        # By name: a memlet and a re-parsed parameter may carry one name at two dtypes.
+        param_names = {str(p) for p in self.params}
+        if any(str(s) in param_names for s in used_symbols) and any(
+            s not in defined_names for s in node_range.free_symbols
+        ):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
 
-        # Always matches
-        return True
+        # The ends of the image are the images of the ends of a range of known direction under a monotone expression
+        if any(_is_negative(r[2], facts) is symbolic.Truth.UNKNOWN for r in node_range):
+            return False
+        dexpr = dim_exprs[0]
+        begin, end = (dexpr[0], dexpr[1]) if isinstance(dexpr, tuple) else (dexpr, dexpr)
+        begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
+        self.begin_trend = [_trend(begin, param, facts) for param in self.params]
+        self.end_trend = [_trend(end, param, facts) for param in self.params]
+        return Trend.UNKNOWN not in self.begin_trend + self.end_trend
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
 
         result_begin = None
         result_end = None
 
         # Iterate over the node dimensions
         for idx, node_r in enumerate(node_range):
-
             # Get dimension range
             if len(node_r) == 3:
                 node_rb, node_re, node_rs = node_r
@@ -449,7 +501,7 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 raise NotImplementedError
 
-            if (node_rs < 0) == True:
+            if _is_negative(node_rs, facts) is symbolic.Truth.TRUE:
                 node_rb, node_re, node_rs = node_re, node_rb, -node_rs
 
             # Get true range end
@@ -458,18 +510,15 @@ class GenericSMemlet(SeparableMemletPattern):
             pos_lastindex = node_re
             neg_lastindex = node_rb
             if node_rs != 1:
-                pos_lastindex = symbolic.pystr_to_symbolic(
-                    '%s + int_floor(%s - %s, %s) * %s' %
-                    (symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(node_re, cpp_mode=False),
-                     symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(
-                         node_rs, cpp_mode=False), symbolic.symstr(node_rs, cpp_mode=False)))
+                # Built on the symbols themselves: a string round trip re-parses them at the default dtype.
+                rb_sym, re_sym, rs_sym = (symbolic.pystr_to_symbolic(x) for x in (node_rb, node_re, node_rs))
+                pos_lastindex = rb_sym + symbolic.int_floor(re_sym - rb_sym, rs_sym) * rs_sym
                 neg_firstindex = pos_lastindex
 
             if isinstance(dim_exprs, list):
                 dim_exprs = dim_exprs[0]
 
             if isinstance(dim_exprs, tuple):
-
                 if len(dim_exprs) == 3:
                     rb, re, rs = dim_exprs
                 elif len(dim_exprs) == 4:
@@ -484,37 +533,75 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 rb, re = (dim_exprs, dim_exprs)
 
-            # Support for affine expressions with a negative multiplier
-            firstindex = pos_firstindex
-            lastindex = pos_lastindex
-            a = sympy.Wild('a', exclude=self.params)
-            b = sympy.Wild('b', exclude=self.params)
-            if result_begin is None:
-                matches = rb.match(a * self.params[idx] + b)
-            else:
-                matches = result_begin.match(a * self.params[idx] + b)
-            if matches and (matches[a] < 0) == True:
-                firstindex = neg_firstindex
-            if result_end is None:
-                matches = re.match(a * self.params[idx] + b)
-            else:
-                matches = result_end.match(a * self.params[idx] + b)
-            if matches and (matches[a] < 0) == True:
-                lastindex = neg_lastindex
-
-            if result_begin is None:
-                result_begin = rb.subs(self.params[idx], firstindex)
-            else:
-                result_begin = result_begin.subs(self.params[idx], firstindex)
-            if result_end is None:
-                result_end = re.subs(self.params[idx], lastindex)
-            else:
-                result_end = result_end.subs(self.params[idx], lastindex)
+            # A decreasing expression reaches its ends at the opposite ends of the range
+            firstindex = neg_firstindex if self.begin_trend[idx] is Trend.DECREASING else pos_firstindex
+            lastindex = neg_lastindex if self.end_trend[idx] is Trend.DECREASING else pos_lastindex
+            result_begin = (rb if result_begin is None else result_begin).subs(self.params[idx], firstindex)
+            result_end = (re if result_end is None else result_end).subs(self.params[idx], lastindex)
 
         result_skip = 1
         result_tile = 1
 
         return (result_begin, result_end, result_skip, result_tile)
+
+
+class Trend(enum.Enum):
+    """How an expression changes as one parameter grows, the others fixed anywhere in their range."""
+
+    CONSTANT = enum.auto()
+    INCREASING = enum.auto()
+    DECREASING = enum.auto()
+    UNKNOWN = enum.auto()
+
+
+_FLIPPED = {Trend.INCREASING: Trend.DECREASING, Trend.DECREASING: Trend.INCREASING}
+
+
+def _combined(trends: list[Trend]) -> Trend:
+    """The trend of a sum or extremum of terms with the given trends."""
+    varying = set(trends) - {Trend.CONSTANT}
+    if not varying:
+        return Trend.CONSTANT
+    return varying.pop() if len(varying) == 1 else Trend.UNKNOWN
+
+
+def _trend(expr: sympy.Expr, param: sympy.Symbol, facts: symbolic.Facts) -> Trend:
+    """The monotonicity of ``expr`` in ``param``, where ``facts`` hold; ``UNKNOWN`` unless proven."""
+    if not expr.has(param):
+        return Trend.CONSTANT
+    if expr == param:
+        return Trend.INCREASING
+    if isinstance(expr, (sympy.Add, sympy.Min, sympy.Max)):
+        return _combined([_trend(arg, param, facts) for arg in expr.args])
+    if isinstance(expr, (symbolic.int_floor, symbolic.int_ceil)):
+        numerator, denominator = cast(tuple[sympy.Expr, sympy.Expr], expr.args)
+        if denominator.has(param) or not symbolic.provably_le(sympy.Integer(1), denominator, facts):
+            return Trend.UNKNOWN
+        return _trend(numerator, param, facts)
+    if isinstance(expr, (sympy.floor, sympy.ceiling)):
+        return _trend(expr.args[0], param, facts)
+    if isinstance(expr, sympy.Mul):
+        varying = [arg for arg in expr.args if arg.has(param)]
+        if len(varying) != 1:
+            return Trend.UNKNOWN
+        trend = _trend(varying[0], param, facts)
+        coefficient = sympy.Mul(*(arg for arg in expr.args if not arg.has(param)))
+        sign = _is_negative(coefficient, facts)
+        if trend is Trend.UNKNOWN or sign is symbolic.Truth.UNKNOWN:
+            return Trend.UNKNOWN
+        return _FLIPPED.get(trend, trend) if sign is symbolic.Truth.TRUE else trend
+    if isinstance(expr, sympy.Pow) and expr.exp.is_Integer and expr.exp > 0:
+        # An odd power is increasing everywhere, an even one only where its base is nonnegative
+        if expr.exp % 2 == 1 or symbolic.provably_nonnegative(expr.base, facts):
+            return _trend(expr.base, param, facts)
+    return Trend.UNKNOWN
+
+
+def _is_negative(expr: symbolic.SymbolicType, facts: symbolic.Facts) -> symbolic.Truth:
+    """Whether ``expr`` is negative; ``FALSE`` when it is provably nonnegative."""
+    return symbolic.ask(
+        symbolic.Relation(symbolic.RelationKind.LT, cast(sympy.Expr, sympy.sympify(expr)), sympy.Integer(0)), facts
+    )
 
 
 def _subexpr(dexpr, repldict):
@@ -528,10 +615,9 @@ def _subexpr(dexpr, repldict):
 
 @registry.autoregister
 class ConstantRangeMemlet(MemletPattern):
-    """ Memlet pattern that matches arbitrary expressions with constant range.
-    """
+    """Memlet pattern that matches arbitrary expressions with constant range."""
 
-    def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range, orig_edges, facts: symbolic.Facts):
         constant_range = True
         for dim in node_range:
             for rngelem in dim:  # For (begin, end, skip)
@@ -543,12 +629,22 @@ class ConstantRangeMemlet(MemletPattern):
 
         self.params = variable_context[-1]
 
-        return True
+        # Each point is compared by value: an expression that does not evaluate to a number at the first point (e.g.
+        # an unknown function) cannot be bounded
+        first = {p: dim[0] for p, dim in zip(self.params, node_range)}
+        return all(
+            sympy.sympify(
+                _subexpr(bound, first) if isinstance(bound, (sympy.Basic, symbolic.SymExpr)) else bound
+            ).is_comparable
+            for expr in expressions
+            for dexpr in expr
+            for bound in (dexpr if isinstance(dexpr, tuple) else (dexpr,))
+        )
 
     # TODO: An integer set library should shine here (unify indices)
-    def propagate(self, array, expressions, node_range):
+    def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         rng = [(None, None, 1)] * len(array.shape)
-        node_range_gen = (range(rb, re, rs) for rb, re, rs in node_range)
+        node_range_gen = itertools.starmap(range, node_range)
         for ndind in itertools.product(*tuple(node_range_gen)):
             repldict = {p: ndind[i] for i, p in enumerate(self.params)}
             for expr in expressions:
@@ -566,7 +662,7 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def _annotate_loop_ranges(sdfg: 'SDFG', unannotated_cycle_states):
+def _annotate_loop_ranges(sdfg: "SDFG", unannotated_cycle_states):
     """
     Annotate each valid for loop construct with its loop variable ranges.
 
@@ -688,7 +784,7 @@ def _annotate_loop_ranges(sdfg: 'SDFG', unannotated_cycle_states):
     return condition_edges
 
 
-def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -> None:
+def propagate_states(sdfg: "SDFG", concretize_dynamic_unbounded: bool = False) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
 
@@ -773,7 +869,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
     for s in sdfg.nodes():
         if sdfg.out_degree(s) == 0:
             if temp_exit_state is None:
-                temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
+                temp_exit_state = sdfg.add_state("__dace_brannotate_exit")
             sdfg.add_edge(s, temp_exit_state, InterstateEdge())
 
     dom_frontier = cfg.acyclic_dominance_frontier(sdfg)
@@ -808,33 +904,32 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
             if proposed_executions == 0 and proposed_dynamic:
                 state.executions = proposed_executions
                 state.dynamic_executions = proposed_dynamic
-            elif getattr(state, 'is_loop_guard', False):
+            elif getattr(state, "is_loop_guard", False):
                 # If we encounter a loop guard that's already been visited,
                 # we've finished traversing a loop and can remove that loop's
                 # iteration variable from the stack. We additively merge the
                 # number of executions.
                 if not (state.executions == 0 and state.dynamic_executions):
                     state.executions += proposed_executions
+            # If we have already visited this state, but it is NOT a loop
+            # guard, this means that we can reach this state via multiple
+            # different paths. If so, the number of executions for this
+            # state is given by the maximum number of executions among each
+            # of the paths reaching it. If the state additionally completely
+            # merges a previously branched out state tree, we know that the
+            # number of executions isn't dynamic anymore.
+            # The only exception to this rule: If the state is in an
+            # unannotated loop, i.e. should be annotated as dynamic
+            # unbounded instead, we do that.
+            elif (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
+                state.executions = 0
+                state.dynamic_executions = True
             else:
-                # If we have already visited this state, but it is NOT a loop
-                # guard, this means that we can reach this state via multiple
-                # different paths. If so, the number of executions for this
-                # state is given by the maximum number of executions among each
-                # of the paths reaching it. If the state additionally completely
-                # merges a previously branched out state tree, we know that the
-                # number of executions isn't dynamic anymore.
-                # The only exception to this rule: If the state is in an
-                # unannotated loop, i.e. should be annotated as dynamic
-                # unbounded instead, we do that.
-                if (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
-                    state.executions = 0
-                    state.dynamic_executions = True
+                state.executions = sympy.Max(state.executions, proposed_executions).doit()
+                if state in full_merge_states:
+                    state.dynamic_executions = False
                 else:
-                    state.executions = sympy.Max(state.executions, proposed_executions).doit()
-                    if state in full_merge_states:
-                        state.dynamic_executions = False
-                    else:
-                        state.dynamic_executions = (state.dynamic_executions or proposed_dynamic)
+                    state.dynamic_executions = state.dynamic_executions or proposed_dynamic
         elif proposed_dynamic and proposed_executions == 0:
             # We're propagating a dynamic unbounded number of executions, which
             # always gets propagated unconditionally. Propagate to all children.
@@ -867,7 +962,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                     proposed_dynamic = True
                 traversal_q.append((out_edges[0].dst, proposed_executions, proposed_dynamic, itvar_stack))
             elif out_degree > 1:
-                if getattr(state, 'is_loop_guard', False):
+                if getattr(state, "is_loop_guard", False):
                     itvar = symbolic.symbol(state.itvar)
                     loop_range = state.ranges[state.itvar]
                     start = loop_range[0][0]
@@ -878,7 +973,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                     # This resolves ranges based on the order of iteration
                     # variables pushed on to the stack if we're in a nested
                     # loop.
-                    loop_executions = ceiling(((stop + 1) - start) / stride)
+                    loop_executions = symbolic.ceiling_div((stop + 1) - start, stride)
                     for outer_itvar_string in reversed(itvar_stack):
                         outer_range = state.ranges[outer_itvar_string]
                         outer_start = outer_range[0][0]
@@ -886,12 +981,13 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                         outer_stride = outer_range[0][2]
                         outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
                         exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
-                        loop_executions = Sum(exec_repl,
-                                              (outer_itvar, 0, ceiling((outer_stop - outer_start) / outer_stride)))
+                        loop_executions = Sum(
+                            exec_repl, (outer_itvar, 0, symbolic.ceiling_div(outer_stop - outer_start, outer_stride))
+                        )
                     loop_executions = loop_executions.doit()
 
                     loop_state = condition_edges[state].dst
-                    end_state = (out_edges[0].dst if out_edges[1].dst == loop_state else out_edges[1].dst)
+                    end_state = out_edges[0].dst if out_edges[1].dst == loop_state else out_edges[1].dst
 
                     traversal_q.append((end_state, state.executions, proposed_dynamic, itvar_stack))
                     traversal_q.append((loop_state, loop_executions, proposed_dynamic, itvar_stack + [state.itvar]))
@@ -923,11 +1019,16 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                             traversal_q.append((oedge.dst, state.executions, False, itvar_stack))
                         if concretize_dynamic_unbounded:
                             # Here we introduce the num_exec symbol and propagate it down the loop.
-                            # We can always assume these symbols to be non-negative.
                             traversal_q.append(
-                                (unannotated_loop_edge.dst,
-                                 Symbol(f'num_execs_{sdfg.cfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}',
-                                        nonnegative=True), False, itvar_stack))
+                                (
+                                    unannotated_loop_edge.dst,
+                                    symbolic.symbol(
+                                        f"num_execs_{sdfg.cfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}"
+                                    ),
+                                    False,
+                                    itvar_stack,
+                                )
+                            )
                         else:
                             # Propagate dynamic unbounded.
                             traversal_q.append((unannotated_loop_edge.dst, 0, True, itvar_stack))
@@ -979,8 +1080,8 @@ def _make_border_memlets(connectors, as_lists: bool = False):
              initialized connector entries.
     """
     border_memlets = {
-        'in': {},
-        'out': {},
+        "in": {},
+        "out": {},
     }
     for direction in border_memlets:
         for connector in connectors[direction]:
@@ -988,7 +1089,7 @@ def _make_border_memlets(connectors, as_lists: bool = False):
     return border_memlets
 
 
-def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) -> None:
+def _collect_state_border_memlet_candidates(state: "SDFGState", border_memlets) -> None:
     """
     Collect state-local memlets attached to nested border (i.e., not internal) access nodes.
 
@@ -1008,8 +1109,104 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
             if node.label not in border_memlets[direction]:
                 continue
 
-            edges = state.out_edges(node) if direction == 'in' else state.in_edges(node)
-            border_memlets[direction][node.label].extend(edge.data for edge in edges)
+            edges = state.out_edges(node) if direction == "in" else state.in_edges(node)
+            # An EMPTY memlet is an ordering edge: it sequences a WAR/WAW hazard and moves no data, so it contributes
+            # nothing to what the connector transfers (folding it in widened a border write ``a[i]`` to the array).
+            for edge in edges:
+                if edge.data.is_empty():
+                    continue
+                border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
+
+
+def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[Memlet]:
+    """
+    Resolves a border candidate that reaches its container through a view.
+
+    A ``views`` edge spans the whole window the view covers, so it reports more than the accesses
+    behind it do. Look through the view and express each of them in the container's coordinates.
+
+    :param state: The state the edge belongs to.
+    :param edge: The edge adjacent to the container's access node.
+    :param direction: ``'in'`` for a border input, ``'out'`` for a border output.
+    :return: The memlets to use as border candidates for this edge.
+    """
+    # We import late to avoid cyclic imports here.
+    from dace.sdfg import utils as sdutil  # Avoid import loop: dace.sdfg.utils imports this module
+
+    if direction == "in":
+        container, view_node, is_binding = edge.src, edge.dst, edge.dst_conn == "views"
+    else:
+        container, view_node, is_binding = edge.dst, edge.src, edge.src_conn == "views"
+    if not is_binding or not isinstance(view_node, nodes.AccessNode):
+        return [edge.data]
+    view_desc = view_node.desc(state.sdfg)
+    if not isinstance(view_desc, data.View):
+        return [edge.data]
+
+    container_desc = state.sdfg.arrays[container.data]
+    subset = edge.data.subset if edge.data.data == container.data else edge.data.other_subset
+    if subset is None:
+        subset = subsets.Range.from_array(container_desc)
+    # A view that reshapes or permutes has no dimension mapping to the container
+    mapping = sdutil.map_view_to_array(view_desc, container_desc, subset)
+    if mapping is None:
+        return [edge.data]
+
+    inner_edges = state.out_edges(view_node) if direction == "in" else state.in_edges(view_node)
+    result: list[Memlet] = []
+    for inner in inner_edges:
+        if inner.data.is_empty() or inner.data.data != view_node.data:
+            return [edge.data]
+        candidate = copy.deepcopy(inner.data)
+        candidate.data = container.data
+        candidate.subset = sdutil.compose_view_subset(mapping[0], subset, inner.data.subset)
+        result.append(candidate)
+    return result or [edge.data]
+
+
+def _collect_region_meta_read_candidates(region, candidates) -> None:
+    """
+    Collect reads performed by a control-flow region itself as border input candidates.
+
+    This includes reads on the region's interstate edges (conditions and assignments) as
+    well as meta-code reads such as loop or branch conditions.
+
+    :param region: The control-flow region whose meta reads should be collected.
+    :param candidates: A candidate memlet mapping, typically created with
+                       ``_make_border_memlets(..., as_lists=True)``, which is updated in place.
+    :note: ``candidates`` mapping is updated in-place.
+    """
+    arrays = region.sdfg.arrays
+    memlets = []
+    for edge in region.edges():
+        memlets.extend(edge.data.get_read_memlets(arrays))
+    memlets.extend(region.get_meta_read_memlets())
+    for memlet in memlets:
+        if memlet.data in candidates["in"]:
+            candidates["in"][memlet.data].append(memlet)
+
+
+def _merge_meta_read_candidates(region, border_memlets, arrays, symbols: "SymbolResolver") -> None:
+    """
+    Merge a region's own meta reads (interstate edges, conditions) into border input memlets.
+
+    :param region: The control-flow region whose meta reads should be merged.
+    :param border_memlets: The accumulated border memlet mapping to update in place.
+    :param arrays: The array descriptor mapping of the containing SDFG.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
+    candidates = _make_border_memlets(border_memlets, as_lists=True)
+    _collect_region_meta_read_candidates(region, candidates)
+    facts = symbols.facts_at(region)
+    for connector in border_memlets["in"]:
+        propagated = _propagate_border_memlet_candidates(candidates, arrays, "in", connector, facts)
+        if propagated is None:
+            continue
+        array_name = propagated.data if propagated.data is not None else connector
+        border_memlets["in"][connector] = _merge_border_memlet(
+            border_memlets["in"][connector], propagated, arrays[array_name], facts
+        )
 
 
 def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
@@ -1029,7 +1226,7 @@ def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None
                 border_memlets[direction][connector].append(memlet)
 
 
-def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data, facts: symbolic.Facts) -> Memlet:
     """
     Merge two border memlets using union aggregation semantics.
 
@@ -1043,6 +1240,7 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
     :param incoming: The newly propagated memlet to merge into the result.
     :param array: The array descriptor used to fall back to a full-array subset
                   when subset unioning cannot preserve a more precise result.
+    :param facts: The facts that hold where the memlets are merged.
     :return: The merged memlet.
     """
     if incoming is None:
@@ -1054,7 +1252,7 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
 
     if incoming.wcr is not None:
         if result.wcr is not None and result.wcr != incoming.wcr:
-            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
+            warnings.warn("Memlet appears with more than one type of write-conflict resolution.")
         result.wcr = incoming.wcr
 
     if result.dynamic and result.volume == 0:
@@ -1063,14 +1261,14 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
         result.dynamic = True
         result.volume = 0
     else:
-        result.volume = simplify(result.volume + incoming.volume)
-        result.dynamic = (result.dynamic or incoming.dynamic)
+        result.volume = simplify(result.volume + incoming.volume, facts)
+        result.dynamic = result.dynamic or incoming.dynamic
 
     if incoming.subset is not None:
         if result.subset is not None:
             if result.subset.dims() != incoming.subset.dims():
-                raise ValueError('Cannot merge subset ranges of unequal dimension!')
-            result.subset = subsets.union(result.subset, incoming.subset)
+                raise ValueError("Cannot merge subset ranges of unequal dimension!")
+            result.subset = subsets.union(result.subset, incoming.subset, facts)
             if result.subset is None:
                 result.subset = subsets.Range.from_array(array)
         else:
@@ -1079,7 +1277,9 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
     return result
 
 
-def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+def _merge_border_memlet_upper_bound(
+    existing: Memlet, incoming: Memlet, array: data.Data, facts: symbolic.Facts
+) -> Memlet:
     """
     Merge two border memlets using upper-bound conditional semantics.
 
@@ -1093,6 +1293,7 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
                      result.
     :param array: The array descriptor used to fall back to a full-array subset
                   when subset unioning cannot preserve a more precise result.
+    :param facts: The facts that hold where the memlets are merged.
     :return: The merged memlet that conservatively upper-bounds the branches.
     """
     if incoming is None:
@@ -1104,7 +1305,7 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
 
     if incoming.wcr is not None:
         if result.wcr is not None and result.wcr != incoming.wcr:
-            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
+            warnings.warn("Memlet appears with more than one type of write-conflict resolution.")
         result.wcr = incoming.wcr
 
     if result.dynamic and result.volume == 0:
@@ -1113,14 +1314,14 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
         result.dynamic = True
         result.volume = 0
     else:
-        result.volume = simplify(sympy.Max(result.volume, incoming.volume))
-        result.dynamic = (result.dynamic or incoming.dynamic)
+        result.volume = simplify(sympy.Max(result.volume, incoming.volume), facts)
+        result.dynamic = result.dynamic or incoming.dynamic
 
     if incoming.subset is not None:
         if result.subset is not None:
             if result.subset.dims() != incoming.subset.dims():
-                raise ValueError('Cannot merge subset ranges of unequal dimension!')
-            result.subset = subsets.union(result.subset, incoming.subset)
+                raise ValueError("Cannot merge subset ranges of unequal dimension!")
+            result.subset = subsets.union(result.subset, incoming.subset, facts)
             if result.subset is None:
                 result.subset = subsets.Range.from_array(array)
         else:
@@ -1129,13 +1330,42 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
     return result
 
 
-def _propagate_border_memlet_candidates(candidates,
-                                        arrays,
-                                        direction: str,
-                                        connector: str,
-                                        params=None,
-                                        rng=None,
-                                        scale_by_range: bool = False) -> Memlet:
+def _positive_step_range(start, stop, step):
+    """
+    Rewrites a decidably negative-step range dimension into its set-preserving
+    positive-step form.
+
+    A range dimension ``(start, stop, step)`` covers ``start, start + step, ...``
+    down to and including ``stop``, so a negative-step dimension denotes the
+    same index set as ``(stop + ((start - stop) % -step), start, -step)`` -- for
+    a unit step this is simply ``(stop, start, 1)``. Negative-step subsets are
+    non-canonical (``Range.covers()``, ``min_element()`` and ``max_element()``
+    do not handle them consistently), so propagation emits the positive-step
+    form. Dimensions whose step sign cannot be decided are returned unchanged,
+    and empty dimensions remain empty under the rewrite.
+
+    :param start: The dimension's first index.
+    :param stop: The dimension's last index (inclusive), also under a negative step.
+    :param step: The dimension's stride.
+    :return: An equivalent ``(start, stop, step)`` triple with a positive (or undecidable) step.
+    """
+    # This inequality needs to be checked exactly like this due to
+    # constraints in sympy/symbolic expressions, do not simplify!!!
+    if (step < 0) == True:
+        start, stop, step = stop + ((start - stop) % -step), start, -step
+    return start, stop, step
+
+
+def _propagate_border_memlet_candidates(
+    candidates,
+    arrays,
+    direction: str,
+    connector: str,
+    facts: symbolic.Facts,
+    params=None,
+    rng=None,
+    scale_by_range: bool = False,
+) -> Memlet:
     """
     Propagate candidate memlets through a symbolic iteration range.
 
@@ -1150,6 +1380,7 @@ def _propagate_border_memlet_candidates(candidates,
                       direction should be propagated.
     :param connector: The connector name whose candidate memlets should be
                       propagated.
+    :param facts: The facts that hold where the candidates are, inside ``rng``.
     :param params: Optional iteration variable names for the propagation range.
                    If omitted together with ``rng``, a dummy singleton range is
                    used.
@@ -1165,25 +1396,25 @@ def _propagate_border_memlet_candidates(candidates,
         return None
 
     if params is None or rng is None:
-        params = ['__dace_dummy']
+        params = ["__dace_dummy"]
         rng = subsets.Range([(0, 0, 1)])
 
     array_name = next((memlet.data for memlet in memlets if memlet.data is not None), connector)
     array = arrays[array_name]
-    propagated = propagate_subset(memlets, array, params, rng, use_dst=(direction == 'out'))
+    propagated = propagate_subset(memlets, array, params, rng, facts, use_dst=(direction == "out"))
 
     if any(memlet.dynamic and memlet.volume == 0 for memlet in memlets):
         propagated.dynamic = True
         propagated.volume = 0
     elif not scale_by_range:
-        propagated.volume = simplify(sum(memlet.volume for memlet in memlets))
+        propagated.volume = simplify(sum(memlet.volume for memlet in memlets), facts)
         propagated.dynamic = any(memlet.dynamic for memlet in memlets)
 
     propagated.other_subset = None
     return propagated
 
 
-def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) -> None:
+def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays, symbols: "SymbolResolver") -> None:
     """
     Propagate all connector-adjacent memlets contributed by one state.
 
@@ -1196,10 +1427,12 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
     :param border_memlets: The accumulated border memlet mapping to update.
     :param arrays: The array descriptor mapping used for propagation and merge
                    fallback behavior.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation.
     :note: The ``border_memlets`` mapping is updated in-place.
     """
     candidates = _make_border_memlets(border_memlets, as_lists=True)
     _collect_state_border_memlet_candidates(state, candidates)
+    facts = symbols.facts_at(state)
 
     params = []
     ranges = []
@@ -1220,6 +1453,7 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
                 arrays,
                 direction,
                 connector,
+                facts,
                 params=params,
                 rng=rng,
                 scale_by_range=False,
@@ -1234,46 +1468,97 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
                 propagated.volume = 0
             else:
                 propagated.volume = simplify(
-                    sum(memlet.volume for memlet in candidates[direction][connector]) * state.executions)
+                    sum(memlet.volume for memlet in candidates[direction][connector]) * state.executions,
+                    facts,
+                )
                 propagated.dynamic = propagated.dynamic or state.dynamic_executions
 
             array_name = propagated.data if propagated.data is not None else connector
-            border_memlets[direction][connector] = _merge_border_memlet(border_memlets[direction][connector],
-                                                                        propagated, arrays[array_name])
+            border_memlets[direction][connector] = _merge_border_memlet(
+                border_memlets[direction][connector], propagated, arrays[array_name], facts
+            )
 
 
-def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
+def _propagate_nsdfg_border_edge(
+    edge: gr.MultiConnectorEdge[Memlet], internal_memlet: Memlet, parent_sdfg: "SDFG", sdfg: "SDFG", connector: str
+) -> Memlet:
+    """
+    Converts a propagated 'border' memlet of a nested SDFG into a memlet on the outer edge.
+
+    :param edge: The outer edge of the nested SDFG node to propagate onto.
+    :param internal_memlet: The propagated border memlet, expressed in the inner descriptor.
+    :param parent_sdfg: The SDFG containing the nested SDFG node.
+    :param sdfg: The nested SDFG.
+    :param connector: The connector of the nested SDFG node that ``edge`` is attached to.
+    :return: The memlet to place on ``edge``.
+    """
+    extname = edge.data.data
+    outer_desc = parent_sdfg.arrays[extname]
+    inner_desc = sdfg.arrays[connector]
+    # The connector is written in the nested SDFG's symbols, which the symbol mapping binds to the parent's
+    if not inner_desc.is_equivalent(outer_desc, symbol_mapping=sdfg.parent_nsdfg_node.symbol_mapping):
+        raise ValueError(
+            f'Connector "{connector}" of {sdfg.label} describes {inner_desc}, not the container '
+            f'"{extname}" it is connected to. Restate the nested SDFG with '
+            "dace.sdfg.dealias.convert_legacy_nested_sdfgs."
+        )
+
+    result = copy.deepcopy(internal_memlet)
+    result.data = extname
+    # The connector may keep an ``offset`` of its own -- the origin of the index space the memlets inside are written
+    # in, e.g., to keep one-based indices -- so they are restated in the container's
+    if isinstance(inner_desc, data.Array) and isinstance(outer_desc, data.Array) and result.subset is not None:
+        replacements = symbolic.symbol_replacements(sdfg.parent_nsdfg_node.symbol_mapping)
+        inner_offset = [symbolic.replace_symbols(pystr_to_symbolic(off), replacements) for off in inner_desc.offset]
+        shift = [ioff - ooff for ioff, ooff in zip(inner_offset, outer_desc.offset)]
+        if any(off != 0 for off in shift):
+            result.subset.offset(shift, False)
+    return result
+
+
+def propagate_memlets_nested_sdfg(
+    parent_sdfg: "SDFG",
+    parent_state: "SDFGState",
+    nsdfg_node: nodes.NestedSDFG,
+    symbols: Optional["SymbolResolver"] = None,
+):
     """
     Propagate memlets out of a nested sdfg.
 
     :param parent_sdfg: The parent SDFG this nested SDFG is in.
     :param parent_state: The state containing this nested SDFG.
     :param nsdfg_node: The NSDFG node containing this nested SDFG.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
     :note: This operates in-place on the parent SDFG.
     """
     # We import late to avoid cyclic imports here.
-    from dace.transformation.helpers import unsqueeze_memlet
     from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
     # get propagated in the SDFG.
-    border_memlets = _make_border_memlets({
-        'in': nsdfg_node.in_connectors,
-        'out': nsdfg_node.out_connectors,
-    })
+    border_memlets = _make_border_memlets(
+        {
+            "in": nsdfg_node.in_connectors,
+            "out": nsdfg_node.out_connectors,
+        }
+    )
 
     sdfg = nsdfg_node.sdfg
-    outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+
+        symbols = SymbolResolver()
+    outer_symbols = symbols.defined_at(parent_state, nsdfg_node)
 
     # Collect contributions from top-level CFG blocks. Plain states contribute
     # directly, while control-flow regions aggregate their child blocks via
     # their own propagate_memlets implementations.
     for block in sdfg.nodes():
         if isinstance(block, SDFGState):
-            _propagate_state_border_memlets(block, border_memlets, sdfg.arrays)
+            _propagate_state_border_memlets(block, border_memlets, sdfg.arrays, symbols)
         elif isinstance(block, AbstractControlFlowRegion):
-            block.propagate_memlets(border_memlets)
+            block.propagate_memlets(border_memlets, symbols)
 
     # Make sure any potential NSDFG symbol mapping is correctly reversed
     # when propagating out.
@@ -1286,79 +1571,59 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                 # Also make sure that there's no symbol in the border memlet's
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
-                if border_memlet.src_subset is not None:
+                if border_memlet.src_subset is not None or border_memlet.dst_subset is not None:
                     if border_memlet.data is None:
                         border_memlet.data = connector
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.src_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
+                    for subset in (border_memlet.src_subset, border_memlet.dst_subset):
+                        if subset is None:
+                            continue
+                        # A copy's two subsets address the two containers it connects, so the one to
+                        # widen to is whichever of them has the subset's rank
+                        fallback_desc = None
+                        for candidate in (border_memlet.data, connector):
+                            desc = sdfg.arrays.get(candidate, None)
+                            if desc is not None and len(desc.shape) == subset.dims():
+                                fallback_desc = desc
                                 break
-                        if fall_back:
-                            border_memlet.src_subset[i] = fallback_subset[i]
-                if border_memlet.dst_subset is not None:
-                    if border_memlet.data is None:
-                        border_memlet.data = connector
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.dst_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            border_memlet.dst_subset[i] = fallback_subset[i]
+                        if fallback_desc is None:
+                            continue
+                        fallback_subset = subsets.Range.from_array(fallback_desc)
+                        for i, rng in enumerate(subset):
+                            fall_back = False
+                            for item in rng:
+                                if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                    fall_back = True
+                                    break
+                            if fall_back:
+                                subset[i] = fallback_subset[i]
 
-    # Propagate the inside 'border' memlets outside the SDFG by
-    # offsetting, and unsqueezing if necessary.
+                # A volume counted in a symbol assigned inside the nested SDFG means nothing out here
+                if any(str(s) not in outer_symbols for s in symbolic.symlist(border_memlet.volume)):
+                    border_memlet.volume = (
+                        border_memlet.subset.num_elements() if border_memlet.subset is not None else 0
+                    )
+                    border_memlet.dynamic = True
+
+    # Propagate the inside 'border' memlets outside the SDFG. Connectors are the containers they are
+    # connected to, so only the container name changes.
     for iedge in parent_state.in_edges(nsdfg_node):
-        if iedge.dst_conn in border_memlets['in']:
-            internal_memlet = border_memlets['in'][iedge.dst_conn]
+        if iedge.dst_conn in border_memlets["in"]:
+            internal_memlet = border_memlets["in"][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(iedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in iedge.data.volume.free_symbols):
-                            iedge.data.volume = 0
-                            iedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                iedge.data.volume = 0
-                iedge.data.dynamic = True
+            iedge.data = _propagate_nsdfg_border_edge(iedge, internal_memlet, parent_sdfg, sdfg, iedge.dst_conn)
     for oedge in parent_state.out_edges(nsdfg_node):
-        if oedge.src_conn in border_memlets['out']:
-            internal_memlet = border_memlets['out'][oedge.src_conn]
+        if oedge.src_conn in border_memlets["out"]:
+            internal_memlet = border_memlets["out"][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(oedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in oedge.data.volume.free_symbols):
-                            oedge.data.volume = 0
-                            oedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                oedge.data.volume = 0
-                oedge.data.dynamic = True
+            oedge.data = _propagate_nsdfg_border_edge(oedge, internal_memlet, parent_sdfg, sdfg, oedge.src_conn)
 
 
-def reset_state_annotations(sdfg: 'SDFG'):
-    """ Resets the state (loop-related) annotations of an SDFG.
+def reset_state_annotations(sdfg: "SDFG"):
+    """Resets the state (loop-related) annotations of an SDFG.
 
-        :note: This operation is shallow (does not go into nested SDFGs).
+    :note: This operation is shallow (does not go into nested SDFGs).
     """
     for state in sdfg.states():
         state.executions = 0
@@ -1366,26 +1631,32 @@ def reset_state_annotations(sdfg: 'SDFG'):
         state.ranges = {}
 
 
-def propagate_memlets_sdfg(sdfg: 'SDFG'):
-    """ Propagates memlets throughout an entire given SDFG.
+def propagate_memlets_sdfg(sdfg: "SDFG", symbols: Optional["SymbolResolver"] = None):
+    """Propagates memlets throughout an entire given SDFG.
 
-        :note: This is an in-place operation on the SDFG.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
+    :note: This is an in-place operation on the SDFG.
     """
     # Reset previous annotations first
     reset_state_annotations(sdfg)
 
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+
+        symbols = SymbolResolver()
     for state in sdfg.states():
-        propagate_memlets_state(sdfg, state)
+        propagate_memlets_state(sdfg, state, symbols)
 
     propagate_states(sdfg)
 
 
-def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
-    """ Propagates memlets throughout one SDFG state.
+def propagate_memlets_state(sdfg: "SDFG", state: "SDFGState", symbols: Optional["SymbolResolver"] = None):
+    """Propagates memlets throughout one SDFG state.
 
-        :param sdfg: The SDFG in which the state is situated.
-        :param state: The state to propagate in.
-        :note: This is an in-place operation on the SDFG state.
+    :param sdfg: The SDFG in which the state is situated.
+    :param state: The state to propagate in.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
+    :note: This is an in-place operation on the SDFG state.
     """
     # Algorithm:
     # 1. Start propagating information from tasklets outwards (their edges
@@ -1410,21 +1681,27 @@ def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
 
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+
+        symbols = SymbolResolver()
+
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
-
             # Propagate memlets inside the nested SDFG.
-            propagate_memlets_sdfg(node.sdfg)
+            propagate_memlets_sdfg(node.sdfg, symbols)
 
             # Propagate memlets out of the nested SDFG.
-            propagate_memlets_nested_sdfg(sdfg, state, node)
+            propagate_memlets_nested_sdfg(sdfg, state, node, symbols)
 
     # Process scopes from the leaves upwards
-    propagate_memlets_scope(sdfg, state, state.scope_leaves())
+    propagate_memlets_scope(sdfg, state, state.scope_leaves(), symbols=symbols)
 
 
-def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
+def propagate_memlets_scope(
+    sdfg, state, scopes, propagate_entry=True, propagate_exit=True, symbols: Optional["SymbolResolver"] = None
+):
     """
     Propagate memlets from the given scopes outwards.
 
@@ -1433,9 +1710,15 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
     :param scopes: The ScopeTree object or a list thereof to start from.
     :param propagate_entry: If False, skips propagating out of the scope entry node.
     :param propagate_exit: If False, skips propagating out of the scope exit node.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
     :note: This operation is performed in-place on the given SDFG.
     """
     from dace.sdfg.scope import ScopeTree
+
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+
+        symbols = SymbolResolver()
 
     if isinstance(scopes, ScopeTree):
         scopes_to_process = [scopes]
@@ -1453,11 +1736,11 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
 
             # Propagate out of entry
             if propagate_entry:
-                _propagate_node(state, scope.entry)
+                propagate_node(state, scope.entry, symbols)
 
             # Propagate out of exit
             if propagate_exit:
-                _propagate_node(state, scope.exit)
+                propagate_node(state, scope.exit, symbols)
 
             # Add parent to next frontier
             next_scopes.add(scope.parent)
@@ -1465,10 +1748,12 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
         next_scopes = set()
 
 
-def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nodes.MapEntry) -> None:
+def propagate_memlets_map_scope(
+    sdfg: "SDFG", state: "SDFGState", map_entry: nodes.MapEntry, symbols: Optional["SymbolResolver"] = None
+) -> None:
     """Propagate Memlets from the given Map outside.
 
-    The main difference to `propagate_memlets_scope()` is that this function operates on Maps
+    The main difference to ``propagate_memlets_scope()`` is that this function operates on Maps
     instead of `ScopeTree` it is thus much more accessible.
     The function will first propagate the Memlets of the nested SDFGs that are enclosed by the
     Map. Then the propagation will start bit only for those Melets that starts with `map_entry`.
@@ -1476,20 +1761,25 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
     :param sdfg: The SDFG in which the scopes reside.
     :param state: The SDFG state in which the scopes reside.
     :param map_entry: Defining the Map scope to which propagation should be restricted.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, one is made if not given.
     """
     if not isinstance(map_entry, nodes.MapEntry):
         raise TypeError(
-            f'A MapEntry node must be passed to the `propagate_memlets_map_scope()` function not a `{type(map_entry).__name__}`.'
+            f"A MapEntry node must be passed to the `propagate_memlets_map_scope()` function not a `{type(map_entry).__name__}`."
         )
 
     # This code is an adapted version of `propagate_memlet_state()` and as there we
     #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
     #  ones that are inside the scope we are in.
+    if symbols is None:
+        from dace.sdfg.state import SymbolResolver
+
+        symbols = SymbolResolver()
     nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
     for node in nodes_in_scope:
         if isinstance(node, nodes.NestedSDFG):
-            propagate_memlets_sdfg(node.sdfg)
-            propagate_memlets_nested_sdfg(sdfg, state, node)
+            propagate_memlets_sdfg(node.sdfg, symbols)
+            propagate_memlets_nested_sdfg(sdfg, state, node, symbols)
 
     # In `propagate_memlet_state()` we would start the propagation from all lowest scopes. Here,
     #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
@@ -1499,31 +1789,58 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
         sdfg,
         state,
         contained_leaf_scopes,
+        symbols=symbols,
     )
 
 
-def _propagate_node(dfg_state, node):
+def propagate_node(dfg_state, node, symbols: Optional["SymbolResolver"] = None):
     if isinstance(node, nodes.EntryNode):
-        internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
-        external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
+        entry_node = node
+        internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith("OUT_")]
+        external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith("IN_")]
         geticonn = lambda e: e.src_conn[4:]
         geteconn = lambda e: e.dst_conn[3:]
         use_dst = False
     else:
-        internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
-        external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
+        entry_node = dfg_state.entry_node(node)
+        internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith("IN_")]
+        external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith("OUT_")]
         geticonn = lambda e: e.dst_conn[3:]
         geteconn = lambda e: e.src_conn[4:]
         use_dst = True
 
+    # One table for every edge through this node -- it is one scope, and empty memlets need none.
+    defined_variables = None
+
     for edge in external_edges:
         if edge.data.is_empty():
-            new_memlet = Memlet()
-        else:
-            internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
-            aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
-            new_memlet = propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
-        edge.data = new_memlet
+            edge.data = Memlet()
+            continue
+        if defined_variables is None:
+            defined_variables = (
+                symbols.defined_at(dfg_state, entry_node)
+                if symbols is not None
+                else dfg_state.symbols_defined_at(entry_node)
+            ).keys() | dfg_state.parent.constants.keys()
+        connector = geteconn(edge)
+        # An empty internal edge is an ORDERING edge, and ``propagate_memlet`` answers Memlet()
+        # for one. Taking it as the seed collapses the external DATA edge to a connector with no
+        # array behind it, which later reads as a Code->Code connector of unknowable type. Seed
+        # from a real data edge instead; when every internal edge on this connector only orders,
+        # there is nothing to derive and the external memlet stands as it is.
+        internal_edge = next((e for e in internal_edges if geticonn(e) == connector and not e.data.is_empty()), None)
+        if internal_edge is None:
+            continue
+        aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
+        edge.data = propagate_memlet(
+            dfg_state,
+            aligned_memlet,
+            node,
+            True,
+            connector=connector,
+            defined_variables=defined_variables,
+            symbols=symbols,
+        )
 
 
 def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
@@ -1555,23 +1872,35 @@ def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
 
 
 # External API
-def propagate_memlet(dfg_state,
-                     memlet: Memlet,
-                     scope_node: nodes.EntryNode,
-                     union_inner_edges: bool,
-                     arr=None,
-                     connector=None):
-    """ Tries to propagate a memlet through a scope (computes the image of
-        the memlet function applied on an integer set of, e.g., a map range)
-        and returns a new memlet object.
+def propagate_memlet(
+    dfg_state,
+    memlet: Memlet,
+    scope_node: nodes.EntryNode,
+    union_inner_edges: bool,
+    arr=None,
+    connector=None,
+    defined_variables: set[str] | None = None,
+    symbols: Optional["SymbolResolver"] = None,
+):
+    """Tries to propagate a memlet through a scope (computes the image of
+    the memlet function applied on an integer set of, e.g., a map range)
+    and returns a new memlet object.
 
-        :param dfg_state: An SDFGState object representing the graph.
-        :param memlet: The memlet adjacent to the scope node from the inside.
-        :param scope_node: A scope entry or exit node.
-        :param union_inner_edges: True if the propagation should take other
-                                  neighboring internal memlets within the same
-                                  scope into account.
+    :param dfg_state: An SDFGState object representing the graph.
+    :param memlet: The memlet adjacent to the scope node from the inside.
+    :param scope_node: A scope entry or exit node.
+    :param union_inner_edges: True if the propagation should take other
+                              neighboring internal memlets within the same
+                              scope into account.
+    :param defined_variables: The symbols defined at ``scope_node`` plus the SDFG's constants,
+                              when the caller already has them. Deriving them here walks every
+                              descriptor in the SDFG, once per memlet.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation, if there is one; without
+                    it the state resolves the symbols itself.
     """
+    if memlet.is_empty():
+        return Memlet()
+
     use_dst = False
     if isinstance(scope_node, nodes.EntryNode):
         use_dst = False
@@ -1586,16 +1915,17 @@ def propagate_memlet(dfg_state,
         if connector is not None:
             neighboring_edges = [e for e in neighboring_edges if e.dst_conn and e.dst_conn[3:] == connector]
     else:
-        raise TypeError('Trying to propagate through a non-scope node')
-    if memlet.is_empty():
-        return Memlet()
+        raise TypeError("Trying to propagate through a non-scope node")
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-    defined_vars = [
-        symbolic.pystr_to_symbolic(s) for s in (dfg_state.symbols_defined_at(entry_node).keys()
-                                                | sdfg.constants.keys()) if s not in scope_node_symbols
-    ]
+    scope_node_symbols = {conn for conn in entry_node.in_connectors if not conn.startswith("IN_")}
+    if defined_variables is None:
+        defined_variables = (
+            symbols.defined_at(dfg_state, entry_node)
+            if symbols is not None
+            else dfg_state.symbols_defined_at(entry_node)
+        ).keys() | sdfg.constants.keys()
+    defined_vars = set(defined_variables) - scope_node_symbols
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets
@@ -1608,7 +1938,7 @@ def propagate_memlet(dfg_state,
 
     if arr is None:
         if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
+            raise KeyError(f'Data descriptor (Array, Stream) "{memlet.data}" not defined in SDFG.')
 
         # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
         #        so this test cannot be used
@@ -1623,13 +1953,15 @@ def propagate_memlet(dfg_state,
 
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
+        from dace.sdfg.state import StateSubgraphView, SymbolResolver
+
+        # The memlets are united as images of the map's body, so the map runs
+        state = dfg_state.graph if isinstance(dfg_state, StateSubgraphView) else dfg_state
+        facts = (symbols if symbols is not None else SymbolResolver()).facts_in_scope(state, entry_node)
         mapnode = entry_node.map
-        return propagate_subset(aggdata,
-                                arr,
-                                mapnode.params,
-                                mapnode.range,
-                                defined_variables=defined_vars,
-                                use_dst=use_dst)
+        return propagate_subset(
+            aggdata, arr, mapnode.params, mapnode.range, facts, defined_variables=defined_vars, use_dst=use_dst
+        )
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1640,40 +1972,46 @@ def propagate_memlet(dfg_state,
         new_memlet.dynamic = True
         return new_memlet
     else:
-        raise NotImplementedError('Unimplemented primitive: %s' % type(entry_node))
+        raise NotImplementedError(f"Unimplemented primitive: {type(entry_node)}")
 
 
 # External API
-def propagate_subset(memlets: List[Memlet],
-                     arr: data.Data,
-                     params: List[str],
-                     rng: subsets.Subset,
-                     *,
-                     defined_variables: Set[symbolic.SymbolicType] = None,
-                     undefined_variables: Set[symbolic.SymbolicType] = None,
-                     use_dst: bool = False) -> Memlet:
-    """ Tries to propagate a list of memlets through a range (computes the
-        image of the memlet function applied on an integer set of, e.g., a
-        map range) and returns a new memlet object.
+def propagate_subset(
+    memlets: list[Memlet],
+    arr: data.Data,
+    params: list[str],
+    rng: subsets.Subset,
+    facts: symbolic.Facts,
+    *,
+    defined_variables: set[symbolic.SymbolicType] = None,
+    undefined_variables: set[symbolic.SymbolicType] = None,
+    use_dst: bool = False,
+) -> Memlet:
+    """Tries to propagate a list of memlets through a range (computes the
+    image of the memlet function applied on an integer set of, e.g., a
+    map range) and returns a new memlet object.
 
-        :param memlets: The memlets to propagate.
-        :param arr: Array descriptor for memlet (used for obtaining extents).
-        :param params: A list of variable names.
-        :param rng: A subset with dimensionality len(params) that contains the
-                    range to propagate with.
-        :param defined_variables: A set of symbols defined that will remain the
-                                  same throughout propagation. If None, assumes
-                                  that all symbols outside of ``params``, except
-                                  for ``undefined_variables``, have been defined.
-        :param undefined_variables: A set of symbols that are explicitly considered
-                                    as not defined throughout propagation, such as
-                                    locals. Their existence will trigger propagating
-                                    the entire memlet.
-        :param use_dst: Whether to propagate the memlets' dst subset or use the
-                        src instead, depending on propagation direction.
-        :return: Memlet with propagated subset and volume.
+    :param memlets: The memlets to propagate.
+    :param arr: Array descriptor for memlet (used for obtaining extents).
+    :param params: A list of variable names.
+    :param rng: A subset with dimensionality len(params) that contains the
+                range to propagate with.
+    :param facts: The facts that hold where the memlets are, for some value of ``params`` in ``rng``: their images
+                  are united, and are only accessed when the range is not empty.
+    :param defined_variables: A set of symbols defined that will remain the
+                              same throughout propagation. If None, assumes
+                              that all symbols outside of ``params``, except
+                              for ``undefined_variables``, have been defined.
+    :param undefined_variables: A set of symbols that are explicitly considered
+                                as not defined throughout propagation, such as
+                                locals. Their existence will trigger propagating
+                                the entire memlet.
+    :param use_dst: Whether to propagate the memlets' dst subset or use the
+                    src instead, depending on propagation direction.
+    :return: Memlet with propagated subset and volume.
     """
-    # Argument handling
+    # Argument handling. Defined variables are only ever membership-tested, so keep them as bare names:
+    # symbol identity includes the dtype, which a name reparsed out of its scope cannot know.
     if defined_variables is None:
         # Default defined variables is "everything but params"
         defined_variables = set()
@@ -1681,17 +2019,17 @@ def propagate_subset(memlets: List[Memlet],
         for memlet in memlets:
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
-        defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
-    else:
-        defined_variables = set(defined_variables)
+    # ``?`` carries no value, so a range over it stays unpropagatable; by name alone it would read as defined.
+    defined_variables = set(map(str, defined_variables)) - {symbolic.UNDEFINED_NAME}
 
-    if undefined_variables is not None:
-        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
-    else:
-        undefined_variables = set()
+    undefined_names = set(map(str, undefined_variables)) if undefined_variables is not None else set()
+    defined_variables -= undefined_names
+
+    # Scope parameters are matched against the subsets, so they must be the very instances those carry.
+    scope_symbols = symbolic.symbols_in([md.subset for md in memlets] + [md.other_subset for md in memlets] + [rng])
 
     # Propagate subset
-    variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
+    variable_context = [defined_variables, [symbolic.resolve_symbol(p, scope_symbols) for p in params]]
 
     new_subset = None
     for md in memlets:
@@ -1715,32 +2053,26 @@ def propagate_subset(memlets: List[Memlet],
 
         for pclass in MemletPattern.extensions():
             pattern = pclass()
-            if pattern.can_be_applied([subset], variable_context, rng, [md]):
-                tmp_subset = pattern.propagate(arr, [subset], rng)
+            if pattern.can_be_applied([subset], variable_context, rng, [md], facts):
+                tmp_subset = pattern.propagate(arr, [subset], rng, facts)
                 break
         else:
             # No patterns found. Propagate the entire array whenever symbols are used.
-            if Config.get_bool('debugprint'):
-                print(f'Cannot find appropriate memlet pattern to propagate {subset} through {rng}')
+            if Config.get_bool("debugprint"):
+                print(f"Cannot find appropriate memlet pattern to propagate {subset} through {rng}")
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
             # free symbols list of the subset dimension or is undefined outside.
             tmp_subset_rng = []
             for s, ea in zip(subset, entire_array):
-                if isinstance(subset, subsets.Indices):
-                    fsyms = _freesyms(s)
+                contains_params = False
+                contains_undefs = False
+                for sdim in s:
+                    fsyms = _freesyms(sdim)
                     fsyms_str = set(map(str, fsyms))
-                    contains_params = len(fsyms_str & paramset) != 0
-                    contains_undefs = len(fsyms & undefined_variables) != 0
-                else:
-                    contains_params = False
-                    contains_undefs = False
-                    for sdim in s:
-                        fsyms = _freesyms(sdim)
-                        fsyms_str = set(map(str, fsyms))
-                        contains_params |= len(fsyms_str & paramset) != 0
-                        contains_undefs |= len(fsyms & undefined_variables) != 0
+                    contains_params |= len(fsyms_str & paramset) != 0
+                    contains_undefs |= len(fsyms_str & undefined_names) != 0
                 if contains_params or contains_undefs:
                     tmp_subset_rng.append(ea)
                 else:
@@ -1752,9 +2084,9 @@ def propagate_subset(memlets: List[Memlet],
             new_subset = tmp_subset
         else:
             old_subset = new_subset
-            new_subset = subsets.union(new_subset, tmp_subset)
+            new_subset = subsets.union(new_subset, tmp_subset, facts)
             if new_subset is None:
-                warnings.warn('Subset union failed between %s and %s ' % (old_subset, tmp_subset))
+                warnings.warn(f"Subset union failed between {old_subset} and {tmp_subset} ")
                 break
 
     # Some unions failed
@@ -1770,18 +2102,21 @@ def propagate_subset(memlets: List[Memlet],
     # Propagate volume:
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set (unbounded dynamic)
-    new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
+    new_memlet.volume = simplify(
+        sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1), facts
+    )
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
-    if symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
-                                                      for s in new_memlet.volume.free_symbols):
+    if symbolic.issymbolic(new_memlet.volume) and any(
+        str(s) not in defined_variables for s in new_memlet.volume.free_symbols
+    ):
         new_memlet.dynamic = True
         new_memlet.volume = 0
 
     return new_memlet
 
 
-def _freesyms(expr) -> Set:
+def _freesyms(expr) -> set:
     """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.

@@ -17,10 +17,15 @@ not share parallelism --
   is independent across ``i``, so it must become ``map i: { loop j }``
   (``i`` parallel, ``j`` sequential).
 
+The distribution is what the DEFAULT pipeline delivers; measured 2026-09-11, passing
+``perfect_loop_nesting=False`` reaches the identical shape on this nest, so the knob is not
+what produces it and a knob-on test pins nothing the default test does not.
+
 Value preservation is checked against the original (un-canonicalized)
 SDFG -- the non-transformed reference -- so the ``B[i, -1]`` wrap on the
 first ``j`` iteration is matched exactly on both sides.
 """
+
 import numpy as np
 import pytest
 
@@ -29,7 +34,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -74,8 +79,8 @@ def test_mixed_parallelism_value_preserving():
     gotA, gotB = A0.copy(), B0.copy()
     sdfg(A=gotA, B=gotB, N=n)
 
-    assert np.allclose(gotA, refA), 'A (fully-parallel) value mismatch after canonicalize'
-    assert np.allclose(gotB, refB), 'B (j-carried) value mismatch after canonicalize'
+    assert np.allclose(gotA, refA), "A (fully-parallel) value mismatch after canonicalize"
+    assert np.allclose(gotB, refB), "B (j-carried) value mismatch after canonicalize"
 
 
 def test_mixed_parallelism_b_keeps_sequential_j():
@@ -86,29 +91,47 @@ def test_mixed_parallelism_b_keeps_sequential_j():
     sdfg = mixed_parallelism.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) >= 1, 'the j-carried B statement must keep a sequential LoopRegion for j'
-    assert _nmaps(sdfg) >= 1, 'the i axis must be parallelized into a Map'
+    assert _nloops(sdfg) == 1, f"exactly the j-carried B statement stays a LoopRegion, got {_nloops(sdfg)}"
+    assert _nmaps(sdfg) == 2, f"expected A's 2D map and B's i-map, got {_nmaps(sdfg)}"
+    assert _map_param_counts(sdfg) == [1, 2], f"maps={_map_param_counts(sdfg)}"
 
 
-def test_mixed_parallelism_A_becomes_collapsed_2d_map():
-    """The fully-parallel A statement (``A[j, i] = A[j, i] * 2.0``,
-    independent over both i and j) fissions into a STANDALONE collapsed
-    2D Map (a MapEntry with two parameters), separate from the
-    j-carried B statement (``B -> map i: { loop j }``).
+def test_mixed_parallelism_default_pipeline_distributes():
+    """The default pipeline distributes the nest: a collapsed 2D map for A, a 1-D i-map for B.
 
-    Maximal loop fission distributes the shared outer i-loop so each
-    statement gets its own perfect nest (``map i: { map j: A }`` and
-    ``map i: { loop j: B }``); the fully-parallel A nest then collapses
-    into a single ``map[i, j]`` (param count 2), while B's carried-j
-    nest stays a 1-parameter i-map -- so ``map_param_counts == [1, 2]``.
-    Being 2-dimensional, A's collapsed map no longer matches B's 1-D
-    i-map for horizontal fusion, so the two stay fissioned apart."""
+    ``perfect_loop_nesting`` is ON by default (user ruling 2026-09-01, reversing the 2026-08-18
+    ruling that kept it opt-in). The 08-18 ruling existed for a defect, not for a preference:
+    ``PerfectLoopNesting`` then distributed through ``LoopFission``'s node-level grouping, which
+    carries no dependence distance or direction, and a single application reproduced the CloudSC
+    read-modify-write miscompile (``tendency_loc_a`` rel=0.13). That path is severed -- the pass
+    groups with Allen-Kennedy at block granularity and refuses what it cannot prove disjoint --
+    so the pin now points the other way. A default that silently stopped distributing would leave
+    the collapsed 2D map reachable only through a knob nobody passes, which is what this catches.
+
+    Values are checked against the un-canonicalized original in the same run: the distribution is
+    only worth having if it is also correct, and this kernel is exactly the shape whose grouping
+    soundness is in question.
+    """
+    n = 8
+    rng = np.random.default_rng(0)
+    A0, B0 = rng.random((n, n)), rng.random((n, n))
+    ref = mixed_parallelism.to_sdfg(simplify=True)
+    A_ref, B_ref = A0.copy(), B0.copy()
+    ref.compile()(A=A_ref, B=B_ref, N=n)
+
     sdfg = mixed_parallelism.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    param_counts = _map_param_counts(sdfg)
-    assert 2 in param_counts, f'expected a collapsed 2D map for the fully-parallel A statement; maps={param_counts}'
+    assert _map_param_counts(sdfg) == [1, 2], (
+        "the default pipeline no longer distributes this nest into a collapsed 2D map for A and a "
+        f"1-D i-map for B; maps={_map_param_counts(sdfg)}"
+    )
+
+    A_got, B_got = A0.copy(), B0.copy()
+    sdfg.compile()(A=A_got, B=B_got, N=n)
+    assert np.allclose(A_got, A_ref), "A diverged from the un-canonicalized reference"
+    assert np.allclose(B_got, B_ref), "B diverged from the un-canonicalized reference"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

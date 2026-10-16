@@ -1,35 +1,49 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple
+from typing import TYPE_CHECKING
+
 import sympy as sp
 
-# DaCe imports
-import dace.sdfg.nodes as nodes
-from dace import dtypes, data as dt, symbolic
-from dace.sdfg import SDFGState, graph as dgraph, state as dstate
-from dace.memlet import Memlet
-from dace.sdfg.state import LoopRegion
+import dace.autodiff.utils as ad_utils
+from dace import data as dt
+from dace import dtypes, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.memlet import Memlet
+
+# DaCe imports
+from dace.sdfg import SDFGState, nodes
+from dace.sdfg import graph as dgraph
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
+
+if TYPE_CHECKING:
+    from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
-def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
-                                 backward_state: SDFGState, forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                 starting_edge: dstate.MultiConnectorEdge):
+def resolve_overwrite_with_store(
+    bwd_generator: "BackwardPassGenerator",
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    forward_node: nodes.AccessNode,
+    target_node: nodes.Node,
+    starting_edge: dstate.MultiConnectorEdge,
+):
     """
     Given the AccessNode pointing to the data required by the backward pass,
     We will save the values of this array in a new array and forward it to the backward pass.
     """
 
     # Modify the forward pass to save the data in a new array
-    new_stored_array, memlets = _store_data(bwd_generator=bwd_generator,
-                                            forward_state=forward_state,
-                                            backward_state=backward_state,
-                                            forward_an=forward_node,
-                                            target_node=target_node,
-                                            edge=starting_edge)
+    new_stored_array, memlets = store_data(
+        bwd_generator=bwd_generator,
+        forward_state=forward_state,
+        backward_state=backward_state,
+        forward_an=forward_node,
+        target_node=target_node,
+        edge=starting_edge,
+    )
 
     # Check if this data needs to be forwarded through NestedSDFGs
     if bwd_generator.separate_sdfgs or forward_state.sdfg.parent_sdfg is not None:
@@ -42,19 +56,26 @@ def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward
             bwd_generator.backward_input_arrays[new_stored_array.data] = data_desc
 
     # Connect the new array to the target node
-    _connect_stored_data_to_target(bwd_generator=bwd_generator,
-                                   forward_state=forward_state,
-                                   backward_state=backward_state,
-                                   source_node=new_stored_array,
-                                   forward_node=forward_node,
-                                   starting_edge=starting_edge,
-                                   memlets=memlets,
-                                   target_node=target_node)
+    connect_stored_data_to_target(
+        bwd_generator=bwd_generator,
+        forward_state=forward_state,
+        backward_state=backward_state,
+        source_node=new_stored_array,
+        forward_node=forward_node,
+        starting_edge=starting_edge,
+        memlets=memlets,
+        target_node=target_node,
+    )
 
 
-def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState, backward_state: SDFGState,
-                forward_an: nodes.AccessNode, target_node: nodes.Node,
-                edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
+def store_data(
+    bwd_generator: "BackwardPassGenerator",
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    forward_an: nodes.AccessNode,
+    target_node: nodes.Node,
+    edge: dgraph.MultiConnectorEdge,
+) -> tuple[nodes.AccessNode, list[Memlet]]:
     """
     Given an edge leading an AccessNode or a map to the target node in the forward state,
     add a path from the connector for this AccessNode to store its values for all iterations.
@@ -68,7 +89,6 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     # Get the connector and edge to save
     if isinstance(edge.src, nodes.AccessNode) and edge.src is not forward_an:
-
         # Get the incoming edge to this AccessNode
         in_edges = forward_state.in_edges(edge.src)
 
@@ -90,21 +110,21 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     # Get the new array shape
     # This will be the shape of the current array
-    shape: List[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
+    shape: list[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
 
     # If the shape is an expression:
-    free_symbols_dict = {sym: None for sym in bwd_generator.sdfg.free_symbols}
+    free_symbols_dict = dict.fromkeys(bwd_generator.sdfg.free_symbols)
     if any(symbolic.issymbolic(s, free_symbols_dict) for s in shape):
         # Otherwise, replace all the loop dependent allocations with the max length of the loop
         # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
         # Additionally, an array of size [32-i] in the same loop will be stored in a [10, 30]  (2)
-        loops = _get_all_enclosing_loops(forward_state)
+        loops = get_all_enclosing_loops(forward_state)
 
         if len(loops) > 0:
             # Loop over the shape dimensions
             for i, s in enumerate(shape):
                 if ad_utils.shape_has_symbols_to_replace(bwd_generator.sdfg, s):
-                    loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, s, loops)
+                    loop_size, loop_index = get_symbol_upper_bound_from_loop(bwd_generator, s, loops)
                     # Replace the symbol with the loop size and evaluate the expression
                     # Check if loop size can be converted to an integer
                     loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
@@ -117,7 +137,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     loop_param_list = []
     if enclosed:
         # Get all enclosing loops
-        all_encolsing_loops = _get_all_enclosing_loops(forward_state=forward_state)
+        all_encolsing_loops = get_all_enclosing_loops(forward_state=forward_state)
         nb_enclosing_loops = len(all_encolsing_loops)
         # Get the size of each loop and add it to the list
         for loop in all_encolsing_loops:
@@ -141,7 +161,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                     new_dim = symbolic.pystr_to_symbolic(new_dim)
 
                 # Try to replace the symbols with the loop size
-                loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
+                loop_size, loop_index = get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
                 loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
                 loop_size_sym = loop_size if isinstance(loop_size, int) else symbolic.pystr_to_symbolic(loop_size)
                 new_dim = new_dim.subs(loop_index_sym, loop_size_sym)
@@ -158,8 +178,9 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
         # Make sure the subset elements are (i,i,1) and (j,j,1)
         # Then check if this matches the loop indices
         if all(
-                str(subset[0]) == loop_param_list[i] and subset[0] == subset[1] and subset[2] == 1
-                for i, subset in enumerate(edge.data.subset)):
+            str(subset[0]) == loop_param_list[i] and subset[0] == subset[1] and subset[2] == 1
+            for i, subset in enumerate(edge.data.subset)
+        ):
             # We only use the loop accesses
             # Both should work since shape[:nb_enclosing_loops] == shape[nb_enclosing_loops:]
             shape = shape[nb_enclosing_loops:]
@@ -182,7 +203,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     # The loop accesses will be the same within the state
     # Prepare them for all edges
-    loop_access = ','.join([f'{loop_param_list[i]}' for i in range(nb_enclosing_loops)])
+    loop_access = ",".join([f"{loop_param_list[i]}" for i in range(nb_enclosing_loops)])
 
     # In the other cases, we need to route the storing through maps
     all_edges = ad_utils.get_all_path_edges(forward_state, forward_an, edge)
@@ -206,11 +227,13 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     params_to_add = new_param_dict
     # First, we need to add an assign tasklet
-    assign_tasklet_node, assign_tasklet_node_out_connector = _get_assign_tasklet(forward_state=forward_state,
-                                                                                 node=forward_an,
-                                                                                 stored_node=new_store_node,
-                                                                                 last_edge=edge,
-                                                                                 loop_iterators=loop_access)
+    assign_tasklet_node, assign_tasklet_node_out_connector = get_assign_tasklet(
+        forward_state=forward_state,
+        node=forward_an,
+        stored_node=new_store_node,
+        last_edge=edge,
+        loop_iterators=loop_access,
+    )
 
     # Start iterating
     previous_node = assign_tasklet_node
@@ -219,7 +242,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     for edge in reversed(all_edges):
         if isinstance(edge.src, nodes.MapEntry):
             # Get the corresponding map exit
-            map_exist = _find_map_exist_for_map_entry(map_entry=edge.src, state=forward_state)
+            map_exist = find_map_exist_for_map_entry(map_entry=edge.src, state=forward_state)
 
             # Add the Connectors to the map
             map_exit_in_connector = f"IN_stored_{new_store_node.label}"
@@ -238,26 +261,29 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                     else:
                         start = val[0]
                         end = val[1]
-                        access_list.append(f'{start}:{end}')
+                        access_list.append(f"{start}:{end}")
                 elif isinstance(key, int):
                     start = val[0]
                     end = val[1] + 1
-                    access_list.append(f'{start}:{end}')
+                    access_list.append(f"{start}:{end}")
                 else:
                     raise AutoDiffException("Found unexepected type in memlet parameters dictionary")
 
-            in_state_access = ','.join(access_list)
+            in_state_access = ",".join(access_list)
 
-            memlet_data = Memlet(
-                expr=f"{new_store_node.data}[{loop_access},{in_state_access}]") if loop_access else Memlet(
-                    expr=f"{new_store_node.data}[{in_state_access}]")
+            memlet_data = (
+                Memlet(expr=f"{new_store_node.data}[{loop_access},{in_state_access}]")
+                if loop_access
+                else Memlet(expr=f"{new_store_node.data}[{in_state_access}]")
+            )
 
             # Save the memlet for later
             memlets_stack.append(memlet_data)
 
             # Connect the previous node to this map exist
-            forward_state.add_edge(previous_node, previous_node_out_connector, map_exist, map_exit_in_connector,
-                                   memlet_data)
+            forward_state.add_edge(
+                previous_node, previous_node_out_connector, map_exist, map_exit_in_connector, memlet_data
+            )
 
             previous_node = map_exist
             previous_node_out_connector = map_exit_out_connector
@@ -283,20 +309,22 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                 if isinstance(key, str):
                     start = val[0]
                     end = val[1]
-                    access_list.append(f'{start}:{end}')
+                    access_list.append(f"{start}:{end}")
                 elif isinstance(key, int):
                     start = val[0]
                     end = val[1] + 1
-                    access_list.append(f'{start}:{end}')
+                    access_list.append(f"{start}:{end}")
                 else:
                     raise AutoDiffException("Found unexepected type in memlet parameters dictionary")
 
-            in_state_access = ','.join(access_list)
+            in_state_access = ",".join(access_list)
 
             # Get the memlet data for the connection between the last map exit and the new store AccessNode
-            memlet_data = Memlet(
-                expr=f"{new_store_node.data}[{loop_access},{in_state_access}]") if loop_access else Memlet(
-                    expr=f"{new_store_node.data}[{in_state_access}]")
+            memlet_data = (
+                Memlet(expr=f"{new_store_node.data}[{loop_access},{in_state_access}]")
+                if loop_access
+                else Memlet(expr=f"{new_store_node.data}[{in_state_access}]")
+            )
 
             memlets_stack.append(memlet_data)
 
@@ -342,8 +370,9 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
         if map_exist:
             # Check if this map exit writes to the data we want to save
             if any(
-                    isinstance(e.dst, nodes.AccessNode) and e.dst.data == forward_an.data
-                    for e in forward_state.out_edges(map_exist)):
+                isinstance(e.dst, nodes.AccessNode) and e.dst.data == forward_an.data
+                for e in forward_state.out_edges(map_exist)
+            ):
                 # Get the map entry of this map exit
                 tasklet_in_edges = forward_state.in_edges(assign_tasklet_node)
                 assert len(tasklet_in_edges) == 1
@@ -357,7 +386,8 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
                 # Get all the edges coming out of this specific in connector
                 collusion_edges = [
-                    e for e in forward_state.out_edges(tasklet_in_edge.src)
+                    e
+                    for e in forward_state.out_edges(tasklet_in_edge.src)
                     if e.src_conn == tasklet_in_edge.src_conn and e.dst != assign_tasklet_node
                 ]
 
@@ -368,18 +398,24 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     return new_store_node, memlets_stack
 
 
-def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
-                                   backward_state: SDFGState, source_node: nodes.AccessNode,
-                                   forward_node: nodes.AccessNode, target_node: nodes.Node, memlets: List[Memlet],
-                                   starting_edge: dgraph.MultiConnectorEdge):
+def connect_stored_data_to_target(
+    bwd_generator: "BackwardPassGenerator",
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    source_node: nodes.AccessNode,
+    forward_node: nodes.AccessNode,
+    target_node: nodes.Node,
+    memlets: list[Memlet],
+    starting_edge: dgraph.MultiConnectorEdge,
+):
     """
-        Connect the source node to the sink target node (both in the backawrd state) through a set of maps using the parameter memelets.
-        We use the forward_sink_edge to track which maps to make this connection through.
-        :param source_node: the source node of the new memlet path
-        :param sink_node: the sink node of the new memlet path
-        :param memlets: the set of memlets to use for the edges in the path
-        :param forward_sink_edge: the sink edge connecting the original nodes in the forward state
-        """
+    Connect the source node to the sink target node (both in the backawrd state) through a set of maps using the parameter memelets.
+    We use the forward_sink_edge to track which maps to make this connection through.
+    :param source_node: the source node of the new memlet path
+    :param sink_node: the sink node of the new memlet path
+    :param memlets: the set of memlets to use for the edges in the path
+    :param forward_sink_edge: the sink edge connecting the original nodes in the forward state
+    """
     # First, if the stored data is not already in the sdfg descriptors, add it
     # This is the case for NestedSDFGs
     if source_node.data not in backward_state.sdfg.arrays:
@@ -402,7 +438,7 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
         edge_src = edge.src
         if isinstance(edge_src, nodes.MapEntry):
             # Get the correponding map exist
-            map_exit = _find_map_exist_for_map_entry(map_entry=edge_src, state=forward_state)
+            map_exit = find_map_exist_for_map_entry(map_entry=edge_src, state=forward_state)
 
             # Use the lookup table to get the map entry in the backward state corresponding to this map exist in the forward state
             # Sanity check: this map entry should already exist in the backward state
@@ -425,8 +461,9 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
             memlet_data = copy.deepcopy(memlets.pop(0))
 
             # Add the edge with the corresponding memlet
-            backward_state.add_edge(bwd_map_entry, parent_node_out_connector, child_node, child_node_in_connector,
-                                    memlet_data)
+            backward_state.add_edge(
+                bwd_map_entry, parent_node_out_connector, child_node, child_node_in_connector, memlet_data
+            )
 
             child_node = bwd_map_entry
             child_node_in_connector = parent_node_in_connector
@@ -465,20 +502,21 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
                 # We take the last elements since we might add loop indices to the shape
                 # Sanity check the strides for this desc should be less than or equal to the stored strides
                 assert len(input_desc.strides) <= len(stored_strides)
-                input_desc.strides = stored_strides[-len(input_desc.shape):]
+                input_desc.strides = stored_strides[-len(input_desc.shape) :]
 
     # There should be the same number of memlets through the new path
     assert len(memlets) == 0
 
 
-def _get_assign_tasklet(forward_state: SDFGState,
-                        node: nodes.AccessNode,
-                        stored_node: nodes.AccessNode,
-                        last_edge: dgraph.MultiConnectorEdge,
-                        loop_iterators: str,
-                        cuda: bool = False):
-    """
-        """
+def get_assign_tasklet(
+    forward_state: SDFGState,
+    node: nodes.AccessNode,
+    stored_node: nodes.AccessNode,
+    last_edge: dgraph.MultiConnectorEdge,
+    loop_iterators: str,
+    cuda: bool = False,
+):
+    """ """
     # Create the assign tasklet
     assign_tasklet_node_in_connector = "in_stored_" + node.data
     assign_tasklet_node_out_connector = "out_stored_" + node.data
@@ -502,16 +540,15 @@ def _get_assign_tasklet(forward_state: SDFGState,
                 memlet_access_iterators.append(str(element[0]))
             else:
                 # This is a range tuple we need to add an iterator for
-                # Create a random new free symbol
-                free_symbol = forward_state.sdfg.find_new_symbol("si")
-
-                # Add the new symbol here so that find_new_symbol doesn't return it again
-                forward_state.sdfg.add_symbol(free_symbol, dtypes.int64)
+                # A map parameter that neither the SDFG nor an earlier dimension uses
+                free_symbol, index = "si", 0
+                while free_symbol in param_dict or forward_state.sdfg.is_name_used(free_symbol):
+                    free_symbol, index = f"si_{index}", index + 1
                 memlet_access_iterators.append(free_symbol)
                 param_dict.update({free_symbol: element})
 
         # Build the memlets for input and output
-        in_state_access = ','.join(memlet_access_iterators)
+        in_state_access = ",".join(memlet_access_iterators)
         input_memlet = Memlet(expr=f"{last_edge.data.data}[{in_state_access}]")
         if loop_iterators:
             output_memlet = Memlet(expr=f"{stored_node.data}[{loop_iterators},{in_state_access}]")
@@ -525,7 +562,8 @@ def _get_assign_tasklet(forward_state: SDFGState,
             code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
             outputs={assign_tasklet_node_out_connector: output_memlet},
             schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
-            external_edges=False)
+            external_edges=False,
+        )
 
         # Add the necessary connectors for external connections
         map_entry.add_in_connector("IN_store_block")
@@ -537,8 +575,9 @@ def _get_assign_tasklet(forward_state: SDFGState,
             if e.dst == assign_tasklet_node:
                 # Update the source connector to route through our external connector
                 forward_state.remove_edge(e)
-                forward_state.add_edge(map_entry, "OUT_store_block", assign_tasklet_node,
-                                       assign_tasklet_node_in_connector, e.data)
+                forward_state.add_edge(
+                    map_entry, "OUT_store_block", assign_tasklet_node, assign_tasklet_node_in_connector, e.data
+                )
                 map_entry.add_out_connector("OUT_store_block")
                 break
 
@@ -547,8 +586,9 @@ def _get_assign_tasklet(forward_state: SDFGState,
             if e.src == assign_tasklet_node:
                 # Update the destination connector to route through our external connector
                 forward_state.remove_edge(e)
-                forward_state.add_edge(assign_tasklet_node, assign_tasklet_node_out_connector, map_exit,
-                                       "IN_store_block", e.data)
+                forward_state.add_edge(
+                    assign_tasklet_node, assign_tasklet_node_out_connector, map_exit, "IN_store_block", e.data
+                )
                 map_exit.add_in_connector("IN_store_block")
                 break
 
@@ -583,7 +623,7 @@ def _get_assign_tasklet(forward_state: SDFGState,
     return return_node, return_connector
 
 
-def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -> nodes.MapExit:
+def find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -> nodes.MapExit:
     """
     Find the map exist that corresponds to the input map entry
     """
@@ -596,8 +636,9 @@ def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -
     return src_candidates[0]
 
 
-def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generator', s: sp.Symbol,
-                                      loops: List[LoopRegion]) -> int:
+def get_symbol_upper_bound_from_loop(
+    bwd_generator: "BackwardPassGenerator", s: sp.Symbol, loops: list[LoopRegion]
+) -> int:
     """
     Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
     Raises an error if the symbol is not a loop index or the upper bound cannot be extracted correctly.
@@ -610,11 +651,12 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
             raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
         loop_index = str(list(loop_indices)[0])
     elif isinstance(s, str):
-        # Convert the string to a symbolic expression and extract free symbols
+        # Convert the string to a symbolic expression and extract free symbols. Not sympify: a
+        # subset dimension spells integer division as ``//``, which sympify reads as a rational.
         try:
-            expr = sp.sympify(s)
-        except (sp.SympifyError, TypeError, ValueError) as e:
-            raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed as a symbolic expression: {e}")
+            expr = symbolic.pystr_to_symbolic(s)
+        except (sp.SympifyError, SyntaxError, TypeError, ValueError) as e:
+            raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed as a symbolic expression: {e}") from e
 
         # We don't want to match global SDFG symbols
         loop_indices = {symb for symb in expr.free_symbols if str(symb) not in bwd_generator.sdfg.free_symbols}
@@ -631,14 +673,15 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
         # Get the loop range for this symbol
         loop_size = None
         for l in loops:
-            # Convert the sympy symbol to string to check if it macthes the loop variable
-            if loop_index in l.loop_variable:
+            # Compare the names, not one against the other as a substring: an ``i`` would claim the
+            # bounds of the nearest enclosing ``idx`` loop.
+            if loop_index == l.loop_variable:
                 # Get the max loop range
                 start, end = ad_utils.extract_loop_region_info(l)
 
                 # Check if the loop variable has a negative coefficient
                 # by extracting the coefficient from the affine expression
-                s_expr = sp.sympify(s) if isinstance(s, str) else s
+                s_expr = symbolic.pystr_to_symbolic(s) if isinstance(s, str) else s
                 # Find the actual symbol in the expression that matches loop_index by name
                 loop_symbol = None
                 for sym in s_expr.free_symbols:
@@ -662,19 +705,20 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
 
     if loop_size is None:
         raise AutoDiffException(
-            f"Can't figure out how to save the data inside: {l.label} because of its symbol shape {s}")
+            f"Can't figure out how to save the data inside: {l.label} because of its symbol shape {s}"
+        )
 
     # We will call this function recusrively until loop size is numeric or it is a global SDFG symbol
     if ad_utils.shape_has_symbols_to_replace(bwd_generator.sdfg, loop_size):
-        loop_size, _ = _get_symbol_upper_bound_from_loop(bwd_generator, loop_size, loops)
+        loop_size, _ = get_symbol_upper_bound_from_loop(bwd_generator, loop_size, loops)
     return loop_size, loop_index
 
 
-def _get_all_enclosing_loops(forward_state: SDFGState) -> List[LoopRegion]:
+def get_all_enclosing_loops(forward_state: SDFGState) -> list[LoopRegion]:
     """
-        Check if this state will be executed several times within a loop.
-        We check if any of the parents of this state is a loop region.
-        """
+    Check if this state will be executed several times within a loop.
+    We check if any of the parents of this state is a loop region.
+    """
     all_loops = []
     parent = forward_state.parent_graph
     while parent is not None:

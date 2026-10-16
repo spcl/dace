@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
 
 import sympy as sp
 
-from dace import data, dtypes, registry, subsets, symbolic
 import dace.codegen.dispatcher as dispatcher_mod
+from dace import data, dtypes, registry, subsets, symbolic
 from dace.codegen.py import control_flow as py_cflow
 from dace.codegen.py.framecode import codeblock_to_python
 from dace.codegen.py.prettycode import PythonCodeIOStream
@@ -42,39 +42,39 @@ _SCOPE_OUT_PREFIX: str = "OUT_"
 #: ``@ct.kernel`` cannot capture a numpy ufunc as a constant, so calls inside
 #: a cuTile scope are rewritten to their ``cuda.tile`` equivalents.
 _CT_MATH_FUNCS: Dict[str, str] = {
-    'sqrt': 'sqrt',
-    'rsqrt': 'rsqrt',
-    'exp': 'exp',
-    'exp2': 'exp2',
-    'log': 'log',
-    'log2': 'log2',
-    'sin': 'sin',
-    'cos': 'cos',
-    'tan': 'tan',
-    'sinh': 'sinh',
-    'cosh': 'cosh',
-    'tanh': 'tanh',
-    'floor': 'floor',
-    'ceil': 'ceil',
-    'ceiling': 'ceil',
-    'abs': 'abs',
-    'fabs': 'abs',
-    'Abs': 'abs',
-    'isnan': 'isnan',
-    'atan2': 'atan2',
-    'arctan2': 'atan2',
-    'pow': 'pow',
-    'fmin': 'minimum',
-    'minimum': 'minimum',
-    'fmax': 'maximum',
-    'maximum': 'maximum',
+    "sqrt": "sqrt",
+    "rsqrt": "rsqrt",
+    "exp": "exp",
+    "exp2": "exp2",
+    "log": "log",
+    "log2": "log2",
+    "sin": "sin",
+    "cos": "cos",
+    "tan": "tan",
+    "sinh": "sinh",
+    "cosh": "cosh",
+    "tanh": "tanh",
+    "floor": "floor",
+    "ceil": "ceil",
+    "ceiling": "ceil",
+    "abs": "abs",
+    "fabs": "abs",
+    "Abs": "abs",
+    "isnan": "isnan",
+    "atan2": "atan2",
+    "arctan2": "atan2",
+    "pow": "pow",
+    "fmin": "minimum",
+    "minimum": "minimum",
+    "fmax": "maximum",
+    "maximum": "maximum",
 }
 
 #: Dtype names an explicit cast can carry (``float64`` / ``int32`` / ``bool`` / ...),
 #: built from the dtype registry. VTI keeps casts rather than stripping them, so a
 #: kept ``dace.float64(x)`` / ``np.int32(x)`` reaches the kernel module-qualified;
 #: cuda.tile can't resolve ``dace``/``np``, so it is rewritten to ``ct.astype``.
-_CT_CAST_DTYPES = {s.split('::')[-1] for s in dtypes.TYPECLASS_TO_STRING.values()}
+_CT_CAST_DTYPES = {s.split("::")[-1] for s in dtypes.TYPECLASS_TO_STRING.values()}
 
 
 def _ct_attr(name: str) -> ast.Attribute:
@@ -83,7 +83,7 @@ def _ct_attr(name: str) -> ast.Attribute:
     :param name: Attribute name on the ``cuda.tile`` module alias ``ct``.
     :returns: The ``ast.Attribute`` node (load context).
     """
-    return ast.Attribute(value=ast.Name(id='ct', ctx=ast.Load()), attr=name, ctx=ast.Load())
+    return ast.Attribute(value=ast.Name(id="ct", ctx=ast.Load()), attr=name, ctx=ast.Load())
 
 
 def _literal_value(arm: ast.expr) -> Optional[object]:
@@ -179,23 +179,32 @@ class _CuTileTaskletRewriter(ast.NodeTransformer):
         gating.
         """
         from dace.codegen.py.sympy_function_redefinitions import _NUMPY_EQUIVALENTS
+
         self.generic_visit(node)
-        if (isinstance(node.func, ast.Attribute) and node.func.attr in _CT_CAST_DTYPES
-                and isinstance(node.func.value, ast.Name) and node.func.value.id in ('dace', 'numpy', 'np')
-                and len(node.args) == 1):
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in _CT_CAST_DTYPES
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in ("dace", "numpy", "np")
+            and len(node.args) == 1
+        ):
             # A kept dtype cast reaches the kernel module-qualified (``dace.float64(x)``);
             # cuda.tile can't resolve ``dace``/``np``, so rewrite to ``ct.astype(x, ct.<dtype>)``.
             dt = node.func.attr
-            return ast.Call(func=_ct_attr('astype'),
-                            args=[node.args[0], _ct_attr('bool_' if dt == 'bool' else dt)],
-                            keywords=node.keywords)
+            return ast.Call(
+                func=_ct_attr("astype"),
+                args=[node.args[0], _ct_attr("bool_" if dt == "bool" else dt)],
+                keywords=node.keywords,
+            )
         if isinstance(node.func, ast.Name):
             ct_name = _CT_MATH_FUNCS.get(node.func.id)
             if ct_name is not None:
                 node.func = _ct_attr(ct_name)
             elif node.func.id in _NUMPY_EQUIVALENTS:
-                warnings.warn(f"cuTile codegen: math function {node.func.id!r} has no cuda.tile "
-                              f"equivalent; the kernel will fail to compile at runtime.")
+                warnings.warn(
+                    f"cuTile codegen: math function {node.func.id!r} has no cuda.tile "
+                    f"equivalent; the kernel will fail to compile at runtime."
+                )
         return node
 
     def _cast_literal_arm(self, arm: ast.expr, other: ast.expr) -> ast.expr:
@@ -205,11 +214,11 @@ class _CuTileTaskletRewriter(ast.NodeTransformer):
         if value is None or not (isinstance(other, ast.Name) and other.id in self._tile_conns):
             return arm
         dtype_name = self._tile_conns[other.id]
-        if isinstance(value, float) and value != int(value) and ('int' in dtype_name or 'bool' in dtype_name):
+        if isinstance(value, float) and value != int(value) and ("int" in dtype_name or "bool" in dtype_name):
             # Fractional literal vs integer tile: ct.astype would silently
             # truncate (0.5 -> 0). Leave the arm uncast — see class docstring.
             return arm
-        return ast.Call(func=_ct_attr('astype'), args=[arm, _ct_attr(dtype_name)], keywords=[])
+        return ast.Call(func=_ct_attr("astype"), args=[arm, _ct_attr(dtype_name)], keywords=[])
 
     def visit_IfExp(self, node: ast.IfExp) -> ast.expr:
         """Rewrite ``A if cond else B`` over tiles to ``ct.where(cond, A, B)``."""
@@ -219,7 +228,7 @@ class _CuTileTaskletRewriter(ast.NodeTransformer):
             return node  # Scalar condition: plain Python branching is fine.
         then_arm = self._cast_literal_arm(node.body, node.orelse)
         else_arm = self._cast_literal_arm(node.orelse, node.body)
-        return ast.Call(func=_ct_attr('where'), args=[node.test, then_arm, else_arm], keywords=[])
+        return ast.Call(func=_ct_attr("where"), args=[node.test, then_arm, else_arm], keywords=[])
 
 
 def _rewrite_cutile_tasklet_code(code: str, tile_conn_dtypes: Dict[str, str]) -> str:
@@ -334,7 +343,7 @@ def _matching_inner_connector(outer_conn: str) -> str:
     """
     if not outer_conn.startswith(_SCOPE_IN_PREFIX):
         raise ValueError(f"Expected connector starting with {_SCOPE_IN_PREFIX!r}, got {outer_conn!r}")
-    return _SCOPE_OUT_PREFIX + outer_conn[len(_SCOPE_IN_PREFIX):]
+    return _SCOPE_OUT_PREFIX + outer_conn[len(_SCOPE_IN_PREFIX) :]
 
 
 def _matching_outer_connector(inner_conn: str) -> str:
@@ -346,7 +355,7 @@ def _matching_outer_connector(inner_conn: str) -> str:
     """
     if not inner_conn.startswith(_SCOPE_OUT_PREFIX):
         raise ValueError(f"Expected connector starting with {_SCOPE_OUT_PREFIX!r}, got {inner_conn!r}")
-    return _SCOPE_IN_PREFIX + inner_conn[len(_SCOPE_OUT_PREFIX):]
+    return _SCOPE_IN_PREFIX + inner_conn[len(_SCOPE_OUT_PREFIX) :]
 
 
 def _is_scalar_buffer_name(name: str, desc: data.Data) -> bool:
@@ -360,7 +369,7 @@ def _is_scalar_buffer_name(name: str, desc: data.Data) -> bool:
     :param desc: The data descriptor.
     :returns: True for non-transient, non-member Scalar descriptors.
     """
-    return isinstance(desc, data.Scalar) and not desc.transient and '.' not in name
+    return isinstance(desc, data.Scalar) and not desc.transient and "." not in name
 
 
 def _array_runtime_name(sdfg: "SDFG", name: str) -> str:
@@ -377,9 +386,9 @@ def _array_runtime_name(sdfg: "SDFG", name: str) -> str:
     if desc is None:
         return name
     if desc.lifetime in (
-            dtypes.AllocationLifetime.Global,
-            dtypes.AllocationLifetime.Persistent,
-            dtypes.AllocationLifetime.External,
+        dtypes.AllocationLifetime.Global,
+        dtypes.AllocationLifetime.Persistent,
+        dtypes.AllocationLifetime.External,
     ):
         base = f"globals()[{root_name!r}]"
         return f"{base}.{suffix}" if sep else base
@@ -408,7 +417,8 @@ def _grid_exprs_from_map_entry(entry: nodes.MapEntry) -> List[str]:
     # Delegate to the single shared implementation so the map-entry grid and the
     # tile-op ``cutile`` expansions cannot drift apart (divergent grid strings
     # would silently desynchronize the folded launch-grid PIDs).
-    from dace.libraries.tileops._pure_codegen import cutile_grid_size_exprs
+    from dace.libraries.tileops.cutile import cutile_grid_size_exprs
+
     return cutile_grid_size_exprs(entry)
 
 
@@ -422,7 +432,7 @@ def _fold_grid_to_launch(grid_exprs: List[str]) -> Tuple[List[str], List[str]]:
     recovered inside the kernel via integer div/mod.
 
     The fold layout is the single canonical contract defined in
-    :mod:`dace.libraries.tileops._pure_codegen` (``cutile_launch_grid_dims`` /
+    :mod:`dace.libraries.tileops.cutile` (``cutile_launch_grid_dims`` /
     ``cutile_bid_expr``), shared with every tile-op ``cutile`` expansion so the
     map-entry block IDs and the tile-op block IDs agree: the two innermost map
     dimensions map to grid axes 1 and 2, and the leading ``K-2`` dimensions are
@@ -436,7 +446,8 @@ def _fold_grid_to_launch(grid_exprs: List[str]) -> Tuple[List[str], List[str]]:
         ``ct.launch``, and ``pid_stmts`` is the list of Python statement strings
         that bind ``__pid{d}`` for every map dimension ``d`` inside the kernel.
     """
-    from dace.libraries.tileops._pure_codegen import cutile_bid_expr, cutile_launch_grid_dims
+    from dace.libraries.tileops.cutile import cutile_bid_expr, cutile_launch_grid_dims
+
     num_dims = len(grid_exprs)
     launch_dims = cutile_launch_grid_dims(grid_exprs)
     pid_stmts = [f"__pid{d} = {cutile_bid_expr(d, num_dims, grid_exprs)}" for d in range(num_dims)]
@@ -475,8 +486,9 @@ def _ordered_unique(items: Iterable[str]) -> List[str]:
     return sorted(set(items))
 
 
-def _collect_free_symbols(entry: nodes.MapEntry, dfg_scope: object, sdfg: "SDFG",
-                          symbol_types: Optional[Dict[str, dtypes.typeclass]] = None) -> List[str]:
+def _collect_free_symbols(
+    entry: nodes.MapEntry, dfg_scope: object, sdfg: "SDFG", symbol_types: Optional[Dict[str, dtypes.typeclass]] = None
+) -> List[str]:
     """Collect free symbols used in a map scope.
 
     Only names visible at the launch site can be kernel arguments; names
@@ -500,7 +512,7 @@ def _collect_free_symbols(entry: nodes.MapEntry, dfg_scope: object, sdfg: "SDFG"
     for scope_node in dfg_scope.nodes():
         if isinstance(scope_node, nodes.NestedSDFG):
             for expr in scope_node.symbol_mapping.values():
-                if hasattr(expr, 'free_symbols'):
+                if hasattr(expr, "free_symbols"):
                     syms |= {str(s) for s in expr.free_symbols}
                 else:
                     syms.add(str(expr))
@@ -553,8 +565,7 @@ def _is_cutile_node(state: "SDFGState", node: nodes.Node) -> bool:
         return True
     if isinstance(node, nodes.MapExit):
         entry = state.entry_node(node)
-        if (entry is not None and isinstance(entry, nodes.MapEntry)
-                and entry.map.schedule == dtypes.ScheduleType.CuTile):
+        if entry is not None and isinstance(entry, nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.CuTile:
             return True
     return _enclosing_cutile_entry(state, node) is not None
 
@@ -602,15 +613,18 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 self._dispatcher.register_copy_dispatcher(dtypes.StorageType.CuTile_Tile, peer_storage, sched, self)
         # Also register tile-to-tile copies within a CuTile scope.
         for sched in _copy_schedules:
-            self._dispatcher.register_copy_dispatcher(dtypes.StorageType.CuTile_Tile, dtypes.StorageType.CuTile_Tile,
-                                                      sched, self)
+            self._dispatcher.register_copy_dispatcher(
+                dtypes.StorageType.CuTile_Tile, dtypes.StorageType.CuTile_Tile, sched, self
+            )
         # Register for cross-storage copies between CPU_Heap and GPU_Global.
         # These arise from apply_gpu_transformations() copy-in/copy-out states
         # that transfer data between host and device outside any map scope.
-        self._dispatcher.register_copy_dispatcher(dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, None,
-                                                  self)
-        self._dispatcher.register_copy_dispatcher(dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Heap, None,
-                                                  self)
+        self._dispatcher.register_copy_dispatcher(
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, None, self
+        )
+        self._dispatcher.register_copy_dispatcher(
+            dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Heap, None, self
+        )
         # Register array dispatcher for CuTile_Tile storage (allocation is a no-op).
         self._dispatcher.register_array_dispatcher(dtypes.StorageType.CuTile_Tile, self)
 
@@ -689,15 +703,24 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         :param node: The node to check.
         :returns: ``True`` if generating cuTile code is valid for this node.
         """
-        return (_enclosing_cutile_entry(state, node) is not None or self._sdfg_is_cutile_body(sdfg))
+        return _enclosing_cutile_entry(state, node) is not None or self._sdfg_is_cutile_body(sdfg)
 
     # ------------------------------------------------------------------
     # Array dispatcher methods (no-ops for tile arrays)
     # ------------------------------------------------------------------
 
-    def allocate_array(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.Node, nodedesc: object,
-                       global_stream: PythonCodeIOStream, declaration_stream: PythonCodeIOStream,
-                       allocation_stream: PythonCodeIOStream) -> None:
+    def allocate_array(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.Node,
+        nodedesc: object,
+        global_stream: PythonCodeIOStream,
+        declaration_stream: PythonCodeIOStream,
+        allocation_stream: PythonCodeIOStream,
+    ) -> None:
         """Tile arrays inside cuTile kernels are Python locals -- no allocation needed.
 
         :param sdfg: The SDFG.
@@ -712,9 +735,17 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         """
         pass
 
-    def deallocate_array(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.Node,
-                         nodedesc: object, function_stream: PythonCodeIOStream,
-                         callsite_stream: PythonCodeIOStream) -> None:
+    def deallocate_array(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.Node,
+        nodedesc: object,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Tile arrays inside cuTile kernels are Python locals -- no deallocation needed.
 
         :param sdfg: The SDFG.
@@ -728,8 +759,17 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         """
         pass
 
-    def declare_array(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.Node, nodedesc: object,
-                      global_stream: PythonCodeIOStream, declaration_stream: PythonCodeIOStream) -> None:
+    def declare_array(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.Node,
+        nodedesc: object,
+        global_stream: PythonCodeIOStream,
+        declaration_stream: PythonCodeIOStream,
+    ) -> None:
         """Tile arrays are not declared -- they are created by ct.load or tasklet output.
 
         :param sdfg: The SDFG.
@@ -747,9 +787,18 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
     # Copy dispatcher method
     # ------------------------------------------------------------------
 
-    def copy_memory(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, src_node: nodes.Node,
-                    dst_node: nodes.Node, edge: object, function_stream: PythonCodeIOStream,
-                    callsite_stream: PythonCodeIOStream) -> None:
+    def copy_memory(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        src_node: nodes.Node,
+        dst_node: nodes.Node,
+        edge: object,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Handle copy operations between arrays.
 
         Supports three categories of copies:
@@ -780,9 +829,11 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         """
         memlet = edge.data
         if not isinstance(src_node, nodes.AccessNode) or not isinstance(dst_node, nodes.AccessNode):
-            raise NotImplementedError(f"CuTile copy_memory only supports AccessNode-to-AccessNode "
-                                      f"copies, got {type(src_node).__name__} -> "
-                                      f"{type(dst_node).__name__}")
+            raise NotImplementedError(
+                f"CuTile copy_memory only supports AccessNode-to-AccessNode "
+                f"copies, got {type(src_node).__name__} -> "
+                f"{type(dst_node).__name__}"
+            )
 
         src_storage = sdfg.arrays[src_node.data].storage
         dst_storage = sdfg.arrays[dst_node.data].storage
@@ -799,8 +850,9 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         is_gpu_to_cpu = src_on_gpu and dst_on_host
 
         if is_cpu_to_gpu or is_gpu_to_cpu:
-            self._emit_cross_storage_copy(sdfg, cfg, state_id, src_node, dst_node, memlet, is_cpu_to_gpu,
-                                          callsite_stream)
+            self._emit_cross_storage_copy(
+                sdfg, cfg, state_id, src_node, dst_node, memlet, is_cpu_to_gpu, callsite_stream
+            )
             return
 
         # --- Same-storage / CuTile_Tile fallback copies ---
@@ -991,7 +1043,7 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         for dimension in desc.shape:
             value = symbolic.simplify(symbolic.replace_symbols(sp.sympify(dimension), constants))
             if value.free_symbols or value.is_integer is not True:
-                raise ValueError(f'cuTile array {tile_name!r} needs compile-time integer dimensions, got {dimension}')
+                raise ValueError(f"cuTile array {tile_name!r} needs compile-time integer dimensions, got {dimension}")
             resolved.append(int(value))
         return tuple(resolved)
 
@@ -1020,14 +1072,18 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         # 1. All dimensions must be positive.
         for d, dim in enumerate(tile_shape):
             if dim <= 0:
-                raise RuntimeError(f"Tile {tile_name!r} has non-positive dimension {dim} "
-                                   f"at axis {d}. All tile dimensions must be positive.")
+                raise RuntimeError(
+                    f"Tile {tile_name!r} has non-positive dimension {dim} "
+                    f"at axis {d}. All tile dimensions must be positive."
+                )
 
         # 2. Tile dimensionality must not exceed map dimensionality.
         map_ndim = len(entry.map.range)
         if len(tile_shape) > map_ndim:
-            raise RuntimeError(f"Tile {tile_name!r} has {len(tile_shape)} dimensions but "
-                               f"the enclosing map has only {map_ndim} dimensions.")
+            raise RuntimeError(
+                f"Tile {tile_name!r} has {len(tile_shape)} dimensions but "
+                f"the enclosing map has only {map_ndim} dimensions."
+            )
 
         # 3. Advisory: warn when tile dims don't match map steps.
         for d, (_, _, step) in enumerate(entry.map.range):
@@ -1039,7 +1095,8 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                     f"Tile {tile_name!r} dimension {d} has size "
                     f"{tile_shape[d]} but the enclosing map step is "
                     f"{step_val}. The gather/scatter path will be used.",
-                    stacklevel=2)
+                    stacklevel=2,
+                )
 
     # ------------------------------------------------------------------
     # Trace load/store sources and targets through scope boundaries
@@ -1068,8 +1125,9 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         return None
 
     @staticmethod
-    def _trace_load_source(state: "SDFGState", entry: nodes.MapEntry, tile_node: nodes.AccessNode,
-                           in_edge: object) -> Optional[str]:
+    def _trace_load_source(
+        state: "SDFGState", entry: nodes.MapEntry, tile_node: nodes.AccessNode, in_edge: object
+    ) -> Optional[str]:
         """Trace through a MapEntry to find the global array feeding a tile.
 
         Given an edge MapEntry -> AccessNode(tile), finds the corresponding
@@ -1088,8 +1146,9 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         return outer_edge.data.data if outer_edge.data else outer_edge.src.data
 
     @staticmethod
-    def _trace_store_target(state: "SDFGState", exit_node: nodes.MapExit, tile_node: nodes.AccessNode,
-                            out_edge: object) -> Optional[str]:
+    def _trace_store_target(
+        state: "SDFGState", exit_node: nodes.MapExit, tile_node: nodes.AccessNode, out_edge: object
+    ) -> Optional[str]:
         """Trace through a MapExit to find the global array receiving a tile.
 
         Given an edge AccessNode(tile) -> MapExit, finds the corresponding
@@ -1126,8 +1185,11 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             return None
         outer_conn = _matching_outer_connector(src_conn)
         for outer_edge in state.in_edges_by_connector(entry, outer_conn):
-            if (isinstance(outer_edge.src, nodes.AccessNode) and outer_edge.data is not None
-                    and outer_edge.data.subset is not None):
+            if (
+                isinstance(outer_edge.src, nodes.AccessNode)
+                and outer_edge.data is not None
+                and outer_edge.data.subset is not None
+            ):
                 return [symstr(r[0]) for r in outer_edge.data.subset.ranges]
         return None
 
@@ -1146,8 +1208,11 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             return None
         outer_conn = _matching_inner_connector(dst_conn)
         for outer_edge in state.out_edges_by_connector(exit_node, outer_conn):
-            if (isinstance(outer_edge.dst, nodes.AccessNode) and outer_edge.data is not None
-                    and outer_edge.data.subset is not None):
+            if (
+                isinstance(outer_edge.dst, nodes.AccessNode)
+                and outer_edge.data is not None
+                and outer_edge.data.subset is not None
+            ):
                 return [symstr(r[0]) for r in outer_edge.data.subset.ranges]
         return None
 
@@ -1197,9 +1262,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
     # Gather / scatter emission helpers
     # ------------------------------------------------------------------
 
-    def _emit_gather_load(self, callsite_stream: PythonCodeIOStream, arr: str, tile_var: str,
-                          map_index_exprs: List[str], tile_shape: Tuple[int,
-                                                                        ...], cfg: object, state_id: int) -> List[str]:
+    def _emit_gather_load(
+        self,
+        callsite_stream: PythonCodeIOStream,
+        arr: str,
+        tile_var: str,
+        map_index_exprs: List[str],
+        tile_shape: Tuple[int, ...],
+        cfg: object,
+        state_id: int,
+    ) -> List[str]:
         """Emit ``ct.gather`` with computed index tiles for non-aligned loads.
 
         Generates per-dimension index tiles via ``ct.arange`` and
@@ -1223,8 +1295,9 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
 
         for d in range(ndim):
             idx_var = f"__dace_ct_gidx_{tile_var}_{d}"
-            callsite_stream.write(f"{idx_var} = {map_index_exprs[d]} + ct.arange({tile_shape[d]}, dtype=ct.int32)", cfg,
-                                  state_id)
+            callsite_stream.write(
+                f"{idx_var} = {map_index_exprs[d]} + ct.arange({tile_shape[d]}, dtype=ct.int32)", cfg, state_id
+            )
             idx_vars.append(idx_var)
 
         if ndim > 1:
@@ -1235,22 +1308,29 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 reshape_str = ", ".join(str(x) for x in reshape_dims)
                 bcast_var = f"{idx_var}_nd"
                 callsite_stream.write(
-                    f"{bcast_var} = ct.broadcast_to("
-                    f"ct.reshape({idx_var}, ({reshape_str},)), "
-                    f"({shape_str},))", cfg, state_id)
+                    f"{bcast_var} = ct.broadcast_to(ct.reshape({idx_var}, ({reshape_str},)), ({shape_str},))",
+                    cfg,
+                    state_id,
+                )
                 broadcast_vars.append(bcast_var)
             indices_str = ", ".join(broadcast_vars)
         else:
             indices_str = idx_vars[0]
             broadcast_vars = idx_vars
 
-        callsite_stream.write(f"{tile_var} = ct.gather({arr}, ({indices_str},), "
-                              f"padding_value=0)", cfg, state_id)
+        callsite_stream.write(f"{tile_var} = ct.gather({arr}, ({indices_str},), padding_value=0)", cfg, state_id)
 
         return broadcast_vars if ndim > 1 else idx_vars
 
-    def _emit_scatter_store(self, callsite_stream: PythonCodeIOStream, arr: str, tile_expr: str,
-                            gather_idx_vars: List[str], cfg: object, state_id: int) -> None:
+    def _emit_scatter_store(
+        self,
+        callsite_stream: PythonCodeIOStream,
+        arr: str,
+        tile_expr: str,
+        gather_idx_vars: List[str],
+        cfg: object,
+        state_id: int,
+    ) -> None:
         """Emit ``ct.scatter`` with precomputed index tiles.
 
         Reuses the index tile variables generated by
@@ -1271,8 +1351,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
     # Node dispatch entry point
     # ------------------------------------------------------------------
 
-    def generate_node(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.Node,
-                      function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def generate_node(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.Node,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Dispatch code generation for a single node inside a CuTile scope.
 
         :param sdfg: The SDFG.
@@ -1293,8 +1381,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
     # MapEntry: PIDs + map variable bindings only
     # ------------------------------------------------------------------
 
-    def _generate_MapEntry(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.MapEntry,
-                           function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def _generate_MapEntry(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.MapEntry,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Emit block IDs and map variable bindings for a cuTile kernel.
 
         In the AccessNode-centric design, MapEntry only sets up the
@@ -1326,8 +1422,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
     # MapExit: no-op (stores handled at AccessNode)
     # ------------------------------------------------------------------
 
-    def _generate_MapExit(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.MapExit,
-                          function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def _generate_MapExit(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.MapExit,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """No-op -- tile stores are handled at each AccessNode.
 
         :param sdfg: The SDFG.
@@ -1376,8 +1480,9 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             if e.data is not None and e.data.data is not None and isinstance(e.src, nodes.AccessNode)
         }
 
-    def _scalar_needs_tile_load(self, state: "SDFGState", entry: Optional[nodes.MapEntry], name: str,
-                                desc: object) -> bool:
+    def _scalar_needs_tile_load(
+        self, state: "SDFGState", entry: Optional[nodes.MapEntry], name: str, desc: object
+    ) -> bool:
         """Whether a numeric-Scalar read must be bound as a 0-d tile load.
 
         Mirrors the launch site exactly when the kernel entry is at hand: every
@@ -1399,12 +1504,20 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         if not _is_device_scalar(desc):
             return False
         if entry is not None:
-            return (name in self._kernel_input_names(state, entry)
-                    and name not in self._kernel_output_names(state, entry))
+            return name in self._kernel_input_names(state, entry) and name not in self._kernel_output_names(
+                state, entry
+            )
         return _is_device_staged_scalar(desc)
 
-    def _emit_scalar_bridge_binding(self, sdfg: "SDFG", state: "SDFGState", node: nodes.AccessNode, cfg: object,
-                                    state_id: int, callsite_stream: PythonCodeIOStream) -> None:
+    def _emit_scalar_bridge_binding(
+        self,
+        sdfg: "SDFG",
+        state: "SDFGState",
+        node: nodes.AccessNode,
+        cfg: object,
+        state_id: int,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Bind a Register-storage scalar bridge to its source kernel parameter.
 
         A loop-invariant scalar (e.g. ``alpha``) that the vectorizer staged via
@@ -1440,16 +1553,20 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             # kernel body -- surface it instead of silently emitting nothing.
             if not any(isinstance(e.src, nodes.CodeNode) for e in in_edges):
                 srcs = sorted({type(e.src).__name__ for e in in_edges})
-                warnings.warn(f"cuTile codegen: scalar bridge {node.data!r} is fed by {srcs} instead of a "
-                              f"MapEntry; no binding emitted (the kernel may reference an undefined name).")
+                warnings.warn(
+                    f"cuTile codegen: scalar bridge {node.data!r} is fed by {srcs} instead of a "
+                    f"MapEntry; no binding emitted (the kernel may reference an undefined name)."
+                )
             return
         kernel_entry = _enclosing_cutile_entry(state, node)
-        kernel_outputs = (self._kernel_output_names(state, kernel_entry) if kernel_entry is not None else set())
+        kernel_outputs = self._kernel_output_names(state, kernel_entry) if kernel_entry is not None else set()
         for in_edge in map_entry_edges:
             outer_edge = self._trace_load_source_edge(state, in_edge.src, in_edge)
             if outer_edge is None:
-                warnings.warn(f"cuTile codegen: could not trace the source of scalar bridge {node.data!r} "
-                              f"through MapEntry {in_edge.src.map.label!r}; no binding emitted.")
+                warnings.warn(
+                    f"cuTile codegen: could not trace the source of scalar bridge {node.data!r} "
+                    f"through MapEntry {in_edge.src.map.label!r}; no binding emitted."
+                )
                 continue
             src_name = outer_edge.data.data if outer_edge.data else outer_edge.src.data
             src_desc = sdfg.arrays.get(src_name)
@@ -1484,20 +1601,32 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 elif outer_edge.data is not None:
                     subset = outer_edge.data.subset
                 if subset is None:
-                    warnings.warn(f"cuTile codegen: scalar bridge {node.data!r} stages array "
-                                  f"{src_name!r} without a usable subset; no binding emitted.")
+                    warnings.warn(
+                        f"cuTile codegen: scalar bridge {node.data!r} stages array "
+                        f"{src_name!r} without a usable subset; no binding emitted."
+                    )
                     continue
                 index_exprs = _element_index_exprs(subset)
                 if index_exprs is None:
-                    warnings.warn(f"cuTile codegen: scalar bridge {node.data!r} stages a non-element "
-                                  f"subset {subset} of {src_name!r}; using the per-dim begins.")
+                    warnings.warn(
+                        f"cuTile codegen: scalar bridge {node.data!r} stages a non-element "
+                        f"subset {subset} of {src_name!r}; using the per-dim begins."
+                    )
                     index_exprs = _element_index_exprs(subset, allow_multi_element=True)
                 source_expr = _scalar_element_load(src_name, index_exprs)
             if source_expr != node.data:
                 callsite_stream.write(f"{node.data} = {source_expr}", cfg, state_id)
 
-    def _generate_AccessNode(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.AccessNode,
-                             function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def _generate_AccessNode(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.AccessNode,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Generate code for an AccessNode inside a cuTile scope.
 
         Handles four cases:
@@ -1538,6 +1667,7 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             # ``Undefined variable <name>``.
             if desc.storage == dtypes.StorageType.Register and isinstance(desc, data.Scalar):
                 self._emit_scalar_bridge_binding(sdfg, state, node, cfg, state_id, callsite_stream)
+                self._emit_scalar_reduction_store(sdfg, state, node, cfg, state_id, callsite_stream)
             return
 
         entry = _enclosing_cutile_entry(state, node)
@@ -1568,13 +1698,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 gather_index_exprs = self._apply_index_offsets(map_index_exprs, offsets)
 
                 if has_offset or self._needs_gather_for_tile(entry, tile_shape, sdfg):
-                    self._emit_gather_load(callsite_stream, global_arr, node.data, gather_index_exprs, tile_shape, cfg,
-                                           state_id)
+                    self._emit_gather_load(
+                        callsite_stream, global_arr, node.data, gather_index_exprs, tile_shape, cfg, state_id
+                    )
                 else:
                     shape_str = ", ".join(str(s) for s in tile_shape)
                     callsite_stream.write(
-                        f"{node.data} = ct.load({global_arr}, "
-                        f"index=({cutile_index},), shape=({shape_str},))", cfg, state_id)
+                        f"{node.data} = ct.load({global_arr}, index=({cutile_index},), shape=({shape_str},))",
+                        cfg,
+                        state_id,
+                    )
 
             elif isinstance(src, nodes.NestedSDFG):
                 # NestedSDFG output -> tile: bind variable. The nested-function
@@ -1593,14 +1726,18 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             elif isinstance(src, nodes.AccessNode):
                 # Tile-to-tile dataflow is a rename of an immutable value.
                 src_desc = sdfg.arrays.get(src.data)
-                if (src_desc is not None
-                        and src_desc.storage in (dtypes.StorageType.CuTile_Tile, dtypes.StorageType.Register)):
+                if src_desc is not None and src_desc.storage in (
+                    dtypes.StorageType.CuTile_Tile,
+                    dtypes.StorageType.Register,
+                ):
                     # TODO: Add check that shpaes match and we move the full tile
                     if src.data != node.data:
                         callsite_stream.write(f"{node.data} = {src.data}", cfg, state_id)
                 else:
-                    raise RuntimeError(f"AccessNode-to-AccessNode copy ({src.data!r} -> {node.data!r}) "
-                                       f"is not supported in CuTile scope. Use library nodes for copies.")
+                    raise RuntimeError(
+                        f"AccessNode-to-AccessNode copy ({src.data!r} -> {node.data!r}) "
+                        f"is not supported in CuTile scope. Use library nodes for copies."
+                    )
 
         # Process outgoing edges -- handle stores
         for out_edge in state.out_edges(node):
@@ -1627,12 +1764,20 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
 
                 if has_offset or self._needs_gather_for_tile(entry, tile_shape, sdfg):
                     # Build index tiles for scatter
-                    idx_vars = self._emit_gather_load(callsite_stream, global_arr, f"__ct_scatter_{node.data}",
-                                                      scatter_index_exprs, tile_shape, cfg, state_id)
+                    idx_vars = self._emit_gather_load(
+                        callsite_stream,
+                        global_arr,
+                        f"__ct_scatter_{node.data}",
+                        scatter_index_exprs,
+                        tile_shape,
+                        cfg,
+                        state_id,
+                    )
                     self._emit_scatter_store(callsite_stream, global_arr, node.data, idx_vars, cfg, state_id)
                 else:
-                    callsite_stream.write(f"ct.store({global_arr}, index=({cutile_index},), "
-                                          f"tile={node.data})", cfg, state_id)
+                    callsite_stream.write(
+                        f"ct.store({global_arr}, index=({cutile_index},), tile={node.data})", cfg, state_id
+                    )
 
             elif isinstance(dst, (nodes.Tasklet, nodes.NestedSDFG)):
                 # Tile -> tasklet: no code needed (tasklet reads the variable)
@@ -1643,18 +1788,60 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 # AccessNode's incoming edge; nothing to do here.  Reject only
                 # genuinely unsupported cross-storage copies.
                 dst_desc = sdfg.arrays.get(dst.data)
-                if (dst_desc is None
-                        or dst_desc.storage not in (dtypes.StorageType.CuTile_Tile, dtypes.StorageType.Register)):
+                if dst_desc is None or dst_desc.storage not in (
+                    dtypes.StorageType.CuTile_Tile,
+                    dtypes.StorageType.Register,
+                ):
                     # TODO: Add check that shpaes match and we move the full tile
-                    raise RuntimeError(f"AccessNode-to-AccessNode copy ({node.data!r} -> {dst.data!r}) "
-                                       f"is not supported in CuTile scope. Use library nodes for copies.")
+                    raise RuntimeError(
+                        f"AccessNode-to-AccessNode copy ({node.data!r} -> {dst.data!r}) "
+                        f"is not supported in CuTile scope. Use library nodes for copies."
+                    )
 
     # ------------------------------------------------------------------
     # Tasklet
     # ------------------------------------------------------------------
 
-    def _generate_Tasklet(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.Tasklet,
-                          function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def _emit_scalar_reduction_store(
+        self,
+        sdfg: "SDFG",
+        state: "SDFGState",
+        node: nodes.AccessNode,
+        cfg: object,
+        state_id: int,
+        stream: PythonCodeIOStream,
+    ) -> None:
+        """Commit a tile's scalar reduction to the shared device accumulator."""
+        from dace.frontend.operations import detect_reduction_type
+
+        atomic = {
+            dtypes.ReductionType.Sum: "atomic_add",
+            dtypes.ReductionType.Min: "atomic_min",
+            dtypes.ReductionType.Max: "atomic_max",
+        }
+        for edge in state.out_edges(node):
+            if not edge.data.wcr:
+                continue
+            path = state.memlet_path(edge)
+            target = path[-1].dst
+            if not isinstance(target, nodes.AccessNode) or target.desc(sdfg).storage != dtypes.StorageType.GPU_Global:
+                raise NotImplementedError("cuTile scalar reductions require a GPU_Global accumulator")
+            operation = atomic.get(detect_reduction_type(edge.data.wcr))
+            indices = _element_index_exprs(edge.data.get_dst_subset(edge, state))
+            if operation is None or indices is None:
+                raise NotImplementedError("Unsupported cuTile scalar reduction or accumulator subset")
+            stream.write(f"ct.{operation}({target.data}, ({', '.join(indices)},), {node.data})", cfg, state_id)
+
+    def _generate_Tasklet(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.Tasklet,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Generate code for a Tasklet inside a cuTile scope.
 
         Binds input connectors from tile variables, emits the tasklet
@@ -1678,8 +1865,10 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             raise RuntimeError("CuTile tasklet handler invoked outside a CuTile scope.")
 
         if node.instrument != dtypes.InstrumentationType.No_Instrumentation:
-            raise RuntimeError("Node-level instrumentation is not supported inside cuTile kernels; "
-                               "instrument the enclosing cuTile map (kernel) instead.")
+            raise RuntimeError(
+                "Node-level instrumentation is not supported inside cuTile kernels; "
+                "instrument the enclosing cuTile map (kernel) instead."
+            )
 
         init_code = codeblock_to_python(node.code_init).strip()
         if init_code:
@@ -1691,7 +1880,8 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         self._dispatcher.defined_vars.enter_scope(node)
         # Tile-valued input connectors and their ct dtype names, for the
         # kernel-body rewrites (ternary -> ct.where literal-arm casting).
-        from dace.libraries.tileops._pure_codegen import ct_dtype_name
+        from dace.libraries.tileops.cutile import ct_dtype_name
+
         tile_conn_dtypes: Dict[str, str] = {}
         for edge in state.in_edges(node):
             if not edge.dst_conn or not isinstance(edge.src, nodes.AccessNode):
@@ -1708,8 +1898,10 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 if isinstance(edge.src, nodes.AccessNode):
                     rhs = edge.src.data
                     src_desc = sdfg.arrays.get(rhs)
-                    if (src_desc is not None
-                            and src_desc.storage not in (dtypes.StorageType.CuTile_Tile, dtypes.StorageType.Register)):
+                    if src_desc is not None and src_desc.storage not in (
+                        dtypes.StorageType.CuTile_Tile,
+                        dtypes.StorageType.Register,
+                    ):
                         # Non-tile source at kernel scope. Binding the bare name
                         # hands the tasklet the WHOLE ct array, dropping the
                         # memlet subset (syrk's ``alpha * A[i, k]`` became
@@ -1719,8 +1911,12 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                             # Numeric-scalar kernel param: 1-element device
                             # array (launch-site convention) -> 0-d tile.
                             rhs = _scalar_tile_load(rhs)
-                        elif (isinstance(src_desc, data.Array) and not isinstance(src_desc, data.View)
-                              and edge.data is not None and edge.data.data == rhs):
+                        elif (
+                            isinstance(src_desc, data.Array)
+                            and not isinstance(src_desc, data.View)
+                            and edge.data is not None
+                            and edge.data.data == rhs
+                        ):
                             # Global array read: 0-d tile load of the addressed
                             # element. Multi-element subsets (e.g. gather
                             # sources) keep the raw array binding.
@@ -1751,9 +1947,13 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                         root_desc = sdfg.arrays.get(rhs)
                         if self._scalar_needs_tile_load(state, entry, rhs, root_desc):
                             rhs = _scalar_tile_load(rhs)
-                        elif (isinstance(root_desc, data.Array) and not isinstance(root_desc, data.View)
-                              and root_desc.storage not in (dtypes.StorageType.CuTile_Tile, dtypes.StorageType.Register)
-                              and edge.data is not None and edge.data.data == rhs):
+                        elif (
+                            isinstance(root_desc, data.Array)
+                            and not isinstance(root_desc, data.View)
+                            and root_desc.storage not in (dtypes.StorageType.CuTile_Tile, dtypes.StorageType.Register)
+                            and edge.data is not None
+                            and edge.data.data == rhs
+                        ):
                             # Global-array element read through the scope
                             # entry (symm's ``alpha * B[i, j]``): binding the
                             # bare name hands the tasklet the whole ct array.
@@ -1864,10 +2064,12 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
 
     #: Inner-SDFG storage types whose values are immutable Python locals
     #: (returned from the generated function rather than written in place).
-    _RETURNED_OUTPUT_STORAGES = frozenset({
-        dtypes.StorageType.CuTile_Tile,
-        dtypes.StorageType.Register,
-    })
+    _RETURNED_OUTPUT_STORAGES = frozenset(
+        {
+            dtypes.StorageType.CuTile_Tile,
+            dtypes.StorageType.Register,
+        }
+    )
 
     def _is_returned_output(self, inner_sdfg: "SDFG", conn: str) -> bool:
         """Whether an output connector is an immutable value (returned) rather
@@ -1880,8 +2082,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         desc = inner_sdfg.arrays.get(conn)
         return desc is not None and desc.storage in self._RETURNED_OUTPUT_STORAGES
 
-    def _generate_NestedSDFG(self, sdfg: "SDFG", cfg: object, dfg: object, state_id: int, node: nodes.NestedSDFG,
-                             function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def _generate_NestedSDFG(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg: object,
+        state_id: int,
+        node: nodes.NestedSDFG,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Emit a module-level function for a NestedSDFG and call it.
 
         :param sdfg: The containing SDFG.
@@ -1898,8 +2108,7 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         # Lower any tile-op library nodes to their cuTile tasklets first.
         inner_sdfg.expand_library_nodes(recursive=True)
 
-        func_name = (f"__dace_nested_{inner_sdfg.name}_{cfg.cfg_id}_"
-                     f"{state_id}_{state.node_id(node)}")
+        func_name = f"__dace_nested_{inner_sdfg.name}_{cfg.cfg_id}_{state_id}_{state.node_id(node)}"
 
         input_conns: List[str] = sorted({e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None})
         output_conns: List[str] = sorted({e.src_conn for e in state.out_edges(node) if e.src_conn is not None})
@@ -1921,8 +2130,10 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         # passed exactly once, matching the function's parameter list.
         input_conn_set = set(input_conns)
         call_args: List[str] = [
-            self._resolve_nsdfg_input_var(state, node, c) if c in input_conn_set else self._resolve_nsdfg_output_var(
-                state, node, c) for c in param_conns
+            self._resolve_nsdfg_input_var(state, node, c)
+            if c in input_conn_set
+            else self._resolve_nsdfg_output_var(state, node, c)
+            for c in param_conns
         ]
         for sym_name in symbol_names:
             mapping_expr = node.symbol_mapping.get(sym_name)
@@ -1937,8 +2148,14 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         else:
             callsite_stream.write(f"{func_name}({args_str})", cfg, state_id)
 
-    def _emit_nsdfg_function(self, inner_sdfg: "SDFG", func_name: str, params: List[str], returned_outputs: List[str],
-                             function_stream: PythonCodeIOStream) -> None:
+    def _emit_nsdfg_function(
+        self,
+        inner_sdfg: "SDFG",
+        func_name: str,
+        params: List[str],
+        returned_outputs: List[str],
+        function_stream: PythonCodeIOStream,
+    ) -> None:
         """Write the module-level function definition for a NestedSDFG.
 
         The body is generated through the shared node dispatcher — every node
@@ -1955,13 +2172,15 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
 
         def dispatch_state(inner_state: "SDFGState") -> str:
             tmp = PythonCodeIOStream()
-            self._dispatcher.dispatch_subgraph(inner_sdfg,
-                                               inner_state.parent_graph,
-                                               inner_state,
-                                               inner_state.block_id,
-                                               function_stream,
-                                               tmp,
-                                               skip_entry_node=False)
+            self._dispatcher.dispatch_subgraph(
+                inner_sdfg,
+                inner_state.parent_graph,
+                inner_state,
+                inner_state.block_id,
+                function_stream,
+                tmp,
+                skip_entry_node=False,
+            )
             return tmp.getvalue()
 
         py_cflow.control_flow_region_to_code(inner_sdfg, dispatch_state, self._frame, inner_sdfg.symbols, body_stream)
@@ -1993,7 +2212,8 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         inner_sdfg = node.sdfg
         free_symbols = set(str(s) for s in inner_sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True))
         return [
-            sym_name for sym_name in sorted(node.symbol_mapping.keys())
+            sym_name
+            for sym_name in sorted(node.symbol_mapping.keys())
             if sym_name in free_symbols and sym_name not in inner_sdfg.constants
         ]
 
@@ -2082,9 +2302,11 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 # stays int64, uint64 stays uint64).
                 np_name = desc.dtype.as_numpy_dtype().name
                 return f"cupy.asarray({expr}, dtype=numpy.{np_name}).reshape(1)"
-            if desc.dtype.as_numpy_dtype().kind == 'c':
-                raise NotImplementedError(f"cuTile codegen: complex Scalar {name!r} is not supported as a "
-                                          f"kernel argument (no by-value or device-memory convention).")
+            if desc.dtype.as_numpy_dtype().kind == "c":
+                raise NotImplementedError(
+                    f"cuTile codegen: complex Scalar {name!r} is not supported as a "
+                    f"kernel argument (no by-value or device-memory convention)."
+                )
             # Bool scalars (the only remaining kind) are passed by value
             # (typed exactly at the launch boundary); ``.item()`` covers cupy
             # 0-d arrays, numpy scalars, and 0-d numpy buffers; plain Python
@@ -2092,8 +2314,15 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
             return f"({expr}.item() if hasattr({expr}, 'item') else {expr})"
         return expr
 
-    def generate_scope(self, sdfg: "SDFG", cfg: object, dfg_scope: object, state_id: int,
-                       function_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> None:
+    def generate_scope(
+        self,
+        sdfg: "SDFG",
+        cfg: object,
+        dfg_scope: object,
+        state_id: int,
+        function_stream: PythonCodeIOStream,
+        callsite_stream: PythonCodeIOStream,
+    ) -> None:
         """Generate the cuTile kernel wrapper and launch call for a map scope.
 
         Emits a ``@ct.kernel``-decorated function containing the scope body,
@@ -2117,10 +2346,14 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         exit_node = state.exit_node(entry)
         grid_exprs = _grid_exprs_from_map_entry(entry)
 
-        input_arrays = _ordered_unique(e.data.data for e in state.in_edges(entry)
-                                       if e.data and e.data.data and isinstance(e.src, nodes.AccessNode))
-        output_arrays = _ordered_unique(e.data.data for e in state.out_edges(exit_node)
-                                        if e.data and e.data.data and isinstance(e.dst, nodes.AccessNode))
+        input_arrays = _ordered_unique(
+            e.data.data for e in state.in_edges(entry) if e.data and e.data.data and isinstance(e.src, nodes.AccessNode)
+        )
+        output_arrays = _ordered_unique(
+            e.data.data
+            for e in state.out_edges(exit_node)
+            if e.data and e.data.data and isinstance(e.dst, nodes.AccessNode)
+        )
         symbol_types = self._frame.symbols_defined_at(state, entry)
         free_syms = _collect_free_symbols(entry, dfg_scope, sdfg, symbol_types)
         kernel_params = list(dict.fromkeys(input_arrays + output_arrays + free_syms))
@@ -2135,10 +2368,12 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         # pipeline never produces this shape; fail loudly if it ever does.
         for name in set(input_arrays) & set(output_arrays):
             if isinstance(sdfg.arrays.get(name), data.Scalar):
-                raise NotImplementedError(f"cuTile codegen: Scalar {name!r} is both a kernel input and a "
-                                          f"kernel output; the scalar launch conventions do not "
-                                          f"support in/out scalars. Stage the scalar through a 1-element array "
-                                          f"instead.")
+                raise NotImplementedError(
+                    f"cuTile codegen: Scalar {name!r} is both a kernel input and a "
+                    f"kernel output; the scalar launch conventions do not "
+                    f"support in/out scalars. Stage the scalar through a 1-element array "
+                    f"instead."
+                )
 
         # Numeric SYMBOLS would otherwise ride the by-value path, where the
         # cuda.tile frontend types every Python/numpy float as float32 (silent
@@ -2155,13 +2390,12 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         for symbol in free_syms:
             dtype = symbol_types[symbol]
             if dtype is None:
-                raise TypeError(f'Cannot determine the type of cuTile symbol {symbol!r}')
+                raise TypeError(f"Cannot determine the type of cuTile symbol {symbol!r}")
             np_dtype = dtype.as_numpy_dtype()
-            if np_dtype.kind in 'fiu':
+            if np_dtype.kind in "fiu":
                 device_syms[symbol] = np_dtype.name
 
-        kernel_name = (f"__dace_cutile_{sdfg.name}_{cfg.cfg_id}_"
-                       f"{state.block_id}_{state.node_id(entry)}")
+        kernel_name = f"__dace_cutile_{sdfg.name}_{cfg.cfg_id}_{state.block_id}_{state.node_id(entry)}"
 
         kernel_stream = PythonCodeIOStream()
         kernel_stream.write("@ct.kernel")
@@ -2213,8 +2447,8 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                 launch_args.append(f"cupy.asarray({s}{dtype_arg}).reshape(1)")
             else:
                 launch_args.append(s)
-        args_tuple = (f"({', '.join(launch_args)},)" if len(launch_args) == 1 else f"({', '.join(launch_args)})")
-        instrumented = (entry.map.instrument != dtypes.InstrumentationType.No_Instrumentation)
+        args_tuple = f"({', '.join(launch_args)},)" if len(launch_args) == 1 else f"({', '.join(launch_args)})"
+        instrumented = entry.map.instrument != dtypes.InstrumentationType.No_Instrumentation
 
         # Instrumentation: kernel-scope begin (before launch)
         if instrumented:

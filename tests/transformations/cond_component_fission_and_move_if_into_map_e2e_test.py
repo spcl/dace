@@ -15,6 +15,7 @@ the guard-taken and guard-not-taken cases, asserts the pass fired, validates
 the SDFG, and checks the structural effect (``ConditionalBlock`` counts /
 top-level absence / map params).
 """
+
 import copy
 
 import numpy as np
@@ -25,12 +26,10 @@ from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
-N = dace.symbol('N')
-L = dace.symbol('L')
+N = dace.symbol("N")
+L = dace.symbol("L")
 
-# --------------------------------------------------------------------------
 # Helpers
-# --------------------------------------------------------------------------
 
 
 def _count_conditional_blocks(sdfg: dace.SDFG) -> int:
@@ -46,7 +45,7 @@ def _top_level_conditional_blocks(sdfg: dace.SDFG) -> int:
 def _conditional_inside_map_scope(sdfg: dace.SDFG) -> bool:
     """Whether some ``ConditionalBlock`` lives inside a NestedSDFG that is
     itself inside a map scope (i.e. the guard was pushed into a map body)."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, NestedSDFG):
                 continue
@@ -61,21 +60,26 @@ def _conditional_inside_map_scope(sdfg: dace.SDFG) -> bool:
 def _map_params(sdfg: dace.SDFG):
     """Set of all map parameter names across every state of ``sdfg``."""
     params = set()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, MapEntry):
                 params.update(str(p) for p in node.map.params)
     return params
 
 
-# --------------------------------------------------------------------------
 # Kernels (file-level @dace.program, symbolic shapes)
-# --------------------------------------------------------------------------
 
 
 @dace.program
-def fission_two_outputs(active: dace.int32[1], w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2],
-                        vidx: dace.int32[N, 2], b: dace.float64[N, L], d: dace.float64[N, L]):
+def fission_two_outputs(
+    active: dace.int32[1],
+    w: dace.float64[N, L],
+    v: dace.float64[N, L],
+    cidx: dace.int32[N, 2],
+    vidx: dace.int32[N, 2],
+    b: dace.float64[N, L],
+    d: dace.float64[N, L],
+):
     """CCF's matched shape: ONE map whose body is a guard with two
     independent neighbour-gather outputs (the map body lowers to a
     NestedSDFG holding the ConditionalBlock -- the MapFission-blocking
@@ -87,9 +91,18 @@ def fission_two_outputs(active: dace.int32[1], w: dace.float64[N, L], v: dace.fl
 
 
 @dace.program
-def fission_three_outputs(active: dace.int32[1], w: dace.float64[N, L], v: dace.float64[N, L], u: dace.float64[N, L],
-                          cidx: dace.int32[N, 2], vidx: dace.int32[N, 2], uidx: dace.int32[N, 2], b: dace.float64[N, L],
-                          d: dace.float64[N, L], g: dace.float64[N, L]):
+def fission_three_outputs(
+    active: dace.int32[1],
+    w: dace.float64[N, L],
+    v: dace.float64[N, L],
+    u: dace.float64[N, L],
+    cidx: dace.int32[N, 2],
+    vidx: dace.int32[N, 2],
+    uidx: dace.int32[N, 2],
+    b: dace.float64[N, L],
+    d: dace.float64[N, L],
+    g: dace.float64[N, L],
+):
     """CCF's matched shape with three independent guarded outputs."""
     for i, k in dace.map[0:N, 0:L]:
         if active[0] > 0:
@@ -114,9 +127,7 @@ def move_if_index_dependent(w: dace.float64[N, L], cidx: dace.int32[N, 2], out: 
             out[i, k] = 2.0 * w[cidx[i, 0], k] - w[cidx[i, 1], k]
 
 
-# --------------------------------------------------------------------------
 # Oracles (pure numpy)
-# --------------------------------------------------------------------------
 
 
 def _oracle_fission_two(active, w, v, cidx, vidx, n, l):
@@ -161,9 +172,7 @@ def _oracle_index_dependent(w, cidx, n, l):
     return out
 
 
-# --------------------------------------------------------------------------
 # A) SplitStatements
-# --------------------------------------------------------------------------
 
 
 def test_conditional_component_fission_two_outputs():
@@ -185,7 +194,7 @@ def test_conditional_component_fission_two_outputs():
     sdfg.validate()
 
     cb_after = _count_conditional_blocks(sdfg)
-    assert cb_after > cb_before, (f"conditional must be replicated per output: {cb_before} -> {cb_after}")
+    assert cb_after > cb_before, f"conditional must be replicated per output: {cb_before} -> {cb_after}"
     assert cb_after >= 2, "expected one guard per independent output"
 
     for active_val in (np.int32(1), np.int32(0)):
@@ -194,15 +203,9 @@ def test_conditional_component_fission_two_outputs():
         got_b = np.zeros((n, l))
         got_d = np.zeros((n, l))
         csdfg = copy.deepcopy(sdfg)
-        csdfg(active=active.copy(),
-              w=w.copy(),
-              v=v.copy(),
-              cidx=cidx.copy(),
-              vidx=vidx.copy(),
-              b=got_b,
-              d=got_d,
-              N=n,
-              L=l)
+        csdfg(
+            active=active.copy(), w=w.copy(), v=v.copy(), cidx=cidx.copy(), vidx=vidx.copy(), b=got_b, d=got_d, N=n, L=l
+        )
         np.testing.assert_allclose(got_b, exp_b, rtol=1e-12, err_msg=f"b mismatch active={active_val}")
         np.testing.assert_allclose(got_d, exp_d, rtol=1e-12, err_msg=f"d mismatch active={active_val}")
 
@@ -228,7 +231,7 @@ def test_conditional_component_fission_three_outputs():
     sdfg.validate()
 
     cb_after = _count_conditional_blocks(sdfg)
-    assert cb_after >= 3, (f"expected one guard per independent output (>=3), got {cb_after}")
+    assert cb_after >= 3, f"expected one guard per independent output (>=3), got {cb_after}"
 
     for active_val in (np.int32(1), np.int32(0)):
         active = np.array([active_val], dtype=np.int32)
@@ -237,26 +240,26 @@ def test_conditional_component_fission_three_outputs():
         got_d = np.zeros((n, l))
         got_g = np.zeros((n, l))
         csdfg = copy.deepcopy(sdfg)
-        csdfg(active=active.copy(),
-              w=w.copy(),
-              v=v.copy(),
-              u=u.copy(),
-              cidx=cidx.copy(),
-              vidx=vidx.copy(),
-              uidx=uidx.copy(),
-              b=got_b,
-              d=got_d,
-              g=got_g,
-              N=n,
-              L=l)
+        csdfg(
+            active=active.copy(),
+            w=w.copy(),
+            v=v.copy(),
+            u=u.copy(),
+            cidx=cidx.copy(),
+            vidx=vidx.copy(),
+            uidx=uidx.copy(),
+            b=got_b,
+            d=got_d,
+            g=got_g,
+            N=n,
+            L=l,
+        )
         np.testing.assert_allclose(got_b, exp_b, rtol=1e-12, err_msg=f"b mismatch active={active_val}")
         np.testing.assert_allclose(got_d, exp_d, rtol=1e-12, err_msg=f"d mismatch active={active_val}")
         np.testing.assert_allclose(got_g, exp_g, rtol=1e-12, err_msg=f"g mismatch active={active_val}")
 
 
-# --------------------------------------------------------------------------
 # B) MoveIfIntoMap
-# --------------------------------------------------------------------------
 
 
 def test_move_if_into_map_contract_on_frontend_shape():
@@ -278,8 +281,10 @@ def test_move_if_into_map_contract_on_frontend_shape():
     assert _top_level_conditional_blocks(sdfg) >= 1
 
     applied = sdfg.apply_transformations_repeated(MoveIfIntoMap)
-    assert applied == 0, ("MoveIfIntoMap must refuse the top-level frontend shape "
-                          f"(guard not yet inside a map's NestedSDFG), got {applied}")
+    assert applied == 0, (
+        "MoveIfIntoMap must refuse the top-level frontend shape "
+        f"(guard not yet inside a map's NestedSDFG), got {applied}"
+    )
     sdfg.validate()
     # Refused -> unchanged -> still numerically correct for taken/not-taken.
     for active_val in (np.int32(1), np.int32(0)):
@@ -307,13 +312,14 @@ def test_move_if_into_map_index_dependent_does_not_hoist():
     # must reject the match (it would be unsound to evaluate ``i % 2`` once
     # outside the per-iteration body).
     applied = sdfg.apply_transformations_repeated(MoveIfIntoMap)
-    assert applied == 0, (f"MoveIfIntoMap must NOT hoist an index-dependent guard, got {applied}")
+    assert applied == 0, f"MoveIfIntoMap must NOT hoist an index-dependent guard, got {applied}"
     sdfg.validate()
 
     # The guard must remain inside the index-defining map scope.
-    assert _conditional_inside_map_scope(sdfg), ("index-dependent guard must stay inside the map scope")
-    assert 'i' in _map_params(sdfg) or any(p.startswith('i')
-                                           for p in _map_params(sdfg)), "the index-defining map must still be present"
+    assert _conditional_inside_map_scope(sdfg), "index-dependent guard must stay inside the map scope"
+    assert "i" in _map_params(sdfg) or any(p.startswith("i") for p in _map_params(sdfg)), (
+        "the index-defining map must still be present"
+    )
 
     exp = _oracle_index_dependent(w, cidx, n, l)
     got = np.zeros((n, l))

@@ -5,8 +5,8 @@
 SDFG, how does access vary as the K-dim tile iterates its (W_0, ..., W_{K-1}) lanes?
 
 Target-isa-agnostic, no SDFG mutation. Sole output = :class:`TileAccess` record; emitter consumes
-it to pick a tile lib node (``TileLoad`` / ``TileLoadStrided`` / ``TileLoad`` (``gather_dims``) /
-``TileStore`` / ``TileStore`` (``gather_dims``) / ``TileBroadcast``). Arch intrinsics live in
+it to pick a tile lib node (``TileGather`` / ``TileLoadStrided`` / ``TileGather`` (``gather_dims``) /
+``TileScatter`` / ``TileScatter`` (``gather_dims``) / ``TileBroadcast``). Arch intrinsics live in
 lib-node expansions.
 
 Per-dim classification
@@ -20,7 +20,7 @@ Each subset dim tagged independently as a :class:`PerDimKind`:
 * **AFFINE** -- iter-var(s) as direct symbols, non-unit coeff (``2*i + 3``) or combined (``i + j``).
   Emitter picks strided-load / loop-of-loads / GATHER fallback per arch.
 * **GATHER** -- tile iter-var inside a :class:`Subscript` (``arr[idx[i]]``). Data-dependent; always
-  lowers to TileLoad (gather_dims).
+  lowers to TileGather (gather_dims).
 
 Whole-subset composition (DIAGONAL / TRANSPOSE flags)
 -----------------------------------------------------
@@ -31,7 +31,7 @@ Two composition flags:
 * **diagonal** -- a STRUCTURED_1 iter-var is direct symbol in multiple dims (``arr[i, i]``).
 * **transpose** -- STRUCTURED_1 iter-vars in non-canonical permutation of ``spec.iter_vars``.
 
-Both informational; per locked design both fold into ``TileLoad`` (``gather_dims``) today
+Both informational; per locked design both fold into ``TileGather`` (``gather_dims``) today
 (diagonal → 1-D index tile; transpose → permuted index tile or transpose intrinsic).
 
 dim_strides convention
@@ -52,23 +52,26 @@ Gather-side composition rule
 ANY GATHER dim → whole-subset kind GATHER. Non-GATHER dims fold into the gather's index expr inline
 (structured dims contribute affine sub-exprs; no separate index tile).
 """
+
 import enum
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import TypeAlias
 
 import sympy
 
-from dace import symbolic
-from dace.sdfg import SDFG, nodes
-from dace.subsets import Range
+from dace import data as dt
+from dace import dtypes, symbolic
+from dace.optionals import required
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.narrowing import as_expr, as_range, free_symbol_names
+from dace.subsets import Range, Subset
+from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 
 
 class PerDimKind(enum.Enum):
-    """Per-dim classification of a memlet subset for tile lowering.
-
-    See TILIFICATION_TRANSFORMATION_DESIGN.md section 4 for the lattice.
-    """
+    """Per-dim classification of a memlet subset for tile lowering."""
 
     #: No tile iter-var -- loop-invariant. All W lanes share one source element (codegen splats).
     CONSTANT = "constant"
@@ -106,7 +109,7 @@ class TileAccessKind(enum.Enum):
     GATHER = "gather"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TileAccess:
     """Result of :func:`classify_tile_access` (data only). Emitter reads it + surrounding scope
     (mask availability, target_isa) to pick a lib node and wire its properties."""
@@ -115,24 +118,24 @@ class TileAccess:
     kind: TileAccessKind
 
     #: Per-dim classification, one entry per subset dim (in subset order).
-    per_dim_kind: Tuple[PerDimKind, ...]
+    per_dim_kind: tuple[PerDimKind, ...]
 
     #: Per-dim stride. ``0`` = broadcast; ``1`` = identity; ``c > 1`` = affine coeff. ``None`` for
     #: GATHER dims (stride lives in the gather-index expr). Same length as ``per_dim_kind``.
-    dim_strides: Tuple[Optional[int], ...]
+    dim_strides: tuple[int | None, ...]
 
     #: STRUCTURED_1 / AFFINE dims: which tile iter-var drives the dim's per-lane stride. ``None`` for
     #: BROADCAST / GATHER dims. Same length as ``per_dim_kind``.
-    dim_iter_var: Tuple[Optional[str], ...]
+    dim_iter_var: tuple[str | None, ...]
 
     #: GATHER dims: the in-scope :class:`AccessNode` of the index array, when resolvable. ``None``
     #: for non-GATHER dims OR when the index source isn't a direct array read. Same length as
     #: ``per_dim_kind``.
-    gather_index_per_dim: Tuple[Optional[nodes.AccessNode], ...]
+    gather_index_per_dim: tuple[nodes.AccessNode | None, ...]
 
     #: STRUCTURED_1 / AFFINE dims: the constant offset (``c`` in ``iter_var + c``). ``None`` for
     #: BROADCAST / GATHER dims.
-    dim_offset: Tuple[Optional[sympy.Expr], ...]
+    dim_offset: tuple[sympy.Expr | None, ...]
 
     #: Per-dim replicate factor (lanes-per-distinct-value within the dim); unifies BROADCAST /
     #: STRUCTURED_1 / REPLICATE. Same length as :attr:`per_dim_kind`:
@@ -143,22 +146,35 @@ class TileAccess:
     #: * ``k > 1`` REPLICATE (``int_floor`` / ``int_ceil`` of affine arg) -- ``k`` consecutive lanes
     #:   share each element; codegen loads ``W / k``, group-broadcasts each ``k`` times.
     #: * ``None`` AFFINE / GATHER -- N/A.
-    replicate_factor_per_dim: Tuple[Optional[int], ...]
+    replicate_factor_per_dim: tuple[int | None, ...]
 
     #: Diagonal composition: tile iter-var name → tuple of subset dims it appears in directly. Only
     #: populated when one iter-var spans multiple dims. Empty dict when no diagonal.
-    diagonal: Dict[str, Tuple[int, ...]] = field(default_factory=dict)
+    diagonal: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
     #: Transpose composition: permutation of tile iter-vars across subset dims as
     #: ``(perm_0, ..., perm_{K-1})``, ``perm_d`` = iter-var INDEX in ``spec.iter_vars`` driving dim
     #: ``d``. ``None`` when the dim order is canonical or the subset isn't a pure permutation.
-    transpose: Optional[Tuple[int, ...]] = None
+    transpose: tuple[int, ...] | None = None
 
 
-# ----- internal helpers --------------------------------------------------
+#: Everything :func:`build_symbol_definition_map` derives from ``inner_sdfg`` alone, in the order it
+#: unpacks them: interstate RHS strings, scalar-write defs, unreadable writes, unique interstate
+#: defs, the sympify memo, the recurrence symbols, and the free-symbol names of each definition.
+ScanCache: TypeAlias = tuple[
+    dict[str, set[str]],
+    dict[str, set[sympy.Expr]],
+    set[str],
+    dict[str, sympy.Expr],
+    dict[str, sympy.Expr | None],
+    set[str],
+    dict[sympy.Expr, frozenset[str]],
+]
+
+# internal helpers
 
 
-def _safe_sympify(expr) -> Optional[sympy.Expr]:
+def _safe_sympify(expr: object) -> sympy.Expr | None:
     """Best-effort sympify. ``None`` on failure (caller treats unparseable exprs as opaque --
     typically GATHER or refused)."""
     try:
@@ -167,7 +183,17 @@ def _safe_sympify(expr) -> Optional[sympy.Expr]:
         return None
 
 
-def _direct_symbols(expr: sympy.Expr) -> Set[str]:
+def _memo_sympify(text: str, memo: dict[str, sympy.Expr | None]) -> sympy.Expr | None:
+    """:func:`_safe_sympify` behind a string-keyed memo. Safe anywhere: the parse is a pure
+    function of the string."""
+    if text in memo:
+        return memo[text]
+    expr = _safe_sympify(text)
+    memo[text] = expr
+    return expr
+
+
+def _direct_symbols(expr: sympy.Expr) -> set[str]:
     """Symbol names appearing OUTSIDE any gather Subscript in ``expr``. Math functions on iter-vars
     (``floor(i / 4)``, ``exp(i)``) still expose ``i`` as direct (iter-var in address arithmetic, no
     memory load; affine-coeff analysis catches non-affine cases). :class:`~dace.symbolic.Subscript`
@@ -179,27 +205,32 @@ def _direct_symbols(expr: sympy.Expr) -> Set[str]:
     # Subscript = gather stop boundary: inner symbols are gather-index inputs, not address arithmetic
     if isinstance(expr, symbolic.Subscript):
         return set()
-    args = getattr(expr, 'args', None)
+    args = expr.args if isinstance(expr, sympy.Basic) else ()
     if not args:
         return set()
-    result: Set[str] = set()
+    result: set[str] = set()
     for arg in args:
-        result |= _direct_symbols(arg)
+        result |= _direct_symbols(as_expr(arg))
     return result
 
 
 #: DaCe / numpy dtype names appearing as cast *functions* in tasklet bodies (``int64(i)``,
-#: ``float64(x)``). After sympify these are :class:`sympy.Function` nodes; :func:`_strip_casts`
-#: collapses them to their argument.
-_CAST_NAMES = frozenset({
-    'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'float16', 'float32', 'float64', 'bool',
-    'bool_'
-})
+#: ``float64(x)``), LONGEST FIRST so a name can never be shadowed by one it starts with
+#: (``float`` ahead of ``float64``). Taken from the dtype registry, not written out: the hand list
+#: this replaced predated ``bfloat16`` / the fp8 pair and never held ``complex*`` or bare
+#: ``int`` / ``float``, so a cast in any of those kept its Function node and hid the affine
+#: structure underneath it.
+_CAST_NAMES_LONGEST_FIRST: tuple[str, ...] = tuple(sorted(dtypes.TYPECLASS_STRINGS, key=lambda n: (-len(n), n)))
+
+#: Membership form of the same names, for :func:`_strip_casts`.
+_CAST_NAMES: frozenset[str] = frozenset(_CAST_NAMES_LONGEST_FIRST)
 
 #: Strip ``dace.`` / ``np.`` / ``numpy.`` prefix before a cast name so the remainder parses
 #: (``dace.int64(`` -> ``int64(``). Attribute form ``dace.int64`` is what
 #: :func:`dace.symbolic.pystr_to_symbolic` can't parse; this minimal strip = only text fixup.
-_CAST_PREFIX_RE = re.compile(r'\b(?:dace|np|numpy)\.(?=(?:u?int(?:8|16|32|64)|float(?:16|32|64)|bool_?)\b)')
+_CAST_PREFIX_RE = re.compile(
+    r"\b(?:dace|np|numpy)\.(?=(?:" + "|".join(re.escape(n) for n in _CAST_NAMES_LONGEST_FIRST) + r")\b)"
+)
 
 
 def _strip_casts(expr: sympy.Expr) -> sympy.Expr:
@@ -211,22 +242,23 @@ def _strip_casts(expr: sympy.Expr) -> sympy.Expr:
     if expr is None:
         return expr
     try:
-        return expr.replace(lambda e: isinstance(e, sympy.Function) and e.func.__name__ in _CAST_NAMES,
-                            lambda e: e.args[0])
+        return expr.replace(
+            lambda e: isinstance(e, sympy.Function) and e.func.__name__ in _CAST_NAMES, lambda e: e.args[0]
+        )
     except Exception:  # noqa: BLE001
         return expr
 
 
-def _sympify_tasklet_rhs(text: str) -> Optional[sympy.Expr]:
+def _sympify_tasklet_rhs(text: str) -> sympy.Expr | None:
     """Parse a tasklet/interstate RHS to a sympy expr, casts collapsed.
 
     Strip only the unparseable ``dace.``/``np.`` prefix textually, then defer to
     :func:`dace.symbolic.pystr_to_symbolic` + sympy-level cast collapse.
     """
-    return _strip_casts(_safe_sympify(_CAST_PREFIX_RE.sub('', text)))
+    return _strip_casts(_safe_sympify(_CAST_PREFIX_RE.sub("", text)))
 
 
-def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = None) -> Optional[str]:
+def _reaching_ise_assignment(state: SDFGState, symbol: str, inner_sdfg: SDFG | None = None) -> str | None:
     """Backward-walk the (flat) state graph from ``state`` for the nearest interstate-edge
     assignment of ``symbol`` (its reaching definition).
 
@@ -243,7 +275,7 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     :param inner_sdfg: Unused (kept for call-site symmetry / future use).
     :returns: RHS expression string, or ``None`` when no assignment reaches.
     """
-    region = getattr(state, "parent_graph", None)
+    region = state.parent_graph
     if region is None:
         return None
     visited = set()
@@ -262,7 +294,9 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     return None
 
 
-def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[str, sympy.Expr]:
+def build_symbol_definition_map(
+    inner_sdfg: SDFG | None, state: SDFGState | None = None, scan_cache: dict[int, ScanCache] | None = None
+) -> dict[str, sympy.Expr]:
     """Map ``symbol_name -> defining sympy expression`` for symbols resolvable within ``inner_sdfg``
     (optionally reaching-def-disambiguated at ``state``).
 
@@ -288,89 +322,144 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
     if inner_sdfg is None:
         return {}
 
-    # --- source 1: interstate-edge symbol assignments ---
-    ise_rhs: Dict[str, Set[str]] = {}
-    for edge in inner_sdfg.all_interstate_edges():
-        assigns = edge.data.assignments if edge.data is not None else {}
-        for k, v in assigns.items():
-            ise_rhs.setdefault(k, set()).add(str(v))
+    # Both raw scans below (source 1 = interstate-edge assignments, source 2 = single-tasklet scalar
+    # writes) are a function of ``inner_sdfg`` ALONE: ``state`` is consulted only afterwards, to
+    # disambiguate a multiply-assigned symbol. ``scan_cache`` -- a dict the caller keeps for the span
+    # of an UNMUTATED SDFG -- memoizes them by SDFG identity, together with every value DERIVED from
+    # them alone, so a hit re-parses nothing. Omitting it reproduces the original scan exactly.
+    cache_key = id(inner_sdfg)
+    cached = scan_cache.get(cache_key) if scan_cache is not None else None
+    if cached is not None:
+        ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo, recurrence_syms, free_names = cached
+    else:
+        # source 1: interstate-edge symbol assignments
+        ise_rhs: dict[str, set[str]] = {}
+        for edge in inner_sdfg.all_interstate_edges():
+            assigns = edge.data.assignments if edge.data is not None else {}
+            for k, v in assigns.items():
+                ise_rhs.setdefault(k, set()).add(str(v))
 
-    defs: Dict[str, sympy.Expr] = {}
+        # source 2: scalars written by a single tasklet ``__out = <body>``
+        # name -> set of resolved exprs; keep only unambiguous singletons. Keyed on the EXPRESSION,
+        # not its printed form: sympy expressions hash structurally, so they dedupe just as well, and
+        # printing one is expensive -- the round trip (print here, re-parse below, print again for
+        # the recurrence scan) made this the single most costly step of the tile pipeline on a large
+        # body. The loop state is ``scan_state`` (not ``state``): this scan must not touch the param.
+        scalar_defs: dict[str, set[sympy.Expr]] = {}
+        # Names with an unreadable write (WCR, multi-edge, non-``__out = <body>`` producer): must
+        # be excluded below, or a later readable write alone would look like the whole definition.
+        unreadable_writes: set[str] = set()
+        for sd in inner_sdfg.all_sdfgs_recursive():
+            for scan_state in sd.states():
+                for node in scan_state.nodes():
+                    if not isinstance(node, nodes.AccessNode):
+                        continue
+                    in_edges = scan_state.in_edges(node)
+                    if not in_edges:
+                        continue  # pure read -- says nothing about the definition
+                    producer = in_edges[0].src
+                    if (
+                        len(in_edges) != 1
+                        or in_edges[0].data is None
+                        or in_edges[0].data.wcr is not None
+                        or not isinstance(producer, nodes.Tasklet)
+                        or len(producer.out_connectors) != 1
+                    ):
+                        unreadable_writes.add(node.data)
+                        continue
+                    out_conn = next(iter(producer.out_connectors))
+                    body = producer.code.as_string if producer.code is not None else ""
+                    body = body.strip().rstrip(";").strip()
+                    prefix = f"{out_conn} = "
+                    if not body.startswith(prefix):
+                        unreadable_writes.add(node.data)
+                        continue
+                    rhs_expr = _sympify_tasklet_rhs(body[len(prefix) :].strip())
+                    if rhs_expr is None:
+                        unreadable_writes.add(node.data)
+                        continue
+                    # Rewrite input connectors -> source data names
+                    rename = {}
+                    for ie in scan_state.in_edges(producer):
+                        if ie.dst_conn and ie.data is not None and ie.data.data is not None:
+                            source = ie.data.data
+                            if required(
+                                ie.data.subset
+                            ).free_symbols:  # keep ``idx[i]``: a bare ``idx`` looks lane-invariant
+                                source += f"[{', '.join(map(str, as_range(ie.data.subset).min_element()))}]"
+                            rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(source)
+                    if rename:
+                        # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to
+                        # another plain symbol, which is exact structural replacement. ``subs`` sorts
+                        # the keys and re-sympifies them to handle expression patterns none of these
+                        # are.
+                        rhs_expr = rhs_expr.xreplace(rename)
+                    scalar_defs.setdefault(node.data, set()).add(rhs_expr)
+
+        # Uniquely-assigned symbol: the RHS is fixed, so its parse is state-free too.
+        sympify_memo: dict[str, sympy.Expr | None] = {}
+        unique_ise_defs: dict[str, sympy.Expr] = {}
+        for k, rhs_set in ise_rhs.items():
+            if len(rhs_set) != 1:
+                continue
+            uexpr = _memo_sympify(next(iter(rhs_set)), sympify_memo)
+            if uexpr is not None:
+                unique_ise_defs[k] = uexpr
+
+        # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
+        # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap
+        # refuses recurrences) → access stays in scalar control flow, so leave the symbol UNRESOLVED,
+        # preserving the subset (``a[j]``) verbatim. Substituting would run ``resolve_index_expr``'s
+        # fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt the subset (TSVC s123). The same
+        # instability propagates transitively: an index DEFINED from a recurrence symbol (``k = j + 1``,
+        # snapshotted at loop-top while ``j`` is bumped before the ``b[k]``/``c[k]`` use -- TSVC s128) is
+        # equally unstable, because the substituted ``j`` would read its post-update value at the use
+        # site. Collect every recurrence symbol from the raw assignment RHSs and drop both the
+        # self-referential defs AND any def whose RHS depends on one. (Tiled access carrying such an
+        # index is refused downstream by the tile-index builder, not rewritten -- see InsertTileLoadStore.)
+        recurrence_syms: set[str] = set()
+        for sym, rhs_set in ise_rhs.items():
+            for rhs in rhs_set:
+                rexpr = _memo_sympify(rhs, sympify_memo)
+                if rexpr is not None and sym in {str(s) for s in rexpr.free_symbols}:
+                    recurrence_syms.add(sym)
+                    break
+        for name, rhs_set in scalar_defs.items():
+            if any(name in {str(s) for s in rhs.free_symbols} for rhs in rhs_set):
+                recurrence_syms.add(name)
+
+        # Printing a symbol is the costly part of naming it, and the taint walk below names every
+        # definition once per state: equal expressions print alike, so one entry per expression.
+        free_names: dict[sympy.Expr, frozenset[str]] = {}
+        if scan_cache is not None:
+            scan_cache[cache_key] = (
+                ise_rhs,
+                scalar_defs,
+                unreadable_writes,
+                unique_ise_defs,
+                sympify_memo,
+                recurrence_syms,
+                free_names,
+            )
+
+    defs: dict[str, sympy.Expr] = {}
     for k, rhs_set in ise_rhs.items():
         if len(rhs_set) == 1:
-            chosen = next(iter(rhs_set))
+            expr = unique_ise_defs.get(k)
         elif state is not None:
             chosen = _reaching_ise_assignment(state, k, inner_sdfg)  # reaching def disambiguates
             if chosen is None:
                 continue
+            expr = _memo_sympify(chosen, sympify_memo)
         else:
             continue  # ambiguous, no state -> unresolved
-        expr = _safe_sympify(chosen)
         if expr is not None:
             defs[k] = expr
 
-    # --- source 2: scalars written by a single tasklet ``__out = <body>`` ---
-    # name -> set of resolved-expr strings; keep only unambiguous singletons.
-    scalar_defs: Dict[str, Set[str]] = {}
-    for sd in inner_sdfg.all_sdfgs_recursive():
-        for state in sd.states():
-            for node in state.nodes():
-                if not isinstance(node, nodes.AccessNode):
-                    continue
-                in_edges = state.in_edges(node)
-                if len(in_edges) != 1:
-                    continue
-                producer = in_edges[0].src
-                if not isinstance(producer, nodes.Tasklet) or len(producer.out_connectors) != 1:
-                    continue
-                out_conn = next(iter(producer.out_connectors))
-                body = producer.code.as_string if producer.code is not None else ""
-                body = body.strip().rstrip(";").strip()
-                prefix = f"{out_conn} = "
-                if not body.startswith(prefix):
-                    continue
-                rhs_expr = _sympify_tasklet_rhs(body[len(prefix):].strip())
-                if rhs_expr is None:
-                    continue
-                # Rewrite input connectors -> source data names
-                rename = {}
-                for ie in state.in_edges(producer):
-                    if ie.dst_conn and ie.data is not None and ie.data.data is not None:
-                        rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(ie.data.data)
-                if rename:
-                    rhs_expr = rhs_expr.subs(rename)
-                scalar_defs.setdefault(node.data, set()).add(str(rhs_expr))
-
     for name, rhs_set in scalar_defs.items():
-        if name in defs or len(rhs_set) != 1:
-            continue  # ISE def wins / ambiguous scalar def -> skip
-        expr = _safe_sympify(next(iter(rhs_set)))
-        if expr is not None:
-            defs[name] = expr
-    # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
-    # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap
-    # refuses recurrences) → access stays in scalar control flow, so leave the symbol UNRESOLVED,
-    # preserving the subset (``a[j]``) verbatim. Substituting would run ``resolve_index_expr``'s
-    # fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt the subset (TSVC s123). The same
-    # instability propagates transitively: an index DEFINED from a recurrence symbol (``k = j + 1``,
-    # snapshotted at loop-top while ``j`` is bumped before the ``b[k]``/``c[k]`` use -- TSVC s128) is
-    # equally unstable, because the substituted ``j`` would read its post-update value at the use
-    # site. Collect every recurrence symbol from the raw assignment RHSs and drop both the
-    # self-referential defs AND any def whose RHS depends on one. (Tiled access carrying such an
-    # index is refused downstream by the tile-index builder, not rewritten -- see InsertTileLoadStore.)
-    recurrence_syms: Set[str] = set()
-    for sym, rhs_set in ise_rhs.items():
-        for rhs in rhs_set:
-            rexpr = _safe_sympify(rhs)
-            if rexpr is not None and sym in {str(s) for s in rexpr.free_symbols}:
-                recurrence_syms.add(sym)
-                break
-    for name, rhs_set in scalar_defs.items():
-        for rhs in rhs_set:
-            rexpr = _safe_sympify(rhs)
-            if rexpr is not None and name in {str(s) for s in rexpr.free_symbols}:
-                recurrence_syms.add(name)
-                break
+        if name in defs or name in unreadable_writes or len(rhs_set) != 1:
+            continue  # ISE def wins / partially-readable or ambiguous scalar def -> skip
+        defs[name] = next(iter(rhs_set))
     # Taint every def transitively reaching a recurrence symbol, to a fixpoint. A def that
     # references a recurrence symbol is itself unstable (``LEN_1D_minus_k = LEN_1D - k``, ``k``
     # carried; ``k = j + 1``, ``j`` carried), and so is any def that references such a tainted mint
@@ -382,32 +471,34 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
     # undeclared reference (TSVC s122). Dropping the whole chain instead leaves the ORIGINAL promoted
     # subset symbol unresolved (matching s128's fully-unresolved ``b[k]``), which the downstream
     # tile-index builder refuses cleanly.
-    tainted: Set[str] = set(recurrence_syms)
+    tainted: set[str] = set(recurrence_syms)
     changed = True
     while changed:
         changed = False
         for k, v in defs.items():
             if k in tainted:
                 continue
-            v_syms = {str(s) for s in v.free_symbols}
-            if k in v_syms or (v_syms & tainted):  # self-ref, or reaches a tainted symbol
+            v_syms = free_names.get(v)
+            if v_syms is None:
+                v_syms = frozenset(str(s) for s in v.free_symbols)
+                free_names[v] = v_syms
+            if k in v_syms or not v_syms.isdisjoint(tainted):  # self-ref, or reaches a tainted symbol
                 tainted.add(k)
                 changed = True
     filtered = {k: v for k, v in defs.items() if k not in tainted}
     return filtered
 
 
-def resolve_index_expr(expr: sympy.Expr,
-                       inner_sdfg: Optional[SDFG],
-                       _defs: Optional[Dict[str, sympy.Expr]] = None,
-                       _max_depth: int = 16) -> sympy.Expr:
+def resolve_index_expr(
+    expr: sympy.Expr, inner_sdfg: SDFG | None, _defs: dict[str, sympy.Expr] | None = None, _max_depth: int = 16
+) -> sympy.Expr:
     """Resolve promoted index symbols in ``expr`` back to their defining arithmetic so iter-var
     dependence is visible to the classifier.
 
     Frontend promotes a computed index ``i + offset1`` to a scalar then to a symbol
     ``__sym_i_plus_offset1`` in the memlet subset; classifier would else see that opaque symbol as
     loop-invariant. Substitutes each resolvable free symbol (see
-    :func:`_build_symbol_definition_map`) with its definition, recursively, to a fixpoint or
+    :func:`build_symbol_definition_map`) with its definition, recursively, to a fixpoint or
     ``_max_depth``. Cycle/ambiguity safe: unresolvable symbols untouched.
 
     :param expr: The (sympified) index expression to resolve.
@@ -418,7 +509,7 @@ def resolve_index_expr(expr: sympy.Expr,
     """
     if expr is None:
         return expr
-    defs = _build_symbol_definition_map(inner_sdfg) if _defs is None else _defs
+    defs = build_symbol_definition_map(inner_sdfg) if _defs is None else _defs
     if not defs:
         return expr
     cur = expr
@@ -435,18 +526,34 @@ def resolve_index_expr(expr: sympy.Expr,
     return cur
 
 
-def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
+def _scalar_loaded_from_array(sdfg: SDFG, name: str, memo: dict[str, bool] | None = None) -> bool:
     """True if ``name`` is a transient Scalar whose value is loaded from a (non-Scalar) Array -- a
     gather-index scalar (``N__slice = Xiv[j]``, written by a memlet COPY). The frontend promotes such
-    a scalar to a subset symbol (``__sym_N__slice = N__slice``); ``_build_symbol_definition_map``
+    a scalar to a subset symbol (``__sym_N__slice = N__slice``); ``build_symbol_definition_map``
     source 2 only rewrites TASKLET-defined scalars to their source array, so a COPY-defined one is
     missed and the array name never surfaces. The scalar is state-local, so inlining it into a later
     state's subset references it out of scope (undeclared-identifier compile error) -- keep the
     promoted symbol instead.
+
+    :param memo: Optional ``{name: bool}`` memo for one UNMUTATED ``sdfg``; without it every free
+        symbol of every memlet bound pays a full SDFG scan.
     """
-    import dace.data as _dd
+    if memo is not None:
+        hit = memo.get(name)
+        if hit is not None:
+            return hit
+    result = _scan_scalar_loaded_from_array(sdfg, name)
+    if memo is not None:
+        memo[name] = result
+    return result
+
+
+def _scan_scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
+    """Uncached body of :func:`_scalar_loaded_from_array`."""
+    import dace.data as dt
+
     desc = sdfg.arrays.get(name)
-    if not (isinstance(desc, _dd.Scalar) and desc.transient):
+    if not (isinstance(desc, dt.Scalar) and desc.transient):
         return False
     for state in sdfg.states():
         for node in state.nodes():
@@ -457,17 +564,19 @@ def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
                 if isinstance(src, nodes.AccessNode):
                     sources = [src.data]
                 elif isinstance(src, nodes.Tasklet):
-                    sources = [e.data.data for e in state.in_edges(src) if e.data is not None and e.data.data is not None]
+                    sources = [
+                        e.data.data for e in state.in_edges(src) if e.data is not None and e.data.data is not None
+                    ]
                 else:
                     sources = []
                 for sname in sources:
                     sdesc = sdfg.arrays.get(sname)
-                    if isinstance(sdesc, _dd.Array) and not isinstance(sdesc, _dd.Scalar):
+                    if isinstance(sdesc, dt.Array) and not isinstance(sdesc, dt.Scalar):
                         return True
     return False
 
 
-def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
+def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG, memo: dict[str, bool] | None = None) -> bool:
     """True if ``expr`` is a data-dependent index -- reads an array value (a gather like ``idx[i]``),
     so must NOT be inlined into a memlet subset (stays gather form for the gather machinery).
 
@@ -475,10 +584,14 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
     non-Scalar :class:`~dace.data.Array` descriptor (resolver rewrites a gather scalar's defining
     tasklet to read the source array name, so ``idx`` shows up as a free symbol), or a transient
     Scalar loaded from an Array (a copy-defined gather-index scalar the tasklet-only rewrite misses).
+
+    :param memo: Optional gather-scalar memo for ``sdfg``, forwarded to
+        :func:`_scalar_loaded_from_array` (see its contract).
     """
     if expr is None:
         return False
-    import dace.data as _dd
+    import dace.data as dt
+
     try:
         if expr.atoms(symbolic.Subscript):
             return True
@@ -486,14 +599,20 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
         pass
     for s in expr.free_symbols:
         desc = sdfg.arrays.get(str(s))
-        if isinstance(desc, _dd.Array) and not isinstance(desc, _dd.Scalar):
+        if isinstance(desc, dt.Array) and not isinstance(desc, dt.Scalar):
             return True
-        if _scalar_loaded_from_array(sdfg, str(s)):  # gather-index scalar (copy-defined)
+        if _scalar_loaded_from_array(sdfg, str(s), memo):  # gather-index scalar (copy-defined)
             return True
     return False
 
 
-def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
+def propagate_subset(
+    subset: Subset | None,
+    inner_sdfg: SDFG | None,
+    state: SDFGState | None = None,
+    defs: dict[str, sympy.Expr] | None = None,
+    data_dep_memo: dict[str, bool] | None = None,
+) -> Range | None:
     """Rewrite a memlet ``subset`` by inlining promoted index symbols back to their original
     arithmetic (``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i+offset]``) so access is direct, widens
     to a dense load.
@@ -506,42 +625,55 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
     :param subset: The memlet :class:`~dace.subsets.Range` to rewrite.
     :param inner_sdfg: Body SDFG carrying the symbol/scalar definitions.
     :param state: Access state for reaching-def disambiguation.
+    :param defs: The ``build_symbol_definition_map(inner_sdfg, state)`` result, when the caller
+                 already holds it. A caller rewriting every subset of a state builds it once and
+                 passes it here rather than paying for a whole-SDFG scan per subset; the map is a
+                 function of ``(inner_sdfg, state)`` only, and a subset rewrite does not change it.
+                 ``None`` builds it here, as before.
+    :param data_dep_memo: Gather-scalar memo for ``inner_sdfg`` (see
+        :func:`_scalar_loaded_from_array`); ``None`` scopes a fresh one to this subset.
     :returns: A new :class:`~dace.subsets.Range` if anything changed, else ``None``.
     """
-    if inner_sdfg is None or subset is None or not hasattr(subset, "ranges"):
+    if inner_sdfg is None or not isinstance(subset, Range):
         return None
-    defs = _build_symbol_definition_map(inner_sdfg, state)
+    if defs is None:
+        defs = build_symbol_definition_map(inner_sdfg, state)
     if not defs:
         return None
+    if data_dep_memo is None:
+        data_dep_memo = {}
 
-    def _rewrite(bound):
+    def _rewrite(bound: symbolic.SymbolicType) -> tuple[symbolic.SymbolicType, bool]:
         e = _safe_sympify(bound)
         if e is None:
             return bound, False
         resolved = resolve_index_expr(e, inner_sdfg, _defs=defs)
         if resolved == e:
             return bound, False
-        if expr_is_data_dependent(resolved, inner_sdfg):
-            return bound, False  # gather index -> keep
+        # A memlet subset may name symbols only. A resolved form that names a data CONTAINER
+        # (``_exit_i_0 = _exit_i_buf_0``, the library-node-written exit buffer) survives CPU codegen
+        # by accident but is a device pointer on GPU, so the subscript does not compile.
+        # Membership, not ``arrays.keys()``: NestedDict rebuilds that set on every call.
+        names = {str(s) for s in resolved.free_symbols}
+        if expr_is_data_dependent(resolved, inner_sdfg, data_dep_memo) or any(n in inner_sdfg.arrays for n in names):
+            return bound, False  # gather / container-valued index -> keep
         return resolved, True
 
     new_ranges = []
     changed = False
-    for (lo, hi, step) in subset.ranges:
+    for lo, hi, step in subset.ranges:
         nlo, c1 = _rewrite(lo)
         nhi, c2 = _rewrite(hi)
         new_ranges.append((nlo, nhi, step))
         changed = changed or c1 or c2
     if not changed:
         return None
-    from dace.subsets import Range as _Range
-    return _Range(new_ranges)
+    return Range(new_ranges)
 
 
-def _is_tile_dependent(symbol: str,
-                       iter_vars: Set[str],
-                       inner_sdfg: Optional[SDFG],
-                       memo: Optional[Dict[str, bool]] = None) -> bool:
+def _is_tile_dependent(
+    symbol: str, iter_vars: set[str], inner_sdfg: SDFG | None, memo: dict[str, bool] | None = None
+) -> bool:
     """True iff ``symbol`` transitively depends on a tile iter-var (section 4.2 join rule).
 
     Depends via interstate-edge assignments in ``inner_sdfg``. Same relation codegen uses for
@@ -579,7 +711,7 @@ def _is_tile_dependent(symbol: str,
     return memo[symbol]
 
 
-def classify_symbols(expr: sympy.Expr, iter_vars: Sequence[str], inner_sdfg: Optional[SDFG]) -> Dict[str, bool]:
+def classify_symbols(expr: sympy.Expr, iter_vars: Sequence[str], inner_sdfg: SDFG | None) -> dict[str, bool]:
     """Per-symbol tile-dependence map for every symbol in ``expr``.
 
     :param expr: The expression to walk.
@@ -591,64 +723,30 @@ def classify_symbols(expr: sympy.Expr, iter_vars: Sequence[str], inner_sdfg: Opt
     if expr is None:
         return {}
     iter_var_set = set(iter_vars)
-    memo: Dict[str, bool] = {}
-    out: Dict[str, bool] = {}
+    memo: dict[str, bool] = {}
+    out: dict[str, bool] = {}
     for fs in expr.free_symbols:
         name = str(fs)
         out[name] = _is_tile_dependent(name, iter_var_set, inner_sdfg, memo)
     return out
 
 
-def compute_per_iter_var_dep_mask(gather_expr: str, iter_vars: Sequence[str],
-                                  inner_sdfg: Optional[SDFG]) -> Tuple[bool, ...]:
-    """Per-iter-var dependency mask for a gather expression.
-
-    Per tile iter-var, ``True`` iff gather expr transitively depends on it (via interstate-edge
-    assignments in ``inner_sdfg``). Walks back through per-lane symbols introduced by
-    :class:`BypassTrivialAssignTasklets` -- e.g. ``__sym_<>`` from ``__sym_<> = idx[i]`` tracked as
-    dep on ``i``, not ``j``.
-
-    Post-Bypass-aware version of the materialiser's direct ``free_symbols`` check. Walker calls this
-    BEFORE :func:`materialise_per_lane_index_tile` so per-dim ONE-marker emission has the correct dep
-    mask.
-
-    :param gather_expr: Gather expr string (e.g. ``"__sym_x"`` or ``"idx[i]"``).
-    :param iter_vars: Tile iter-var names in order.
-    :param inner_sdfg: Body NSDFG carrying interstate assignments. ``None`` → direct iter-var
-        membership check (no transitive walk).
-    :returns: A tuple ``(dep_i, dep_j, ...)`` of length ``len(iter_vars)``.
-    """
-    expr = _safe_sympify(gather_expr)
-    if expr is None:
-        return tuple(True for _ in iter_vars)
-    mask: List[bool] = []
-    for v in iter_vars:
-        any_dep = False
-        memo: Dict[str, bool] = {}
-        for fs in expr.free_symbols:
-            if _is_tile_dependent(str(fs), {v}, inner_sdfg, memo):
-                any_dep = True
-                break
-        mask.append(any_dep)
-    return tuple(mask)
-
-
-def _gather_subscripts(expr: sympy.Expr) -> List[symbolic.Subscript]:
+def _gather_subscripts(expr: sympy.Expr) -> list[symbolic.Subscript]:
     """Every :class:`Subscript` node anywhere in ``expr``. Detects data-dependent indices
     (``arr[idx[i]]``)."""
     if expr is None:
         return []
-    result: List[symbolic.Subscript] = []
+    result: list[symbolic.Subscript] = []
     if isinstance(expr, symbolic.Subscript):
         result.append(expr)
-    args = getattr(expr, 'args', None)
+    args = expr.args if isinstance(expr, sympy.Basic) else ()
     if args:
         for arg in args:
-            result.extend(_gather_subscripts(arg))
+            result.extend(_gather_subscripts(as_expr(arg)))
     return result
 
 
-def _find_named_symbol(expr: sympy.Expr, var_name: str) -> Optional[sympy.Symbol]:
+def _find_named_symbol(expr: sympy.Expr, var_name: str) -> sympy.Symbol | None:
     """Actual :class:`sympy.Symbol` instance in ``expr`` named ``var_name``. DaCe's ``symbol``
     subclasses :class:`sympy.Symbol` but doesn't compare equal to a fresh ``sympy.Symbol``;
     :func:`sympy.Poly` then treats the mismatched generator as opaque (degree 0). Picking the real
@@ -661,7 +759,7 @@ def _find_named_symbol(expr: sympy.Expr, var_name: str) -> Optional[sympy.Symbol
     return None
 
 
-def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
+def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> sympy.Expr | None:
     """Coefficient of ``var_name`` in ``expr`` if ``expr`` is affine in it (``expr = coeff * var +
     rest``, ``rest`` free of ``var_name``). ``None`` if non-affine or unresolvable."""
     if expr is None:
@@ -674,11 +772,11 @@ def _affine_coeff_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
     if poly.degree() > 1:
         return None
     if poly.degree() == 0:
-        return sympy.Integer(0)
+        return symbolic.pystr_to_symbolic(0)
     return poly.coeff_monomial(sym)  # degree 1
 
 
-def _affine_offset_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
+def _affine_offset_for(expr: sympy.Expr, var_name: str) -> sympy.Expr | None:
     """Constant term of ``expr`` w.r.t. ``var_name`` (the ``c`` in ``coeff * var + c``). ``None`` if
     non-affine."""
     if expr is None:
@@ -693,9 +791,9 @@ def _affine_offset_for(expr: sympy.Expr, var_name: str) -> Optional[sympy.Expr]:
     return poly.nth(0)  # constant term
 
 
-def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
-    """Detect ``int_floor(affine_in_var, k)`` / ``int_ceil(...)`` at the top of ``expr``; return
-    integer divisor ``k`` when the inner arg is affine in ``var_name``.
+def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> int | None:
+    """Detect ``int_floor(var + c0, k)`` with ``c0 % k == 0`` at the top of ``expr``; return the
+    divisor ``k``.
 
     ``None`` when: not an ``int_floor`` / ``int_ceil`` call, divisor not a concrete positive integer,
     or dividend not affine in ``var_name``.
@@ -716,9 +814,9 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     dividend, divisor = expr.args
     # Divisor: positive integer OR symbolic (e.g. ``DV`` in ``i // DV``). Per user direction
     # 2026-06-10 (tile dim must be a multiple of replicate factor):
-    # * Static: TileLoad construction validates ``W % k == 0``, ValueError on violation.
+    # * Static: TileGather construction validates ``W % k == 0``, ValueError on violation.
     # * Symbolic: not statically verifiable; codegen emits ``__l / DV``, CORRECT only when
-    #   ``W % DV == 0`` at runtime (user responsibility, documented on TileLoad property).
+    #   ``W % DV == 0`` at runtime (user responsibility, documented on TileGather property).
     #   Non-dividing symbolic divisors (e.g. ``test_div_index_symbol[3]``: DV=3, W=8) give wrong
     #   results -- by-design refusal, not a codegen bug.
     # Refuse floats: access exprs integer-valued; float divisor = upstream pass leaked a numeric
@@ -726,7 +824,7 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     if isinstance(divisor, (sympy.Float, float)):
         return None
     try:
-        k = int(divisor)
+        k = int(as_expr(divisor))
         if k <= 1:
             return None
     except (TypeError, ValueError):
@@ -735,13 +833,15 @@ def _detect_replicate_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
         k = divisor  # symbolic -- runtime check (W % k == 0) at codegen per 2c7b88e26
     # Dividend must be affine in ``var_name`` (regular replication -- ``int_floor(idx[i], 2)`` is
     # data-dependent → GATHER, not REPLICATE).
-    coeff = _affine_coeff_for(dividend, var_name)
-    if coeff is None:
+    # The contracted-box load is exact only for ``int_floor(var + c0, k)`` with ``c0 % k == 0``.
+    coeff = _affine_coeff_for(as_expr(dividend), var_name)
+    offset = _affine_offset_for(as_expr(dividend), var_name)
+    if fname not in ("int_floor", "__int_floor") or coeff != 1 or offset is None or sympy.Mod(offset, k) != 0:
         return None
     return k
 
 
-def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
+def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> int | None:
     """Detect ``(c * var + c0) % N`` -- the MODULAR per-dim pattern.
 
     Returns ``N`` (positive integer) when ``expr`` is a Mod / mod call with positive-integer RHS and
@@ -751,25 +851,23 @@ def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> Optional[int]:
     if expr is None:
         return None
     fname = type(expr).__name__
-    # SymPy modulo is ``Mod`` (also from ``a % b``); DaCe's ``__mod__`` overload may yield ``mod``
-    # or ``Mod`` depending on construction.
-    if fname not in ("Mod", "mod", "__mod__"):
+    if fname not in ("Mod", "__mod__"):
         return None
     if len(expr.args) != 2:
         return None
     dividend, divisor = expr.args
     try:
-        N = int(divisor)
+        N = int(as_expr(divisor))
     except (TypeError, ValueError):
         return None
     if N <= 1:
         return None
-    if _affine_coeff_for(dividend, var_name) is None:
+    if _affine_coeff_for(as_expr(dividend), var_name) is None:
         return None
     return N
 
 
-def _resolve_gather_index_an(inner_sdfg: Optional[SDFG], expr: sympy.Expr) -> Optional[nodes.AccessNode]:
+def _resolve_gather_index_an(inner_sdfg: SDFG | None, expr: sympy.Expr) -> nodes.AccessNode | None:
     """If ``expr`` has exactly one Subscript whose base is an array name in ``inner_sdfg.arrays``,
     return an :class:`AccessNode` for that array from any state. ``None`` when there are zero /
     multiple subscripts, the base isn't an array, or no AccessNode exists."""
@@ -782,20 +880,23 @@ def _resolve_gather_index_an(inner_sdfg: Optional[SDFG], expr: sympy.Expr) -> Op
     base_name = str(base)
     if base_name not in inner_sdfg.arrays:
         return None
-    for st in inner_sdfg.all_states():
+    for st in inner_sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and n.data == base_name:
                 return n
     return None
 
 
-# ----- public API --------------------------------------------------------
+# public API
 
 
-def classify_tile_access(subset: Range,
-                         iter_vars: Sequence[str],
-                         inner_sdfg: Optional[SDFG] = None,
-                         state=None) -> TileAccess:
+def classify_tile_access(
+    subset: Range,
+    iter_vars: Sequence[str],
+    inner_sdfg: SDFG | None = None,
+    state: SDFGState | None = None,
+    sym_defs: dict[str, sympy.Expr] | None = None,
+) -> TileAccess:
     """Classify a memlet subset for tile lib-node dispatch.
 
     :param subset: The :class:`Range` to classify (typically a memlet's ``subset``).
@@ -804,27 +905,33 @@ def classify_tile_access(subset: Range,
         symbols. ``None`` outside the body context (gather-index field left empty).
     :param state: Optional access state; disambiguates multiply-assigned promoted index symbols by
         reaching definition (one ``__sym_i_plus_offset1`` per program point).
+    :param sym_defs: The symbol-definition map for ``(inner_sdfg, state)``, when the caller already
+        has one. Building it scans every interstate edge and scalar write in the body, which is
+        wasted work for a caller classifying many subsets of the SAME body -- the per-lane subset
+        walk over a large tiled state does exactly that, and rebuilding it per subset made the
+        predicate quadratic. Not cached across calls on purpose: passes mutate the body between
+        them, and a stale map would silently mis-classify an access.
     :returns: A :class:`TileAccess` record. Always returns, never raises. Unrecognisable patterns
         degrade to GATHER (correctness fallback).
     """
-    iter_var_set: Set[str] = set(iter_vars)
+    iter_var_set: set[str] = set(iter_vars)
     n_dims = len(subset.ranges)
 
-    per_dim_kind: List[PerDimKind] = []
-    dim_strides: List[Optional[int]] = []
-    dim_iter_var: List[Optional[str]] = []
-    gather_index_per_dim: List[Optional[nodes.AccessNode]] = []
-    dim_offset: List[Optional[sympy.Expr]] = []
-    replicate_factor_per_dim: List[Optional[int]] = []
+    per_dim_kind: list[PerDimKind] = []
+    dim_strides: list[int | None] = []
+    dim_iter_var: list[str | None] = []
+    gather_index_per_dim: list[nodes.AccessNode | None] = []
+    dim_offset: list[sympy.Expr | None] = []
+    replicate_factor_per_dim: list[int | None] = []
 
     # Per-iter-var tracking for diagonal / transpose detection.
-    iter_var_in_dim: Dict[str, List[int]] = {v: [] for v in iter_vars}
-    dim_to_canonical_iter_var: List[Optional[int]] = []
+    iter_var_in_dim: dict[str, list[int]] = {v: [] for v in iter_vars}
+    dim_to_canonical_iter_var: list[int | None] = []
 
     # Resolve promoted index symbols (``__sym_i_plus_offset1`` -> ``i + offset1``) once per subset so
     # each dim's iter-var dependence is visible. Empty/unresolvable leaves exprs untouched. ``state``
     # disambiguates multiply-assigned interstate symbols by reaching def.
-    _sym_defs = _build_symbol_definition_map(inner_sdfg, state)
+    _sym_defs = build_symbol_definition_map(inner_sdfg, state) if sym_defs is None else sym_defs
 
     for d, (lo, _hi, _stp) in enumerate(subset.ranges):
         lo_sym = _safe_sympify(lo)
@@ -903,8 +1010,7 @@ def classify_tile_access(subset: Range,
             # The value ``a[(c*l+c0) mod N]`` is single-element but NOT contiguous across lanes
             # (it wraps), so it cannot be a structured contiguous-widened tile. The emitter builds
             # a per-lane index tile ``[f(l+0), .., f(l+W-1)]`` (expand the modulus per lane, then
-            # gather), exactly as VECTORIZATION_MODEL.md documents for ``MODULAR`` ("per-lane index
-            # + gather"). Recorded as GATHER so the shared emit dispatch routes it to the gather
+            # gather). Recorded as GATHER so the shared emit dispatch routes it to the gather
             # path; the per-lane expression is recovered from the subset-begin text.
             modular_N = _detect_modular_factor(lo_sym, tvar)
             if modular_N is not None:
@@ -935,7 +1041,7 @@ def classify_tile_access(subset: Range,
                 # symbolic coefficients whose tile-independence we can't prove.
                 tile_dep_coeff = False
                 if inner_sdfg is not None:
-                    coeff_syms = {str(s) for s in coeff.free_symbols} if hasattr(coeff, "free_symbols") else set()
+                    coeff_syms = free_symbol_names(coeff)
                     if any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in coeff_syms):
                         tile_dep_coeff = True
                 if tile_dep_coeff:
@@ -990,9 +1096,10 @@ def classify_tile_access(subset: Range,
             if c is None:  # non-affine in tv (e.g. i**2)
                 multi_var_gather = True
                 break
-            c_syms = {str(s) for s in c.free_symbols} if hasattr(c, "free_symbols") else set()
-            if (c_syms & iter_var_set) or (inner_sdfg is not None
-                                           and any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in c_syms)):
+            c_syms = free_symbol_names(c)
+            if (c_syms & iter_var_set) or (
+                inner_sdfg is not None and any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in c_syms)
+            ):
                 multi_var_gather = True
                 break
         if multi_var_gather:
@@ -1053,7 +1160,7 @@ def classify_tile_access(subset: Range,
 
     # Transpose: STRUCTURED with iter-vars in non-canonical order (canonical: dim ``d`` carries
     # ``iter_vars[d]``).
-    transpose: Optional[Tuple[int, ...]] = None
+    transpose: tuple[int, ...] | None = None
     if kind == TileAccessKind.STRUCTURED and len(per_dim_kind) == len(iter_vars):
         perm = tuple(dim_to_canonical_iter_var)  # type: ignore[arg-type]
         if all(p is not None for p in perm) and tuple(perm) != tuple(range(len(iter_vars))):
@@ -1070,3 +1177,83 @@ def classify_tile_access(subset: Range,
         diagonal=diagonal,
         transpose=transpose,
     )
+
+
+def _holds_one_value(desc: dt.Data) -> bool:
+    """Whether ``desc`` holds exactly one element -- a ``Scalar``, or an ``Array`` whose every
+    dimension simplifies to 1 (the ``(1,)`` / ``(1, 1)`` frontend artifacts).
+
+    Mirrors ``WidenAccesses._is_widenable``, which decides the same shapes are tile-widenable;
+    importing it here would close an import cycle, and the question is about the descriptor alone.
+
+    :param desc: the data descriptor to test.
+    :returns: ``True`` when the descriptor carries a single value.
+    """
+    if isinstance(desc, dt.Scalar):
+        return True
+    if isinstance(desc, dt.Array):
+        shape = tuple(desc.shape)
+        if not shape:
+            return False
+        try:
+            return all(bool(symbolic.simplify(s - 1) == 0) for s in shape)
+        except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
+            return False
+    return False
+
+
+def data_is_lane_indexed(inner_sdfg: SDFG, name: str, iter_vars: Sequence[str]) -> bool:
+    """True iff some memlet indexes ``name`` BY a tile iter-var.
+
+    Such a transient carries the lane axis in its OWN indexing -- CloudSC's ``zsolqa[jm, jn, jl]``,
+    shape ``(nclv, nclv, klon)`` -- so it holds a whole lane DIMENSION, not one value per lane. It
+    is already the shape the tile machinery reads: widening it to ``(W, ...)`` would add a second
+    lane axis. A genuine per-lane buffer (a sliding window ``tmp[0:2] = a[i:i+2]``) indexes ``tmp``
+    by constants and is NOT lane-indexed by this test.
+
+    :param inner_sdfg: the body SDFG whose memlets are inspected.
+    :param name: the data name to test.
+    :param iter_vars: the K tile iter-var names.
+    :returns: whether the lane axis is part of the data's own indexing.
+    """
+    desc = inner_sdfg.arrays.get(name)
+    if desc is None:
+        return False
+    # A scalar-like buffer has no lane axis to carry: it holds ONE value, so whatever its memlets
+    # say it is a per-lane buffer whose DESCRIPTOR must be swapped for a ``(W,)`` tile, never an
+    # array already spanning the lane dimension. Answering True for one seeds it for in-place
+    # widening instead: its memlets go to ``[0:W]`` while the descriptor stays ``(1,)``, which is
+    # the "Memlet subset out-of-bounds" TSVC-2.5 ``scan_conditional`` hits on ``_then__scan_in_out``.
+    # Two of the three callers ask only after their own widenable check; this keeps the answer
+    # right for the one that does not, and for anyone who asks later.
+    if _holds_one_value(desc):
+        return False
+    only = set(iter_vars)
+    for state in inner_sdfg.states():
+        for edge in state.edges():
+            if edge.data is None or edge.data.subset is None:
+                continue
+            if edge.data.data == name:
+                sub = edge.data.subset
+            else:
+                # An AN-to-AN copy holds one endpoint's region in ``subset`` and the other's in
+                # ``other_subset``, and WHICH end ``subset`` names is the memlet's orientation, not
+                # the endpoint being asked about. A copy built from the source names the SOURCE, so
+                # matching on ``edge.data.data`` alone finds no access at all to a lane-indexed
+                # transient that a source-oriented copy writes -- ``WidenAccesses`` then refuses it
+                # as an unwidenable per-lane buffer (CloudSC's ``loop_body_zsolqa``, shape
+                # ``(5, 5, klon)``, written by exactly such a copy). ``an_side_subset`` resolves the
+                # orientation and returns this name's own side.
+                sub = None
+                for endpoint in (edge.src, edge.dst):
+                    if isinstance(endpoint, nodes.AccessNode) and endpoint.data == name:
+                        try:
+                            sub = an_side_subset(edge, endpoint, inner_sdfg, state)
+                        except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
+                            sub = None
+                        break
+                if sub is None:
+                    continue
+            if only & {str(s) for s in sub.free_symbols}:
+                return True
+    return False

@@ -6,20 +6,22 @@ a conditional block, the outer guard can be pushed inside the inner map's body.
 This exposes the two maps to fusion/collapsing passes that otherwise refuse to
 cross the conditional block.
 """
-import copy
-from typing import Dict, List, Optional, Set, Tuple
 
-from dace import dtypes, memlet as mm, symbolic
+import copy
+
+from dace import dtypes, symbolic
+from dace import memlet as mm
 from dace import sdfg as sd
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG, AccessNode
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Tasklet
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
-from dace.sdfg.graph import SubgraphView
-from dace.transformation import transformation
 from dace.transformation import helpers as xfh
+from dace.transformation import transformation
 
 
 @transformation.explicit_cf_compatible
@@ -82,7 +84,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return [sdutil.node_path_graph(cls.cond_block)]
 
     @staticmethod
-    def _single_meaningful_state(region: ControlFlowRegion) -> Optional[SDFGState]:
+    def _single_meaningful_state(region: ControlFlowRegion) -> SDFGState | None:
         """Returns the single non-empty ``SDFGState`` inside a region.
 
         :param region: The control-flow region to inspect.
@@ -101,7 +103,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return non_empty[0]
 
     @staticmethod
-    def _find_all_inner_map_pieces(branch_state: SDFGState) -> Optional[List[Tuple[MapEntry, MapExit, NestedSDFG]]]:
+    def _find_all_inner_map_pieces(branch_state: SDFGState) -> list[tuple[MapEntry, MapExit, NestedSDFG]] | None:
         """Returns the list of ``(map_entry, map_exit, inner_nsdfg)`` tuples for
         every top-level map in ``branch_state``.
 
@@ -120,7 +122,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             return None
 
         map_pairs = [(me, branch_state.exit_node(me)) for me in map_entries]
-        scope_nodes: Set = set()
+        scope_nodes: set = set()
         for me, mx in map_pairs:
             scope_nodes.add(me)
             scope_nodes.add(mx)
@@ -134,9 +136,9 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 continue
             return None
 
-        pieces: List[Tuple[MapEntry, MapExit, NestedSDFG]] = []
+        pieces: list[tuple[MapEntry, MapExit, NestedSDFG]] = []
         for map_entry, map_exit in map_pairs:
-            body = list(branch_state.all_nodes_between(map_entry, map_exit))
+            body = list(branch_state.all_nodes_between(map_entry, required(map_exit)))
             nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
             if len(nsdfgs) != 1:
                 return None
@@ -167,7 +169,16 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         map_entries = [n for n in branch_state.nodes() if isinstance(n, MapEntry)]
         if len(map_entries) < 1:
             return False
-        scope_nodes: Set = set()
+        # Only sibling top-level maps. A nested map (``if c: map j: map k:``)
+        # would be accepted here but breaks the rewrite: normalizing the outer
+        # map nests the inner one away, so the snapshot loop in
+        # ``_normalize_inner_map_bodies`` then calls ``exit_node`` on a node
+        # already removed from the state (a KeyError from the plain-dict scope
+        # lookup) -- and by then the branch state has been mutated, so the
+        # transformation would raise having already changed the graph.
+        if any(branch_state.entry_node(me) is not None for me in map_entries):
+            return False
+        scope_nodes: set = set()
         for me in map_entries:
             scope_nodes.add(me)
             scope_nodes.add(branch_state.exit_node(me))
@@ -178,7 +189,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 continue
             return False
         for me in map_entries:
-            body = list(branch_state.all_nodes_between(me, branch_state.exit_node(me)))
+            body = list(branch_state.all_nodes_between(me, required(branch_state.exit_node(me))))
             if not any(not isinstance(n, AccessNode) for n in body):
                 return False
         return True
@@ -197,7 +208,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         :param enclosing_sdfg: The SDFG that owns ``branch_state``.
         """
         for me in [n for n in branch_state.nodes() if isinstance(n, MapEntry)]:
-            body = list(branch_state.all_nodes_between(me, branch_state.exit_node(me)))
+            body = list(branch_state.all_nodes_between(me, required(branch_state.exit_node(me))))
             nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
             non_access = [n for n in body if not isinstance(n, AccessNode)]
             if len(nsdfgs) == 1 and len(non_access) == 1:
@@ -252,15 +263,60 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # is that the condition's free symbols can be read at all; a condition
         # that cannot be parsed is rejected (``apply`` could not thread it).
         try:
-            branch_cond.get_free_symbols()
+            cond_syms = {str(s) for s in branch_cond.get_free_symbols()}
         except Exception:
+            return False
+
+        # The condition is usually a symbol assigned on the entry edge
+        # (``__tmp0 = (__tmp_r > thr)``), and ``apply`` moves that assignment
+        # INTO the inner body so the guard can be re-evaluated there. That only
+        # works while the assignment reads symbols: an assignment reading a
+        # data container turns those names into free symbols of the inner SDFG,
+        # which the nested node cannot satisfy through ``symbol_mapping`` --
+        # the result fails validation with "Missing symbols on nested SDFG".
+        # Refuse rather than emit an invalid SDFG.
+        #
+        # The data-reading case is the common data-dependent guard, so this
+        # gives up real fusion opportunities; the proper fix is to leave the
+        # assignment on the edge feeding the replacement state and thread only
+        # the resulting boolean in, which needs no data piping at all.
+        # A guard symbol defined on more than one incoming edge has no single
+        # definition to move inside. ``apply`` collects them into a flat dict,
+        # so the last one seen wins -- while every edge's copy is deleted. Both
+        # predecessors would then evaluate the guard with whichever definition
+        # the iteration order happened to land on. Silently wrong; refuse.
+        guard_defs: dict[str, int] = {}
+        for e in enclosing_sdfg.in_edges(cond_block):
+            for lhs in e.data.assignments:
+                if lhs in cond_syms:
+                    guard_defs[lhs] = guard_defs.get(lhs, 0) + 1
+        if any(count > 1 for count in guard_defs.values()):
+            return False
+
+        for e in enclosing_sdfg.in_edges(cond_block):
+            for lhs, rhs in e.data.assignments.items():
+                if lhs not in cond_syms:
+                    continue
+                try:
+                    rhs_names = {str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols}
+                except Exception:
+                    return False
+                if any(n in enclosing_sdfg.arrays for n in rhs_names):
+                    return False
+        if any(s in enclosing_sdfg.arrays for s in cond_syms):
             return False
 
         return True
 
-    def _rewrite_inner_sdfg(self, cond_block: ConditionalBlock, branch_cond: CodeBlock, enclosing_sdfg: sd.SDFG,
-                            inner_nsdfg: NestedSDFG, cond_free_syms: Set[str],
-                            moved_assignments: Dict[str, str]) -> Set[str]:
+    def _rewrite_inner_sdfg(
+        self,
+        cond_block: ConditionalBlock,
+        branch_cond: CodeBlock,
+        enclosing_sdfg: sd.SDFG,
+        inner_nsdfg: NestedSDFG,
+        cond_free_syms: set[str],
+        moved_assignments: dict[str, str],
+    ) -> set[str]:
         """Wraps the body of one inner NestedSDFG in a copy of the moved
         condition and threads in the symbols/arrays it needs.
 
@@ -286,13 +342,13 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # Identify arrays referenced by the moved assignments -- they must
         # be piped as inputs into the inner NSDFG so the moved-inside
         # assignments can still evaluate.
-        arrays_to_pipe: Set[str] = set()
+        arrays_to_pipe: set[str] = set()
         for sym, rhs in moved_assignments.items():
             tmp_edge = InterstateEdge(assignments={sym: rhs})
             for mmlt in tmp_edge.get_read_memlets(enclosing_sdfg.arrays):
                 arrays_to_pipe.add(mmlt.data)
 
-        piped_array_shape_syms: Set[str] = set()
+        piped_array_shape_syms: set[str] = set()
         for arr_name in arrays_to_pipe:
             if arr_name not in inner_sdfg.arrays:
                 desc = copy.deepcopy(enclosing_sdfg.arrays[arr_name])
@@ -305,7 +361,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # Pipe free symbols that the condition and moved RHS expressions
         # reference. Skip any names that now live as data descriptors OR
         # that are themselves defined inside (LHS of a moved assignment).
-        syms_needed: Set[str] = set(cond_free_syms)
+        syms_needed: set[str] = set(cond_free_syms)
         for rhs in moved_assignments.values():
             try:
                 for s in symbolic.pystr_to_symbolic(rhs).free_symbols:
@@ -381,7 +437,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # (they would otherwise add an always-true pre-state to the outer
         # map body, blocking collapse).
         in_edges = list(enclosing_sdfg.in_edges(cond_block))
-        moved_assignments: Dict[str, str] = {}
+        moved_assignments: dict[str, str] = {}
         for e in in_edges:
             for k in list(e.data.assignments.keys()):
                 if k in cond_free_syms:
@@ -391,10 +447,18 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # Wrap each sibling map's inner body with its own copy of the guard.
         # All siblings share the identical condition and moved assignments;
         # the union of arrays that needed piping is rewired below.
-        arrays_to_pipe: Set[str] = set()
-        for _, _, inner_nsdfg in all_pieces:
-            arrays_to_pipe |= self._rewrite_inner_sdfg(cond_block, branch_cond, enclosing_sdfg, inner_nsdfg,
-                                                       cond_free_syms, moved_assignments)
+        arrays_to_pipe: set[str] = set()
+        for _, _, inner_nsdfg in required(all_pieces):
+            arrays_to_pipe |= self._rewrite_inner_sdfg(
+                cond_block, branch_cond, enclosing_sdfg, inner_nsdfg, cond_free_syms, moved_assignments
+            )
+
+        # Ask BEFORE the add: a derivable entry is left implicit, and ``add_node`` attaches
+        # ``new_branch_state`` unwired, so until the rewiring lands the region has two source
+        # blocks and the getter raises. The placeholder cleanup below reads the same answer:
+        # by then the emptied pre-states are isolated, which is the same ambiguity.
+        start_before = enclosing_sdfg.start_block
+        was_start = start_before is cond_block
 
         new_branch_state = copy.deepcopy(branch_state)
         enclosing_sdfg.add_node(new_branch_state, ensure_unique_name=True)
@@ -404,7 +468,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # its own MapEntry/NestedSDFG nodes; we look them up again.
         if arrays_to_pipe:
             copied_pieces = self._find_all_inner_map_pieces(new_branch_state)
-            for copied_entry, _, copied_nsdfg in copied_pieces:
+            for copied_entry, _, copied_nsdfg in required(copied_pieces):
                 for arr_name in arrays_to_pipe:
                     if arr_name not in copied_nsdfg.sdfg.arrays:
                         continue
@@ -415,19 +479,28 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                     if "OUT_" + arr_name not in copied_entry.out_connectors:
                         copied_entry.add_out_connector("OUT_" + arr_name)
                     arr_read = new_branch_state.add_read(arr_name)
-                    new_branch_state.add_edge(arr_read, None, copied_entry, "IN_" + arr_name,
-                                              mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
-                    new_branch_state.add_edge(copied_entry, "OUT_" + arr_name, copied_nsdfg, arr_name,
-                                              mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
+                    new_branch_state.add_edge(
+                        arr_read,
+                        None,
+                        copied_entry,
+                        "IN_" + arr_name,
+                        mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]),
+                    )
+                    new_branch_state.add_edge(
+                        copied_entry,
+                        "OUT_" + arr_name,
+                        copied_nsdfg,
+                        arr_name,
+                        mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]),
+                    )
 
         out_edges = list(enclosing_sdfg.out_edges(cond_block))
-        was_start = enclosing_sdfg.start_block is cond_block
 
         # Wire in_edges to new_branch_state. If an edge has been emptied
         # by the moved-inside step (no assignments, no condition), drop it
         # and also drop its source state when the source is an empty
         # placeholder that exists only to feed the ConditionalBlock.
-        states_to_try_remove: Set[SDFGState] = set()
+        states_to_try_remove: OrderedSet[SDFGState] = OrderedSet()
         for e in in_edges:
             if e.data.is_unconditional() and not e.data.assignments:
                 if isinstance(e.src, SDFGState):
@@ -437,14 +510,16 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 enclosing_sdfg.add_edge(e.src, new_branch_state, copy.deepcopy(e.data))
                 enclosing_sdfg.remove_edge(e)
 
-        if was_start or not in_edges:
-            enclosing_sdfg.start_block = enclosing_sdfg.node_id(new_branch_state)
-
         for e in out_edges:
             enclosing_sdfg.add_edge(new_branch_state, e.dst, copy.deepcopy(e.data))
             enclosing_sdfg.remove_edge(e)
 
         enclosing_sdfg.remove_node(cond_block)
+
+        # Repoint the start AFTER the removal, so the pin cannot name a block that is about to
+        # go away.
+        if was_start or not in_edges:
+            enclosing_sdfg.start_block = enclosing_sdfg.node_id(new_branch_state)
 
         # Drop the moved symbols from the enclosing SDFG's symbol table if
         # no interstate edge or nested SDFG symbol-mapping still uses them.
@@ -470,6 +545,11 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                             return True
                     except Exception:
                         pass
+            # Dataflow uses the symbol too, and dropping it there is what makes
+            # the removal dangerous: ``SDFG.remove_symbol`` also strips the name
+            # from the parent NestedSDFG's symbol_mapping, so a map range like
+            # ``map[0:n2]`` or a memlet subset mentioning ``n2`` would be left
+            # referring to a symbol that no longer exists at any level.
             for state in sdfg.states():
                 for n in state.nodes():
                     if isinstance(n, NestedSDFG):
@@ -479,19 +559,39 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                                     return True
                             except Exception:
                                 pass
+                    if isinstance(n, MapEntry):
+                        if name in {str(s) for s in n.map.range.free_symbols}:
+                            return True
+                    if isinstance(n, Tasklet):
+                        if name in {str(s) for s in n.free_symbols}:
+                            return True
+                for e in state.edges():
+                    if e.data is None or e.data.is_empty():
+                        continue
+                    if name in {str(s) for s in e.data.free_symbols}:
+                        return True
+            # Descriptor shapes and strides can be symbolic as well.
+            for desc in sdfg.arrays.values():
+                if name in {str(s) for s in desc.free_symbols}:
+                    return True
             return False
 
         for sym in list(moved_assignments.keys()):
             if sym in enclosing_sdfg.symbols and not _still_references(enclosing_sdfg, sym):
                 enclosing_sdfg.remove_symbol(sym)
 
-        # Drop empty placeholder pre-states that are no longer reachable.
+        # Drop empty placeholder pre-states that are no longer reachable. The entry was captured
+        # ONCE up top: the pin is a node *index*, so every removal invalidates it, and comparing
+        # by identity is what survives that.
+        removed_start = False
         for s in states_to_try_remove:
-            if (s in enclosing_sdfg.nodes() and s.is_empty() and enclosing_sdfg.in_degree(s) == 0
-                    and enclosing_sdfg.out_degree(s) == 0):
-                was_start_src = enclosing_sdfg.start_block is s
+            if (
+                s in enclosing_sdfg.nodes()
+                and s.is_empty()
+                and enclosing_sdfg.in_degree(s) == 0
+                and enclosing_sdfg.out_degree(s) == 0
+            ):
+                removed_start = removed_start or s is start_before
                 enclosing_sdfg.remove_node(s)
-                if was_start_src:
-                    enclosing_sdfg.start_block = enclosing_sdfg.node_id(new_branch_state)
-
-        set_nested_sdfg_parent_references(sdfg)
+        if removed_start:
+            enclosing_sdfg.start_block = enclosing_sdfg.node_id(new_branch_state)

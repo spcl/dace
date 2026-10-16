@@ -8,6 +8,7 @@ symbol-absent no-op, etc.). Rows are intentionally shape-driven, not branch-
 driven: if the implementation is rewritten the rows still encode the same
 user-visible contract.
 """
+
 import pytest
 
 from dace.transformation.passes.vectorization.utils.code_rewrite import (
@@ -28,7 +29,8 @@ from dace.transformation.passes.vectorization.utils.code_rewrite import (
         ("a[i]", "i", 3, {"a"}, "a[i + 3]"),
         # Zero offset is a no-op semantically (i + 0 = i).
         ("i", "i", 0, None, "i"),
-    ])
+    ],
+)
 def test_offset_symbol_in_expression(expr, sym, offset, arrays, expected):
     assert offset_symbol_in_expression(expr, sym, offset, arrays=arrays) == expected
 
@@ -44,6 +46,7 @@ def test_offset_symbol_in_expression(expr, sym, offset, arrays, expected):
         # Generic symbol with vector_map_param set to a DIFFERENT name:
         # still lane-suffixed (only matches when sym == vector_map_param).
         ("idx + 0", "idx", 5, "i", "idx_lane0id_5"),
-    ])
+    ],
+)
 def test_use_laneid_symbol_in_expression(expr, sym, offset, vp, expected):
     assert use_laneid_symbol_in_expression(expr, sym, offset, vector_map_param=vp) == expected

@@ -1,20 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" MapFission on indirect-access maps.
+"""MapFission on indirect-access maps.
 
-    The dace frontend lowers ``for i: A[i]=B[idx[i]]; C[i]=D[idx[i]]`` to a
-    map whose body is one ``NestedSDFG`` whose ``idx[i]`` indirection is an
-    interstate-edge symbol assignment depending on the map iterator.
-    ``MapFission`` refuses to split that in place (it cannot hoist the
-    assignment out of the fissioned maps). ``SplitStatements``
-    replicates the NestedSDFG per independent output group first -- the
-    deep-copy carries every interstate-edge indirection-symbol assignment
-    and the index inputs into each clone -- after which ordinary
-    ``MapFission`` splits the map into one map per independent output.
+The dace frontend lowers ``for i: A[i]=B[idx[i]]; C[i]=D[idx[i]]`` to a
+map whose body is one ``NestedSDFG`` whose ``idx[i]`` indirection is an
+interstate-edge symbol assignment depending on the map iterator.
+``MapFission`` refuses to split that in place (it cannot hoist the
+assignment out of the fissioned maps). ``SplitStatements``
+replicates the NestedSDFG per independent output group first -- the
+deep-copy carries every interstate-edge indirection-symbol assignment
+and the index inputs into each clone -- after which ordinary
+``MapFission`` splits the map into one map per independent output.
 
-    Every test checks numerical equivalence against a deep-copied pre-pass
-    run, and that the split actually happened (applied when possible) or
-    provably did not (single group / coupled outputs -> still correct).
+Every test checks numerical equivalence against a deep-copied pre-pass
+run, and that the split actually happened (applied when possible) or
+provably did not (single group / coupled outputs -> still correct).
 """
+
 import copy
 
 import numpy as np
@@ -22,15 +23,15 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.dataflow.map_fission import MapFission
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _nmaps(sdfg):
-    return len([n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry)])
+    return len([n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)])
 
 
 @dace.program
@@ -48,8 +49,9 @@ def scatter_two(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: d
 
 
 @dace.program
-def semi_indirect_two(a: dace.float64[N, M], col: dace.int32[M], b: dace.float64[N, M], c: dace.float64[N, M],
-                      e: dace.float64[N, M]):
+def semi_indirect_two(
+    a: dace.float64[N, M], col: dace.int32[M], b: dace.float64[N, M], c: dace.float64[N, M], e: dace.float64[N, M]
+):
     # dim 0 structured, dim 1 gathered through ``col``.
     for i, j in dace.map[0:N, 0:M]:
         b[i, j] = a[i, col[j]]
@@ -82,10 +84,11 @@ def _fission(sdfg):
 
 def test_mapfission_splits_two_independent_gathers():
     """`b=a[idx]; e=c[idx]` -> two independent maps; value-preserving."""
+    rng = np.random.default_rng(42)
     n = 20
-    a = np.random.rand(n)
-    c = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    c = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     base = gather_two.to_sdfg(simplify=True)
     assert _nmaps(base) == 1
 
@@ -106,10 +109,11 @@ def test_mapfission_splits_two_independent_gathers():
 
 def test_mapfission_splits_two_independent_scatters():
     """`b[idx]=2a; e[idx]=c+1` -> two independent maps; value-preserving."""
+    rng = np.random.default_rng(42)
     n = 18
-    a = np.random.rand(n)
-    c = np.random.rand(n)
-    idx = np.random.permutation(n).astype(np.int32)
+    a = rng.random(n)
+    c = rng.random(n)
+    idx = rng.permutation(n).astype(np.int32)
     base = scatter_two.to_sdfg(simplify=True)
 
     ref_b, ref_e = np.zeros(n), np.zeros(n)
@@ -133,10 +137,11 @@ def test_mapfission_splits_two_independent_scatters():
 def test_mapfission_splits_semi_indirect():
     """Semi-indirect 2-D (structured dim 0, gathered dim 1) splits into two
     maps; value-preserving."""
+    rng = np.random.default_rng(42)
     n, m = 8, 12
-    a = np.random.rand(n, m)
-    c = np.random.rand(n, m)
-    col = np.random.randint(0, m, size=m).astype(np.int32)
+    a = rng.random((n, m))
+    c = rng.random((n, m))
+    col = rng.integers(0, m, size=m).astype(np.int32)
     base = semi_indirect_two.to_sdfg(simplify=True)
 
     ref_b, ref_e = np.zeros((n, m)), np.zeros((n, m))
@@ -156,9 +161,10 @@ def test_mapfission_splits_semi_indirect():
 
 def test_mapfission_single_output_indirect_is_noop():
     """A single-output indirect map has nothing to fission: no-op, correct."""
+    rng = np.random.default_rng(42)
     n = 14
-    a = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     base = gather_single.to_sdfg(simplify=True)
     ref = np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), idx=idx.copy(), b=ref, N=n)
@@ -174,9 +180,10 @@ def test_mapfission_single_output_indirect_is_noop():
 def test_mapfission_coupled_outputs_not_split_but_correct():
     """Outputs sharing a non-input transient are one group: no independent
     split is possible, and the result stays numerically correct."""
+    rng = np.random.default_rng(42)
     n = 16
-    a = np.random.rand(n)
-    idx = np.random.randint(0, n, size=n).astype(np.int32)
+    a = rng.random(n)
+    idx = rng.integers(0, n, size=n).astype(np.int32)
     base = gather_coupled.to_sdfg(simplify=True)
     ref_b, ref_e = np.zeros(n), np.zeros(n)
     copy.deepcopy(base)(a=a.copy(), idx=idx.copy(), b=ref_b, e=ref_e, N=n)

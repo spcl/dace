@@ -8,20 +8,27 @@ writeback, so the tile/SIMD widener folds it to per-lane partial sums + one hori
 
 Coverage:
 
-* POSITIVE e2e: a dot product / a sum whose accumulator is a genuine array slot -- BAILS through the
-  vectorize pipeline with the prep disabled (proven via a no-op patch), widens + is numerically
-  correct with the prep on.
+* POSITIVE e2e: a dot product / a sum whose accumulator is a genuine array slot widens + is
+  numerically correct. Since the vectorizer's "no loose WCR" precondition learned to recognise a
+  lifted array-slot boundary reduction on its own, the un-prepped form (proven via a no-op patch)
+  now tiles too -- the prep is an optimisation (a private scalar for the OpenMP ``reduction``
+  clause), not the gate that decides whether the kernel vectorizes.
 * POSITIVE structural: the array-slot WCR target becomes a transient ``Scalar`` after the pass.
 * NEGATIVE: a plain scalar / length-1 accumulator (already widenable), a ``min`` RMW (not a WCR),
   and a cross-iteration recurrence are all left untouched -- value-preserving.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+# Four threads, not one: these cases assert numbers, and a reduction lowered onto a Map that carries
+# a dependence is right on one thread and wrong on many -- pinning to 1 hides exactly the defect the
+# assertions exist to catch. Four is enough to expose that and small enough not to oversubscribe the
+# box under xdist. The tolerances below already cover the fold order OpenMP costs.
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 from unittest import mock
 
@@ -32,15 +39,13 @@ import dace
 from dace import data
 from dace.sdfg import nodes
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")
 
-# ---------------------------------------------------------------------------
 # Kernels: reductions whose accumulator is a genuine multi-element ARRAY SLOT.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -78,12 +83,15 @@ def scan_recurrence(a: dace.float64[N]):
 
 
 def _wcr_targets(sdfg: dace.SDFG):
-    """(#WCR edges into a multi-element Array, #WCR edges into a Scalar) across all states."""
+    """(#WCR paths into a multi-element Array, #WCR paths into a Scalar) across all states.
+
+    A path is counted once whichever of its edges carry the WCR (the frontend puts it on all of them)."""
     arr_elem, scalar = 0, 0
-    for st in sdfg.all_states():
-        for e in st.edges():
-            if e.data is None or e.data.wcr is None:
-                continue
+    for st in sdfg.states():
+        ends = {
+            id(st.memlet_path(e)[-1]): st.memlet_path(e)[-1] for e in st.edges() if e.data is not None and e.data.wcr
+        }
+        for e in ends.values():
             desc = sdfg.arrays.get(e.data.data)
             if desc is None:
                 continue
@@ -94,9 +102,21 @@ def _wcr_targets(sdfg: dace.SDFG):
     return arr_elem, scalar
 
 
-# ---------------------------------------------------------------------------
+def _tiled_map_steps(sdfg: dace.SDFG):
+    """The set of constant map-range step sizes ``> 1`` across the SDFG (recursively).
+
+    A nonempty set means the widener strided some map by a tile width -- it TILED the kernel; an
+    empty set means every map is still unit-step, i.e. the kernel was left un-tiled (a refusal)."""
+    steps = set()
+    for node, graph in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            for _, _, step in node.map.range:
+                if str(step) != "1":
+                    steps.add(str(step))
+    return steps
+
+
 # Structural: the pass rewrites the array-slot WCR into a scalar accumulator.
-# ---------------------------------------------------------------------------
 
 
 def test_array_slot_wcr_becomes_scalar():
@@ -105,7 +125,7 @@ def test_array_slot_wcr_becomes_scalar():
     sdfg = dot_into_slot.to_sdfg(simplify=True)
     arr_before, scalar_before = _wcr_targets(sdfg)
     assert arr_before == 1 and scalar_before == 0, "fixture must start with one array-slot WCR"
-    n_states_before = len(list(sdfg.all_states()))
+    n_states_before = len(list(sdfg.states()))
 
     count = PrepareReductionForWidening().apply_pass(sdfg, {})
     sdfg.validate()
@@ -116,7 +136,7 @@ def test_array_slot_wcr_becomes_scalar():
     priv = [k for k, v in sdfg.arrays.items() if k.startswith("_priv_") and isinstance(v, data.Scalar) and v.transient]
     assert len(priv) == 1, priv
     # Cross-state form: an init state (seed from the slot) + a writeback state were added.
-    assert len(list(sdfg.all_states())) == n_states_before + 2
+    assert len(list(sdfg.states())) == n_states_before + 2
 
 
 @pytest.mark.parametrize("prog", [min_rmw_slot, sum_into_slot, dot_into_slot, prod_into_slot])
@@ -157,17 +177,20 @@ def test_recurrence_is_left_alone():
     assert not count
 
 
-# ---------------------------------------------------------------------------
-# e2e: through the multi-dim tile vectorizer -- bails without prep, correct with it.
-# ---------------------------------------------------------------------------
+# e2e: through the multi-dim tile vectorizer -- tiled and correct with or without the prep.
 
 
 def _vectorize(prog, name):
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.name = name
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     for sym in {str(x) for x in sdfg.free_symbols}:
         if sym not in sdfg.symbols:
@@ -175,55 +198,77 @@ def _vectorize(prog, name):
     return sdfg
 
 
-def test_array_slot_dot_bails_without_prep_and_widens_with_it():
-    """The dot-into-slot reduction BAILS through the vectorizer with the prep disabled, and widens
-    to a correct result with it on -- the "no-widen before, correct after" case."""
-    # BEFORE: with the prep patched to a no-op, the array-slot WCR reaches the tiler as a loose
-    # in-body WCR and the pipeline's precondition fires.
-    with mock.patch.object(PrepareReductionForWidening, "apply_pass", lambda self, sdfg, res: None):
-        with pytest.raises((AssertionError, dace.sdfg.validation.InvalidSDFGError)):
-            _vectorize(dot_into_slot, "dot_into_slot_noprep")
+def test_array_slot_dot_widens_with_or_without_the_prep():
+    """The dot-into-slot reduction widens to a correct result BOTH ways: the prep scalar-localizes
+    the accumulator, and -- since the "no loose WCR" precondition learned to recognise a lifted
+    array-slot boundary reduction directly -- the un-prepped form now tiles as well.
 
-    # AFTER: the wired-in prep scalar-localizes it and the widened result matches numpy.
+    The slot ``s[3]`` does not vary with the map's innermost (widened) parameter, so within one
+    tile there is exactly one accumulator: the body folds the lanes to a single partial and the
+    boundary resolves one accumulation per tile. The prep is therefore an optimisation (a private
+    scalar the backend can put in an OpenMP ``reduction`` clause), no longer the thing that decides
+    whether the kernel vectorizes at all.
+    """
+    rng = np.random.default_rng(42)
     n = 60
-    a = np.random.random(n)
-    b = np.random.random(n)
-    s = np.zeros(8)
+    a = rng.random(n)
+    b = rng.random(n)
     ref = np.zeros(8)
     ref[3] = float((a * b).sum())
+
+    # WITHOUT the prep: the array-slot WCR reaches the tiler intact and is still tiled + correct.
+    with mock.patch.object(PrepareReductionForWidening, "apply_pass", lambda self, sdfg, res: None):
+        noprep = _vectorize(dot_into_slot, "dot_into_slot_noprep")
+    assert "8" in _tiled_map_steps(noprep), "the array-slot reduction must stride the tiled map to width 8"
+    s_noprep = np.zeros(8)
+    noprep.compile()(a=a.copy(), b=b.copy(), s=s_noprep, N=n)
+    assert np.allclose(s_noprep, ref, rtol=1e-9, atol=1e-12), f"got {s_noprep}, ref {ref}"
+
+    # WITH the prep: it scalar-localizes the accumulator, the widener strides the map to the tile
+    # width and folds the reduction (the array-slot WCR becomes a scalar-accumulator
+    # ``TileReduce``), and the widened result matches numpy. The structural checks make "widens"
+    # non-vacuous: without real widening the array-slot WCR would survive un-folded.
+    s = np.zeros(8)
     sdfg = _vectorize(dot_into_slot, "dot_into_slot_prep")
+    assert _wcr_targets(sdfg)[0] == 0, "prep+widen must fold the array-slot WCR -- none may survive"
+    assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"
     sdfg.compile()(a=a.copy(), b=b.copy(), s=s, N=n)
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
 
 def test_sum_into_slot_widens_and_correct():
     """Sum into a fixed slot ``s[2] += a[i]`` -- widened result matches numpy (all-zero elsewhere)."""
+    rng = np.random.default_rng(42)
     n = 55
-    a = np.random.random(n)
+    a = rng.random(n)
     s = np.zeros(4)
     ref = np.zeros(4)
     ref[2] = float(a.sum())
     sdfg = _vectorize(sum_into_slot, "sum_into_slot_prep")
+    assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"
     sdfg.compile()(a=a.copy(), s=s, N=n)
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
 
 def test_prod_into_slot_widens_and_correct():
     """Product into a fixed slot ``s[1] *= a[i]`` -- widened result matches numpy."""
+    rng = np.random.default_rng(42)
     n = 40
-    a = np.random.random(n) * 0.5 + 0.75  # keep away from 0 so the product is well-conditioned
+    a = rng.random(n) * 0.5 + 0.75  # keep away from 0 so the product is well-conditioned
     s = np.ones(4)  # product seed 1.0 in slot 1
     ref = np.ones(4)
     ref[1] = float(np.prod(a))
     sdfg = _vectorize(prod_into_slot, "prod_into_slot_prep")
+    assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"
     sdfg.compile()(a=a.copy(), s=s, N=n)
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
 
 def test_recurrence_value_preserving_through_pipeline():
     """A scan recurrence stays sequential + correct through the pipeline (prep is a no-op on it)."""
+    rng = np.random.default_rng(42)
     n = 32
-    a = np.random.random(n)
+    a = rng.random(n)
     ref = a.copy()
     for i in range(1, n):
         ref[i] = ref[i - 1] + ref[i]

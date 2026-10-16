@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Input-data generation and run-and-compare helpers for the inlined CloudSC
-kernel in ``tests/corpus/cloudsc.py``, for end-to-end numerical tests.
+kernel in ``tests/corpus/cloudsc/cloudsc.py``, for end-to-end numerical tests.
 
 The inlined ``cloudsc_py`` program requires no callbacks, so it compiles and
 runs standalone. These helpers build a runnable SDFG, generate a
@@ -19,11 +19,16 @@ Data generation **follows the dwarf-p-cloudsc reference dataset**
 (``config-files/input.h5`` of the upstream ECMWF dwarf): the YDCST/YDTHF/YRECLDP
 physical constants in :data:`CLOUDSC_CONSTANTS` are the exact values from that
 file, and every input array is filled with random values inside the ``[min,
-max]`` range observed there (:data:`CLOUDSC_INPUT_RANGES`). The dwarf's problem
-size (``klev = 137``, ``klon = 100``) and ``ncldtop = 15`` are used so the
-vertical microphysics loop runs over a realistic depth. We do **not** load
+max]`` range observed there (:data:`CLOUDSC_INPUT_RANGES`). The grid is SMALLER
+than the dwarf's (``klev = klon = 32`` against its ``137`` by ``100``) to keep a
+compiled run short; ``ncldtop = 15`` is the dwarf's own, so the vertical
+microphysics loop still runs over a realistic depth. We do **not** load
 ``input.h5`` at runtime -- the harness is self-contained and only mirrors its
 values -- so it stays runnable without the external dataset.
+
+Every array is built ROW-MAJOR, matching the SDFG descriptors. See
+:func:`generate_cloudsc_inputs` for what column-major memory does here, and
+``cloudsc_input_data_test.py`` for the assertion that holds the line.
 
 Filling thresholds and latent heats with the real constants (rather than
 uniform ``[0, 1)`` noise) keeps the kernel out of its degenerate branch regimes,
@@ -31,14 +36,18 @@ which is what makes a transform-vs-reference comparison meaningful: a random
 constant set sits on every ``MIN``/``MAX`` and ``< rlmin`` boundary, so a
 harmless floating-point reassociation flips branches and masquerades as a bug.
 """
+
 import copy
-from typing import Dict, List, Optional, Tuple, Union
+import hashlib
+import os
+from pathlib import Path
 
 import numpy as np
 import sympy
 
 import dace
 from dace import dtypes
+from dace.config import set_temporary
 from dace.sdfg import nodes
 from tests.corpus.cloudsc.cloudsc import cloudsc_py
 
@@ -47,169 +56,175 @@ from tests.corpus.cloudsc.cloudsc import cloudsc_py
 #: (``klev = klon = 32``) for a fast compiled run -- the physical input ranges
 #: are bounds, not vertical profiles, so they stay valid at any grid size, and
 #: ``ncldtop = 15`` still leaves a meaningful vertical microphysics loop.
-CLOUDSC_SYMBOLS: Dict[str, int] = {
-    'klev': 32,
-    'klon': 32,
-    'nclv': 5,
-    'ncldql': 1,  # liquid cloud water
-    'ncldqi': 2,  # ice cloud water
-    'ncldqr': 3,  # rain water
-    'ncldqs': 4,  # snow
-    'ncldqv': 5,  # vapour
-    'kidia': 1,
-    'kfdia': 32,
+CLOUDSC_SYMBOLS: dict[str, int] = {
+    "klev": 32,
+    "klon": 32,
+    "nclv": 5,
+    "ncldql": 1,  # liquid cloud water
+    "ncldqi": 2,  # ice cloud water
+    "ncldqr": 3,  # rain water
+    "ncldqs": 4,  # snow
+    "ncldqv": 5,  # vapour
+    "kidia": 1,
+    "kfdia": 32,
+}
+
+#: The species PARAMETERs (Fortran ``NCLV``, ``NCLDQL..NCLDQV``), passed as specialization constants so the
+#: species and LU loops are constant-trip; klev/klon/kidia/kfdia stay symbolic.
+SPECIES_CONSTANTS: dict[str, int] = {
+    name: CLOUDSC_SYMBOLS[name] for name in ("nclv", "ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv")
 }
 
 #: Exact YDCST/YDTHF/YRECLDP constants from the dwarf-p-cloudsc ``input.h5``
 #: reference. The ``yrecldp_nssopt``/``ncldtop``/``laeri*`` entries are integer
 #: scalars (cast on use); the rest are doubles. Mirrored here so the harness
 #: needs no external dataset.
-CLOUDSC_CONSTANTS: Dict[str, float] = {
-    'ptsphy': 3600.0,
-    'ydcst_rcpd': 1004.7088578330674,
-    'ydcst_rd': 287.0596736665907,
-    'ydcst_retv': 0.6077667316114637,
-    'ydcst_rg': 9.80665,
-    'ydcst_rlmlt': 333700.0,
-    'ydcst_rlstt': 2834500.0,
-    'ydcst_rlvtt': 2500800.0,
-    'ydcst_rtt': 273.16,
-    'ydcst_rv': 461.5249933083879,
-    'ydthf_r2es': 380.1608703442847,
-    'ydthf_r3ies': 22.587,
-    'ydthf_r3les': 17.502,
-    'ydthf_r4ies': -0.7,
-    'ydthf_r4les': 32.19,
-    'ydthf_r5alscp': 17451123.253362577,
-    'ydthf_r5alvcp': 10497584.68169531,
-    'ydthf_r5ies': 6185.67582,
-    'ydthf_r5les': 4217.45694,
-    'ydthf_ralfdcp': 332.1360187066693,
-    'ydthf_ralsdcp': 2821.2152982440934,
-    'ydthf_ralvdcp': 2489.0792795374246,
-    'ydthf_rkoop1': 2.583,
-    'ydthf_rkoop2': 0.0048116,
-    'ydthf_rtice': 250.16000000000003,
-    'ydthf_rticecu': 250.16000000000003,
-    'ydthf_rtwat': 273.16,
-    'ydthf_rtwat_rtice_r': 0.043478260869565216,
-    'ydthf_rtwat_rticecu_r': 0.043478260869565216,
-    'yrecldp_laericeauto': 0,
-    'yrecldp_laericesed': 0,
-    'yrecldp_laerliqautolsp': 0,
-    'yrecldp_laerliqcoll': 0,
-    'yrecldp_ncldtop': 15,
-    'yrecldp_nssopt': 1,
-    'yrecldp_ramid': 0.8,
-    'yrecldp_ramin': 1e-08,
-    'yrecldp_rccn': 125.0,
-    'yrecldp_rcl_apb1': 714000000000.0,
-    'yrecldp_rcl_apb2': 116000000.0,
-    'yrecldp_rcl_apb3': 241.6,
-    'yrecldp_rcl_cdenom1': 557000000000.0,
-    'yrecldp_rcl_cdenom2': 103000000.0,
-    'yrecldp_rcl_cdenom3': 204.0,
-    'yrecldp_rcl_const1i': 3.6231880115136998e-06,
-    'yrecldp_rcl_const1r': 1.382300767579509,
-    'yrecldp_rcl_const1s': 3.6231880115136998e-06,
-    'yrecldp_rcl_const2i': 6283185.307179586,
-    'yrecldp_rcl_const2r': 2143.2299120517614,
-    'yrecldp_rcl_const2s': 6283185.307179586,
-    'yrecldp_rcl_const3i': 596.9998475835998,
-    'yrecldp_rcl_const3r': 0.6349999999999998,
-    'yrecldp_rcl_const3s': 596.9998475835998,
-    'yrecldp_rcl_const4i': 0.6666666666666666,
-    'yrecldp_rcl_const4r': -0.20000000000000018,
-    'yrecldp_rcl_const4s': 0.6666666666666666,
-    'yrecldp_rcl_const5i': 0.9211666666666667,
-    'yrecldp_rcl_const5r': 8685252.965082133,
-    'yrecldp_rcl_const5s': 0.9211666666666667,
-    'yrecldp_rcl_const6i': 1.0000000948961185,
-    'yrecldp_rcl_const6r': -4.8,
-    'yrecldp_rcl_const6s': 1.0000000948961185,
-    'yrecldp_rcl_const7s': 90363515.76351073,
-    'yrecldp_rcl_const8s': 1.1756666666666666,
-    'yrecldp_rcl_fac1': 4146.902789847063,
-    'yrecldp_rcl_fac2': 0.5555555555555556,
-    'yrecldp_rcl_fzrab': -0.66,
-    'yrecldp_rcl_ka273': 0.024,
-    'yrecldp_rcl_kk_cloud_num_land': 300.0,
-    'yrecldp_rcl_kk_cloud_num_sea': 50.0,
-    'yrecldp_rcl_kkaac': 67.0,
-    'yrecldp_rcl_kkaau': 1350.0,
-    'yrecldp_rcl_kkbac': 1.15,
-    'yrecldp_rcl_kkbaun': -1.79,
-    'yrecldp_rcl_kkbauq': 2.47,
-    'yrecldp_rclcrit_land': 0.00055,
-    'yrecldp_rclcrit_sea': 0.00025,
-    'yrecldp_rcldiff': 3e-06,
-    'yrecldp_rcldiff_convi': 7.0,
-    'yrecldp_rcldtopcf': 0.01,
-    'yrecldp_rcovpmin': 0.1,
-    'yrecldp_rdensref': 1.0,
-    'yrecldp_rdepliqrefdepth': 500.0,
-    'yrecldp_rdepliqrefrate': 0.1,
-    'yrecldp_riceinit': 1e-12,
-    'yrecldp_rkconv': 0.00016666666666666666,
-    'yrecldp_rkooptau': 10800.0,
-    'yrecldp_rlcritsnow': 3e-05,
-    'yrecldp_rlmin': 1e-08,
-    'yrecldp_rnice': 0.027,
-    'yrecldp_rpecons': 5.54725619859993e-05,
-    'yrecldp_rprc1': 100.0,
-    'yrecldp_rprecrhmax': 0.7,
-    'yrecldp_rsnowlin1': 0.001,
-    'yrecldp_rsnowlin2': 0.03,
-    'yrecldp_rtaumel': 7200.0,
-    'yrecldp_rthomo': 235.16000000000003,
-    'yrecldp_rvice': 0.13,
-    'yrecldp_rvrain': 4.0,
-    'yrecldp_rvrfactor': 0.00509,
-    'yrecldp_rvsnow': 1.0,
+CLOUDSC_CONSTANTS: dict[str, float] = {
+    "ptsphy": 3600.0,
+    "ydcst_rcpd": 1004.7088578330674,
+    "ydcst_rd": 287.0596736665907,
+    "ydcst_retv": 0.6077667316114637,
+    "ydcst_rg": 9.80665,
+    "ydcst_rlmlt": 333700.0,
+    "ydcst_rlstt": 2834500.0,
+    "ydcst_rlvtt": 2500800.0,
+    "ydcst_rtt": 273.16,
+    "ydcst_rv": 461.5249933083879,
+    "ydthf_r2es": 380.1608703442847,
+    "ydthf_r3ies": 22.587,
+    "ydthf_r3les": 17.502,
+    "ydthf_r4ies": -0.7,
+    "ydthf_r4les": 32.19,
+    "ydthf_r5alscp": 17451123.253362577,
+    "ydthf_r5alvcp": 10497584.68169531,
+    "ydthf_r5ies": 6185.67582,
+    "ydthf_r5les": 4217.45694,
+    "ydthf_ralfdcp": 332.1360187066693,
+    "ydthf_ralsdcp": 2821.2152982440934,
+    "ydthf_ralvdcp": 2489.0792795374246,
+    "ydthf_rkoop1": 2.583,
+    "ydthf_rkoop2": 0.0048116,
+    "ydthf_rtice": 250.16000000000003,
+    "ydthf_rticecu": 250.16000000000003,
+    "ydthf_rtwat": 273.16,
+    "ydthf_rtwat_rtice_r": 0.043478260869565216,
+    "ydthf_rtwat_rticecu_r": 0.043478260869565216,
+    "yrecldp_laericeauto": 0,
+    "yrecldp_laericesed": 0,
+    "yrecldp_laerliqautolsp": 0,
+    "yrecldp_laerliqcoll": 0,
+    "yrecldp_ncldtop": 15,
+    "yrecldp_nssopt": 1,
+    "yrecldp_ramid": 0.8,
+    "yrecldp_ramin": 1e-08,
+    "yrecldp_rccn": 125.0,
+    "yrecldp_rcl_apb1": 714000000000.0,
+    "yrecldp_rcl_apb2": 116000000.0,
+    "yrecldp_rcl_apb3": 241.6,
+    "yrecldp_rcl_cdenom1": 557000000000.0,
+    "yrecldp_rcl_cdenom2": 103000000.0,
+    "yrecldp_rcl_cdenom3": 204.0,
+    "yrecldp_rcl_const1i": 3.6231880115136998e-06,
+    "yrecldp_rcl_const1r": 1.382300767579509,
+    "yrecldp_rcl_const1s": 3.6231880115136998e-06,
+    "yrecldp_rcl_const2i": 6283185.307179586,
+    "yrecldp_rcl_const2r": 2143.2299120517614,
+    "yrecldp_rcl_const2s": 6283185.307179586,
+    "yrecldp_rcl_const3i": 596.9998475835998,
+    "yrecldp_rcl_const3r": 0.6349999999999998,
+    "yrecldp_rcl_const3s": 596.9998475835998,
+    "yrecldp_rcl_const4i": 0.6666666666666666,
+    "yrecldp_rcl_const4r": -0.20000000000000018,
+    "yrecldp_rcl_const4s": 0.6666666666666666,
+    "yrecldp_rcl_const5i": 0.9211666666666667,
+    "yrecldp_rcl_const5r": 8685252.965082133,
+    "yrecldp_rcl_const5s": 0.9211666666666667,
+    "yrecldp_rcl_const6i": 1.0000000948961185,
+    "yrecldp_rcl_const6r": -4.8,
+    "yrecldp_rcl_const6s": 1.0000000948961185,
+    "yrecldp_rcl_const7s": 90363515.76351073,
+    "yrecldp_rcl_const8s": 1.1756666666666666,
+    "yrecldp_rcl_fac1": 4146.902789847063,
+    "yrecldp_rcl_fac2": 0.5555555555555556,
+    "yrecldp_rcl_fzrab": -0.66,
+    "yrecldp_rcl_ka273": 0.024,
+    "yrecldp_rcl_kk_cloud_num_land": 300.0,
+    "yrecldp_rcl_kk_cloud_num_sea": 50.0,
+    "yrecldp_rcl_kkaac": 67.0,
+    "yrecldp_rcl_kkaau": 1350.0,
+    "yrecldp_rcl_kkbac": 1.15,
+    "yrecldp_rcl_kkbaun": -1.79,
+    "yrecldp_rcl_kkbauq": 2.47,
+    "yrecldp_rclcrit_land": 0.00055,
+    "yrecldp_rclcrit_sea": 0.00025,
+    "yrecldp_rcldiff": 3e-06,
+    "yrecldp_rcldiff_convi": 7.0,
+    "yrecldp_rcldtopcf": 0.01,
+    "yrecldp_rcovpmin": 0.1,
+    "yrecldp_rdensref": 1.0,
+    "yrecldp_rdepliqrefdepth": 500.0,
+    "yrecldp_rdepliqrefrate": 0.1,
+    "yrecldp_riceinit": 1e-12,
+    "yrecldp_rkconv": 0.00016666666666666666,
+    "yrecldp_rkooptau": 10800.0,
+    "yrecldp_rlcritsnow": 3e-05,
+    "yrecldp_rlmin": 1e-08,
+    "yrecldp_rnice": 0.027,
+    "yrecldp_rpecons": 5.54725619859993e-05,
+    "yrecldp_rprc1": 100.0,
+    "yrecldp_rprecrhmax": 0.7,
+    "yrecldp_rsnowlin1": 0.001,
+    "yrecldp_rsnowlin2": 0.03,
+    "yrecldp_rtaumel": 7200.0,
+    "yrecldp_rthomo": 235.16000000000003,
+    "yrecldp_rvice": 0.13,
+    "yrecldp_rvrain": 4.0,
+    "yrecldp_rvrfactor": 0.00509,
+    "yrecldp_rvsnow": 1.0,
 }
 
 #: ``[min, max]`` range of each floating input array in the dwarf reference.
 #: Arrays absent here are kernel outputs (or have no reference value) and are
 #: zero-initialized. Several reference inputs are uniformly zero (``pmfd``,
 #: ``pnice``, ``plsm``, ...); their ``(0.0, 0.0)`` range reproduces that.
-CLOUDSC_INPUT_RANGES: Dict[str, Tuple[float, float]] = {
-    'pa': (0.0, 1.0),
-    'pap': (0.999923895048429, 101254.97084602337),
-    'paph': (0.0, 101375.10057152908),
-    'pccn': (0.0, 0.0),
-    'pclv': (0.0, 4.0253768484705866e-05),
-    'pdyna': (-0.0001187964540362494, 0.00013518935141888),
-    'pdyni': (-2.140507622298193e-09, 1.5815637844680652e-09),
-    'pdynl': (-4.134462057260392e-09, 2.9599904813560976e-09),
-    'phrlw': (-0.00016678085208516417, 1.6941956516047845e-05),
-    'phrsw': (-4.112083689734362e-20, 0.0),
-    'picrit_aer': (0.0, 0.0),
-    'plcrit_aer': (0.0, 0.0),
-    'plsm': (0.0, 0.0),
-    'plu': (0.0, 0.00028126794898995864),
-    'plude': (0.0, 1.2765809819686113e-06),
-    'pmfd': (0.0, 0.0),
-    'pmfu': (0.0, 0.06243987753452692),
-    'pnice': (0.0, 0.0),
-    'pq': (1.030691002421725e-06, 0.0024358218045027608),
-    'pre_ice': (0.0, 0.0),
-    'psnde': (0.0, 0.0),
-    'psupsat': (0.0, 4.762341884143876e-05),
-    'pt': (196.49936539855418, 267.57212905220615),
-    'pvervel': (-0.20627060482285262, 0.1776496848080718),
-    'pvfa': (-0.0002305417072000441, 0.0002777777777777778),
-    'pvfi': (-3.6683428537982023e-09, 1.2988008242524594e-08),
-    'pvfl': (-2.193240268281019e-09, 6.007184256012529e-09),
-    'tendency_tmp_a': (-0.00024253423245031549, 0.0002777777777777778),
-    'tendency_tmp_cld': (-4.164243445880186e-09, 1.2724998598908134e-08),
-    'tendency_tmp_q': (-6.92205735885683e-08, 4.265980175425775e-08),
-    'tendency_tmp_t': (-0.000472018266728236, 0.0003986018193989591),
+CLOUDSC_INPUT_RANGES: dict[str, tuple[float, float]] = {
+    "pa": (0.0, 1.0),
+    "pap": (0.999923895048429, 101254.97084602337),
+    "paph": (0.0, 101375.10057152908),
+    "pccn": (0.0, 0.0),
+    "pclv": (0.0, 4.0253768484705866e-05),
+    "pdyna": (-0.0001187964540362494, 0.00013518935141888),
+    "pdyni": (-2.140507622298193e-09, 1.5815637844680652e-09),
+    "pdynl": (-4.134462057260392e-09, 2.9599904813560976e-09),
+    "phrlw": (-0.00016678085208516417, 1.6941956516047845e-05),
+    "phrsw": (-4.112083689734362e-20, 0.0),
+    "picrit_aer": (0.0, 0.0),
+    "plcrit_aer": (0.0, 0.0),
+    "plsm": (0.0, 0.0),
+    "plu": (0.0, 0.00028126794898995864),
+    "plude": (0.0, 1.2765809819686113e-06),
+    "pmfd": (0.0, 0.0),
+    "pmfu": (0.0, 0.06243987753452692),
+    "pnice": (0.0, 0.0),
+    "pq": (1.030691002421725e-06, 0.0024358218045027608),
+    "pre_ice": (0.0, 0.0),
+    "psnde": (0.0, 0.0),
+    "psupsat": (0.0, 4.762341884143876e-05),
+    "pt": (196.49936539855418, 267.57212905220615),
+    "pvervel": (-0.20627060482285262, 0.1776496848080718),
+    "pvfa": (-0.0002305417072000441, 0.0002777777777777778),
+    "pvfi": (-3.6683428537982023e-09, 1.2988008242524594e-08),
+    "pvfl": (-2.193240268281019e-09, 6.007184256012529e-09),
+    "tendency_tmp_a": (-0.00024253423245031549, 0.0002777777777777778),
+    "tendency_tmp_cld": (-4.164243445880186e-09, 1.2724998598908134e-08),
+    "tendency_tmp_q": (-6.92205735885683e-08, 4.265980175425775e-08),
+    "tendency_tmp_t": (-0.000472018266728236, 0.0003986018193989591),
 }
 
 #: ``[min, max]`` integer range of each integer input array in the reference.
-CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
-    'ktype': (0, 3),
-    'ldcum': (0, 1),
+CLOUDSC_INT_RANGES: dict[str, tuple[int, int]] = {
+    "ktype": (0, 3),
+    "ldcum": (0, 1),
 }
 
 #: Compiler flags for a deterministic IEEE build: ``-O0`` with no fast-math and
@@ -217,7 +232,7 @@ CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
 #: reassociation. Under these flags the simplified and reference cloudsc SDFGs
 #: agree **bit-for-bit**, which is why the correctness check (see
 #: :func:`run_and_compare`) uses this build with a ``1e-15`` tolerance.
-IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off'
+IEEE_CPU_ARGS: str = "-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off"
 
 #: Compiler flags for an ``-O3`` build that still preserves IEEE semantics:
 #: same ``-fno-fast-math -ffp-contract=off`` flags as the IEEE build, so the
@@ -226,17 +241,100 @@ IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract
 #: under: fast-math (``-ffast-math``) lets the compiler rewrite transcendentals
 #: and reorder reductions, which produces large drifts the test cannot bound
 #: cleanly -- so the suite never enables it.
-O3_CPU_ARGS: str = '-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=off'
+O3_CPU_ARGS: str = "-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=off"
+
+#: Files whose contents change the parsed SDFG. The program itself, and this builder -- an edit to
+#: either must mint a fresh cache entry rather than resume a stale one.
+CACHE_SOURCE_FILES = (Path(__file__), Path(cloudsc_py.f.__code__.co_filename))
+#: The sources that define how an SDFG is written to and read from ``.sdfgz``. Two checkouts of one dace version can
+#: disagree on that format (a symbol table moved into the symbol repository), and an entry one wrote must then miss
+#: in the other rather than load with its symbols silently dropped.
+CACHE_FORMAT_FILES = tuple(
+    Path(dace.__file__).parent / relative
+    for relative in ("serialize.py", "sdfg/sdfg.py", "sdfg/state.py", "sdfg/symbol_repo.py", "properties.py")
+)
+
+
+def cloudsc_cache_dir() -> Path | None:
+    """Directory holding parsed-SDFG cache entries, or ``None`` when caching is off.
+
+    Off by setting ``DACE_CLOUDSC_SDFG_CACHE=0``. Otherwise ``DACE_CLOUDSC_SDFG_CACHE`` names the
+    directory, defaulting to ``~/.cache/dace_cloudsc_sdfg`` -- a stable location, deliberately NOT a
+    per-run pytest tmp dir, since the whole point is to survive across runs.
+    """
+    value = os.environ.get("DACE_CLOUDSC_SDFG_CACHE", "")
+    if value in ("0", "off", "false", "no"):
+        return None
+    return Path(value) if value else Path.home() / ".cache" / "dace_cloudsc_sdfg"
+
+
+def cloudsc_cache_key(simplify: bool) -> str:
+    """Digest of everything that decides the parsed SDFG: the source files, the ``simplify`` flag, the dace version
+    (``to_sdfg`` semantics move with it) and the sources of the ``.sdfgz`` format (:data:`CACHE_FORMAT_FILES`)."""
+    hasher = hashlib.sha256()
+    hasher.update(f"dace={dace.__version__};simplify={simplify}".encode())
+    for path in CACHE_SOURCE_FILES + CACHE_FORMAT_FILES:
+        try:
+            hasher.update(path.read_bytes())
+        except OSError:
+            # A source we cannot read cannot be proven unchanged, so fold its absence in and let the
+            # entry differ from any run that could read it.
+            hasher.update(f"<unreadable:{path}>".encode())
+    return hasher.hexdigest()[:16]
 
 
 def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
-    """Build a fresh runnable SDFG from the inlined CloudSC program.
+    """Build a runnable SDFG from the inlined CloudSC program, persistently cached.
+
+    The ``to_sdfg`` parse is minutes, and its result is a pure function of the program source, the
+    ``simplify`` flag and the dace version -- so it is cached across runs under
+    :func:`cloudsc_cache_dir`, keyed by :func:`cloudsc_cache_key`. The cache is advisory: an entry is
+    written only after the freshly built SDFG validates, loaded STRICTLY (any element the reader
+    cannot rebuild raises rather than being silently dropped), and validated again on load. A miss, a
+    stale key, or an entry that fails either check just rebuilds. It can never substitute a wrong SDFG
+    for the right one -- at worst it costs the parse it was meant to save.
 
     :param simplify: Whether to run the simplify pipeline while building.
     :returns: A validated CloudSC SDFG.
     """
+    cache_dir = cloudsc_cache_dir()
+    entry = (
+        cache_dir / f"cloudsc_{'simplified' if simplify else 'nosimplify'}_{cloudsc_cache_key(simplify)}.sdfgz"
+        if cache_dir
+        else None
+    )
+
+    if entry is not None and entry.is_file():
+        try:
+            # Strict load: a checkpoint that lost anything through JSON raises here instead of loading
+            # a quietly-degraded graph that then validates and runs subtly wrong.
+            with set_temporary("testing", "deserialize_exception", value=True):
+                sdfg = dace.SDFG.from_file(str(entry))
+            sdfg.validate()
+            return sdfg
+        except Exception:
+            # Unusable entry -- drop it and fall through to a fresh build, which re-publishes.
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+
     sdfg = cloudsc_py.to_sdfg(simplify=simplify)
     sdfg.validate()
+
+    if entry is not None:
+        # Publish atomically via a private temp name so a concurrent reader never sees a half-written
+        # file. A failure to cache is never fatal -- the built SDFG is already correct.
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            staging = entry.with_suffix(f".sdfgz.{os.getpid()}")
+            sdfg.save(str(staging), compress=True)
+            os.replace(staging, entry)
+        except Exception:
+            try:
+                staging.unlink()
+            except (OSError, NameError):
+                pass
     return sdfg
 
 
@@ -254,7 +352,40 @@ def _instantiate_dim(dim) -> int:
     return int(sympy.sympify(dim).subs(CLOUDSC_SYMBOLS))
 
 
-def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[np.ndarray, int, float]]:
+def pressure_profile(name: str, dims: list[int]) -> np.ndarray:
+    """A monotone hydrostatic pressure profile for ``pap`` / ``paph``.
+
+    Pressure at half levels has to INCREASE from the model top to the surface, because the kernel
+    takes the layer thickness as a difference of consecutive ones (``zdp = paph[jk+1] - paph[jk]``,
+    cloudsc.py:489) and divides by it. Drawing each element uniformly, as every other input is
+    drawn, makes that difference negative on about half the levels; ``zdtgdp`` then goes negative,
+    the ``sign`` factor in the precipitation-evaporation divisor flips, and ``zbeta1**0.5777``
+    takes a fractional power of a negative number -- a NaN, out of physically impossible input.
+
+    So these two are built rather than sampled: half levels stretch from the model top to a
+    per-column surface pressure, and full levels sit at the midpoint of the half levels bracketing
+    them, which is the arrangement the dwarf's own data has. Values stay inside
+    :data:`CLOUDSC_INPUT_RANGES`. Deterministic -- the profile carries no information a random
+    draw would add.
+
+    :param name: ``'pap'`` (full levels) or ``'paph'`` (half levels).
+    :param dims: the instantiated shape, levels first.
+    :returns: the filled array, in the row-major order every input uses.
+    """
+    nlev = dims[0] - 1 if name == "paph" else dims[0]
+    columns = int(np.prod(dims[1:])) if len(dims) > 1 else 1
+    top, surface = 1.0, CLOUDSC_INPUT_RANGES["paph"][1]
+
+    # Stretched so the layers thin towards the top, as a hybrid-sigma coordinate does, and a small
+    # per-column spread in surface pressure so the columns are not identical.
+    sigma = (np.arange(nlev + 1) / nlev) ** 1.5
+    spread = 1.0 - 0.03 * (np.arange(columns) / max(columns - 1, 1))
+    half = top + np.outer(sigma, spread * surface - top)
+    levels = half if name == "paph" else 0.5 * (half[:-1] + half[1:])
+    return np.array(levels.reshape(dims), dtype=np.float64, order="C")
+
+
+def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> dict[str, np.ndarray | int | float]:
     """Generate a physically-realistic CloudSC input set for ``sdfg``.
 
     Every non-transient argument is filled following the dwarf reference (see
@@ -264,49 +395,58 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     :data:`CLOUDSC_INT_RANGES`, and the named index scalars / shape symbols from
     :data:`CLOUDSC_SYMBOLS`. Length-1 arrays are passed as scalars.
 
+    Every array is built ROW-MAJOR. The kernel is a port of a Fortran dwarf, so
+    column-major is the tempting choice, but DaCe describes these arrays with
+    row-major strides (``pt`` is ``(klon, 1)``) and hands the buffer to the
+    compiled function as a bare pointer -- nothing transposes and nothing
+    complains. Column-major memory is therefore read as its own transpose: the
+    level index walks columns, the vertical profiles that ``pressure_profile``
+    builds are destroyed, and the microphysics runs away to ``5e9`` and to NaN
+    on physically impossible input.
+
     :param sdfg: The CloudSC SDFG whose non-transient arrays are filled.
     :param seed: Seed for the random number generator (reproducible runs).
     :returns: A kwargs dict of arrays, scalars, and symbol values.
     """
     rng = np.random.default_rng(seed)
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     for name, desc in sdfg.arrays.items():
         if desc.transient:
             continue
-        dims: List[int] = [_instantiate_dim(d) for d in desc.shape]
-        is_int = 'int' in str(desc.dtype)
+        dims: list[int] = [_instantiate_dim(d) for d in desc.shape]
+        is_int = "int" in str(desc.dtype)
 
         if name in CLOUDSC_CONSTANTS:
             value = CLOUDSC_CONSTANTS[name]
-            arrays[name] = np.full(dims,
-                                   int(value) if is_int else value,
-                                   dtype=np.int32 if is_int else np.float64,
-                                   order='F')
+            arrays[name] = np.full(
+                dims, int(value) if is_int else value, dtype=np.int32 if is_int else np.float64, order="C"
+            )
         elif is_int:
             if name in CLOUDSC_SYMBOLS:
-                data = np.zeros(dims, order='F').astype(np.int32)
+                data = np.zeros(dims, order="C").astype(np.int32)
                 data.flat[0] = CLOUDSC_SYMBOLS[name]
                 arrays[name] = data
             else:
                 lo, hi = CLOUDSC_INT_RANGES.get(name, (1, 1))
-                arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order='F')
+                arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order="C")
+        elif name in ("pap", "paph"):
+            arrays[name] = pressure_profile(name, dims)
         else:
-            value_range: Optional[Tuple[float, float]] = CLOUDSC_INPUT_RANGES.get(name)
+            value_range: tuple[float, float] | None = CLOUDSC_INPUT_RANGES.get(name)
             if value_range is None:
-                arrays[name] = np.zeros(dims, order='F')  # kernel output / no reference range
+                arrays[name] = np.zeros(dims, order="C")  # kernel output / no reference range
             else:
                 lo, hi = value_range
-                arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order='F')
+                arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order="C")
 
-    inputs: Dict[str, Union[np.ndarray, int, float]] = {
-        name: (data.flat[0] if data.size == 1 else data)
-        for name, data in arrays.items()
+    inputs: dict[str, np.ndarray | int | float] = {
+        name: (data.flat[0] if data.size == 1 else data) for name, data in arrays.items()
     }
     inputs.update(CLOUDSC_SYMBOLS)
     return inputs
 
 
-def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
+def make_sequential(sdfg: dace.SDFG) -> tuple[int, int]:
     """Force every map and library node to a sequential schedule, in place.
 
     A numerical-equivalence comparison must be deterministic: CloudSC's
@@ -324,17 +464,19 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
             node.map.schedule = dtypes.ScheduleType.Sequential
             n_maps += 1
         elif isinstance(node, nodes.LibraryNode):
-            if hasattr(node, 'schedule'):
+            if hasattr(node, "schedule"):
                 node.schedule = dtypes.ScheduleType.Sequential
             n_lib += 1
     return n_maps, n_lib
 
 
-def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
-                    cand_inputs: Dict[str, Union[np.ndarray, int, float]],
-                    rtol: float = 1e-15,
-                    atol: float = 1e-15,
-                    verbose: bool = False) -> Dict[str, Tuple[float, float, bool]]:
+def compare_outputs(
+    ref_inputs: dict[str, np.ndarray | int | float],
+    cand_inputs: dict[str, np.ndarray | int | float],
+    rtol: float = 1e-15,
+    atol: float = 1e-15,
+    verbose: bool = False,
+) -> dict[str, tuple[float, float, bool]]:
     """Per-array (per-subset) tolerance check between two driven input/output sets.
 
     Returns ``{array_name: (max_abs, max_rel, ok)}`` for every shared
@@ -358,7 +500,7 @@ def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
     :param verbose: Print a ``name max_abs max_rel ok`` line per array.
     :returns: Mapping from array name to ``(max_abs, max_rel, ok)``.
     """
-    report: Dict[str, Tuple[float, float, bool]] = {}
+    report: dict[str, tuple[float, float, bool]] = {}
     for name, ref_val in ref_inputs.items():
         if not isinstance(ref_val, np.ndarray) or ref_val.size == 0:
             continue
@@ -375,14 +517,16 @@ def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
     return report
 
 
-def run_and_compare(reference: dace.SDFG,
-                    candidate: dace.SDFG,
-                    seed: int = 0,
-                    rtol: float = 1e-15,
-                    atol: float = 1e-15,
-                    sequential: bool = True,
-                    ieee_build: bool = True,
-                    verbose: bool = False) -> bool:
+def run_and_compare(
+    reference: dace.SDFG,
+    candidate: dace.SDFG,
+    seed: int = 0,
+    rtol: float = 1e-15,
+    atol: float = 1e-15,
+    sequential: bool = True,
+    ieee_build: bool = True,
+    verbose: bool = False,
+) -> bool:
     """Run two CloudSC SDFGs on identical inputs and compare every shared
     non-transient output array, each at its own ``rtol`` / ``atol``.
 
@@ -419,14 +563,14 @@ def run_and_compare(reference: dace.SDFG,
     ref_inputs = generate_cloudsc_inputs(reference, seed)
     cand_inputs = copy.deepcopy(ref_inputs)
 
-    saved_args = dace.Config.get('compiler', 'cpu', 'args')
+    saved_args = dace.Config.get("compiler", "cpu", "args")
     try:
         if ieee_build:
-            dace.Config.set('compiler', 'cpu', 'args', value=IEEE_CPU_ARGS)
+            dace.Config.set("compiler", "cpu", "args", value=IEEE_CPU_ARGS)
         reference(**ref_inputs)
         candidate(**cand_inputs)
     finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
+        dace.Config.set("compiler", "cpu", "args", value=saved_args)
 
     report = compare_outputs(ref_inputs, cand_inputs, rtol=rtol, atol=atol, verbose=verbose)
     return all(ok for _, _, ok in report.values())

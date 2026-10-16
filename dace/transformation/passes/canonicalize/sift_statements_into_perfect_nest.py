@@ -45,40 +45,19 @@ single-branch (no-else) :class:`ConditionalBlock` placed as the first (pre) / la
 block of the inner body, and the interstate-edge data (conditions **and** assignments) that
 fed the moved blocks is re-emitted inside the guarded region so nothing is silently dropped.
 """
+
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
 
-import sympy
-
-from dace import SDFG, properties, symbolic
+from dace import SDFG, symbolic
+from dace.optionals import required
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
-
-
-def _linear_order(region: ControlFlowRegion) -> Optional[List]:
-    """Blocks of ``region`` in order iff it is a plain linear chain (unconditional edges;
-    interstate assignments are allowed -- they carry statement prep); else ``None``.
-
-    Mirrors ``move_if_into_loop._linear_order`` so the two passes agree on what a
-    siftable chain is.
-    """
-    blocks = list(region.nodes())
-    edges = list(region.edges())
-    if not blocks or len(edges) != len(blocks) - 1:
-        return None
-    for e in edges:
-        if e.data.condition.as_string not in ('1', 'True', '(1)'):
-            return None
-    succ = {e.src: e.dst for e in edges}
-    order = [region.start_block]
-    while order[-1] in succ:
-        order.append(succ[order[-1]])
-    return order if len(order) == len(blocks) else None
+from dace.subsets import Subset
+from dace.transformation.passes.analysis.loop_analysis import get_init_assignment, get_loop_end, get_loop_stride
+from dace.transformation.passes.move_if_into_loop import _linear_order
 
 
 def _provably_nonempty(loop: LoopRegion) -> bool:
@@ -94,17 +73,18 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
     stride = get_loop_stride(loop)
     if init is None or end is None or stride is None:
         return False
-    s = sympy.sympify(stride)
-    if s.is_positive:
-        diff = sympy.simplify(sympy.sympify(end) - sympy.sympify(init))
-    elif s.is_negative:
-        diff = sympy.simplify(sympy.sympify(init) - sympy.sympify(end))
+    s = symbolic.pystr_to_symbolic(stride)
+    facts = loop.sdfg.facts()
+    if symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, s), facts) is symbolic.Truth.TRUE:
+        diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(init)))
+    elif symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, s), facts) is symbolic.Truth.TRUE:
+        diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(init)) - as_expr(symbolic.pystr_to_symbolic(end)))
     else:
         return False
-    return diff.is_nonnegative is True
+    return symbolic.provably_nonnegative(diff, facts)
 
 
-def _last_reached_iterate(loop: LoopRegion):
+def _last_reached_iterate(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """The value of the loop variable on the final executed iteration.
 
     ``get_loop_end`` normalizes the raw bound (``i < a -> a-1``, ``i <= a -> a``); with a
@@ -116,15 +96,19 @@ def _last_reached_iterate(loop: LoopRegion):
     stride = get_loop_stride(loop)
     if init is None or end is None or stride is None:
         return None
-    init_s = sympy.sympify(init)
-    end_s = sympy.sympify(end)
-    stride_s = sympy.sympify(stride)
+    init_s = symbolic.pystr_to_symbolic(init)
+    end_s = symbolic.pystr_to_symbolic(end)
+    stride_s = symbolic.pystr_to_symbolic(stride)
     if stride_s == 1:
         return end_s
-    return sympy.simplify(init_s + sympy.floor((end_s - init_s) / stride_s) * stride_s)
+    # ``int_floor``, never ``sympy.floor`` over a division: ``simplify`` distributes the floor into
+    # a rational and ``sym2cpp`` prints it without the floor, so the guard below compares against a
+    # truncated value and the post-body fires mid-loop. Same hazard documented in
+    # ``materialize_loop_exit_symbols``.
+    return symbolic.simplify(init_s + symbolic.int_floor(as_expr(end_s) - as_expr(init_s), stride_s) * stride_s)
 
 
-def _has_outer_carry(subset, iv: str) -> bool:
+def _has_outer_carry(subset: Subset | None, iv: str) -> bool:
     """``True`` iff ``subset`` indexes the outer iterator ``iv`` at a non-zero offset.
 
     A single-point / range begin or end of the form ``iv`` (offset 0) is per-iteration and
@@ -133,20 +117,23 @@ def _has_outer_carry(subset, iv: str) -> bool:
     """
     if subset is None:
         return False
-    iv_sym = sympy.Symbol(iv)
+    iv_sym = symbolic.pystr_to_symbolic(iv)
     for rb, re_, _ in subset.ndrange():
         for expr in (rb, re_):
             try:
-                e = sympy.sympify(str(expr))
+                e = symbolic.pystr_to_symbolic(str(expr))
             except Exception:
                 return True  # unparseable -> assume the worst
-            if iv_sym in e.free_symbols:
-                if sympy.simplify(e - iv_sym) != 0:
+            # Equalized: e is reparsed here while iv_sym is minted from the name, so membership by
+            # identity misses the dependence and reports the index as independent of the loop.
+            e, iv = symbolic.equalize_symbols_across(e, iv_sym)
+            if iv in e.free_symbols:
+                if symbolic.simplify(as_expr(e) - iv) != 0:
                     return True
     return False
 
 
-def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List[SDFGState]) -> bool:
+def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
     """S7: refuse if the outer axis carries a dependence a later interchange would break.
 
     Restricted to the outer iterator: any *written* container that is accessed at ``iv +/- c``
@@ -155,13 +142,13 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     carries and stay clear of this check.
     """
     iv = str(outer.loop_variable)
-    states: List[SDFGState] = list(pre) + list(post) + list(inner.all_states())
+    states: list[SDFGState] = list(pre) + list(post) + list(inner.states())
 
-    written: Set[str] = set()
+    written: dict[str, None] = {}
     for st in states:
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                written.add(n.data)
+                written[n.data] = None
 
     for st in states:
         for e in st.edges():
@@ -172,19 +159,19 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     return True
 
 
-def _body_written_names(inner: LoopRegion) -> Set[str]:
+def _body_written_names(inner: LoopRegion) -> dict[str, None]:
     """Symbols (interstate-edge LHS) and data containers written inside ``inner``'s body."""
-    names: Set[str] = set()
+    names: dict[str, None] = {}
     for e in inner.all_interstate_edges(recursive=True):
-        names |= set(e.data.assignments.keys())
-    for st in inner.all_states():
+        names.update(dict.fromkeys(e.data.assignments.keys()))
+    for st in inner.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                names.add(n.data)
+                names[n.data] = None
     return names
 
 
-def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState], List[SDFGState]]]:
+def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SDFGState]] | None:
     """Find an outer ``LoopRegion`` whose linear body is ``[pre..., one inner loop, post...]``
     and that satisfies every soundness gate.
 
@@ -202,7 +189,7 @@ def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState]
         inner = inner_loops[0]
         idx = order.index(inner)
         pre = order[:idx]
-        post = order[idx + 1:]
+        post = order[idx + 1 :]
         if not pre and not post:
             continue  # already perfect
         if any(not isinstance(b, SDFGState) for b in pre + post):
@@ -218,20 +205,20 @@ def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState]
         if not _outer_axis_independent(outer, inner, pre, post):  # S7
             continue
         # Refuse a sifted interstate assignment whose LHS the body reassigns.
-        sifted_lhs: Set[str] = set()
+        sifted_lhs: dict[str, None] = {}
         edge_of = {(e.src, e.dst): e for e in outer.edges()}
         chain = pre + [inner] + post
         for a, b in zip(chain, chain[1:]):
             e = edge_of.get((a, b))
             if e is not None:
-                sifted_lhs |= set(e.data.assignments.keys())
-        if sifted_lhs & _body_written_names(inner):
+                sifted_lhs.update(dict.fromkeys(e.data.assignments.keys()))
+        if any(s in sifted_lhs for s in _body_written_names(inner)):
             continue
         return outer, inner, pre, post
     return None
 
 
-def _assemble_region(pairs: List[Tuple[SDFGState, Optional[InterstateEdge]]], label: str) -> ControlFlowRegion:
+def _assemble_region(pairs: list[tuple[SDFGState, InterstateEdge | None]], label: str) -> ControlFlowRegion:
     """Build a fresh linear ``ControlFlowRegion`` from ``(block, incoming-edge-data)`` pairs.
 
     The first pair's edge data is ``None`` (it is the region start); every other block is
@@ -249,7 +236,7 @@ def _assemble_region(pairs: List[Tuple[SDFGState, Optional[InterstateEdge]]], la
     return region
 
 
-def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List[SDFGState]) -> None:
+def _sift(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> None:
     """Sink ``pre`` / ``post`` into ``inner``'s body under boundary guards; make ``outer`` perfect."""
     lv = str(inner.loop_variable)
     first_val = get_init_assignment(inner)
@@ -262,7 +249,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
     pre_if = None
     if pre:
         pre_copies = [copy.deepcopy(b) for b in pre]
-        pairs: List[Tuple[SDFGState, Optional[InterstateEdge]]] = [(pre_copies[0], None)]
+        pairs: list[tuple[SDFGState, InterstateEdge | None]] = [(pre_copies[0], None)]
         for k in range(1, len(pre)):
             e = edge_of[(pre[k - 1], pre[k])]
             pairs.append((pre_copies[k], copy.deepcopy(e.data)))
@@ -270,9 +257,9 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         # them at the boundary iteration via a trailing empty state inside the guard.
         e_into = edge_of[(pre[-1], inner)]
         if e_into.data.assignments:
-            pairs.append((SDFGState('pre_guard_tail'), copy.deepcopy(e_into.data)))
-        pre_region = _assemble_region(pairs, 'pre_guard_body')
-        pre_if = ConditionalBlock('pre_guard')
+            pairs.append((SDFGState("pre_guard_tail"), copy.deepcopy(e_into.data)))
+        pre_region = _assemble_region(pairs, "pre_guard_body")
+        pre_if = ConditionalBlock("pre_guard")
         pre_if.add_branch(CodeBlock(pre_pred), pre_region)
 
     post_if = None
@@ -282,14 +269,14 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         # via a leading empty state inside the guard.
         e_outof = edge_of[(inner, post[0])]
         if e_outof.data.assignments:
-            pairs = [(SDFGState('post_guard_lead'), None), (post_copies[0], copy.deepcopy(e_outof.data))]
+            pairs = [(SDFGState("post_guard_lead"), None), (post_copies[0], copy.deepcopy(e_outof.data))]
         else:
             pairs = [(post_copies[0], None)]
         for k in range(1, len(post)):
             e = edge_of[(post[k - 1], post[k])]
             pairs.append((post_copies[k], copy.deepcopy(e.data)))
-        post_region = _assemble_region(pairs, 'post_guard_body')
-        post_if = ConditionalBlock('post_guard')
+        post_region = _assemble_region(pairs, "post_guard_body")
+        post_if = ConditionalBlock("post_guard")
         post_if.add_branch(CodeBlock(post_pred), post_region)
 
     old_start = inner.start_block
@@ -300,7 +287,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         inner.add_edge(pre_if, old_start, InterstateEdge())
     if post_if is not None:
         inner.add_node(post_if, ensure_unique_name=True)
-        inner.add_edge(old_sink, post_if, InterstateEdge())
+        inner.add_edge(required(old_sink), post_if, InterstateEdge())
     if pre_if is not None:
         # Make the prepended pre-guard the explicit inner-body start (the getter otherwise
         # prefers a unique source node, and a stale start corrupts dominator analysis).
@@ -313,57 +300,27 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
     outer.start_block = outer.node_id(inner)
 
 
-@properties.make_properties
-@transformation.explicit_cf_compatible
-class SiftStatementsIntoPerfectNest(ppl.Pass):
-    """Sift imperfect-nest outer statements into the inner loop under boundary guards (GPU-only).
+def sift_imperfect_nests(sdfg: SDFG) -> int:
+    """Sift every qualifying imperfect nest in ``sdfg``; return how many were sifted.
 
-    See the module docstring for the transform, the soundness gates (S1 non-empty inner loop,
-    S7 outer-axis independence, boundary-assignment refusal) and the GPU-only rationale.
+    Driven by :class:`~dace.transformation.passes.canonicalize.perfect_loop_nesting.PerfectLoopNesting`
+    under ``target='gpu'`` -- this module holds the matcher and the rewrite, not a Pass of its own,
+    so perfect nesting has ONE entry point.
+
+    :param sdfg: The SDFG to transform in place.
+    :returns: The number of nests sifted (0 if none matched).
     """
-
-    CATEGORY: str = 'Optimization Preparation'
-
-    target = properties.Property(dtype=str,
-                                 default='cpu',
-                                 choices=['cpu', 'gpu'],
-                                 desc="Target policy: 'gpu' sifts to expose the outer axis; 'cpu' is a no-op.")
-
-    def __init__(self, target: str = 'cpu'):
-        super().__init__()
-        self.target = target
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def depends_on(self):
-        return set()
-
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
-        """Sift every qualifying imperfect nest in ``sdfg``.
-
-        :param sdfg: The SDFG to transform in place.
-        :returns: The number of nests sifted, or ``None`` if none / not a GPU target.
-        """
-        if self.target != 'gpu':
-            return None
-        count = 0
-        # Each sift rewrites the CFG (moves/removes blocks), so re-scan from scratch after
-        # every application until nothing more matches.
-        while True:
-            m = _match(sdfg)
-            if m is None:
-                break
-            _sift(*m)
-            count += 1
-        if count:
-            # _sift deep-copies blocks; any nested SDFG carried along keeps a stale parent
-            # reference until repaired (mirrors MoveIfIntoLoop.apply_pass).
-            set_nested_sdfg_parent_references(sdfg)
-        return count or None
+    count = 0
+    # Each sift rewrites the CFG (moves/removes blocks), so re-scan from scratch after
+    # every application until nothing more matches.
+    while True:
+        m = _match(sdfg)
+        if m is None:
+            break
+        # _sift deep-copies blocks; ``add_node`` re-homes every nested SDFG a copy carries.
+        _sift(*m)
+        count += 1
+    return count
 
 
-__all__ = ['SiftStatementsIntoPerfectNest']
+__all__ = ["sift_imperfect_nests"]

@@ -1,29 +1,37 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    M: 38,
-    N: 42,
-}, {
-    M: 116,
-    N: 124,
-}, {
-    M: 390,
-    N: 410,
-}, {
-    M: 1900,
-    N: 2100,
-}, {
-    M: 1800,
-    N: 2200,
-}]
+sizes = [
+    {
+        M: 38,
+        N: 42,
+    },
+    {
+        M: 116,
+        N: 124,
+    },
+    {
+        M: 390,
+        N: 410,
+    },
+    {
+        M: 1900,
+        N: 2100,
+    },
+    {
+        M: 1800,
+        N: 2200,
+    },
+]
+
+#: ported from the npbench bench_info paper row (M=18000, N=22000)
 
 args = [([M, N], datatype), ([N], datatype), ([N], datatype)]
 
@@ -40,41 +48,12 @@ def init_array(A, x, y, n, m):
 
 @dace.program
 def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
-    tmp = dace.define_local([M], dtype=datatype)
-
-    @dace.map
-    def reset_y(i: _[0:N]):
-        out >> y[i]
-        out = 0.0
-
-    # Zero ``tmp`` before the accumulation (polybench sets ``tmp[i] = 0`` inside the
-    # i-loop). The source expressed this via the WCR identity ``tmp(1, ..., 0)``, but
-    # the Python frontend drops the identity third argument, so the accumulation would
-    # otherwise read uninitialised memory -- making even the untransformed reference
-    # process-dependent. ``tmp[i]`` is produced and consumed within the same i, so a
-    # single up-front zero is equivalent to per-iteration reset.
-    @dace.map
-    def reset_tmp(i: _[0:M]):
-        out >> tmp[i]
-        out = 0.0
-
-    for i in range(M):
-
-        @dace.map
-        def compute_tmp(j: _[0:N]):
-            inA << A[i, j]
-            inx << x[j]
-            out >> tmp(1, lambda a, b: a + b, 0)[i]
-            out = inA * inx
-
-        @dace.map
-        def compute_y(j: _[0:N]):
-            inA << A[i, j]
-            intmp << tmp[i]
-            outy >> y(1, lambda a, b: a + b)[j]
-            outy = inA * intmp
+    # npbench formulation: ``y = (A @ x) @ A`` (two Gemv library nodes), replacing the
+    # hand-written ``tmp`` accumulation.
+    y[:] = (A @ x) @ A
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(2, 'y')], init_array, atax)
+
+    polybench.main(sizes, args, [(2, "y")], init_array, atax)

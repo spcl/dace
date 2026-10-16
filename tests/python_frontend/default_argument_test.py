@@ -1,7 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for using default arguments (mutable or not) in different contexts. """
-import dace
+"""Tests for using default arguments (mutable or not) in different contexts."""
+
 import numpy as np
+
+import dace
 
 
 def test_default_arg():
@@ -20,7 +22,6 @@ def test_default_arg():
 def test_single_nested_default_arg_jit():
 
     class MyClass:
-
         def __call__(self, arr, qmin=0.0):
             arr[:] = qmin
 
@@ -38,7 +39,6 @@ def test_single_nested_default_arg_jit():
 def test_nested_default_arg_jit():
 
     class MyClass:
-
         def __call__(self, arr, qmin=0.0):
             self.nested(arr, qmin)
 
@@ -59,7 +59,6 @@ def test_nested_default_arg_jit():
 def test_nested_default_arg():
 
     class MyClass:
-
         def __call__(self, arr: dace.float64[20], qmin: float = 0.0):
             self.nested(arr, qmin)
 
@@ -80,7 +79,6 @@ def test_nested_default_arg():
 def test_nested_default_arg_reuse():
 
     class MyClass:
-
         def __call__(self, arr: dace.float64[20], qmin: float = 0.0):
             self.nested(arr, qmin)
 
@@ -101,7 +99,6 @@ def test_nested_default_arg_reuse():
 def test_nested_default_arg_reuse_2():
 
     class MyClass:
-
         def __call__(self, arr: dace.float64[20], qmin: float = 0.0):
             self.nested(arr, qmin)
 
@@ -142,7 +139,6 @@ def test_default_arg_object():
 def test_nested_default_arg_object():
 
     class MyClass:
-
         def __call__(self, arr: dace.float64[20], defarg: dace.float64[20] = np.ones(20)):
             defarg += 1
             arr[:] = defarg
@@ -160,7 +156,7 @@ def test_nested_default_arg_object():
     assert np.allclose(myarr, 3.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_default_arg()
     test_single_nested_default_arg_jit()
     test_nested_default_arg_jit()

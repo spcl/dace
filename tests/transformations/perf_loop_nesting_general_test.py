@@ -1,14 +1,15 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the generalized ``PerfLoopNesting`` transformation.
+"""Tests for the generalized ``PerfLoopNesting`` transformation.
 
-    ``PerfLoopNesting`` duplicates a parent map once per independent inner map.
-    Besides the original NestedSDFG-wrapped form it also handles the common
-    inlined same-state shape (a parent map directly enclosing >= 2 inner maps,
-    no NestedSDFG indirection), delegating the dependency-respecting split to
-    ``MapFission``. Applied repeatedly it cascades an arbitrarily deep nest.
+``PerfLoopNesting`` duplicates a parent map once per independent inner map.
+Besides the original NestedSDFG-wrapped form it also handles the common
+inlined same-state shape (a parent map directly enclosing >= 2 inner maps,
+no NestedSDFG indirection), delegating the dependency-respecting split to
+``MapFission``. Applied repeatedly it cascades an arbitrarily deep nest.
 
-    All kernels use the dace Python frontend only.
+All kernels use the dace Python frontend only.
 """
+
 import copy
 
 import numpy as np
@@ -18,7 +19,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
 
-N, M, P = (dace.symbol(s) for s in ('N', 'M', 'P'))
+N, M, P = (dace.symbol(s) for s in ("N", "M", "P"))
 
 
 @dace.program
@@ -94,9 +95,7 @@ def _toplevel_map_entries(sdfg: dace.SDFG):
     :param sdfg: The SDFG to scan.
     :return: The list of outermost map entries.
     """
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def test_inlined_two_independent_maps_are_split():
@@ -120,8 +119,9 @@ def test_inlined_two_independent_maps_are_split():
 
 
 def test_intervening_producer_is_replicated():
+    rng = np.random.default_rng(42)
     n, m = 7, 4
-    a = np.random.rand(m)
+    a = rng.random(m)
     sdfg = intervening_producer.to_sdfg(simplify=True)
 
     x0, y0 = np.zeros((n, m)), np.zeros((n, m))
@@ -177,8 +177,9 @@ def test_nested_parent_with_intervening_producer():
     """A three-level nest whose middle map has an intervening producer feeding
     both inner maps: the structured fission must cascade the nested split
     *and* replicate the producer, staying valid and numerically exact."""
+    rng = np.random.default_rng(42)
     n, m, p = 4, 3, 2
-    a = np.random.rand(m)
+    a = rng.random(m)
     sdfg = nested_intervening.to_sdfg(simplify=True)
 
     x0, y0 = np.zeros((n, m)), np.zeros((n, m))

@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import math as mt
+
 import numpy as np
 import pytest
+
+import dace
 from dace.frontend.python.common import DaceSyntaxError
 
 
@@ -79,7 +81,7 @@ def test_invalid_scalar_access_decorator_syntax():
 
 
 def test_store_into_symbol_memlet():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(input: dace.int64[N]):
@@ -95,7 +97,7 @@ def test_store_into_symbol_memlet():
 
 
 def test_store_into_symbol():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(input: dace.int64[N]):

@@ -27,5 +27,5 @@ def test_include():
     assert_exists("BarLib")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_include()

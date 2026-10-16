@@ -11,8 +11,6 @@ descent. These tests pin both behaviours, including value preservation on the
 cloudsc inout pattern.
 """
 
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import numpy
 import pytest
 
@@ -20,7 +18,6 @@ import dace
 from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
-
 from tests.passes.vectorization.helpers.harness import _get_cloudsc_snippet_four
 
 M = dace.symbol("M")
@@ -32,6 +29,13 @@ def _nested2d(a: dace.float64[M, Nn], b: dace.float64[M, Nn]):
     for j in range(M):
         for i in range(Nn):
             b[j, i] = a[j, i] + 1.0
+
+
+@dace.program
+def _nested2d_rmw(a: dace.float64[M, Nn], b: dace.float64[M, Nn]):
+    for j in range(M):
+        for i in range(Nn):
+            b[j, i] = b[j, i] + a[j, i]
 
 
 def _maps(sdfg: dace.SDFG):
@@ -69,6 +73,25 @@ def test_simple_single_state_body_inlined_away():
     assert not _nsdfgs(s), f"simple single-state body should inline away; left: {[n.label for n in _nsdfgs(s)]}"
 
 
+def test_rmw_loop_nest_wrapper_with_inout_connector_fuses_to_multiparam_map():
+    """A read-modify-write nest gives every wrapper an inout ``b`` connector read at a source
+    node and written at a separate sink node; the wrappers inline, so the maps fuse to one
+    ``(j, i)`` map and the result stays equal to NumPy."""
+    s = _nested2d_rmw.to_sdfg(simplify=True)
+    s.apply_transformations_repeated(LoopToMap, permissive=True, validate=False)
+    assert _inout_nsdfgs(s), "fixture precondition: inout-connector wrapper NSDFGs"
+    normalize_loop_nests(s)
+    s.validate()
+    assert _maps(s) == [["j", "i"]], f"expected one fused (j, i) map, got {_maps(s)}"
+    assert not _nsdfgs(s), f"wrappers should inline away; left: {[n.label for n in _nsdfgs(s)]}"
+    rng = numpy.random.default_rng(7)
+    a = rng.random((5, 6))
+    b = rng.random((5, 6))
+    expected = b + a
+    s(a=a, b=b, M=5, Nn=6)
+    numpy.testing.assert_allclose(b, expected, rtol=1e-12, atol=1e-12)
+
+
 def test_cloudsc_inout_body_preserved():
     """The cloudsc ``zqlhs`` RMW body NSDFG has an inout connector; InlineSDFG
     refuses it, so normalization LEAVES it intact for the tile descent (the
@@ -80,8 +103,9 @@ def test_cloudsc_inout_body_preserved():
     s.validate()
     inout_after = _inout_nsdfgs(s)
     assert inout_after, "the inout (zqlhs RMW) body must be preserved, not flattened"
-    assert any("zqlhs" in (set(n.in_connectors) & set(n.out_connectors)) for n in inout_after), \
+    assert any("zqlhs" in (set(n.in_connectors) & set(n.out_connectors)) for n in inout_after), (
         "zqlhs must remain an inout connector on the preserved body"
+    )
 
 
 def test_cloudsc_inout_normalization_is_value_preserving():
@@ -109,11 +133,9 @@ def test_cloudsc_inout_normalization_is_value_preserving():
     va = {k: v.copy() for k, v in arrays.items()}
     vec.compile()(**va, **params)
     for k in arrays:
-        numpy.testing.assert_allclose(va[k],
-                                      ra[k],
-                                      rtol=1e-12,
-                                      atol=1e-12,
-                                      err_msg=f"normalize changed cloudsc array {k!r}")
+        numpy.testing.assert_allclose(
+            va[k], ra[k], rtol=1e-12, atol=1e-12, err_msg=f"normalize changed cloudsc array {k!r}"
+        )
 
 
 if __name__ == "__main__":

@@ -38,20 +38,21 @@ def example_function(param_a: str, *args: Optional[SDFG]) -> bool:
     ...
 ```
 
-For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use the [yapf](https://github.com/google/yapf) file formatter.
+For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use [ruff](https://docs.astral.sh/ruff/) as both the formatter (`ruff format`) and the linter (`ruff check`). Settings live in `ruff.toml`.
 **Please run `pre-commit` before making your pull request ready for review.**
 
 ```bash
 pre-commit run --all-files
 ```
 
-Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. To get `pre-commit` and `yapf`, be sure to install the `linting` extra, e.g. for contributors we recommend
+Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. `uv sync` will automatically install `pre-commit` and `ruff` as part of the `dev` dependency group. For contributors, we recommend to run
 
 ```bash
-pip install -e ".[testing,linting]"
+uv sync
+source .venv/bin/activate
 ```
 
-to get testing and linting extras in an editable install.
+to get an editable install with all dev dependencies. Add `--extra ml` for optional dace-ml support.
 
 One way to always ensure consistency with our coding standards is to install pre-commit hooks, which will check formatting issues of changed files before every commit. If you wish to do so, run
 
@@ -60,6 +61,16 @@ pre-commit install
 ```
 
 to install the `git` hooks for this repository.
+
+### Bulk reformats and `git blame`
+
+Repository-wide reformats are listed in `.git-blame-ignore-revs`. GitHub applies that file
+automatically, so blame views on github.com already skip them. To get the same behavior
+locally, run once:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
 
 ## Tests
 
@@ -80,7 +91,7 @@ and must also be commented out at the main section at the bottom of the file.
 Please refrain from adding new dependencies unless necessary. If they are necessary,
 indicate the reason in the pull request description. Prefer dependencies
 available in standard repositories (such as [PyPI](https://pypi.org/)) over git
-repositories. Add dependencies both to the [setup.py](setup.py) and [requirements.txt](requirements.txt) files.
+repositories.
 
 ## File Heading
 

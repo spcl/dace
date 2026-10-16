@@ -19,6 +19,8 @@ from dace import data, dtypes, subsets
 from dace.codegen.py.framecode import DaCePythonCodeGenerator
 from dace.codegen.py.python_target import PythonCodeGen
 from dace.memlet import Memlet
+from dace.sdfg.dealias import integrate_nested_sdfgs_within
+from dace.sdfg.validation import InvalidSDFGNodeError
 
 
 def _build_nested_scale_sdfg(name: str,
@@ -114,6 +116,7 @@ def test_output_side_flat_reshape():
     sdfg = _build_scale_sdfg('nested_out_reshape', (6, 4), (4, 1), (6, 4), (4, 1))
     X = np.random.rand(2, 3, 4)
     Y = np.zeros((2, 3, 4))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y, 2 * X), f"max diff = {np.max(np.abs(Y - 2 * X))}"
 
@@ -126,21 +129,21 @@ def test_input_permutation_mismatch_raises():
     would silently produce transposed data (bug 08b).
     """
     sdfg = _build_scale_sdfg('nested_perm_mismatch', (4, 6), (1, 4), (6, 4), (4, 1))
-    with pytest.raises(NotImplementedError, match='flat-order-preserving'):
+    with pytest.raises(InvalidSDFGNodeError, match='not equivalent'):
         sdfg.compile()
 
 
 def test_output_permutation_mismatch_raises():
     """A permutation-type OUTPUT mismatch raises loudly too."""
     sdfg = _build_scale_sdfg('nested_perm_out_mismatch', (6, 4), (4, 1), (4, 6), (1, 4))
-    with pytest.raises(NotImplementedError, match='flat-order-preserving'):
+    with pytest.raises(InvalidSDFGNodeError, match='not equivalent'):
         sdfg.compile()
 
 
 def test_element_count_mismatch_raises():
     """A same-rank different-size mismatch raises (no silent wrong indexing)."""
     sdfg = _build_scale_sdfg('nested_count_mismatch', (5, 4), (4, 1), (6, 4), (4, 1))
-    with pytest.raises(NotImplementedError, match='flat-order-preserving'):
+    with pytest.raises(InvalidSDFGNodeError, match='not equivalent'):
         sdfg.compile()
 
 
@@ -149,6 +152,7 @@ def test_matching_shapes_unchanged():
     sdfg = _build_scale_sdfg('nested_matching', (2, 3, 4), (12, 4, 1), (2, 3, 4), (12, 4, 1))
     X = np.random.rand(2, 3, 4)
     Y = np.zeros((2, 3, 4))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y, 2 * X)
 
@@ -182,6 +186,7 @@ def test_inout_connector_flat_reshape():
     X = np.random.rand(2, 3, 4)
     Y0 = np.random.rand(2, 3, 4)
     Y = Y0.copy()
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     ref = 2 * X + Y0
     assert np.allclose(Y, ref), f"max diff = {np.max(np.abs(Y - ref))}"
@@ -197,6 +202,7 @@ def test_column_view_input_output():
                                     ((6, ), (4, )))
     X = np.random.rand(6, 4)
     Y = np.zeros((6, 4))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y[:, 1], 2 * X[:, 1])
     Y[:, 1] = 0
@@ -216,6 +222,7 @@ def test_column_view_symbolic_length():
     sdfg.add_state_after(sdfg.start_state, assignments={'__use_m': 'M'})
     X = np.random.rand(6, 4)
     Y = np.zeros((6, 4))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y, M=6, N=4)
     assert np.allclose(Y[:, 1], 2 * X[:, 1])
     Y[:, 1] = 0
@@ -233,6 +240,7 @@ def test_strided_output_writeback():
                                     ((2, 5), (5, 1)), ((2, 5), (60, 1)))
     X = np.random.rand(2, 5)
     Y = np.zeros((2, 3, 4, 5))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y[:, 1, 2, :], 2 * X)
     Y[:, 1, 2, :] = 0
@@ -247,6 +255,7 @@ def test_transpose_view_supported():
                                     ((4, 2), (1, 4)))
     X = np.random.rand(2, 4)
     Y = np.zeros((2, 4))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y, 2 * X)
 
@@ -268,7 +277,7 @@ def test_inconsistent_stride_raises():
     """
     sdfg = _build_nested_scale_sdfg('nested_bad_stride', (6, 4), (6, 4), '0:6, 0:4', '0:6, 0:4', ((4, 6), (3, 7)),
                                     ((6, 4), (4, 1)))
-    with pytest.raises(NotImplementedError, match='flat-order-preserving'):
+    with pytest.raises(InvalidSDFGNodeError, match='not equivalent'):
         sdfg.compile()
 
 
@@ -283,6 +292,7 @@ def test_column_view_gpu_global():
     X = np.random.rand(6, 4)
     X_gpu = cupy.asarray(X)
     Y_gpu = cupy.zeros((6, 4))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X_gpu, Y=Y_gpu)
     Y = cupy.asnumpy(Y_gpu)
     assert np.allclose(Y[:, 1], 2 * X[:, 1])
@@ -320,6 +330,7 @@ def test_rendered_column_slice_needs_no_reshape():
 
     X = np.random.rand(5, 7)
     Y = np.zeros(5)
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y, 2 * X[:, 2])
 
@@ -352,6 +363,7 @@ def test_writeback_through_collapsed_dim():
 
     X = np.random.rand(2, 3)
     Y = np.zeros((6, 2))
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     assert np.allclose(Y[:, 0], (2 * X).reshape(6))
     assert np.allclose(Y[:, 1], 0.0)
@@ -425,6 +437,7 @@ def test_inout_full_in_window_out_binds_consistently():
     X = np.random.rand(4, 6)
     Y0 = np.random.rand(4, 6)
     Y = Y0.copy()
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     ref = Y0.copy()
     ref[0:3] = 2 * X[0:3] + Y0[0:3]
@@ -440,6 +453,7 @@ def test_inout_full_in_window_out_wcr():
     X = np.random.rand(4, 6)
     Y0 = np.random.rand(4, 6)
     Y = Y0.copy()
+    integrate_nested_sdfgs_within(sdfg)
     sdfg(X=X, Y=Y)
     ref = Y0.copy()
     ref[0:3] += 2 * X[0:3]
@@ -476,18 +490,18 @@ class TestNestedDescSpansFullOuter:
         inner, outer = self._descs(outer_shape=(4, 5, 6))
         assert not self._codegen()._nested_desc_spans_full_outer(Memlet('A[0:3, 0:5, 0:6]'), inner, outer)
 
-    def test_rejects_nonzero_start(self):
+    def test_accepts_nonzero_access_window(self):
         inner, outer = self._descs()
-        assert not self._codegen()._nested_desc_spans_full_outer(Memlet('A[1:4, 0:5]'), inner, outer)
+        assert self._codegen()._nested_desc_spans_full_outer(Memlet('A[1:4, 0:5]'), inner, outer)
 
-    def test_rejects_non_unit_step(self):
+    def test_accepts_strided_access_window(self):
         inner, outer = self._descs()
-        assert not self._codegen()._nested_desc_spans_full_outer(Memlet('A[0:4:2, 0:5]'), inner, outer)
+        assert self._codegen()._nested_desc_spans_full_outer(Memlet('A[0:4:2, 0:5]'), inner, outer)
 
-    def test_rejects_nonzero_single_element_subset(self):
+    def test_accepts_single_element_access_window(self):
         inner, outer = self._descs()
         memlet = Memlet(data='A', subset=subsets.Range([(2, 2, 1), (3, 3, 1)]))
-        assert not self._codegen()._nested_desc_spans_full_outer(memlet, inner, outer)
+        assert self._codegen()._nested_desc_spans_full_outer(memlet, inner, outer)
 
     def test_rejects_other_subset(self):
         inner, outer = self._descs()

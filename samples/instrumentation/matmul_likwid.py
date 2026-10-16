@@ -1,10 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-M = dace.symbol('M')
-K = dace.symbol('K')
-N = dace.symbol('N')
+import dace
+
+M = dace.symbol("M")
+K = dace.symbol("K")
+N = dace.symbol("N")
 
 
 @dace.program

@@ -1,22 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Symmetric loop/map tests for pushing a scope-invariant guard inside.
+"""Symmetric loop/map tests for pushing a scope-invariant guard inside.
 
-    Each scenario is written twice, differing *only* in loop vs map:
+Each scenario is written twice, differing *only* in loop vs map:
 
-    * loop variant (``for k in range(N)``): the generalized ``MoveIfIntoLoop``
-      pushes the invariant guard into the loop directly.
-    * map variant (``for ... in dace.map[...]``): the same effect is obtained
-      by *reusing existing transformations* -- lower the map to loops
-      (``MapExpansion`` + ``MapToForLoop``), flatten the lowering's
-      NestedSDFG (``InlineMultistateSDFG``), push the guard in
-      (``MoveIfIntoLoop``), then recover parallelism (``LoopToMap``, which
-      MUST re-apply). This is exactly what the canonicalize pipeline does
-      internally; no transformation is modified.
+* loop variant (``for k in range(N)``): the generalized ``MoveIfIntoLoop``
+  pushes the invariant guard into the loop directly.
+* map variant (``for ... in dace.map[...]``): the same effect is obtained
+  by *reusing existing transformations* -- lower the map to loops
+  (``MapExpansion`` + ``MapToForLoop``), flatten the lowering's
+  NestedSDFG (``InlineMultistateSDFG``), push the guard in
+  (``MoveIfIntoLoop``), then recover parallelism (``LoopToMap``, which
+  MUST re-apply). This is exactly what the canonicalize pipeline does
+  internally; no transformation is modified.
 
-    Both variants assert the structural effect (no top-level
-    ``ConditionalBlock`` survives; the guard is duplicated inside, not
-    dropped) and end-to-end numerics vs a pure-numpy oracle for the guard
-    taken and not-taken.
+Both variants assert the structural effect (no top-level
+``ConditionalBlock`` survives; the guard is duplicated inside, not
+dropped) and end-to-end numerics vs a pure-numpy oracle for the guard
+taken and not-taken.
 """
 
 import numpy as np
@@ -31,8 +31,8 @@ from dace.transformation.interstate.multistate_inline import InlineMultistateSDF
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _top_conds(sdfg):
@@ -75,9 +75,9 @@ def _assert_guard_moved_inside(sdfg):
     assert _any_cond(sdfg), "the guard must be duplicated inside, not dropped"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Scenario 1: invariant scalar/symbolic guard over an elementwise body         #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -122,9 +122,9 @@ def test_s1_invariant_guard_map():
         assert np.allclose(out, _s1_oracle(a, av, n)), f"map av={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Scenario 2: invariant guard over an ICON-style neighbour-gather 2-D body     #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -174,8 +174,63 @@ def test_s2_gather_guard_map():
         assert np.allclose(out, _s2_oracle(w, cidx, av, n, m)), f"map av={av}"
 
 
-if __name__ == '__main__':
+# #
+# Scenario 3: the guard's prep state READS what the loop writes               #
+# #
+
+
+@dace.program
+def s3_snapshot_prep(items: dace.int64[N], goal: dace.int64[1], ways: dace.int64[M], prev: dace.int64[M]):
+    """0/1-knapsack count: the guarded branch snapshots ``ways`` into ``prev`` and then updates
+    ``ways`` from that snapshot. The snapshot is prep for the inner loop, but the inner loop
+    clobbers its source, so re-running it per iteration is not the same program."""
+    g = goal[0]
+    for d in range(N):
+        v = items[d]
+        if v <= g:
+            prev[:] = ways
+            for s in range(M - v):
+                ways[s + v] = ways[s + v] + prev[s]
+
+
+def _s3_oracle(items, goal, ways0, m):
+    ways = ways0.copy()
+    for v in items:
+        if v <= goal:
+            prev = ways.copy()
+            for s in range(m - v):
+                ways[s + v] += prev[s]
+    return ways
+
+
+def test_prep_that_reads_loop_written_data_is_not_sunk():
+    """The prep state must stay OUTSIDE the loop.
+
+    ``_move`` re-runs prep on every iteration. ``prev[:] = ways`` is only a snapshot if it runs
+    once; re-snapshotting mid-update lets one item be counted twice within its own pass, which
+    counts multisets instead of subsets.
+    """
+    m = 12
+    items = np.array([2, 3, 5, 7], np.int64)
+    ways0 = np.zeros(m, np.int64)
+    ways0[0] = 1
+
+    sdfg = s3_snapshot_prep.to_sdfg(simplify=True)
+    before = len(_any_cond(sdfg))
+    assert before >= 1, "the guard must survive parsing for this test to mean anything"
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, (
+        "MoveIfIntoLoop must decline: the prep state reads data the loop writes"
+    )
+    sdfg.validate()
+
+    ways = ways0.copy()
+    sdfg(items=items.copy(), goal=np.array([m - 1], np.int64), ways=ways, prev=np.zeros(m, np.int64), N=len(items), M=m)
+    assert np.array_equal(ways, _s3_oracle(items, m - 1, ways0, m)), "0/1 counts must survive the pass"
+
+
+if __name__ == "__main__":
     test_s1_invariant_guard_loop()
     test_s1_invariant_guard_map()
     test_s2_gather_guard_loop()
     test_s2_gather_guard_map()
+    test_prep_that_reads_loop_written_data_is_not_sunk()

@@ -3,7 +3,7 @@
 
 The knob marks non-transient arrays ``GPU_Global`` (via ``auto_optimize``'s
 ``apply_gpu_storage``) before GPU scheduling, so ``GPUTransformSDFG`` creates
-no ``gpu_*`` transient clones and no copy-in/copy-out states. The compiled
+no ``*_gpu`` transient clones and no copy-in/copy-out states. The compiled
 Python-backend SDFG then takes device (cupy) arrays directly — the calling
 convention NPBench uses to keep H2D/D2H transfers out of the timed region.
 
@@ -92,26 +92,26 @@ def _has_host_device_copy_edge(sdfg: SDFG) -> bool:
 
 def test_gpu_storage_marks_args_and_skips_clones():
     """With the knob on, argument arrays are GPU_Global and GPUTransformSDFG
-    creates neither ``gpu_*`` clones nor copy edges."""
+    creates neither ``*_gpu`` clones nor copy edges."""
     sdfg = _axpy_sdfg("gs_knob_on", use_gpu_storage=True)
 
     args = dict(_nontransient_arrays(sdfg))
     assert set(args) == {"x", "y"}
     for name, desc in args.items():
         assert desc.storage == dtypes.StorageType.GPU_Global, f"'{name}' storage is {desc.storage}"
-        assert f"gpu_{name}" not in sdfg.arrays, f"unexpected clone gpu_{name}"
+        assert f"{name}_gpu" not in sdfg.arrays, f"unexpected clone gpu_{name}"
     assert not _has_host_device_copy_edge(sdfg)
     sdfg.validate()
 
 
 def test_default_keeps_host_arrays():
     """Regression guard: with the knob off (default), argument arrays stay on
-    host and the ``gpu_*`` clones + copy edges DO exist."""
+    host and the ``*_gpu`` clones + copy edges DO exist."""
     sdfg = _axpy_sdfg("gs_knob_off", use_gpu_storage=False)
 
     for name, desc in _nontransient_arrays(sdfg):
         assert desc.storage != dtypes.StorageType.GPU_Global, f"'{name}' unexpectedly on GPU"
-        clone = sdfg.arrays.get(f"gpu_{name}")
+        clone = sdfg.arrays.get(f"{name}_gpu")
         assert clone is not None, f"missing clone gpu_{name}"
         assert clone.transient and clone.storage == dtypes.StorageType.GPU_Global
     assert _has_host_device_copy_edge(sdfg)
@@ -129,27 +129,26 @@ def test_gpu_storage_read_only_scalar_stays_host():
     assert desc.storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
 
 
-def test_gpu_storage_written_scalar_becomes_gpu_global():
-    """A WRITTEN non-transient scalar output is marked GPU_Global by
-    ``apply_gpu_storage`` (accepted edge case: the caller must then pass a
-    cupy 0-d buffer for it)."""
+def test_gpu_storage_written_scalar_stays_host():
+    """Scalar outputs keep the host ABI and are copied back by offloading."""
     sdfg = _axpy_scalar_out.to_sdfg(simplify=False)
     sdfg.name = "gs_written_scalar"
     VectorizeCuTile(widths=(32, ), use_gpu_storage=True).apply_pass(sdfg, {})
 
     desc = sdfg.arrays["s"]
     assert not desc.transient
-    assert desc.storage == dtypes.StorageType.GPU_Global
+    assert desc.storage == dtypes.StorageType.CPU_Heap
+    assert _has_host_device_copy_edge(sdfg)
 
 
 def test_gpu_storage_warns_when_ineffective():
     """On an SDFG already GPU-transformed WITHOUT gpu storage (existing
-    ``gpu_*`` clones + copy states), the knob cannot remove the copies and
+    ``*_gpu`` clones + copy states), the knob cannot remove the copies and
     emits a UserWarning."""
     sdfg = _axpy.to_sdfg(simplify=False)
     sdfg.name = "gs_warn_ineffective"
     VectorizeCuTile.canonicalize_for_cutile(sdfg)
-    sdfg.apply_gpu_transformations(sequential_innermaps=True, register_transients=True, simplify=False)
+    sdfg.apply_gpu_transformations( simplify=False)
 
     with pytest.warns(UserWarning, match="use_gpu_storage had no effect"):
         VectorizeCuTile(widths=(32, ), run_canonicalize=False, use_gpu_storage=True).apply_pass(sdfg, {})
@@ -171,7 +170,7 @@ def test_gpu_storage_pre_scheduled_noop():
 
     for name, desc in _nontransient_arrays(sdfg):
         assert desc.storage == dtypes.StorageType.GPU_Global
-        assert f"gpu_{name}" not in sdfg.arrays
+        assert f"{name}_gpu" not in sdfg.arrays
     assert not _has_host_device_copy_edge(sdfg)
     sdfg.validate()
 
@@ -251,7 +250,7 @@ if __name__ == "__main__":
     test_gpu_storage_marks_args_and_skips_clones()
     test_default_keeps_host_arrays()
     test_gpu_storage_read_only_scalar_stays_host()
-    test_gpu_storage_written_scalar_becomes_gpu_global()
+    test_gpu_storage_written_scalar_stays_host()
     test_gpu_storage_warns_when_ineffective()
     test_gpu_storage_pre_scheduled_noop()
     test_axpy_gpu_storage_runtime(64)

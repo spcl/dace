@@ -1,3 +1,4 @@
+from dace.transformation.passes.vectorization.enums import ISA
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Regression tests for the NPBench ``dace_cutile`` pipeline fixes.
 
@@ -173,7 +174,8 @@ def test_lane_id_materializes_tile_iota_not_cpp_tasklet():
     """The lane-id path places a TileIota lib node (Python-compatible for
     cuTile), not a raw CPP tasklet."""
     sdfg = _build_lane_id_kernel(16)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa="CUTILE",
+    sdfg.backend = dace.dtypes.BackendLanguage.Python
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.CUTILE,
                                          expand_tile_nodes=False)).apply_pass(sdfg, {})
     iotas = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileIota)]
     assert iotas, "lane-id symbol should be materialized via a TileIota lib node"
@@ -193,7 +195,7 @@ def test_lane_id_pure_path_numerics_unchanged():
     ref.name = "lane_id_reg_ref"
     vec = _build_lane_id_kernel(n)
     vec.name = "lane_id_reg_vec"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa="SCALAR")).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     ref.compile()(A=a.copy(), B=b_ref)
     vec.compile()(A=a.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)

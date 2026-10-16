@@ -11,10 +11,13 @@ collide), so it stays bit-exact with the un-vectorized reference regardless of w
 This is the READ counterpart of the residue-scan seed ``a[i mod K]`` canon leaves beside its Scan
 libnode (tsvc_2_5 scan_strided_sym / scan_strided_2), isolated from any recurrence.
 """
+
 import numpy
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.enums import BranchMode
+from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
 from tests.passes.vectorization.helpers.harness import S, X, Y, run_vectorization_test
 
 pytestmark = pytest.mark.tile_nodes
@@ -22,7 +25,7 @@ pytestmark = pytest.mark.tile_nodes
 
 @dace.program
 def modular_gather_read_1d(out: dace.float64[X], a: dace.float64[S]):
-    for i, in dace.map[0:X:1]:
+    for (i,) in dace.map[0:X:1]:
         out[i] = a[i % S]
 
 
@@ -37,12 +40,12 @@ def modular_gather_read_2d(out: dace.float64[Y, X], a: dace.float64[Y, S]):
 def square_gather_read_1d(out: dace.float64[X], a: dace.float64[S]):
     # ``(i * i) % S`` is non-affine (AFFINE-with-no-int-stride, wrapped) -> per-lane index
     # ``((i+l)**2) mod S``; kept in [0, S) so it stays in bounds for every i.
-    for i, in dace.map[0:X:1]:
+    for (i,) in dace.map[0:X:1]:
         out[i] = a[(i * i) % S]
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_modular_gather_read_1d(branch_mode, remainder_strategy):
     """``out[i] = a[i % S]`` -> per-lane gather ``a[(i+l) mod S]``; S=3 < 8 exercises the wrap."""
     xv, sv = 60, 3  # xv not a multiple of 8 -> remainder tile; sv < W -> cyclic wrap within a tile
@@ -58,7 +61,7 @@ def test_modular_gather_read_1d(branch_mode, remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_modular_gather_read_2d(branch_mode, remainder_strategy):
     """2-D ``out[i, j] = a[i, j % S]`` -- linear ``i`` tile dim + modular ``j`` gather dim."""
     yv, xv, sv = 8, 60, 3
@@ -74,7 +77,7 @@ def test_modular_gather_read_2d(branch_mode, remainder_strategy):
 
 
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
-@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
 def test_square_gather_read_1d(branch_mode, remainder_strategy):
     """``out[i] = a[(i * i) % S]`` -- a non-affine (no integer stride) index -> per-lane
     ``((i+l)**2) mod S``."""
@@ -88,3 +91,47 @@ def test_square_gather_read_1d(branch_mode, remainder_strategy):
         branch_mode=branch_mode,
         remainder_strategy=remainder_strategy,
     )
+
+
+def cmod_gather_read_sdfg() -> dace.SDFG:
+    """``out[i] = a[CMod(i, S)]``: the index is C's modulo, not the frontend's floored one."""
+    sdfg = dace.SDFG("cmod_gather_read_1d")
+    sdfg.add_array("out", [X], dace.float64)
+    sdfg.add_array("a", [S], dace.float64)
+    state = sdfg.add_state("body")
+    state.add_mapped_tasklet(
+        "copy",
+        map_ranges={"i": "0:X"},
+        inputs={"inp": dace.Memlet("a[CMod(i, S)]")},
+        code="o = inp",
+        outputs={"o": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
+@pytest.mark.parametrize("branch_mode", [BranchMode.MERGE, BranchMode.FP_FACTOR])
+def test_cmod_gather_read_1d(branch_mode, remainder_strategy):
+    """A truncating ``CMod`` index whose dividend sign is unknown gathers per lane like the floored one."""
+    sdfg = cmod_gather_read_sdfg()
+    index = next(e.data.subset for e in next(iter(sdfg.states())).edges() if isinstance(e.dst, dace.nodes.Tasklet))
+    assert isinstance(index.min_element()[0], dace.symbolic.CMod)
+    xv, sv = 60, 3
+    vectorized = run_vectorization_test(
+        dace_func=sdfg,
+        arrays={"out": numpy.zeros(xv), "a": numpy.random.random(sv)},
+        params={"X": xv, "S": sv},
+        vector_width=8,
+        sdfg_name="cmod_gather_read_1d",
+        from_sdfg=True,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+    )
+    lane_index_code = [
+        node.code.as_string
+        for node, _ in vectorized.all_nodes_recursive()
+        if isinstance(node, dace.nodes.Tasklet) and node.label.startswith(LANE_ID_MATERIALISER_PREFIX)
+    ]
+    assert lane_index_code, "the CMod index was not gathered through a per-lane index tile"
+    assert not any("py_mod" in code for code in lane_index_code), lane_index_code

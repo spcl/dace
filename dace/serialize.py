@@ -1,19 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dataclasses import is_dataclass
 import enum
 import json
+import warnings
+from dataclasses import is_dataclass
+
 import numpy as np
 import sympy
-import warnings
-from dace import attr_enum
+
 import dace.dtypes
-from dace import config
+from dace import attr_enum, config
 from dace.utils import until
 
 
-class SerializableObject(object):
-
+class SerializableObject:
     json_obj = {}
     typename = None
 
@@ -23,7 +23,7 @@ class SerializableObject(object):
 
     def to_json(self):
         retval = self.json_obj
-        retval['dace_unregistered'] = True
+        retval["dace_unregistered"] = True
         return retval
 
     @staticmethod
@@ -32,19 +32,19 @@ class SerializableObject(object):
 
 
 class NumpySerializer:
-    """ Helper class to load/store numpy arrays from JSON. """
+    """Helper class to load/store numpy arrays from JSON."""
 
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj is None:
             return None
-        if json_obj['type'] != 'ndarray':
-            raise TypeError('Object is not a numpy ndarray')
+        if json_obj["type"] != "ndarray":
+            raise TypeError("Object is not a numpy ndarray")
 
-        if 'dtype' in json_obj:
-            return np.array(json_obj['data'], dtype=json_obj['dtype'])
+        if "dtype" in json_obj:
+            return np.array(json_obj["data"], dtype=json_obj["dtype"])
 
-        return np.array(json_obj['data'])
+        return np.array(json_obj["data"])
 
     @staticmethod
     def to_json(obj):
@@ -56,7 +56,7 @@ class NumpySerializer:
         except KeyError:
             dtype_json = str(obj.dtype)
 
-        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': dtype_json}
+        return {"type": "ndarray", "data": obj.tolist(), "dtype": dtype_json}
 
 
 _DACE_SERIALIZE_TYPES = {
@@ -77,7 +77,7 @@ _DACE_SERIALIZE_TYPES = {
 
 
 def get_serializer(type_name):
-    type_name = until(type_name, '.')
+    type_name = until(type_name, ".")
     if type_name in _DACE_SERIALIZE_TYPES:
         return _DACE_SERIALIZE_TYPES[type_name]
 
@@ -86,8 +86,10 @@ def get_serializer(type_name):
     if type_name in basic_dtypes:
         return basic_dtypes[type_name]
 
-    raise KeyError(f'Serializer for type "{type_name}" was not found. Object type does not support serialization. '
-                   'Please implement serialization by decorating the class with ``@serializable``.')
+    raise KeyError(
+        f'Serializer for type "{type_name}" was not found. Object type does not support serialization. '
+        "Please implement serialization by decorating the class with ``@serializable``."
+    )
 
 
 # Decorator for objects that should be serializable, but don't call
@@ -111,11 +113,13 @@ def to_json(obj):
     elif isinstance(obj, np.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
-    elif type(obj).__name__ == 'SymExpr':
+    elif type(obj).__name__ == "SymExpr":
         from dace import symbolic
+
         return symbolic.serialize_symbolic(obj)
     elif isinstance(obj, sympy.Basic):
         from dace import symbolic
+
         return symbolic.serialize_symbolic(obj)
     elif is_dataclass(obj):
         # Serialize dataclass as a dictionary
@@ -126,11 +130,11 @@ def to_json(obj):
     elif isinstance(obj, attr_enum.ExtensibleAttributeEnum):
         if obj._is_template:
             # Store the full dataclass representation for templates
-            return {'type': f'{obj.__class__.__name__}.{obj._name_}'}
+            return {"type": f"{obj.__class__.__name__}.{obj._name_}"}
         elif is_dataclass(obj._value_):
             # Store the full dataclass representation for instances
             retval = to_json(obj._value_)
-            retval['type'] = f'{obj.__class__.__name__}.{obj._name_}'
+            retval["type"] = f"{obj.__class__.__name__}.{obj._name_}"
             return retval
         else:
             # Store just the name of this key
@@ -161,20 +165,20 @@ def from_json(obj, context=None, known_type=None):
         return obj
     attr_type = None
     if "attributes" in obj:
-        tmp = obj['attributes']
+        tmp = obj["attributes"]
         if isinstance(tmp, dict):
             if "type" in tmp:
-                attr_type = tmp['type']
+                attr_type = tmp["type"]
         else:
             # The object was consumed previously
             try:
-                obj['type']
+                obj["type"]
             except KeyError:
                 return tmp
             # If a type is available, the parent element must also be parsed accordingly
 
     try:
-        t = obj['type']
+        t = obj["type"]
     except KeyError:
         t = attr_type
 
@@ -182,23 +186,40 @@ def from_json(obj, context=None, known_type=None):
         raise TypeError("Type mismatch in JSON, found " + t + ", expected " + known_type.__name__)
 
     if t:
+        # Two failures used to share one handler, which is what made a bad parse surface as nonsense
+        # far away: an unparsable shape became a placeholder, the Subset holding it became one too,
+        # then the Memlet, then the whole block, and the load finally died on "Expected
+        # ControlFlowBlock, got SerializableObject" -- naming neither the real error nor where it was.
         try:
             serializer = get_serializer(t)
+        except KeyError as ex:
+            # UNREGISTERED type: exactly what the placeholder is for (see the ``deserialize_exception``
+            # config text -- "e.g., due to missing library node"). Keeping the raw JSON lets an SDFG
+            # carrying a third-party node still round-trip through a build that never defined it.
+            if config.Config.get_bool("testing", "deserialize_exception"):
+                raise
+            warnings.warn(f"Failed to deserialize element, {type(ex).__name__}: {ex}")
+            return SerializableObject.from_json(obj, context=context, typename=t)
+
+        # REGISTERED type: this build knows how to read it, so a raised exception is a genuine parse
+        # failure on data we understand. Substituting a placeholder here is silent corruption, so
+        # report it where it happened, with the type that failed and the original error chained.
+        try:
             if is_dataclass(serializer):
                 # Special case for dataclasses
                 field_values = {}
                 for field in serializer.__dataclass_fields__.values():
                     if field.name in obj:
                         field_values[field.name] = from_json(obj[field.name], context, known_type=field.type)
-                deserialized = serializer(**field_values)
-            else:
-                deserialized = serializer.from_json(obj, context=context)
+                return serializer(**field_values)
+            return serializer.from_json(obj, context=context)
         except Exception as ex:
-            if config.Config.get_bool('testing', 'deserialize_exception'):
-                raise
-            warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
-            deserialized = SerializableObject.from_json(obj, context=context, typename=t)
-        return deserialized
+            # A note rather than a rewrap: reconstructing the type would break every exception whose
+            # constructor takes more than a message (InvalidSDFGError wants the SDFG and a block id),
+            # and callers already catch these by type. Not ``add_note``: that is 3.11+, and on 3.10 it
+            # raised an AttributeError here that replaced the parse failure it was annotating.
+            ex.__dict__.setdefault("__notes__", []).append(f"while deserializing a {t}")
+            raise
 
     # No type was found, so treat this as a regular dictionary
     return {from_json(k, context): from_json(v, context) for k, v in obj.items()}
@@ -212,7 +233,7 @@ def loads(*args, context=None, **kwargs):
 def dumps(*args, readable=False, **kwargs):
     if readable:
         return json.dumps(*args, default=to_json, indent=2, **kwargs)
-    return json.dumps(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
+    return json.dumps(*args, default=to_json, indent=None, separators=(",", ":"), **kwargs)
 
 
 def load(*args, context=None, **kwargs):
@@ -223,15 +244,15 @@ def load(*args, context=None, **kwargs):
 def dump(*args, readable=False, **kwargs):
     if readable:
         return json.dump(*args, default=to_json, indent=2, **kwargs)
-    return json.dump(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
+    return json.dump(*args, default=to_json, indent=None, separators=(",", ":"), **kwargs)
 
 
 def all_properties_to_json(object_with_properties):
-    save_all_fields = config.Config.get_bool('testing', 'serialize_all_fields')
+    save_all_fields = config.Config.get_bool("testing", "serialize_all_fields")
     retdict = {}
     for x, v in object_with_properties.properties():
         if not save_all_fields:
-            is_default = (v == x.default)
+            is_default = v == x.default
             if isinstance(is_default, np.ndarray):
                 is_default = np.all(is_default)
             if is_default:  # Skip default fields
@@ -243,39 +264,27 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
+def deepcopy_returns_itself(value) -> bool:
+    """True where ``copy.deepcopy(value) is value``, so the copy can be skipped."""
+    return value is None or type(value) in (bool, int, float, str)
+
+
 def set_properties_from_json(object_with_properties, json_obj, context=None, ignore_properties=None):
     ignore_properties = ignore_properties or set()
     try:
-        attrs = json_obj['attributes']
+        attrs = json_obj["attributes"]
     except KeyError:
         attrs = json_obj
 
-    # Apply properties
-    ps = dict(object_with_properties.__properties__)
-    source_properties = set(attrs.keys())
-    for prop_name, prop in ps.items():
+    # Membership, not a raised KeyError per absent property: a Tasklet leaves most of its ~20 unwritten.
+    properties = object_with_properties.__properties__
+    unknown_names = [name for name in attrs if name not in properties]
+    for prop_name, prop in properties.items():
         if prop_name in ignore_properties:
             continue
 
-        missing_prop = False
-        try:
+        if prop_name in attrs:
             val = attrs[prop_name]
-            # Make sure we use all properties
-            source_properties.remove(prop_name)
-        except KeyError:
-            missing_prop = True
-            # Allow a property to not be set if it has a default value
-            # TODO: is this really the job of serialize?
-            if prop.default is not None:
-                # Prevent shared mutable defaults from being aliased across deserialized objects.
-                val = copy.deepcopy(prop.default)
-            elif prop.allow_none:
-                val = None
-            else:
-                raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
-                               prop_name)
-
-        if not missing_prop:
             if isinstance(val, dict):
                 val = prop.from_json(val, context)
             else:
@@ -286,15 +295,30 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                     # dictionary has been fully deserialized, and on raw json
                     # objects. In the interest of time, we're not failing here, but
                     # should untangle this eventually
-                    warnings.warn("Failed to parse object {}"
-                                  " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
+                    warnings.warn(
+                        f"Failed to parse object {val} for property {prop_name} of type {prop}. Error was: {err}"
+                    )
                     raise
+        else:
+            # Allow a property to not be set if it has a default value
+            # TODO: is this really the job of serialize?
+            default = prop.default
+            if default is not None:
+                # Prevent shared mutable defaults from being aliased across deserialized objects.
+                val = default if deepcopy_returns_itself(default) else copy.deepcopy(default)
+            elif prop.allow_none:
+                val = None
+            else:
+                raise KeyError(
+                    "Missing property for object of type " + type(object_with_properties).__name__ + ": " + prop_name
+                )
 
         setattr(object_with_properties, prop_name, val)
 
-    remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for editing
-    remaining_properties = set(prop for prop in remaining_properties if not prop.startswith('_meta'))
+    remaining_properties = {
+        name for name in unknown_names if name not in ignore_properties and not name.startswith("_meta")
+    }
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
         warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))

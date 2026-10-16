@@ -411,7 +411,7 @@ class TestTasklet:
         state.add_edge(t1, 'out', t2, 'inp', Memlet())
         state.add_edge(t2, 'res', w, None, Memlet(data='y'))
 
-        with pytest.raises(NotImplementedError, match="Code-to-code memlets"):
+        with pytest.raises(dace.sdfg.validation.InvalidSDFGEdgeError, match="empty memlet"):
             sdfg.generate_code()
 
     def test_tasklet_code_to_code_output_memlet(self):
@@ -427,7 +427,7 @@ class TestTasklet:
         state.add_edge(r, None, t1, 'a', Memlet(data='x'))
         state.add_edge(t1, 'out', t2, 'inp', Memlet())
 
-        with pytest.raises(NotImplementedError, match="Code-to-code memlets"):
+        with pytest.raises(dace.sdfg.validation.InvalidSDFGEdgeError, match="empty memlet"):
             sdfg.generate_code()
 
 

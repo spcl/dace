@@ -23,7 +23,7 @@ import pytest
 
 import dace
 from dace.dtypes import ScheduleType
-from dace.libraries.tileops import TileStore
+from dace.libraries.tileops import TileScatter
 from dace.transformation.passes.vectorization.vectorize_cutile import VectorizeCuTile
 
 N = dace.symbol("N")
@@ -70,7 +70,7 @@ def _lower(prog, widths=(8, )):
 def test_load_offset_width_keeps_aligned_load():
     """Offset == width: block load with the index shifted by 1, no gather."""
     _, code = _lower(_off_w)
-    assert "ct.load(_src" in code
+    assert "ct.load(_src" in code or "ct.load(_cpy_in" in code
     assert "__pid0 + 1" in code
     assert "ct.gather" not in code
 
@@ -78,7 +78,7 @@ def test_load_offset_width_keeps_aligned_load():
 def test_load_offset_two_widths_keeps_aligned_load():
     """Offset == 2*width: block load with the index shifted by 2."""
     _, code = _lower(_off_2w)
-    assert "ct.load(_src" in code
+    assert "ct.load(_src" in code or "ct.load(_cpy_in" in code
     assert "__pid0 + 2" in code
     assert "ct.gather" not in code
 
@@ -91,7 +91,7 @@ def test_load_offset_one_takes_gather():
 
 
 def _expand_store_in_cutile_map(dst_subset: str):
-    """Expand an unmasked ``TileStore`` inside a CuTile map with the given
+    """Expand an unmasked ``TileScatter`` inside a CuTile map with the given
     destination memlet subset; return the tasklet body.
 
     :param dst_subset: The ``_dst`` memlet subset (e.g. ``"__i0 + 8:__i0 + 16"``).
@@ -102,7 +102,7 @@ def _expand_store_in_cutile_map(dst_subset: str):
     sdfg.add_array("dst", (128, ), dace.float64)
     sdfg.add_array("src_tile", (8, ), dace.float64, transient=True)
     me, mx = state.add_map("m", {"__i0": "0:64:8"}, schedule=ScheduleType.CuTile)
-    node = TileStore(name="S", widths=(8, ))
+    node = TileScatter(name="S", widths=(8, ))
     state.add_node(node)
     src = state.add_access("src_tile")
     state.add_edge(me, None, src, None, dace.Memlet())

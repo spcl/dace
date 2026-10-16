@@ -4,13 +4,17 @@ from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination
 from .dead_state_elimination import DeadStateElimination
-from .full_map_fusion import FullMapFusion
+from .fuse_maps import FuseMaps
 from .fusion_inline import FuseStates, InlineSDFGs
+from .gpu_block_size_selection import SelectGPUDeviceBlockSize, pick_gpu_block_size, select_gpu_device_block_size
+from .instrument_with_timer import InstrumentWithTimer
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .optional_arrays import OptionalArrayInference
+from .persistent_transients import MakeTransientsPersistent
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
-from .scalar_fission import PrivatizeScalars, ScalarFission
+from .scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
+from .region_boundary_states import RegionBoundaryStates
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays
 from .simplify import SimplifyPass
@@ -18,6 +22,8 @@ from .simplify_induction_variables import SimplifyInductionVariables
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
 from .offset_loop_and_maps import OffsetLoopsAndMaps
+from .outline_top_level_nests import OutlineTopLevelNests, outline_top_level_nests
+from .outline_to_external_calls import OutlineToExternalCalls, outline_to_external_calls
 from .eliminate_branches import EliminateBranches
 from .util import available_passes
 from .canonicalize import CanonicalizationPipeline, canonicalize

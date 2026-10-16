@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-import dace
-from common import compare_numpy_output
 import math
-from numpy import exp, sin, cos, sqrt, log, log10, conj, real, imag
+
+import numpy as np
 import pytest
+from common import compare_numpy_output
+from numpy import conj, cos, exp, imag, log, log10, real, sin, sqrt
+
+import dace
 
 M, N = 24, 24
 
@@ -83,7 +85,6 @@ def test_exponent_t():
 
 
 class TestMathFuncs:
-
     @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
     @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
     def test_func(self, mathfunc, arg):
@@ -120,6 +121,50 @@ class TestMathFuncs:
         arg2 = np.random.randn(5, 5)
         res = func(arg1, arg2)
         assert np.allclose(mathfunc(arg1, arg2), res)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_abs_complex(A: dace.complex64[M, N]):
+    # abs() of a complex value is its (real-valued) magnitude; the result dtype must be real.
+    return abs(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_np_abs_complex(A: dace.complex128[M, N]):
+    return np.abs(A)
+
+
+def test_abs_complex_comparison():
+    # The original bug: abs(z) stayed typed complex, so abs(z) < 1.0 failed to compile
+    # (no operator< on std::complex). This program must both build and match numpy.
+    @dace.program
+    def func(A: dace.complex128[M, N]):
+        return abs(A) < 1.0
+
+    A = (np.random.rand(M, N) + 1j * np.random.rand(M, N)).astype(np.complex128)
+    assert np.array_equal(func(A), np.abs(A) < 1.0)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_pow_int_exponent_complex(A: dace.complex128[M, N]):
+    # base ** int must stay an exact integer power (not routed through exp/log via an
+    # up-cast exponent), preserving both the complex result dtype and bit-exactness.
+    return A**2
+
+
+@compare_numpy_output(check_dtype=True)
+def test_pow_int_exponent_float(A: dace.float64[M, N]):
+    return A**3
+
+
+def test_pow_int_exponent_bit_exact():
+    # Guard the bit-exactness the fix restores: squaring must equal an explicit multiply.
+    @dace.program
+    def func(A: dace.complex128[M, N]):
+        return A**2
+
+    A = (np.random.rand(M, N) + 1j * np.random.rand(M, N)).astype(np.complex128)
+    assert np.array_equal(func(A), A * A)
 
 
 def test_scalarret_cond_1():
@@ -165,7 +210,7 @@ def test_scalarret_cond_3():
     assert res == 0.0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_exponent()
     test_sine()
     test_cosine()
@@ -180,6 +225,12 @@ if __name__ == '__main__':
     TestMathFuncs().test_func(np.abs, 0.7)
     TestMathFuncs().test_func(abs, 0.7)
     TestMathFuncs().test_func_scalar(math.floor)
+    test_abs_complex()
+    test_np_abs_complex()
+    test_abs_complex_comparison()
+    test_pow_int_exponent_complex()
+    test_pow_int_exponent_float()
+    test_pow_int_exponent_bit_exact()
     TestMathFuncs().test_func_scalar(math.ceil)
     test_scalarret_cond_1()
     test_scalarret_cond_2()

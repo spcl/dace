@@ -1,42 +1,41 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy as np
+
 import dace
+from dace.memlet import Memlet
+from dace.sdfg import InterstateEdge
+from dace.sdfg.nodes import Tasklet
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import MoveAssignmentOutsideIf
-from dace.sdfg import InterstateEdge
-from dace.memlet import Memlet
-from dace.sdfg.nodes import Tasklet
 
 
 def one_variable_simple_test(const_value: int = 0):
-    """ Test with one variable which has formula and const branch. Uses the given const value """
-    sdfg = dace.SDFG('one_variable_simple_test')
+    """Test with one variable which has formula and const branch. Uses the given const value"""
+    sdfg = dace.SDFG("one_variable_simple_test")
     # Create guard state and one state where A is set to 0 and another where it is set using B and some formula
-    guard = sdfg.add_state('guard', is_start_block=True)
-    formula_state = sdfg.add_state('formula', is_start_block=False)
-    const_state = sdfg.add_state('const', is_start_block=False)
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [1], dace.float64)
+    guard = sdfg.add_state("guard", is_start_block=True)
+    formula_state = sdfg.add_state("formula", is_start_block=False)
+    const_state = sdfg.add_state("const", is_start_block=False)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
 
     # Add tasklet inside states
-    formula_tasklet = formula_state.add_tasklet('formula_assign', {'b'}, {'a'}, 'a = 2*b')
-    formula_state.add_memlet_path(formula_state.add_read('B'),
-                                  formula_tasklet,
-                                  memlet=Memlet(data='B', subset='0'),
-                                  dst_conn='b')
-    formula_state.add_memlet_path(formula_tasklet,
-                                  formula_state.add_write('A'),
-                                  memlet=Memlet(data='A', subset='0'),
-                                  src_conn='a')
-    const_tasklet = const_state.add_tasklet('const_assign', {}, {'a'}, f"a = {const_value}")
-    const_state.add_memlet_path(const_tasklet,
-                                const_state.add_write('A'),
-                                memlet=Memlet(data='A', subset='0'),
-                                src_conn='a')
+    formula_tasklet = formula_state.add_tasklet("formula_assign", {"b"}, {"a"}, "a = 2*b")
+    formula_state.add_memlet_path(
+        formula_state.add_read("B"), formula_tasklet, memlet=Memlet(data="B", subset="0"), dst_conn="b"
+    )
+    formula_state.add_memlet_path(
+        formula_tasklet, formula_state.add_write("A"), memlet=Memlet(data="A", subset="0"), src_conn="a"
+    )
+    const_tasklet = const_state.add_tasklet("const_assign", {}, {"a"}, f"a = {const_value}")
+    const_state.add_memlet_path(
+        const_tasklet, const_state.add_write("A"), memlet=Memlet(data="A", subset="0"), src_conn="a"
+    )
 
     # Create if-else condition such that either the formula state or the const state is executed
-    sdfg.add_edge(guard, formula_state, InterstateEdge(condition='B[0] < 0.5'))
-    sdfg.add_edge(guard, const_state, InterstateEdge(condition='B[0] >= 0.5'))
+    sdfg.add_edge(guard, formula_state, InterstateEdge(condition="B[0] < 0.5"))
+    sdfg.add_edge(guard, const_state, InterstateEdge(condition="B[0] >= 0.5"))
     sdfg.simplify()
     sdfg.validate()
 
@@ -53,49 +52,47 @@ def one_variable_simple_test(const_value: int = 0):
             break
     assert conditional is not None
     assert len(conditional.branches) == 1
-    assert conditional.branches[0][0].as_string == '(B[0] < 0.5)'
+    assert conditional.branches[0][0].as_string == "(B[0] < 0.5)"
 
 
 def multiple_variable_test():
-    """ Test with multiple variables where not all appear in the const branch """
-    sdfg = dace.SDFG('one_variable_simple_test')
+    """Test with multiple variables where not all appear in the const branch"""
+    sdfg = dace.SDFG("one_variable_simple_test")
     # Create guard state and one state where A is set to 0 and another where it is set using B and some formula
-    guard = sdfg.add_state('guard', is_start_block=True)
-    formula_state = sdfg.add_state('formula', is_start_block=False)
-    const_state = sdfg.add_state('const', is_start_block=False)
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [1], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_array('D', [1], dace.float64)
+    guard = sdfg.add_state("guard", is_start_block=True)
+    formula_state = sdfg.add_state("formula", is_start_block=False)
+    const_state = sdfg.add_state("const", is_start_block=False)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_array("D", [1], dace.float64)
 
-    A = formula_state.add_access('A')
-    B = formula_state.add_access('B')
-    C = formula_state.add_access('C')
-    D = formula_state.add_access('D')
-    formula_tasklet_a = formula_state.add_tasklet('formula_assign', {'b'}, {'a'}, 'a = 2*b')
-    formula_state.add_memlet_path(B, formula_tasklet_a, memlet=Memlet(data='B', subset='0'), dst_conn='b')
-    formula_state.add_memlet_path(formula_tasklet_a, A, memlet=Memlet(data='A', subset='0'), src_conn='a')
-    formula_tasklet_b = formula_state.add_tasklet('formula_assign', {'c'}, {'b'}, 'a = 2*c')
-    formula_state.add_memlet_path(C, formula_tasklet_b, memlet=Memlet(data='C', subset='0'), dst_conn='c')
-    formula_state.add_memlet_path(formula_tasklet_b, B, memlet=Memlet(data='B', subset='0'), src_conn='b')
-    formula_tasklet_c = formula_state.add_tasklet('formula_assign', {'d'}, {'c'}, 'a = 2*d')
-    formula_state.add_memlet_path(D, formula_tasklet_c, memlet=Memlet(data='D', subset='0'), dst_conn='d')
-    formula_state.add_memlet_path(formula_tasklet_c, C, memlet=Memlet(data='C', subset='0'), src_conn='c')
+    A = formula_state.add_access("A")
+    B = formula_state.add_access("B")
+    C = formula_state.add_access("C")
+    D = formula_state.add_access("D")
+    formula_tasklet_a = formula_state.add_tasklet("formula_assign", {"b"}, {"a"}, "a = 2*b")
+    formula_state.add_memlet_path(B, formula_tasklet_a, memlet=Memlet(data="B", subset="0"), dst_conn="b")
+    formula_state.add_memlet_path(formula_tasklet_a, A, memlet=Memlet(data="A", subset="0"), src_conn="a")
+    formula_tasklet_b = formula_state.add_tasklet("formula_assign", {"c"}, {"b"}, "a = 2*c")
+    formula_state.add_memlet_path(C, formula_tasklet_b, memlet=Memlet(data="C", subset="0"), dst_conn="c")
+    formula_state.add_memlet_path(formula_tasklet_b, B, memlet=Memlet(data="B", subset="0"), src_conn="b")
+    formula_tasklet_c = formula_state.add_tasklet("formula_assign", {"d"}, {"c"}, "a = 2*d")
+    formula_state.add_memlet_path(D, formula_tasklet_c, memlet=Memlet(data="D", subset="0"), dst_conn="d")
+    formula_state.add_memlet_path(formula_tasklet_c, C, memlet=Memlet(data="C", subset="0"), src_conn="c")
 
-    const_tasklet_a = const_state.add_tasklet('const_assign', {}, {'a'}, 'a = 0')
-    const_state.add_memlet_path(const_tasklet_a,
-                                const_state.add_write('A'),
-                                memlet=Memlet(data='A', subset='0'),
-                                src_conn='a')
-    const_tasklet_b = const_state.add_tasklet('const_assign', {}, {'b'}, 'b = 0')
-    const_state.add_memlet_path(const_tasklet_b,
-                                const_state.add_write('B'),
-                                memlet=Memlet(data='B', subset='0'),
-                                src_conn='b')
+    const_tasklet_a = const_state.add_tasklet("const_assign", {}, {"a"}, "a = 0")
+    const_state.add_memlet_path(
+        const_tasklet_a, const_state.add_write("A"), memlet=Memlet(data="A", subset="0"), src_conn="a"
+    )
+    const_tasklet_b = const_state.add_tasklet("const_assign", {}, {"b"}, "b = 0")
+    const_state.add_memlet_path(
+        const_tasklet_b, const_state.add_write("B"), memlet=Memlet(data="B", subset="0"), src_conn="b"
+    )
 
     # Create if-else condition such that either the formula state or the const state is executed
-    sdfg.add_edge(guard, formula_state, InterstateEdge(condition='D[0] < 0.5'))
-    sdfg.add_edge(guard, const_state, InterstateEdge(condition='D[0] >= 0.5'))
+    sdfg.add_edge(guard, formula_state, InterstateEdge(condition="D[0] < 0.5"))
+    sdfg.add_edge(guard, const_state, InterstateEdge(condition="D[0] >= 0.5"))
     sdfg.simplify()
     sdfg.validate()
 
@@ -115,48 +112,45 @@ def multiple_variable_test():
             break
     assert conditional is not None
     assert len(conditional.branches) == 1
-    assert conditional.branches[0][0].as_string == '(D[0] < 0.5)'
+    assert conditional.branches[0][0].as_string == "(D[0] < 0.5)"
 
 
 def multiple_variable_not_all_const_test():
-    """ Test with multiple variables where not all get const-assigned in const branch """
-    sdfg = dace.SDFG('one_variable_simple_test')
+    """Test with multiple variables where not all get const-assigned in const branch"""
+    sdfg = dace.SDFG("one_variable_simple_test")
     # Create guard state and one state where A is set to 0 and another where it is set using B and some formula
-    guard = sdfg.add_state('guard', is_start_block=True)
-    formula_state = sdfg.add_state('formula', is_start_block=False)
-    const_state = sdfg.add_state('const', is_start_block=False)
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [1], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
+    guard = sdfg.add_state("guard", is_start_block=True)
+    formula_state = sdfg.add_state("formula", is_start_block=False)
+    const_state = sdfg.add_state("const", is_start_block=False)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
 
-    A = formula_state.add_access('A')
-    B = formula_state.add_access('B')
-    C = formula_state.add_access('C')
-    formula_tasklet_a = formula_state.add_tasklet('formula_assign', {'b'}, {'a'}, 'a = 2*b')
-    formula_state.add_memlet_path(B, formula_tasklet_a, memlet=Memlet(data='B', subset='0'), dst_conn='b')
-    formula_state.add_memlet_path(formula_tasklet_a, A, memlet=Memlet(data='A', subset='0'), src_conn='a')
-    formula_tasklet_b = formula_state.add_tasklet('formula_assign', {'c'}, {'b'}, 'a = 2*c')
-    formula_state.add_memlet_path(C, formula_tasklet_b, memlet=Memlet(data='C', subset='0'), dst_conn='c')
-    formula_state.add_memlet_path(formula_tasklet_b, B, memlet=Memlet(data='B', subset='0'), src_conn='b')
+    A = formula_state.add_access("A")
+    B = formula_state.add_access("B")
+    C = formula_state.add_access("C")
+    formula_tasklet_a = formula_state.add_tasklet("formula_assign", {"b"}, {"a"}, "a = 2*b")
+    formula_state.add_memlet_path(B, formula_tasklet_a, memlet=Memlet(data="B", subset="0"), dst_conn="b")
+    formula_state.add_memlet_path(formula_tasklet_a, A, memlet=Memlet(data="A", subset="0"), src_conn="a")
+    formula_tasklet_b = formula_state.add_tasklet("formula_assign", {"c"}, {"b"}, "a = 2*c")
+    formula_state.add_memlet_path(C, formula_tasklet_b, memlet=Memlet(data="C", subset="0"), dst_conn="c")
+    formula_state.add_memlet_path(formula_tasklet_b, B, memlet=Memlet(data="B", subset="0"), src_conn="b")
 
-    const_tasklet_a = const_state.add_tasklet('const_assign', {}, {'a'}, 'a = 0')
-    const_state.add_memlet_path(const_tasklet_a,
-                                const_state.add_write('A'),
-                                memlet=Memlet(data='A', subset='0'),
-                                src_conn='a')
-    const_tasklet_b = const_state.add_tasklet('const_assign', {'c'}, {'b'}, 'b = 1.5 * c')
-    const_state.add_memlet_path(const_state.add_read('C'),
-                                const_tasklet_b,
-                                memlet=Memlet(data='C', subset='0'),
-                                dst_conn='c')
-    const_state.add_memlet_path(const_tasklet_b,
-                                const_state.add_write('B'),
-                                memlet=Memlet(data='B', subset='0'),
-                                src_conn='b')
+    const_tasklet_a = const_state.add_tasklet("const_assign", {}, {"a"}, "a = 0")
+    const_state.add_memlet_path(
+        const_tasklet_a, const_state.add_write("A"), memlet=Memlet(data="A", subset="0"), src_conn="a"
+    )
+    const_tasklet_b = const_state.add_tasklet("const_assign", {"c"}, {"b"}, "b = 1.5 * c")
+    const_state.add_memlet_path(
+        const_state.add_read("C"), const_tasklet_b, memlet=Memlet(data="C", subset="0"), dst_conn="c"
+    )
+    const_state.add_memlet_path(
+        const_tasklet_b, const_state.add_write("B"), memlet=Memlet(data="B", subset="0"), src_conn="b"
+    )
 
     # Create if-else condition such that either the formula state or the const state is executed
-    sdfg.add_edge(guard, formula_state, InterstateEdge(condition='C[0] < 0.5'))
-    sdfg.add_edge(guard, const_state, InterstateEdge(condition='C[0] >= 0.5'))
+    sdfg.add_edge(guard, formula_state, InterstateEdge(condition="C[0] < 0.5"))
+    sdfg.add_edge(guard, const_state, InterstateEdge(condition="C[0] >= 0.5"))
     sdfg.simplify()
     sdfg.validate()
 
@@ -177,8 +171,49 @@ def multiple_variable_not_all_const_test():
     assert len(conditional.branches) == 2
 
 
-if __name__ == '__main__':
+def wcr_branch_sdfg() -> dace.SDFG:
+    """``if C < 0.5: A(+)= 2*B`` / ``else: A = 0`` -- the const seed may not move out of the branch."""
+    sdfg = dace.SDFG("wcr_branch")
+    guard = sdfg.add_state("guard", is_start_block=True)
+    acc_state = sdfg.add_state("accumulate")
+    const_state = sdfg.add_state("const")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+
+    acc_tasklet = acc_state.add_tasklet("acc", {"b"}, {"a"}, "a = 2*b")
+    acc_state.add_memlet_path(acc_state.add_read("B"), acc_tasklet, memlet=Memlet(data="B", subset="0"), dst_conn="b")
+    acc_state.add_memlet_path(
+        acc_tasklet,
+        acc_state.add_write("A"),
+        memlet=Memlet(data="A", subset="0", wcr="lambda x, y: x + y"),
+        src_conn="a",
+    )
+
+    const_tasklet = const_state.add_tasklet("const_assign", {}, {"a"}, "a = 0")
+    const_state.add_memlet_path(
+        const_tasklet, const_state.add_write("A"), memlet=Memlet(data="A", subset="0"), src_conn="a"
+    )
+
+    sdfg.add_edge(guard, acc_state, InterstateEdge(condition="B[0] < 0.5"))
+    sdfg.add_edge(guard, const_state, InterstateEdge(condition="B[0] >= 0.5"))
+    sdfg.simplify()
+    sdfg.validate()
+    return sdfg
+
+
+def test_wcr_branch_is_not_hoisted():
+    sdfg = wcr_branch_sdfg()
+    assert sdfg.apply_transformations_repeated([MoveAssignmentOutsideIf]) == 0
+
+    A = np.array([100.0])
+    B = np.array([0.25])
+    sdfg(A=A, B=B)
+    assert np.allclose(A, 100.5)
+
+
+if __name__ == "__main__":
     one_variable_simple_test(0)
     one_variable_simple_test(2)
     multiple_variable_test()
     multiple_variable_not_all_const_test()
+    test_wcr_branch_is_not_hoisted()

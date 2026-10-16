@@ -44,6 +44,27 @@ exercised by the velocity ``cfl_clipping`` pattern). No outer-state edge
 surgery is therefore required, and the proven duplication machinery is
 fully reused.
 
+Design — cross-child ordering
+-----------------------------
+
+Fission replays the parent iteration space once per child, so two children
+that touch the same container must keep their original relative order. The
+children are ordered by ``dfs_topological_sort`` -- the very traversal
+codegen uses to emit a state -- and every ordered pair with a RAW / WAR /
+WAW conflict gets an empty (dependency) memlet from the earlier duplicate's
+``MapExit`` to the later duplicate's ``MapEntry``. That is DaCe's standard
+happens-before encoding, and it constrains codegen's topological traversal
+without adding data movement. Only conflicting pairs are linked, so
+independent children stay free to be scheduled in any order.
+
+Ordering alone is not sufficient: the conflicting value must also be able to
+*cross* the duplicate boundary. Each duplicate wraps its own pruned
+``NestedSDFG``, so a container that is an inner transient in the original
+``NestedSDFG`` is a distinct allocation in every copy and the value cannot
+flow. Such a conflict is rejected outright; a conflict on a container that
+is already a ``NestedSDFG`` connector travels through the shared outer array
+and only needs the ordering edge.
+
 Soundness. A chain is admitted only when every chain node is a
 side-effect-free, deterministic dataflow node (a ``Tasklet`` or a
 *transient* ``AccessNode``), no carried memlet uses write-conflict
@@ -59,10 +80,13 @@ map's symbols. Any body that violates the conditions is rejected, so
 forcing perfect nesting can never change results. Bare two-level perfect
 nests (no intervening nodes) keep their original fast path unchanged.
 """
-import copy as _copy
-from typing import Dict, List, Set, Tuple
 
-from dace import memlet as mm, nodes, properties
+import copy as _copy
+
+from dace import memlet as mm
+from dace import nodes, properties
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
@@ -87,7 +111,9 @@ class PerfLoopNesting(xf.SingleStateTransformation):
 
         pe = self.parent_entry
         px = graph.exit_node(pe)
-        body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
+        # One scope map for the whole scan: `entry_node()` copies it per node, so this is O(N^2).
+        scope = graph.scope_dict()
+        body = [n for n in graph.nodes() if scope[n] is pe]
         nsdfgs = [n for n in body if isinstance(n, nodes.NestedSDFG)]
 
         # Inlined same-state form (no NestedSDFG indirection): a parent map --
@@ -103,7 +129,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             return MapFission.can_be_applied_to(sdfg, map_entry=pe)
 
         # NestedSDFG-wrapped path (original behavior): only at the top level.
-        if graph.entry_node(pe) is not None:
+        if scope[pe] is not None:
             return False
         if len(nsdfgs) != 1:
             return False
@@ -119,24 +145,26 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             return False
 
         inner_state = list(inner.states())[0]
-        top_children = [
-            n for n in inner_state.nodes()
-            if inner_state.entry_node(n) is None and isinstance(n, (nodes.MapEntry, nodes.Tasklet))
-        ]
-        # Each child becomes its own parent-map copy, so the children must be
-        # data-independent: a child map's output is not replicated into the
-        # other copies, so the split is invalid if another child reads or
-        # writes a container that a child map writes.
-        return len(top_children) >= 2 and _children_data_independent(inner_state, top_children, nsdfg)
+        top_children = _ordered_top_children(inner_state)
+        if len(top_children) < 2:
+            return False
+        # Each child becomes its own parent-map copy. Cross-child dependencies
+        # survive only when the shared container crosses the NestedSDFG
+        # boundary; ``apply`` then restores their original order with an
+        # explicit happens-before edge per conflicting pair.
+        conflicts = _cross_child_conflicts(inner_state, top_children)
+        return not conflicts or _conflicts_are_materializable(inner_state, top_children, nsdfg, conflicts)
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         pe = self.parent_entry
         px = graph.exit_node(pe)
-        body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
+        scope = graph.scope_dict()
+        body = [n for n in graph.nodes() if scope[n] is pe]
 
         # Inlined same-state form: delegate to MapFission (see can_be_applied).
         if not any(isinstance(n, nodes.NestedSDFG) for n in body):
             from dace.transformation.dataflow.map_fission import MapFission
+
             MapFission.apply_to(sdfg, map_entry=pe, verify=False, save=False)
             return
 
@@ -154,26 +182,39 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             if isinstance(n, nodes.Tasklet) and inner_state.entry_node(n) is None and n not in sunk:
                 _wrap_tasklet_in_trivial_map(inner_state, n)
 
-        child_entries = [
-            n for n in inner_state.nodes() if isinstance(n, nodes.MapEntry) and inner_state.entry_node(n) is None
-        ]
+        child_entries = _ordered_top_children(inner_state, (nodes.MapEntry,))
         outer_in_by, outer_out_by = _outer_plumbing(graph, pe, px, orig_nsdfg)
 
+        duplicates = []
         for ch_entry in child_entries:
             keep = _child_subgraph(inner_state, ch_entry)
-            _build_duplicate(graph, pe, px, orig_nsdfg, inner_state, keep, outer_in_by, outer_out_by)
+            duplicates.append(_build_duplicate(graph, pe, px, orig_nsdfg, inner_state, keep, outer_in_by, outer_out_by))
 
+        # Restore the original intra-state order across the duplicates: an
+        # empty memlet is DaCe's happens-before edge and carries no data.
+        for i, j in _cross_child_conflicts(inner_state, child_entries):
+            graph.add_nedge(duplicates[i][1], duplicates[j][0], mm.Memlet())
+
+        # Each duplicate is wired only to the outer access nodes its own child reads or writes, so
+        # one that no child uses keeps no edge once the original scope goes -- and an isolated node
+        # is not a valid SDFG (tsvc_2_5 fission_dep_const_offset).
+        outer_touched: OrderedSet[nodes.Node] = OrderedSet(e.src for e in graph.in_edges(pe))
+        outer_touched.update(e.dst for e in graph.out_edges(px))
         for ie in list(graph.in_edges(pe)):
             graph.remove_edge(ie)
         for oe in list(graph.out_edges(px)):
             graph.remove_edge(oe)
-        body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
+        scope = graph.scope_dict()  # Re-read: the edge removals above invalidated the old one.
+        body = [n for n in graph.nodes() if scope[n] is pe]
         for n in body + [pe, px]:
             if n in graph.nodes():
                 graph.remove_node(n)
+        for n in outer_touched:
+            if n in graph.nodes() and graph.in_degree(n) == 0 and graph.out_degree(n) == 0:
+                graph.remove_node(n)
 
 
-def _direct_io_access_nodes(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit) -> Set[nodes.Node]:
+def _direct_io_access_nodes(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit) -> set[nodes.Node]:
     """``AccessNode`` s wired directly to the parent ``MapEntry`` outputs or
     ``MapExit`` inputs (the base perfect-nest plumbing).
 
@@ -182,7 +223,7 @@ def _direct_io_access_nodes(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapE
     :param px: The parent ``MapExit``.
     :returns: The set of directly-wired ``AccessNode`` s.
     """
-    direct: Set[nodes.Node] = set()
+    direct: set[nodes.Node] = set()
     for e in graph.out_edges(pe):
         if isinstance(e.dst, nodes.AccessNode):
             direct.add(e.dst)
@@ -192,7 +233,7 @@ def _direct_io_access_nodes(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapE
     return direct
 
 
-def _child_data_io(state: SDFGState, child: nodes.Node) -> Tuple[Set[str], Set[str]]:
+def _child_data_io(state: SDFGState, child: nodes.Node) -> tuple[set[str], set[str]]:
     """The data containers read and written across one top-level child's scope
     boundary (a child ``MapEntry`` and its body, or a bare ``Tasklet``).
 
@@ -202,62 +243,143 @@ def _child_data_io(state: SDFGState, child: nodes.Node) -> Tuple[Set[str], Set[s
     """
     if isinstance(child, nodes.MapEntry):
         cx = state.exit_node(child)
-        scope = set(state.all_nodes_between(child, cx)) | {child, cx}
+        scope = set(state.all_nodes_between(child, required(cx))) | {child, cx}
     else:
         scope = {child}
-    reads: Set[str] = set()
-    writes: Set[str] = set()
+    reads: set[str] = set()
+    writes: set[str] = set()
+    operands: set[nodes.Node] = set()
+    results: set[nodes.Node] = set()
     for e in state.edges():
         if e.data is None or e.data.data is None:
             continue
         if e.dst in scope and e.src not in scope:
             reads.add(e.data.data)
+            operands.add(e.src)
         if e.src in scope and e.dst not in scope:
             writes.add(e.data.data)
+            results.add(e.dst)
+    # The copies an operand arrives through and a result leaves through belong to the child, since
+    # fission keeps them in its duplicate (``_child_subgraph``): the container they end at is the
+    # one the child really reads or writes.
+    reads.update(n.data for n in _copy_chain(state, operands, downstream=False))
+    writes.update(n.data for n in _copy_chain(state, results, downstream=True))
     return reads, writes
 
 
-def _children_data_independent(state: SDFGState, children: List[nodes.Node], nsdfg: nodes.NestedSDFG) -> bool:
-    """Whether the children can be split into independent parent-map copies.
+def _copy_chain(state: SDFGState, starts, downstream: bool) -> set[nodes.AccessNode]:
+    """The top-level ``AccessNode`` s reached from ``starts`` through ``AccessNode``-to-``AccessNode``
+    copies, following the data forward (``downstream``) or back to where it came from.
 
-    Each child becomes its own parent-map copy wrapping a pruned NestedSDFG,
-    wired only with the NestedSDFG's existing in/out connectors plus the
-    replicated producer chain (tasklets / access nodes) feeding it. A child
-    *map*'s output is not replicated. So the split is invalid only when an
-    *internal* container -- one that is not already a NestedSDFG connector --
-    is written by a child map and read or written by another child: it would
-    have to be materialised across the two parent maps, which the duplication
-    does not do. A shared container that is already a NestedSDFG connector
-    stays wired (e.g. two maps doing read-modify-write on an in-out array), and
-    an internal container written by a producer ``Tasklet`` is fine because
-    that producer is replicated into each consuming copy.
+    :param state: The inner state to walk.
+    :param starts: The nodes to walk from; only ``AccessNode`` s continue the walk.
+    :param downstream: Follow out-edges when ``True``, in-edges otherwise.
+    :returns: The reached ``AccessNode`` s, ``starts`` excluded.
+    """
+    scope = state.scope_dict()
+    reached: set[nodes.AccessNode] = set()
+    frontier = [n for n in starts if isinstance(n, nodes.AccessNode)]
+    while frontier:
+        node = frontier.pop()
+        edges = state.out_edges(node) if downstream else state.in_edges(node)
+        for e in edges:
+            other = e.dst if downstream else e.src
+            if isinstance(other, nodes.AccessNode) and scope[other] is None and other not in reached:
+                reached.add(other)
+                frontier.append(other)
+    return reached
+
+
+def _ordered_top_children(state: SDFGState, types=(nodes.MapEntry, nodes.Tasklet)) -> list[nodes.Node]:
+    """The state's top-level children, in the order codegen would emit them.
+
+    ``dfs_topological_sort`` is the same traversal the code generator's
+    dispatcher uses to walk a state, so this ordering is exactly the original
+    intra-state execution order that fission must preserve.
+
+    :param state: The inner state to scan.
+    :param types: Node types admitted as children.
+    :returns: The matching top-level nodes in topological order.
+    """
+    rank = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
+    scope = state.scope_dict()
+    children = [n for n in state.nodes() if scope[n] is None and isinstance(n, types)]
+    return sorted(children, key=lambda n: rank.get(n, len(rank)))
+
+
+def _cross_child_conflicts(state: SDFGState, children: list[nodes.Node]) -> list[tuple[int, int]]:
+    """Ordered child index pairs whose data accesses conflict.
+
+    A pair ``(i, j)`` with ``i`` before ``j`` conflicts on a container when
+    ``i`` writes it and ``j`` reads or writes it (RAW / WAW), or ``i`` reads it
+    and ``j`` writes it (WAR). Writers of every child type are considered --
+    a bare ``Tasklet`` child writes just as a child map does -- and a container
+    being a ``NestedSDFG`` connector is no evidence of independence: it is
+    precisely a shared container that both children touch.
 
     :param state: The inner state holding the children.
-    :param children: The top-level ``MapEntry`` / ``Tasklet`` children.
-    :param nsdfg: The NestedSDFG whose connectors stay wired across the split.
-    :returns: ``True`` if the split preserves every cross-child dependency.
+    :param children: Top-level children in execution order.
+    :returns: Conflicting ``(earlier_index, later_index)`` pairs.
     """
-    # A reader child can only be re-wired to a container that is a NestedSDFG
-    # *input* connector (its copy reads it from the same outside source). A
-    # container a child map merely writes out (an out-only connector) or an
-    # internal transient cannot reach another child's copy.
-    inputs = set(nsdfg.in_connectors)
-    io = {id(c): _child_data_io(state, c) for c in children}
-    for mc in children:
-        if not isinstance(mc, nodes.MapEntry):
-            continue
-        internal_writes = io[id(mc)][1] - inputs
-        for other in children:
-            if other is mc:
-                continue
-            other_reads, other_writes = io[id(other)]
-            if internal_writes & (other_reads | other_writes):
-                return False
+    io = [_child_data_io(state, c) for c in children]
+    conflicts: list[tuple[int, int]] = []
+    for i in range(len(children)):
+        reads_i, writes_i = io[i]
+        for j in range(i + 1, len(children)):
+            reads_j, writes_j = io[j]
+            if (writes_i & (reads_j | writes_j)) or (reads_i & writes_j):
+                conflicts.append((i, j))
+    return conflicts
+
+
+def _children_data_independent(state: SDFGState, children: list[nodes.Node]) -> bool:
+    """Whether no cross-child data dependency exists at all.
+
+    Independent children may be fissioned and left unordered. Dependent ones
+    need an ordering edge per conflicting pair, and are admissible only if
+    :func:`_conflicts_are_materializable` also holds.
+
+    :param state: The inner state holding the children.
+    :param children: Top-level children in execution order.
+    :returns: ``True`` if no RAW / WAR / WAW crosses any pair of children.
+    """
+    return not _cross_child_conflicts(state, children)
+
+
+def _conflicts_are_materializable(
+    state: SDFGState, children: list[nodes.Node], nsdfg: nodes.NestedSDFG, conflicts: list[tuple[int, int]]
+) -> bool:
+    """Whether every conflicting value can cross the duplicate boundary.
+
+    Each duplicate wraps its own pruned ``NestedSDFG``, so a container that is
+    an inner transient exists once per copy and a value written in one copy can
+    never be observed in another -- ordering cannot repair that. A container
+    that is already a ``NestedSDFG`` connector is backed by the shared outer
+    array, so the value does travel and an ordering edge is enough.
+
+    :param state: The inner state holding the children.
+    :param children: Top-level children in execution order.
+    :param nsdfg: The NestedSDFG whose connectors survive the split.
+    :param conflicts: Conflicting child index pairs.
+    :returns: ``True`` if every conflicting container is a ``NestedSDFG``
+        connector on each side that needs it.
+    """
+    io = [_child_data_io(state, c) for c in children]
+    for i, j in conflicts:
+        reads_i, writes_i = io[i]
+        reads_j, writes_j = io[j]
+        for name in (writes_i & (reads_j | writes_j)) | (reads_i & writes_j):
+            for reads, writes in ((reads_i, writes_i), (reads_j, writes_j)):
+                if name in writes and name not in nsdfg.out_connectors:
+                    return False
+                if name in reads and name not in nsdfg.in_connectors:
+                    return False
     return True
 
 
-def _intervening_chain(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG,
-                       body: List[nodes.Node]) -> List[nodes.Node]:
+def _intervening_chain(
+    graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG, body: list[nodes.Node]
+) -> list[nodes.Node]:
     """Return the body nodes that form the intervening chain (everything that
     is neither the ``NestedSDFG`` nor a directly-wired ``AccessNode``).
 
@@ -277,8 +399,9 @@ def _intervening_chain(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, 
     return [n for n in body if n is not nsdfg and n is not px and n not in direct]
 
 
-def _intervening_chain_is_replicable(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG,
-                                     body: List[nodes.Node]) -> bool:
+def _intervening_chain_is_replicable(
+    graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG, body: list[nodes.Node]
+) -> bool:
     """Validate that the intervening chain may be soundly sunk into the
     ``NestedSDFG`` and replicated per fissioned duplicate.
 
@@ -348,8 +471,9 @@ def _intervening_chain_is_replicable(graph: SDFGState, pe: nodes.MapEntry, px: n
     return feeds_nsdfg and t is not None
 
 
-def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.NestedSDFG,
-                            body: List[nodes.Node]) -> Set[nodes.Node]:
+def _sink_intervening_chain(
+    graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.NestedSDFG, body: list[nodes.Node]
+) -> set[nodes.Node]:
     """Move the intervening chain from the parent scope into the
     ``NestedSDFG``'s single inner state.
 
@@ -385,7 +509,7 @@ def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.N
     # Map each fed NestedSDFG-input connector to the Tasklet out-connector
     # whose value reaches it (directly or via the absorbed AccessNode).
     chain_set = set(chain)
-    conn_to_srcconn: Dict[str, str] = {}
+    conn_to_srcconn: dict[str, str] = {}
     for e in graph.out_edges(t):
         if e.dst is nsdfg and e.dst_conn is not None:
             conn_to_srcconn[e.dst_conn] = e.src_conn
@@ -400,7 +524,8 @@ def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.N
     # the inner array (the connector name), not the outer transient.
     for conn, src_conn in conn_to_srcconn.items():
         readers = [
-            a for a in inner_state.nodes()
+            a
+            for a in inner_state.nodes()
             if isinstance(a, nodes.AccessNode) and a.data == conn and inner_state.in_degree(a) == 0
         ]
         if not readers:
@@ -432,11 +557,15 @@ def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.N
     return {inner_t}
 
 
-def _copy_state_contents(src: SDFGState, dst: SDFGState) -> Dict[nodes.Node, nodes.Node]:
+def _copy_state_contents(src: SDFGState, dst: SDFGState) -> dict[nodes.Node, nodes.Node]:
     """Deep-copy all nodes and edges from ``src`` into ``dst``."""
-    nmap: Dict[nodes.Node, nodes.Node] = {}
+    nmap: dict[nodes.Node, nodes.Node] = {}
+    # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+    # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+    # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+    memo = {}
     for n in src.nodes():
-        new_n = _copy.deepcopy(n)
+        new_n = _copy.deepcopy(n, memo)
         dst.add_node(new_n)
         nmap[n] = new_n
     for e in src.edges():
@@ -444,16 +573,18 @@ def _copy_state_contents(src: SDFGState, dst: SDFGState) -> Dict[nodes.Node, nod
     return nmap
 
 
-def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nodes.Node]:
+def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> set[nodes.Node]:
     """Subgraph belonging to one child map: its MapEntry, MapExit, every
     node scoped under the MapEntry, the top-level AccessNodes directly
-    connected to the entry's in-edges or exit's out-edges, and -- for an
-    imperfect nest -- the transitive top-level producer chain of any such
-    input AccessNode (the sunk intervening chain)."""
+    connected to the entry's in-edges or exit's out-edges, the copies those
+    output AccessNodes flow on through, and -- for an imperfect nest -- the
+    transitive top-level producer chain of any such input AccessNode (the
+    sunk intervening chain)."""
     ch_exit = inner_state.exit_node(ch_entry)
-    keep: Set[nodes.Node] = {ch_entry, ch_exit}
-    keep.update(n for n in inner_state.nodes() if inner_state.entry_node(n) is ch_entry)
-    frontier: List[nodes.Node] = []
+    scope = inner_state.scope_dict()  # Nothing below mutates `inner_state`.
+    keep: set[nodes.Node] = {ch_entry, ch_exit}
+    keep.update(n for n in inner_state.nodes() if scope[n] is ch_entry)
+    frontier: list[nodes.Node] = []
     for e in inner_state.in_edges(ch_entry):
         if isinstance(e.src, nodes.AccessNode):
             keep.add(e.src)
@@ -461,13 +592,17 @@ def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nod
     for e in inner_state.out_edges(ch_exit):
         if isinstance(e.dst, nodes.AccessNode):
             keep.add(e.dst)
+    # A result that reaches its container through a copy (``tasklet -> transient -> hc``, npbench
+    # cegterg's ``hc[i, j] = np.conj(hc[j, i])``) takes the copy along: without it the duplicate
+    # computes the transient and never writes the container.
+    keep.update(_copy_chain(inner_state, [e.dst for e in inner_state.out_edges(ch_exit)], downstream=True))
     # Pull in the producer chain feeding kept top-level input AccessNodes so
     # the sunk intervening computation travels into every duplicate.
     while frontier:
         node = frontier.pop()
         for ie in inner_state.in_edges(node):
             src = ie.src
-            if src in keep or inner_state.entry_node(src) is not None:
+            if src in keep or scope[src] is not None:
                 continue
             if isinstance(src, (nodes.Tasklet, nodes.AccessNode)):
                 keep.add(src)
@@ -476,13 +611,13 @@ def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nod
 
 
 def _outer_plumbing(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, orig_nsdfg: nodes.NestedSDFG):
-    in_by: Dict[str, list] = {}
+    in_by: dict[str, list] = {}
     for e in graph.in_edges(orig_nsdfg):
         n_conn = e.dst_conn
         me_in_conn = e.src_conn.replace("OUT_", "IN_") if e.src_conn else None
         outer_edges = [ie for ie in graph.in_edges(pe) if ie.dst_conn == me_in_conn]
         in_by.setdefault(n_conn, []).extend((ie.src, ie.data, e.data) for ie in outer_edges)
-    out_by: Dict[str, list] = {}
+    out_by: dict[str, list] = {}
     for e in graph.out_edges(orig_nsdfg):
         n_conn = e.src_conn
         mx_out_conn = e.dst_conn.replace("IN_", "OUT_") if e.dst_conn else None
@@ -499,7 +634,7 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
     me, mx = state.add_map(f"{t.label}_wrap", {"_p": "0:1"})
 
     for idx, e in enumerate(in_edges):
-        key = e.dst_conn if e.dst_conn else f"in_{idx}"
+        key = e.dst_conn or f"in_{idx}"
         in_c = f"IN_{key}"
         out_c = f"OUT_{key}"
         me.add_in_connector(in_c)
@@ -509,7 +644,7 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
         state.add_edge(me, out_c, t, e.dst_conn, _copy.deepcopy(e.data))
 
     for idx, e in enumerate(out_edges):
-        key = e.src_conn if e.src_conn else f"out_{idx}"
+        key = e.src_conn or f"out_{idx}"
         in_c = f"IN_{key}"
         out_c = f"OUT_{key}"
         mx.add_in_connector(in_c)
@@ -524,9 +659,16 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
         state.add_nedge(t, mx, mm.Memlet())
 
 
-def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, orig_nsdfg: nodes.NestedSDFG,
-                     orig_inner_state: SDFGState, keep: Set[nodes.Node], outer_in_by: Dict[str, list],
-                     outer_out_by: Dict[str, list]):
+def _build_duplicate(
+    graph: SDFGState,
+    pe: nodes.MapEntry,
+    px: nodes.MapExit,
+    orig_nsdfg: nodes.NestedSDFG,
+    orig_inner_state: SDFGState,
+    keep: set[nodes.Node],
+    outer_in_by: dict[str, list],
+    outer_out_by: dict[str, list],
+) -> tuple[nodes.MapEntry, nodes.MapExit]:
     new_inner_sdfg = SDFG(orig_nsdfg.sdfg.name + "_pn")
     for name, desc in orig_nsdfg.sdfg.arrays.items():
         new_inner_sdfg.add_datadesc(name, _copy.deepcopy(desc))
@@ -545,8 +687,10 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
         if n in new_inner_state.nodes():
             new_inner_state.remove_node(n)
 
-    used_in: Set[str] = set()
-    used_out: Set[str] = set()
+    # Ordered: these become NestedSDFG connectors, i.e. generated function signatures.
+    #  Plain-set iteration order varies with PYTHONHASHSEED and would change the ABI.
+    used_in: OrderedSet[str] = OrderedSet()
+    used_out: OrderedSet[str] = OrderedSet()
     for n in new_inner_state.nodes():
         if not isinstance(n, nodes.AccessNode):
             continue
@@ -555,7 +699,7 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
         if n.data in orig_nsdfg.out_connectors and new_inner_state.in_degree(n) > 0:
             used_out.add(n.data)
 
-    referenced: Set[str] = set()
+    referenced: set[str] = set()
     for n in new_inner_state.nodes():
         if isinstance(n, nodes.AccessNode):
             referenced.add(n.data)
@@ -575,21 +719,20 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
     graph.add_node(new_pe)
     graph.add_node(new_px)
 
-    new_nsdfg = graph.add_nested_sdfg(new_inner_sdfg,
-                                      used_in,
-                                      used_out,
-                                      symbol_mapping=_copy.copy(orig_nsdfg.symbol_mapping))
+    new_nsdfg = graph.add_nested_sdfg(
+        new_inner_sdfg, used_in, used_out, symbol_mapping=_copy.deepcopy(orig_nsdfg.symbol_mapping)
+    )
 
     for conn in used_in:
         new_pe.add_in_connector("IN_" + conn)
         new_pe.add_out_connector("OUT_" + conn)
-        for (outer_access, outer_memlet, inner_memlet) in outer_in_by.get(conn, []):
+        for outer_access, outer_memlet, inner_memlet in outer_in_by.get(conn, []):
             graph.add_edge(outer_access, None, new_pe, "IN_" + conn, _copy.deepcopy(outer_memlet))
             graph.add_edge(new_pe, "OUT_" + conn, new_nsdfg, conn, _copy.deepcopy(inner_memlet))
     for conn in used_out:
         new_px.add_in_connector("IN_" + conn)
         new_px.add_out_connector("OUT_" + conn)
-        for (outer_access, outer_memlet, inner_memlet) in outer_out_by.get(conn, []):
+        for outer_access, outer_memlet, inner_memlet in outer_out_by.get(conn, []):
             graph.add_edge(new_nsdfg, conn, new_px, "IN_" + conn, _copy.deepcopy(inner_memlet))
             graph.add_edge(new_px, "OUT_" + conn, outer_access, None, _copy.deepcopy(outer_memlet))
 
@@ -597,3 +740,5 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
         graph.add_nedge(new_pe, new_nsdfg, mm.Memlet())
     if not used_out:
         graph.add_nedge(new_nsdfg, new_px, mm.Memlet())
+
+    return new_pe, new_px

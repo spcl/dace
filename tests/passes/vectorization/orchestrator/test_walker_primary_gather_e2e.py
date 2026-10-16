@@ -7,13 +7,15 @@ of an idx data-dependency edge through MapEntry is brittle, per design Appendix 
 
 Numerical contract: ``B[i] = A[idx[i]]`` matches the unvectorised reference output.
 """
+
 import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 N_SYM = dace.symbol("N_GATHER")
 
@@ -39,9 +41,10 @@ def test_k1_gather_matches_reference(N):
     vec_sdfg = k1_gather.to_sdfg(simplify=True)
     vec_sdfg.name = f"k1_gather_vec_{N}"
     try:
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001 - the walker may still refuse some gather shapes.
         pytest.xfail(f"gather walker path refused: {exc}")
+    assert_tiled(vec_sdfg, ref_sdfg)
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_GATHER=N)
     vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_GATHER=N)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -59,10 +62,9 @@ def k1_scatter(A: dace.float64[N_SCATTER], idx: dace.int64[N_SCATTER], B: dace.f
 def test_k1_scatter_matches_reference():
     """K=1 ``B[idx[i]] = A[i]`` (scatter) -- bit-equal to the unvectorised reference.
 
-    Exercises the symmetric scatter path through the walker (TileStore with
-    ``gather_dims`` lowering via :class:`ExpandTileStorePure` because
-    ``make_store_tasklet`` now delegates to pure when ``gather_dims`` is set,
-    mirroring the gather load fix in commit 4ad424945).
+    Exercises the symmetric scatter path through the walker (TileScatter with
+    ``gather_dims`` lowering through the pure expansion, because a store with
+    ``gather_dims`` has no header lowering).
     """
     n = 8
     rng = np.random.default_rng(seed=n)
@@ -75,9 +77,10 @@ def test_k1_scatter_matches_reference():
     vec_sdfg = k1_scatter.to_sdfg(simplify=True)
     vec_sdfg.name = f"k1_scatter_vec_{n}"
     try:
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001
         pytest.xfail(f"scatter walker path refused: {exc}")
+    assert_tiled(vec_sdfg, ref_sdfg)
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_SCATTER=n)
     vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_SCATTER=n)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -98,13 +101,9 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     ``(W_0, ONE)`` because the gather expression depends only on ``i`` (the
     row iter-var).
 
-    Resolved by Phase A2: the walker now computes the per-iter-var dep mask
-    via :func:`compute_per_iter_var_dep_mask` which walks interstate edges
-    to resolve post-Bypass per-lane symbols (``__sym_<> = idx[i]`` becomes
-    "dep on i, not on j"). The materialiser receives the mask explicitly
-    and emits ``(W_0, ONE)`` per the cuTile contract.
+    The per-iter-var dependence resolves post-Bypass per-lane symbols (``__sym_<> = idx[i]``
+    is "dep on i, not on j"), so the materialiser emits ``(W_0, ONE)``.
     """
-    from dace.symbolic import ONE
     m, n = 8, 8
     vec_sdfg = k2_partial_kdep_gather.to_sdfg(simplify=True)
     vec_sdfg.name = "k2_partial_kdep_shape_audit"
@@ -115,7 +114,6 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     # Inspect every nested SDFG for ``_idx_*`` tiles produced by the gather
     # materialiser. Each must have shape ``(8, ONE)`` -- the row dim is
     # lane-dep, the col dim is broadcast.
-    import sympy
     idx_descs = []
     for sd in vec_sdfg.all_sdfgs_recursive():
         for name, desc in sd.arrays.items():
@@ -125,5 +123,4 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     for name, shape in idx_descs:
         assert len(shape) == 2, f"{name!r}: expected K=2 shape, got {shape}"
         assert int(shape[0]) == 8, f"{name!r}: expected W_0=8 on lane-dep dim, got {shape}"
-        assert isinstance(shape[1], sympy.Basic) and ONE in shape[1].free_symbols, \
-            f"{name!r}: expected ONE on broadcast dim 1, got {shape}"
+        assert dace.symbolic.has_one_marker(shape[1]), f"{name!r}: expected ONE on broadcast dim 1, got {shape}"

@@ -32,11 +32,14 @@ chain):
   scalar per subset; the dependency between the two writes survives via
   the scalars' read-after-write chain on the bridge.
 """
+
 import copy
 
-import dace
 import numpy as np
+
+import dace
 from dace.memlet import Memlet
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 
 
 def _ref_run(sdfg, **arrays):
@@ -49,8 +52,9 @@ def _ref_run(sdfg, **arrays):
 
 def _assert_close(reference, result, *, rtol=1e-12):
     for k in reference:
-        assert np.allclose(reference[k], result[k],
-                           rtol=rtol), (f"{k} mismatch: max abs diff {np.max(np.abs(reference[k] - result[k]))}")
+        assert np.allclose(reference[k], result[k], rtol=rtol), (
+            f"{k} mismatch: max abs diff {np.max(np.abs(reference[k] - result[k]))}"
+        )
 
 
 def _bridge_is_staged(sdfg: dace.SDFG, bridge_name: str) -> bool:
@@ -62,14 +66,12 @@ def _bridge_is_staged(sdfg: dace.SDFG, bridge_name: str) -> bool:
     """
     for s in sdfg.all_sdfgs_recursive():
         for name, desc in s.arrays.items():
-            if (bridge_name in name and desc.transient and isinstance(desc, dace.data.Scalar)):
+            if bridge_name in name and desc.transient and isinstance(desc, dace.data.Scalar):
                 return True
     return False
 
 
-# ----------------------------------------------------------------------
 # Pattern builders
-# ----------------------------------------------------------------------
 def _build_inmap_single_bridge(N: int = 8):
     """``tasklet1 -[A[i]]-> A_bridge -[A[i]]-> tasklet2``, both tasklets inside the
     inner map. ``A_bridge`` is an in-map access node aliasing the global
@@ -178,7 +180,7 @@ def _build_inmap_multi_state_propagation(N: int = 8):
     state = sdfg.add_state("compute")
     me, mx = state.add_map("m", dict(i="0:N"))
 
-    body = dace.SDFG("body")
+    body = dace.SDFG("body_build_inmap_multi_state_propagation")
     body.add_array("input_in", [1], dace.float64)
     body.add_array("output_out", [1], dace.float64)
     body.add_array("A_io", [1], dace.float64)
@@ -209,6 +211,7 @@ def _build_inmap_multi_state_propagation(N: int = 8):
     state.add_memlet_path(nsdfg_node, mx, state.add_access("A"), src_conn="A_io", memlet=Memlet("A[i]"))
 
     sdfg.specialize({"N": N})
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -287,7 +290,7 @@ def _build_nsdfg_single_bridge(N: int = 8):
     state = sdfg.add_state("compute")
     me, mx = state.add_map("m", dict(i="0:N"))
 
-    body = dace.SDFG("body")
+    body = dace.SDFG("body_build_nsdfg_single_bridge")
     body.add_array("input_in", [1], dace.float64)
     body.add_array("output_out", [1], dace.float64)
     body.add_array("A_io", [1], dace.float64)
@@ -315,17 +318,18 @@ def _build_nsdfg_single_bridge(N: int = 8):
     state.add_memlet_path(nsdfg_node, mx, state.add_access("A"), src_conn="A_io", memlet=Memlet("A[i]"))
 
     sdfg.specialize({"N": N})
+    convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
 
 
-# ----------------------------------------------------------------------
 # Tests
-# ----------------------------------------------------------------------
 def _stage(sdfg):
     """Apply :class:`StageGlobalArrayThroughScalars` in place."""
     from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-        StageGlobalArrayThroughScalars, )
+        StageGlobalArrayThroughScalars,
+    )
+
     StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
 
 
@@ -405,8 +409,9 @@ def test_inmap_multi_state_propagation():
     ref = _ref_run(sdfg, input=inputs, output=outputs, A=A)
     _stage(sdfg)
     sdfg.validate()
-    assert _bridge_is_staged(sdfg, "A_io"), ("Multi-state bridge ``A_io`` should have a staged scalar that "
-                                             "propagates between states")
+    assert _bridge_is_staged(sdfg, "A_io"), (
+        "Multi-state bridge ``A_io`` should have a staged scalar that propagates between states"
+    )
     cur = {"input": inputs.copy(), "output": outputs.copy(), "A": A.copy()}
     sdfg(**cur)
     _assert_close(ref, cur)
@@ -444,7 +449,7 @@ def test_inmap_multi_in_multi_out_subsets():
         for name, desc in s.arrays.items():
             if "A" in name and desc.transient and isinstance(desc, dace.data.Scalar):
                 staged_count += 1
-    assert staged_count >= 2, (f"Expected ≥2 staged scalars (one per subset), got {staged_count}")
+    assert staged_count >= 2, f"Expected ≥2 staged scalars (one per subset), got {staged_count}"
     A_run = A.copy()
     out_run = np.zeros(2 * N)
     sdfg(input=inputs.copy(), output=out_run, A=A_run)
@@ -466,7 +471,7 @@ def test_nsdfg_single_bridge_through_scalar():
     ref = _ref_run(sdfg, input=inputs, output=outputs, A=A)
     _stage(sdfg)
     sdfg.validate()
-    assert _bridge_is_staged(sdfg, "A_io"), ("Body-NSDFG bridge ``A_io`` should have a staged scalar transient")
+    assert _bridge_is_staged(sdfg, "A_io"), "Body-NSDFG bridge ``A_io`` should have a staged scalar transient"
     cur = {"input": inputs.copy(), "output": outputs.copy(), "A": A.copy()}
     sdfg(**cur)
     _assert_close(ref, cur)

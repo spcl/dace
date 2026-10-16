@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 def test_output():
@@ -14,7 +15,7 @@ def test_output():
     elementwise(A=A.copy(), B=B)
 
     diff = np.linalg.norm(np.log(A) - B)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
@@ -29,7 +30,7 @@ def test_output_none():
     elementise_none(A=A.copy(), B=B)
 
     diff = np.linalg.norm(np.log(A) - B)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
@@ -44,11 +45,11 @@ def test_cast():
     elementwise_cast(A=A.copy(), B=B)
 
     diff = np.linalg.norm(A - B)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_output()
     test_output_none()
     test_cast()

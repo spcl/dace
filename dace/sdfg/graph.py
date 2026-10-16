@@ -1,13 +1,21 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" File containing DaCe-serializable versions of graphs, nodes, and edges. """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""File containing DaCe-serializable versions of graphs, nodes, and edges."""
 
-from collections import deque, OrderedDict
+import copy
 import itertools
 import uuid
+from collections import OrderedDict, deque
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
 import networkx as nx
-from dace.dtypes import deduplicate
+
 import dace.serialize
-from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
+from dace import graphlib
+from dace.dtypes import deduplicate
+from dace.ordered import OrderedSet
 
 
 class NodeNotFoundError(Exception):
@@ -18,14 +26,30 @@ class EdgeNotFoundError(Exception):
     pass
 
 
-T = TypeVar('T')
-NodeT = TypeVar('NodeT')
-EdgeT = TypeVar('EdgeT')
+T = TypeVar("T")
+NodeT = TypeVar("NodeT")
+EdgeT = TypeVar("EdgeT")
+
+# ``id(graph) -> (graph, {id(node): index})`` while the graphs are frozen; the graph is kept to pin its id.
+_frozen_node_ids: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar(
+    "_frozen_node_ids", default=None
+)
+
+
+@contextmanager
+def frozen_node_ids() -> Iterator[None]:
+    """Answers ``OrderedDiGraph.node_id`` from an index built once per graph. Only for spans that add or
+    remove no nodes, e.g. serialization, where a linear scan per edge endpoint is quadratic."""
+    token = _frozen_node_ids.set({}) if _frozen_node_ids.get() is None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _frozen_node_ids.reset(token)
 
 
 @dace.serialize.serializable
 class Edge(Generic[T]):
-
     def __init__(self, src, dst, data: T):
         self._src = src
         self._dst = dst
@@ -55,22 +79,20 @@ class Edge(Generic[T]):
     def to_json(self, parent_graph):
         memlet_ret = self.data.to_json()
         ret = {
-            'type': type(self).__name__,
-            'attributes': {
-                'data': memlet_ret
-            },
-            'src': str(parent_graph.node_id(self.src)),
-            'dst': str(parent_graph.node_id(self.dst)),
+            "type": type(self).__name__,
+            "attributes": {"data": memlet_ret},
+            "src": str(parent_graph.node_id(self.src)),
+            "dst": str(parent_graph.node_id(self.dst)),
         }
 
         return ret
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "Edge":
+        if json_obj["type"] != "Edge":
             raise TypeError("Invalid data type")
 
-        ret = Edge(json_obj['src'], json_obj['dst'], dace.serialize.from_json(json_obj['attributes']['data'], context))
+        ret = Edge(json_obj["src"], json_obj["dst"], dace.serialize.from_json(json_obj["attributes"]["data"], context))
 
         return ret
 
@@ -84,9 +106,8 @@ class Edge(Generic[T]):
 
 @dace.serialize.serializable
 class MultiEdge(Edge, Generic[T]):
-
     def __init__(self, src, dst, data: T, key):
-        super(MultiEdge, self).__init__(src, dst, data)
+        super().__init__(src, dst, data)
         self._key = key
 
     @property
@@ -96,37 +117,36 @@ class MultiEdge(Edge, Generic[T]):
 
 @dace.serialize.serializable
 class MultiConnectorEdge(MultiEdge, Generic[T]):
-
     def __init__(self, src, src_conn: str, dst, dst_conn: str, data: T, key):
-        super(MultiConnectorEdge, self).__init__(src, dst, data, key)
+        super().__init__(src, dst, data, key)
         self._src_conn: str = src_conn
         self._dst_conn: str = dst_conn
 
     def to_json(self, parent_graph):
         ret = super().to_json(parent_graph)
 
-        ret['dst_connector'] = self.dst_conn
-        ret['src_connector'] = self.src_conn
+        ret["dst_connector"] = self.dst_conn
+        ret["src_connector"] = self.src_conn
 
-        ret['type'] = "MultiConnectorEdge"
+        ret["type"] = "MultiConnectorEdge"
 
         return ret
 
     @staticmethod
     def from_json(json_obj, context=None):
 
-        sdfg = context['sdfg_state']
+        sdfg = context["sdfg_state"]
         if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
-        data = dace.serialize.from_json(json_obj['attributes']['data'], context)
-        src_nid = json_obj['src']
-        dst_nid = json_obj['dst']
+        data = dace.serialize.from_json(json_obj["attributes"]["data"], context)
+        src_nid = json_obj["src"]
+        dst_nid = json_obj["dst"]
 
         dst = sdfg.nodes()[int(dst_nid)]
         src = sdfg.nodes()[int(src_nid)]
 
-        dst_conn = json_obj['dst_connector']
-        src_conn = json_obj['src_connector']
+        dst_conn = json_obj["dst_connector"]
+        src_conn = json_obj["src_connector"]
 
         # Auto-create key (used when uniquely identifying networkx multigraph
         # edges)
@@ -175,22 +195,21 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
 
 @dace.serialize.serializable
 class Graph(Generic[NodeT, EdgeT]):
-
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
 
     def to_json(self):
         ret = {
-            'type': type(self).__name__,
-            'attributes': dace.serialize.all_properties_to_json(self),
-            'nodes': [n.to_json(self) for n in self.nodes()],
-            'edges': [e.to_json(self) for e in self.edges()],
+            "type": type(self).__name__,
+            "attributes": dace.serialize.all_properties_to_json(self),
+            "nodes": [n.to_json(self) for n in self.nodes()],
+            "edges": [e.to_json(self) for e in self.edges()],
         }
         return ret
 
     @property
     def nx(self):
-        """ Returns a networkx version of this graph if available. """
+        """Returns a networkx version of this graph if available."""
         raise TypeError("No networkx version exists for this graph type")
 
     def nodes(self) -> Iterable[NodeT]:
@@ -210,12 +229,12 @@ class Graph(Generic[NodeT, EdgeT]):
         raise self._not_implemented_error()
 
     def __getitem__(self, node: NodeT) -> Iterable[NodeT]:
-        """ Returns an iterable to neighboring nodes. """
+        """Returns an iterable to neighboring nodes."""
         return (e.dst for e in self.out_edges(node))
 
     def all_edges(self, *nodes: NodeT) -> Iterable[Edge[EdgeT]]:
         """Returns an iterable to incoming and outgoing Edge objects."""
-        result = set()
+        result = OrderedSet()
         for node in nodes:
             result.update(self.in_edges(node))
             result.update(self.out_edges(node))
@@ -232,7 +251,7 @@ class Graph(Generic[NodeT, EdgeT]):
 
     def node_id(self, node: NodeT) -> int:
         """Returns a numeric ID that corresponds to the node index in the
-           internal graph representation (unique)."""
+        internal graph representation (unique)."""
         for i, n in enumerate(self.nodes()):
             if node == n:
                 return i
@@ -240,7 +259,7 @@ class Graph(Generic[NodeT, EdgeT]):
 
     def edge_id(self, edge: Edge[EdgeT]) -> int:
         """Returns a numeric ID that corresponds to the edge index in the
-           internal graph representation (unique)."""
+        internal graph representation (unique)."""
         for i, e in enumerate(self.edges()):
             if edge == e:
                 return i
@@ -307,14 +326,14 @@ class Graph(Generic[NodeT, EdgeT]):
     def is_multigraph(self) -> bool:
         raise self._not_implemented_error()
 
-    def __iter__(self) -> Iterable[NodeT]:
+    def __iter__(self) -> Iterator[NodeT]:
         return iter(self.nodes())
 
     def __len__(self) -> int:
-        """ Returns the total number of nodes in the graph (nx compatibility)"""
+        """Returns the total number of nodes in the graph (nx compatibility)"""
         return self.number_of_nodes()
 
-    def edge_bfs(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
+    def edge_bfs(self, node: NodeT | Sequence[NodeT], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
         """Returns a generator over edges in the graph originating from the
         passed node in BFS order.
 
@@ -330,20 +349,21 @@ class Graph(Generic[NodeT, EdgeT]):
             if node in visited:
                 continue
             visited.add(node)
-            edges = (self.out_edges(node) if not reverse else self.in_edges(node))
+            edges = self.out_edges(node) if not reverse else self.in_edges(node)
             for e in edges:
                 next_node = e.dst if not reverse else e.src
                 if next_node not in visited:
                     queue.append(next_node)
                 yield e
 
-    def dfs_edges(self,
-                  source: Union[NodeT, Sequence[NodeT]],
-                  condition: Callable[[NodeT, NodeT, Any], bool] = None) -> Iterable[Edge[EdgeT]]:
-        """Traverse a graph (DFS) with an optional condition to filter out nodes
-        """
-        if isinstance(source, list): nodes = source
-        else: nodes = [source]
+    def dfs_edges(
+        self, source: NodeT | Sequence[NodeT], condition: Callable[[NodeT, NodeT, Any], bool] = None
+    ) -> Iterable[Edge[EdgeT]]:
+        """Traverse a graph (DFS) with an optional condition to filter out nodes"""
+        if isinstance(source, list):
+            nodes = source
+        else:
+            nodes = [source]
         visited = set()
         for start in nodes:
             if start in visited:
@@ -364,15 +384,15 @@ class Graph(Generic[NodeT, EdgeT]):
                 except StopIteration:
                     stack.pop()
 
-    def source_nodes(self) -> List[NodeT]:
+    def source_nodes(self) -> list[NodeT]:
         """Returns nodes with no incoming edges."""
         return [n for n in self.nodes() if self.in_degree(n) == 0]
 
-    def sink_nodes(self) -> List[NodeT]:
+    def sink_nodes(self) -> list[NodeT]:
         """Returns nodes with no outgoing edges."""
         return [n for n in self.nodes() if self.out_degree(n) == 0]
 
-    def bfs_nodes(self, source: Optional[NodeT] = None) -> Iterable[NodeT]:
+    def bfs_nodes(self, source: NodeT | None = None) -> Iterable[NodeT]:
         """Returns an iterable over nodes traversed in breadth-first search
         order starting from ``source``."""
         if source is not None:
@@ -397,10 +417,9 @@ class Graph(Generic[NodeT, EdgeT]):
                     queue.append(succ)
         return seen.keys()
 
-    def all_simple_paths(self,
-                         source_node: NodeT,
-                         dest_node: NodeT,
-                         as_edges: bool = False) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
+    def all_simple_paths(
+        self, source_node: NodeT, dest_node: NodeT, as_edges: bool = False
+    ) -> Iterable[Sequence[Edge[EdgeT] | NodeT]]:
         """
         Finds all simple paths (with no repeating nodes) from ``source_node``
         to ``dest_node``.
@@ -410,14 +429,27 @@ class Graph(Generic[NodeT, EdgeT]):
         :param as_edges: If True, returns list of edges instead of nodes.
         """
         if as_edges:
-            for path in map(nx.utils.pairwise, nx.all_simple_paths(self._nx, source_node, dest_node)):
-                yield [Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path]
+            for path in graphlib.all_simple_paths(self._nx, source_node, dest_node):
+                path = list(path)
+                yield [Edge(u, v, self._nx.edges[u, v]["data"]) for u, v in zip(path[:-1], path[1:])]
         else:
-            yield from nx.all_simple_paths(self._nx, source_node, dest_node)
+            yield from graphlib.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
-        """Finds all nodes between begin and end. Returns None if there is any
-           path starting at begin that does not reach end."""
+        """Finds all nodes between begin and end.
+
+        Returns an EMPTY set if any path starting at begin does not reach end -- that is, if the
+        walk meets a node with no out-edges. The whole traversal is discarded in that case, not
+        just the dead-ending node, so a single sink empties the result even when every other node
+        reached end. A write-only scratch scalar is enough to trigger it.
+
+        A caller that wants "the nodes of this scope" therefore cannot use this: an empty answer
+        is indistinguishable from an empty scope, so a predicate written over the result reports
+        "nothing found" without having inspected anything. Use
+        :meth:`~dace.sdfg.state.SDFGState.scope_subgraph` for that question instead.
+
+        :note: The name says ``None`` in older docs; it has always returned a set.
+        """
         to_visit = [begin]
         seen = set()
         while len(to_visit) > 0:
@@ -454,26 +486,33 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         # Is there an inherent reason why the nodes are in the same relative order than
         #  in their source graph. If there is no reason we can even drop the `sorted()`
         #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
-        self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
+        if isinstance(graph, OrderedDiGraph):
+            # ``node_id`` is the position in ``nodes()``: one filtered walk replaces a scan per member.
+            members = dict.fromkeys(subgraph_nodes)
+            self._subgraph_nodes = {n: None for n in graph.nodes() if n in members}
+            if len(self._subgraph_nodes) != len(members):
+                raise NodeNotFoundError(next(n for n in members if n not in self._subgraph_nodes))
+        else:
+            self._subgraph_nodes = dict.fromkeys(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
 
-    def nodes(self) -> List[NodeT]:
+    def nodes(self) -> list[NodeT]:
         # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
         #   it was "promoted" to a `Sequence`. Figuring out if we can go back to an `Interable`
         #   and get rid of the `list` creation. The same applies to `edges()`.
         return list(self._subgraph_nodes.keys())
 
-    def edges(self) -> List[Edge[EdgeT]]:
+    def edges(self) -> list[Edge[EdgeT]]:
         # NOTE: If the edge or node structure in the containing graph changes then the output of
         #   this function changes as well, while the output of `self.nodes()` is not affected.
         return [e for e in self._graph.edges() if e.src in self._subgraph_nodes and e.dst in self._subgraph_nodes]
 
-    def in_edges(self, node: NodeT) -> List[Edge[EdgeT]]:
+    def in_edges(self, node: NodeT) -> list[Edge[EdgeT]]:
         if node not in self._subgraph_nodes:
             raise NodeNotFoundError
 
         return [e for e in self._graph.in_edges(node) if e.src in self._subgraph_nodes]
 
-    def out_edges(self, node: NodeT) -> List[Edge[EdgeT]]:
+    def out_edges(self, node: NodeT) -> list[Edge[EdgeT]]:
         if node not in self._subgraph_nodes:
             raise NodeNotFoundError
 
@@ -532,10 +571,9 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 @dace.serialize.serializable
 class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
-
     def __init__(self):
         super().__init__()
-        self._nx = nx.DiGraph()
+        self._nx = graphlib.DiGraph()
 
     def nodes(self):
         return self._nx.nodes()
@@ -587,21 +625,20 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def find_cycles(self):
-        return nx.simple_cycles(self._nx)
+        return graphlib.simple_cycles(self._nx)
 
     def has_cycles(self) -> bool:
         try:
-            nx.find_cycle(self._nx, self.source_nodes())
+            graphlib.find_cycle(self._nx, self.source_nodes())
             return True
-        except nx.NetworkXNoCycle:
+        except graphlib.NetworkXNoCycle:
             return False
 
 
 class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
-
     def __init__(self):
         super().__init__()
-        self._nx = nx.MultiDiGraph()
+        self._nx = graphlib.MultiDiGraph()
 
     @staticmethod
     def _from_nx(edge) -> MultiEdge[EdgeT]:
@@ -619,7 +656,6 @@ class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 
 class MultiDiConnectorGraph(MultiDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
-
     def __init__(self):
         super().__init__()
 
@@ -640,8 +676,8 @@ class MultiDiConnectorGraph(MultiDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 @dace.serialize.serializable
 class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
-    """ Directed graph where nodes and edges are returned in the order they
-        were added. """
+    """Directed graph where nodes and edges are returned in the order they
+    were added."""
 
     def __init__(self):
         self._nx = nx.DiGraph()
@@ -656,26 +692,42 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def node(self, id: int) -> NodeT:
         try:
-            return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
+            if id >= 0:
+                # Same result as the scan below, without a Python-level loop over the nodes
+                return next(itertools.islice(self._nodes.keys(), id, None))
+            else:
+                return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
         except StopIteration:
             raise NodeNotFoundError
 
+    #: ``{node: index}`` while a serialization holds the node order fixed; ``None`` otherwise.
+    _frozen_node_ids: dict[NodeT, int] | None = None
+
     def node_id(self, node: NodeT) -> int:
+        frozen = _frozen_node_ids.get()
+        if frozen is not None:
+            entry = frozen.get(id(self))
+            if entry is None:
+                entry = frozen[id(self)] = (self, {id(n): i for i, n in enumerate(self._nodes.keys())})
+            try:
+                return entry[1][id(node)]
+            except KeyError:
+                raise NodeNotFoundError(node)
         try:
             return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
         except StopIteration:
             raise NodeNotFoundError(node)
 
-    def nodes(self) -> List[NodeT]:
+    def nodes(self) -> list[NodeT]:
         return list(self._nodes.keys())
 
-    def edges(self) -> List[Edge[EdgeT]]:
+    def edges(self) -> list[Edge[EdgeT]]:
         return list(self._edges.values())
 
-    def in_edges(self, node: NodeT) -> List[Edge[EdgeT]]:
+    def in_edges(self, node: NodeT) -> list[Edge[EdgeT]]:
         return list(self._nodes[node][0].values())
 
-    def out_edges(self, node: NodeT) -> List[Edge[EdgeT]]:
+    def out_edges(self, node: NodeT) -> list[Edge[EdgeT]]:
         return list(self._nodes[node][1].values())
 
     def add_node(self, node: NodeT):
@@ -698,6 +750,29 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes[dst][0][t] = edge
         self._nx.add_edge(src, dst, data=data)
         return edge
+
+    def reorder_nodes(self, order: Sequence[NodeT]):
+        """Permute the node list into ``order``, leaving nodes, edges and adjacency untouched.
+
+        ``nodes()`` (and with it ``node_id`` and everything serialized by index) reports insertion
+        order, so a node's position records WHEN it was added. A rewrite that has to place a node
+        at a fixed position -- an entry block that must lead the list whether it was built first or
+        last -- can only say so here. Both node stores are permuted together, so the backing
+        ``networkx`` graph keeps agreeing with ``nodes()`` and traversal tie-breaks stay
+        deterministic.
+
+        :param order: A permutation of the current nodes.
+        """
+        reordered = OrderedDict((n, self._nodes[n]) for n in order)
+        if len(reordered) != len(self._nodes):
+            raise ValueError("reorder_nodes expects a permutation of the current node list")
+        self._nodes = reordered
+        # networkx has no reordering API; popping and re-inserting each node in the wanted order
+        # moves it to the end of every backing dict, so after one sweep they read in ``order``.
+        for n in order:
+            self._nx._node[n] = self._nx._node.pop(n)
+            self._nx._succ[n] = self._nx._succ.pop(n)
+            self._nx._pred[n] = self._nx._pred.pop(n)
 
     def remove_node(self, node: NodeT):
         try:
@@ -736,23 +811,27 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return False
 
     def find_cycles(self):
-        return nx.simple_cycles(self._nx)
+        return graphlib.simple_cycles(self._nx)
 
     def has_cycles(self) -> bool:
         try:
             sources = self.source_nodes()
             if len(sources) == 0:
-                nx.find_cycle(self._nx)
+                graphlib.find_cycle(self._nx)
             else:
-                nx.find_cycle(self._nx, sources)
+                graphlib.find_cycle(self._nx, sources)
             return True
-        except nx.NetworkXNoCycle:
+        except graphlib.NetworkXNoCycle:
             return False
 
-    def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
+    def edges_between(self, source: NodeT, destination: NodeT) -> list[Edge[EdgeT]]:
         if (source, destination) in self._edges:
             return [self._edges[(source, destination)]]
-        if source not in self.nodes(): return []
+        # ``self._nodes``, not ``self.nodes()``: the latter materializes every node into a list and
+        # linear-scans it. On a multigraph the fast path above can never hit (edges hash by identity),
+        # so every call reached this line -- 1.27us at 10 nodes, 79.7us at 4000.
+        if source not in self._nodes:
+            return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def reverse(self):
@@ -761,8 +840,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 
 class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
-    """ Directed multigraph where nodes and edges are returned in the order
-        they were added. """
+    """Directed multigraph where nodes and edges are returned in the order
+    they were added."""
 
     def __init__(self):
         self._nx = nx.MultiDiGraph()
@@ -789,13 +868,17 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         del self._nodes[edge.dst][0][edge]
         self._nx.remove_edge(edge.src, edge.dst, edge.key)
 
-    def in_edges(self, node) -> List[MultiEdge[EdgeT]]:
+    if TYPE_CHECKING:
+        # Type-only: the runtime edges are MultiEdge objects; no override, so no extra call per query.
+        def edges(self) -> list[MultiEdge[EdgeT]]: ...
+
+    def in_edges(self, node) -> list[MultiEdge[EdgeT]]:
         return super().in_edges(node)
 
-    def out_edges(self, node) -> List[MultiEdge[EdgeT]]:
+    def out_edges(self, node) -> list[MultiEdge[EdgeT]]:
         return super().out_edges(node)
 
-    def edges_between(self, source: NodeT, destination: NodeT) -> List[MultiEdge[EdgeT]]:
+    def edges_between(self, source: NodeT, destination: NodeT) -> list[MultiEdge[EdgeT]]:
         return super().edges_between(source, destination)
 
     def reverse(self) -> None:
@@ -810,8 +893,8 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 
 class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
-    """ Directed multigraph with node connectors (SDFG states), where nodes
-        and edges are returned in the order they were added. """
+    """Directed multigraph with node connectors (SDFG states), where nodes
+    and edges are returned in the order they were added."""
 
     def __init__(self):
         super().__init__()
@@ -829,7 +912,7 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
         return edge
 
     def add_nedge(self, src: NodeT, dst: NodeT, data: EdgeT) -> MultiConnectorEdge[EdgeT]:
-        """ Adds an edge without (value=None) connectors. """
+        """Adds an edge without (value=None) connectors."""
         return self.add_edge(src, None, dst, None, data)
 
     def remove_edge(self, edge: MultiConnectorEdge[EdgeT]):
@@ -845,17 +928,153 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
         for n, (in_edges, out_edges) in self._nodes.items():
             self._nodes[n] = (out_edges, in_edges)
 
-    def in_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
+    if TYPE_CHECKING:
+        # Type-only: the runtime edges are MultiConnectorEdge objects; no override, so no extra call per query.
+        # fmt: off
+        def edges(self) -> list[MultiConnectorEdge[EdgeT]]: ...
+        def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]: ...
+        def edge_bfs(self, node: NodeT | Sequence[NodeT], reverse: bool = False) -> Iterable[MultiConnectorEdge[EdgeT]]: ...
+        # fmt: on
+
+    def in_edges(self, node) -> list[MultiConnectorEdge[EdgeT]]:
         return super().in_edges(node)
 
-    def out_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
+    def out_edges(self, node) -> list[MultiConnectorEdge[EdgeT]]:
         return super().out_edges(node)
 
-    def edges_between(self, source: NodeT, destination: NodeT) -> List[MultiConnectorEdge[EdgeT]]:
+    def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]:
+        return super().all_edges(*nodes)
+
+    def edges_between(self, source: NodeT, destination: NodeT) -> list[MultiConnectorEdge[EdgeT]]:
         return super().edges_between(source, destination)
 
     def is_multigraph(self) -> bool:
         return True
+
+
+#: Values ``copy.deepcopy`` returns as-is; copying them through the dispatcher costs a call each.
+IMMUTABLE_COPY_TYPES = (type(None), bool, int, float, str)
+#: networkx graph classes whose adjacency :func:`copy_nx_graph` rebuilds directly.
+STRUCTURALLY_COPIED_NX_TYPES = (nx.DiGraph, nx.MultiDiGraph)
+NX_GRAPH_FIELDS = frozenset({"graph", "_node", "_adj", "_succ", "_pred", "__networkx_cache__"})
+
+
+def copy_value(value: Any, memo: dict[int, Any]) -> Any:
+    """``copy.deepcopy(value, memo)``, without the dispatch for a value that copies to itself."""
+    if type(value) in IMMUTABLE_COPY_TYPES:
+        return value
+    return copy.deepcopy(value, memo)
+
+
+def keep_alive(value: Any, memo: dict[int, Any]) -> None:
+    # Same contract as ``copy._keep_alive``: an id in the memo must not be recycled mid-copy.
+    memo.setdefault(id(memo), []).append(value)
+
+
+def copy_attribute_dict(source: dict[Any, Any], memo: dict[int, Any]) -> dict[Any, Any]:
+    known = memo.get(id(source))
+    if known is None:
+        known = {key: copy_value(value, memo) for key, value in source.items()}
+        memo[id(source)] = known
+        keep_alive(source, memo)
+    return known
+
+
+def copy_graph_edge(edge: Edge, memo: dict[int, Any]) -> Edge:
+    """``copy.deepcopy(edge, memo)`` for an edge object, which has no ``__deepcopy__`` of its own."""
+    known = memo.get(id(edge))
+    if known is None:
+        known = object.__new__(type(edge))
+        memo[id(edge)] = known
+        keep_alive(edge, memo)
+        known.__dict__.update({key: copy_value(value, memo) for key, value in edge.__dict__.items()})
+    return known
+
+
+def copy_nx_graph(graph: Any, memo: dict[int, Any]) -> Any:
+    """``copy.deepcopy(graph, memo)`` for a networkx (multi)digraph, rebuilt dict by dict.
+
+    Same result as the generic copy: every dict keeps its own key order, and the adjacency objects networkx
+    shares (``_adj is _succ``, and one edge-key or attribute dict under both ``_succ[u][v]`` and
+    ``_pred[v][u]``) stay shared in the copy. Any other graph type takes the generic path."""
+    known = memo.get(id(graph))
+    if known is not None:
+        return known
+    if (
+        type(graph) not in STRUCTURALLY_COPIED_NX_TYPES
+        or graph.__dict__.keys() != NX_GRAPH_FIELDS
+        or graph._adj is not graph._succ
+    ):
+        return copy.deepcopy(graph, memo)
+    clone = type(graph).__new__(type(graph))
+    memo[id(graph)] = clone
+    keep_alive(graph, memo)
+    multigraph = graph.is_multigraph()
+
+    def copied_node(node: Any) -> Any:
+        found = memo.get(id(node))
+        return found if found is not None else copy.deepcopy(node, memo)
+
+    def copied_adjacency(outer: dict[Any, dict[Any, Any]]) -> dict[Any, dict[Any, Any]]:
+        result = {}
+        for node, neighbors in outer.items():
+            inner = {}
+            for neighbor, entry in neighbors.items():
+                if multigraph:
+                    shared = memo.get(id(entry))
+                    if shared is None:
+                        shared = {key: copy_attribute_dict(attributes, memo) for key, attributes in entry.items()}
+                        memo[id(entry)] = shared
+                        keep_alive(entry, memo)
+                    inner[copied_node(neighbor)] = shared
+                else:
+                    inner[copied_node(neighbor)] = copy_attribute_dict(entry, memo)
+            result[copied_node(node)] = inner
+        return result
+
+    fields = clone.__dict__
+    fields["graph"] = copy.deepcopy(graph.graph, memo)
+    fields["_node"] = {
+        copied_node(node): copy_attribute_dict(attributes, memo) for node, attributes in graph._node.items()
+    }
+    successors = copied_adjacency(graph._succ)
+    fields["_adj"] = successors
+    fields["_succ"] = successors
+    fields["_pred"] = copied_adjacency(graph._pred)
+    fields["__networkx_cache__"] = copy.deepcopy(graph.__dict__["__networkx_cache__"], memo)
+    return clone
+
+
+def copy_edge_index(edges: "OrderedDict[Any, Edge]", memo: dict[int, Any]) -> "OrderedDict[Any, Edge]":
+    """Deep copy of an ``{edge or (src, dst): edge}`` index, keeping its order."""
+    result = type(edges)()
+    for key, edge in edges.items():
+        clone = copy_graph_edge(edge, memo)
+        if key is edge:
+            result[clone] = clone
+        else:
+            result[tuple(copy_value(node, memo) for node in key)] = clone
+    return result
+
+
+def copy_node_index(nodes: "OrderedDict[Any, Any]", memo: dict[int, Any]) -> "OrderedDict[Any, Any]":
+    """Deep copy of a ``{node: (in-edge index, out-edge index)}`` index, keeping every order."""
+    result = type(nodes)()
+    for node, (in_edges, out_edges) in nodes.items():
+        result[copy_value(node, memo)] = (copy_edge_index(in_edges, memo), copy_edge_index(out_edges, memo))
+    return result
+
+
+def copy_graph_field(owner: Any, name: str, value: Any, memo: dict[int, Any]) -> Any:
+    """The deep copy of ``owner.<name>``, taking the structural copy for an ordered graph's containers."""
+    if isinstance(owner, OrderedDiGraph):
+        if name == "_nx":
+            return copy_nx_graph(value, memo)
+        if name == "_nodes":
+            return copy_node_index(value, memo)
+        if name == "_edges":
+            return copy_edge_index(value, memo)
+    return copy_value(value, memo)
 
 
 def generate_element_id(element) -> str:

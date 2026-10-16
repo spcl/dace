@@ -12,8 +12,9 @@ The parallel form comes from a caller-supplied callback mutating the true-branch
 in place (lift to Map, split into affine segments, ...): specialization owns the
 control-flow surgery, the callback owns what "parallel" means.
 """
+
 import copy
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
@@ -32,9 +33,9 @@ def specialize_loop_under_condition(
     loop: LoopRegion,
     condition,
     parallelize: Callable[[LoopRegion, ControlFlowRegion, SDFG], None],
-    owner_sdfg: Optional[SDFG] = None,
+    owner_sdfg: SDFG | None = None,
     assume: bool = False,
-) -> Optional[ConditionalBlock]:
+) -> ConditionalBlock | None:
     """Replace ``loop`` with ``if (condition) { parallel } else { original loop }``.
 
     :param loop: Loop to specialize; removed from its parent graph, deep-copied into each branch.
@@ -65,13 +66,13 @@ def specialize_loop_under_condition(
     out_edges = list(parent.out_edges(loop))
     is_start = parent.start_block is loop
 
-    conditional = ConditionalBlock(label=f'{loop.label}_specialize')
+    conditional = ConditionalBlock(label=f"{loop.label}_specialize")
 
     # True branch: a clone the caller parallelizes. Else branch (condition ``None``):
     # a clone kept as sequential fallback. Deep-copy both (not re-host the original) to
     # keep re-parenting simple and leave no stale refs to the removed loop.
     par_loop = copy.deepcopy(loop)
-    par_region = ControlFlowRegion(label=f'{loop.label}_par')
+    par_region = ControlFlowRegion(label=f"{loop.label}_par")
     par_region.add_node(par_loop, is_start_block=True, ensure_unique_name=True)
     conditional.add_branch(condition, par_region)
 
@@ -80,7 +81,7 @@ def specialize_loop_under_condition(
     # lifts it back to a Map -- it exists for values violating ``condition`` and must
     # stay sequential.
     seq_loop.pinned_sequential = True
-    seq_region = ControlFlowRegion(label=f'{loop.label}_seq')
+    seq_region = ControlFlowRegion(label=f"{loop.label}_seq")
     seq_region.add_node(seq_loop, is_start_block=True, ensure_unique_name=True)
     conditional.add_branch(None, seq_region)
 
@@ -94,10 +95,9 @@ def specialize_loop_under_condition(
     parent.remove_node(loop)
     if is_start:
         parent.start_block = parent.node_id(conditional)
-    parent.reset_cfg_list()
 
     parallelize(par_loop, par_region, owner_sdfg)
     return conditional
 
 
-__all__ = ['specialize_loop_under_condition']
+__all__ = ["specialize_loop_under_condition"]

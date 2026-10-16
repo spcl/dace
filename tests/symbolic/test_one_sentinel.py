@@ -12,11 +12,12 @@ vectorisation track (design section 3.8.1 / 3.8.2). It must:
 * Block :class:`ConvertLengthOneArraysToScalars` from scalarising arrays
   whose shape carries ``ONE``.
 """
-import dace
+
 import sympy
 
+import dace
 from dace.symbolic import ONE
-from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars)
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 
@@ -25,6 +26,7 @@ def test_identity_across_imports():
     """The sentinel is one shared object; identity comparison must work
     after re-importing from the same module path."""
     from dace.symbolic import ONE as ONE2
+
     assert ONE is ONE2
 
 
@@ -38,6 +40,21 @@ def test_shape_with_one_preserves_symbol():
     assert ONE in shape[1].free_symbols
     assert ONE not in shape[0].free_symbols
     assert ONE not in shape[2].free_symbols
+
+
+def test_one_marker_survives_a_reparse():
+    """A shape entry reparsed from its string spelling is the sentinel again: symbols are names only.
+    :func:`dace.symbolic.has_one_marker` recognises the marker by NAME, and ``collapse_one_dims`` drops it."""
+    sdfg = dace.SDFG("one_marker_reparsed")
+    sdfg.add_array("Idx", (4, ONE), dace.int64, transient=True)
+    stored = tuple(dace.symbolic.pystr_to_symbolic(str(s)) for s in sdfg.arrays["Idx"].shape)
+
+    assert ONE in stored[1].free_symbols, "a symbol is its name"
+    assert stored[1].name == "ONE"
+    assert dace.symbolic.has_one_marker(stored[1])
+    assert not dace.symbolic.has_one_marker(stored[0])
+    assert dace.symbolic.collapse_one_dims(stored, treat_one_symbol_as_one=True) == (4,)
+    assert dace.symbolic.collapse_one_dims(stored) == stored
 
 
 def test_sympy_arithmetic_preserves_one():
@@ -59,10 +76,10 @@ def test_convert_length_one_arrays_skips_one_marked():
     """:class:`ConvertLengthOneArraysToScalars` must NOT scalarise an
     array whose shape carries ``ONE``."""
     sdfg = dace.SDFG("one_marked_fixture")
-    sdfg.add_array("A", (ONE, ), dace.float64, transient=True)
+    sdfg.add_array("A", (ONE,), dace.float64, transient=True)
     pre = type(sdfg.arrays["A"]).__name__
     assert pre == "Array"
-    ConvertLengthOneArraysToScalars(recursive=True, transient_only=False).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
     post = type(sdfg.arrays["A"]).__name__
     assert post == "Array", f"ONE-marked array got scalarised: post={post!r}"
 
@@ -71,11 +88,10 @@ def test_convert_length_one_arrays_scalarises_literal_one():
     """Sanity check: an array with literal shape ``(1,)`` IS still
     scalarised (the firewall only skips ``ONE``-marked dims)."""
     sdfg = dace.SDFG("literal_one_fixture")
-    sdfg.add_array("B", (1, ), dace.float64, transient=True)
+    sdfg.add_array("B", (1,), dace.float64, transient=True)
     assert type(sdfg.arrays["B"]).__name__ == "Array"
-    ConvertLengthOneArraysToScalars(recursive=True, transient_only=False).apply_pass(sdfg, {})
-    assert type(sdfg.arrays["B"]).__name__ == "Scalar", \
-        "literal-1 array should still scalarise"
+    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
+    assert type(sdfg.arrays["B"]).__name__ == "Scalar", "literal-1 array should still scalarise"
 
 
 def test_collapse_one_dims_default_drops_literal_one_only():
@@ -87,9 +103,10 @@ def test_collapse_one_dims_default_drops_literal_one_only():
     in :class:`ConvertLengthOneArraysToScalars`) keep working.
     """
     from dace.symbolic import collapse_one_dims
+
     M = dace.symbol("M")
     K = dace.symbol("K")
-    assert collapse_one_dims((8, 1)) == (8, )
+    assert collapse_one_dims((8, 1)) == (8,)
     assert collapse_one_dims((1, 1)) == ()
     assert collapse_one_dims((M, 1, K)) == (M, K)
     assert collapse_one_dims((M, ONE, K)) == (M, ONE, K)  # ONE survives
@@ -102,11 +119,12 @@ def test_collapse_one_dims_opt_in_treats_one_symbol_as_one():
     matching, gather-dep lookup, test assertions).
     """
     from dace.symbolic import collapse_one_dims
+
     M = dace.symbol("M")
     K = dace.symbol("K")
     assert collapse_one_dims((M, ONE, K), treat_one_symbol_as_one=True) == (M, K)
     assert collapse_one_dims((ONE, ONE), treat_one_symbol_as_one=True) == ()
-    assert collapse_one_dims((8, 1, ONE), treat_one_symbol_as_one=True) == (8, )
+    assert collapse_one_dims((8, 1, ONE), treat_one_symbol_as_one=True) == (8,)
     assert collapse_one_dims((M, K), treat_one_symbol_as_one=True) == (M, K)  # neither -- pass through
 
 
@@ -121,7 +139,6 @@ def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
     accidentally leaked the broadcast marker outside its intended scope.
     """
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-    from dace.symbolic import ONE
 
     N = dace.symbol("N_GATHER_AUDIT")
 
@@ -131,23 +148,26 @@ def test_one_appears_only_on_gather_idx_arrays_in_pipeline():
             B[i] = A[idx[i]]
 
     sdfg = k1_gather_audit.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
     offenders = []
     for sd in sdfg.all_sdfgs_recursive():
         for name, desc in sd.arrays.items():
             if not isinstance(desc, dace.data.Array):
                 continue
-            shape_has_one = any(isinstance(s, sympy.Basic) and ONE in s.free_symbols for s in desc.shape)
+            shape_has_one = any(dace.symbolic.has_one_marker(s) for s in desc.shape)
             if shape_has_one and not name.startswith("_idx_"):
                 offenders.append(f"{sd.name}::{name} shape={tuple(desc.shape)}")
-    assert not offenders, ("ONE found on non-gather descriptors (should appear only on _idx_<d> "
-                           f"gather tiles per design 3.8.2): {offenders}")
+    assert not offenders, (
+        "ONE found on non-gather descriptors (should appear only on _idx_<d> "
+        f"gather tiles per design 3.8.2): {offenders}"
+    )
 
 
 def test_collapse_one_dims_preserves_order():
     """The helper preserves source order of the surviving dims."""
     from dace.symbolic import collapse_one_dims
+
     A = dace.symbol("A")
     B = dace.symbol("B")
     C = dace.symbol("C")
@@ -179,6 +199,7 @@ def test_one_emitted_as_constexpr_at_compile():
     """
     import numpy as np
 
+    rng = np.random.default_rng(42)
     N = dace.symbol("N")
 
     @dace.program
@@ -191,13 +212,14 @@ def test_one_emitted_as_constexpr_at_compile():
     sdfg.add_constant("ONE", 1, dace.data.Scalar(dace.int32))
     compiled = sdfg.compile()
     n_val = 8
-    a = np.random.random(n_val)
-    b = np.random.random(n_val)
+    a = rng.random(n_val)
+    b = rng.random(n_val)
     c = np.zeros(n_val)
     compiled(a=a, b=b, c=c, N=n_val)
     np.testing.assert_allclose(c, a + b, rtol=1e-12)
 
     import glob
+
     found = False
     for cpp in glob.glob(f"{sdfg.build_folder}/src/cpu/*.cpp"):
         with open(cpp) as f:

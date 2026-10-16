@@ -1,47 +1,36 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fission induction-variable updates out of compound loop bodies.
 
-The existing :class:`~dace.transformation.passes.canonicalize.induction_variable_substitution.InductionVariableSubstitution`
-pass only matches *single-tasklet* loop bodies of the shape ``accum = accum OP const``.
-Many real kernels (TSVC ``s317`` variants, ICON config-scalar updates, cloudsc
-species loops) carry such an IV update *next to* unrelated per-iteration work --
-e.g. ::
+:class:`~dace.transformation.passes.canonicalize.induction_variable_substitution.InductionVariableSubstitution`
+only matches *single-tasklet* loop bodies (``accum = accum OP const``). Real
+kernels (TSVC ``s317``, ICON config-scalar updates, cloudsc species loops) mix
+such an IV update with unrelated per-iteration work, e.g. ::
 
     for i in range(N):
-        scale[0] = scale[0] * 0.99       # loop-invariant slot, IV-eligible
-        b[i]     = b[i]     + 1.0        # per-iteration work, NOT IV-eligible
+        scale[0] = scale[0] * 0.99       # IV-eligible
+        b[i]     = b[i]     + 1.0        # not IV-eligible
 
-The two statements are *independent* (they share no AccessNodes, no symbols), so
-the IV update can be lifted into its own sibling loop without changing semantics.
-That sibling loop is then single-tasklet -- exactly what
-``InductionVariableSubstitution`` recognises -- and collapses to its ``O(1)``
-closed form ``scale[0] = scale[0] * 0.99 ** N``.
-
-This pass runs **before** ``InductionVariableSubstitution`` in the canonicalize
-recipe; together they recover the O(N) → O(1) speedup on real-world kernels
-where the IV update was muddled with unrelated loop body work.
+The two statements share no AccessNodes or symbols, so the IV update can be
+lifted into its own sibling loop. That loop is then single-tasklet and
+collapses to closed form ``scale[0] = scale[0] * 0.99 ** N`` once
+``InductionVariableSubstitution`` runs, right after this pass in the recipe.
 
 Scope today:
 
-* Loop body is a single ``SDFGState`` with ≥ 2 tasklets.
-* One of those tasklets matches the IV predicate from
-  ``induction_variable_substitution._extract_iv`` (Python ``__out = __in OP const``,
-  loop-invariant read/write subset, single in/out edge).
-* That tasklet's *data-flow component* (the tasklet plus AccessNodes reached
-  through its in/out edges, walking only through transients) is *isolated* --
-  no edge connects it to any other tasklet in the state.
+* loop body is a single ``SDFGState`` with >= 2 tasklets;
+* one tasklet matches the IV predicate from ``induction_variable_substitution._extract_iv``
+  (``__out = __in OP const``, loop-invariant subsets, single in/out edge);
+* that tasklet's data-flow component (through transients) is isolated from
+  every other tasklet in the state.
 
-Out of scope (potential follow-ups):
-
-* multi-state loop bodies (no fission across state boundaries);
-* IV components that share an external AccessNode with another statement
-  (would require value-flow analysis of the sharing);
-* multiple independent IV updates in the same body (this pass fissions one per
-  invocation; re-running picks up the next).
+Out of scope: multi-state bodies; IV components sharing an external
+AccessNode with another statement; multiple independent IV updates per body
+(fissions one per call, re-run for the next).
 """
+
 import ast
 import copy
-from typing import Optional, Set, Tuple
+from typing import Any
 
 import dace
 from dace import SDFG, dtypes, nodes, properties, symbolic
@@ -50,6 +39,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses
 
 
@@ -81,25 +71,28 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     if not isinstance(const_val, (int, float)):
         return False
 
-    in_edges = [e for e in state.in_edges(tasklet) if e.data is not None and not e.data.is_empty()]
-    out_edges = [e for e in state.out_edges(tasklet) if e.data is not None and not e.data.is_empty()]
+    in_edges = value_edges(state.in_edges(tasklet))
+    out_edges = value_edges(state.out_edges(tasklet))
     if len(in_edges) != 1 or len(out_edges) != 1:
         return False
-    (in_edge, ) = in_edges
-    (write_edge, ) = out_edges
+    (in_edge,) = in_edges
+    (write_edge,) = out_edges
+    # A WCR store is ``acc = wcr(acc, rhs)``: not an IV recurrence, so not fissionable as one.
+    if in_edge.data.wcr is not None or write_edge.data.wcr is not None:
+        return False
     if in_edge.dst_conn != var_conn:
         return False
     if not isinstance(write_edge.dst, nodes.AccessNode):
         return False
 
     write_subset = write_edge.data.subset
-    if _one_elem(write_subset) != 1:
+    if _one_elem(write_subset, sdfg.facts()) != 1:
         return False
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     if _uses(write_subset, loop_var_sym):
         return False
 
-    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
+    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, sdfg.facts())
     if final_accum not in sdfg.arrays or _uses(final_subset, loop_var_sym):
         return False
 
@@ -109,20 +102,20 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     return True
 
 
-def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Set:
-    """BFS from ``tasklet`` through every connected node in ``state``.
+def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> dict[nodes.Node, None]:
+    """BFS from ``tasklet`` over the VALUE edges of ``state``.
 
-    Walks both in- and out-edges, into AccessNodes and through them; the returned
-    set is the connected component of ``tasklet`` in the state's data-flow graph.
+    An ordering (empty) memlet decides ORDER, never membership: following one would make an
+    unrelated statement part of the IV component and fission it into the sibling loop.
     """
-    seen: Set = {tasklet}
+    seen: dict[nodes.Node, None] = {tasklet: None}
     frontier = [tasklet]
     while frontier:
         n = frontier.pop()
-        for e in list(state.in_edges(n)) + list(state.out_edges(n)):
+        for e in value_edges(state.in_edges(n)) + value_edges(state.out_edges(n)):
             for nb in (e.src, e.dst):
                 if nb not in seen:
-                    seen.add(nb)
+                    seen[nb] = None
                     frontier.append(nb)
     return seen
 
@@ -135,10 +128,10 @@ def _is_copy_tasklet(t: nodes.Tasklet) -> bool:
     if t.code.language != dtypes.Language.Python:
         return False
     code = (t.code.as_string or "").strip()
-    return code in ('__out = __inp', '__out = (__inp)')
+    return code in ("__out = __inp", "__out = (__inp)")
 
 
-def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optional[Set]:
+def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> dict[nodes.Node, None] | None:
     """Return the IV tasklet's component if every tasklet in it is either the
     IV tasklet itself or a pure copy (``__out = __inp``) -- otherwise ``None``.
 
@@ -151,11 +144,16 @@ def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optio
     for n in component:
         if isinstance(n, nodes.Tasklet) and n is not tasklet and not _is_copy_tasklet(n):
             return None
+        # The fission runs the component FIRST and would drop a boundary-crossing ordering edge.
+        for e in state.in_edges(n) + state.out_edges(n):
+            if e.data is not None and e.data.is_empty() and (e.src not in component or e.dst not in component):
+                return None
     return component
 
 
-def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, component: Set, sdfg: SDFG,
-                                        parent: ControlFlowRegion) -> None:
+def _split_iv_component_to_sibling_loop(
+    loop: LoopRegion, state: SDFGState, component: dict[nodes.Node, None], sdfg: SDFG, parent: ControlFlowRegion
+) -> None:
     """Move the IV component into a fresh sibling loop *before* ``loop``.
 
     The sibling loop is a deep copy of ``loop`` with the body state's contents
@@ -188,7 +186,7 @@ def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, comp
     # the original side strip the IV component out so the residual body still
     # contains the other statements.
     iv_state = list(iv_loop.nodes())[0]
-    component_labels = {id_for(n) for n in component}
+    component_labels = dict.fromkeys(id_for(n) for n in component)
     for n in list(iv_state.nodes()):
         if id_for(n) not in component_labels:
             iv_state.remove_node(n)
@@ -197,14 +195,18 @@ def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, comp
             state.remove_node(n)
 
 
-def id_for(n) -> Tuple:
+def id_for(n: nodes.Node) -> tuple[str, ...]:
     """A stable "structural id" for a node, so we can match deepcopy-pair nodes
-    by their visible shape (label/data + type) without relying on Python ``id``."""
+    by their visible shape (label/data + type) without relying on Python ``id``.
+
+    ``label`` is missing only on ``Node``, ``EntryNode`` and ``ExitNode``, which are abstract
+    bases; every node that can sit in a state resolves it.
+    """
     if isinstance(n, nodes.AccessNode):
-        return ('access', n.data)
+        return ("access", n.data)
     if isinstance(n, nodes.Tasklet):
-        return ('tasklet', n.label, n.code.as_string)
-    return (type(n).__name__, getattr(n, 'label', None))
+        return ("tasklet", n.label, n.code.as_string)
+    return (type(n).__name__, n.label)
 
 
 @properties.make_properties
@@ -222,10 +224,10 @@ class HoistInductionVariableUpdates(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Fission every compound-body loop in ``sdfg`` (and nested SDFGs) that
         carries an independent IV update.
 
@@ -268,4 +270,4 @@ class HoistInductionVariableUpdates(ppl.Pass):
         return False
 
 
-__all__ = ['HoistInductionVariableUpdates']
+__all__ = ["HoistInductionVariableUpdates"]

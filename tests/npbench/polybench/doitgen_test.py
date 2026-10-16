@@ -1,12 +1,14 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Data set sizes
 # NQ, NR, NP
@@ -15,10 +17,10 @@ sizes = {
     "small": (20, 25, 30),
     "medium": (40, 50, 60),
     "large": (140, 150, 160),
-    "extra-large": (220, 250, 270)
+    "extra-large": (220, 250, 270),
 }
 
-NR, NQ, NP = (dc.symbol(s, dtype=dc.int64) for s in ('NR', 'NQ', 'NP'))
+NR, NQ, NP = (dc.symbol(s, dtype=dc.int64) for s in ("NR", "NQ", "NP"))
 
 
 @dc.program
@@ -27,7 +29,7 @@ def doitgen_kernel(A: dc.float64[NR, NQ, NP], C4: dc.float64[NP, NP]):
     # Ideal - not working because Matmul with dim > 3 unsupported
     # A[:] = np.reshape(np.reshape(A, (NR, NQ, 1, NP)) @ C4, (NR, NQ, NP))
     for r in range(NR):
-        A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, NP)) @ C4, (NQ, NP))
+        A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, 1, NP)) @ C4, (NQ, NP))
 
 
 def initialize(NR, NQ, NP, datatype=np.float64):
@@ -51,10 +53,10 @@ def ground_truth(NR, NQ, NP, A, C4):
 
 
 def run_doitgen(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Doitgen for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     NQ, NR, NP = sizes["mini"]
@@ -83,7 +85,7 @@ def run_doitgen_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -123,9 +125,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

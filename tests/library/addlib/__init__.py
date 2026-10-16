@@ -42,13 +42,12 @@ class ExpandAdd(ExpandTransformation):
 
 @dace.library.node
 class AddNode(dace.sdfg.nodes.LibraryNode):
-
     _dace_library_name = "AddLib"
     # Global properties
     implementations = {
         "pure": ExpandAdd,
     }
-    default_implementation = 'pure'
+    default_implementation = "pure"
 
     def __init__(self, name):
-        super().__init__(name, inputs={'_a'}, outputs={'_b'})
+        super().__init__(name, inputs={"_a"}, outputs={"_b"})

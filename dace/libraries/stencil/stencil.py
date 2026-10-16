@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Dict, Tuple
 
 import dace
 import dace.library
@@ -49,29 +48,44 @@ class Stencil(dace.library.LibraryNode):
     }
     default_implementation = "pure"
 
-    code = dace.properties.CodeProperty(desc=("Stencil code accessing all the input connector at constant "
-                                              "offsets relative to the center, e.g.: "
-                                              "c[0, 0, 0] = 0.1 * a[-1, 0, 1] + 0.9 * b[0, 0, 1]"),
-                                        default=dace.properties.CodeBlock(""))
+    code = dace.properties.CodeProperty(
+        category="Semantics",
+        desc=(
+            "Stencil code accessing all the input connector at constant "
+            "offsets relative to the center, e.g.: "
+            "c[0, 0, 0] = 0.1 * a[-1, 0, 1] + 0.9 * b[0, 0, 1]"
+        ),
+        default=dace.properties.CodeBlock(""),
+    )
     iterator_mapping = dace.properties.DictProperty(
         str,
         tuple,
-        desc=("Dictionary mapping lower-dimensional input fields to a tuple "
-              " of booleans indicating which iterators to use for their "
-              "accesses, e.g.: {'a': (True, False, True)} uses the first and "
-              "last iterator in a 3D iteration space to access a 2D array."),
-        default=collections.OrderedDict())
+        category="Semantics",
+        desc=(
+            "Dictionary mapping lower-dimensional input fields to a tuple "
+            " of booleans indicating which iterators to use for their "
+            "accesses, e.g.: {'a': (True, False, True)} uses the first and "
+            "last iterator in a 3D iteration space to access a 2D array."
+        ),
+        default=collections.OrderedDict(),
+    )
     boundary_conditions = dace.properties.OrderedDictProperty(
-        desc=("Boundary condition specifications for each accessed field, on "
-              "the form: {'b': {'btype': 'constant', 'value': 3}}."),
-        default=collections.OrderedDict())
+        category="Semantics",
+        desc=(
+            "Boundary condition specifications for each accessed field, on "
+            "the form: {'b': {'btype': 'constant', 'value': 3}}."
+        ),
+        default=collections.OrderedDict(),
+    )
 
-    def __init__(self,
-                 label: str,
-                 code: str = "",
-                 iterator_mapping: Dict[str, Tuple[int]] = {},
-                 boundary_conditions: Dict[str, Dict] = {},
-                 **kwargs):
+    def __init__(
+        self,
+        label: str,
+        code: str = "",
+        iterator_mapping: dict[str, tuple[int]] = {},
+        boundary_conditions: dict[str, dict] = {},
+        **kwargs,
+    ):
         super().__init__(label, **kwargs)
         self.code = type(self).code.from_string(code, dace.dtypes.Language.Python)
         self.iterator_mapping = iterator_mapping

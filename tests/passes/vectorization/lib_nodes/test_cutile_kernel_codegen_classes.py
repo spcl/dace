@@ -71,7 +71,8 @@ def test_float_scalar_launch_normalization_codegen():
     the kernel binds them as scalar tiles."""
     sdfg = _lower(_gofast_like)
     code = sdfg.generate_code()[0].code.replace(" ", "")
-    assert "cupy.asarray(trace,dtype=numpy.float64).reshape(1)" in code
+    assert "trace=cupy.empty((1,),dtype=numpy.float64)" in code
+    assert "ct.atomic_add(trace,(0,)," in code
     assert "ct.load(trace,(0,),shape=()).item()" in code
 
 

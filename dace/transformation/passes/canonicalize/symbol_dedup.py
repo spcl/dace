@@ -21,13 +21,15 @@ every point one is read, the other has an identical reaching definition). All
 uses of the dropped symbol are rewritten to the surviving keeper via DaCe's
 symbol-replacement machinery, keeping the transform value-preserving (bit-exact).
 """
+
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Any
 
 from dace import SDFG, properties
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @dataclass(unsafe_hash=True)
@@ -46,7 +48,7 @@ class SymbolDedup(ppl.Pass):
     and the symbol itself -- preserves values exactly.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         # Renames symbols (Symbols), rewrites interstate edges + memlets (Edges),
@@ -58,7 +60,7 @@ class SymbolDedup(ppl.Pass):
         # changes symbols or edges may expose fresh duplicates, so reapply then.
         return modified & (ppl.Modifies.Symbols | ppl.Modifies.Edges) != ppl.Modifies.Nothing
 
-    def apply_pass(self, sdfg: SDFG, _: Dict) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Deduplicate provably-equal interstate symbols across the whole SDFG.
 
         :param sdfg: The SDFG to modify.
@@ -70,12 +72,12 @@ class SymbolDedup(ppl.Pass):
         # symbol_mapping), so dedup one SDFG scope at a time.
         for nested in sdfg.all_sdfgs_recursive():
             merged += self._dedup_sdfg(nested)
-        return merged if merged else None
+        return merged or None
 
-    def report(self, pass_retval: Optional[int]) -> str:
-        return f'Deduplicated {pass_retval or 0} interstate-edge symbol(s).'
+    def report(self, pass_retval: int | None) -> str:
+        return f"Deduplicated {pass_retval or 0} interstate-edge symbol(s)."
 
-    def _normalize_rhs(self, rhs) -> str:
+    def _normalize_rhs(self, rhs: object) -> str:
         """Normalize an assignment RHS so equal-but-differently-formatted
         expressions compare equal; fall back to the raw text if it will not parse."""
         text = str(rhs)
@@ -84,24 +86,24 @@ class SymbolDedup(ppl.Pass):
         except Exception:
             return text.strip()
 
-    def _protected_symbols(self, sdfg: SDFG) -> Set[str]:
+    def _protected_symbols(self, sdfg: SDFG) -> dict[str, None]:
         """Symbols that must never be dropped: externally-required free symbols,
         parameters bound by the parent nested-SDFG mapping, and loop variables
         (whose updates live in loop metadata, not interstate edges)."""
-        protected: Set[str] = set(map(str, sdfg.free_symbols))
+        protected: dict[str, None] = dict.fromkeys(map(str, sdfg.free_symbols))
         nsdfg = sdfg.parent_nsdfg_node
         if nsdfg is not None:
-            protected |= set(nsdfg.symbol_mapping.keys())
+            protected.update(dict.fromkeys(nsdfg.symbol_mapping.keys()))
         for cfg in sdfg.all_control_flow_regions(recursive=False):
             if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                protected.add(str(cfg.loop_variable))
+                protected[str(cfg.loop_variable)] = None
         return protected
 
     def _dedup_sdfg(self, sdfg: SDFG) -> int:
         """Deduplicate symbols within a single SDFG's interstate edges."""
         # 1. Collect, per symbol, the (edge -> normalized RHS) map of its
         #    assignments. Edge identity keys the "same set of edges" comparison.
-        defs: Dict[str, Dict[int, str]] = {}
+        defs: dict[str, dict[int, str]] = {}
         for edge in sdfg.all_interstate_edges():
             for sym, rhs in edge.data.assignments.items():
                 defs.setdefault(sym, {})[id(edge)] = self._normalize_rhs(rhs)
@@ -112,19 +114,22 @@ class SymbolDedup(ppl.Pass):
         # 2. Group symbols by their def-signature. Two symbols share a signature
         #    iff they are assigned on exactly the same edges with an equal RHS on
         #    each -- i.e. they are provably equal everywhere and mergeable.
-        by_signature: Dict[FrozenSet[Tuple[int, str]], List[str]] = {}
+        by_signature: dict[frozenset[tuple[int, str]], list[str]] = {}
         for sym, edge_map in defs.items():
             by_signature.setdefault(frozenset(edge_map.items()), []).append(sym)
 
+        # A class of one merges nothing, so the whole-SDFG ``free_symbols`` walk behind
+        # ``_protected_symbols`` is only paid once a merge is actually on the table.
+        classes = [syms for syms in by_signature.values() if len(syms) >= 2]
+        if not classes:
+            return 0
         protected = self._protected_symbols(sdfg)
 
         # 3. Per equivalence class, keep one canonical symbol (shortest name, ties
         #    broken lexicographically -- prefers 'idx_index' over 'idx_index_0')
         #    and map every other droppable member onto it.
-        repl: Dict[str, str] = {}
-        for syms in by_signature.values():
-            if len(syms) < 2:
-                continue
+        repl: dict[str, str] = {}
+        for syms in classes:
             keeper = min(syms, key=lambda name: (len(name), name))
             for sym in syms:
                 if sym != keeper and sym not in protected:
@@ -142,7 +147,7 @@ class SymbolDedup(ppl.Pass):
 
         # 5. Drop each redundant assignment (the keeper is assigned identically on
         #    the same edge) and remove the now-dead symbols from the SDFG.
-        dropped = set(repl.keys())
+        dropped = dict.fromkeys(repl.keys())
         for edge in sdfg.all_interstate_edges():
             for sym in [s for s in edge.data.assignments if s in dropped]:
                 del edge.data.assignments[sym]

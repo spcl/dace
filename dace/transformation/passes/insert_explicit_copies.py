@@ -1,22 +1,23 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pass replacing implicit copy patterns (e.g. a path between two access nodes
-without an intermediate tasklet) with explicit ``CopyLibraryNode`` instances.
-"""
+"""Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
+
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import data, dtypes, nodes, properties, subsets, symbolic
+from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
-from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
-    """Destination subset for a copy memlet that omits it: the full array when the
-    volumes are not provably unequal, else ``src_subset``.
+    """Derive the absent side of a copy memlet: the full array when volumes are not
+    provably unequal, else ``src_subset``.
 
     :param src_subset: the known (source) side of the copy.
     :param dst_desc: descriptor whose subset is being derived.
@@ -28,35 +29,139 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     return src_subset
 
 
+def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> list:
+    """The edges into ``target`` other than ``edge`` that write a region of ``name`` that may overlap ``subset``.
+
+    An overlap ``subsets.intersects`` cannot decide counts as one.
+    """
+    facts = SymbolResolver().facts_at(state, target)
+    return [
+        other
+        for other in state.in_edges(target)
+        if other is not edge
+        and not other.data.is_empty()
+        and other.data.data == name
+        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset, facts)
+        is not symbolic.Truth.FALSE
+    ]
+
+
+def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: nodes.Node) -> None:
+    """Repeat onto ``libnode`` the ordering edges that sequenced writes to ``written``.
+
+    An empty memlet is a happens-before edge, and the write it constrained is no longer the access
+    node's own -- it is the libnode's. Left behind, it orders a node that no longer writes anything,
+    and the libnode is free to be scheduled ahead of the write it was supposed to follow.
+
+    :param state: the state both nodes live in.
+    :param written: the access node the libnode now writes.
+    :param libnode: the inserted copy node.
+    """
+    for edge in state.in_edges(written):
+        if not edge.data.is_empty() or edge.src is libnode:
+            continue
+        if any(existing.src is edge.src for existing in state.in_edges(libnode)):
+            continue
+        state.add_edge(edge.src, None, libnode, None, Memlet())
+
+
+def drop_scope_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
+    """Remove ``inner``, a stage-in access node that only renames the container across the map entry.
+
+    The staging ``edge`` must be its sole producer; its consumers then read the map connector directly.
+    A consumer that is itself an access node would become a new staging copy, so that shape is left to
+    the lift.
+
+    :returns: whether ``inner`` was removed.
+    """
+    consumers = list(state.out_edges(inner))
+    if state.in_degree(inner) != 1 or not consumers or any(isinstance(e.dst, nodes.AccessNode) for e in consumers):
+        return False
+    for e in consumers:
+        if e.data.is_empty():
+            state.add_nedge(edge.src, e.dst, Memlet())
+        else:
+            state.add_edge(edge.src, edge.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+    state.remove_node(inner)
+    return True
+
+
+def drop_scope_exit_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
+    """Remove ``inner``, a stage-out access node that only renames the container across the map exit.
+
+    The mirror of :func:`drop_scope_alias`: the staging ``edge`` into the exit must be the sole consumer of
+    ``inner`` and carry its single, non-empty producer on to the exit. A producer that is itself an access node
+    would become a new staging copy, so that shape is left to the lift.
+
+    :returns: whether ``inner`` was removed.
+    """
+    producers = list(state.in_edges(inner))
+    if state.out_degree(inner) != 1 or len(producers) != 1:
+        return False
+    producer = producers[0]
+    if producer.data.is_empty() or isinstance(producer.src, (nodes.AccessNode, nodes.MapEntry)):
+        return False
+    state.add_edge(producer.src, producer.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(producer.data))
+    state.remove_node(inner)
+    return True
+
+
+def order_against_competing_writes(
+    state: SDFGState,
+    libnode: CopyLibraryNode,
+    source: nodes.Node,
+    written: nodes.Node,
+    name: str,
+    subset: subsets.Subset,
+) -> None:
+    """Order a lifted copy against the competing writes its implicit form was ordered with.
+
+    Copy-edge codegen emits a copy when its SOURCE node is visited, so the implicit copy landed before every
+    competing write downstream of the source, and after any other copy out of the same source emitted ahead of
+    it. Both orders are kept with empty-memlet edges: nothing else in the graph orders two writes to one region
+    that reach a node on separate edges, and a lifted copy would be re-sorted against them, silently flipping
+    which value survives. A competing write not downstream of the source was never ordered with the copy and
+    stays unordered. An edge is only added where the pair is not already ordered, so no cycle appears.
+
+    ``source`` is the node the copy reads (the map entry when staging in), ``written`` the node it writes through
+    (the map exit when staging out); the libnode is already wired between them.
+    """
+    out_edge = next(state.out_edges_by_connector(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME))
+    competing = competing_writes(state, written, out_edge, name, subset)
+    if not competing:
+        return
+    after_libnode = sdutils.find_downstream_nodes(libnode, state)
+    for other in competing:
+        # Another copy out of the same source, emitted ahead of this one, keeps landing first.
+        if (
+            isinstance(other.src, CopyLibraryNode)
+            and other.src not in after_libnode
+            and any(e.src is source for e in state.in_edges(other.src))
+        ):
+            state.add_edge(other.src, None, libnode, None, Memlet())
+    after_source = sdutils.find_downstream_nodes(source, state)
+    before_libnode = sdutils.find_upstream_nodes(libnode, state)
+    for other in competing:
+        # A write out of a scope happens inside it, so the scope as a whole has to follow the copy.
+        writer = state.entry_node(other.src) if isinstance(other.src, nodes.ExitNode) else other.src
+        if writer in after_source and writer not in before_libnode and writer not in after_libnode:
+            state.add_edge(libnode, None, writer, None, Memlet())
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
-    """Replaces implicit copy patterns with ``CopyLibraryNode`` instances.
+    """Replaces implicit copy patterns with ``CopyLibraryNode`` instances: direct
+    ``AccessNode -> AccessNode`` edges (View endpoints included), and stage-in/stage-out through
+    chained ``MapEntry``/``MapExit`` (libnode placed inside the map scope).
 
-    Detected patterns:
-    - ``AccessNode -> AccessNode`` (direct copy edge) -- lifted to a libnode.
-    - an ``AccessNode <-> View <-> AccessNode`` data-movement edge -- lifted to a libnode with
-      the View as a normal endpoint (treated like an array).
-    - ``AccessNode -> (MapEntry)+ -> AccessNode`` (stage-in) -- libnode placed
-      inside the innermost map scope, wired directly to the MapEntry's output
-      connector.
-    - ``AccessNode -> (MapExit)+ -> AccessNode`` (stage-out) -- symmetric;
-      libnode inside the map scope, output connector wired directly to the outermost
-      MapExit.
-    """
+    No copy is left implicit because another write competes for its region: the lifted copy is ordered against
+    that write by an empty memlet, as copy-edge codegen ordered the implicit one."""
 
-    # Storages whose copies CopyLibraryNode can lower. Other storages
-    # (e.g. TensorCore_*, FPGA_*, Snitch_*) belong to custom codegen
-    # targets that handle copies via their own ``copy_memory`` hook.
-    _STANDARD_STORAGES = frozenset({
-        dtypes.StorageType.Default,
-        dtypes.StorageType.Register,
-        dtypes.StorageType.CPU_Heap,
-        dtypes.StorageType.CPU_Pinned,
-        dtypes.StorageType.CPU_ThreadLocal,
-        dtypes.StorageType.GPU_Global,
-        dtypes.StorageType.GPU_Shared,
-    })
+    # Other storages (TensorCore_*, FPGA_*, Snitch_*) use their own codegen ``copy_memory`` hook.
+    _STANDARD_STORAGES = (
+        CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -67,8 +172,8 @@ class InsertExplicitCopies(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Lift every implicit copy in ``sdfg`` to a ``CopyLibraryNode``.
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """Lift every implicit copy in ``sdfg`` (and nested SDFGs) to a ``CopyLibraryNode``.
 
         :param sdfg: The SDFG to transform, recursively including nested SDFGs.
         :param pipeline_results: Results of previously applied passes (unused).
@@ -76,10 +181,52 @@ class InsertExplicitCopies(ppl.Pass):
         """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
+            self.free_copy_connector_names(nsdfg, connectors=False)
+            inserted = 0
             for state in nsdfg.states():
-                count += self._replace_direct_copies(state)
-                count += self._replace_map_staging_copies(state)
+                inserted += self._replace_direct_copies(state)
+                inserted += self._replace_map_staging_copies(state)
+            if inserted:
+                self.free_copy_connector_names(nsdfg)
+            count += inserted
         return count if count > 0 else None
+
+    @classmethod
+    def free_copy_connector_names(cls, sdfg: SDFG, connectors: bool = True) -> None:
+        """Renames data named like a copy node's connectors, which a connector may not share a name with.
+
+        An expanded and inlined copy leaves its wrapper views behind under those names (``_cpy_in``); those
+        transients move in every SDFG, since any later copy-like node beside them would clash. With
+        ``connectors``, a non-transient of that name moves too, together with its nested SDFG node's connector:
+        only for an SDFG that received copies, since the wrapper of a copy expanded but not inlined binds its
+        connectors under exactly these names.
+        """
+        taken = [
+            name
+            for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
+            if name in sdfg.arrays and (connectors or sdfg.arrays[name].transient)
+        ]
+        if not taken:
+            return
+        renames = {name: sdfg.find_new_name_avoiding_connectors(name.lstrip("_")) for name in taken}
+        sdfg.replace_dict(renames)
+        # A non-transient is also the name of the nested SDFG node's connector, which the parent spells.
+        node, parent = sdfg.parent_nsdfg_node, sdfg.parent
+        if node is None or parent is None:
+            return
+        for old, new in renames.items():
+            if sdfg.arrays[new].transient:
+                continue
+            for edge in list(parent.in_edges_by_connector(node, old)):
+                edge.dst_conn = new
+            for edge in list(parent.out_edges_by_connector(node, old)):
+                edge.src_conn = new
+            if old in node.in_connectors:
+                node.add_in_connector(new, node.in_connectors[old], force=True)
+                node.remove_in_connector(old)
+            if old in node.out_connectors:
+                node.add_out_connector(new, node.out_connectors[old], force=True)
+                node.remove_out_connector(old)
 
     def _replace_direct_copies(self, state: SDFGState) -> int:
         """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances.
@@ -105,58 +252,69 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.wcr is not None:
                 continue
 
+            # A reference-set edge assigns a POINTER; rewriting it would drop the ``set`` connector.
+            if edge.dst_conn == "set":
+                continue
+
             src_desc = sdfg.arrays[src_node.data]
             dst_desc = sdfg.arrays[dst_node.data]
 
-            # A view's alias (view-defining) edge references the underlying
-            # buffer rather than moving data -- skip it.
+            # A view's alias (view-defining) edge references the underlying buffer, not data -- skip.
             if any(
-                    isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
-                    for an in (src_node, dst_node)):
+                isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
+                for an in (src_node, dst_node)
+            ):
                 continue
 
-            # We only copy array-like data (Array / Scalar), not streams.
-            if not isinstance(src_desc, (data.Array, data.Scalar)) \
-                    or not isinstance(dst_desc, (data.Array, data.Scalar)):
+            if not isinstance(src_desc, (data.Array, data.Scalar)) or not isinstance(
+                dst_desc, (data.Array, data.Scalar)
+            ):
                 continue
 
-            # Custom-target storages (e.g. TensorCore_A/B/Accumulator from
-            # the tensor_cores sample) are handled by their own codegen.
-            if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
+            # Custom-target storages are handled by their own codegen, not CopyLibraryNode.
+            if src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES:
                 continue
 
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # Resolve src and dst subset. Self-copy: subset is the dst side;
-            # otherwise the memlet path maps ``data`` to an endpoint.
-            if src_name == dst_name:
-                src_subset, dst_subset = memlet.other_subset, memlet.subset
-            else:
-                src_subset = memlet.get_src_subset(edge, state)
-                dst_subset = memlet.get_dst_subset(edge, state)
+            # The memlet path maps ``data`` to an endpoint; in a self-copy, where both match, ``_is_data_src``
+            # decides, exactly as in copy-edge codegen.
+            src_subset = memlet.get_src_subset(edge, state)
+            dst_subset = memlet.get_dst_subset(edge, state)
 
-            # Fill in either side that wasn't carried by the memlet, deriving
-            # a matching range on the absent side from the array shape when
-            # the volumes line up (common for implicit copies between
-            # different-shaped but same-volume arrays).
+            # Derive any side the memlet omitted from the array shape (same-volume, different-shape).
             if src_subset is None:
                 src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
             if dst_subset is None:
                 dst_subset = _derive_matching_dst_subset(src_subset, dst_desc)
 
+            # A copy of zero elements moves nothing, and plain copy-edge codegen emits nothing for
+            # it. Lifting it would put a node in the state that has no work to do.
+            if symbolic.equal(src_subset.num_elements(), 0, is_length=False) is True:
+                continue
+
             in_memlet = Memlet(data=src_name, subset=copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
             out_memlet = Memlet(data=dst_name, subset=copy.deepcopy(dst_subset))
             out_memlet.dynamic = memlet.dynamic
+            # ``allow_oob`` is the author's waiver of the src/dst volume check (``validation.py``
+            # honours it the same way); dropping it here turns a legal copy into an expansion error.
+            in_memlet.allow_oob = memlet.allow_oob
+            out_memlet.allow_oob = memlet.allow_oob
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)
+            # Instrumentation providers decide a copy edge's instrumentation from the state it is in
+            # (``on_copy_begin``); as a node the copy needs its own setting to stay measured.
+            libnode.instrument = state.instrument
 
             state.remove_edge(edge)
             state.add_node(libnode)
             state.add_edge(src_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, in_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_node, None, out_memlet)
+            _carry_write_ordering(state, dst_node, libnode)
+            order_against_competing_writes(state, libnode, src_node, dst_node, dst_name, dst_subset)
             count += 1
 
         return count
@@ -164,21 +322,21 @@ class InsertExplicitCopies(ppl.Pass):
     def _replace_map_staging_copies(self, state: SDFGState) -> int:
         """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
 
-        The libnode is placed inside the map scope: for stage-in it keeps the
-        per-iteration memlet on the MapEntry side and a descriptor-derived
-        memlet on the inner AccessNode; stage-out is symmetric. Chained
-        MapEntries / MapExits are followed via ``memlet_path``.
+        The libnode sits inside the map scope; chained MapEntries / MapExits are followed via
+        ``memlet_path``.
 
         :param state: The state to scan (owning SDFG is ``state.sdfg``).
         :returns: Number of libnodes inserted.
         """
         count = 0
+        # Stage-ins first: a stage-out alias is only removable once what feeds it is a node, not a scope entry.
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
                 for edge in list(state.out_edges(node)):
                     if self._lift_staging_edge(state, edge, stage_in=True):
                         count += 1
-            elif isinstance(node, nodes.MapExit):
+        for node in state.nodes():
+            if isinstance(node, nodes.MapExit):
                 for edge in list(state.in_edges(node)):
                     if self._lift_staging_edge(state, edge, stage_in=False):
                         count += 1
@@ -190,9 +348,12 @@ class InsertExplicitCopies(ppl.Pass):
         :returns: True iff the edge was lifted.
         """
         sdfg = state.sdfg
-        # For stage-in the inner side is edge.dst (AccessNode), for stage-out edge.src.
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
+            return False
+        # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
+        # ``set`` connector and leave the Reference unbound.
+        if edge.dst_conn == "set":
             return False
         inner_desc = sdfg.arrays[inner_node.data]
         if isinstance(inner_desc, data.View):
@@ -202,15 +363,36 @@ class InsertExplicitCopies(ppl.Pass):
             outer = find_outer(state, edge)
         except RuntimeError:
             return False
-        outer_desc = sdfg.arrays[outer.data]
-        if (outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES
-                or outer_desc.dtype != inner_desc.dtype):
+        # One container passing through the scope with one subset is one memory on both sides: nothing moves. A node
+        # that only renames it is dropped, so that no copy onto itself is emitted for it. One that cannot be dropped
+        # keeps the identity copy -- its absent far side must not be derived from the array, which would cover the
+        # whole of it from the slice one iteration owns.
+        identity = inner_node.data == outer.data and edge.data.other_subset is None
+        if identity and (drop_scope_alias if stage_in else drop_scope_exit_alias)(state, edge, inner_node):
             return False
+        outer_desc = sdfg.arrays[outer.data]
+        # A dtype change is fine: the copy node's selector lowers a converting copy to a casting tasklet.
+        if outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES:
+            return False
+        # A WCR edge isn't a copy -- it's a reduction (e.g. AccumulateTransient's tile merge back
+        # into the real output), and the memcpy expansions store unconditionally, so lifting one
+        # turns the accumulate into an overwrite. A host single-element stage-out is the exception:
+        # ``Auto`` has nothing but ``Tasklet`` to pick for it, and a tasklet keeps the WCR on its
+        # output edge for the generator's own conflict resolution to lower. Left implicit that shape
+        # has no explicit spelling at all -- ``cpu.py`` falls back to ``dace::CopyND::Accumulate``.
+        if edge.data.wcr is not None:
+            liftable = (
+                not stage_in
+                and not GPU_RESIDENT_STORAGES & {outer_desc.storage, inner_desc.storage}
+                and all(
+                    sbs is None or sbs.num_elements_exact() == 1 for sbs in (edge.data.subset, edge.data.other_subset)
+                )
+            )
+            if not liftable:
+                return False
 
         outer_memlet = edge.data
-        # The inner Memlet may be dst-relative (``data == inner_node.data``,
-        # outer-side subset in ``other_subset``); resolve the subset in the
-        # outer array's index space via ``get_src/dst_subset``.
+        # May be dst-relative (subset in ``other_subset``); resolve via ``get_src/dst_subset``.
         if stage_in:
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset
         else:
@@ -218,18 +400,57 @@ class InsertExplicitCopies(ppl.Pass):
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
-        inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
+        # When the memlet already names both sides that mapping IS the copy -- deriving from the
+        # outer subset instead silently retargets the write.
+        if stage_in:
+            inner_subset = outer_memlet.get_dst_subset(edge, state)
+        else:
+            inner_subset = outer_memlet.get_src_subset(edge, state)
+        if identity:
+            inner_subset = copy.deepcopy(outer_subset)
+        elif inner_subset is None or outer_memlet.other_subset is None:
+            inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
+        else:
+            inner_subset = copy.deepcopy(inner_subset)
+        # One container over one subset on both sides of the scope is the same memory: nothing moves,
+        # and a node left for it would still be emitted as a copy onto itself.
+        if (
+            stage_in
+            and outer.data == inner_node.data
+            and inner_subset == outer_subset
+            and drop_scope_alias(state, edge, inner_node)
+        ):
+            return False
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}"
         libnode = CopyLibraryNode(name=label)
+        libnode.instrument = state.instrument
         state.add_node(libnode)
         if stage_in:
             map_node = edge.src
             state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, outer_side_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
+            _carry_write_ordering(state, inner_node, libnode)
+            source, written, written_name, written_subset = map_node, inner_node, inner_node.data, inner_subset
+            boundary_conn = "IN_" + edge.src_conn[len("OUT_") :]
+            boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
         else:
             map_node = edge.dst
             state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn, outer_side_memlet)
+            source, written, written_name, written_subset = inner_node, map_node, outer.data, outer_subset
+            boundary_conn = "OUT_" + edge.dst_conn[len("IN_") :]
+            boundary_edges = list(state.out_edges_by_connector(map_node, boundary_conn))
         state.remove_edge(edge)
+        order_against_competing_writes(state, libnode, source, written, written_name, written_subset)
+
+        # The scope-boundary edge on this connector may still carry a memlet whose ``.data``
+        # names the inner array, relying on memlet_path continuing through the scope entry/exit
+        # straight to inner_node for validation (validation.py resolves src/dst from the full
+        # path, not the edge's immediate neighbours). That continuation broke: the libnode now
+        # sits between the scope node and inner_node, so the path ends at a non-AccessNode and
+        # the boundary edge needs its own outer-relative memlet instead.
+        for bedge in boundary_edges:
+            if bedge.data.data != outer.data:
+                bedge.data = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         return True

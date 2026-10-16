@@ -30,14 +30,13 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
-# --------------------------------------------------------------------------
 # Kernels: two separate loops guarded by the same condition
-# --------------------------------------------------------------------------
 @dace.program
 def two_guarded_loops(cond: dace.int32, a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     """Map-invariant guard: after fusion + merge + hoist the ideal form is
@@ -62,13 +61,9 @@ def two_guarded_loops_idx(a: dace.float64[N], b: dace.float64[N], c: dace.float6
             c[i] = a[i] * 2.0
 
 
-# --------------------------------------------------------------------------
 # Helpers
-# --------------------------------------------------------------------------
 def _top_maps(sdfg: dace.SDFG):
-    return [
-        n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
-    ]
+    return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
 def _num_condblocks(sdfg: dace.SDFG) -> int:
@@ -81,7 +76,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
         if not isinstance(cb, ConditionalBlock):
             continue
         for _, branch in cb.branches:
-            for st in branch.all_states():
+            for st in branch.states():
                 if any(isinstance(n, nodes.MapEntry) and st.entry_node(n) is None for n in st.nodes()):
                     return True
     return False
@@ -89,7 +84,7 @@ def _guard_over_a_map(sdfg: dace.SDFG) -> bool:
 
 def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     """A ConditionalBlock inside a NestedSDFG that sits under a map scope (guard in-map)."""
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None:
                 if any(isinstance(b, ConditionalBlock) for b in n.sdfg.all_control_flow_regions(recursive=True)):
@@ -97,9 +92,7 @@ def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     return False
 
 
-# --------------------------------------------------------------------------
 # (1) MapFusion fuses two if-bodied maps; NormalizeMapBody merges the guards
-# --------------------------------------------------------------------------
 def test_mapfusion_fuses_then_merges_invariant_guard():
     """Map-invariant guard: MapFusion fuses the two if-bodied maps, then
     NormalizeMapBody + ConditionFusion merge the two same-condition guards into
@@ -107,6 +100,9 @@ def test_mapfusion_fuses_then_merges_invariant_guard():
     n = 16
     sdfg = two_guarded_loops.to_sdfg(simplify=False)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     assert _num_condblocks(sdfg) == 1, "the two same-condition guards must merge into one"
     assert _guard_over_a_map(sdfg), "the merged map-invariant guard must hoist out of the map"

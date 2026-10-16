@@ -1,63 +1,63 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the orthogonal
-    stencil tiling transformation. """
-
-import dace
-from dace import dtypes, symbolic
-from dace.properties import make_properties, Property, ShapeProperty
-from dace.sdfg import nodes
-from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
-from dace.sdfg.propagation import _propagate_node
-
-from dace.transformation.dataflow.map_for_loop import MapToForLoop
-from dace.transformation.dataflow.map_expansion import MapExpansion
-from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.strip_mining import StripMining
-from dace.transformation.subgraph import SubgraphFusion
-
-from copy import deepcopy as dcpy
-
-import dace.subsets as subsets
-import dace.symbolic as symbolic
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""This module contains classes and functions that implement the orthogonal
+stencil tiling transformation."""
 
 import itertools
 import warnings
-
 from collections import defaultdict
+from copy import deepcopy as dcpy
 
-from dace.transformation.subgraph import helpers
+import dace
+import dace.subsets as subsets
+from dace import dtypes, symbolic
+from dace.properties import Property, ShapeProperty, make_properties
+from dace.sdfg import nodes
+from dace.sdfg.propagation import propagate_node
+from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.transformation import transformation
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.map_expansion import MapExpansion
+from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.strip_mining import StripMining
+from dace.transformation.subgraph import SubgraphFusion, helpers
 
 
 @make_properties
 class StencilTiling(transformation.SubgraphTransformation):
-    """ Operates on top level maps of the given subgraph.
-        Applies orthogonal tiling to each of the maps with
-        the given strides and extends the newly created
-        inner tiles to account for data dependencies
-        due to stencil patterns. For each map all outgoing
-        memlets to an array must cover the memlets that
-        are incoming into a following child map.
+    """Operates on top level maps of the given subgraph.
+    Applies orthogonal tiling to each of the maps with
+    the given strides and extends the newly created
+    inner tiles to account for data dependencies
+    due to stencil patterns. For each map all outgoing
+    memlets to an array must cover the memlets that
+    are incoming into a following child map.
 
-        All maps must have the same map parameters in
-        the same order.
+    All maps must have the same map parameters in
+    the same order.
     """
 
     # Properties
-    debug = Property(desc="Debug mode", dtype=bool, default=False)
+    debug = Property(category="Diagnostics", desc="Debug mode", dtype=bool, default=False)
 
-    prefix = Property(dtype=str, default="stencil", desc="Prefix for new inner tiled range symbols")
+    prefix = Property(
+        dtype=str, default="stencil", category="Parameters", desc="Prefix for new inner tiled range symbols"
+    )
 
-    strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Tile stride")
+    strides = ShapeProperty(dtype=tuple, default=(1,), category="Parameters", desc="Tile stride")
 
-    schedule = Property(dtype=dace.dtypes.ScheduleType,
-                        default=dace.dtypes.ScheduleType.Default,
-                        desc="Dace.Dtypes.ScheduleType of Inner Maps")
+    schedule = Property(
+        dtype=dace.dtypes.ScheduleType,
+        default=dace.dtypes.ScheduleType.Default,
+        category="Scheduling",
+        desc="Dace.Dtypes.ScheduleType of Inner Maps",
+    )
 
-    unroll_loops = Property(desc="Unroll Inner Loops if they have Size > 1", dtype=bool, default=False)
+    unroll_loops = Property(
+        category="Scheduling", desc="Unroll Inner Loops if they have Size > 1", dtype=bool, default=False
+    )
 
     @staticmethod
-    def coverage_dicts(sdfg, graph, map_entry, outer_range=True):
+    def coverage_dicts(sdfg, graph, map_entry, facts: symbolic.Facts, outer_range=True):
         """
         returns a tuple of two dicts:
         the first dict has as a key all data entering the map
@@ -94,7 +94,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 entry_coverage[e.data.data] = rng
             else:
                 old_coverage = entry_coverage[e.data.data]
-                entry_coverage[e.data.data] = subsets.union(old_coverage, rng)
+                entry_coverage[e.data.data] = subsets.union(old_coverage, rng, facts)
 
         # look at inner memlets at map exit
         for e in graph.in_edges(map_exit):
@@ -111,7 +111,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 exit_coverage[e.data.data] = rng
             else:
                 old_coverage = exit_coverage[e.data.data]
-                exit_coverage[e.data.data] = subsets.union(old_coverage, rng)
+                exit_coverage[e.data.data] = subsets.union(old_coverage, rng, facts)
 
         # return both coverages as a tuple
         return (entry_coverage, exit_coverage)
@@ -159,6 +159,8 @@ class StencilTiling(transformation.SubgraphTransformation):
         # 1.1: There has to be more than one outermost scope map entry
         if len(map_entries) <= 1:
             return False
+        # The maps may differ in their ranges, so only what holds around them is assumed
+        facts = SymbolResolver().facts_at(graph, map_entries[0])
 
         # 1.2: check basic constraints:
         # - all parameters have to be the same (this implies same length)
@@ -212,17 +214,18 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # 1.6 check that we only deal with compressible transients
 
-        subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes,
-                                                                             map_entries, map_exits)
-        if any([s == False for s in subgraph_contains_data.values()]):
+        subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(
+            sdfg, graph, intermediate_nodes, map_entries, map_exits
+        )
+        if any(s == False for s in subgraph_contains_data.values()):
             return False
 
         # get coverages for every map entry
         coverages = {}
         memlets = {}
         for map_entry in map_entries:
-            coverages[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry)
-            memlets[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, outer_range=False)
+            coverages[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, facts)
+            memlets[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, facts, outer_range=False)
 
         # get DAG neighbours for each map
         dag_neighbors = StencilTiling.topology(sdfg, graph, map_entries)
@@ -245,15 +248,17 @@ class StencilTiling(transformation.SubgraphTransformation):
             map_coverage = coverages[map_entry][1]
 
             # final mapping map_parameter -> coverage will be stored here
-            param_parent_coverage = {p: None for p in map_entry.params}
-            param_children_coverage = {p: None for p in map_entry.params}
+            param_parent_coverage = dict.fromkeys(map_entry.params)
+            param_children_coverage = dict.fromkeys(map_entry.params)
             for child_entry in children_dict[map_entry]:
                 # get mapping data_name -> coverage
-                for (data_name, cov) in map_coverage.items():
+                for data_name, cov in map_coverage.items():
                     parent_coverage = cov
                     children_coverage = None
                     if data_name in coverages[child_entry][0]:
-                        children_coverage = subsets.union(children_coverage, coverages[child_entry][0][data_name])
+                        children_coverage = subsets.union(
+                            children_coverage, coverages[child_entry][0][data_name], facts
+                        )
 
                     # TODO: Is there a better fix for this?
                     if children_coverage is None:
@@ -264,10 +269,9 @@ class StencilTiling(transformation.SubgraphTransformation):
                     # by the previous mapping
 
                     for i, (p_subset, c_subset) in enumerate(zip(parent_coverage, children_coverage)):
-
                         # transform into subset
-                        p_subset = subsets.Range((p_subset, ))
-                        c_subset = subsets.Range((c_subset, ))
+                        p_subset = subsets.Range((p_subset,))
+                        c_subset = subsets.Range((c_subset,))
 
                         # get associated parameter in memlet
                         params1 = symbolic.symlist(memlets[map_entry][1][data_name][i]).keys()
@@ -280,28 +284,34 @@ class StencilTiling(transformation.SubgraphTransformation):
                             return False
                         try:
                             symbol = next(iter(params))
-                            param_parent_coverage[symbol] = subsets.union(param_parent_coverage[symbol], p_subset)
-                            param_children_coverage[symbol] = subsets.union(param_children_coverage[symbol], c_subset)
+                            param_parent_coverage[symbol] = subsets.union(
+                                param_parent_coverage[symbol], p_subset, facts
+                            )
+                            param_children_coverage[symbol] = subsets.union(
+                                param_children_coverage[symbol], c_subset, facts
+                            )
 
                         except StopIteration:
                             # current dim has no symbol associated.
                             # ignore and continue
-                            warnings.warn(f"StencilTiling::In map {map_entry}, there is a "
-                                          "dimension belonging to {data_name} "
-                                          "that has no map parameter associated.")
+                            warnings.warn(
+                                f"StencilTiling::In map {map_entry}, there is a "
+                                "dimension belonging to {data_name} "
+                                "that has no map parameter associated."
+                            )
                             pass
 
                         except KeyError:
                             return False
 
-            #parameter mapping must be the same
+            # parameter mapping must be the same
             if param_parent_coverage != param_children_coverage:
                 return False
 
         # 1.8: we want all sink maps to have the same range size
         assert len(sink_maps) > 0
         first_sink_map = next(iter(sink_maps))
-        if not all([map.range.size() == first_sink_map.range.size() for map in sink_maps]):
+        if not all(map.range.size() == first_sink_map.range.size() for map in sink_maps):
             return False
 
         return True
@@ -310,6 +320,8 @@ class StencilTiling(transformation.SubgraphTransformation):
         subgraph = self.subgraph_view(sdfg)
         graph: SDFGState = subgraph.graph
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
+        # The maps may differ in their ranges, so only what holds around them is assumed
+        facts = SymbolResolver().facts_at(graph, map_entries[0])
 
         result = StencilTiling.topology(sdfg, graph, map_entries)
         (children_dict, parent_dict, sink_maps) = result
@@ -333,8 +345,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             element = next(e for e in queue if not children_dict[e] - set(topo_reversed))
             topo_reversed.append(element)
             queue.remove(element)
-            for parent in parent_dict[element]:
-                queue.add(parent)
+            queue.update(parent_dict[element])
 
         # main loop
         # first get coverage dicts for each map entry
@@ -342,7 +353,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         # each of those two maps from data name to outer range
         coverage = {}
         for map_entry in map_entries:
-            coverage[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, outer_range=True)
+            coverage[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, facts, outer_range=True)
 
         # we have a mapping from data name to outer range
         # however we want a mapping from map parameters to outer ranges
@@ -356,14 +367,16 @@ class StencilTiling(transformation.SubgraphTransformation):
             # first find out variable mapping
             for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                 mapping = []
-                for dim in e.data.subset:
+                for dim in e.data.subset.ndrange():
                     syms = set()
                     for d in dim:
                         syms |= symbolic.symlist(d).keys()
                     if len(syms) > 1:
-                        raise NotImplementedError("One incoming or outgoing stencil subset is indexed "
-                                                  "by multiple map parameters. "
-                                                  "This is not supported yet.")
+                        raise NotImplementedError(
+                            "One incoming or outgoing stencil subset is indexed "
+                            "by multiple map parameters. "
+                            "This is not supported yet."
+                        )
                     try:
                         mapping.append(syms.pop())
                     except KeyError:
@@ -380,25 +393,26 @@ class StencilTiling(transformation.SubgraphTransformation):
 
             # now do mapping data name -> outer range
             # and from that infer mapping variable -> outer range
-            local_ranges = {dn: None for dn in coverage[map_entry][1].keys()}
+            local_ranges = dict.fromkeys(coverage[map_entry][1].keys())
             for data_name, cov in coverage[map_entry][1].items():
-                local_ranges[data_name] = subsets.union(local_ranges[data_name], cov)
+                local_ranges[data_name] = subsets.union(local_ranges[data_name], cov, facts)
                 # now look at proceeding maps
                 # and union those subsets -> could be larger with stencil indent
                 for child_map in children_dict[map_entry]:
                     if data_name in coverage[child_map][0]:
-                        local_ranges[data_name] = subsets.union(local_ranges[data_name],
-                                                                coverage[child_map][0][data_name])
+                        local_ranges[data_name] = subsets.union(
+                            local_ranges[data_name], coverage[child_map][0][data_name], facts
+                        )
 
             # final assignent: combine local_ranges and variable_mapping
             # together into inferred_ranges
-            inferred_ranges[map_entry] = {p: None for p in map.params}
+            inferred_ranges[map_entry] = dict.fromkeys(map.params)
             for data_name, ranges in local_ranges.items():
                 for param, r in zip(variable_mapping[data_name], ranges):
                     # create new range from this subset and assign
-                    rng = subsets.Range((r, ))
+                    rng = subsets.Range((r,))
                     if param:
-                        inferred_ranges[map_entry][param] = subsets.union(inferred_ranges[map_entry][param], rng)
+                        inferred_ranges[map_entry][param] = subsets.union(inferred_ranges[map_entry][param], rng, facts)
 
         # get parameters -- should all be the same
         params = next(iter(map_entries)).map.params.copy()
@@ -458,22 +472,24 @@ class StencilTiling(transformation.SubgraphTransformation):
                     target_range_current = inferred_ranges[map_entry][param]
                     reference_range_current = self.reference_range[param]
 
-                    min_diff = symbolic.SymExpr(reference_range_current.min_element()[0] \
-                                    - target_range_current.min_element()[0])
-                    max_diff = symbolic.SymExpr(target_range_current.max_element()[0] \
-                                    - reference_range_current.max_element()[0])
+                    min_diff = symbolic.SymExpr(
+                        reference_range_current.min_element()[0] - target_range_current.min_element()[0]
+                    )
+                    max_diff = symbolic.SymExpr(
+                        target_range_current.max_element()[0] - reference_range_current.max_element()[0]
+                    )
 
                     try:
                         min_diff = symbolic.evaluate(min_diff, {})
                         max_diff = symbolic.evaluate(max_diff, {})
                     except TypeError:
-                        raise RuntimeError("Symbolic evaluation of map "
-                                           "ranges failed. Please check "
-                                           "your parameters and match.")
+                        raise RuntimeError(
+                            "Symbolic evaluation of map ranges failed. Please check your parameters and match."
+                        )
 
                     self.tile_sizes.append(tile_stride + max_diff + min_diff)
-                    self.tile_offset_lower.append(symbolic.pystr_to_symbolic(str(min_diff)))
-                    self.tile_offset_upper.append(symbolic.pystr_to_symbolic(str(max_diff)))
+                    self.tile_offset_lower.append(symbolic.pystr_to_symbolic(min_diff))
+                    self.tile_offset_upper.append(symbolic.pystr_to_symbolic(max_diff))
 
                 # get calculated parameters
                 tile_size = self.tile_sizes[-1]
@@ -495,15 +511,18 @@ class StencilTiling(transformation.SubgraphTransformation):
                 # indent all map ranges accordingly and then perform
                 # strip mining on these. Offset inner maps accordingly afterwards
 
-                range_tuple = (map.range[dim_idx][0] + self.tile_offset_lower[-1],
-                               map.range[dim_idx][1] - self.tile_offset_upper[-1], map.range[dim_idx][2])
+                range_tuple = (
+                    map.range[dim_idx][0] + self.tile_offset_lower[-1],
+                    map.range[dim_idx][1] - self.tile_offset_upper[-1],
+                    map.range[dim_idx][2],
+                )
                 map.range[dim_idx] = range_tuple
                 stripmine = StripMining()
-                stripmine.setup_match(sdfg, cfg_id, self.state_id, stripmine_subgraph, 0)
+                stripmine.setup_match(sdfg, cfg_id, graph.block_id, stripmine_subgraph, 0)
 
                 stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
-                stripmine.new_dim_prefix = self.prefix if not trivial else ''
+                stripmine.new_dim_prefix = self.prefix if not trivial else ""
                 # use tile_stride for both -- we will extend
                 # the inner tiles later
                 stripmine.tile_size = str(tile_stride)
@@ -519,28 +538,32 @@ class StencilTiling(transformation.SubgraphTransformation):
                     if tile_stride == 1:
                         map_entry.map.range[dim_idx] = tuple(
                             symbolic.SymExpr(el._approx_expr) if isinstance(el, symbolic.SymExpr) else el
-                            for el in map_entry.map.range[dim_idx])
+                            for el in map_entry.map.range[dim_idx]
+                        )
 
                     # in map_entry: enlarge tiles by upper and lower offset
                     # doing it this way and not via stripmine strides ensures
                     # that the max gets changed as well
                     old_range = map_entry.map.range[dim_idx]
-                    map_entry.map.range[dim_idx] = ((old_range[0] - self.tile_offset_lower[-1]),
-                                                    (old_range[1] + self.tile_offset_upper[-1]), old_range[2])
+                    map_entry.map.range[dim_idx] = (
+                        (old_range[0] - self.tile_offset_lower[-1]),
+                        (old_range[1] + self.tile_offset_upper[-1]),
+                        old_range[2],
+                    )
 
                 # We have to propagate here for correct outer volume and subset sizes
-                _propagate_node(graph, map_entry)
-                _propagate_node(graph, graph.exit_node(map_entry))
+                propagate_node(graph, map_entry)
+                propagate_node(graph, graph.exit_node(map_entry))
 
                 # usual tiling pipeline
                 if last_map_entry:
                     new_map_entry = graph.in_edges(map_entry)[0].src
                     mapcollapse_subgraph = {
                         MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
-                        MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
+                        MapCollapse.inner_map_entry: graph.node_id(new_map_entry),
                     }
                     mapcollapse = MapCollapse()
-                    mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)
+                    mapcollapse.setup_match(sdfg, cfg_id, graph.block_id, mapcollapse_subgraph, 0)
                     mapcollapse.apply(graph, sdfg)
                 last_map_entry = graph.in_edges(map_entry)[0].src
             # add last instance of map entries to _outer_entries
@@ -553,8 +576,11 @@ class StencilTiling(transformation.SubgraphTransformation):
             # Map Unroll Feature: only unroll if conditions are met:
             # Only unroll if at least one of the inner map ranges is strictly larger than 1
             # Only unroll if strides all are one
-            if self.unroll_loops and all(s == 1 for s in self.strides) and any(s not in [0, 1]
-                                                                               for s in map_entry.range.size()):
+            if (
+                self.unroll_loops
+                and all(s == 1 for s in self.strides)
+                and any(s not in [0, 1] for s in map_entry.range.size())
+            ):
                 l = len(map_entry.params)
                 if l > 1:
                     subgraph = {MapExpansion.map_entry: graph.node_id(map_entry)}
@@ -572,19 +598,26 @@ class StencilTiling(transformation.SubgraphTransformation):
                     trafo_for_loop = MapToForLoop()
                     trafo_for_loop.setup_match(sdfg, graph.parent_graph.cfg_id, graph.block_id, subgraph, 0)
                     trafo_for_loop.apply(graph, sdfg)
-                    nsdfg = trafo_for_loop.nsdfg
+                    # Inlining the wrapping NestedSDFG moves the dataflow that stayed outside the
+                    # loop to a fresh state; the maps still to process live there now.
+                    graph = trafo_for_loop.target_state
 
                     # LoopUnroll
                     # Prevent circular import
                     from dace.transformation.interstate.loop_unroll import LoopUnroll
 
+                    # The loop region sits in the wrapping NestedSDFG, or in the parent region once
+                    # that wrapper is inlined away.
+                    region = trafo_for_loop.loop_region.parent_graph
                     subgraph = {LoopUnroll.loop: trafo_for_loop.loop_region.block_id}
                     transformation = LoopUnroll()
-                    transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
-                    transformation.apply(nsdfg, nsdfg)
+                    transformation.setup_match(region.sdfg, region.cfg_id, -1, subgraph, 0)
+                    transformation.apply(region, region.sdfg)
 
             elif self.unroll_loops:
-                warnings.warn("StencilTiling::Did not unroll loops. Either all ranges are equal to "
-                              "one or range difference is symbolic.")
+                warnings.warn(
+                    "StencilTiling::Did not unroll loops. Either all ranges are equal to "
+                    "one or range difference is symbolic."
+                )
 
         self._outer_entries = list(self._outer_entries)

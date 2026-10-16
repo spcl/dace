@@ -2,10 +2,13 @@
 """
 Pass-level tests for ``LowerITEToFpFactor``.
 
-After running, no tasklet body in the SDFG contains an ``ITE(...)`` call;
-every ``ITE(c, t, e)`` is rewritten to ``c * t + (1 - c) * e``. The pass
-is purely a code-text rewrite -- connectors and edges are unchanged.
+An INTEGER-dtype ``ITE(c, t, e)`` is rewritten to ``c * t + (1 - c) * e``; a
+float/complex one is left intact, because the blend evaluates BOTH arms and
+``0 * inf`` is NaN -- a non-finite unselected arm would leak into the result.
+A surviving ``ITE`` lowers via a real select instead. The pass is purely a
+code-text rewrite -- connectors and edges are unchanged.
 """
+
 import numpy as np
 
 import dace
@@ -13,19 +16,21 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    SameWriteSetIfElseToITECFG, )
+    SameWriteSetIfElseToITECFG,
+)
 
 
-def _build_ite_tasklet_sdfg(ite_code: str):
+def _build_ite_tasklet_sdfg(ite_code: str, dtype=dace.int64):
     """Build a minimal SDFG whose single state contains a tasklet with the
     given ``ITE`` body. Connectors ``_c``, ``_t``, ``_e`` are wired from
-    1-element float64 arrays; output ``_o`` goes to ``A``.
+    1-element ``dtype`` arrays; output ``_o`` goes to ``A``. Defaults to
+    ``int64`` -- the dtype the pass blends (see the module docstring).
     """
     sdfg = dace.SDFG("lower_ite_test")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("E", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("C", shape=(1, ), dtype=dace.bool_)
+    sdfg.add_array("A", shape=(1,), dtype=dtype)
+    sdfg.add_array("T", shape=(1,), dtype=dtype)
+    sdfg.add_array("E", shape=(1,), dtype=dtype)
+    sdfg.add_array("C", shape=(1,), dtype=dace.bool_)
 
     state = sdfg.add_state("only", is_start_block=True)
     rT = state.add_access("T")
@@ -44,14 +49,40 @@ def test_rewrites_simple_ite_tasklet():
     sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e)")
     rewritten = LowerITEToFpFactor().apply_pass(sdfg, {})
     assert rewritten == 1
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" not in body
     # The rewrite should preserve the three operands.
     for op in ("_c", "_t", "_e"):
         assert op in body
     # And introduce the (1 - c) complement factor, with the bool cond promoted to
-    # the float64 arm dtype (uniform-dtype tile binop; see the pass docstring).
-    assert "1 - dace.float64(_c)" in body
+    # the arm dtype (uniform-dtype tile binop; see the pass docstring).
+    assert "1 - dace.int64(_c)" in body
+
+
+def test_float_ite_is_left_intact_for_select():
+    """A float arm may be non-finite, and the blend evaluates BOTH arms, so ``0 * inf``
+    would leak a NaN. The ITE is kept and lowered by a real select instead."""
+    sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e)", dtype=dace.float64)
+    assert LowerITEToFpFactor().apply_pass(sdfg, {}) is None
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    assert "ITE(" in body
+
+
+def test_float_non_finite_unselected_arm_does_not_poison_result():
+    """The motivating bug: with the guard FALSE and the unselected ``then`` arm ``inf``,
+    the fp-factor blend computes ``0.0 * inf + 1.0 * 3.0 = NaN``. The selected arm must be
+    returned verbatim -- exactly ``3.0``."""
+    sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e)", dtype=dace.float64)
+    LowerITEToFpFactor().apply_pass(sdfg, {})
+    csdfg = sdfg.compile()
+    A = np.zeros((1,), dtype=np.float64)
+    csdfg(
+        A=A,
+        T=np.array([np.inf], dtype=np.float64),
+        E=np.array([3.0], dtype=np.float64),
+        C=np.array([False], dtype=np.bool_),
+    )
+    assert A[0] == 3.0, f"unselected inf arm poisoned the result: got {A[0]}"
 
 
 def test_no_match_when_no_ite_call():
@@ -64,7 +95,7 @@ def test_handles_multiple_ites_in_one_tasklet():
     sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e) + ITE(_c, _t, _e)")
     rewritten = LowerITEToFpFactor().apply_pass(sdfg, {})
     assert rewritten == 1
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" not in body
 
 
@@ -74,9 +105,9 @@ def test_handles_symbol_cond_in_ite_call():
     ``ITE(c0 == 1, ...)``. The pass should rewrite this just like the
     in-connector form."""
     sdfg = dace.SDFG("lower_ite_sym_cond")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("E", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.int64)
+    sdfg.add_array("T", shape=(1,), dtype=dace.int64)
+    sdfg.add_array("E", shape=(1,), dtype=dace.int64)
     sdfg.add_symbol("c0", dace.int64)
     state = sdfg.add_state("only", is_start_block=True)
     rT = state.add_access("T")
@@ -89,7 +120,7 @@ def test_handles_symbol_cond_in_ite_call():
 
     rewritten = LowerITEToFpFactor().apply_pass(sdfg, {})
     assert rewritten == 1
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" not in body
     # The symbol cond appears twice: once in `c0 == 1` and again in `1 - (c0 == 1)`.
     assert body.count("c0") == 2
@@ -106,10 +137,13 @@ def test_pass_is_idempotent_after_first_run():
 def test_numerical_equivalence_against_branch_reference():
     """End-to-end: build a same-write-set if/else, run M3.1b to get canonical
     ITE IR, then LowerITEToFpFactor, then compile and compare against the
-    scalar Python reference. The two paths must agree."""
+    scalar Python reference. The two paths must agree.
+
+    The arms here are ``float64``, so the ITE is left intact and lowered by a select;
+    the numerics must match either way, which is what this pins."""
     sdfg = dace.SDFG("end_to_end_lower_ite")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     exit_state = sdfg.add_state("exit")
@@ -139,18 +173,13 @@ def test_numerical_equivalence_against_branch_reference():
     SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
     LowerITEToFpFactor().apply_pass(sdfg, {})
 
-    for state in sdfg.states():
-        for n in state.nodes():
-            if isinstance(n, dace.nodes.Tasklet):
-                assert "ITE(" not in n.code.as_string
-
     def reference(c: bool, B: np.ndarray) -> np.ndarray:
         return np.array([B[0] + 1.0 if c else B[0] - 1.0], dtype=np.float64)
 
     csdfg = sdfg.compile()
     for c in (True, False):
         for b in (-2.0, 0.5, 7.0):
-            A = np.zeros((1, ), dtype=np.float64)
+            A = np.zeros((1,), dtype=np.float64)
             B = np.array([b], dtype=np.float64)
             csdfg(A=A, B=B, c=c)
             expected = reference(c, B)

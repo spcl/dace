@@ -1,13 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Dict, Optional, Any
+from typing import Any
 
-from dace import sdfg as sd, properties
-from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ContinueBlock, ConditionalBlock, LoopRegion
-from dace.transformation import transformation
-from dace.transformation import pass_pipeline as ppl
+from dace import properties
+from dace import sdfg as sd
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -25,10 +25,23 @@ class ContinueToCondition(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
-        for node, parent in sdfg.all_nodes_recursive():
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """Turn every eligible ``continue`` into a guard on the rest of the loop body.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: Number of continue blocks converted, or ``None`` if there were none.
+        """
+        converted = 0
+        # Materialised before the first apply: applying REMOVES the conditional block and the
+        # states after it from their region, so a generator over the live graph hands back nodes
+        # that no longer belong to it. ``can_be_applied`` re-checks each candidate for exactly that.
+        for node, _ in list(sdfg.all_nodes_recursive()):
             if self.can_be_applied(node):
                 self.apply(node, sdfg)
+                converted += 1
+
+        return converted or None
 
     def can_be_applied(self, cb: ContinueBlock) -> bool:
         # Must be a continue block...
@@ -51,6 +64,11 @@ class ContinueToCondition(ppl.Pass):
 
         # ...and the parent graph must have a single successor..
         outer_cfg = pg.parent_graph
+        # A previous apply in this same pass can have detached ``pg`` from it -- ``parent_graph``
+        # still names the old region, but the region no longer holds the node, and ``successors``
+        # raises ``KeyError`` on it rather than answering zero (subset_sum, four nested continues).
+        if outer_cfg is None or pg not in outer_cfg.nodes():
+            return False
         if len(outer_cfg.successors(pg)) > 1:
             return False
 
@@ -96,8 +114,6 @@ class ContinueToCondition(ppl.Pass):
                 )
             to_remove.append(node)
 
+        # ``cfg.add_node`` re-homed each copy, nested SDFGs included; the removals unlist the originals.
         for node in to_remove:
             outer_cfg.remove_node(node)
-
-        # Fix sdfg parents
-        sdutil.set_nested_sdfg_parent_references(sdfg)

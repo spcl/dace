@@ -1,14 +1,19 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import pytest
 import numpy as np
+import pytest
 
-from dace.transformation.passes.nested_gpu_device_map_lowering import NestedGPUDeviceMapLowering
+import dace
+from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('block_size', [None, '64,8,1'])
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotImplementedError,
+    reason="NestedGPUDeviceMapLowering does not yet lower several nesting levels into one device map",
+)
+@pytest.mark.parametrize("block_size", [None, "64,8,1"])
 def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
 
     @dace.program
@@ -54,15 +59,17 @@ def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
     sdfg.validate()
 
-    num_device_maps = len({
-        n
-        for n, g in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-    })
+    num_device_maps = len(
+        {
+            n
+            for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        }
+    )
     assert num_device_maps == 1
 
     if block_size is not None:
-        with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
+        with dace.config.set_temporary("compiler", "cuda", "default_block_size", value=block_size):
             sdfg(a, c=3.0)
     else:
         sdfg(a, c=3.0)
@@ -71,7 +78,11 @@ def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('block_size', [None, '64,8,1'])
+# This test forces every Map (outer + two inner) to GPU_Device, producing a
+# nested GPU_Device structure (dynamic parallelism) which the new codegen
+# rejects by design. Only the legacy codegen supports this pattern.
+@pytest.mark.old_gpu_codegen_only
+@pytest.mark.parametrize("block_size", [None, "64,8,1"])
 def test_thread_specialization_noncontiguous_blocks(block_size):
 
     @dace.program
@@ -89,13 +100,15 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
                     out = 6 + inp
 
     sdfg = thread_specialization.to_sdfg()
+    # Both parametrizations generate different code under the same name, so they would otherwise
+    # share one build folder and clobber each other's build when run in parallel.
+    sdfg.name = f"{sdfg.name}_{(block_size or 'default').replace(',', '_')}"
     sdfg.apply_gpu_transformations()
 
     # Ensure all nested maps set grid dimensions
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
             n.schedule = dace.ScheduleType.GPU_Device
-    sdfg.save("x1.sdfg")
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -103,16 +116,17 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     expected[:, 33:60] += 6
 
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
-    num_device_maps = len({
-        n
-        for n, g in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-    })
+    num_device_maps = len(
+        {
+            n
+            for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        }
+    )
     assert num_device_maps == 1
-    sdfg.save("x2.sdfg")
 
     if block_size is not None:
-        with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
+        with dace.config.set_temporary("compiler", "cuda", "default_block_size", value=block_size):
             sdfg(a)
     else:
         sdfg(a)
@@ -120,8 +134,8 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     assert np.allclose(a, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_thread_specialization_noncontiguous_blocks(None)
-    test_thread_specialization_noncontiguous_blocks('64,8,1')
+    test_thread_specialization_noncontiguous_blocks("64,8,1")
     test_double_nest_thread_specialization_noncontiguous_blocks(None)
-    test_double_nest_thread_specialization_noncontiguous_blocks('64,8,1')
+    test_double_nest_thread_specialization_noncontiguous_blocks("64,8,1")

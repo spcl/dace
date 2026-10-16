@@ -1,27 +1,62 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-import copy
 import pathlib
 import re
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
-
-import numpy as np
+from collections.abc import Set as AbstractSet
+from typing import Any
 
 import dace
-from dace import config, data, dtypes
+from dace import config, cpf_lowering, data, dtypes, symbolic, tile_functions
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
-from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
-from dace.sdfg.type_inference import infer_expr_type
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, SDFGState, nodes, utils
 from dace.sdfg import scope as sdscope
-from dace.sdfg import utils
-from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SymbolResolver,
+)
+from dace.sdfg.symbol_repo import assumption_check, program_assumptions
+from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
+from dace.transformation.passes.canonicalize import supply_num_threads
+
+#: Guarded so a build without OpenMP still compiles; ``1`` is the honest count there, not a guess.
+#: ``omp_get_max_threads`` reports the POOL size outside a parallel region, which is where this is
+#: emitted -- the top of the program function, before any region opens and before any allocation.
+NUM_THREADS_DECL = """#ifdef _OPENMP
+    const {ctype} {name} = omp_get_max_threads();
+#else
+    const {ctype} {name} = 1;
+#endif"""
+
+NUM_THREADS_INCLUDE = """#ifdef _OPENMP
+#include <omp.h>
+#endif"""
+
+
+def num_threads_is_used(sdfg: SDFG, used_symbols: AbstractSet | None = None) -> bool:
+    """Whether anything in ``sdfg`` or its nested SDFGs reads the reserved thread-count symbol.
+
+    ``all_symbols=False`` is the load-bearing argument: ``free_symbols`` counts every name in
+    ``sdfg.symbols``, so a symbol that is merely DECLARED reads as used and every program would pay
+    for a definition it never names. The narrower set covers descriptor sizes, which is the use that
+    has no other spelling -- a per-thread buffer is read by the ALLOCATION, not by an edge, a memlet
+    or a tasklet.
+
+    :param used_symbols: ``sdfg.used_symbols(all_symbols=False)`` when the caller already holds it.
+    """
+    used = sdfg.used_symbols(all_symbols=False) if used_symbols is None else used_symbols
+    return symbolic.NUM_THREADS_SYMBOL in {str(sym) for sym in used}
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -30,28 +65,53 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     return func
 
 
-class DaCeCodeGenerator(object):
-    """ DaCe code generator class that writes the generated code for SDFG
-        state machines, and uses a dispatcher to generate code for
-        individual states based on the target. """
+class DaCeCodeGenerator:
+    """DaCe code generator class that writes the generated code for SDFG
+    state machines, and uses a dispatcher to generate code for
+    individual states based on the target."""
 
     def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
-        self.statestruct: List[str] = []
-        self.environments: List[Any] = []
-        self.targets: Set[TargetCodeGenerator] = set()
-        self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
-                                      List[Tuple[SDFG, Optional[SDFGState], Optional[nodes.AccessNode], bool, bool,
-                                                 bool]]] = collections.defaultdict(list)
-        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
-        self.fsyms: Dict[int, Set[str]] = {}
-        self._symbols_and_constants: Dict[int, Set[str]] = {}
+        self.statestruct: list[str] = []
+        self.environments: list[Any] = []
+        # OrderedSet for the same reason as used_targets: codegen.py iterates this to order
+        # the preprocess() calls, and a TargetCodeGenerator hashes by id().
+        self.targets: set[TargetCodeGenerator] = OrderedSet()
+        self.to_allocate: collections.defaultdict[
+            SDFG | SDFGState | nodes.EntryNode,
+            list[tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool, bool]],
+        ] = collections.defaultdict(list)
+        self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
+        # (cfg_id, symbol) -> ctype, for each loop counter whose hoisted declaration was SKIPPED because
+        # ``codegen_params.decl_placement`` is ``late`` and the counter is loop-local. The loop emitter
+        # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
+        # of the same name, and only one of them may qualify. Empty under the default ``eager``.
+        self.loop_local_counters: dict[tuple[int, str], str] = {}
+        # id(obj) -> (obj, result). The object itself is kept alive here so its address
+        # cannot be recycled by a later, unrelated object for as long as the entry lives
+        # (a WeakValueDictionary would not do this: it lets obj die and the id go stale).
+        self.fsyms: dict[int, tuple[Any, frozenset[str]]] = {}
+        # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
+        # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
+        self._structured_cfg: dict[int, bool] = {}
+        self._symbols_and_constants: dict[int, set[str]] = {}
+        # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
+        self._symbol_resolver = SymbolResolver()
+        self._struct_types: dict[SDFG, dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
+        self.resolve_symbols_and_constants(sdfg)
+
+    def resolve_symbols_and_constants(self, sdfg: SDFG) -> None:
+        """(Re)build the per-``cfg_id`` cache of the symbols and constants each SDFG in the hierarchy sees.
+
+        A target that adds nested SDFGs while preprocessing rebuilds it, as their ``cfg_id``s are new.
+        """
+        self._symbols_and_constants: dict[int, set[str]] = {}
         # resolve all symbols and constants
         # first handle root
         sdfg.reset_cfg_list()
@@ -66,8 +126,14 @@ class DaCeCodeGenerator(object):
                 # found a new nested sdfg: resolve symbols and constants
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
+                # A symbol of the parent reaches the nested SDFG only through the symbol mapping, as a same-named one
+                # of the nested SDFG is its own, which the nested SDFG may assign itself.
                 parent_constants = self._symbols_and_constants[nsdfg.parent_sdfg.cfg_id]
-                result |= parent_constants
+                result |= {
+                    inner
+                    for inner, outer in nested.symbol_mapping.items()
+                    if {str(sym) for sym in symbolic.pystr_to_symbolic(outer).free_symbols} <= parent_constants
+                }
 
                 # check for constant inputs
                 for edge in state.in_edges(nested):
@@ -81,15 +147,47 @@ class DaCeCodeGenerator(object):
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any):
+    def free_symbols(self, obj: Any) -> frozenset[str]:
         k = id(obj)
-        if k in self.fsyms:
-            return self.fsyms[k]
-        if hasattr(obj, 'used_symbols'):
+        cached = self.fsyms.get(k)
+        if cached is not None and cached[0] is obj:
+            return cached[1]
+        if hasattr(obj, "used_symbols"):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
-        self.fsyms[k] = result
+        # Frozen so a caller's `fsyms |= ...` rebinds its own local name instead of
+        # mutating the shared cache entry (frozenset has no __ior__, so `|=` falls
+        # back to `fsyms = fsyms | ...`, which creates a new object).
+        result = frozenset(result)
+        self.fsyms[k] = (obj, result)
+        return result
+
+    def symbols_defined_at(self, state: SDFGState, node: nodes.Node) -> dict[str, dtypes.typeclass]:
+        """
+        Returns the symbols available to a node, as ``SDFGState.symbols_defined_at``. The part of the result that
+        depends only on the state (the SDFG symbols and those defined along the control flow leading to the state)
+        is computed once per state, since the SDFG does not change while its code is generated.
+
+        :param state: The state containing the node.
+        :param node: The node.
+        :return: A dictionary mapping symbol names to their types, which the caller may modify.
+        """
+        return self._symbol_resolver.defined_at(state, node)
+
+    def struct_types(self, sdfg: SDFG) -> dict[str, dtypes.struct]:
+        """
+        Returns the struct types of the data containers of an SDFG by name, computed once per SDFG during code
+        generation.
+
+        :param sdfg: The SDFG.
+        :return: A dictionary mapping struct type names to the struct types.
+        """
+        result = self._struct_types.get(sdfg)
+        if result is None:
+            from dace.codegen.targets.cpp import StructInitializer  # Avoid circular import
+
+            result = self._struct_types[sdfg] = StructInitializer.struct_types(sdfg)
         return result
 
     ##################################################################
@@ -116,54 +214,79 @@ class DaCeCodeGenerator(object):
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
                 const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
-                it = np.nditer(cstval, order='C')
-                for i in range(cstval.size - 1):
-                    const_str += str(it[0]) + ", "
-                    it.iternext()
-                const_str += str(it[0]) + "};\n"
+                # sym2cpp, not str: a numpy bool prints as Python 'True', and complex as '(1+2j)'.
+                # .flat keeps the numpy scalar, so sym2cpp still sees the element's own width.
+                const_str += ", ".join(sym2cpp(cstval.flat[i]) for i in range(cstval.size))
+                const_str += "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
-                callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
+                callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
 
-    def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = 'frame'):
-        """ Generate a header in every output file that includes custom types
+    def generate_fileheader(
+        self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = "frame", include_hash: bool = True
+    ):
+        """Generate a header in every output file that includes custom types
             and constants.
 
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
+            :param include_hash: Whether to include ``include/hash.h``. Only meaningful for the
+                                 ``frame`` backend, and only the frame code actually uses the
+                                 ``__HASH_<name>`` macro it defines (to name an instrumentation
+                                 report). The include is written with a path relative to the frame's
+                                 own directory (``src/<target>/``), so a file emitted one level
+                                 deeper -- a split nested-SDFG translation unit under
+                                 ``src/cpu/nsdfg/`` -- must pass False and would otherwise fail to
+                                 resolve the include.
+
+        Every TU that needs the state type re-emits an identical ``<sdfg>_state_t`` definition --
+        the frame, each ``.cu``, each split nest. It is never forward-declared: Streams and
+        persistent storage are state fields, so any TU may dereference ``__state``.
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
+
+        standalone = cpf_lowering.standalone()
         # Hash file include
-        if backend == 'frame':
+        if backend == "frame" and include_hash and not standalone:
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
         #########################################################
-        # Target-based includes
-        for target in self._dispatcher.used_targets:
-            headers = target.get_includes()
-            if backend in headers:
-                global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
-
-        # Environment-based includes
-        for env in self.environments:
-            if len(env.headers) > 0:
-                if not isinstance(env.headers, dict):
-                    headers = {'frame': env.headers}
-                else:
-                    headers = env.headers
+        # Target- and environment-based includes. Skipped entirely for CPF: its preamble carries the
+        # system headers (:data:`~dace.cpf_lowering.BASE_HEADERS` plus whatever the emitted text
+        # turns out to call), and the DaCe headers in these lists are the ones CPF exists to do
+        # without. Dropping a header an expansion really needed does not hide the problem -- that
+        # expansion also emits the ``dace::`` symbol the header declares, which
+        # ``dace.codegen.cpf.verify`` reports against the SDFG construct that asked for it.
+        if not standalone:
+            for target in self._dispatcher.used_targets:
+                headers = target.get_includes()
                 if backend in headers:
-                    global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
+                    global_stream.write("\n".join('#include "' + h + '"' for h in headers[backend]), sdfg)
+
+            for env in self.environments:
+                if len(env.headers) > 0:
+                    if not isinstance(env.headers, dict):
+                        headers = {"frame": env.headers}
+                    else:
+                        headers = env.headers
+                    if backend in headers:
+                        global_stream.write("\n".join('#include "' + h + '"' for h in headers[backend]), sdfg)
 
         #########################################################
         # Custom types
-        datatypes = set()
+        # OrderedSet, not set: typeclass.__hash__ folds in hash(self.type), which for a struct is
+        # the default id()-based hash of ctypes.Structure -- that id() moves with ASLR run to run,
+        # so a plain set() emitted these definitions in a different order every process even under
+        # a fixed PYTHONHASHSEED. Insertion order here is first-occurrence order in the SDFG, which
+        # is deterministic.
+        datatypes = OrderedSet()
         # Types of this SDFG
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
 
-        emitted = set()
+        emitted = OrderedSet()
 
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if isinstance(dtype, dtypes.pointer):
@@ -171,7 +294,6 @@ class DaCeCodeGenerator(object):
             elif isinstance(dtype, dtypes.struct):
                 for field in dtype.fields.values():
                     wrote_something = _emit_definitions(field, wrote_something)
-            if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
                 if dtype not in emitted:
@@ -192,54 +314,87 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         #########################################################
-        # Write state struct
-        structstr = '\n'.join(self.statestruct)
-        global_stream.write(f'''
+        # Write state struct. A HOST CPF rendering has no state: its entry point takes the
+        # arguments directly, and everything a state field would hold (persistent buffers,
+        # instrumentation reports, environment handles) is either demoted to SDFG lifetime or
+        # refused outright by :func:`~dace.codegen.cpf.render`. Emitting an empty struct nobody
+        # dereferences would only invite one back.
+        #
+        # A DEVICE rendering does have one field it cannot do without: the stream every launch and
+        # every copy is issued on. So the struct is emitted, the entry function declares it as a
+        # local (:func:`~dace.cpf_lowering.device_entry_prologue`), and the generated body reaches
+        # it through the same ``__state`` it always did.
+        if not standalone or (cpf_lowering.device() and backend == "frame"):
+            structstr = "\n".join(self.statestruct)
+            global_stream.write(
+                f"""
 struct {mangle_dace_state_struct_name(sdfg)} {{
     {structstr}
 }};
 
-''', sdfg)
+""",
+                sdfg,
+            )
 
+        # Global code is hand-written expansion C++ exactly as a native tasklet body is -- a device
+        # library expansion puts its launch wrapper here rather than in the tasklet, because the
+        # ``<<<>>>`` is device-compiler syntax -- so it needs the same re-spelling. Without it the
+        # ``dace::`` names in a wrapper reach ``dace.codegen.cpf.verify`` unlowered and the whole
+        # rendering is refused for a symbol CPF does define.
         for sd in sdfg.all_sdfgs_recursive():
-            if None in sd.global_code:
-                global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
-            if backend in sd.global_code:
-                global_stream.write(codeblock_to_cpp(sd.global_code[backend]), sd)
+            for key in (None, backend):
+                if key not in sd.global_code:
+                    continue
+                code = codeblock_to_cpp(sd.global_code[key])
+                if standalone:
+                    code = cpf_lowering.rewrite_native_code(code)
+                global_stream.write(code, sd)
 
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        """ Generate the header of the frame-code. Code exists in a separate
-            function for overriding purposes.
+        """Generate the header of the frame-code. Code exists in a separate
+        function for overriding purposes.
 
-            :param sdfg: The input SDFG.
-            :param global_stream: Stream to write to (global).
-            :param callsite_stream: Stream to write to (at call site).
+        :param sdfg: The input SDFG.
+        :param global_stream: Stream to write to (global).
+        :param callsite_stream: Stream to write to (at call site).
         """
-        # Write frame code - header
-        global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' + '#include <dace/dace.h>\n', sdfg)
+        # Write frame code - header. The runtime header is the whole point of CPF's absence: the
+        # standalone preamble (system headers plus the inline definitions the unit actually calls)
+        # is prepended afterwards by :func:`~dace.codegen.cpf.render`, which is the only place that
+        # can see the finished text and therefore which helpers it uses.
+        if cpf_lowering.standalone():
+            global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n", sdfg)
+        else:
+            global_stream.write("/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n" + "#include <dace/dace.h>\n", sdfg)
 
         # Write header required by environments
         for env in self.environments:
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 2:
-            self.statestruct.append('dace::perf::Report report;')
+        # NOTE: Some instrumentation providers (e.g. GPU_TX_MARKERS) never write to
+        # __state->report, so skip the report machinery unless at least one active provider does.
+        if any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()):
+            self.statestruct.append("dace::perf::Report report;")
             # Reset report if written every invocation
-            if config.Config.get_bool('instrumentation', 'report_each_invocation'):
-                callsite_stream.write('__state->report.reset();', sdfg)
+            if config.Config.get_bool("instrumentation", "report_each_invocation"):
+                callsite_stream.write("__state->report.reset();", sdfg)
 
-        self.generate_fileheader(sdfg, global_stream, 'frame')
+        self.generate_fileheader(sdfg, global_stream, "frame")
 
     def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        """ Generate the footer of the frame-code. Code exists in a separate
-            function for overriding purposes.
+        """Generate the footer of the frame-code. Code exists in a separate
+        function for overriding purposes.
 
-            :param sdfg: The input SDFG.
-            :param global_stream: Stream to write to (global).
-            :param callsite_stream: Stream to write to (at call site).
+        :param sdfg: The input SDFG.
+        :param global_stream: Stream to write to (global).
+        :param callsite_stream: Stream to write to (at call site).
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
+
+        if cpf_lowering.standalone():
+            self.generate_standalone_footer(sdfg, callsite_stream)
+            return
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
@@ -252,43 +407,74 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
         # Instrumentation saving
-        if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+        if config.Config.get_bool("instrumentation", "report_each_invocation") and any(
+            i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()
+        ):
             callsite_stream.write(
-                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
+                '__state->report.save("{}", __HASH_{});'.format(pathlib.Path(sdfg.build_folder) / "perf", sdfg.name),
+                sdfg,
+            )
 
         # Write closing brace of program
-        callsite_stream.write('}', sdfg)
+        callsite_stream.write("}", sdfg)
 
         # Write awkward footer to avoid 'extern "C"' issues
-        params_comma = (', ' + params) if params else ''
-        initparams_comma = (', ' + initparams) if initparams else ''
-        paramnames_comma = (', ' + paramnames) if paramnames else ''
-        initparamnames_comma = (', ' + initparamnames) if initparamnames else ''
+        params_comma = (", " + params) if params else ""
+        initparams_comma = (", " + initparams) if initparams else ""
+        paramnames_comma = (", " + paramnames) if paramnames else ""
+        initparamnames_comma = (", " + initparamnames) if initparamnames else ""
+        # Drain per invocation, not just per state: contamination can arrive between any two
+        # calls. Declared rather than included, since it lives in the generated .cu.
+        gpu_drain_decl = ""
+        gpu_drain_call = ""
+        # getattr: a user-registered code generator need not define target_name. Both GPU generators
+        # define the drain in their .cu, so both get the per-call declaration.
+        if any(
+            getattr(target, "target_name", None) in ("cuda", "experimental_cuda")
+            for target in self._dispatcher.used_targets
+        ):
+            gpu_drain_decl = (
+                f"DACE_EXPORTED void __dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n"
+            )
+            gpu_drain_call = "    __dace_gpu_drain_error(__state);\n"
+
         callsite_stream.write(
-            f'''
-DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__state{params_comma})
+            f"""
+{gpu_drain_decl}DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__state{params_comma})
 {{
-    __program_{fname}_internal(__state{paramnames_comma});
-}}''', sdfg)
+{gpu_drain_call}    __program_{fname}_internal(__state{paramnames_comma});
+}}""",
+            sdfg,
+        )
 
         for target in self._dispatcher.used_targets:
-            # Names are suffixed with ``sdfg.name`` so multiple SDFGs from
-            # distinct TUs can be linked into one binary without the
-            # per-target init/exit helpers colliding at link time.
             if target.has_initializer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_init_{target.target_name}_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n',
-                    sdfg)
+                    f"DACE_EXPORTED int __dace_init_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n",
+                    sdfg,
+                )
             if target.has_finalizer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_exit_{target.target_name}_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state);\n',
-                    sdfg)
+                    f"DACE_EXPORTED int __dace_exit_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state);\n",
+                    sdfg,
+                )
+
+        # The orders proofs took from symbol scales; init refuses symbol values that break one
+        assumptions = program_assumptions(sdfg)
+        if assumptions:
+            readable = {name for name in self.free_symbols(sdfg) if not name.startswith("__dace")}
+            callsite_stream.write(assumption_check(sdfg.name, initparams, assumptions, readable), sdfg)
 
         callsite_stream.write(
             f"""
 DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
-{{""", sdfg)
+{{""",
+            sdfg,
+        )
+        if assumptions:
+            callsite_stream.write(
+                f"    if (__dace_check_assumptions_{sdfg.name}({initparamnames}) != 0) return nullptr;\n", sdfg
+            )
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -298,13 +484,27 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         callsite_stream.write(
             f"""
     int __result = 0;
-    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};""", sdfg)
+    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)}();""",
+            sdfg,
+        )
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s_%s(__state%s);' % (target.target_name, sdfg.name, initparamnames_comma),
-                    sdfg)
+                    f"__result |= __dace_init_{target.target_name}(__state{initparamnames_comma});", sdfg
+                )
+        # A failed target initializer leaves its part of the state struct unset, and everything below
+        # allocates against it -- persistent GPU arrays dereference __state->gpu_context, which
+        # __dace_init_cuda never constructs when it bails out on a missing device. Leave here first.
+        callsite_stream.write(
+            """
+    if (__result) {
+        delete __state;
+        return nullptr;
+    }
+""",
+            sdfg,
+        )
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
@@ -315,17 +515,20 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            if 'frame' in sd.init_code:
-                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
+            if "frame" in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code["frame"]), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
-        callsite_stream.write(f"""
-    if (__result) {{
+        callsite_stream.write(
+            """
+    if (__result) {
         delete __state;
         return nullptr;
-    }}
-""", sdfg)
+    }
+""",
+            sdfg,
+        )
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
@@ -337,38 +540,48 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
 DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state)
 {{
-""", sdfg)
+""",
+            sdfg,
+        )
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_exit_begin(sdfg, callsite_stream, global_stream)
-        callsite_stream.write(f"""
+        callsite_stream.write(
+            """
     int __err = 0;
-""", sdfg)
+""",
+            sdfg,
+        )
 
         # Instrumentation saving
-        if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+        if not config.Config.get_bool("instrumentation", "report_each_invocation") and any(
+            i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()
+        ):
             callsite_stream.write(
-                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
+                '__state->report.save("{}", __HASH_{});'.format(pathlib.Path(sdfg.build_folder) / "perf", sdfg.name),
+                sdfg,
+            )
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            if 'frame' in sd.exit_code:
-                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+            if "frame" in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code["frame"]), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
                 callsite_stream.write(
-                    f'''
-    int __err_{target.target_name} = __dace_exit_{target.target_name}_{sdfg.name}(__state);
+                    f"""
+    int __err_{target.target_name} = __dace_exit_{target.target_name}(__state);
     if (__err_{target.target_name}) {{
         __err = __err_{target.target_name};
     }}
-''', sdfg)
+""",
+                    sdfg,
+                )
         for env in reversed(self.environments):
             finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
             if finalize_code:
@@ -376,12 +589,77 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 callsite_stream.write(finalize_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write('delete __state;\n', sdfg)
+        callsite_stream.write("delete __state;\n", sdfg)
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_exit_end(sdfg, callsite_stream, global_stream)
-        callsite_stream.write('return __err;\n}\n', sdfg)
+        callsite_stream.write("return __err;\n}\n", sdfg)
+
+    def generate_standalone_footer(self, sdfg: SDFG, callsite_stream: CodeIOStream):
+        """Close CPF's entry function, and nothing else.
+
+        The ordinary footer emits four things CPF cannot have: the ``__program_<name>`` wrapper and
+        the ``__dace_init_<name>`` / ``__dace_exit_<name>`` pair (all three take a state pointer),
+        and the instrumentation report save (a ``dace::perf::Report`` field on that state). CPF's
+        entry function IS the program, so only its closing brace is left.
+
+        Init/exit code is REFUSED rather than dropped. Both come from SDFG properties a user set on
+        purpose (``sdfg.init_code`` / ``exit_code``, or an environment's initializer); silently
+        skipping them would render a program that quietly does less than the SDFG it came from,
+        which is exactly the failure the numeric gate cannot catch when the skipped code only sets
+        something up.
+        """
+        refused = []
+        # A device unit runs the state's setup and teardown inside its entry (``device_entry_prologue``).
+        if not cpf_lowering.device() and (self._initcode.getvalue().strip() or self._exitcode.getvalue().strip()):
+            refused.append("generated init/exit code")
+        for sd in sdfg.all_sdfgs_recursive():
+            if any(block.as_string.strip() for block in sd.init_code.values()):
+                refused.append(f"{sd.name}.init_code")
+            if any(block.as_string.strip() for block in sd.exit_code.values()):
+                refused.append(f"{sd.name}.exit_code")
+        # An environment is refused only when it has something to RUN or LINK. Most carry nothing
+        # but a header list (the ``standard`` library's ``CPU`` is only ``<cstring>``, ``<numeric>``
+        # and friends), and those cost the rendering nothing -- CPF supplies the system headers
+        # itself. One with initialization code, a state field or a link dependency is a different
+        # thing: it needs a handshake or a library that a single self-contained unit does not have.
+        for env in self.environments:
+            # An environment CPF supplies for itself is not a hole in the rendering: see
+            # :data:`~dace.cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS` for what each one is and what
+            # replaces it.
+            if env.__name__ in cpf_lowering.PROVIDED_ENVIRONMENTS:
+                continue
+            # A vendor library is called through its own headers and linked by the caller
+            # (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`); what its DaCe environment would set up, the unit defines.
+            if env.__name__ in cpf_lowering.VENDOR_LIBRARIES:
+                continue
+            if cpf_lowering.device() and env.__name__ in cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS:
+                continue
+            needs = [
+                kind
+                for kind, value in (
+                    ("initialization code", getattr(env, "init_code", "")),
+                    ("finalization code", getattr(env, "finalize_code", "")),
+                    ("state fields", getattr(env, "state_fields", ())),
+                    ("linked libraries", getattr(env, "cmake_libraries", ())),
+                    ("CMake packages", getattr(env, "cmake_packages", ())),
+                )
+                if value
+            ]
+            # Libraries alone are a link-line input, not code: CPF hands them to the caller (``Rendering.link``).
+            if needs and needs != ["linked libraries"]:
+                refused.append(f"the {env.__name__} environment ({', '.join(needs)})")
+        if len(self._dispatcher.instrumentation) > 2:
+            refused.append("instrumentation")
+        if refused:
+            raise NotImplementedError(
+                "CPF cannot render this SDFG standalone: it needs "
+                + "; ".join(refused)
+                + ", which runs outside the entry function and has no place to run in a "
+                "single self-contained translation unit"
+            )
+        callsite_stream.write("}", sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         """
@@ -394,60 +672,156 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
 
         # Collect external arrays
-        ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
+        ext_arrays: dict[dtypes.StorageType, list[tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
-            if arr.lifetime == dtypes.AllocationLifetime.External:
+            if arr.lifetime == dtypes.AllocationLifetime.External and arr.transient is True:
                 ext_arrays[arr.storage].append((subsdfg, aname, arr))
+
+        # External lifetime means the CALLER owns the buffer and hands it in through
+        # ``__dace_set_external_memory_<storage>`` before the program runs. CPF has no such
+        # handshake -- its entry function takes the arglist and nothing else -- so an SDFG that
+        # needs one cannot be rendered, and saying so beats emitting a kernel that reads a pointer
+        # that was never set.
+        if cpf_lowering.standalone():
+            if ext_arrays:
+                names = sorted(name for arrays in ext_arrays.values() for _, name, _ in arrays)
+                raise NotImplementedError(
+                    "CPF cannot render this SDFG standalone: "
+                    + ", ".join(names)
+                    + " have External lifetime, which requires the caller to supply the "
+                    "buffer through an init handshake CPF does not emit"
+                )
+            return
 
         # Only generate functions as necessary
         if not ext_arrays:
             return
 
         initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        initparams_comma = (', ' + initparams) if initparams else ''
+        initparams_comma = (", " + initparams) if initparams else ""
 
         for storage, arrays in ext_arrays.items():
             size = 0
             for subsdfg, aname, arr in arrays:
-                size += arr.total_size * arr.dtype.bytes
+                size += arr.total_size_in_bytes
 
             # Size query functions
             callsite_stream.write(
-                f'''
+                f"""
 DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma})
 {{
     return {sym2cpp(size)};
 }}
-''', sdfg)
+""",
+                sdfg,
+            )
 
             # Pointer set functions
             callsite_stream.write(
-                f'''
+                f"""
 DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_struct_name(sdfg)} *__state, char *ptr{initparams_comma})
-{{''', sdfg)
+{{""",
+                sdfg,
+            )
 
             offset = 0
             for subsdfg, aname, arr in arrays:
-                allocname = f'__state->__{subsdfg.cfg_id}_{aname}'
-                callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
-                offset += arr.total_size * arr.dtype.bytes
+                allocname = f"__state->__{subsdfg.cfg_id}_{aname}"
+                callsite_stream.write(f"{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});", subsdfg)
+                offset += arr.total_size_in_bytes
 
             # Footer
-            callsite_stream.write('}', sdfg)
+            callsite_stream.write("}", sdfg)
 
-    def generate_state(self,
-                       sdfg: SDFG,
-                       cfg: ControlFlowRegion,
-                       state: SDFGState,
-                       global_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream,
-                       generate_state_footer: bool = True):
+    def _readable_cpu_active(self) -> bool:
+        """The readable experimental CPU code generator is selected (``compiler.cpu.implementation``)."""
+        return config.Config.get("compiler", "cpu", "implementation") == "experimental_readable"
+
+    def _structured_control_flow(self, sdfg: SDFG) -> bool:
+        """Whether ``sdfg``'s control flow can only emit gotos that never cross a state-body
+        declaration: every region is a strict line graph -- each block has at most one out-edge and
+        that edge is UNCONDITIONAL -- with no ``UnstructuredControlFlow`` region. Branching is then
+        carried by ``ConditionalBlock`` (its branch bodies each ``{ }``-scoped) and loops by
+        ``LoopRegion``, so the emitted state machine only falls through between siblings.
+
+        This is STRICTER than ``control_flow.py``'s ``contains_irreducible`` on purpose: a block with a
+        single CONDITIONAL out-edge has ``out_degree == 1`` yet ``control_flow.py`` emits it via the
+        ``exit_on_else`` path as ``if (cond) { goto __state_dst; } else { goto __state_exit_<cfg>; }``.
+        That ``goto __state_exit`` jumps forward over every following sibling state, so if any crossed
+        state had its C scope elided and declared something, the jump would cross an initialization
+        (ill-formed C++). Rejecting conditional out-edges removes that hazard. An unstructured region
+        (raw multi-edge goto branching) is likewise rejected. Cached per ``cfg_id``. When False, the
+        experimental state-scope elision is disabled and every state keeps its scope (matching legacy).
+        """
+        key = sdfg.cfg_id
+        cached = self._structured_cfg.get(key)
+        if cached is not None:
+            return cached
+        result = next(utils.unstructured_control_flow(sdfg), None) is None
+        self._structured_cfg[key] = result
+        return result
+
+    def state_needs_brace(self, state: SDFGState) -> bool:
+        """Whether a non-empty state's body must be wrapped in its own ``{ ... }`` C scope.
+
+        Always True for the legacy generator, so its output is byte-identical. The experimental readable
+        generator drops the scope only when the state provably declares NOTHING at its own (state-body)
+        scope, so no inter-state ``goto`` can cross an initialization.
+
+        ``to_allocate`` is necessary but NOT a complete inventory of state-scope declarations -- the
+        shared tasklet path also emits, directly at state-body scope (``cpu.py`` ``outer_stream_begin``,
+        not via ``to_allocate``): inter-tasklet ``code->code`` register temporaries (``T tmp;`` -- for a
+        non-trivially-constructible type a goto cannot cross it) and node-level instrumentation timers.
+        Rather than enumerate every such source, this is a default-deny positive whitelist: elide only
+        when every top-level node is a map scope (``MapEntry``/``MapExit``, whose loops brace their own
+        bodies and whose scope transients allocate inside those loops) or an ``AccessNode`` (no decl).
+        Any other top-level node -- a state-level tasklet, nested SDFG, library node, reduction, etc. --
+        or any node-level instrumentation keeps the scope. Combined with ``_structured_control_flow``
+        (no crossing goto) and ``to_allocate`` empty (no tracked transient), the elided state is
+        guaranteed declaration-free.
+        """
+        if not self._readable_cpu_active():
+            return True
+        if state.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return True
+        if not self._structured_control_flow(state.sdfg):
+            return True
+        if self.to_allocate.get(state):
+            return True
+        scope = state.scope_dict()
+        for node in state.nodes():
+            if scope[node] is not None:
+                continue  # nested inside a map -> that scope braces it (and its declarations)
+            # An instrumented node declares its timers at state scope, so the brace must bound them.
+            # Read each property directly and against ITS OWN enum: a Property is stored under a
+            # mangled ``_name``, so a ``vars(node).get('instrument')`` lookup silently returns the
+            # default and never fires; and an AccessNode's ``instrument`` is a DataInstrumentationType,
+            # which never compares equal to an InstrumentationType member of the same name.
+            if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+                if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:
+                    return True
+            elif isinstance(node, nodes.AccessNode):
+                if node.instrument != dtypes.DataInstrumentationType.No_Instrumentation:
+                    return True
+            else:
+                return True  # a top-level tasklet / nested SDFG / library node may declare at state scope
+        return False
+
+    def generate_state(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        global_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+        generate_state_footer: bool = True,
+    ):
         sid = state.block_id
 
         # Emit internal transient array allocation
         self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
 
-        callsite_stream.write('\n')
+        callsite_stream.write("\n")
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -464,26 +838,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) <= 1:
-            self._dispatcher.dispatch_subgraph(sdfg,
-                                               cfg,
-                                               state,
-                                               sid,
-                                               global_stream,
-                                               callsite_stream,
-                                               skip_entry_node=False)
+            self._dispatcher.dispatch_subgraph(
+                sdfg, cfg, state, sid, global_stream, callsite_stream, skip_entry_node=False
+            )
         else:
             if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
                 if sdfg.openmp_sections:
                     callsite_stream.write("#pragma omp section\n{")
-                self._dispatcher.dispatch_subgraph(sdfg,
-                                                   cfg,
-                                                   c,
-                                                   sid,
-                                                   global_stream,
-                                                   callsite_stream,
-                                                   skip_entry_node=False)
+                self._dispatcher.dispatch_subgraph(
+                    sdfg, cfg, c, sid, global_stream, callsite_stream, skip_entry_node=False
+                )
                 if sdfg.openmp_sections:
                     callsite_stream.write("} // End omp section")
             if sdfg.openmp_sections:
@@ -501,10 +867,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if instr is not None:
                     instr.on_state_end(sdfg, cfg, state, callsite_stream, global_stream)
 
-    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> Set[SDFGState]:
+    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
+        opbar = progress.OptionalProgressBar(sdfg.num_states(), title=f"Generating code (SDFG {sdfg.cfg_id})")
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -514,20 +880,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
+        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg)
 
         opbar.done()
 
         return states_generated
 
-    def _get_schedule(self, scope: Union[nodes.EntryNode, SDFGState, SDFG]) -> dtypes.ScheduleType:
+    def _get_schedule(self, scope: nodes.EntryNode | SDFGState | SDFG) -> dtypes.ScheduleType:
         TOP_SCHEDULE = dtypes.ScheduleType.Sequential
         if scope is None:
             return TOP_SCHEDULE
         elif isinstance(scope, nodes.EntryNode):
             return scope.schedule
         elif isinstance(scope, (SDFGState, SDFG)):
-            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
+            sdfg: SDFG = scope if isinstance(scope, SDFG) else scope.parent
             if sdfg.parent_nsdfg_node is None:
                 return TOP_SCHEDULE
 
@@ -540,8 +906,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         else:
             raise TypeError
 
-    def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
-                                                                                        SDFG]) -> bool:
+    def _can_allocate(
+        self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: nodes.EntryNode | SDFGState | SDFG
+    ) -> bool:
+        # Views allocate no memory: they are bound at their access node, whose subset may use scope parameters
+        if isinstance(desc, data.View):
+            return True
+
         schedule = self._get_schedule(scope)
         # if not dtypes.can_allocate(desc.storage, schedule):
         #     return False
@@ -564,46 +935,30 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         :param top_sdfg: The top-level SDFG to determine for.
         """
-        # Gather shared transients, free symbols, and first/last appearance
-        shared_transients = {}
-        fsyms = {}
-        reachability = StateReachability().apply_pass(top_sdfg, {})
-        access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
-            fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
+        # Every read-only analysis codegen needs, resolved once through one pipeline.
+        analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
+        reachability = analysis_results[StateReachability.__name__]
+        alloc_scopes = analysis_results[AllocationScopes.__name__]
+        instances = analysis_results[AccessInstances.__name__]
+        access_instances = instances["access_instances"]
+        code_instances = instances["code_instances"]
+        shared_transients = instances["shared_transients"]
 
-            #############################################
-            # Look for all states in which a scope-allocated array is used in
-            instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
-            array_names = sdfg.arrays.keys(
-            )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
-            # Iterate topologically to get state-order
-            for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
-                for node in state.data_nodes():
-                    if node.data not in array_names:
-                        continue
-                    instances[node.data].append((state, node))
-
-                # Look in the surrounding edges for usage
-                edge_fsyms: Set[str] = set()
-                for e in state.parent_graph.all_edges(state):
-                    edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
-                    instances[edge_array].append((state, nodes.AccessNode(edge_array)))
-            #############################################
-
-            access_instances[sdfg.cfg_id] = instances
+        # Symbols-and-constants stays here: it is memoized on this code generator, not on the SDFG.
+        fsyms = {sdfg.cfg_id: self.symbols_and_constants(sdfg) for sdfg in top_sdfg.all_sdfgs_recursive()}
+        # Per SDFG, built on its first container that needs a common (post)dominator.
+        dominance: dict[int, tuple[_DominatorTree, _DominatorTree]] = {}
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
-                self._dispatcher.defined_vars.add_global(f'__state->{name}', disp.DefinedType.Scalar,
-                                                         desc.state_field_dtype.ctype)
+                self._dispatcher.defined_vars.add_global(
+                    f"__state->{name}", disp.DefinedType.Scalar, desc.state_field_dtype.ctype
+                )
                 self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
             # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
             # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.
-            top_desc = sdfg.arrays[name.split('.')[0]]
+            top_desc = sdfg.arrays[name.split(".")[0]]
             top_transient = top_desc.transient
             top_storage = top_desc.storage
             top_lifetime = top_desc.lifetime
@@ -637,7 +992,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if first_node_instance is None:
                     continue
 
-                definition = desc.as_arg(name=f'__{sdfg.cfg_id}_{name}') + ';'
+                definition = desc.as_arg(name=f"__{sdfg.cfg_id}_{name}") + ";"
 
                 if top_storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
                     self.statestruct.append(definition)
@@ -654,7 +1009,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if first_node_instance is None:
                     continue
 
-                definition = desc.as_arg(name=f'__{sdfg.cfg_id}_{name}') + ';'
+                definition = desc.as_arg(name=f"__{sdfg.cfg_id}_{name}") + ";"
                 self.statestruct.append(definition)
 
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
@@ -665,9 +1020,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # allocate from, since the descriptors may only be allocated higher
             # in the hierarchy (e.g., in the case of GPU global memory inside
             # a kernel).
-            alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
+            alloc_scope: nodes.EntryNode | SDFGState | SDFG = None
             alloc_state: SDFGState = None
-            if (name in shared_transients[sdfg.cfg_id] or top_lifetime is dtypes.AllocationLifetime.SDFG):
+            if name in shared_transients[sdfg.cfg_id] or top_lifetime is dtypes.AllocationLifetime.SDFG:
                 # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
@@ -678,14 +1033,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             elif top_lifetime == dtypes.AllocationLifetime.State:
                 # State memory is either allocated in the beginning of the
                 # containing state or the SDFG (if used in more than one state)
-                curstate: SDFGState = None
-                multistate = False
-                for state in sdfg.states():
-                    if any(n.data == name for n in state.data_nodes()):
-                        if curstate is not None:
-                            multistate = True
-                            break
-                        curstate = state
+                states_with_data = alloc_scopes["data_states"][sdfg.cfg_id].get(name, [])
+                curstate: SDFGState = states_with_data[0] if states_with_data else None
+                multistate = len(states_with_data) > 1
                 if multistate:
                     alloc_scope = sdfg
                 else:
@@ -695,28 +1045,33 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # Scope memory (default) is either allocated in the innermost
                 # scope (e.g., Map, Consume) it is used in (i.e., greatest
                 # common denominator), or in the SDFG if used in multiple states
-                curscope: Union[nodes.EntryNode, SDFGState] = None
+                curscope: nodes.EntryNode | SDFGState = None
                 curstate: SDFGState = None
-                multistate = False
 
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
-                for isedge in sdfg.all_interstate_edges():
-                    if name in self.free_symbols(isedge.data):
-                        multistate = True
-                for cfg in sdfg.all_control_flow_regions():
-                    block_syms = cfg.used_symbols(all_symbols=True, with_contents=False)
-                    if name in block_syms:
-                        multistate = True
+                multistate = name in alloc_scopes["meta_symbols"][sdfg.cfg_id]
 
+                # Code nodes reading the container directly from their code (no
+                # AccessNode) count as uses for the scope decision as well.
+                code_users = code_instances[sdfg.cfg_id].get(name, [])
+                # A state with neither an access node for `name` nor a code user of it contributes
+                # nothing below, so skipping it avoids its scope_dict and node walk.
+                relevant = alloc_scopes["root_data_states"][sdfg.cfg_id].get(name, frozenset()) | {
+                    s for s, user in code_users
+                }
                 for state in sdfg.states():
                     if multistate:
                         break
+                    if state not in relevant:
+                        continue
                     sdict = state.scope_dict()
+                    state_code_users = {n for s, n in code_users if s is state}
                     for node in state.nodes():
-                        if not isinstance(node, nodes.AccessNode):
-                            continue
-                        if node.root_data != name:
-                            continue
+                        if node not in state_code_users:
+                            if not isinstance(node, nodes.AccessNode):
+                                continue
+                            if node.root_data != name:
+                                continue
 
                         # If already found in another state, set scope to SDFG
                         if curstate is not None and curstate != state:
@@ -737,18 +1092,35 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         if isinstance(curscope, SDFGState):
                             if scope in curscope.nodes():
                                 continue
-                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+                        # Scopes that share no scope meet at the top level of the state
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope) or state
 
                     if multistate:
                         break
 
                 if multistate:
                     alloc_scope = sdfg
+                elif (
+                    isinstance(curscope, SDFGState)
+                    and curstate is not None
+                    and desc.storage
+                    in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, dtypes.StorageType.Default)
+                    and scope_allocation_repeats_per_iteration(curstate)
+                    and first_node_instance is not None
+                    and not utils.is_nonfree_sym_dependent(
+                        first_node_instance, desc, first_state_instance, fsyms[sdfg.cfg_id]
+                    )
+                ):
+                    # Placing it at the one state that uses it re-allocates the buffer on every iteration of
+                    # the enclosing loop; the SDFG entry dominates that state, so one buffer serves them all.
+                    # Only the PLACEMENT moves -- ``desc.lifetime`` stays Scope.
+                    alloc_scope = sdfg
+                    alloc_state = curstate
                 else:
                     alloc_scope = curscope
                     alloc_state = curstate
             else:
-                raise TypeError('Unrecognized allocation lifetime "%s"' % desc.lifetime)
+                raise TypeError(f'Unrecognized allocation lifetime "{desc.lifetime}"')
 
             if alloc_scope is None:  # No allocation necessary
                 continue
@@ -767,7 +1139,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if curscope is None:
                         curscope = curstate
                 elif isinstance(curscope, (SDFGState, SDFG)):
-                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else curscope.parent)
+                    cursdfg: SDFG = curscope if isinstance(curscope, SDFG) else curscope.parent
                     # Go one SDFG up
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None
@@ -786,13 +1158,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
             fsymbols = fsyms[sdfg.cfg_id]
-            if (not isinstance(curscope, nodes.EntryNode)
-                    and utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance, fsymbols)):
+            if not isinstance(curscope, nodes.EntryNode) and utils.is_nonfree_sym_dependent(
+                first_node_instance, desc, first_state_instance, fsymbols
+            ):
                 # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
                     # If any state is not reachable from first state, find common denominators in the form of
                     # dominator and postdominator.
-                    instances: List[Tuple[SDFGState, nodes.AccessNode]] = access_instances[sdfg.cfg_id][name]
+                    instances: list[tuple[SDFGState, nodes.AccessNode]] = access_instances[sdfg.cfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
                     if isinstance(desc, data.View):
@@ -803,7 +1176,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
+                        if sdfg.cfg_id not in dominance:
+                            dominance[sdfg.cfg_id] = _dominator_trees(sdfg)
+                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
+                            instances, *dominance[sdfg.cfg_id]
+                        )
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
@@ -811,18 +1188,22 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
                     else:
                         self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, True, False, False))
+                            (sdfg, first_state_instance, first_node_instance, True, False, False)
+                        )
 
-                    curscope = first_state_instance
+                    curscope = allocation_block(first_state_instance, desc, {state for state, _ in instances})
                     self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, False))
+                        (sdfg, first_state_instance, first_node_instance, False, True, False)
+                    )
                     curscope = last_state_instance
-                    self.to_allocate[curscope].append(
-                        (sdfg, last_state_instance, last_node_instance, False, False, True))
+                    # A control flow region has no state to dispatch the deallocation through
+                    dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
+                    self.to_allocate[curscope].append((sdfg, dealloc_state, last_node_instance, False, False, True))
                 else:
                     curscope = first_state_instance
                     self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, True, True, True))
+                        (sdfg, first_state_instance, first_node_instance, True, True, True)
+                    )
             else:
                 self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
             if isinstance(curscope, SDFG):
@@ -830,16 +1211,62 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             else:
                 self.where_allocated[(sdfg, name)] = cursdfg
 
-    def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
-                                                                                        SDFG],
-                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+    def order_views_after_their_sources(self, entries: list[tuple[Any, ...]]) -> list[int]:
+        """Order allocations so a view is bound only once the container it points into exists.
+
+        ``to_allocate`` is filled in descriptor order, which says nothing about who views whom. A
+        view emitted first takes the address of a pointer that is still null, or still holds the
+        previous iteration's freed buffer -- the read through it is then wild.
+        """
+        allocated_at: dict[str, int] = {}
+        for index, (_, _, node, _, allocate, _) in enumerate(entries):
+            # A scope entry also lands here, and it names no data.
+            if allocate and isinstance(node, nodes.AccessNode) and node.data not in allocated_at:
+                allocated_at[node.data] = index
+
+        def source_of(index: int) -> int | None:
+            tsdfg, state, node, _, allocate, _ = entries[index]
+            if not allocate or state is None or not isinstance(node, nodes.AccessNode):
+                return None
+            if not isinstance(node.desc(tsdfg), data.View):
+                return None
+            # A view bound through a scope resolves to the scope node, which names no data.
+            viewed = utils.get_view_node(state, node)
+            if not isinstance(viewed, nodes.AccessNode) or viewed.data == node.data:
+                return None
+            source = allocated_at.get(viewed.data)
+            return None if source == index else source
+
+        # Depth in the view chain, so a stable sort leaves every unrelated allocation where it was.
+        depth: dict[int, int] = {}
+        for start in range(len(entries)):
+            chain: list[int] = []
+            index: int | None = start
+            while index is not None and index not in depth and index not in chain:
+                chain.append(index)
+                index = source_of(index)
+            base = 0 if index is None or index in chain else depth[index]
+            for offset, member in enumerate(reversed(chain)):
+                depth[member] = base + offset + 1
+        return sorted(range(len(entries)), key=lambda index: depth[index])
+
+    def allocate_arrays_in_scope(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        scope: nodes.EntryNode | ControlFlowBlock | SDFG,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ) -> None:
         if len(self.to_allocate[scope]) == 0:
             return
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_allocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches allocation of all arrays in the given scope. """
-        for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
+        entries = self.to_allocate[scope]
+        for index in self.order_views_after_their_sources(entries):
+            tsdfg, state, node, declare, allocate, _ = entries[index]
             if state is not None:
                 state_id = state.block_id
             else:
@@ -847,15 +1274,30 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             desc = node.desc(tsdfg)
 
-            self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
-                                               node, desc, function_stream, callsite_stream, declare, allocate)
+            self._dispatcher.dispatch_allocate(
+                tsdfg,
+                cfg if state is None else state.parent_graph,
+                state,
+                state_id,
+                node,
+                desc,
+                function_stream,
+                callsite_stream,
+                declare,
+                allocate,
+            )
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_allocation_end(sdfg, scope, callsite_stream)
 
-    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
-                                                                                          SDFG],
-                                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def deallocate_arrays_in_scope(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        scope: nodes.EntryNode | ControlFlowBlock | SDFG,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ):
         if len(self.to_allocate[scope]) == 0:
             return
         for instr in self._dispatcher.instrumentation.values():
@@ -872,16 +1314,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             desc = node.desc(tsdfg)
 
-            self._dispatcher.dispatch_deallocate(tsdfg, state.parent_graph, state, state_id, node, desc,
-                                                 function_stream, callsite_stream)
+            self._dispatcher.dispatch_deallocate(
+                tsdfg, state.parent_graph, state, state_id, node, desc, function_stream, callsite_stream
+            )
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_deallocation_end(sdfg, scope, callsite_stream)
 
-    def generate_code(self,
-                      sdfg: SDFG,
-                      schedule: Optional[dtypes.ScheduleType],
-                      cfg_id: str = "") -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+    def generate_code(
+        self, sdfg: SDFG, schedule: dtypes.ScheduleType | None, cfg_id: str = ""
+    ) -> tuple[str, str, set[TargetCodeGenerator], set[str]]:
         """
         Generate frame code for a given SDFG, calling registered targets'
         code generation callbacks for them to generate their own code.
@@ -895,7 +1337,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                  generation of this SDFG.
         """
         if len(cfg_id) == 0 and sdfg.cfg_id != 0:
-            cfg_id = '_%d' % sdfg.cfg_id
+            cfg_id = "_%d" % sdfg.cfg_id
 
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
@@ -921,20 +1363,38 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if instr is not None:
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
+        # ORDER IS THE POINT: a per-thread buffer's size names this symbol and allocations are
+        # emitted at program entry, ahead of every state, so nothing the graph runs can define it in
+        # time. Only the top level declares it -- nested SDFGs inline into this same function.
+        # One walk answers both the thread-count check and the argument list below.
+        top_used_symbols = sdfg.used_symbols(all_symbols=False) if is_top_level else None
+        if is_top_level and num_threads_is_used(sdfg, top_used_symbols):
+            global_stream.write(NUM_THREADS_INCLUDE, sdfg)
+            callsite_stream.write(
+                NUM_THREADS_DECL.format(
+                    ctype=supply_num_threads.symbol_dtype(sdfg).ctype, name=symbolic.NUM_THREADS_SYMBOL
+                ),
+                sdfg,
+            )
+
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
-        outside_symbols = sdfg.arglist() if is_top_level else set()
+        outside_symbols = sdfg.arglist(free_symbols=top_used_symbols) if is_top_level else set()
 
-        # Define constants as top-level-allocated
+        # Define constants as top-level-allocated. A constexpr array registers its POINTER ctype, as every
+        # allocation site does: a nested SDFG's parameter bound to it registers the pointer too, so the
+        # element ctype here made one consumer add the ``*`` itself and the next level add it again.
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+                self.dispatcher.defined_vars.add(
+                    cname, disp.DefinedType.Pointer, "const " + dtypes.pointer(ctype.dtype).ctype
+                )
             else:
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
-        global_symbols = copy.deepcopy(sdfg.symbols)
+        global_symbols = dict(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():
@@ -946,9 +1406,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         l_end = loop_analysis.get_loop_end(cfr)
                         l_start = loop_analysis.get_init_assignment(cfr)
                         l_step = loop_analysis.get_loop_stride(cfr)
-                        sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
-                                                         infer_expr_type(l_step, global_symbols),
-                                                         infer_expr_type(l_end, global_symbols))
+                        # Only the readable parts: ``get_loop_end`` is None for any condition that
+                        # is not ``i <op> X``. See ``LoopRegion.new_symbols``, which carries the
+                        # same guard -- this is the second place the same three expressions are
+                        # inferred from, and it crashed for the same reason.
+                        parts = [expr for expr in (l_start, l_step, l_end) if expr is not None]
+                        if not parts:
+                            continue
+                        sym_type = dtypes.result_type_of(*(infer_expr_type(part, global_symbols) for part in parts))
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
@@ -970,7 +1435,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
-                raise TypeError(f'Type inference failed for symbol {isvarName}')
+                raise TypeError(f"Type inference failed for symbol {isvarName}")
 
             # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
             # redefine the symbols in such cases.
@@ -982,21 +1447,26 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 edge_codegen.emit_interstate_variable_declaration(isvarName, isvarType, callsite_stream, sdfg)
             # If the variable is passed as an input argument to the SDFG, do not need to declare it
 
-        callsite_stream.write('\n', sdfg)
+        callsite_stream.write("\n", sdfg)
 
         #######################################################################
         # Generate actual program body
 
-        states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
+        # Printed expressions type each symbol by this SDFG's declaration, not by the object found in the expression. A
+        # complex interstate scalar is no symbol (symbols are real), so it is left out.
+        symbol_types = {
+            k: v for k, v in global_symbols.items() if v is not None and v not in (dtypes.complex64, dtypes.complex128)
+        }
+        with symbolic.serialization_symbol_dtypes(symbol_types, inherit=True):
+            states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
 
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(sdfg.states()):
+        if len(states_generated) != sdfg.num_states():
             raise RuntimeError(
-                "Not all states were generated in SDFG {}!"
-                "\n  Generated: {}\n  Missing: {}".format(sdfg.label, [s.label for s in states_generated],
-                                                          [s.label for s in (set(sdfg.states()) - states_generated)]))
+                f"Not all states were generated in SDFG {sdfg.label}!\n  Generated: {[s.label for s in states_generated]}\n  Missing: {[s.label for s in (set(sdfg.states()) - states_generated)]}"
+            )
 
         # Deallocate transients
         self.deallocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
@@ -1012,15 +1482,41 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Get all environments used in the generated code, including
             # dependent environments
             from dace.codegen.targets.cpp import mangle_dace_state_struct_name
+
             self.environments = dace.library.get_environments_and_dependencies(self._dispatcher.used_environments)
 
             self.generate_header(sdfg, header_global_stream, header_stream)
+            if not cpf_lowering.standalone():
+                # CPF places the tile functions in its preamble with the rest of its inline definitions.
+                header_global_stream.write(
+                    tile_functions.definitions_in(global_stream.getvalue() + callsite_stream.getvalue()), sdfg
+                )
 
             # Open program function
             params = sdfg.signature(arglist=self.arglist)
-            if params:
-                params = ', ' + params
-            function_signature = f'void __program_{sdfg.name}_internal({mangle_dace_state_struct_name(sdfg)}*__state{params})\n{{'
+            if cpf_lowering.standalone():
+                # CPF's entry point IS the program: no state pointer, no ``__program_`` wrapper to
+                # forward through, and C linkage so a ctypes / dlopen caller finds it under the
+                # SDFG's own name. The argument list is unchanged, so the signature stays the one
+                # ``sdfg.arglist()`` describes -- which is what the test harness builds its ctypes
+                # argument types from.
+                # ``extern "C"`` is a C++ construct and the C dialect's ABI is already C's.
+                linkage = "" if cpf_lowering.standalone_c() else 'extern "C" '
+                function_signature = f"{linkage}void {sdfg.name}({params})\n{{"
+                if cpf_lowering.device():
+                    # The device handshake the ordinary build puts in __dace_init / __dace_exit,
+                    # which a single entry point has nowhere to put but here. The generated body
+                    # then reads ``__state->gpu_context->streams`` exactly as it always did, so
+                    # nothing downstream of this line knows the state is a local.
+                    function_signature += "\n" + cpf_lowering.device_entry_prologue(
+                        mangle_dace_state_struct_name(sdfg), self._initcode.getvalue(), self._exitcode.getvalue()
+                    )
+            else:
+                if params:
+                    params = ", " + params
+                function_signature = (
+                    f"void __program_{sdfg.name}_internal({mangle_dace_state_struct_name(sdfg)}*__state{params})\n{{"
+                )
 
             self.generate_footer(sdfg, footer_global_stream, footer_stream)
             self.generate_external_memory_management(sdfg, footer_stream)
@@ -1028,6 +1524,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             header_global_stream.write(global_stream.getvalue())
             header_global_stream.write(footer_global_stream.getvalue())
             generated_header = header_global_stream.getvalue()
+            if self._readable_cpu_active():
+                from dace.codegen.targets.experimental_cpu import deduplicate_includes  # Avoid circular import
+
+                generated_header = deduplicate_includes(generated_header)
 
             all_code = CodeIOStream()
             all_code.write(function_signature)
@@ -1040,66 +1540,183 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             generated_code = callsite_stream.getvalue()
 
         # Clean up generated code
-        gotos = re.findall(r'goto (.*?);', generated_code)
-        goto_ctr = collections.Counter(gotos)
-        clean_code = ''
-        last_line = ''
-        for line in generated_code.split('\n'):
+        # NOTE: The lines are collected in a list and joined once, since repeatedly appending to (and truncating) one
+        # string copies the code generated so far for every line.
+        goto_ctr = collections.Counter(re.findall(r"goto (.*?);", generated_code))
+        empty_statement = re.compile(r"^\s*;\s*")
+        label_line = re.compile(r"^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$")
+        clean_lines = []
+        last_line = ""
+        for line in generated_code.split("\n"):
             # Empty line
             if not line.strip():
                 continue
             # Empty line with semicolon
-            if re.match(r'^\s*;\s*', line):
+            if empty_statement.match(line):
                 continue
             # Label that might be unused
-            label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+            label = label_line.findall(line)
             if len(label) > 0:
-                if label[0] not in gotos:
-                    last_line = ''
+                if label[0] not in goto_ctr:
+                    last_line = ""
                     continue
-                if f'goto {label[0]};' in last_line and goto_ctr[label[0]] == 1:  # goto followed by label
-                    clean_code = clean_code[:-len(last_line) - 1]
-                    last_line = ''
+                if f"goto {label[0]};" in last_line and goto_ctr[label[0]] == 1:  # goto followed by label
+                    # ``last_line`` is non-empty only if it is the last line kept
+                    clean_lines.pop()
+                    last_line = ""
                     continue
-            clean_code += line + '\n'
+            clean_lines.append(line)
             last_line = line
+        clean_code = "".join(line + "\n" for line in clean_lines)
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
 
 
-def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
+def scope_allocation_repeats_per_iteration(state: SDFGState) -> bool:
+    """Whether a scope allocation placed at ``state`` re-runs on every iteration of an enclosing loop.
+
+    Ascends exactly as the dominator walk does: a block that is its region's entry is dominated by
+    whatever dominates the region, so the region collapses to a single node in its parent and the walk
+    continues. Reaching a :class:`LoopRegion` on that path means the allocation sits in a loop body.
+    """
+    block: ControlFlowBlock = state
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            return True
+        block, region = region, region.parent_graph
+    return False
+
+
+def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGState]) -> ControlFlowBlock:
+    """
+    The block whose entry allocates ``desc``, given the state that dominates its accesses. Allocating there would read
+    a symbol ``desc`` is sized by before it is assigned when the assignment comes later on the only path to the
+    accesses: on the edge leaving a block, or on an edge inside a control flow region the path passes through. The
+    allocation then moves past each such block, to the first block after the last assignment; a control flow region
+    allocates on entry.
+
+    :param state: The state that dominates the accesses of ``desc``.
+    :param desc: The descriptor to allocate.
+    :param access_states: The states that access ``desc`` or read it on an adjacent edge.
+    """
+    sizes = {str(sym) for sym in desc.free_symbols}
+
+    def accesses(block: ControlFlowBlock) -> bool:
+        if isinstance(block, SDFGState):
+            return block in access_states
+        return any(inner in access_states for inner in block.states())
+
+    def assigns_inside(block: ControlFlowBlock) -> bool:
+        return isinstance(block, AbstractControlFlowRegion) and any(
+            edge.data.assignments.keys() & sizes for edge in block.all_interstate_edges()
+        )
+
+    block = state
+    while not accesses(block):
+        out_edges = block.parent_graph.out_edges(block)
+        if len(out_edges) != 1:
+            break
+        successor = out_edges[0].dst
+        if not (
+            out_edges[0].data.assignments.keys() & sizes
+            or assigns_inside(block)
+            or (assigns_inside(successor) and not accesses(successor))
+        ):
+            break
+        block = successor
+    return block
+
+
+class _DominatorTree:
+    """The tree of ``immediate`` (a root maps to itself), numbered by a DFS: ``a`` dominates ``b`` iff ``b``'s
+    entry/exit interval lies within ``a``'s. One walk answers every query, where the transitive closure of the tree is
+    quadratic in its depth."""
+
+    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
+        self.immediate = immediate
+        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
+        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
+        for block, parent in immediate.items():
+            if parent is not block:
+                children[parent].append(block)
+        self.entry: dict[ControlFlowBlock, int] = {}
+        self.exit: dict[ControlFlowBlock, int] = {}
+        clock = 0
+        for root in roots:
+            stack = [(root, iter(children[root]))]
+            self.entry[root] = clock
+            clock += 1
+            while stack:
+                block, pending = stack[-1]
+                child = next(pending, None)
+                if child is None:
+                    self.exit[block] = clock
+                    clock += 1
+                    stack.pop()
+                elif child not in self.entry:
+                    self.entry[child] = clock
+                    clock += 1
+                    stack.append((child, iter(children[child])))
+
+    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
+        if a is b:
+            return True
+        if a not in self.entry or b not in self.entry:
+            return False
+        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+
+
+def _dominator_trees(sdfg: SDFG) -> tuple[_DominatorTree, _DominatorTree]:
+    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
+    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
+    return _DominatorTree(idom), _DominatorTree(ipostdom)
+
+
+def _get_dominator_and_postdominator(
+    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: _DominatorTree, postdom: _DominatorTree
+):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
-    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    allpostdoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    idom: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    ipostdom: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, alldoms, ipostdom, allpostdoms)
-
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
 
-    # All dominators and postdominators include the states themselves
-    for state in states:
-        alldoms[state].add(state)
-        allpostdoms[state].add(state)
-
     start_state = states[0]
-    while any(start_state not in alldoms[n] for n in states):
-        if idom[start_state] is start_state:
+    while not all(dom.dominates(start_state, n) for n in states):
+        if dom.immediate[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = idom[start_state]
+        start_state = dom.immediate[start_state]
 
     end_state = states[-1]
-    while any(end_state not in allpostdoms[n] for n in states):
-        if ipostdom[end_state] is end_state:
+    while not all(postdom.dominates(end_state, n) for n in states):
+        if postdom.immediate[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = ipostdom[end_state]
+        end_state = postdom.immediate[end_state]
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError
 
     return start_state, end_state
+
+
+def pad_control_flow_region_boundaries(top_sdfg: SDFG):
+    """Add an empty state before and after each loop / conditional block.
+
+    A transient whose shape depends on a symbol assigned *inside* such a block is
+    allocated at the closest common dominator state of its accesses; without a
+    state on the block's boundary that dominator can precede the symbol's
+    definition, emitting ``new T[sym]`` with an undefined ``sym``.  A landing
+    state on either side gives the allocator a valid placement where the symbol
+    is already defined.  Runs before codegen freezes the SDFG.
+    """
+    for cfg in list(top_sdfg.all_control_flow_regions()):
+        for block in list(cfg.nodes()):
+            if isinstance(block, (ConditionalBlock, LoopRegion)):
+                cfg.add_state_before(block, is_start_block=block is cfg.start_block)
+                cfg.add_state_after(block)
+    top_sdfg.reset_cfg_list()

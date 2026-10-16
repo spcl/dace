@@ -7,21 +7,21 @@ No GPU / nvcc is required: these assert the *lowering selection* and the
 GPU path shares ~90% of its pipeline with the CPU one, so the lowering is the
 part that needs dedicated coverage.
 """
+
 import os
 
 import pytest
 
 import dace
-from dace.libraries.tileops import _dispatch
+from dace.libraries.tileops import dispatch
 from dace.libraries.tileops import environments as tile_env
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _VALID_ISAS
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
-_CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "tile_ops", "cuda.h")
+CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "tile_ops", "cuda.h")
 
 
 def test_cuda_isa_registered():
-    assert "CUDA" in _VALID_ISAS
-    assert _dispatch._ISA_TO_IMPL["CUDA"] == "cuda"
+    assert dispatch.ISA_TO_IMPL[ISA.CUDA] == "cuda"
 
 
 def test_cuda_environment_pulls_header():
@@ -34,7 +34,7 @@ def test_cuda_environment_pulls_header():
 
 
 def test_cuda_header_has_half2_intrinsics():
-    src = open(_CUDA_H).read()
+    src = open(CUDA_H).read()
     # fp16x2 arithmetic + min/max + negate/abs (the core SIMD ops).
     for intr in ("__hadd2", "__hsub2", "__hmul2", "__h2div", "__hmin2", "__hmax2", "__hneg2", "__habs2"):
         assert intr in src, f"cuda.h missing fp16x2 intrinsic {intr}"
@@ -47,7 +47,7 @@ def test_cuda_header_has_half2_intrinsics():
     # Same tileops contract as the other ISA headers, plus the composed half2
     # horizontal reduce (no native "reduce half2 -> half" intrinsic exists).
     assert "namespace tileops" in src
-    for op in ("tile_binop", "tile_unop", "tile_load", "tile_store", "tile_gather", "tile_scatter", "tile_reduce"):
+    for op in ("tile_binop", "tile_unop", "tile_load", "tile_store", "tile_gather", "tile_reduce"):
         assert op in src, f"cuda.h missing {op}"
     # tile_reduce folds pairwise via half2 then combines the 2 lanes into one half.
     for intr in ("__hadd", "__hmax", "__hmin", "__low2half", "__high2half"):
@@ -59,56 +59,74 @@ def test_cuda_header_has_half2_intrinsics():
     assert "float" in src
 
 
+def wired_binop(op, widths):
+    """A ``TileBinop`` of two fp16 tiles in a state, with the arrays its selection reads the dtypes of."""
+    from dace.libraries.tileops.nodes.tile_binop import TileBinop
+
+    sdfg = dace.SDFG("cuda_selection_binop")
+    state = sdfg.add_state()
+    node = TileBinop("t", op=op, widths=widths)
+    state.add_node(node)
+    for name in "abc":
+        sdfg.add_array(name, widths, dace.float16, storage=dace.StorageType.Register, transient=True)
+    subset = ", ".join(f"0:{w}" for w in widths)
+    state.add_edge(state.add_access("a"), None, node, "_a", dace.Memlet(f"a[{subset}]"))
+    state.add_edge(state.add_access("b"), None, node, "_b", dace.Memlet(f"b[{subset}]"))
+    state.add_edge(node, "_c", state.add_access("c"), None, dace.Memlet(f"c[{subset}]"))
+    node.target_isa = ISA.CUDA
+    return node, state
+
+
 @pytest.mark.parametrize("op", ["+", "-", "*", "/"])
 def test_binop_selects_cuda_for_fp16_tile(op):
-    from dace.libraries.tileops.nodes.tile_binop import TileBinop
-    n = TileBinop("t", op=op, widths=(2, ))
-    n.target_isa = "CUDA"
-    assert _dispatch.select_tile_implementation(n) == "cuda"
+    node, state = wired_binop(op, (2,))
+    assert dispatch.select_tile_implementation(node, state) == "cuda"
 
 
 def test_kge2_tile_falls_back_to_pure_under_cuda():
     # K>=2 always lowers to 'pure' regardless of ISA.
-    from dace.libraries.tileops.nodes.tile_binop import TileBinop
-    n = TileBinop("t", op="+", widths=(2, 2))
-    n.target_isa = "CUDA"
-    assert _dispatch.select_tile_implementation(n) == "pure"
+    node, state = wired_binop("+", (2, 2))
+    assert dispatch.select_tile_implementation(node, state) == "pure"
 
 
 def test_reduce_selects_cuda_for_full_k1_tile():
     # A full (axis=None), unmasked, K=1 TileReduce lowers to the cuda ``tile_reduce``
     # intrinsic (composed half2 fold for fp16, per-lane fold otherwise).
-    from dace.libraries.tileops.nodes.tile_reduce import TileReduce
-    n = TileReduce("t", op="+", widths=(2, ))
-    n.target_isa = "CUDA"
+    sdfg, st, n = _reduce_sdfg(dace.float16, 2)
+    n.target_isa = ISA.CUDA
     assert "cuda" in n.implementations
-    assert _dispatch.select_tile_implementation(n) == "cuda"
+    assert dispatch.select_tile_implementation(n, st) == "cuda"
 
 
 def test_reduce_kge2_falls_back_to_pure_under_cuda():
     # K>=2 always lowers to 'pure' regardless of ISA (matches the binop rule); the
     # cuda ``tile_reduce`` intrinsic is a K==1 horizontal fold.
     from dace.libraries.tileops.nodes.tile_reduce import TileReduce
+
     n = TileReduce("t", op="+", widths=(2, 2))
-    n.target_isa = "CUDA"
-    assert _dispatch.select_tile_implementation(n) == "pure"
+    st = dace.SDFG("cuda_selection_reduce").add_state()
+    st.add_node(n)
+    n.target_isa = ISA.CUDA
+    assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def _reduce_sdfg(dtype, W, op="+", axis=None, mask=False):
     """A minimal SDFG holding one ``TileReduce`` (Register tiles), for expansion tests."""
     from dace.libraries.tileops.nodes.tile_reduce import TileReduce
-    shape = (W, ) if axis is None else (2, W)
-    dst_shape = (1, ) if axis is None else (2, )
+
+    shape = (W,) if axis is None else (2, W)
+    dst_shape = (1,) if axis is None else (2,)
     sdfg = dace.SDFG(f"tr_{dtype.to_string()}_{W}")
     sdfg.add_array("src", shape, dtype, storage=dace.StorageType.Register, transient=True)
     sdfg.add_array("dst", dst_shape, dtype, storage=dace.StorageType.Register, transient=True)
     st = sdfg.add_state()
-    widths = (W, ) if axis is None else (2, W)
+    widths = (W,) if axis is None else (2, W)
     n = TileReduce("tr", widths=widths, op=op, axis=axis, has_mask=mask)
     s, d = st.add_access("src"), st.add_access("dst")
     st.add_edge(s, None, n, "_src", dace.Memlet.from_array("src", sdfg.arrays["src"]))
-    st.add_edge(n, "_dst", d, None,
-                dace.Memlet("dst[0]") if axis is None else dace.Memlet.from_array("dst", sdfg.arrays["dst"]))
+    st.add_edge(
+        n, "_dst", d, None, dace.Memlet("dst[0]") if axis is None else dace.Memlet.from_array("dst", sdfg.arrays["dst"])
+    )
     if mask:
         sdfg.add_array("msk", shape, dace.bool_, storage=dace.StorageType.Register, transient=True)
         m = st.add_access("msk")
@@ -120,6 +138,7 @@ def test_reduce_cuda_emits_intrinsic_for_full_k1():
     # A full (axis=None), unmasked, K=1 fp16 reduce lowers to the tile_reduce intrinsic
     # (the fp16 template picks the composed half2 fold at compile).
     from dace.libraries.tileops.nodes.tile_reduce import ExpandTileReduceCUDA
+
     sdfg, st, n = _reduce_sdfg(dace.float16, 4, "+")
     code = ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
     assert "dace::tileops::tile_reduce<dace::float16, 4, '+'>(_src)" in code
@@ -128,22 +147,21 @@ def test_reduce_cuda_emits_intrinsic_for_full_k1():
     assert "tile_reduce<float, 8, 'M'>" in ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
 
 
-def test_reduce_cuda_falls_back_to_pure_for_masked_and_axis():
+def test_reduce_cuda_selects_pure_for_masked_and_axis():
     # The tile_reduce intrinsic takes no mask and only does a full reduction, so a
-    # masked reduce or a single-axis reduce delegates to the pure per-lane expansion.
-    from dace.libraries.tileops.nodes.tile_reduce import ExpandTileReduceCUDA
-    sdfg, st, n = _reduce_sdfg(dace.float16, 4, "+", mask=True)
-    assert "tile_reduce" not in ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
-    sdfg, st, n = _reduce_sdfg(dace.float32, 4, "+", axis=1)
-    assert "tile_reduce" not in ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
+    # masked reduce or a single-axis reduce lowers to the pure per-lane loop.
+    for sdfg, st, n in (_reduce_sdfg(dace.float16, 4, "+", mask=True), _reduce_sdfg(dace.float32, 4, "+", axis=1)):
+        n.target_isa = ISA.CUDA
+        assert dispatch.select_tile_implementation(n, st) == "pure"
 
 
 def test_cuda_requires_even_width():
     # half2 packs 2 lanes, so the innermost tile width must be a multiple of 2.
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _validate_knobs
-    _validate_knobs((2, ), "CUDA", "scalar_postamble", "merge", "tile_k1")  # ok
+
+    _validate_knobs((2,), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")  # ok
     with pytest.raises(NotImplementedError, match="half2"):
-        _validate_knobs((1, ), "CUDA", "scalar_postamble", "merge", "tile_k1")
+        _validate_knobs((1,), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")
 
 
 if __name__ == "__main__":

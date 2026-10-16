@@ -11,8 +11,12 @@
 #define DACE_EXPORTED extern "C"
 #endif
 
-// Workaround (see unload_library)
+#ifdef _WIN32
+// Workaround (see unload_library), guarded with its only use.
+#ifdef _OPENMP
 #include <omp.h>
+#endif
+#endif
 
 // Loads a library and returns a handle to it, or NULL if there was an error
 // NOTE: On Windows, path must be given as a Unicode string (UTF-16, or
@@ -38,12 +42,23 @@ DACE_EXPORTED int is_library_loaded(const char *filename) {
   void *hLibrary = nullptr;
 
 #ifdef _WIN32
+  // GetModuleHandleW does not increment the module's reference count, so there is nothing to give
+  // back here.
   hLibrary = (void *)GetModuleHandleW((const wchar_t *)filename);
+  if (hLibrary) return 1;
 #else
   hLibrary = dlopen(filename, RTLD_LOCAL | RTLD_NOW | RTLD_NOLOAD);
+  if (hLibrary) {
+    // RTLD_NOLOAD still takes a reference on a library that IS loaded, and this function only
+    // answers a question. Leaking it here pins the library for the lifetime of the process: a
+    // later dlopen of the same path then hands back the object already mapped instead of the file
+    // just rebuilt, so a program silently runs the code of whichever same-named program was
+    // compiled before it.
+    dlclose(hLibrary);
+    return 1;
+  }
 #endif
 
-  if (hLibrary) return 1;
   return 0;
 }
 
@@ -68,12 +83,23 @@ DACE_EXPORTED void *get_symbol(void *hLibrary, const char *symbol) {
 DACE_EXPORTED void unload_library(void *hLibrary) {
   if (!hLibrary) return;
 
-  // Workaround so that OpenMP does not go ballistic when calling dlclose()
-  omp_get_max_threads();
-
+  // Workaround so that OpenMP does not go ballistic when calling dlclose(): the runtime must be live
+  // and must outlive the library.
 #ifdef _WIN32
+#ifdef _OPENMP
+  omp_get_max_threads();
+#endif
   FreeLibrary((HMODULE)hLibrary);
 #else
+  // The runtime is the one the LIBRARY links, found through the library rather than linked into the
+  // stub: a strong reference made a stub whose link line lacked the runtime fail to load on
+  // "undefined symbol: omp_get_max_threads". Pinned with RTLD_NODELETE, which is what a runtime on
+  // the stub's own link line used to guarantee; without it dlclose unmaps the runtime under its threads.
+  if (void *query = dlsym(hLibrary, "omp_get_max_threads")) {
+    reinterpret_cast<int (*)()>(query)();
+    Dl_info owner;
+    if (dladdr(query, &owner) && owner.dli_fname) dlopen(owner.dli_fname, RTLD_NOW | RTLD_NODELETE);
+  }
   dlclose(hLibrary);
 #endif
 }

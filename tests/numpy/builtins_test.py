@@ -3,7 +3,7 @@ import numpy as np
 
 import dace
 
-N, M = dace.symbol('N'), dace.symbol('M')
+N, M = dace.symbol("N"), dace.symbol("M")
 
 
 def test_len():
@@ -20,7 +20,7 @@ def test_len_constant():
 
     @dace.program
     def tester(A: dace.float64[N, M]):
-        b = np.array([1., 2., 3.])
+        b = np.array([1.0, 2.0, 3.0])
         return len(b)
 
     a = np.random.rand(20, 30)
@@ -37,7 +37,7 @@ def test_sum():
     assert np.allclose(tester(a), sum(a))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_len()
     test_len_constant()
     test_sum()

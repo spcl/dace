@@ -2,33 +2,95 @@
 #ifndef __DACE_CUDACOMMON_CUH
 #define __DACE_CUDACOMMON_CUH
 
+#include <cstddef>  // size_t
+
+// The ONE place the two GPU runtimes are reconciled. A library node emits ``gpuMalloc`` /
+// ``gpuMemcpyAsync`` / ``gpuError_t`` and compiles under either backend unchanged, which is what
+// keeps an expansion from needing a second, hand-maintained AMD copy of itself.
 #if defined(__HIPCC__) || defined(WITH_HIP)
+// The precompiled runtime header is force-included ahead of the generated file's own includes.
+#include <hip/hip_runtime.h>
 typedef hipStream_t gpuStream_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;
 #define gpuGetLastError hipGetLastError
+#define gpuPeekAtLastError hipPeekAtLastError
 #define gpuGetErrorString hipGetErrorString
 #define gpuStreamSynchronize hipStreamSynchronize
-#define gpuEventSynchronize hipEventSynchronize
 #define gpuDeviceSynchronize hipDeviceSynchronize
+#define gpuEventSynchronize hipEventSynchronize
+#define gpuSuccess hipSuccess
+#define gpuErrorMemoryAllocation hipErrorOutOfMemory
+#define gpuLaunchKernel hipLaunchKernel
+#define gpuMalloc hipMalloc
+#define gpuMallocAsync hipMallocAsync
+#define gpuFree hipFree
+#define gpuFreeAsync hipFreeAsync
+#define gpuMemset hipMemset
+#define gpuMemsetAsync hipMemsetAsync
+#define gpuMemcpy hipMemcpy
+#define gpuMemcpyAsync hipMemcpyAsync
+#define gpuMemcpyHostToDevice hipMemcpyHostToDevice
+#define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
+#define gpuMemcpyDeviceToDevice hipMemcpyDeviceToDevice
+// hipFreeHost is deprecated in favour of hipHostFree; the pair of gpuMallocHost.
+#define gpuFreeHost hipHostFree
 #else
+// nvcc implies this, a host .cpp translation unit does not -- and the aliases below are consumed
+// from both.
+#include <cuda_runtime.h>
 typedef cudaStream_t gpuStream_t;
 typedef cudaEvent_t gpuEvent_t;
 typedef cudaError_t gpuError_t;
 #define gpuGetLastError cudaGetLastError
+#define gpuPeekAtLastError cudaPeekAtLastError
 #define gpuGetErrorString cudaGetErrorString
 #define gpuStreamSynchronize cudaStreamSynchronize
-#define gpuEventSynchronize cudaEventSynchronize
 #define gpuDeviceSynchronize cudaDeviceSynchronize
+#define gpuEventSynchronize cudaEventSynchronize
+#define gpuSuccess cudaSuccess
+#define gpuErrorMemoryAllocation cudaErrorMemoryAllocation
+#define gpuLaunchKernel cudaLaunchKernel
+#define gpuMalloc cudaMalloc
+#define gpuMallocAsync cudaMallocAsync
+#define gpuFree cudaFree
+#define gpuFreeAsync cudaFreeAsync
+#define gpuMemset cudaMemset
+#define gpuMemsetAsync cudaMemsetAsync
+#define gpuMemcpy cudaMemcpy
+#define gpuMemcpyAsync cudaMemcpyAsync
+#define gpuMemcpyHostToDevice cudaMemcpyHostToDevice
+#define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
+#define gpuMemcpyDeviceToDevice cudaMemcpyDeviceToDevice
+#define gpuFreeHost cudaFreeHost
 #endif
 
+// Pinned-host allocation, in the shape the code generator emits. ``cudaMallocHost`` is a TEMPLATE
+// accepting any ``T**``; the HIP spelling takes a bare ``void**`` and is deprecated in favour of
+// ``hipHostMalloc``, so emitting the vendor name directly fails to compile for any non-void
+// pointer (measured on an ``int**`` index array). One wrapper gives both backends the same
+// signature, so codegen names one function rather than branching.
+template <typename T>
+static inline gpuError_t gpuMallocHost(T** ptr, size_t size) {
+#if defined(__HIPCC__) || defined(WITH_HIP)
+  return hipHostMalloc(reinterpret_cast<void**>(ptr), size);
+#else
+  return cudaMallocHost(reinterpret_cast<void**>(ptr), size);
+#endif
+}
+
+// The context guard covers the calls checked during __dace_init_cuda before the context has been
+// constructed (the runtime warm-up allocation). The message is printed either way; only the
+// recording needs a context to record into.
 #define DACE_GPU_CHECK(err)                                               \
   do {                                                                    \
     gpuError_t errr = (err);                                              \
     if (errr != (gpuError_t)0) {                                          \
       printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
-             gpuGetErrorString(err), errr);                               \
-      __state->gpu_context->lasterror = errr;                             \
+             gpuGetErrorString(errr), errr);                              \
+      if (__state->gpu_context) {                                         \
+        __state->gpu_context->record_error(errr);                         \
+      }                                                                   \
     }                                                                     \
   } while (0)
 
@@ -43,7 +105,21 @@ typedef cudaError_t gpuError_t;
           (unsigned int)(gdimx), (unsigned int)(gdimy), (unsigned int)(gdimz), \
           (unsigned int)(bdimx), (unsigned int)(bdimy),                        \
           (unsigned int)(bdimz));                                              \
-      __state->gpu_context->lasterror = err;                                   \
+      __state->gpu_context->record_error(err);                                 \
+    }                                                                          \
+  } while (0)
+
+// Allows a kernel to use more dynamic shared memory than the device grants by
+// default. If the device cannot provide it, reports the kernel's request and
+// the device's limit, records the error, and returns from the calling
+// (launching) function.
+#define DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY(kernel, kernel_name, bytes) \
+  do {                                                                         \
+    gpuError_t __dace_smem_err = dace::cuda::request_dynamic_shared_memory(    \
+        (const void *)(kernel), (kernel_name), (bytes));                       \
+    if (__dace_smem_err != (gpuError_t)0) {                                    \
+      __state->gpu_context->record_error(__dace_smem_err);                     \
+      return;                                                                  \
     }                                                                          \
   } while (0)
 
@@ -64,9 +140,52 @@ struct Context {
   }
   ~Context() {
     delete[] streams;
+    delete[] internal_streams;
     delete[] events;
   }
+  // Keep the first error. One failure tends to produce more, and only the first names the call that
+  // actually broke: a failed CUB size query leaves its workspace unsized, and the reduction that
+  // then reads it reports a second, later error that describes a consequence.
+  void record_error(gpuError_t err) {
+    if (lasterror == (gpuError_t)0) {
+      lasterror = err;
+    }
+  }
 };
+
+// Allows ``kernel`` to be launched with ``bytes`` of dynamic shared memory,
+// beyond the amount devices grant without opting in. On failure, prints the
+// request and the most the current device can grant a thread-block.
+static inline gpuError_t request_dynamic_shared_memory(const void *kernel,
+                                                       const char *kernel_name,
+                                                       size_t bytes) {
+#if defined(__HIPCC__) || defined(WITH_HIP)
+  gpuError_t err = hipFuncSetAttribute(
+      kernel, hipFuncAttributeMaxDynamicSharedMemorySize, (int)bytes);
+  const auto optin_attribute = hipDeviceAttributeSharedMemPerBlockOptin;
+#else
+  gpuError_t err = cudaFuncSetAttribute(
+      kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)bytes);
+  const auto optin_attribute = cudaDevAttrMaxSharedMemoryPerBlockOptin;
+#endif
+  if (err != (gpuError_t)0) {
+    int device = 0, max_bytes = -1;
+#if defined(__HIPCC__) || defined(WITH_HIP)
+    if (hipGetDevice(&device) == hipSuccess)
+      (void)hipDeviceGetAttribute(&max_bytes, optin_attribute, device);
+#else
+    if (cudaGetDevice(&device) == cudaSuccess)
+      (void)cudaDeviceGetAttribute(&max_bytes, optin_attribute, device);
+#endif
+    printf(
+        "ERROR launching kernel %s: it requests %zu bytes of dynamic shared "
+        "memory, but device %d allows at most %d bytes of shared memory per "
+        "thread-block: %s (%d).\n",
+        kernel_name, bytes, device, max_bytes, gpuGetErrorString(err),
+        (int)err);
+  }
+  return err;
+}
 
 }  // namespace cuda
 }  // namespace dace

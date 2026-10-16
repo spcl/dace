@@ -1,22 +1,57 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Transformations to convert subgraphs to write-conflict resolutions. """
+"""Transformations to convert subgraphs to write-conflict resolutions."""
+
 import ast
 import copy
 import re
-from typing import List
+
 import sympy
-from dace import nodes, dtypes, Memlet, data, subsets, symbolic
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.python import astutils
+from dace.ordered import OrderedSet
+from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import propagate_memlets_state
 from dace.transformation import transformation
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
-from dace.sdfg import utils as sdutil
-from dace import Memlet, SDFG, SDFGState
-from dace.sdfg.propagation import propagate_memlets_state
 
 
-def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> List[str]:
+def connect_through_scalar(
+    state: SDFGState,
+    sdfg: SDFG,
+    src: nodes.Node,
+    src_conn: str,
+    dst: nodes.Node,
+    dst_conn: str,
+    dtype: dtypes.typeclass,
+) -> None:
+    """Route a value from one tasklet to another through a materialized transient scalar.
+
+    A bare memlet straight between two tasklets names a container that no AccessNode carries, so every
+    scan that counts uses through access nodes sees the container as dead: LoopToMap took minife's one
+    such scalar for loop-unique data and removed it from the SDFG while the memlet still named it.
+    """
+    name, desc = sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors("tmp"), dtype, transient=True)
+    node = state.add_access(name)
+    state.add_edge(src, src_conn, node, None, Memlet.from_array(name, desc))
+    state.add_edge(node, None, dst, dst_conn, Memlet.from_array(name, desc))
+
+
+def read_back_access(state: SDFGState, written: nodes.AccessNode) -> nodes.AccessNode:
+    """A new read of ``written``'s data in ``state``; a view is bound to what ``written`` views, through every
+    level of a view chain, or views nothing when ``written`` is unbound."""
+    node = state.add_access(written.data)
+    if isinstance(written.desc(state.sdfg), data.View):
+        edge = sdutil.get_view_edge(state, written)
+        if edge is not None:
+            viewed = edge.dst if edge.src is written else edge.src
+            state.add_edge(read_back_access(state, viewed), None, node, "views", copy.deepcopy(edge.data))
+    return node
+
+
+def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> list[str]:
     """Iteration parameters of every Map enclosing ``node`` (innermost outward)."""
-    params: List[str] = []
+    params: list[str] = []
     scope = state.scope_dict()
     cur = scope.get(node)
     while cur is not None:
@@ -50,42 +85,53 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
         outer = set()
         for name in syms:
             if name in mapping and mapping[name] is not None:
-                outer |= {str(s) for s in symbolic.pystr_to_symbolic(str(mapping[name])).free_symbols}
+                outer |= {str(s) for s in symbolic.pystr_to_symbolic(mapping[name]).free_symbols}
         syms |= outer
         cur = cur.parent_sdfg
     return syms
 
 
-def _wcr_write_is_injective(write_subset, params: List[str]) -> bool:
-    """Write at ``write_subset`` hits a DISTINCT element per distinct enclosing-map ``params``
-    value → conflict-free → WCR droppable for explicit RMW without cross-lane race.
+def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
+    """Symbol NAMES the write index depends on in the PARENT namespace, for a write leaving
+    ``sdfg`` through the nested-SDFG output connector ``data_name``.
 
-    Conservative: only single-param affine case decided (LoopToMap in-place shape ``a[c*i+d]``).
-    Injective iff some dim is ``c*i+d``, ``c`` nonzero numeric const, no loop-varying multi-element
-    range. Reduction (``c==0``) NOT injective; symbolic stride (``c`` not known-nonzero) → left to
-    guarded parallelization passes. Else ``False`` (WCR kept).
+    ``nest_state_subgraph`` rebases a boundary connector's descriptor onto the crossing memlet, so
+    the INNER subset of a write to it (``__tmp[0]`` on a shape-(1,) connector) can NEVER mention
+    the enclosing map's parameters -- even when the outer memlet that connector maps to
+    (``A[i, j]``) varies with every one of them. ``_index_syms_across_nesting`` follows the
+    ``symbol_mapping`` chain, which covers a renamed ITERATOR but not this DATA boundary; without
+    the outer subset the parent-map guard reads every conflict-free through-connector WCR as an
+    invariant reduction and keeps it (``A[i, j] += 2.0`` under ``dace.map[0:N, 0:N]``).
+
+    Only the NSDFG node's OWN out-edge is read: its subset is the precise parent-namespace image of
+    the connector. Edges further out are propagated over the enclosing map and have the map
+    parameters unioned away, so they could only drop symbols, never add one. A connector that fans
+    out to several writes stops the walk: the symbols are only sound per write path, and unioning
+    them would let one injective path vouch for an invariant sibling.
+
+    :param sdfg: The nested SDFG the write lives in.
+    :param data_name: The written data descriptor's name inside ``sdfg``.
+    :returns: The set of symbol names the outer write index depends on (empty if not a boundary).
     """
-    if len(params) != 1:
-        return False
-    p = symbolic.pystr_to_symbolic(params[0])
-    monotone_dim = False
-    for (b, e, _step) in write_subset.ranges:
-        be = symbolic.pystr_to_symbolic(b)
-        en = symbolic.pystr_to_symbolic(e)
-        depends = p in be.free_symbols or p in en.free_symbols
-        if be != en:
-            # Multi-element range: if loop-varying, per-iter windows may overlap → not injective.
-            if depends:
-                return False
-            continue
-        if depends:
-            slope = sympy.diff(be, p)
-            if slope.is_number and slope != 0:
-                monotone_dim = True
-            else:
-                # Non-affine, or a symbolic slope we cannot prove nonzero.
-                return False
-    return monotone_dim
+    syms = set()
+    cur, conn = sdfg, data_name
+    while cur.parent_nsdfg_node is not None and cur.parent is not None:
+        node = cur.parent_nsdfg_node
+        if conn not in node.out_connectors:
+            break
+        state = cur.parent
+        edges = [e for e in state.out_edges_by_connector(node, conn) if e.data is not None and not e.data.is_empty()]
+        if len(edges) != 1 or edges[0].data.data is None:
+            break
+        edge = edges[0]
+        subset = edge.data.get_dst_subset(edge, state)
+        if subset is None:
+            subset = edge.data.subset
+        if subset is None:
+            break
+        syms |= {str(s) for s in subset.free_symbols}
+        cur, conn = cur.parent_sdfg, edge.data.data
+    return syms
 
 
 def _wcr_augassign_body(wcr_str: str) -> str:
@@ -100,27 +146,86 @@ def _wcr_augassign_body(wcr_str: str) -> str:
     if len(lam.args.args) != 2:
         raise NotImplementedError
     is_binop = isinstance(lam.body, ast.BinOp)
-    is_minmax = (isinstance(lam.body, ast.Call) and isinstance(lam.body.func, ast.Name)
-                 and lam.body.func.id in ('min', 'max') and len(lam.body.args) == 2)
+    is_minmax = (
+        isinstance(lam.body, ast.Call)
+        and isinstance(lam.body.func, ast.Name)
+        and lam.body.func.id in ("min", "max")
+        and len(lam.body.args) == 2
+    )
     if not (is_binop or is_minmax):
         raise NotImplementedError
     acc_name, new_name = (a.arg for a in lam.args.args)
 
     class _Rename(ast.NodeTransformer):
-
         def visit_Name(self, node):
             if node.id == acc_name:
-                node.id = '__in1'
+                node.id = "__in1"
             elif node.id == new_name:
-                node.id = '__in2'
+                node.id = "__in2"
             return node
 
     return astutils.unparse(_Rename().visit(lam.body))
 
 
+def _same_extent(shape_a, shape_b) -> bool:
+    """Two symbolic shapes are provably the same extent, dim by dim."""
+    if len(shape_a) != len(shape_b):
+        return False
+    try:
+        return all(symbolic.simplify(a - b) == 0 for a, b in zip(shape_a, shape_b))
+    except (TypeError, ValueError):
+        return False
+
+
+def nested_connector_subset(nsdfg_node: nodes.NestedSDFG, conn: str, writes: bool, boundary_subset=None):
+    """The PRECISE subset a NestedSDFG accesses through connector ``conn``, in the PARENT namespace.
+
+    Union of the inner memlets touching ``conn``, with the node's ``symbol_mapping`` applied so the
+    parent's iterators name the same dimensions. The boundary memlet on a ``NestedSDFG -> MapExit``
+    edge is over-approximated -- memlet propagation unions the connector's reads and writes into one
+    bounding box -- so it cannot decide whether a write is a fixed reduction slot or an injective
+    per-iteration store. The inner edges carry the real per-iteration slice.
+
+    ``nest_state_subgraph`` sizes the inner descriptor to the boundary memlet and re-bases the inner
+    subsets to ITS origin, so those coordinates are the parent's only after adding the origin back.
+    Pass ``boundary_subset`` (the boundary memlet's subset) to have the re-basing undone; when the
+    inner descriptor instead keeps the outer array's full shape, the origin is zero and nothing moves.
+
+    :param nsdfg_node: The NestedSDFG node owning the connector.
+    :param conn: The connector name (also the inner descriptor's name).
+    :param writes: ``True`` for the written subset, ``False`` for the read subset.
+    :param boundary_subset: The outer boundary memlet's subset, for the re-basing above.
+    :returns: The union subset, or ``None`` if any access is unanalysable or a rank mismatch shows
+        the inner descriptor is a reshaped view (then the subsets are not comparable across the
+        boundary).
+    """
+    inner = nsdfg_node.sdfg
+    idesc = inner.arrays.get(conn)
+    if idesc is None:
+        return None
+    acc = None
+    for st in inner.states():
+        for node in st.data_nodes():
+            if node.data != conn:
+                continue
+            for e in st.in_edges(node) if writes else st.out_edges(node):
+                if e.data is None or e.data.data is None:
+                    return None
+                sub = e.data.subset if e.data.data == conn else e.data.other_subset
+                if sub is None or len(sub.size()) != len(idesc.shape):
+                    return None
+                acc = copy.deepcopy(sub) if acc is None else subsets.union(acc, sub, nsdfg_node.sdfg.facts())
+    if acc is None:
+        return None
+    acc.replace({k: symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()})
+    if boundary_subset is not None and _same_extent(boundary_subset.size(), idesc.shape):
+        acc.offset(boundary_subset, negative=False)
+    return acc
+
+
 def _multi_element_dims(subset):
     """``(dim_index, (lo, hi, step))`` for each ``Range`` dimension of ``subset`` that spans
-    more than one element. A non-``Range`` subset (``Indices``) or a whole single element
+    more than one element. A non-``Range`` subset or a whole single element
     yields an empty list -- the caller then emits a scalar RMW tasklet, no map."""
     if not isinstance(subset, subsets.Range):
         return []
@@ -157,6 +262,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     (direct-read + copy-after vs copy-before + direct-write); free-tasklet pattern misses it
     because combine writes the transient not ``arr``.
     """
+
     input = transformation.PatternNode(nodes.AccessNode)
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
@@ -167,13 +273,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     combine_out = transformation.PatternNode(nodes.AccessNode)
     copyback = transformation.PatternNode(nodes.Tasklet)
 
-    _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
-    _FUNCTIONS = ['min', 'max']
-    _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
-    _PYOP_MAP = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.BitXor: '^', ast.Mod: '%', ast.Div: '/'}
+    _EXPRESSIONS = ["+", "-", "*", "^", "%"]  # , '/']
+    _FUNCTIONS = ["min", "max"]
+    _EXPR_MAP = {"-": ("+", "-({expr})"), "/": ("*", "((decltype({expr}))1)/({expr})")}
+    _PYOP_MAP = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.Mod: "%", ast.Div: "/"}
+    _PYBOOLOP_MAP = {ast.Or: "or", ast.And: "and"}
     # Order-independent combines for copy-wrapped RMW. Subtraction only with acc on left
     # (checked at match): ``a - b1 - b2 == a - (b1 + b2)`` is order-independent.
-    _RMW_BINOPS = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*'}
+    _RMW_BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
 
     @classmethod
     def expressions(cls):
@@ -182,6 +289,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             sdutil.node_path_graph(cls.input, cls.map_entry, cls.tasklet, cls.map_exit, cls.output),
             sdutil.node_path_graph(cls.input, cls.copy_in, cls.tasklet, cls.copy_out, cls.output),
             sdutil.node_path_graph(cls.input, cls.tasklet, cls.combine_out, cls.copyback, cls.output),
+            sdutil.node_path_graph(
+                cls.input, cls.map_entry, cls.tasklet, cls.combine_out, cls.copyback, cls.map_exit, cls.output
+            ),
         ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -189,6 +299,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return self._can_be_applied_rmw_copy(graph, sdfg)
         if expr_index == 3:
             return self._can_be_applied_combine_copyback(graph, sdfg)
+        if expr_index == 4:
+            return self._can_be_applied_combine_copyback_map(graph, sdfg)
 
         inarr = self.input
         tasklet = self.tasklet
@@ -205,8 +317,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             if len(graph.edges_between(tasklet, outarr)) > 1:
                 return False
 
-            # Make sure augmented assignment can be fissioned as necessary
-            if any(not isinstance(e.src, nodes.AccessNode) for e in graph.in_edges(tasklet)):
+            # Make sure augmented assignment can be fissioned as necessary. ``apply`` only calls
+            # ``isolate_tasklet`` when the accumulator is ALSO written in this state; with
+            # ``in_degree(inarr) == 0`` nothing is relocated, so a producer that is not an
+            # AccessNode is harmless. An indirect scatter-accumulate reaches here exactly that way
+            # -- edge_laplacian's ``Lx[src[i]] += flux[i]`` takes its delta straight off the slice
+            # tasklet -- and refusing it left the accumulate a plain write, which the scatter guard
+            # then aborted on as a duplicate-index collision.
+            if graph.in_degree(inarr) > 0 and any(
+                not isinstance(e.src, nodes.AccessNode) for e in graph.in_edges(tasklet)
+            ):
                 return False
 
             outedge = graph.edges_between(tasklet, outarr)[0]
@@ -223,8 +343,10 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 return False
 
             # Make sure augmented assignment can be fissioned as necessary
-            if any(e.src is not me and not isinstance(e.src, nodes.AccessNode)
-                   for e in graph.in_edges(me) + graph.in_edges(tasklet)):
+            if any(
+                e.src is not me and not isinstance(e.src, nodes.AccessNode)
+                for e in graph.in_edges(me) + graph.in_edges(tasklet)
+            ):
                 return False
 
             outedge = graph.edges_between(tasklet, mx)[0]
@@ -236,8 +358,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         outconn = outedge.src_conn
 
-        ops = '[%s]' % ''.join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
-        funcs = '|'.join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
+        ops = "[{}]".format("".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS))
+        funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         if tasklet.language is dtypes.Language.Python:
             # Match a single assignment with a binary operation as RHS
@@ -259,9 +381,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             # restricting to BinOp left them undetected → unparallelizable by LoopToMap.
             if isinstance(rhs, ast.BinOp) and isinstance(rhs.op, tuple(AugAssignToWCR._PYOP_MAP.keys())):
                 operands = (rhs.left, rhs.right)
-            elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name)
-                  and rhs.func.id in AugAssignToWCR._FUNCTIONS and len(rhs.args) == 2):
+            elif (
+                isinstance(rhs, ast.Call)
+                and isinstance(rhs.func, ast.Name)
+                and rhs.func.id in AugAssignToWCR._FUNCTIONS
+                and len(rhs.args) == 2
+            ):
                 operands = tuple(rhs.args)
+            elif isinstance(rhs, ast.BoolOp) and type(rhs.op) in AugAssignToWCR._PYBOOLOP_MAP and len(rhs.values) == 2:
+                # Fortran's ``.OR.`` / ``.AND.`` accumulations (``levelmask = levelmask .OR. levmask``)
+                operands = tuple(rhs.values)
             else:
                 return False
             inconns = tuple(edge.dst_conn for edge in inedges)
@@ -280,11 +409,11 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             for edge in inedges:
                 # Try to match a single C assignment that can be converted to WCR
                 inconn = edge.dst_conn
-                lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn), re.escape(inconn), ops)
+                lhs = rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(inconn)}\s*{ops}.*;$"
                 # rhs: a = (...) op b
-                rhs = r'^\s*%s\s*=\s*\(.*\)\s*%s\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn))
-                func_lhs = r'^\s*%s\s*=\s*(%s)\(\s*%s\s*,.*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
-                func_rhs = r'^\s*%s\s*=\s*(%s)\(.*,\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
+                rhs = rf"^\s*{re.escape(outconn)}\s*=\s*\(.*\)\s*{ops}\s*{re.escape(inconn)};$"
+                func_lhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(\s*{re.escape(inconn)}\s*,.*\)\s*;$"
+                func_rhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(.*,\s*{re.escape(inconn)}\s*\)\s*;$"
                 if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
                     if re.match(func_lhs, cstr) is None and re.match(func_rhs, cstr) is None:
                         inconns = list(self.tasklet.in_connectors)
@@ -293,8 +422,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                         # Special case: a = <other> op b
                         other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
-                        rhs2 = r'^\s*%s\s*=\s*%s\s*%s\s*%s;$' % (re.escape(outconn), re.escape(other_inconn), ops,
-                                                                 re.escape(inconn))
+                        rhs2 = (
+                            rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(other_inconn)}\s*{ops}\s*{re.escape(inconn)};$"
+                        )
                         if re.match(rhs2, cstr) is None:
                             continue
 
@@ -311,6 +441,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return self._apply_rmw_copy(state, sdfg)
         if self.expr_index == 3:
             return self._apply_combine_copyback(state, sdfg)
+        if self.expr_index == 4:
+            return self._apply_combine_copyback_map(state, sdfg)
 
         input: nodes.AccessNode = self.input
         tasklet: nodes.Tasklet = self.tasklet
@@ -334,8 +466,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         outconn = outedge.src_conn
 
-        ops = '[%s]' % ''.join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
-        funcs = '|'.join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
+        ops = "[{}]".format("".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS))
+        funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
@@ -343,18 +475,44 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             ast_node: ast.Assign = tasklet.code.code[0]
             lhs: ast.Name = ast_node.targets[0]
             rhs = ast_node.value
-            inconns = list(edge.dst_conn for edge in inedges)
-            if isinstance(rhs, ast.Call):
+            inconns = [edge.dst_conn for edge in inedges]
+            if isinstance(rhs, ast.BoolOp):
+                op = AugAssignToWCR._PYBOOLOP_MAP[type(rhs.op)]
+                acc_arg = next(
+                    a
+                    for a in rhs.values
+                    if isinstance(a, ast.Name)
+                    and a.id in inconns
+                    and inedges[inconns.index(a.id)].data.subset == outedge.data.subset
+                )
+                inedge = inedges[inconns.index(acc_arg.id)]
+                new_rhs = rhs.values[1] if rhs.values[0] is acc_arg else rhs.values[0]
+            elif isinstance(rhs, ast.Call):
                 # min/max reduction. Accumulator = operand whose read slice matches the written
                 # slice (robust to arg order); WCR combines the OTHER (delta) operand into it.
                 op = rhs.func.id
-                acc_arg = next(a for a in rhs.args if isinstance(a, ast.Name) and a.id in inconns
-                               and inedges[inconns.index(a.id)].data.subset == outedge.data.subset)
+                acc_arg = next(
+                    a
+                    for a in rhs.args
+                    if isinstance(a, ast.Name)
+                    and a.id in inconns
+                    and inedges[inconns.index(a.id)].data.subset == outedge.data.subset
+                )
                 inedge = inedges[inconns.index(acc_arg.id)]
                 new_rhs = rhs.args[1] if rhs.args[0] is acc_arg else rhs.args[0]
             else:
                 op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-                if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
+
+                # The accumulator is the operand reading the written slice: in ``B[j] = B[j-1] + B[j]`` both
+                # operands read B, and taking the left one would drop ``B[j-1]`` from the sum.
+                def reads_written_slice(operand) -> bool:
+                    return (
+                        isinstance(operand, ast.Name)
+                        and operand.id in inconns
+                        and inedges[inconns.index(operand.id)].data.subset == outedge.data.subset
+                    )
+
+                if reads_written_slice(rhs.left):
                     inedge = inedges[inconns.index(rhs.left.id)]
                     new_rhs = rhs.right
                 else:
@@ -368,17 +526,18 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
                 inconn = edge.dst_conn
-                match = re.match(r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' % (re.escape(outconn), re.escape(inconn), ops), cstr)
+                match = re.match(rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(inconn)}\s*({ops})(.*);$", cstr)
                 if match is None:
                     match = re.match(
-                        r'^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn)), cstr)
+                        rf"^\s*{re.escape(outconn)}\s*=\s*\((.*)\)\s*({ops})\s*{re.escape(inconn)};$", cstr
+                    )
                     if match is None:
-                        func_rhs = r'^\s*%s\s*=\s*(%s)\((.*),\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs,
-                                                                                 re.escape(inconn))
+                        func_rhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\((.*),\s*{re.escape(inconn)}\s*\)\s*;$"
                         match = re.match(func_rhs, cstr)
                         if match is None:
-                            func_lhs = r'^\s*%s\s*=\s*(%s)\(\s*%s\s*,(.*)\)\s*;$' % (re.escape(outconn), funcs,
-                                                                                     re.escape(inconn))
+                            func_lhs = (
+                                rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(\s*{re.escape(inconn)}\s*,(.*)\)\s*;$"
+                            )
                             match = re.match(func_lhs, cstr)
                             if match is None:
                                 inconns = list(tasklet.in_connectors)
@@ -387,8 +546,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                                 # Special case: a = <other> op b
                                 other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
-                                rhs2 = r'^\s*%s\s*=\s*(%s)\s*(%s)\s*%s;$' % (
-                                    re.escape(outconn), re.escape(other_inconn), ops, re.escape(inconn))
+                                rhs2 = rf"^\s*{re.escape(outconn)}\s*=\s*({re.escape(other_inconn)})\s*({ops})\s*{re.escape(inconn)};$"
                                 match = re.match(rhs2, cstr)
                                 if match is None:
                                     continue
@@ -416,7 +574,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     op, newexpr = AugAssignToWCR._EXPR_MAP[op]
                     expr = newexpr.format(expr=expr)
 
-                tasklet.code.code = '%s = %s;' % (outconn, expr)
+                tasklet.code.code = f"{outconn} = {expr};"
                 inedge = edge
                 break
         else:
@@ -424,9 +582,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # Change output edge
         if op in AugAssignToWCR._FUNCTIONS:
-            outedge.data.wcr = f'lambda a,b: {op}(a, b)'
+            outedge.data.wcr = f"lambda a,b: {op}(a, b)"
         else:
-            outedge.data.wcr = f'lambda a,b: a {op} b'
+            outedge.data.wcr = f"lambda a,b: a {op} b"
 
         # Remove input node and connector
         new_state.remove_memlet_path(inedge)
@@ -435,16 +593,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # If outedge leads to non-transient, and this is a nested SDFG,
         # propagate outwards
         sd = sdfg
-        while (not sd.arrays[outedge.data.data].transient and sd.parent_nsdfg_node is not None):
+        while not sd.arrays[outedge.data.data].transient and sd.parent_nsdfg_node is not None:
             nsdfg = sd.parent_nsdfg_node
             nstate = sd.parent
             sd = sd.parent_sdfg
             outedge = next(iter(nstate.out_edges_by_connector(nsdfg, outedge.data.data)))
             for outedge in nstate.memlet_path(outedge):
                 if op in AugAssignToWCR._FUNCTIONS:
-                    outedge.data.wcr = f'lambda a,b: {op}(a, b)'
+                    outedge.data.wcr = f"lambda a,b: {op}(a, b)"
                 else:
-                    outedge.data.wcr = f'lambda a,b: a {op} b'
+                    outedge.data.wcr = f"lambda a,b: a {op} b"
             # At this point we are leading to an access node again and can
             # traverse further up
 
@@ -463,14 +621,29 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if isinstance(rhs, ast.BinOp) and type(rhs.op) in self._RMW_BINOPS:
             op = self._RMW_BINOPS[type(rhs.op)]
             left, right = rhs.left, rhs.right
-            if (isinstance(left, ast.Name) and left.id == acc_conn and isinstance(right, ast.Name)
-                    and right.id in in_conns and right.id != acc_conn):
+            if (
+                isinstance(left, ast.Name)
+                and left.id == acc_conn
+                and isinstance(right, ast.Name)
+                and right.id in in_conns
+                and right.id != acc_conn
+            ):
                 return op, right, True
-            if (isinstance(right, ast.Name) and right.id == acc_conn and isinstance(left, ast.Name)
-                    and left.id in in_conns and left.id != acc_conn):
+            if (
+                isinstance(right, ast.Name)
+                and right.id == acc_conn
+                and isinstance(left, ast.Name)
+                and left.id in in_conns
+                and left.id != acc_conn
+            ):
                 return op, left, False
-        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in self._FUNCTIONS
-              and len(rhs.args) == 2 and all(isinstance(a, ast.Name) for a in rhs.args)):
+        elif (
+            isinstance(rhs, ast.Call)
+            and isinstance(rhs.func, ast.Name)
+            and rhs.func.id in self._FUNCTIONS
+            and len(rhs.args) == 2
+            and all(isinstance(a, ast.Name) for a in rhs.args)
+        ):
             a0, a1 = rhs.args
             if a0.id == acc_conn and a1.id in in_conns and a1.id != acc_conn:
                 return rhs.func.id, a1, True
@@ -528,8 +701,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if tlet.language is not dtypes.Language.Python or len(tlet.code.code) != 1:
             return False
         node = tlet.code.code[0]
-        if (not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name)
-                or node.targets[0].id != oute.src_conn):
+        if (
+            not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(node.targets[0], ast.Name)
+            or node.targets[0].id != oute.src_conn
+        ):
             return False
         data_in = [e for e in graph.in_edges(tlet) if e.data is not None and not e.data.is_empty()]
         data_out = [e for e in graph.out_edges(tlet) if e.data is not None and not e.data.is_empty()]
@@ -539,7 +716,22 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         op, _, acc_on_left = self._classify_rmw_rhs(node.value, ine.dst_conn, tlet)
         if op is None:
             return False
-        if op == '-' and not acc_on_left:
+        if op == "-" and not acc_on_left:
+            return False
+
+        # Another writer of the accumulator in this state forbids the rewrite. ``apply`` drops the
+        # load edge and lets the WCR read the destination at write time instead -- but that load is
+        # what orders the RMW behind the other write. A scan seeds ``a[k+1] = a[k]`` through its own
+        # access node and then accumulates into ``a[k+1]``; without the load the WCR is unordered
+        # against the seed and the increment is applied to whichever value happens to be there.
+        # (CloudSC's vertical flux band, and TSVC's recurrences, are exactly this shape.)
+        if any(
+            other is not out
+            and isinstance(other, nodes.AccessNode)
+            and other.data == out.data
+            and graph.in_degree(other) > 0
+            for other in graph.nodes()
+        ):
             return False
         return True
 
@@ -560,7 +752,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # Write the increment straight into the accumulator with the WCR,
         # bypassing the scalar copy-out transient.
         acc_subset = store.data.get_dst_subset(store, state)
-        wcr = f'lambda a,b: {op}(a, b)' if op in self._FUNCTIONS else f'lambda a,b: a {op} b'
+        wcr = f"lambda a,b: {op}(a, b)" if op in self._FUNCTIONS else f"lambda a,b: a {op} b"
         state.remove_edge(oute)
         state.remove_edge(store)
         state.add_edge(tlet, oute.src_conn, out, store.dst_conn, Memlet(data=out.data, subset=acc_subset, wcr=wcr))
@@ -638,9 +830,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if cpy.language is not dtypes.Language.Python or len(cpy.code.code) != 1:
             return False
         cb = cpy.code.code[0]
-        if (not isinstance(cb, ast.Assign) or len(cb.targets) != 1 or not isinstance(cb.targets[0], ast.Name)
-                or cb.targets[0].id != store.src_conn or not isinstance(cb.value, ast.Name)
-                or cb.value.id != copy_load.dst_conn):
+        if (
+            not isinstance(cb, ast.Assign)
+            or len(cb.targets) != 1
+            or not isinstance(cb.targets[0], ast.Name)
+            or cb.targets[0].id != store.src_conn
+            or not isinstance(cb.value, ast.Name)
+            or cb.value.id != copy_load.dst_conn
+        ):
             return False
         cb_in = [e for e in graph.in_edges(cpy) if e.data is not None and not e.data.is_empty()]
         cb_out = [e for e in graph.out_edges(cpy) if e.data is not None and not e.data.is_empty()]
@@ -652,8 +849,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if combine.language is not dtypes.Language.Python or len(combine.code.code) != 1:
             return False
         node = combine.code.code[0]
-        if (not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name)
-                or node.targets[0].id != combine_store.src_conn):
+        if (
+            not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(node.targets[0], ast.Name)
+            or node.targets[0].id != combine_store.src_conn
+        ):
             return False
         data_in = [e for e in graph.in_edges(combine) if e.data is not None and not e.data.is_empty()]
         data_out = [e for e in graph.out_edges(combine) if e.data is not None and not e.data.is_empty()]
@@ -663,7 +864,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         op, _, acc_on_left = self._classify_rmw_rhs(node.value, acc_read.dst_conn, combine)
         if op is None:
             return False
-        if op == '-' and not acc_on_left:
+        if op == "-" and not acc_on_left:
             return False
         return True
 
@@ -684,12 +885,13 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # Write the increment straight into the accumulator with the WCR,
         # bypassing the intermediate transient and the copyback tasklet.
         acc_subset = store.data.get_dst_subset(store, state)
-        wcr = f'lambda a,b: {op}(a, b)' if op in self._FUNCTIONS else f'lambda a,b: a {op} b'
+        wcr = f"lambda a,b: {op}(a, b)" if op in self._FUNCTIONS else f"lambda a,b: a {op} b"
         state.remove_edge(combine_store)
         state.remove_edge(copy_load)
         state.remove_edge(store)
-        state.add_edge(combine, combine_store.src_conn, out, store.dst_conn,
-                       Memlet(data=out.data, subset=acc_subset, wcr=wcr))
+        state.add_edge(
+            combine, combine_store.src_conn, out, store.dst_conn, Memlet(data=out.data, subset=acc_subset, wcr=wcr)
+        )
         if state.degree(mid) == 0:
             state.remove_node(mid)
         if state.degree(cpy) == 0:
@@ -706,6 +908,165 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         propagate_memlets_state(sdfg, state)
 
+    def _combine_copyback_map_edges(self, graph):
+        """Return the spine edges ``(acc_read, combine_store, copy_load, store, map_out)`` of the
+        in-map combine-then-copyback, or ``None`` if the spine is not a clean single path.
+
+        - ``acc_read``    : ``map_entry -> combine`` carrying the accumulator (``input.data``).
+        - ``combine_store``: ``combine -> combine_out`` (combine writes the private transient).
+        - ``copy_load``   : ``combine_out -> copyback`` (copy tasklet reads it).
+        - ``store``       : ``copyback -> map_exit`` (writes the accumulator back out of the map).
+        - ``map_out``     : ``map_exit -> output`` (the accumulator leaves the map).
+        """
+        me, mx = self.map_entry, self.map_exit
+        inp, combine, mid, cpy, out = (self.input, self.tasklet, self.combine_out, self.copyback, self.output)
+        acc_reads = [e for e in graph.edges_between(me, combine) if e.data is not None and e.data.data == inp.data]
+        combine_store = graph.edges_between(combine, mid)
+        copy_load = graph.edges_between(mid, cpy)
+        store = graph.edges_between(cpy, mx)
+        map_out = graph.edges_between(mx, out)
+        if (
+            len(acc_reads) != 1
+            or len(combine_store) != 1
+            or len(copy_load) != 1
+            or len(store) != 1
+            or len(map_out) != 1
+        ):
+            return None
+        return acc_reads[0], combine_store[0], copy_load[0], store[0], map_out[0]
+
+    def _can_be_applied_combine_copyback_map(self, graph, sdfg):
+        """Match the in-map combine-then-copyback reduction
+        ``arr[S] -> map_entry -> combine -> slice -> copyback -> map_exit -> arr[S]`` where ``arr[S]``
+        is a LOOP-INVARIANT accumulator (write subset independent of the map params, so every lane
+        writes the SAME element -- a genuine reduction, unlike a per-lane disjoint scatter). This is
+        the map-scoped mirror of the free combine-copyback (:meth:`_can_be_applied_combine_copyback`);
+        the ``dace.map`` form of ``acc = max(acc, x)`` lands here (the frontend emits the combine +
+        private slice + trivial copyback inside the map), which the free pattern misses."""
+        me, mx = self.map_entry, self.map_exit
+        inp, combine, mid, cpy, out = (self.input, self.tasklet, self.combine_out, self.copyback, self.output)
+        if inp.data != out.data:
+            return False
+        # Free map only; the combine + copyback must live in THIS map.
+        if graph.entry_node(me) is not None:
+            return False
+        if graph.entry_node(combine) is not me or graph.entry_node(cpy) is not me:
+            return False
+        # The intermediate must be a private single-use transient.
+        desc = sdfg.arrays.get(mid.data)
+        if desc is None or not desc.transient:
+            return False
+        if graph.in_degree(mid) != 1 or graph.out_degree(mid) != 1:
+            return False
+
+        edges = self._combine_copyback_map_edges(graph)
+        if edges is None:
+            return False
+        acc_read, combine_store, copy_load, store, map_out = edges
+        if map_out.data.wcr is not None or store.data.wcr is not None:
+            return False
+        # Reduction, not scatter: the element written OUT of the map must be loop-invariant
+        # (independent of every map param) so all lanes conflict on the same slot.
+        acc_subset = map_out.data.get_dst_subset(map_out, graph)
+        load_subset = acc_read.data.get_src_subset(acc_read, graph)
+        if acc_subset is None or load_subset is None or acc_subset != load_subset:
+            return False
+        if len(acc_subset.free_symbols & set(me.map.params)) != 0:
+            return False
+
+        # copyback must be a trivial single-in / single-out copy ``<store_conn> = <copy_load_conn>``.
+        if cpy.language is not dtypes.Language.Python or len(cpy.code.code) != 1:
+            return False
+        cb = cpy.code.code[0]
+        if (
+            not isinstance(cb, ast.Assign)
+            or len(cb.targets) != 1
+            or not isinstance(cb.targets[0], ast.Name)
+            or cb.targets[0].id != store.src_conn
+            or not isinstance(cb.value, ast.Name)
+            or cb.value.id != copy_load.dst_conn
+        ):
+            return False
+
+        # The combining tasklet: single assignment, two data inputs (accumulator + increment),
+        # one data output, an order-independent reduction of the accumulator with one other input.
+        if combine.language is not dtypes.Language.Python or len(combine.code.code) != 1:
+            return False
+        node = combine.code.code[0]
+        if (
+            not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(node.targets[0], ast.Name)
+            or node.targets[0].id != combine_store.src_conn
+        ):
+            return False
+        data_in = [e for e in graph.in_edges(combine) if e.data is not None and not e.data.is_empty()]
+        data_out = [e for e in graph.out_edges(combine) if e.data is not None and not e.data.is_empty()]
+        if len(data_in) != 2 or len(data_out) != 1:
+            return False
+        op, _, acc_on_left = self._classify_rmw_rhs(node.value, acc_read.dst_conn, combine)
+        if op is None:
+            return False
+        # Restrict to the min/max CALL reductions: the combine-through-a-private-slice + trivial
+        # copyback is exactly how the frontend lowers ``acc = max(acc, x)`` / ``min`` inside a
+        # ``dace.map`` (a 2-arg Call), the one reduction shape no other pattern catches. A ``+`` / ``*``
+        # combine-copyback in a map is a vectorizer intermediate (a NormalizeWCR seeded accumulator
+        # whose copyback WidenAccesses folds); converting it here would strip that copyback. Sum/prod
+        # reductions reach WCR via the direct augmented-assign (expr_index 1) instead.
+        if op not in self._FUNCTIONS:
+            return False
+        return True
+
+    def _apply_combine_copyback_map(self, state: SDFGState, sdfg: SDFG):
+        """Rewrite the in-map combine-then-copyback into a map-exit WCR write: the combine emits
+        only the increment (accumulator operand dropped), written straight to the map exit with the
+        reduction WCR (the intermediate transient and the copyback tasklet are removed); the
+        accumulator load path through the map entry is dropped. Mirror of
+        :meth:`_apply_combine_copyback` with the map scope."""
+        me, mx = self.map_entry, self.map_exit
+        inp, combine, mid, cpy, out = (self.input, self.tasklet, self.combine_out, self.copyback, self.output)
+        acc_read, combine_store, copy_load, store, map_out = self._combine_copyback_map_edges(state)
+
+        node = combine.code.code[0]
+        op, other_ast, _ = self._classify_rmw_rhs(node.value, acc_read.dst_conn, combine)
+        combine.code.code = [ast.copy_location(ast.Assign(targets=node.targets, value=other_ast), node)]
+
+        # Collapse ``combine -> combine_out -> copyback -> map_exit`` into ``combine -> map_exit``,
+        # carrying the reduction WCR into the map exit (propagation carries it out to the accumulator).
+        acc_subset = map_out.data.get_dst_subset(map_out, state)
+        wcr = f"lambda a,b: {op}(a, b)" if op in self._FUNCTIONS else f"lambda a,b: a {op} b"
+        mx_in_conn = store.dst_conn
+        state.remove_edge(combine_store)
+        state.remove_edge(copy_load)
+        state.remove_edge(store)
+        state.add_edge(
+            combine, combine_store.src_conn, mx, mx_in_conn, Memlet(data=out.data, subset=acc_subset, wcr=wcr)
+        )
+        if state.degree(mid) == 0:
+            state.remove_node(mid)
+        if state.degree(cpy) == 0:
+            state.remove_node(cpy)
+
+        # Drop the accumulator load path: ``map_entry -> combine`` and, if the accumulator is no
+        # longer read inside the map, the map-entry connector pair + the ``input -> map_entry`` edge.
+        acc_conn = acc_read.dst_conn
+        me_out_conn = acc_read.src_conn
+        state.remove_edge(acc_read)
+        if acc_conn in combine.in_connectors:
+            combine.remove_in_connector(acc_conn)
+        if me_out_conn is not None and not any(e.src_conn == me_out_conn for e in state.out_edges(me)):
+            in_conn = "IN_" + me_out_conn[len("OUT_") :] if me_out_conn.startswith("OUT_") else None
+            if me_out_conn in me.out_connectors:
+                me.remove_out_connector(me_out_conn)
+            if in_conn is not None and in_conn in me.in_connectors:
+                for e in list(state.in_edges_by_connector(me, in_conn)):
+                    state.remove_edge(e)
+                me.remove_in_connector(in_conn)
+        if state.degree(inp) == 0:
+            state.remove_node(inp)
+
+        propagate_memlets_state(sdfg, state)
+
     def isolate_tasklet(
         self,
         state: SDFGState,
@@ -714,9 +1075,11 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         newstate = state.parent_graph.add_state_after(state)
 
         # Bookkeeping
-        nodes_to_move = set([tlet])
-        boundary_nodes = set()
-        orig_edges = set()
+        # Ordered: these drive ``add_nodes_from`` / ``add_edge`` below, and a plain set of node
+        # objects iterates in id() order -- not even PYTHONHASHSEED-stable.
+        nodes_to_move = OrderedSet([tlet])
+        boundary_nodes = OrderedSet()
+        orig_edges = OrderedSet()
 
         for edge in state.in_edges(tlet):
             for e in state.memlet_path(edge):
@@ -756,6 +1119,17 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     if oedge.dst not in nodes_to_move:
                         boundary_nodes.add(node)
                         break
+        # A view left behind keeps the chain binding it to its data.
+        for node in list(boundary_nodes):
+            if isinstance(node.desc(state.sdfg), data.View):
+                chain = sdutil.get_all_view_edges(state, node)
+                boundary_nodes.update(n for e in chain for n in (e.src, e.dst) if n in nodes_to_move)
+
+        # A duplicated view needs the chain it views duplicated with it, or the copy views nothing.
+        for node in list(boundary_nodes):
+            if isinstance(node.desc(state.sdfg), data.View):
+                for edge in sdutil.get_all_view_edges(state, node):
+                    boundary_nodes.update(n for n in (edge.src, edge.dst) if n in nodes_to_move)
 
         # Duplicate boundary nodes
         new_nodes = {}
@@ -766,8 +1140,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         for edge in state.edges():
             if edge.src in boundary_nodes and edge.dst in boundary_nodes:
-                state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
-                               copy.deepcopy(edge.data))
+                state.add_edge(
+                    new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data)
+                )
             elif edge.src in boundary_nodes:
                 state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
             elif edge.dst in boundary_nodes:
@@ -792,14 +1167,17 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
     """
     Converts a tasklet with a write-conflict resolution to an augmented assignment subgraph (e.g., "a = a + b").
     """
+
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
     map_exit = transformation.PatternNode(nodes.MapExit)
+    outer_map_exit = transformation.PatternNode(nodes.MapExit)
     inp = transformation.PatternNode(nodes.AccessNode)
+    nested = transformation.PatternNode(nodes.NestedSDFG)
 
-    _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
-    _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
-    _PYOP_MAP = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.BitXor: '^', ast.Mod: '%', ast.Div: '/'}
+    _EXPRESSIONS = ["+", "-", "*", "^", "%"]  # , '/']
+    _EXPR_MAP = {"-": ("+", "-({expr})"), "/": ("*", "((decltype({expr}))1)/({expr})")}
+    _PYOP_MAP = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.Mod: "%", ast.Div: "/"}
 
     @classmethod
     def expressions(cls):
@@ -815,6 +1193,24 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # AT the map boundary (LoopToMap lowers ``a[i] = a[i] - x`` to
             # ``_wcr_priv -(a-b)-> MapExit -> a``). 3rd pattern misses it: MapExit sits between.
             sdutil.node_path_graph(cls.inp, cls.map_exit, cls.output),
+            # ``Tasklet -> MapExit -[wcr]-> AccessNode``: the WCR is stranded on the OUTER
+            # map-exit->output edge (over-approximated to the whole array), while the inner
+            # tasklet->map-exit edge carries the PRECISE per-iteration write with no WCR.
+            # AugAssignToWCR mints a reduction on the outer boundary to let LoopToMap parallelize
+            # the loop; when the per-iteration write is injective over the map (distinct lane ->
+            # distinct element, no reduction) and the tasklet already materialises the RMW
+            # (reads the destination element back), the WCR is spurious -- an atomic over a
+            # conflict-free store -- and reverts to a plain indexed write. Same node topology as
+            # expr 1; distinguished by which edge holds the WCR (see ``_matched_wcr_edge``).
+            sdutil.node_path_graph(cls.tasklet, cls.map_exit, cls.output),
+            # ``NestedSDFG -[wcr]-> MapExit -> AccessNode``: expr 4 with the RMW materialised
+            # inside a body NestedSDFG instead of a bare tasklet (gramschmidt's
+            # ``A[:, j] -= Q[:, k] * R[k, j]``). The boundary memlet is over-approximated to the
+            # whole array there, so injectivity is decided on the PRECISE inner write subset.
+            sdutil.node_path_graph(cls.nested, cls.map_exit, cls.output),
+            # ``AccessNode -[wcr]-> MapExit -> MapExit -> AccessNode``: expr 3 with the output one map further
+            # out (a loop body inlined into a map nest: gramschmidt's ``A[j, i] -= Q[j, k] * R[k, i]``).
+            sdutil.node_path_graph(cls.inp, cls.map_exit, cls.outer_map_exit, cls.output),
         ]
 
     def _matched_wcr_edge(self, graph, expr_index):
@@ -825,15 +1221,131 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edges = graph.edges_between(self.tasklet, self.map_exit)
         elif expr_index == 2:
             edges = graph.edges_between(self.inp, self.output)
-        else:
+        elif expr_index in (3, 6):
             edges = graph.edges_between(self.inp, self.map_exit)
+        elif expr_index == 4:
+            # expr 4: WCR on the OUTER map_exit->output edge (inner tasklet->map_exit WCR-free,
+            # else it is expr 1's match).
+            inner = graph.edges_between(self.tasklet, self.map_exit)
+            if len(inner) != 1 or inner[0].data.wcr is not None:
+                return None
+            edges = graph.edges_between(self.map_exit, self.output)
+        else:
+            # expr 5: WCR on the NestedSDFG -> MapExit edge (the whole boundary chain carries it).
+            edges = [e for e in graph.edges_between(self.nested, self.map_exit) if e.data.wcr is not None]
         if len(edges) != 1 or edges[0].data.wcr is None:
             return None
         return edges[0]
 
+    def _can_revert_mapexit_wcr(self, graph, sdfg):
+        """expr 4: WCR stranded on the ``map_exit -> output`` edge. Revert (drop the WCR) only
+        when the PRECISE per-iteration write on the inner ``tasklet -> map_exit`` edge is a single
+        conflict-free element AND the tasklet already reads the destination element back, so the
+        read-modify-write is already materialised and a plain indexed store is equivalent."""
+        outer = self._matched_wcr_edge(graph, 4)
+        if outer is None:
+            return False
+        inner = graph.edges_between(self.tasklet, self.map_exit)[0]
+        sub = inner.data.subset
+        if sub is None or inner.data.dynamic is True or outer.data.dynamic is True:
+            return False
+        # Precise single-element per-iteration write only.
+        if sub.num_elements() != 1:
+            return False
+        # Injective over the enclosing map(s): distinct lane -> distinct element (not a reduction).
+        params = _enclosing_map_params(graph, self.tasklet)
+        # Avoid import loop: the vectorization package imports this module.
+        from dace.transformation.passes.vectorization.utils.injectivity import (
+            guarded_nonzero_symbols,
+            write_subset_is_injective,
+        )
+
+        if not write_subset_is_injective(sub, params, guarded_nonzero_symbols(graph)):
+            return False
+        # Parent-map guard (mirrors the scalar-revert path): across a nested-SDFG boundary the
+        # PARENT's enclosing maps are invisible to ``_enclosing_map_params``. If an outer map's
+        # param does not vary the write index, every one of its (potentially parallel) iterations
+        # writes the SAME element -- a race that is only correct as the reduction it currently is.
+        dst_desc = sdfg.arrays.get(self.output.data)
+        dst_scope_private = (
+            dst_desc is not None and dst_desc.transient and dst_desc.lifetime == dtypes.AllocationLifetime.Scope
+        )
+        if sdfg.parent is not None and not dst_scope_private:
+            outer_map_params = set()
+            for scope in get_parent_map_and_loop_scopes(sdfg, self.tasklet, graph):
+                if isinstance(scope, nodes.MapEntry):
+                    outer_map_params |= set(scope.map.params)
+            outer_map_params -= set(params)
+            index_syms = _index_syms_across_nesting(sdfg, sub)
+            index_syms |= boundary_write_index_syms(sdfg, self.output.data)
+            if any(str(it) not in index_syms for it in outer_map_params):
+                return False
+        # The tasklet must already READ BACK the destination element (same data, same subset), so
+        # ``__out`` already equals ``dest <op> incoming`` and dropping the WCR keeps the accumulate.
+        for ie in graph.in_edges(self.tasklet):
+            if ie.data.data != self.output.data or ie.data.subset is None:
+                continue
+            try:
+                same = ie.data.subset == sub
+            except Exception:
+                same = str(ie.data.subset) == str(sub)
+            if same:
+                return True
+        return False
+
+    def _can_revert_nested_boundary_wcr(self, graph, sdfg):
+        """expr 5: the WCR on a body NestedSDFG's ``-> MapExit -> AccessNode`` boundary is spurious.
+
+        Same reasoning as :meth:`_can_revert_mapexit_wcr`, one nesting level down: the read-modify-
+        write is already materialised INSIDE the NestedSDFG (it reads the destination slice back and
+        writes the combined value), and the write is injective over the enclosing map, so the atomic
+        buys nothing. Decided on the precise inner subsets, because the boundary memlet is
+        over-approximated to the whole array.
+        """
+        edge = self._matched_wcr_edge(graph, 5)
+        if edge is None or edge.data.dynamic is True:
+            return False
+        conn = edge.src_conn
+        if conn is None or conn not in self.nested.out_connectors or conn not in self.nested.in_connectors:
+            return False
+        if edge.data.data != self.output.data:
+            return False
+        write = nested_connector_subset(self.nested, conn, writes=True, boundary_subset=edge.data.subset)
+        if write is None:
+            return False
+        # Injective over the enclosing map: distinct iteration -> distinct element, no reduction.
+        # Avoid import loop: the vectorization package imports this module.
+        from dace.transformation.passes.vectorization.utils.injectivity import (
+            guarded_nonzero_symbols,
+            write_subset_is_injective,
+        )
+
+        if not write_subset_is_injective(
+            write, _enclosing_map_params(graph, self.nested), guarded_nonzero_symbols(graph)
+        ):
+            return False
+        # The RMW must already be materialised inside: the body reads back exactly what it writes,
+        # so the written value already equals ``dest <op> incoming`` and a plain store is equivalent.
+        read = nested_connector_subset(self.nested, conn, writes=False, boundary_subset=edge.data.subset)
+        return read is not None and str(read) == str(write)
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if expr_index == 4:
+            return self._can_revert_mapexit_wcr(graph, sdfg)
+        if expr_index == 5:
+            return self._can_revert_nested_boundary_wcr(graph, sdfg)
         edge = self._matched_wcr_edge(graph, expr_index)
         if edge is None:
+            return False
+
+        # ``output`` is bound as SOME successor of the map exit, and an exit with several outputs
+        # has one valid binding per array -- nothing in the path pattern ties it to the container
+        # the matched WCR edge writes. Applying a mismatched binding pairs this edge's memlet with
+        # the other array's access node (CloudSC's flux band writes four arrays through one exit).
+        if expr_index in (1, 3, 6) and self.output.data != edge.data.data:
+            return False
+        # expr 6: the matched outer exit and output must be where THIS connector's path leads.
+        if expr_index == 6 and graph.memlet_path(edge)[-1].dst is not self.output:
             return False
 
         # Overapproximated WCR subset (access may be dynamic) → unsupported. The two
@@ -843,7 +1355,10 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # symbolically and PROCEED only when the write is provably within its volume;
         # an undecidable or provably-larger difference (the over-approximated /
         # dynamic case) refuses, keeping the WCR.
-        diff = symbolic.simplify(edge.data.subset.num_elements() - edge.data.volume)
+        # ``volume`` is a separately stored property -- reparsed on deserialization, recomputed by
+        # passes -- so its symbols need not be the subset's own instances of the same names.
+        written, volume = symbolic.equalize_symbols_across(edge.data.subset.num_elements(), edge.data.volume)
+        diff = symbolic.simplify(written - volume)
         within_volume = (diff <= 0) == True  # noqa: E712 -- sympy Relational, not a bool
         if not within_volume or edge.data.dynamic is True:
             return False
@@ -872,8 +1387,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                     if len(in_dims) != len(out_dims):
                         return False
                     if any(
-                            sympy.simplify((i[1][1] - i[1][0]) - (o[1][1] - o[1][0])) != 0
-                            for i, o in zip(in_dims, out_dims)):
+                        sympy.simplify((i[1][1] - i[1][0]) - (o[1][1] - o[1][0])) != 0
+                        for i, o in zip(in_dims, out_dims)
+                    ):
                         return False
 
         # Soundness: dropping WCR for explicit RMW safe only where write is conflict-free.
@@ -881,7 +1397,13 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # injective over map params. Reduction (constant target) NOT injective → keeps WCR
         # (lifted to Reduce libnode / OMP-reduction elsewhere); symbolic stride → guarded passes.
         params = _enclosing_map_params(graph, edge.src)
-        if params and not _wcr_write_is_injective(edge.data.subset, params):
+        # Avoid import loop: the vectorization package imports this module.
+        from dace.transformation.passes.vectorization.utils.injectivity import (
+            guarded_nonzero_symbols,
+            write_subset_is_injective,
+        )
+
+        if params and not write_subset_is_injective(edge.data.subset, params, guarded_nonzero_symbols(graph)):
             return False
 
         # Nested-SDFG guard: inside a NestedSDFG the enclosing maps of the PARENT are invisible to
@@ -910,8 +1432,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # scalar for a masked/nested reduction; without this the outer-map-param check below
         # would wrongly keep its WCR, trapping a loose in-NSDFG WCR the tile emitter drops.)
         dst_desc = sdfg.arrays.get(edge.dst.data) if isinstance(edge.dst, nodes.AccessNode) else None
-        dst_scope_private = (dst_desc is not None and dst_desc.transient
-                             and dst_desc.lifetime == dtypes.AllocationLifetime.Scope)
+        dst_scope_private = (
+            dst_desc is not None and dst_desc.transient and dst_desc.lifetime == dtypes.AllocationLifetime.Scope
+        )
         if sdfg.parent is not None and not dst_scope_private:
             outer_map_params = set()
             for scope in get_parent_map_and_loop_scopes(sdfg, edge.src, graph):
@@ -924,44 +1447,92 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # (an injective per-element in-place RMW like s212 ``b[i] += a[i+1]*d[i]``), not a
             # cross-iteration reduction that must keep its WCR.
             index_syms = _index_syms_across_nesting(sdfg, edge.data.subset)
+            index_syms |= boundary_write_index_syms(sdfg, edge.data.data)
             if any(str(it) not in index_syms for it in outer_map_params):
                 return False
 
         return True
 
+    def clear_boundary_wcr(self, sdfg: SDFG, data: str) -> None:
+        """Drop the reduction ``AugAssignToWCR`` stamped on the enclosing nested-SDFG boundaries.
+
+        ``AugAssignToWCR.apply`` does not stop at the state it rewrites: while the written array is
+        visible outside, it walks OUT of every nesting level and marks the connector's whole memlet
+        path with the same WCR, because a reduction inside a NestedSDFG is still a reduction where
+        the parent sees the write. Reverting the inner WCR without the mirror walk leaves that mark
+        behind as residue -- a boundary claiming an atomic no producer asks for any more. It is not
+        merely untidy: the multi-dim tile vectorizer refuses a whole kernel over a loose WCR inside
+        a map body (tsvc ``s212_d_single``, whose in-chunk sweep is nested), and re-running memlet
+        propagation erases the same edges, which is the definition of stale derived data.
+
+        Stops at a level that still has another WCR writer for the array, whose reduction the
+        boundary is legitimately carrying.
+        """
+        sd = sdfg
+        while sd.parent_nsdfg_node is not None:
+            desc = sd.arrays.get(data)
+            # A transient is invisible to the parent, so no boundary was stamped for it.
+            if desc is None or desc.transient:
+                return
+            if any(
+                e.data is not None and e.data.wcr is not None and e.data.data == data
+                for st in sd.states()
+                for e in st.edges()
+            ):
+                return
+            nsdfg = sd.parent_nsdfg_node
+            nstate = sd.parent
+            sd = sd.parent_sdfg
+            outer = list(nstate.out_edges_by_connector(nsdfg, data))
+            if not outer:
+                return
+            for oe in outer:
+                path = nstate.memlet_path(oe)
+                for pe in path:
+                    pe.data.wcr = None
+                data = path[-1].data.data
+
     def apply(self, state: SDFGState, sdfg: SDFG):
         # WCR convention ``lambda acc, new``: ``__in1`` = existing dest value (read back),
         # ``__in2`` = incoming value the edge writes. ``_wcr_augassign_body`` binds by arg name
         # so non-commutative ops (``a - b``) stay correct.
+        if self.expr_index in (4, 5):
+            # Spurious reduction on the outer boundary: the RMW is already materialised by the
+            # producer (it reads the destination back) and the write is injective over the map, so
+            # the conflict-free store needs no atomic. Drop the WCR along the whole memlet path.
+            edge = self._matched_wcr_edge(state, self.expr_index)
+            for pe in state.memlet_path(edge):
+                pe.data.wcr = None
+            self.clear_boundary_wcr(sdfg, self.output.data)
+            return
         if self.expr_index == 0:
             edge = state.edges_between(self.tasklet, self.output)[0]
             code = _wcr_augassign_body(edge.data.wcr)
             edge.data.wcr = None
-            in_access = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            scal_name, scal_desc = sdfg.add_scalar('tmp',
-                                                   sdfg.arrays[self.output.data].dtype,
-                                                   transient=True,
-                                                   find_new_name=True)
-            state.add_edge(in_access, None, new_tasklet, '__in1', copy.deepcopy(edge.data))
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
-            state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, edge.data)
+            in_access = read_back_access(state, self.output)
+            new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
+            state.add_edge(in_access, None, new_tasklet, "__in1", copy.deepcopy(edge.data))
+            connect_through_scalar(
+                state, sdfg, self.tasklet, edge.src_conn, new_tasklet, "__in2", sdfg.arrays[self.output.data].dtype
+            )
+            state.add_edge(new_tasklet, "__out", self.output, edge.dst_conn, edge.data)
             state.remove_edge(edge)
         elif self.expr_index == 1:
             edge = state.edges_between(self.tasklet, self.map_exit)[0]
-            map_entry = state.entry_node(self.map_exit)
+            # Outermost first: the read-back enters through every map the write leaves through.
+            entries = [
+                state.entry_node(e.dst) for e in reversed(state.memlet_path(edge)) if isinstance(e.dst, nodes.MapExit)
+            ]
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
-            in_access = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            scal_name, scal_desc = sdfg.add_scalar('tmp',
-                                                   sdfg.arrays[self.output.data].dtype,
-                                                   transient=True,
-                                                   find_new_name=True)
-            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in2', Memlet.from_array(scal_name, scal_desc))
-            state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
+            in_access = read_back_access(state, self.output)
+            new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
+            state.add_memlet_path(in_access, *entries, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn="__in1")
+            connect_through_scalar(
+                state, sdfg, self.tasklet, edge.src_conn, new_tasklet, "__in2", sdfg.arrays[self.output.data].dtype
+            )
+            state.add_edge(new_tasklet, "__out", self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
         elif self.expr_index == 2:
             # inp -[wcr]-> output copy. Materialise RMW explicitly: ``output = output <op> inp``
@@ -977,8 +1548,8 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             out_subset = m.get_dst_subset(edge, state)
             in_subset = m.get_src_subset(edge, state)
             dims = _multi_element_dims(out_subset) if out_subset is not None else []
-            read_back = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
+            read_back = read_back_access(state, self.output)
+            new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
 
             if not dims:
                 # Scalar RMW: ``__in1``/``__out`` address DEST (output); ``__in2`` reads SOURCE
@@ -996,9 +1567,16 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                     in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))
                 else:
                     in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
-                state.add_edge(read_back, None, new_tasklet, '__in1', _dst_memlet())
-                state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2', in_memlet)
-                state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, _dst_memlet())
+                # A copy inside a map reads the destination back through the map entries it sits in, as expr 1
+                # does; a read-back added beside the scope would cross into it without one.
+                entries = []
+                scope = state.entry_node(self.inp)
+                while scope is not None:
+                    entries.insert(0, scope)
+                    scope = state.entry_node(scope)
+                state.add_memlet_path(read_back, *entries, new_tasklet, memlet=_dst_memlet(), dst_conn="__in1")
+                state.add_edge(self.inp, edge.src_conn, new_tasklet, "__in2", in_memlet)
+                state.add_edge(new_tasklet, "__out", self.output, edge.dst_conn, _dst_memlet())
             else:
                 # Slice-WCR ``out[slice] (wcr)= inp[slice]``: an elementwise RMW. Wrap the tasklet
                 # in a fresh Map with one 0-based iterator per multi-element dim -- ``out[i] =
@@ -1007,52 +1585,70 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 # at its OWN ``lo + q*step`` (``_index_dims``), so a shifted / strided source is
                 # read correctly (``can_be_applied`` guarantees matching per-dim counts). The map
                 # param counts come from the write's dims; a scalar / whole-array source broadcasts.
-                params = [f'__wcr_i{k}' for k in range(len(dims))]
+                params = [f"__wcr_i{k}" for k in range(len(dims))]
                 psyms = [symbolic.pystr_to_symbolic(p) for p in params]
-                me, mx = state.add_map('augassign_map', {
-                    p: subsets.Range([(0, (rng[1] - rng[0]) // rng[2], 1)])
-                    for p, (_, rng) in zip(params, dims)
-                })
+                me, mx = state.add_map(
+                    "augassign_map",
+                    {
+                        p: subsets.Range([(0, symbolic.int_floor(rng[1] - rng[0], rng[2]), 1)])
+                        for p, (_, rng) in zip(params, dims)
+                    },
+                )
                 dst_pe = _index_dims(out_subset, dims, psyms)
                 in_dims = _multi_element_dims(in_subset) if in_subset is not None else []
                 if in_subset is not None and in_dims:
-                    src_pe = _index_dims(in_subset, in_dims, psyms[:len(in_dims)])
+                    src_pe = _index_dims(in_subset, in_dims, psyms[: len(in_dims)])
                     in_memlet = Memlet(data=self.inp.data, subset=src_pe)
                 elif in_subset is not None:
                     in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))  # scalar/broadcast
                 else:
                     in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
-                state.add_memlet_path(read_back,
-                                      me,
-                                      new_tasklet,
-                                      dst_conn='__in1',
-                                      memlet=Memlet(data=self.output.data, subset=copy.deepcopy(dst_pe)))
-                state.add_memlet_path(self.inp,
-                                      me,
-                                      new_tasklet,
-                                      src_conn=edge.src_conn,
-                                      dst_conn='__in2',
-                                      memlet=in_memlet)
-                state.add_memlet_path(new_tasklet,
-                                      mx,
-                                      self.output,
-                                      src_conn='__out',
-                                      dst_conn=edge.dst_conn,
-                                      memlet=Memlet(data=self.output.data, subset=copy.deepcopy(dst_pe)))
+                state.add_memlet_path(
+                    read_back,
+                    me,
+                    new_tasklet,
+                    dst_conn="__in1",
+                    memlet=Memlet(data=self.output.data, subset=copy.deepcopy(dst_pe)),
+                )
+                state.add_memlet_path(
+                    self.inp, me, new_tasklet, src_conn=edge.src_conn, dst_conn="__in2", memlet=in_memlet
+                )
+                state.add_memlet_path(
+                    new_tasklet,
+                    mx,
+                    self.output,
+                    src_conn="__out",
+                    dst_conn=edge.dst_conn,
+                    memlet=Memlet(data=self.output.data, subset=copy.deepcopy(dst_pe)),
+                )
             state.remove_edge(edge)
         else:
             # inp -[wcr]-> MapExit -> output: privatized source resolved at map boundary.
             # Mirror expr 1 but read incoming operand from ``inp`` (AccessNode) not a tasklet:
             # ``output = output <op> inp``, reading dest back through the map entry, dropping WCR.
             edge = state.edges_between(self.inp, self.map_exit)[0]
-            map_entry = state.entry_node(self.map_exit)
+            # Outermost first: the read-back enters through every map enclosing ``inp``, not only the ones the write
+            # leaves through -- an output that sits inside an outer map (a nested loop body inlined into a map nest)
+            # is still reached only through that outer map's entry.
+            entries = []
+            scope = state.entry_node(self.inp)
+            while scope is not None:
+                entries.insert(0, scope)
+                scope = state.entry_node(scope)
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
-            in_access = state.add_access(self.output.data)
-            new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
-            state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2',
-                           Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]))
-            state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
+            in_access = read_back_access(state, self.output)
+            new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
+            state.add_memlet_path(in_access, *entries, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn="__in1")
+            state.add_edge(
+                self.inp,
+                edge.src_conn,
+                new_tasklet,
+                "__in2",
+                Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]),
+            )
+            state.add_edge(new_tasklet, "__out", self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
+
+        self.clear_boundary_wcr(sdfg, self.output.data)

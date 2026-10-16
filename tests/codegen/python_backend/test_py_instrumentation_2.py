@@ -1,3 +1,4 @@
+from dace.transformation.passes.vectorization.enums import ISA
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the refactored DaCe Python-backend timing instrumentation.
 
@@ -539,7 +540,7 @@ class TestPlainPythonContextManager:
 def _apply_cutile_pipeline(sdfg: SDFG, widths=(8, )) -> None:
     """Apply the canonicalize-free cuTile lowering used by the integration
     tests: the ``VectorizeCuTile`` orchestrator (vectorize with
-    ``target_isa="CUTILE"``, stamp CuTile schedules/storage/implementations,
+    ``target_isa=ISA.CUTILE``, stamp CuTile schedules/storage/implementations,
     expand library nodes, and select the Python backend).
 
     :param sdfg: SDFG to transform in place.

@@ -8,6 +8,7 @@ counts sequential ``LoopRegion`` s vs parallel ``MapEntry`` s. ``loop_map_table`
 returns a list of markdown rows (header + separator + one row per group), so the
 result renders directly as a markdown table.
 """
+
 import contextlib
 import io
 import os
@@ -22,7 +23,6 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc_2_5 import tsvc_2_5
 
@@ -56,8 +56,9 @@ def _count(program):
     sdfg = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(sdfg, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP, unroll_limit=_UNROLL_LIMIT)
-    loops = sum(1 for cfr in sdfg.all_control_flow_regions()
-                if isinstance(cfr, LoopRegion) and not cfr.pinned_sequential)
+    loops = sum(
+        1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion) and not cfr.pinned_sequential
+    )
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     return loops, maps
 

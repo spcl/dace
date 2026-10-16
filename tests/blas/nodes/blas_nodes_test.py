@@ -1,17 +1,24 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.libraries.blas as blas
-from dace.transformation.dataflow import RedundantSecondArray
 import numpy as np
 import pytest
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+import dace
+from dace.libraries import blas
+from dace.transformation.dataflow import RedundantSecondArray
+
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
-@pytest.mark.parametrize(('implementation', ), [('pure', ),
-                                                pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', ),
-                                                pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ("implementation",),
+    [
+        ("pure",),
+        pytest.param("MKL", marks=pytest.mark.mkl),
+        ("OpenBLAS",),
+        pytest.param("cuBLAS", marks=pytest.mark.gpu),
+    ],
+)
 def test_gemv_strided(implementation):
 
     @dace.program
@@ -22,8 +29,8 @@ def test_gemv_strided(implementation):
     x = np.random.rand(30, 30)
     reference = A @ x[:, 1]
     sdfg = gemv.to_sdfg()
-    sdfg.name = f'{sdfg.name}_{implementation}'
-    if implementation == 'cuBLAS':
+    sdfg.name = f"{sdfg.name}_{implementation}"
+    if implementation == "cuBLAS":
         sdfg.apply_gpu_transformations()
         sdfg.apply_transformations_repeated(RedundantSecondArray)
 
@@ -38,7 +45,7 @@ def test_dot_subset():
 
     @dace.program
     def dot(x: dace.float64[N, N], y: dace.float64[N, N]):
-        return x[1, 1:N - 1] @ y[1:N - 1, 1]
+        return x[1, 1 : N - 1] @ y[1 : N - 1, 1]
 
     x = np.random.rand(30, 30)
     y = np.random.rand(30, 30)
@@ -47,16 +54,22 @@ def test_dot_subset():
 
     # Enforce one-dimensional memlets from two-dimensional arrays
     sdfg.apply_transformations_repeated(RedundantSecondArray)
-    blas.default_implementation = 'pure'
+    blas.default_implementation = "pure"
     daceres = sdfg(x=x, y=y, N=30)
 
     blas.default_implementation = None
     assert np.allclose(daceres, reference)
 
 
-@pytest.mark.parametrize(('implementation', ), [('pure', ),
-                                                pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', ),
-                                                pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ("implementation",),
+    [
+        ("pure",),
+        pytest.param("MKL", marks=pytest.mark.mkl),
+        ("OpenBLAS",),
+        pytest.param("cuBLAS", marks=pytest.mark.gpu),
+    ],
+)
 def test_dot_strided(implementation):
 
     @dace.program
@@ -67,12 +80,12 @@ def test_dot_strided(implementation):
     y = np.random.rand(30, 30)
     reference = x[1, :] @ y[:, 1]
     sdfg = dot.to_sdfg()
-    sdfg.name = f'{sdfg.name}_{implementation}'
+    sdfg.name = f"{sdfg.name}_{implementation}"
 
     # Enforce one-dimensional memlets from two-dimensional arrays
     sdfg.apply_transformations_repeated(RedundantSecondArray)
 
-    if implementation == 'cuBLAS':
+    if implementation == "cuBLAS":
         sdfg.apply_gpu_transformations()
 
     blas.default_implementation = implementation
@@ -82,10 +95,31 @@ def test_dot_strided(implementation):
     assert np.allclose(daceres, reference)
 
 
-if __name__ == '__main__':
-    implementations = ['pure', 'MKL', 'cuBLAS']
+@pytest.mark.parametrize(("implementation",), [("pure",), pytest.param("MKL", marks=pytest.mark.mkl), ("OpenBLAS",)])
+def test_transpose_strided_columns(implementation):
+    """``pos[:, 0:2]`` is an (N, 2) block whose rows are 3 apart: a vendor transpose reads it by that row stride,
+    not as 2 * N contiguous elements."""
+
+    @dace.program
+    def transpose_columns(pos: dace.float64[N, 3]):
+        return pos[:, 0:2].T
+
+    pos = np.random.rand(25, 3)
+    sdfg = transpose_columns.to_sdfg()
+    sdfg.name = f"{sdfg.name}_{implementation}"
+    transposes = [node for node, _ in sdfg.all_nodes_recursive() if type(node).__name__ == "Transpose"]
+    assert transposes, "the transpose did not become a Transpose library node"
+    for node in transposes:
+        node.implementation = implementation
+    assert np.allclose(sdfg(pos=pos, N=25), pos[:, 0:2].T)
+
+
+if __name__ == "__main__":
+    implementations = ["pure", "MKL", "cuBLAS"]
     for implementation in implementations:
         test_gemv_strided(implementation)
     test_dot_subset()
     for implementation in implementations:
         test_dot_strided(implementation)
+    for implementation in ["pure", "MKL", "OpenBLAS"]:
+        test_transpose_strided_columns(implementation)

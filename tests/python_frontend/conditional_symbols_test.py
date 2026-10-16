@@ -1,0 +1,198 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Tests that free symbols which only appear inside the condition of an ``if`` statement (or ``while`` loop) are
+registered as SDFG symbols, so that they are part of the SDFG's argument list.
+"""
+
+import numpy as np
+import pytest
+
+import dace
+
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K", dtype=dace.int64)
+
+
+def test_symbol_only_in_if_condition():
+
+    @dace.program
+    def symbol_only_in_if_condition(A: dace.float64[N], B: dace.float64[N]):
+        for i in range(N):
+            if i >= 1 and i < M:
+                B[i] = A[i] * 2.0
+
+    sdfg = symbol_only_in_if_condition.to_sdfg(simplify=True)
+    assert "M" in sdfg.symbols
+    assert sdfg.symbols["M"] == M.declaration.dtype
+    assert "M" in sdfg.arglist()
+
+    A = np.arange(16, dtype=np.float64)
+    B = np.zeros(16, dtype=np.float64)
+    sdfg(A=A, B=B, N=16, M=9)
+    ref = np.zeros(16, dtype=np.float64)
+    ref[1:9] = A[1:9] * 2.0
+    assert np.allclose(B, ref)
+
+
+def test_symbol_only_in_if_condition_dtype():
+    """The registered symbol must keep the dtype it was declared with."""
+
+    @dace.program
+    def symbol_only_in_if_condition_dtype(A: dace.float64[N]):
+        if K > 3:
+            A[:] = 1.0
+        else:
+            A[:] = 2.0
+
+    sdfg = symbol_only_in_if_condition_dtype.to_sdfg(simplify=True)
+    assert "K" in sdfg.symbols
+    assert sdfg.symbols["K"] == dace.int64
+
+    A = np.zeros(8, dtype=np.float64)
+    sdfg(A=A, N=8, K=5)
+    assert np.allclose(A, 1.0)
+    sdfg(A=A, N=8, K=2)
+    assert np.allclose(A, 2.0)
+
+
+def test_symbol_only_in_elif_condition():
+
+    @dace.program
+    def symbol_only_in_elif_condition(A: dace.float64[N]):
+        for i in range(N):
+            if i < 2:
+                A[i] = 0.0
+            elif i < M:
+                A[i] = 1.0
+            else:
+                A[i] = 2.0
+
+    sdfg = symbol_only_in_elif_condition.to_sdfg(simplify=True)
+    assert "M" in sdfg.symbols
+
+    A = np.zeros(10, dtype=np.float64)
+    sdfg(A=A, N=10, M=6)
+    ref = np.array([0, 0, 1, 1, 1, 1, 2, 2, 2, 2], dtype=np.float64)
+    assert np.allclose(A, ref)
+
+
+def test_symbol_only_in_while_condition():
+
+    @dace.program
+    def symbol_only_in_while_condition(A: dace.float64[N]):
+        i = 0
+        while i < M:
+            A[i] = 1.0
+            i += 1
+
+    sdfg = symbol_only_in_while_condition.to_sdfg(simplify=True)
+    assert "M" in sdfg.symbols
+
+    A = np.zeros(10, dtype=np.float64)
+    sdfg(A=A, N=10, M=4)
+    ref = np.zeros(10, dtype=np.float64)
+    ref[:4] = 1.0
+    assert np.allclose(A, ref)
+
+
+def test_undefined_variable_in_if_condition():
+    """Variables that are not defined anywhere must still be reported as errors."""
+
+    @dace.program
+    def undefined_variable_in_if_condition(A: dace.float64[N]):
+        if undefined_name > 1:  # noqa: F821
+            A[:] = 1.0
+
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
+        undefined_variable_in_if_condition.to_sdfg()
+
+
+def test_none_comparison_in_if_condition():
+    """``is None`` comparisons must not register the ``None`` placeholder as a symbol."""
+
+    @dace.program
+    def none_comparison_in_if_condition(A: dace.float64[N], B: dace.float64[N] | None = None):
+        if B is None:
+            A[:] = 1.0
+        else:
+            A[:] = B
+
+    sdfg = none_comparison_in_if_condition.to_sdfg(simplify=False)
+    assert "NoneSymbol" not in sdfg.symbols
+    assert "NoneSymbol" not in sdfg.arglist()
+
+
+@dace.program
+def size_of_a_scalar_sized_slice(a: dace.float64[20], out: dace.float64[20]):
+    na = int(a[0])
+    off = a[: na - 1]
+    if off.size:
+        out[0] = 1.0
+
+
+def test_a_branch_on_the_size_of_a_scalar_sized_slice_is_not_an_undefined_variable():
+    """``off.size`` reads the promoted ``__sym_na``, which the SDFG already defines: registering the
+    condition's symbols must skip what the SDFG knows before calling a name undefined (ls3df_scf)."""
+    a = np.arange(20, dtype=np.float64)
+    a[0] = 5
+    out = np.zeros(20)
+    size_of_a_scalar_sized_slice(a=a, out=out)
+    assert out[0] == 1.0
+
+
+FLAG_A = dace.symbol("FLAG_A", dtype=dace.int64, nonnegative=True)
+FLAG_B = dace.symbol("FLAG_B", dtype=dace.int64, nonnegative=True)
+
+
+@dace.program
+def negated_flags(a: dace.float64[N]):
+    if not FLAG_A:
+        a[:] = a + 1.0
+    if FLAG_A and not FLAG_B:
+        a[:] = a * 2.0
+    if FLAG_A or FLAG_B:
+        a[:] = a - 3.0
+
+
+@pytest.mark.parametrize("flag_a, flag_b", [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_negated_symbol_condition_stays_a_runtime_branch(flag_a, flag_b):
+    """``not FLAG_A`` must not fold to ``False`` because the symbol object is truthy."""
+    a = np.ones(4)
+    negated_flags(a, FLAG_A=flag_a, FLAG_B=flag_b)
+    ref = np.ones(4)
+    if not flag_a:
+        ref += 1.0
+    if flag_a and not flag_b:
+        ref *= 2.0
+    if flag_a or flag_b:
+        ref -= 3.0
+    assert np.allclose(a, ref)
+
+
+DISABLED = False
+
+
+def test_a_false_constant_prefix_still_drops_the_branch():
+    """``DISABLED and FLAG_A`` is ``False`` whatever the symbol, so the branch is dropped at parse time and
+    a body that could not be parsed is never seen."""
+
+    @dace.program
+    def false_constant_prefix(a: dace.float64[N]):
+        if DISABLED and FLAG_A:
+            a[:] = undefined_function(a)  # noqa: F821
+
+    false_constant_prefix.to_sdfg(simplify=False)
+
+
+if __name__ == "__main__":
+    test_symbol_only_in_if_condition()
+    test_symbol_only_in_if_condition_dtype()
+    test_symbol_only_in_elif_condition()
+    test_symbol_only_in_while_condition()
+    test_undefined_variable_in_if_condition()
+    test_none_comparison_in_if_condition()
+    test_a_branch_on_the_size_of_a_scalar_sized_slice_is_not_an_undefined_variable()
+    for flags in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+        test_negated_symbol_condition_stays_a_runtime_branch(*flags)
+    test_a_false_constant_prefix_still_drops_the_branch()

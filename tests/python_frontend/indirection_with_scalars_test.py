@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace as dc
 import numpy as np
+
+import dace as dc
 
 
 @dc.program
@@ -16,7 +17,7 @@ def test_toplevel_scalar_indirection():
     B = np.random.rand(4).astype(np.float32)
     toplevel_scalar_indirection(A, B)
     ref = A[0, 0, :, 0]
-    assert (np.array_equal(B, ref))
+    assert np.array_equal(B, ref)
 
 
 @dc.program
@@ -33,7 +34,7 @@ def test_nested_scalar_indirection():
     B = np.random.rand(2, 4).astype(np.float32)
     nested_scalar_indirection(A, B)
     ref = A[:, 0, :, 0]
-    assert (np.array_equal(B, ref))
+    assert np.array_equal(B, ref)
 
 
 def test_array_element_scalar_indirection():
@@ -74,8 +75,8 @@ def test_array_element_scalar_indirection_in_map():
 def test_submatrix():
     dtype = dc.float64
     data_index = dc.int32
-    M, N, P = (dc.symbol(s) for s in 'MNP')
-    x0, x1 = dc.symbol('x0'), dc.symbol('x1')
+    M, N, P = (dc.symbol(s) for s in "MNP")
+    x0, x1 = dc.symbol("x0"), dc.symbol("x1")
 
     @dc.program
     def create_submatrix():
@@ -102,9 +103,34 @@ def test_submatrix():
     assert np.allclose(A, expected)
 
 
+def test_promoted_scalar_reaches_a_loop_range():
+    """A scalar promoted to ``__sym_<name>`` by a slice, then read back through the slice's shape.
+
+    Promotion adds the symbol straight to ``sdfg.symbols`` without touching the visitor scope, so a
+    range over the promoted slice's own extent came back as an undefined variable.
+    """
+    N = dc.symbol("N", dtype=dc.int64)
+
+    @dc.program
+    def promoted(rv: dc.float64[N], off: dc.int64[1], out: dc.float64[N]):
+        first_i = int(off[0])
+        last_i = first_i + 4
+        rv_i = rv[first_i:last_i]
+        for k in range(rv_i.shape[0]):
+            out[k] = rv_i[k] * 2.0
+
+    rv = np.arange(8.0, dtype=np.float64)
+    out = np.zeros(8, dtype=np.float64)
+    promoted(rv=rv, off=np.array([2], dtype=np.int64), out=out, N=8)
+    want = np.zeros(8)
+    want[:4] = rv[2:6] * 2.0
+    assert np.allclose(out, want)
+
+
 if __name__ == "__main__":
     test_toplevel_scalar_indirection()
     test_nested_scalar_indirection()
     test_array_element_scalar_indirection()
     test_array_element_scalar_indirection_in_map()
     test_submatrix()
+    test_promoted_scalar_reaches_a_loop_range()

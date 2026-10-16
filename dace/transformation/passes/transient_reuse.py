@@ -1,9 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, Set
-
-import networkx as nx
 
 from dace import SDFG, properties
+from dace import graphlib as nx
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -17,11 +16,12 @@ class TransientReuse(ppl.Pass):
     reused.
     """
 
-    CATEGORY: str = 'Memory Footprint Reduction'
+    CATEGORY: str = "Memory Footprint Reduction"
 
     verbose = properties.Property(
         dtype=bool,
         default=False,
+        category="Diagnostics",
         desc="Print information about the memory reduction.",
     )
 
@@ -32,13 +32,13 @@ class TransientReuse(ppl.Pass):
         # If states changed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        result: Set[str] = set()
+    def apply_pass(self, sdfg: SDFG, _) -> set[str] | None:
+        result: set[str] = set()
 
         memory_before = 0
         arrays = {}
         for a in sdfg.arrays:
-            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+            memory_before += sdfg.arrays[a].total_size_in_bytes
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
 
@@ -47,7 +47,7 @@ class TransientReuse(ppl.Pass):
             for a in state.all_transients():
                 arrays[a] += 1
 
-        transients = set()
+        transients = OrderedSet()
         for a in arrays:
             if arrays[a] == 1:
                 transients.add(a)
@@ -104,16 +104,17 @@ class TransientReuse(ppl.Pass):
                     if n is not m and n.data in transients and m.data in transients:
                         if n.data == m.data:
                             transients.remove(n.data)
-                        if (sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data]) and n in ancestors[m]
-                                and successors[n].issubset(ancestors[m])):
+                        if (
+                            sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
+                            and n in ancestors[m]
+                            and successors[n].issubset(ancestors[m])
+                        ):
                             mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
             # Only add a transient to a bucket if either there is a mapping from it to
             # all other elements of that bucket or there is a mapping from each element in the bucket to it.
-            buckets = []
-            for i in range(len(transients)):
-                buckets.append([])
+            buckets = [[] for _ in range(len(transients))]
 
             for n in transients:
                 for i in range(len(transients)):
@@ -123,14 +124,14 @@ class TransientReuse(ppl.Pass):
 
                     temp = True
                     for j in range(len(buckets[i])):
-                        temp = (temp and n in mappings[buckets[i][j]])
+                        temp = temp and n in mappings[buckets[i][j]]
                     if temp:
                         buckets[i].append(n)
                         break
 
                     temp2 = True
                     for j in range(len(buckets[i])):
-                        temp2 = (temp2 and buckets[i][j] in mappings[n])
+                        temp2 = temp2 and buckets[i][j] in mappings[n]
                     if temp2:
                         buckets[i].insert(0, n)
                         break
@@ -145,11 +146,10 @@ class TransientReuse(ppl.Pass):
             # Construct final mapping (transient_reuse_i, some_transient)
             mapping = set()
             for i in range(len(buckets)):
-                for j in range(1, len(buckets[i])):
-                    mapping.add((buckets[i][0], buckets[i][j]))
+                mapping.update((buckets[i][0], buckets[i][j]) for j in range(1, len(buckets[i])))
 
             # For each mapping redirect edges and rename memlets in the state
-            for (new, old) in sorted(list(mapping)):
+            for new, old in sorted(mapping):
                 result.add(old)
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:
@@ -163,9 +163,9 @@ class TransientReuse(ppl.Pass):
         if self.verbose:
             memory_after = 0
             for a in sdfg.arrays:
-                memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
-            print('memory before: ', memory_before, 'B')
-            print('memory after: ', memory_after, 'B')
-            print('memory savings: ', memory_before - memory_after, 'B')
+                memory_after += sdfg.arrays[a].total_size_in_bytes
+            print("memory before: ", memory_before, "B")
+            print("memory after: ", memory_after, "B")
+            print("memory savings: ", memory_before - memory_after, "B")
 
         return result or None

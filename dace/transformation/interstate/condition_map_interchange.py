@@ -1,17 +1,22 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Interchange conditional blocks with nested map regions."""
 
-from dace import sdfg as sd
-from dace import dtypes
-from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
-from dace.properties import CodeBlock
-from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
-from dace.memlet import Memlet
-from dace.transformation import transformation
-from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 import copy
+import itertools
+
+from dace import dtypes
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.memlet import Memlet
+from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
+from dace.sdfg import dealias
+from dace.sdfg import utils as sdutil
+from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SymbolResolver
+from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace.transformation import transformation
 
 
 @transformation.explicit_cf_compatible
@@ -34,12 +39,16 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         branch: ControlFlowRegion = self.cond_block.branches[0][1]
 
         # Each state in the branch is either empty or only contains maps
-        for state in branch.all_states():
+        for state in branch.states():
             for node in state.nodes():
-                if (not isinstance(node, (MapEntry, MapExit)) and state.entry_node(node) is None and any([
-                        not isinstance(n, (MapEntry, MapExit)) for n in set(state.successors(node))
-                        | set(state.predecessors(node))
-                ])):
+                if (
+                    not isinstance(node, (MapEntry, MapExit))
+                    and state.entry_node(node) is None
+                    and any(
+                        not isinstance(n, (MapEntry, MapExit))
+                        for n in set(state.successors(node)) | set(state.predecessors(node))
+                    )
+                ):
                     return False
 
         return True
@@ -48,7 +57,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         branch: ControlFlowRegion = self.cond_block.branches[0][1]
         branch_cond = self.cond_block.branches[0][0]
         cond_syms = set(branch_cond.get_free_symbols())
-        all_states = list(branch.all_states())
+        all_states = list(branch.states())
 
         # Prepend the condition computation
         cond_sym = graph.sdfg.add_symbol(f"{self.cond_block.label}_cond", dtypes.bool, find_new_name=True)
@@ -68,14 +77,11 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Get inputs and outputs of the nested SDFG
                 map_exit = state.exit_node(node)
-                inputs = set()
-                outputs = set()
-                for edge in state.out_edges(node):
-                    if edge.data.data is not None:
-                        inputs.add(edge.data.data)
-                for edge in state.in_edges(map_exit):
-                    if edge.data.data is not None:
-                        outputs.add(edge.data.data)
+                inputs = OrderedSet(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
+                outputs = OrderedSet(edge.data.data for edge in state.in_edges(map_exit) if edge.data.data is not None)
+
+                # The windows are united inside the map, which runs if they are accessed
+                facts = SymbolResolver().facts_in_scope(state, node)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
@@ -94,14 +100,27 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 start_state = nsdfg.sdfg.add_state(is_start_block=True)
                 copy_mapping = {}
+                # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+                # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+                # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+                memo = {}
                 for n in body:
-                    new_n = copy.deepcopy(n)
+                    new_n = copy.deepcopy(n, memo)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
 
-                param_lb_map = {}
-                for i in range(len(node.map.params)):
-                    param_lb_map[node.map.params[i]] = node.map.range[i][0]
+                # A connector covers the union of the windows of its container that cross the boundary
+                windows = {}
+                for boundary_edge in itertools.chain(state.out_edges(node), state.in_edges(map_exit)):
+                    name = boundary_edge.data.data
+                    if name is None or boundary_edge.data.subset is None:
+                        continue
+                    if name in windows:
+                        windows[name] = sbs.union(windows[name], boundary_edge.data.subset, facts)
+                    else:
+                        windows[name] = copy.deepcopy(boundary_edge.data.subset)
+
+                # Rebase crossing memlets by the connector window's origin
                 for n in body + [map_exit]:
                     for edge in state.in_edges(n):
                         src = None
@@ -117,7 +136,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                                 continue
                             src = start_state.add_access(edge.data.data)
                             src_conn = None
-                            memlet.replace(param_lb_map)
+                            if memlet.subset is not None and windows.get(edge.data.data) is not None:
+                                memlet.subset.offset(windows[edge.data.data], True)
                         if edge.dst in copy_mapping:
                             dst = copy_mapping[edge.dst]
                         elif edge.dst is map_exit:
@@ -125,35 +145,47 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                                 continue
                             dst = start_state.add_access(edge.data.data)
                             dst_conn = None
-                            memlet.replace(param_lb_map)
+                            if memlet.subset is not None and windows.get(edge.data.data) is not None:
+                                memlet.subset.offset(windows[edge.data.data], True)
                         start_state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
-                for edge in state.out_edges(node):
-                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
-                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
-                        desc.shape = edge.data.subset.size()
-                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        edge.src,
-                        edge.src_conn,
-                        nsdfg,
-                        edge.data.data,
-                        copy.deepcopy(edge.data),
-                    )
-                for edge in state.in_edges(state.exit_node(node)):
-                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
-                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
-                        desc.shape = edge.data.subset.size()
-                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        nsdfg,
-                        edge.data.data,
-                        edge.dst,
-                        edge.dst_conn,
-                        copy.deepcopy(edge.data),
-                    )
+                def _connector_memlet(memlet):
+                    # An other subset of a different rank no longer refers to this edge's other end
+                    result = copy.deepcopy(memlet)
+                    desc = state.sdfg.arrays.get(result.data, None)
+                    if (
+                        result.other_subset is not None
+                        and desc is not None
+                        and result.other_subset.dims() != len(desc.shape)
+                    ):
+                        result.other_subset = None
+                    return result
+
+                def _add_connector(edges, to_nested):
+                    seen = set()
+                    for edge in edges:
+                        name = edge.data.data
+                        if name in seen:
+                            continue
+                        if name is not None:
+                            seen.add(name)
+                            if name not in nsdfg.sdfg.arrays:
+                                desc = copy.deepcopy(state.sdfg.arrays[name])
+                                desc.shape = windows[name].size()
+                                nsdfg.sdfg.add_datadesc(name, desc)
+                        memlet = _connector_memlet(edge.data)
+                        if name is not None:
+                            memlet.subset = copy.deepcopy(windows[name])
+                        if to_nested:
+                            state.add_edge(edge.src, edge.src_conn, nsdfg, name, memlet)
+                        else:
+                            state.add_edge(nsdfg, name, edge.dst, edge.dst_conn, memlet)
+
+                _add_connector(state.out_edges(node), True)
+                _add_connector(state.in_edges(state.exit_node(node)), False)
 
                 state.remove_nodes_from(body)
+                dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
         # Wrap all states in the nested SDFGs with the conditional block
         for state in all_states:

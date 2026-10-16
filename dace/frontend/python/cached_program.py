@@ -1,25 +1,25 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Precompiled DaCe program/method cache. """
+"""Precompiled DaCe program/method cache."""
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any
 
 import dace
-from dace import config
-from dace import data as dt, hooks
+from dace import config, hooks
+from dace import data as dt
 from dace.sdfg.sdfg import SDFG
 
 # Type hints
-ArgTypes = Dict[str, dt.Data]
-ConstantTypes = Dict[str, Any]
+ArgTypes = dict[str, dt.Data]
+ConstantTypes = dict[str, Any]
 EvalCallback = Callable[[str], Any]
-SpecifiedArgs = Set[str]
+SpecifiedArgs = set[str]
 
 
 # Adapted from https://stackoverflow.com/a/2437645/6489142
 class LimitedSizeDict(OrderedDict):
-
     def __init__(self, *args, **kwds):
         self.size_limit = kwds.pop("size_limit", None)
         OrderedDict.__init__(self, *args, **kwds)
@@ -53,14 +53,20 @@ def _make_sortable(obj):
 
 @dataclass
 class ProgramCacheKey:
-    """ A key object representing a single instance of a DaCe program. """
+    """A key object representing a single instance of a DaCe program."""
+
     arg_types: ArgTypes
     closure_types: ArgTypes
     closure_constants: ConstantTypes
     specified_args: SpecifiedArgs
 
-    def __init__(self, arg_types: ArgTypes, closure_types: ArgTypes, closure_constants: ConstantTypes,
-                 specified_args: SpecifiedArgs) -> None:
+    def __init__(
+        self,
+        arg_types: ArgTypes,
+        closure_types: ArgTypes,
+        closure_constants: ConstantTypes,
+        specified_args: SpecifiedArgs,
+    ) -> None:
         self.arg_types = arg_types
         self.closure_types = closure_types
         self.closure_constants = closure_constants
@@ -77,7 +83,7 @@ class ProgramCacheKey:
     def __hash__(self) -> int:
         return hash(self._tuple)
 
-    def __eq__(self, o: 'ProgramCacheKey') -> bool:
+    def __eq__(self, o: "ProgramCacheKey") -> bool:
         return self._tuple == o._tuple
 
 
@@ -87,13 +93,13 @@ class ProgramCacheEntry:
     A value object representing a cache entry of a DaCe program. Contains
     the parsed SDFG and the compiled SDFG object.
     """
+
     sdfg: SDFG
-    compiled_sdfg: 'dace.codegen.compiled_sdfg.CompiledSDFG'
+    compiled_sdfg: "dace.codegen.compiled_sdfg.CompiledSDFG"
 
 
 class DaceProgramCache:
-
-    def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
+    def __init__(self, evaluate: EvalCallback, size: int | None = None) -> None:
         """
         Initializes a DaCe program cache.
 
@@ -102,28 +108,30 @@ class DaceProgramCache:
                      the configuration).
         """
         self.eval_callback = evaluate
-        self.size = size or config.Config.get('frontend', 'cache_size')
+        self.size = size or config.Config.get("frontend", "cache_size")
         self.cache: OrderedDict[ProgramCacheKey, ProgramCacheEntry] = LimitedSizeDict(size_limit=size)
 
     def clear(self):
-        """ Clears the program cache. """
+        """Clears the program cache."""
         self.cache.clear()
 
-    def _evaluate_constants(self, constants: Set[str], extra_constants: Dict[str, Any] = None) -> ConstantTypes:
+    def _evaluate_constants(self, constants: set[str], extra_constants: dict[str, Any] = None) -> ConstantTypes:
         # Evaluate closure constants at call time
         return {k: self.eval_callback(k, extra_constants) for k in constants}
 
-    def _evaluate_descriptors(self, arrays: Set[str], extra_constants: Dict[str, Any] = None) -> ConstantTypes:
+    def _evaluate_descriptors(self, arrays: set[str], extra_constants: dict[str, Any] = None) -> ConstantTypes:
         # Evaluate closure array types at call time
         return {k: dt.create_datadescriptor(self.eval_callback(k, extra_constants)) for k in arrays}
 
-    def make_key(self,
-                 argtypes: ArgTypes,
-                 specified_args: Set[str],
-                 closure_types: Set[str],
-                 closure_constants: Set[str],
-                 extra_constants: Dict[str, Any] = None) -> ProgramCacheKey:
-        """ Creates a program cache key from the given arguments. """
+    def make_key(
+        self,
+        argtypes: ArgTypes,
+        specified_args: set[str],
+        closure_types: set[str],
+        closure_constants: set[str],
+        extra_constants: dict[str, Any] = None,
+    ) -> ProgramCacheKey:
+        """Creates a program cache key from the given arguments."""
         adescs = self._evaluate_descriptors(closure_types, extra_constants)
         cvals = self._evaluate_constants(closure_constants, extra_constants)
         # Filter out default arguments that were unspecified (for unique cache keys)
@@ -131,8 +139,8 @@ class DaceProgramCache:
         key = ProgramCacheKey(argtypes, adescs, cvals, specified_args)
         return key
 
-    def add(self, key: ProgramCacheKey, sdfg: SDFG, compiled_sdfg: 'dace.codegen.compiled_sdfg.CompiledSDFG') -> None:
-        """ Adds a new entry to the program cache. """
+    def add(self, key: ProgramCacheKey, sdfg: SDFG, compiled_sdfg: "dace.codegen.compiled_sdfg.CompiledSDFG") -> None:
+        """Adds a new entry to the program cache."""
         self.cache[key] = ProgramCacheEntry(sdfg, compiled_sdfg)
 
     def get(self, key: ProgramCacheKey) -> ProgramCacheEntry:
@@ -143,11 +151,11 @@ class DaceProgramCache:
         return self.cache[key]
 
     def has(self, key: ProgramCacheKey) -> bool:
-        """ Returns True iff the given entry exists in the program cache. """
+        """Returns True iff the given entry exists in the program cache."""
         if len(self.cache) == 0:
             return False
         return key in self.cache
 
     def pop(self) -> None:
-        """ Remove the first entry from the cache. """
+        """Remove the first entry from the cache."""
         self.cache.popitem(last=False)

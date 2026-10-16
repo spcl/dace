@@ -13,6 +13,7 @@ Python backend stamp.  The result is an SDFG the cuTile code generator
 (``dace/codegen/py/cutile_target.py``) compiles into ``cuda.tile`` Python
 kernels.
 """
+
 import warnings
 from typing import Any, Dict, Optional, Set, Tuple, Type, Union
 
@@ -31,7 +32,8 @@ from dace.transformation.passes.vectorization.cutile_lowering import (
     mark_tile_op_memlets_allow_oob,
 )
 from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
-from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim, _has_gpu_device_map as has_gpu_device_map
+from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
+from dace.transformation.passes.vectorization.vectorize_multi_dim import _has_gpu_device_map as has_gpu_device_map
 
 
 @properties.make_properties
@@ -43,36 +45,35 @@ class VectorizeCuTile(ppl.Pass):
 
     CATEGORY: str = "Vectorization"
 
-    strict = properties.Property(dtype=bool,
-                                 default=False,
-                                 desc="When True, lowering-pass precondition violations raise "
-                                 "ValueError instead of emitting a UserWarning.")
+    strict = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="When True, lowering-pass precondition violations raise ValueError instead of emitting a UserWarning.",
+    )
 
-    run_canonicalize = properties.Property(dtype=bool,
-                                           default=True,
-                                           desc="When True, run the canonicalize pipeline as step 0 "
-                                           "(before vectorization).")
+    run_canonicalize = properties.Property(
+        dtype=bool, default=True, desc="When True, run the canonicalize pipeline as step 0 (before vectorization)."
+    )
 
-    use_gpu_storage = properties.Property(dtype=bool,
-                                          default=False,
-                                          desc="When True, apply auto_optimize's apply_gpu_storage before GPU "
-                                          "scheduling: only non-transients with Default storage (written "
-                                          "non-transient scalars included) become GPU_Global, so no "
-                                          "host<->device copy states are generated and the compiled SDFG "
-                                          "requires device (cupy) arrays. On an SDFG already GPU-transformed "
-                                          "with existing gpu_* clones the copy states remain (a UserWarning "
-                                          "is emitted).")
+    use_gpu_storage = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Keep non-transient Default-storage arrays on the GPU and require CuPy arguments. "
+        "Scalars retain the host ABI. Existing device clones still require their copy states.",
+    )
 
-    def __init__(self,
-                 widths: Tuple[int, ...],
-                 *,
-                 remainder_strategy: Union[RemainderStrategy, str] = RemainderStrategy.FULL_MASK,
-                 branch_mode: Union[BranchMode, str] = BranchMode.MERGE,
-                 loop_to_map_permissive: bool = False,
-                 strict: bool = False,
-                 run_canonicalize: bool = True,
-                 use_gpu_storage: bool = False,
-                 debug_save: bool = False):
+    def __init__(
+        self,
+        widths: Tuple[int, ...],
+        *,
+        remainder_strategy: Union[RemainderStrategy, str] = RemainderStrategy.FULL_MASK,
+        branch_mode: Union[BranchMode, str] = BranchMode.MERGE,
+        loop_to_map_permissive: bool = False,
+        strict: bool = False,
+        run_canonicalize: bool = True,
+        use_gpu_storage: bool = False,
+        debug_save: bool = False,
+    ):
         """Build the orchestrator (validates the configuration eagerly).
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries, all
@@ -81,8 +82,8 @@ class VectorizeCuTile(ppl.Pass):
             inner vectorizer (``full_mask`` default).
         :param branch_mode: Branch lowering, forwarded to the inner
             vectorizer (``merge`` default).
-        :param loop_to_map_permissive: Forwarded; lets ``LoopToMap``
-            parallelise scatter-style loops.
+        :param loop_to_map_permissive: Compatibility argument. True is rejected;
+            upstream canonicalization no longer exposes permissive loop conversion.
         :param strict: When ``True``, lowering-pass precondition violations
             (e.g. a partially-vectorized SDFG) raise ``ValueError`` instead of
             emitting a ``UserWarning``.
@@ -90,10 +91,10 @@ class VectorizeCuTile(ppl.Pass):
             pipeline as step 0 before vectorization.
         :param use_gpu_storage: When ``True``, apply ``auto_optimize``'s
             ``apply_gpu_storage``: only non-transients with ``Default``
-            storage (written non-transient scalars included) become
-            ``GPU_Global``, so no host<->device copy states are generated and
+            array storage becomes ``GPU_Global``. Scalars retain host storage.
+            Array host<->device copy states are omitted and
             the compiled SDFG requires device (cupy) arrays. On an SDFG
-            already GPU-transformed with existing ``gpu_*`` clones the copy
+            already GPU-transformed with existing ``*_gpu`` clones the copy
             states remain (a ``UserWarning`` is emitted).
         :param debug_save: When ``True``, save intermediate SDFG files
             after each pipeline stage for debugging.
@@ -102,6 +103,8 @@ class VectorizeCuTile(ppl.Pass):
             not at ``apply_pass`` time).
         """
         super().__init__()
+        if loop_to_map_permissive:
+            raise NotImplementedError("loop_to_map_permissive is no longer supported by upstream canonicalization")
         self.strict = strict
         self.run_canonicalize = run_canonicalize
         self.use_gpu_storage = use_gpu_storage
@@ -109,16 +112,28 @@ class VectorizeCuTile(ppl.Pass):
         # Eager construction: VectorizeMultiDim.__init__ validates the whole
         # knob row (widths count/powers of 2, remainder/branch combos), so a
         # bad config fails fast at orchestrator construction.
+        for value, enum_type, name in (
+            (remainder_strategy, RemainderStrategy, "remainder_strategy"),
+            (branch_mode, BranchMode, "branch_mode"),
+        ):
+            if isinstance(value, str):
+                try:
+                    converted = enum_type[value.upper()]
+                except KeyError as error:
+                    raise ValueError(f"Unknown {enum_type.__name__}: {value!r}") from error
+                if name == "remainder_strategy":
+                    remainder_strategy = converted
+                else:
+                    branch_mode = converted
         self._config = VectorizeConfig(
             widths=widths,
             target_isa=ISA.CUTILE,
+            device=dtypes.DeviceType.GPU,
             remainder_strategy=remainder_strategy,
             branch_mode=branch_mode,
-            loop_to_map_permissive=loop_to_map_permissive,
             expand_tile_nodes=False,
             validate=True,
             assume_even=False,
-            assumption_guard=False,
         )
         self._vectorizer = VectorizeMultiDim(self._config)
 
@@ -142,10 +157,7 @@ class VectorizeCuTile(ppl.Pass):
 
         Knobs: ``target="gpu"`` (cuTile is a GPU backend);
         ``semantic_lifting=False`` keeps raw maps the vectorizer can lower;
-        ``assumption_guard=False`` drops the terminal CPP ``__builtin_trap``
-        guard the Python backend cannot codegen; ``reduction_to_wcr_map=False``
-        keeps accumulator loops out of the privatized-WCR-map shape the tiler
-        refuses; ``peel_limit=0`` skips ``BestEffortLoopPeeling`` — its
+        ``peel_limit=0`` skips ``BestEffortLoopPeeling`` — its
         per-stuck-loop probing dominates canonicalize time (~105 of 117s on
         adi) and the boundary-conflict loops it unblocks don't occur on the
         cuTile corpus.
@@ -157,19 +169,14 @@ class VectorizeCuTile(ppl.Pass):
         # (vectorization) subpackage, so a module-level import would be
         # circular.
         from dace.transformation.passes.canonicalize import canonicalize
-        return canonicalize(sdfg,
-                            target="gpu",
-                            semantic_lifting=False,
-                            assumption_guard=False,
-                            reduction_to_wcr_map=False,
-                            peel_limit=0)
+
+        return canonicalize(sdfg, target="gpu", semantic_lifting=False, peel_limit=0)
 
     @staticmethod
     def _apply_gpu_transformations(sdfg: SDFG):
         return sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
             simplify=False,
+            host_maps=True,
         )
 
     @staticmethod
@@ -260,16 +267,17 @@ class VectorizeCuTile(ppl.Pass):
             # (auto_optimize -> dace.transformation.passes.__init__ ->
             # canonicalize -> this vectorization subpackage).
             from dace.transformation.auto.auto_optimize import apply_gpu_storage
+
             apply_gpu_storage(sdfg)
             # Loud no-op detection (read-only scalars legitimately stay host):
             # an argument array is unaffected if it kept host storage (non-
             # Default storage is skipped by apply_gpu_storage) or if a
-            # pre-existing gpu_* clone means copy states remain either way.
+            # pre-existing *_gpu clone means copy states remain either way.
             ineffective = []
             for name, desc in sdfg.arrays.items():
                 if desc.transient or not isinstance(desc, data.Array):
                     continue
-                clone = sdfg.arrays.get(f"gpu_{name}")
+                clone = sdfg.arrays.get(f"{name}_gpu")
                 has_clone = clone is not None and clone.transient and clone.storage == dtypes.StorageType.GPU_Global
                 if desc.storage != dtypes.StorageType.GPU_Global or has_clone:
                     ineffective.append(name)
@@ -277,7 +285,9 @@ class VectorizeCuTile(ppl.Pass):
                 warnings.warn(
                     f"use_gpu_storage had no effect for arrays {ineffective} "
                     "(e.g. the SDFG was already GPU-transformed); the compiled "
-                    "SDFG will still expect and copy host arrays.", UserWarning)
+                    "SDFG will still expect and copy host arrays.",
+                    UserWarning,
+                )
             debug_save_sdfg()
 
         # GPU-first order: GPU-schedule BEFORE vectorizing so

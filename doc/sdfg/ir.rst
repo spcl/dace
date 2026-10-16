@@ -96,20 +96,11 @@ Tasklets can be written in any language, as long as the code generator supports 
 Python (even if the source language is different), which allows the limited analysis (e.g., operation count). Other
 supported languages are C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
 
-**Nested SDFG**: Nodes that contain an entire SDFG in a state. When invoked, the nested SDFG will be executed in that
-context, independently from other instances if parallel.
-The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is acyclic dataflow
-going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
-
-Such nodes are useful when control flow is necessary in parallel regions. For example, when there is a loop inside a map,
-or when two separate components need to each run its own state machine.
-Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`, :class:`~dace.transformation.dataflow.map_fission.MapFission`)
-work directly with nested SDFGs, and the :ref:`simplify` tries to remove/inline them as much as possible.
-
-To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG. To
-pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
-symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
-this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+**Nested SDFG**: Nodes that contain an entire SDFG in a state. Such nodes are useful when control flow is necessary in
+parallel regions. For example, when there is a loop inside a map, or when two separate components need to each run its
+own state machine. The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is
+acyclic dataflow going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
+See more about nested SDFGs in :ref:`nested-sdfg`.
 
 .. figure:: images/scope.svg
   :name: scopefig
@@ -312,6 +303,133 @@ dimensions:
   a = np.random.rand(100)  # Actual size doesn't matter
   b = np.random.rand(20)
   example_with_undefined(a, b)
+
+.. _division-modulo:
+
+Division and Modulo Semantics
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Languages disagree on the sign of a remainder. C and Fortran's ``MOD`` truncate the quotient toward zero, so the
+remainder takes the sign of the dividend. Python, NumPy and Fortran's ``MODULO`` floor the quotient, so the remainder
+takes the sign of the divisor:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Rounding of the quotient
+     - ``-7`` and ``3``
+     - ``7`` and ``-3``
+   * - truncating (C ``%``, Fortran ``MOD``)
+     - ``-1``
+     - ``1``
+   * - floored (Python ``%``, Fortran ``MODULO``)
+     - ``2``
+     - ``-2``
+
+The SDFG gives each spelling one meaning, wherever it appears: tasklet code, memlet subsets, map ranges, inter-state
+edge conditions and assignments, and any other symbolic expression. **A bare** ``%`` **is always C's modulo.** A
+frontend whose source language means something else emits the function for that language instead:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Spelling
+     - Semantics
+     - Emitted by
+     - Generated C++
+   * - ``a % b``, ``CMod(a, b)``
+     - truncating
+     - the default meaning of ``%``; ``numpy.fmod``
+     - ``a % b``, or ``c_mod(a, b)``, which also takes floating point
+   * - ``PyMod(a, b)``, ``Mod(a, b)``
+     - floored
+     - Python frontend for ``%``, ``numpy.mod`` and ``numpy.remainder``
+     - ``py_mod(a, b)``
+   * - ``FtnMod(a, b)``
+     - truncating
+     - Fortran frontend for ``MOD``, ``AMOD`` and ``DMOD``
+     - ``ftn_mod(a, b)``
+   * - ``FtnModulo(a, b)``
+     - floored
+     - Fortran frontend for ``MODULO``
+     - ``ftn_modulo(a, b)``
+   * - ``a // b``, ``int_floor(a, b)``
+     - floored division
+     - Python frontend for ``//``
+     - ``a / b`` in symbolic expressions, ``py_floor(a, b)`` in tasklets
+
+Tasklet code does not inherit the semantics of the language it is written in. A tasklet created with
+:func:`~dace.sdfg.state.SDFGState.add_tasklet` whose Python code reads ``b = a % 3`` computes C's modulo; code that
+wants Python's modulo calls ``PyMod(a, 3)``. The Python frontend rewrites the ``%`` of a ``@dace.program`` into
+``PyMod`` before it creates tasklets or symbolic expressions, so a program keeps Python's semantics.
+
+In the symbolic engine, ``%`` and ``FtnMod`` parse to :class:`~dace.symbolic.CMod`, while ``PyMod`` and ``FtnModulo``
+parse to SymPy's ``Mod``, whose own rules (constant folding, ``Mod(i + N, N) == Mod(i, N)``) are the floored ones. A
+constant folds by its own rounding: ``CMod(-7, 3)`` is ``-1`` and ``Mod(-7, 3)`` is ``2``. When the dividend is
+provably nonnegative and the divisor provably positive the two agree, and ``CMod`` becomes SymPy's ``Mod``, so
+simplification sees a single form. Printed back, SymPy's ``Mod`` reads ``a % b`` only in that agreeing case and
+``Mod(a, b)`` otherwise, so a serialized SDFG loads with the meaning it was saved with.
+
+
+.. _division-modulo:
+
+Division and Modulo Semantics
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Languages disagree on the sign of a remainder. C and Fortran's ``MOD`` truncate the quotient toward zero, so the
+remainder takes the sign of the dividend. Python, NumPy and Fortran's ``MODULO`` floor the quotient, so the remainder
+takes the sign of the divisor:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Rounding of the quotient
+     - ``-7`` and ``3``
+     - ``7`` and ``-3``
+   * - truncating (C ``%``, Fortran ``MOD``)
+     - ``-1``
+     - ``1``
+   * - floored (Python ``%``, Fortran ``MODULO``)
+     - ``2``
+     - ``-2``
+
+Python code and symbolic expressions have Python's semantics: in Python tasklets, inter-state edge conditions and
+assignments, memlet subsets, map ranges and every other symbolic expression, ``%`` is floored modulo and ``//`` is
+floored division. Only C++ tasklets, which are not translated, keep C's ``%`` and ``/``. C's modulo is available in
+the other code by its name:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Spelling
+     - Semantics
+     - Used by
+     - Generated C++
+   * - ``a % b``, ``PyMod(a, b)``, ``FtnModulo(a, b)``
+     - floored
+     - Python code and symbolic expressions; ``numpy.mod`` and ``numpy.remainder``
+     - ``a % b`` if both operands are provably nonnegative integers, ``py_mod(a, b)`` otherwise
+   * - ``a // b``, ``PyFloor(a, b)``, ``int_floor(a, b)``
+     - floored division
+     - Python code and symbolic expressions; ``numpy.floor_divide``
+     - ``a / b`` if both operands are provably nonnegative integers, ``py_floor(a, b)`` otherwise
+   * - ``CMod(a, b)``, ``FtnMod(a, b)``
+     - truncating
+     - code that asks for C's modulo, such as Fortran's ``MOD``; ``numpy.fmod``
+     - ``a % b`` on integers, ``cpp_mod(a, b)`` otherwise (``fmod`` on floating point)
+
+``FtnMod`` and ``FtnModulo`` name Fortran's ``MOD`` and ``MODULO``: they are other names of
+:class:`~dace.symbolic.CMod` and :class:`~dace.symbolic.PyMod`, and ``PyFloor`` is another name of ``int_floor``.
+Operands are provably nonnegative if they are nonnegative literals, variables of unsigned type, or symbols that
+SymPy knows to be nonnegative. The runtime functions ``py_mod``, ``py_floor`` and ``cpp_mod`` are in
+``dace/runtime/include/dace/math.h`` and work on the host and the device. As in NumPy, floating-point ``PyMod`` and
+``PyFloor`` follow the NumPy algorithm, and a zero divisor is not handled.
+
+In symbolic expressions, constants fold with the rounding of their spelling (``PyMod(-7, 3)`` is ``2``,
+``CMod(-7, 3)`` is ``-1``), and ``PyMod`` takes the simplifications of SymPy's ``Mod``, such as
+``PyMod(i + N, N) == PyMod(i, N)``. When the dividend is provably nonnegative and the divisor provably positive the
+two roundings agree, and ``CMod`` becomes ``PyMod`` so that simplification sees a single form. SymPy's own ``Mod`` is
+floored and is printed like ``PyMod``.
 
 
 .. _connectors:
@@ -690,6 +808,69 @@ library node to the new SDFG. An example of such an expansion is Einstein summat
           sdfg = SDFG('einsum')
           ...
           return sdfg
+
+
+.. _nested-sdfg:
+
+Nested SDFGs
+------------
+
+Nested SDFGs are dataflow nodes that contain a nested state machine. They are used to encapsulate potentially cyclic
+control flow in the context of acyclic dataflow. A nested SDFG is defined by the :class:`~dace.sdfg.nodes.NestedSDFG` node,
+which contains a reference to an SDFG object, and a set of input and output connectors. When invoked, the nested SDFG
+will be executed in that context, independently from other instances if parallel, similarly to a function call.
+
+.. figure:: images/nested-sdfg.svg
+  :figwidth: 50%
+  :align: right
+  :alt: Nested SDFG example.
+
+  Nested SDFG example. The graph corresponds to the code ``if input[7] > 5: output[1] = 1; else: output[2] = 2``.
+  The memlets inside the nested SDFG address the same containers as the ones outside it.
+
+To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG.
+Within the nested SDFG, the data descriptors are set to be non-transient, meaning that they act as if they were
+function parameters. A valid SDFG specifies the same data descriptors in the nested SDFG as the data containers
+connected to it in the parent SDFG, and the memlets inside the nested SDFG address those containers the same way
+the parent does. In the figure, the input array is externally transient but internally non-transient (hence the thick
+edge), and the memlets inside (``input[7]``, ``output[1]``, ``output[2]``) are written the same way as they would be
+outside. If a reinterpretation or a subset of a container is needed, it is expressed with a view inside the nested SDFG.
+The memlets outside the nested SDFG represent the union of all the internal memlets that go into the nested SDFG, and
+the volume is the sum of all the volumes of the internal memlets. See more in :ref:`memprop`.
+
+To pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
+symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
+this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+
+Since the connectors describe the parent's containers, their descriptors are written in the parent's symbols. When a
+nested SDFG is integrated into its parent (:func:`dace.sdfg.dealias.integrate_nested_sdfg`, which the frontends and
+transformations call once the node is connected, and which runs when a nested SDFG is loaded from a file), every entry
+of the symbol mapping that maps an internal symbol to a symbol of the parent is folded into the nested SDFG, by renaming
+the internal symbol to the parent's (see :func:`dace.sdfg.dealias.fold_symbol_mapping`). Entries that map to other
+expressions are kept. For example:
+
+.. code-block:: python
+
+  # The nested SDFG has an array ``a`` of shape ``[N]`` and a map over ``k`` in ``0:N``
+  node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping={'N': 'M'})
+  state.add_edge(node, 'a', state.add_write('A'), None, dace.Memlet('A[0:M]'))  # ``A`` is of shape ``[M]``
+  node.symbol_mapping  # {'N': M}: stored as given
+
+  node.integrate_into_parent()
+  node.symbol_mapping  # {'M': M}
+  nsdfg.arrays['a']    # Of shape ``[M]``, the same descriptor as ``A``, and the map ranges over ``0:M``
+
+Internal names that would clash with the parent's symbols, such as a map parameter called ``M``, are renamed first.
+
+Transformations and passes apply within nested SDFGs as they do anywhere else. The :ref:`simplify` pipeline also
+tries to inline nested SDFGs into their parent (e.g., with :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`)
+whenever possible.
+
+.. note::
+  Nested SDFGs built under the earlier semantics, in which a connector describes the window the outer memlet
+  selects out of the container and the memlets inside are written relative to that window, can be brought to
+  this form with :func:`dace.sdfg.dealias.convert_legacy_nested_sdfgs`. Such a nested SDFG is not inlined until
+  it is converted.
 
 
 .. _memprop:

@@ -1,17 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dataclasses import dataclass
-import struct
-from typing import Any, Dict, List, Set, Tuple, Union
-from numbers import Number
 import os
-
-from dace import dtypes, SDFG
-try:
-    from numpy.typing import ArrayLike
-except ImportError:
-    ArrayLike = Any  # type: ignore
+import re
+import struct
+from dataclasses import dataclass
+from numbers import Number
 
 import numpy as np
+from numpy.typing import ArrayLike
+
+from dace import SDFG, dtypes
 
 
 @dataclass
@@ -46,10 +43,32 @@ class InstrumentedDataReport:
     :seealso: dace.dtypes.DataInstrumentationType.Save
     :seealso: dace.dtypes.DataInstrumentationType.Restore
     """
+
     sdfg: SDFG
     folder: str
-    files: Dict[str, List[str]]
-    loaded_values: Dict[Tuple[str, int], Union[ArrayLike, Number]]
+    files: dict[str, list[str]]
+    loaded_values: dict[tuple[str, int], ArrayLike | Number]
+
+    def _is_internal_copy(self, aname: str) -> bool:
+        """Return True for arrays created automatically as GPU/CPU staging copies."""
+        if aname not in self.sdfg.arrays:
+            return False
+        desc = self.sdfg.arrays[aname]
+        if not getattr(desc, "transient", False):
+            return False
+        # Offloading's staging names: gpu_A, gpu___return, ...
+        if aname.startswith("gpu_"):
+            return aname[4:] in self.sdfg.arrays
+        # OffloadToAccelerator return-value buffer: buffer__return_gpu, buffer__returnfoo_gpu, ...
+        m = re.fullmatch(r"buffer__return(.*)_gpu", aname)
+        if m:
+            return f"__return{m.group(1)}" in self.sdfg.arrays
+        # OffloadToAccelerator device/host copy naming: A_gpu, __return_gpu, A_host, ...
+        if aname.endswith("_gpu"):
+            return aname[:-4] in self.sdfg.arrays
+        if aname.endswith("_host"):
+            return aname[:-5] in self.sdfg.arrays
+        return False
 
     def __init__(self, sdfg: SDFG, folder: str) -> None:
         """
@@ -66,31 +85,33 @@ class InstrumentedDataReport:
         # Prepare file mapping
         array_names = os.listdir(folder)
         for aname in array_names:
-            files = []
+            # Skip internal GPU/CPU staging buffers; the report is meant to show
+            # user-visible arrays (and symbols).
+            if self._is_internal_copy(aname):
+                continue
 
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
-            filenames = sorted([(*(int(s) for s in f.split('.')[0].split('_')), f) for f in filenames])
-            for entry in filenames:
-                files.append(os.path.join(folder, aname, entry[-1]))
+            filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])
+            files = [os.path.join(folder, aname, entry[-1]) for entry in filenames]
 
             self.files[aname] = files
 
-    def keys(self) -> Set[str]:
-        """ Returns the array names available in this data report. """
+    def keys(self) -> set[str]:
+        """Returns the array names available in this data report."""
         return self.files.keys()
 
-    def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
+    def _read_array_file(self, filename: str, npdtype: np.dtype) -> tuple[ArrayLike, ArrayLike]:
         """
         Reads a formatted instrumented data file.
 
         :return: A 2-tuple of (original buffer, array view)
         """
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             # Recreate runtime shape and strides from buffer
-            ndims, = struct.unpack('i', fp.read(4))
-            shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
-            strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
+            (ndims,) = struct.unpack("i", fp.read(4))
+            shape = struct.unpack("i" * ndims, fp.read(4 * ndims))
+            strides = struct.unpack("i" * ndims, fp.read(4 * ndims))
             strides = tuple(s * npdtype.itemsize for s in strides)
 
             # Make numpy array from data descriptor
@@ -100,13 +121,13 @@ class InstrumentedDataReport:
         return nparr, view
 
     def _read_symbol_file(self, filename: str, npdtype: np.dtype) -> Number:
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             npclass = getattr(np, str(npdtype))
             byteval = fp.read(npdtype.itemsize)
             val = npclass(byteval)
         return val
 
-    def __getitem__(self, item: str) -> Union[ArrayLike, Number, List[ArrayLike], List[Number]]:
+    def __getitem__(self, item: str) -> ArrayLike | Number | list[ArrayLike] | list[Number]:
         """
         Returns the instrumented (saved) data from the report according to the data descriptor (array) or symbol name.
 
@@ -124,21 +145,22 @@ class InstrumentedDataReport:
                 nparr, view = self._read_array_file(file, npdtype)
                 self.loaded_values[item, i] = nparr
                 results.append(view)
-        elif item in self.sdfg.symbols:
-            dtype: dtypes.typeclass = self.sdfg.symbols[item]
-            npdtype = dtype.as_numpy_dtype()
+        else:
+            # The dump saves the symbols each state defines, which include loop variables and map parameters
+            types = {name: dtype for state in self.sdfg.states() for name, dtype in state.defined_symbols().items()}
+            if item not in types:
+                raise KeyError(f"Item {item} not found in report")
+            npdtype = types[item].as_numpy_dtype()
             for i, file in enumerate(filenames):
                 val = self._read_symbol_file(file, npdtype)
                 self.loaded_values[item, i] = val
                 results.append(val)
-        else:
-            raise KeyError(f'Item {item} not found in report')
 
         if len(results) == 1:
             return results[0]
         return results
 
-    def get_first_version(self, item: str) -> Union[ArrayLike, Number]:
+    def get_first_version(self, item: str) -> ArrayLike | Number:
         """
         Returns the first version of the instrumented (saved) data from the report according to the data descriptor
         (array) or symbol name.
@@ -162,7 +184,7 @@ class InstrumentedDataReport:
             val = self._read_symbol_file(file, dtype.as_numpy_dtype())
             self.loaded_values[item, 0] = val
         else:
-            raise KeyError(f'Item not found in report: {item}')
+            raise KeyError(f"Item not found in report: {item}")
 
     def update_report(self):
         """
@@ -174,8 +196,8 @@ class InstrumentedDataReport:
         for (k, i), loaded in self.loaded_values.items():
             if isinstance(loaded, np.ndarray):
                 dtype_bytes = loaded.dtype.itemsize
-                with open(self.files[k][i], 'wb') as fp:
-                    fp.write(struct.pack('i', loaded.ndim))
-                    fp.write(struct.pack('i' * loaded.ndim, *loaded.shape))
-                    fp.write(struct.pack('i' * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
+                with open(self.files[k][i], "wb") as fp:
+                    fp.write(struct.pack("i", loaded.ndim))
+                    fp.write(struct.pack("i" * loaded.ndim, *loaded.shape))
+                    fp.write(struct.pack("i" * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
                     loaded.tofile(fp)

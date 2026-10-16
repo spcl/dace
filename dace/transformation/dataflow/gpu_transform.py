@@ -1,35 +1,41 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains the GPU Transform Map transformation. """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Contains the GPU Transform Map transformation."""
 
-from dace import data, dtypes, sdfg as sd
+from dace import data, dtypes
+from dace import sdfg as sd
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.transformation import transformation, helpers
-from dace.properties import Property, make_properties
+from dace.transformation import helpers, transformation
 
 
 @make_properties
 class GPUTransformMap(transformation.SingleStateTransformation):
-    """ Implements the GPUTransformMap transformation.
+    """Implements the GPUTransformMap transformation.
 
-        Converts a single map to a GPU-scheduled map and creates GPU arrays
-        outside it, generating CPU<->GPU memory copies automatically.
+    Converts a single map to a GPU-scheduled map and creates GPU arrays
+    outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
+    fullcopy = Property(category="Memory", desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
-    toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=False)
+    toplevel_trans = Property(category="Memory", desc="Make all GPU transients top-level", dtype=bool, default=False)
 
-    register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=False)
+    register_trans = Property(
+        category="Memory", desc="Make all transients inside GPU maps registers", dtype=bool, default=False
+    )
 
-    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=False)
+    sequential_innermaps = Property(
+        category="Scheduling", desc="Make all internal maps Sequential", dtype=bool, default=False
+    )
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
+
     reduce = transformation.PatternNode(stdlib.Reduce)
 
     @classmethod
@@ -42,7 +48,7 @@ class GPUTransformMap(transformation.SingleStateTransformation):
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES):
+            if candidate_map.schedule in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES:
                 return False
             if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
@@ -55,15 +61,18 @@ class GPUTransformMap(transformation.SingleStateTransformation):
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and node.desc(sdfg).storage != dtypes.StorageType.Register):
+                if (
+                    isinstance(node, nodes.AccessNode)
+                    and node.desc(sdfg).storage != dtypes.StorageType.Default
+                    and node.desc(sdfg).storage != dtypes.StorageType.Register
+                ):
                     return False
 
             # If one of the outputs is a stream, do not match
             map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
-                if (isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream)):
+                if isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream):
                     return False
 
             return True
@@ -85,23 +94,41 @@ class GPUTransformMap(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         if self.expr_index == 0:
             map_entry = self.map_entry
-            nsdfg_node = helpers.nest_state_subgraph(sdfg,
-                                                     graph,
-                                                     graph.scope_subgraph(map_entry),
-                                                     full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
         else:
             cnode = self.reduce
-            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]))
 
         # Avoiding import loops
-        from dace.transformation.interstate import GPUTransformSDFG
-        transformation = GPUTransformSDFG()
-        transformation.setup_match(sdfg, 0, -1, {}, 0)
-        transformation.register_trans = self.register_trans
-        transformation.sequential_innermaps = self.sequential_innermaps
-        transformation.toplevel_trans = self.toplevel_trans
+        from dace.transformation import pass_pipeline as ppl
+        from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        transformation.apply(nsdfg_node.sdfg, nsdfg_node.sdfg)
+        # The nested SDFG this just built is a whole program as far as the offloading is concerned,
+        # which is the only offloader there is: it decides placement from the control flow and
+        # copies where the location changes.
+        ppl.Pipeline([OffloadToAccelerator()]).apply_pass(nsdfg_node.sdfg, {})
+        if not self.sequential_innermaps:
+            unschedule_maps_inside_kernels(nsdfg_node.sdfg)
 
         # Inline back as necessary
         sdfg.simplify()
+
+
+def unschedule_maps_inside_kernels(sdfg: SDFG) -> None:
+    """Return the maps inside every ``GPU_Device`` map of ``sdfg`` to ``Default``.
+
+    The offloading schedules a kernel's body ``Sequential``; a map transformed on its own keeps its inner maps
+    for schedule inference instead, so the outermost of them becomes the thread block -- the shape a body that
+    stages tiles in ``GPU_Shared`` memory is written for.
+    """
+    for state in sdfg.states():
+        for kernel in state.nodes():
+            if not (isinstance(kernel, nodes.MapEntry) and kernel.map.schedule == dtypes.ScheduleType.GPU_Device):
+                continue
+            for node in state.scope_subgraph(kernel, include_entry=False, include_exit=False).nodes():
+                if isinstance(node, nodes.MapEntry):
+                    node.map.schedule = dtypes.ScheduleType.Default
+                elif isinstance(node, nodes.NestedSDFG):
+                    for inner, _ in node.sdfg.all_nodes_recursive():
+                        if isinstance(inner, nodes.MapEntry):
+                            inner.map.schedule = dtypes.ScheduleType.Default

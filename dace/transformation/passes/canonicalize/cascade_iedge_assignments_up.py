@@ -21,7 +21,7 @@ assigned by the loop body's interstate edges"). Cascading the invariant
 assignment up restores ``LoopToMap`` eligibility and stops the per-iteration
 re-assignment of values that never change.
 
-Binding rule (set by the user, see ``CASCADE_UP_DESIGN.md``): *all-or-nothing
+Binding rule (set by the user): *all-or-nothing
 upward*. A one-level partial hoist that leaves the assignment inside a
 different enclosing loop is forbidden -- the same scope-mismatch family of
 bugs reappears one level higher. The pass therefore either moves an
@@ -44,7 +44,7 @@ Legality predicates (per assignment ``key = rhs`` on edge ``e`` in region
 * **L5** -- ``e`` is unconditionally executed by ``D``: refuse if ``e``
   lives inside a ``ConditionalBlock`` branch within ``D`` (conservative;
   the user-permitted relaxation needs whole-program dataflow on ``key``
-  and is left as a future refinement, ``CASCADE_UP_DESIGN.md``).
+  and is left as a future refinement).
 * **L6** -- if the move would cross one or more ``NestedSDFG`` boundaries,
   each crossing needs a ``symbol_mapping`` passthrough. v1 refuses to
   cross NSDFG boundaries (conservative); the next iteration will route
@@ -56,42 +56,123 @@ inward passes that may have buried invariant assignments inside loops, and
 again before the parallelization stage so the ``LoopToMap`` refuse-check
 sees a clean shape.
 """
-from typing import Any, Dict, Optional, Set, Tuple
 
-from dace import SDFG, symbolic
+import ast
+from typing import Any
+
+from dace import SDFG
+from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
-def _free(expr: str) -> Set[str]:
-    """Free symbols of a string expression."""
+class HoistAnalysisCache:
+    """Per-round memo of the content-derived answers ``_cascade_once`` asks repeatedly.
+
+    Every legality check below is a pure function of the graph's CURRENT shape -- which
+    blocks precede which, what a block reads, what a region writes. None of that changes
+    across the many candidate assignments probed within one sweep; it changes only once a
+    hoist actually moves an assignment or inserts a state. So one instance is built lazily
+    over a whole ``_cascade_once`` call and cleared (forcing a lazy rebuild on next use)
+    right after every mutation, instead of recomputing the same answer per candidate.
+    """
+
+    __slots__ = ("reads", "writes", "preds", "region_indices")
+
+    def __init__(self) -> None:
+        self.reads: dict[int, dict[str, None] | None] = {}
+        self.writes: dict[int, tuple[dict[str, None], dict[str, None]]] = {}
+        self.preds: dict[tuple[int, int], dict[ControlFlowBlock, None]] = {}
+        self.region_indices: dict[int, tuple[dict[str, list[str]], dict[str, None]]] = {}
+
+    def block_reads(self, block: ControlFlowBlock) -> dict[str, None] | None:
+        block_id = id(block)
+        if block_id not in self.reads:
+            self.reads[block_id] = _block_reads_symbols(block)
+        return self.reads[block_id]
+
+    def block_writes(self, block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
+        block_id = id(block)
+        if block_id not in self.writes:
+            self.writes[block_id] = _block_writes(block)
+        return self.writes[block_id]
+
+    def predecessors(self, parent: ControlFlowRegion, child: ControlFlowBlock) -> dict[ControlFlowBlock, None]:
+        pred_key = (id(parent), id(child))
+        if pred_key not in self.preds:
+            self.preds[pred_key] = _predecessors_in(parent, child)
+        return self.preds[pred_key]
+
+    def region_index(self, region: ControlFlowRegion) -> tuple[dict[str, list[str]], dict[str, None]]:
+        region_id = id(region)
+        if region_id not in self.region_indices:
+            self.region_indices[region_id] = build_region_index(region)
+        return self.region_indices[region_id]
+
+    def clear(self) -> None:
+        self.reads.clear()
+        self.writes.clear()
+        self.preds.clear()
+        self.region_indices.clear()
+
+
+def names_read_by(expr: str) -> dict[str, None]:
+    """Every name a string expression reads: symbols AND the data containers it subscripts.
+
+    Read off the AST, not off ``pystr_to_symbolic``: sympy renders ``A[0]`` as an indexed
+    object whose ``free_symbols`` is empty, so the array base is lost. A guard that compares
+    this against the containers written inside a region needs ``A``, or an element read is
+    treated as invariant and hoisted out of the loop that writes it.
+    """
     try:
-        return {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
+        visitor = astutils.TaskletFreeSymbolVisitor([])
+        visitor.visit(ast.parse(expr.strip(), mode="eval"))
     except Exception:
-        return set()
+        return {}
+    # Consumed only by membership tests, so the visitor's unordered set cannot reach codegen.
+    return dict.fromkeys(visitor.free_symbols)
 
 
-def _region_writes(region: ControlFlowRegion) -> Tuple[Set[str], Set[str]]:
+def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str, None]]:
     """All symbols (interstate assignments) and data containers written
     anywhere inside ``region`` and its descendants.
 
     :returns: ``(assigned_symbols, written_data)``.
     """
-    asyms: Set[str] = set()
-    wdata: Set[str] = set()
+    asyms: dict[str, None] = {}
+    wdata: dict[str, None] = {}
     for e in region.all_interstate_edges():
-        asyms.update(e.data.assignments.keys())
-    for st in region.all_states():
+        asyms.update(dict.fromkeys(e.data.assignments.keys()))
+    for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                wdata.add(n.data)
+                wdata[n.data] = None
     return asyms, wdata
 
 
-def _key_has_other_writer(region: ControlFlowRegion, key: str, rhs: str) -> bool:
+def build_region_index(region: ControlFlowRegion) -> tuple[dict[str, list[str]], dict[str, None]]:
+    """Every interstate assignment's rhs, grouped by lhs, and every data name an
+    access node writes, anywhere inside ``region``.
+
+    Backing index for :func:`_key_has_other_writer`: the region walk it needs is
+    identical for every ``(key, rhs)`` pair asked about the same region.
+    """
+    by_key: dict[str, list[str]] = {}
+    written: dict[str, None] = {}
+    for e in region.all_interstate_edges():
+        for lhs, rhs_value in e.data.assignments.items():
+            by_key.setdefault(lhs, []).append(str(rhs_value))
+    for st in region.states():
+        for n in st.nodes():
+            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
+                written[n.data] = None
+    return by_key, written
+
+
+def _key_has_other_writer(cache: HoistAnalysisCache, region: ControlFlowRegion, key: str, rhs: str) -> bool:
     """True iff ``key`` is written inside ``region`` by anything other than a
     ``key = rhs`` interstate assignment.
 
@@ -101,15 +182,10 @@ def _key_has_other_writer(region: ControlFlowRegion, key: str, rhs: str) -> bool
     reset that must not be hoisted out of the region -- hoisting it would run the
     reset once and let the value diverge across iterations.
     """
-    for e in region.all_interstate_edges():
-        other = e.data.assignments.get(key)
-        if other is not None and str(other) != str(rhs):
-            return True
-    for st in region.all_states():
-        for n in st.nodes():
-            if isinstance(n, nodes.AccessNode) and n.data == key and st.in_degree(n) > 0:
-                return True
-    return False
+    by_key, written = cache.region_index(region)
+    if key in written:
+        return True
+    return any(other != str(rhs) for other in by_key.get(key, []))
 
 
 def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: SDFG) -> bool:
@@ -118,11 +194,11 @@ def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: S
     ``LoopRegion`` and no ``LoopRegion`` strictly contains ``dest``."""
     if isinstance(dest, LoopRegion):
         return False
-    p = getattr(dest, 'parent_graph', None)
+    p = dest.parent_graph
     while p is not None and p is not sdfg:
         if isinstance(p, LoopRegion):
             return False
-        p = getattr(p, 'parent_graph', None)
+        p = p.parent_graph
     return True
 
 
@@ -132,14 +208,14 @@ def _on_conditional_branch(cfg: ControlFlowRegion, dest: ControlFlowRegion, sdfg
     unconditionally executed under ``dest`` (L5)."""
     g = cfg
     while g is not None and g is not dest:
-        p = getattr(g, 'parent_graph', None)
+        p = g.parent_graph
         if isinstance(p, ConditionalBlock):
             return True
         g = p
     return False
 
 
-def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Set[ControlFlowBlock]:
+def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict[ControlFlowBlock, None]:
     """Strict predecessors of a block within its parent region.
 
     :param parent: The region whose edges are walked.
@@ -147,52 +223,53 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Set[
     :returns: Blocks reachable backwards from ``child`` via ``parent``'s
               edges, excluding ``child`` itself.
     """
-    out: Set[ControlFlowBlock] = set()
+    out: dict[ControlFlowBlock, None] = {}
     stack = [child]
     while stack:
         cur = stack.pop()
         for e in parent.in_edges(cur):
             if e.src in out or e.src is child:
                 continue
-            out.add(e.src)
+            out[e.src] = None
             stack.append(e.src)
     return out
 
 
-def _block_reads_symbols(block: ControlFlowBlock) -> Set[str]:
+def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
     """All symbols read anywhere inside a block (state, region, etc.).
 
-    Uses ``free_symbols`` where available; falls back to a manual scan of
-    interstate-edge conditions and assignment RHSes for regions.
+    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` or condition
+    yields ``None`` rather than a partial set, because a partial set silently drops the very read
+    the caller is looking for and lets an illegal hoist through.
 
     :param block: The state or region to scan.
-    :returns: The set of symbol names read inside ``block``.
+    :returns: The names of symbols read inside ``block``, or ``None`` if it cannot be determined.
     """
-    syms: Set[str] = set()
+    syms: dict[str, None] = {}
     if isinstance(block, SDFGState):
         try:
-            syms |= {str(s) for s in block.free_symbols}
+            syms.update(dict.fromkeys(str(s) for s in block.free_symbols))
         except Exception:
-            pass
+            return None
         return syms
     if isinstance(block, ControlFlowRegion):
-        for st in block.all_states():
+        for st in block.states():
             try:
-                syms |= {str(s) for s in st.free_symbols}
+                syms.update(dict.fromkeys(str(s) for s in st.free_symbols))
             except Exception:
-                pass
+                return None
         for e in block.all_interstate_edges():
             for rhs in e.data.assignments.values():
-                syms |= _free(rhs)
+                syms.update(names_read_by(rhs))
             if not e.data.is_unconditional():
                 try:
-                    syms |= {str(s) for s in e.data.condition.get_free_symbols()}
+                    syms.update(dict.fromkeys(str(s) for s in e.data.condition.get_free_symbols()))
                 except Exception:
-                    pass
+                    return None
     return syms
 
 
-def _block_writes(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
+def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
     """All symbols assigned and data containers written anywhere inside a block.
 
     A state-only block contributes tasklet writes to its AccessNodes; a
@@ -203,17 +280,24 @@ def _block_writes(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
     """
     if isinstance(block, ControlFlowRegion):
         return _region_writes(block)
-    asyms: Set[str] = set()
-    wdata: Set[str] = set()
+    asyms: dict[str, None] = {}
+    wdata: dict[str, None] = {}
     if isinstance(block, SDFGState):
         for n in block.nodes():
             if isinstance(n, nodes.AccessNode) and block.in_degree(n) > 0:
-                wdata.add(n.data)
+                wdata[n.data] = None
     return asyms, wdata
 
 
-def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str, rhs_syms: Set[str],
-                         sdfg: SDFG) -> bool:
+def _legal_to_hoist_into(
+    parent: ControlFlowRegion,
+    child: ControlFlowRegion,
+    key: str,
+    rhs: str,
+    rhs_syms: dict[str, None],
+    sdfg: SDFG,
+    cache: HoistAnalysisCache,
+) -> bool:
     """Decide whether an assignment inside ``child`` may move up one level.
 
     Checks L1 RHS-invariance and L2/L3/L4 (no intervening reads/writes of
@@ -228,6 +312,7 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     :param rhs: The assignment's right-hand-side expression.
     :param rhs_syms: The free symbols of ``rhs``.
     :param sdfg: The owning SDFG (the upward walk does not cross it).
+    :param cache: Per-round memo of read/write answers, reused across candidates.
     :returns: ``True`` if placing the assignment at ``parent``'s entry is legal.
     """
     # L1: any new symbol introduced by ``child`` (its loop variable, or any
@@ -246,27 +331,29 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     # per-iteration reset (e.g. the ``count = 0`` seeding a stream-compaction loop whose
     # body does ``count = count + 1``). Hoisting it past the loop would run the reset once
     # and let ``count`` grow unbounded across iterations -> an out-of-bounds compaction.
-    if isinstance(child, LoopRegion) and _key_has_other_writer(child, key, rhs):
+    if isinstance(child, LoopRegion) and _key_has_other_writer(cache, child, key, rhs):
         return False
-    inner_asyms, inner_wdata = _region_writes(child)
-    inner_asyms.discard(key)  # discount the assignment we're moving
-    if rhs_syms & inner_asyms:
+    inner_asyms, inner_wdata = cache.block_writes(child)
+    inner_asyms = dict(inner_asyms)
+    inner_asyms.pop(key, None)  # discount the assignment we're moving
+    if any(s in inner_asyms for s in rhs_syms):
         return False
-    if rhs_syms & inner_wdata:
+    if any(s in inner_wdata for s in rhs_syms):
         return False  # a tasklet inside child writes to a container our rhs reads
 
     # L2/L3/L4: examine strict predecessors of ``child`` in ``parent``.
     # The new iedge will sit on ``child``'s in-edges; only blocks that can
     # execute BEFORE ``child`` could observe a difference. Blocks after
     # ``child`` saw the assignment via the original edge anyway.
-    preds = _predecessors_in(parent, child)
+    preds = cache.predecessors(parent, child)
     for b in preds:
-        if key in _block_reads_symbols(b):
+        reads = cache.block_reads(b)
+        if reads is None or key in reads:
             return False  # L3: a predecessor would observe the moved assignment
-        b_asyms, b_wdata = _block_writes(b)
+        b_asyms, b_wdata = cache.block_writes(b)
         if key in b_asyms or key in b_wdata:
             return False  # L4: predecessor writes key
-        if (rhs_syms & b_asyms) or (rhs_syms & b_wdata):
+        if any(s in b_asyms for s in rhs_syms) or any(s in b_wdata for s in rhs_syms):
             return False  # L2: predecessor writes a rhs symbol
 
     # Also any iedge in parent (other than the in-edges of ``child``) that
@@ -289,22 +376,35 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     return True
 
 
-def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG) -> Optional[ControlFlowRegion]:
+def _find_destination(
+    edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG, origin: ControlFlowBlock, cache: HoistAnalysisCache
+) -> ControlFlowRegion | None:
     """Walk up the ``parent_graph`` chain from ``edge_region`` to find the
     outermost ancestor ``D`` where the move is legal under L1-L6. Returns
     ``None`` if the binding all-or-nothing rule is not met or if no move
     is legal (D == ``edge_region``).
+
+    :param origin: The source block of the edge carrying the assignment. Even the first hoist step
+                   moves the assignment ahead of everything in ``edge_region`` that runs before this
+                   block, so those blocks are checked here; ``_legal_to_hoist_into`` only ever sees
+                   ``edge_region`` from the outside and cannot look in.
+    :param cache: Per-round memo of read/write answers, reused across candidates.
     """
-    rhs_syms = _free(rhs)
+    rhs_syms = names_read_by(rhs)
+    # legality scan (early-exit AND): iteration order does not affect the True/False outcome
+    for b in dict.fromkeys([*cache.predecessors(edge_region, origin), origin]):
+        reads = cache.block_reads(b)
+        if reads is None or key in reads:
+            return None
     dest: ControlFlowRegion = edge_region
     walker: ControlFlowRegion = edge_region
     while True:
-        parent = getattr(walker, 'parent_graph', None)
+        parent = walker.parent_graph
         if parent is None:
             break
         if not isinstance(parent, ControlFlowRegion):
             break  # crossed out of SDFG (would need L6 NSDFG passthrough)
-        if not _legal_to_hoist_into(parent, walker, key, rhs, rhs_syms, sdfg):
+        if not _legal_to_hoist_into(parent, walker, key, rhs, rhs_syms, sdfg, cache):
             break
         dest = parent
         walker = parent
@@ -315,17 +415,73 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
         return None  # L5: at least one step crossed a ConditionalBlock branch
     if not _meets_binding_rule(dest, edge_region, sdfg):
         return None
+    if not _lands_without_race(dest, _direct_child(dest, edge_region), key, rhs):
+        return None
     return dest
 
 
-def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str):
+def _edge_landing_order(existing: dict[str, str], key: str, rhs_syms: dict[str, None]) -> str:
+    """How ``key = rhs`` must be sequenced against the assignments already on a landing edge.
+
+    Assignments on one interstate edge are unordered -- they all read the pre-edge symbol
+    state -- so co-placing two that depend on each other races (this is how a hoisted
+    ``ip_index = ip[i]`` came to share an edge with the loop's own ``i = i + 1``, TSVC s353).
+    A dependency in one direction is resolvable by splitting the edge in two; a dependency in
+    both directions is a cycle and is not.
+
+    :returns: ``'direct'`` if there is no dependency, ``'after'`` if ours must follow
+              ``existing``, ``'before'`` if ours must precede it, ``'conflict'`` if both.
+    """
+    after = any(s in existing for s in rhs_syms if s != key)
+    before = any(key in names_read_by(str(other_rhs)) for other_key, other_rhs in existing.items() if other_key != key)
+    if after and before:
+        return "conflict"
+    if after:
+        return "after"
+    if before:
+        return "before"
+    return "direct"
+
+
+def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> bool:
+    """Whether ``key = rhs`` can join the edges it would land on, directly or via a split.
+
+    Every guard above examines ``child``'s interior and its predecessors; none looks at what
+    the DESTINATION edge already assigns. A one-directional dependency on an unconditional
+    landing edge is resolvable -- ``_place_assignment_at`` inserts a state that sequences the
+    two assignments. Refuse a same-edge cycle outright, refuse the 'existing depends on ours'
+    direction (v1 only implements the 'ours depends on existing' split), and refuse splitting a
+    conditional edge (it would run the split-off assignment regardless of the condition).
+
+    Self-reference is not a race: ``k = k + 1`` reads the pre-edge value, and validation excludes
+    it for the same reason.
+
+    :param dest: The region the assignment would be placed in.
+    :param child: The block the assignment must dominate within ``dest``.
+    :param key: The assigned symbol name.
+    :param rhs: The assignment's right-hand-side expression.
+    :returns: ``True`` if the placement is legal (directly or via a split) on every edge.
+    """
+    if child is None:
+        return True
+    rhs_syms = names_read_by(rhs)
+    for e in dest.in_edges(child):
+        order = _edge_landing_order(e.data.assignments, key, rhs_syms)
+        if order == "direct":
+            continue
+        if order == "after" and e.data.is_unconditional():
+            continue
+        return False
+    return True
+
+
+def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> None:
     """Add ``key = rhs`` so it dominates ``child`` inside ``dest``.
 
-    Mirrors the placement strategy of
-    :class:`~dace.transformation.interstate.move_loop_invariant_if_up.MoveLoopInvariantIfUp._move`:
-    put the assignment on every in-edge of ``child`` within ``dest``;
-    if ``child`` has no in-edges (it is ``dest``'s start block), prepend a
-    fresh hoist state with the assignment on its outgoing edge.
+    As in ``MoveLoopInvariantIfUp._move``: on every in-edge of ``child``, or on the edge out of a
+    fresh hoist state when ``child`` is the start block. If an in-edge already assigns something
+    ``rhs`` reads (``s1 = K + 1`` then ``s2 = 2 * s1``), the in-edges are rerouted one hop earlier so
+    ``key = rhs`` lands after them without a race.
 
     :param dest: The region the assignment is placed in.
     :param child: The block the assignment must dominate within ``dest``.
@@ -333,18 +489,20 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
     :param rhs: The assignment's right-hand-side expression.
     """
     in_edges = list(dest.in_edges(child))
-    if in_edges:
-        for e in in_edges:
-            e.data.assignments[key] = rhs
+    if not in_edges:
+        pre = dest.add_state(f"{child.label}_iedge_hoist", is_start_block=dest.start_block is child)
+        dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
         return
-    is_start = dest.start_block is child
-    pre = dest.add_state(f'{child.label}_iedge_hoist')
-    dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
-    if is_start:
-        dest.start_block = dest.node_id(pre)
+    rhs_syms = names_read_by(rhs)
+    needs_split = any(_edge_landing_order(e.data.assignments, key, rhs_syms) == "after" for e in in_edges)
+    if needs_split:
+        dest.add_state_before(child, f"{child.label}_iedge_hoist", assignments={key: rhs})
+        return
+    for e in in_edges:
+        e.data.assignments[key] = rhs
 
 
-def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion):
+def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion) -> None:
     """Placeholder for the cross-NSDFG extension (currently a no-op).
 
     If ``key`` were also declared in an inner NestedSDFG inside ``dest``,
@@ -361,23 +519,26 @@ def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegio
 def _direct_child(dest: ControlFlowRegion, edge_region: ControlFlowRegion) -> ControlFlowRegion:
     """Walk up from ``edge_region`` to find the immediate child of ``dest``."""
     g = edge_region
-    while getattr(g, 'parent_graph', None) is not dest:
-        g = getattr(g, 'parent_graph', None)
+    while g.parent_graph is not dest:
+        g = g.parent_graph
         if g is None:
-            raise RuntimeError('dest is not an ancestor of edge_region')
+            raise RuntimeError("dest is not an ancestor of edge_region")
     return g
 
 
 def _cascade_once(sdfg: SDFG) -> int:
     """One sweep across the SDFG; returns the number of assignments moved."""
     moved = 0
+    # Built lazily and reused across every candidate in this sweep; a hoist mutates the
+    # graph, so it invalidates the memo instead of leaving it to answer from a stale shape.
+    cache = HoistAnalysisCache()
     for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
         for edge in list(cfg.edges()):
             if not edge.data.assignments:
                 continue
             # Snapshot keys -- we mutate the dict as we go.
             for key, rhs in list(edge.data.assignments.items()):
-                dest = _find_destination(cfg, key, rhs, sdfg)
+                dest = _find_destination(cfg, key, rhs, sdfg, edge.src, cache)
                 if dest is None:
                     continue
                 child = _direct_child(dest, cfg)
@@ -386,6 +547,7 @@ def _cascade_once(sdfg: SDFG) -> int:
                 _place_assignment_at(dest, child, key, rhs)
                 _drop_inner_symbol_declarations(sdfg, key, dest)
                 moved += 1
+                cache.clear()
     return moved
 
 
@@ -396,7 +558,8 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
 
     Standalone, idempotent, can be invoked at multiple pipeline positions.
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.InterstateEdges | ppl.Modifies.CFG
@@ -404,10 +567,10 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Repeatedly hoist legal interstate-edge assignments until a fixpoint.
 
         :param sdfg: The SDFG to transform in place.
@@ -419,6 +582,4 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
             if not n:
                 break
             total += n
-        if total:
-            set_nested_sdfg_parent_references(sdfg)
         return total or None

@@ -13,4 +13,4 @@ try:
 except ImportError:
     ONNXModel = None
 
-__all__ = ['DaceModule', 'module', 'ONNXModel']
+__all__ = ["DaceModule", "module", "ONNXModel"]

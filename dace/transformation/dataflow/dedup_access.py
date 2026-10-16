@@ -1,17 +1,18 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains the access deduplication transformation. """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Contains the access deduplication transformation."""
 
-from collections import defaultdict
 import copy
-from typing import List
-
-from dace import sdfg as sd, subsets
-from dace.memlet import Memlet
-from dace.sdfg import nodes, graph as gr
-from dace.transformation import transformation as xf
-import dace.transformation.helpers as helpers
-
 import warnings
+from collections import defaultdict
+
+import dace.transformation.helpers as helpers
+from dace import sdfg as sd
+from dace import subsets
+from dace.memlet import Memlet
+from dace.sdfg import dealias, nodes
+from dace.sdfg import graph as gr
+from dace.sdfg.state import SymbolResolver
+from dace.transformation import transformation as xf
 
 
 class DeduplicateAccess(xf.SingleStateTransformation):
@@ -44,13 +45,13 @@ class DeduplicateAccess(xf.SingleStateTransformation):
             return False
 
         # Two nodes must belong to same connector
-        edges1 = set(e.src_conn for e in graph.edges_between(map_entry, node1))
-        edges2 = set(e.src_conn for e in graph.edges_between(map_entry, node2))
+        edges1 = {e.src_conn for e in graph.edges_between(map_entry, node1)}
+        edges2 = {e.src_conn for e in graph.edges_between(map_entry, node2)}
         if len(edges1 & edges2) == 0:
             return False
 
         # For each common connector
-        for conn in (edges1 & edges2):
+        for conn in edges1 & edges2:
             # Deduplication: Only apply to first pair of edges
             node_ids = [graph.node_id(e.dst) for e in graph.out_edges(map_entry) if e.src_conn == conn]
             if any(nid < nid1 for nid in node_ids):
@@ -60,10 +61,11 @@ class DeduplicateAccess(xf.SingleStateTransformation):
 
             # Matching condition: Bounding box union of subsets is smaller than
             # adding the subset sizes
-            memlets: List[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
+            memlets: list[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
+            facts = SymbolResolver().facts_at(graph, node1)
             union_subset = memlets[0].subset
             for memlet in memlets[1:]:
-                union_subset = subsets.bounding_box_union(union_subset, memlet.subset)
+                union_subset = subsets.bounding_box_union(union_subset, memlet.subset, facts)
 
             # TODO: Enhance me!
             # NOTE: This does not always result in correct behaviour for certain
@@ -90,41 +92,42 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         # 3. Create transients for subsets
         # 4. Redirect edges through new transients
 
-        edges1 = set(e.src_conn for e in graph.edges_between(map_entry, node1))
-        edges2 = set(e.src_conn for e in graph.edges_between(map_entry, node2))
+        edges1 = {e.src_conn for e in graph.edges_between(map_entry, node1)}
+        edges2 = {e.src_conn for e in graph.edges_between(map_entry, node2)}
 
         # Only apply to first connector (determinism)
         conn = sorted(edges1 & edges2)[0]
 
         edges = [e for e in graph.out_edges(map_entry) if e.src_conn == conn]
+        facts = SymbolResolver().facts_at(graph, node1)
 
         # Get original data descriptor
         dname = edges[0].data.data
         desc = sdfg.arrays[edges[0].data.data]
 
         # Get unique subsets
-        unique_subsets = set(e.data.subset for e in edges)
+        unique_subsets = {e.data.subset for e in edges}
 
         # Find largest contiguous subsets
         try:
             # Start from stride-1 dimension
-            contiguous_subsets = helpers.find_contiguous_subsets(unique_subsets,
-                                                                 dim=next(i for i, s in enumerate(desc.strides)
-                                                                          if s == 1))
+            contiguous_subsets = helpers.find_contiguous_subsets(
+                unique_subsets, facts, dim=next(i for i, s in enumerate(desc.strides) if s == 1)
+            )
         except (StopIteration, NotImplementedError):
             warnings.warn("DeduplicateAcces::Not operating on Stride One Dimension!")
             contiguous_subsets = unique_subsets
         # Then find subsets for rest of the dimensions
-        contiguous_subsets = helpers.find_contiguous_subsets(contiguous_subsets)
+        contiguous_subsets = helpers.find_contiguous_subsets(contiguous_subsets, facts)
         # Map original edges to subsets
         edge_mapping = defaultdict(list)
         for e in edges:
             for ind, subset in enumerate(contiguous_subsets):
-                if subset.covers(e.data.subset):
+                if subset.covers(e.data.subset, facts):
                     edge_mapping[ind].append(e)
                     break
             else:
-                raise ValueError("Failed to find contiguous subset for edge %s" % e.data)
+                raise ValueError(f"Failed to find contiguous subset for edge {e.data}")
 
         # Create transients for subsets and redirect edges
         for ind, subset in enumerate(contiguous_subsets):
@@ -135,8 +138,12 @@ class DeduplicateAccess(xf.SingleStateTransformation):
                 graph.remove_edge(e)
                 new_memlet = copy.deepcopy(e.data)
                 new_edge = graph.add_edge(anode, None, e.dst, e.dst_conn, new_memlet)
-                for pe in graph.memlet_tree(new_edge):
+                moved = list(graph.memlet_tree(new_edge))
+                for pe in moved:
                     # Rename data on memlet
                     pe.data.data = name
                     # Offset memlets to match new transient
                     pe.data.subset.offset(subset, True)
+
+                # A nested SDFG consumer moves to the deduplicated transient's origin
+                dealias.rebase_reconnected_edges(moved, subset)

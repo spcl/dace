@@ -32,18 +32,43 @@ that write the SAME array at provably-disjoint subsets (e.g. covariance's
 ``cov[i,j]`` compute vs ``cov[j,i]`` mirror) are kept together here; splitting
 those needs subset-disjointness reasoning and is out of scope for this pass.
 """
-from typing import Dict, List, Optional, Tuple
 
-from dace.sdfg import nodes
+import functools
+from typing import Any
+
 from dace import SDFG
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks, _is_per_iter_subset
-from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace.transformation.passes.loop_fission import _is_per_iter_subset, _linear_blocks
 
 
-def _rw_subsets(block, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[str, bool]]:
+def _interstate_reads(block: ControlFlowBlock) -> list[str]:
+    """Containers ``block`` reads through an interstate edge or a branch condition.
+
+    Such a read never becomes an AccessNode: ``if mask[i]:`` lowers to an assignment
+    ``mask_index = mask[i]`` on the edge into a ConditionalBlock, plus the branch condition on the
+    symbol. A walk over AccessNodes therefore reports the container as UNREAD by this block, and a
+    pass deciding a split on that answer separates the mask from the statements that read it.
+    """
+    if isinstance(block, SDFGState):
+        return []
+    arrays = block.sdfg.arrays
+    found: dict[str, None] = {}
+    for edge in block.all_interstate_edges(recursive=True):
+        found.update(dict.fromkeys(name for name in edge.data.free_symbols if name in arrays))
+    for region in block.all_control_flow_regions(recursive=True):
+        if not isinstance(region, ConditionalBlock):
+            continue
+        for condition, _ in region.branches:
+            if condition is None:
+                continue
+            found.update(dict.fromkeys(name for name in condition.get_free_symbols() if name in arrays))
+    return list(found)
+
+
+def _rw_subsets(block: ControlFlowBlock, loop_var: str | None) -> tuple[dict[str, bool], dict[str, bool]]:
     """For every container ``block`` writes / reads, whether ALL of its accesses
     are per-iteration (single-point at ``loop_var`` with zero offset).
 
@@ -52,9 +77,9 @@ def _rw_subsets(block, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[s
         ``loop_var`` (``_is_per_iter_subset``). A container absent from a dict
         is not written / read by the block.
     """
-    writes: Dict[str, bool] = {}
-    reads: Dict[str, bool] = {}
-    states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+    writes: dict[str, bool] = {}
+    reads: dict[str, bool] = {}
+    states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
             if not isinstance(n, nodes.AccessNode):
@@ -72,41 +97,54 @@ def _rw_subsets(block, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[s
                     reads[n.data] = reads.get(n.data, True) and _is_per_iter_subset(sub, loop_var)
                 if st.out_degree(n) == 0 and st.in_degree(n) == 0:
                     reads.setdefault(n.data, False)
+    # False, not True: the subset an interstate read uses is not analyzable here, and the forward
+    # producer->consumer split is only legal when BOTH sides are provably per-iteration. Recording
+    # it as unanalyzable keeps such a pair fused.
+    for name in _interstate_reads(block):
+        reads[name] = False
     return writes, reads
 
 
-def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List]]:
-    """Partition ``loop``'s linear body blocks into ordered groups, allowing a
-    FORWARD flow dependence (an earlier block writes a container -- at the
-    aligned per-iteration index -- that a later block reads at that same index)
-    to cross a group boundary. Everything else merges. ``None`` if the body is
-    not a plain linear chain of >= 2 blocks or nothing splits.
+def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[ControlFlowBlock, ControlFlowBlock]:
+    """Union-find parents that already join the blocks a body-edge assignment couples.
 
-    Merge ``Bi``, ``Bj`` (``i < j``) sharing container ``X`` iff:
-
-    - ``X`` is WRITTEN by the later ``Bj`` -- a backward anti (WAR) / output
-      (WAW) / flow-back edge (later group -> earlier group), always fatal; or
-    - ``X`` is a forward producer->consumer (``Bi`` writes, ``Bj`` reads) whose
-      dependence is NOT provably aligned per-iteration on BOTH sides. A scalar
-      accumulator (``s = s + a[i]``; not per-iter), a future read (``a[i+1]``),
-      or any cross-iteration / unanalyzable subset falls here: distributing it
-      would let the consumer see the wrong (final, or not-yet-overwritten)
-      value. Only the aligned same-index case (atax ``tmp[i]``, covariance
-      ``cov[i,j]``) -- where the producer loop fully materialises ``X`` before
-      the consumer loop reads exactly its own index -- is safe to split.
-
-    (Conservative: a legal-but-offset forward read like ``b[i-1]`` is kept
-    fused rather than reasoned about -- soundness over completeness.)
+    A symbol assigned on a body edge exists only in the clone holding that edge, so the edge's ends and every
+    block reading the symbol stay in one group (CSR ``row_ptr_index := row_ptr[i]`` feeding an inner loop).
     """
-    order = _linear_blocks(loop)
+    parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
+
+    def root(x: ControlFlowBlock) -> ControlFlowBlock:
+        while parent[x] != x:
+            x = parent[x]
+        return x
+
+    for edge in loop.edges():
+        if not edge.data.assignments:
+            continue
+        readers = [b for b in order if set(edge.data.assignments) & {str(sym) for sym in b.free_symbols}]
+        for block in [edge.src, *readers]:
+            parent[root(block)] = root(edge.dst)
+    return parent
+
+
+def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
+    """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
+
+    ``Bi`` and ``Bj`` (``i < j``) sharing ``X`` merge if ``Bj`` writes ``X`` (backward WAR / WAW /
+    flow), or if ``Bi`` writes and ``Bj`` reads ``X`` without a provably aligned per-iteration index
+    on both sides (scalar accumulators, ``a[i+1]``, offsets like ``b[i-1]``). The aligned case (atax
+    ``tmp[i]``, covariance ``cov[i,j]``) splits. ``None`` if not a linear chain of >= 2 blocks or
+    nothing splits.
+    """
+    order = _linear_blocks(loop, allow_assignments=True)
     if order is None or len(order) < 2:
         return None
     lv = loop.loop_variable
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _rw_subsets(b, lv) for b in order}
-    parent: Dict = {b: b for b in order}
+    parent = assignment_coupled(loop, order)
 
-    def find(x):
+    def find(x: ControlFlowBlock) -> ControlFlowBlock:
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
@@ -114,11 +152,13 @@ def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List]]:
 
     for i, bi in enumerate(order):
         writes_i, reads_i = rw[bi]
-        touched_i = set(writes_i) | set(reads_i)
-        for bj in order[i + 1:]:
+        # writes_i/reads_i are already ordered dicts; dict.fromkeys unions them without
+        # dropping into a hash-order set (the old `set(a) | set(b)` did).
+        touched_i = dict.fromkeys([*writes_i, *reads_i])
+        for bj in order[i + 1 :]:
             writes_j, reads_j = rw[bj]
             merge = False
-            for x in touched_i & (set(writes_j) | set(reads_j)):
+            for x in dict.fromkeys(k for k in touched_i if k in writes_j or k in reads_j):
                 if x in writes_j:
                     merge = True  # backward WAR / WAW / flow-back
                     break
@@ -131,7 +171,7 @@ def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List]]:
             if merge:
                 parent[find(bi)] = find(bj)
 
-    classes: Dict = {}
+    classes: dict = {}
     for b in order:
         classes.setdefault(find(b), []).append(b)
     groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()), key=lambda g: pos[g[0]])
@@ -149,37 +189,22 @@ class DistributeProducerConsumerLoop(ppl.Pass):
     nests each liftable on its own.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
-        return set()
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
-        count = 0
-        changed = True
-        # Each split rebuilds the CFG, so restart the scan after applying one
-        # (mirrors ``LoopFission.apply_pass``); distributing an outer loop can
-        # expose a newly-splittable inner one on the next sweep.
-        while changed:
-            changed = False
-            for loop in list(sdfg.all_control_flow_regions(recursive=True)):
-                if not isinstance(loop, LoopRegion):
-                    continue
-                groups = _forward_flow_groups(loop)
-                if groups is None:
-                    continue
-                LoopFission._fission_blocks(loop, groups)
-                set_nested_sdfg_parent_references(sdfg)
-                count += 1
-                changed = True
-                break
-        return count or None
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
+        # Function-local: ``perfect_loop_nesting`` imports this module.
+        from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops, groups_with_expansion
+
+        return distribute_loops(sdfg, grouping=functools.partial(groups_with_expansion, tried=set())) or None
 
 
-__all__ = ['DistributeProducerConsumerLoop', '_forward_flow_groups']
+__all__ = ["DistributeProducerConsumerLoop", "_forward_flow_groups"]

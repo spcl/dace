@@ -20,6 +20,7 @@ not from the unvectorized DaCe SDFG, so the test pins absolute numerical
 correctness of the vectorized lowering -- a miscompiled gather or a dropped
 reduction chunk cannot hide behind a matching-but-wrong scalar path.
 """
+
 import numpy as np
 import pytest
 
@@ -28,12 +29,12 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-_N = dace.symbol("N")
-_NNZ = dace.symbol("NNZ")
+N = dace.symbol("N")
+NNZ = dace.symbol("NNZ")
 
 
 @dace.program
-def _spmv(y: dace.float64[_N], A: dace.float64[_N, _NNZ], x: dace.float64[_N], col: dace.int32[_NNZ]):
+def spmv(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
     """SpMV-style gather + reduction, in the canonical Option-B form: a product
     Map (``prod[i, k] = A[i, k] * x[col[k]]`` -- straight-line body with a gather)
     followed by a ``Reduce`` over the reduced ``k`` axis (``y[i] = sum_k prod[i, k]``).
@@ -43,8 +44,8 @@ def _spmv(y: dace.float64[_N], A: dace.float64[_N, _NNZ], x: dace.float64[_N], c
     NOT as a for-loop or a WCR inside the vectorized map body (neither of which the
     tile path supports). The fused ``y[i] += A[i,k]*x[col[k]]`` form is lifted to
     this shape by a separate pass (see WP1-B)."""
-    prod = np.ndarray((_N, _NNZ), dace.float64)
-    for i, k in dace.map[0:_N, 0:_NNZ]:
+    prod = np.ndarray((N, NNZ), dace.float64)
+    for i, k in dace.map[0:N, 0:NNZ]:
         prod[i, k] = A[i, k] * x[col[k]]
     y[:] = np.sum(prod, axis=1)
 
@@ -61,22 +62,23 @@ def _spmv_numpy(A, x, col):
 # vectorizes over ``k`` (gather ``x[col[k]]``); the ``Reduce`` folds it to
 # ``y[i]``. When ``NNZ`` is not a multiple of the tile width the divisible
 # interior is tiled and the tail is a step-1 **scalar remainder loop**
-# (``remainder_strategy="scalar_postamble"``) -- masking the tail of a gather
+# (``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE``) -- masking the tail of a gather
 # would read out-of-range ``col`` indices, so the tail must be scalar.
 @pytest.mark.parametrize("n,nnz", [(16, 16), (16, 24), (24, 16), (17, 16), (16, 17), (17, 23)])
-@pytest.mark.parametrize("widths", [(8, ), (4, )])
+@pytest.mark.parametrize("widths", [(8,), (4,)])
 def test_spmv_matches_numpy(n, nnz, widths):
     rng = np.random.default_rng(seed=n * 1000 + nnz * 10 + sum(widths))
     A = rng.random((n, nnz))
-    x = rng.random((n, ))
+    x = rng.random((n,))
     col = rng.integers(0, n, size=nnz).astype(np.int32)
 
     y_ref = _spmv_numpy(A, x, col)
 
-    vec = _spmv.to_sdfg(simplify=True)
+    vec = spmv.to_sdfg(simplify=True)
     vec.name = f"spmv_{n}_{nnz}_{'x'.join(map(str, widths))}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR,
-                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=widths, target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)
+    ).apply_pass(vec, {})
     vec.validate()
 
     y_vec = np.zeros(n)

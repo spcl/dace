@@ -7,6 +7,7 @@ body otherwise reads ``_tile_iter_mask`` from a non-dominating branch state
 (uninitialized lanes). This pins the post-condition ``GenerateTileIterationMask``
 enforces after emitting the mask in its ``_tile_mask_init`` start state.
 """
+
 import dace
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.utils.pass_invariants import tile_mask_gen_dominates_consumers
@@ -21,7 +22,7 @@ def _two_state_sdfg(mask_in_start):
     s1 = sdfg.add_state("s1")
     sdfg.add_edge(s0, s1, dace.InterstateEdge())
     host = s0 if mask_in_start else s1
-    node = TileMaskGen(name="mg", widths=(8, ), iter_vars=("i", ), global_ubs=("N", ))
+    node = TileMaskGen(name="mg", widths=(8,), iter_vars=("i",), global_ubs=("N",))
     host.add_node(node)
     acc = host.add_access("m")
     host.add_edge(node, "_o", acc, None, dace.Memlet("m[0:8]"))

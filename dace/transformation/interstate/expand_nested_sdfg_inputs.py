@@ -15,49 +15,115 @@ This transformation does that offset adjustment up-front. Per in/out edge:
   * add the offset to every inner memlet referencing the connector's array.
 After it runs, every edge passes the full-array check and ``InlineMultistateSDFG.apply()`` is correct.
 
-Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``a[0:1, 0:M]`` →
-1-D ``[M]``); the outer array is absent from the parent SDFG (orphan descriptor).
+A connector of lower rank than its outer array (axis-collapse, ``a[0:1, 0:M]`` as 1-D ``[M]``) is widened
+back to the outer rank. Refuses when the outer array is absent from the parent SDFG (orphan descriptor).
 """
-import copy
-from typing import List, Set, Dict, Tuple
 
-from dace import SDFG, dtypes, subsets, symbolic, data
-from dace.codegen.common import CodeBlock
-from dace.sdfg import SDFGState, nodes
-from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation import transformation
-from dace.subsets import Range
-from dace.memlet import Memlet
+import ast
+import copy
+from collections.abc import Callable, Sequence
+
 import sympy
 
+from dace import SDFG, data, dtypes, subsets, symbolic
+from dace.codegen.common import CodeBlock
+from dace.frontend.python import astutils
+from dace.memlet import Memlet
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_expr, as_range
+from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.subsets import Range
+from dace.transformation import transformation
+from dace.transformation.passes.analysis import scopes
 
-def _resolve_outer_symbol_type(sym_name: str, sdfg: SDFG, default=None):
-    """Walk up the SDFG nesting + the parent CFR tree to locate the
-    type ``sym_name`` was declared with. Falls back to ``default`` (or
-    ``dace.int64`` if ``default`` is ``None``)."""
-    if default is None:
-        default = dtypes.int64
-    cur = sdfg
-    while cur is not None:
-        if sym_name in cur.symbols:
-            return cur.symbols[sym_name]
-        cur = getattr(cur, 'parent_sdfg', None)
-    # Try LoopRegion loop-variables in the original SDFG (the loop var
-    # carries the type via its enclosing SDFG's symbol table).
-    for cfg in sdfg.all_control_flow_regions():
-        if isinstance(cfg, LoopRegion) and cfg.loop_variable == sym_name:
-            owner = getattr(cfg, 'sdfg', None)
-            if owner is not None and sym_name in owner.symbols:
-                return owner.symbols[sym_name]
-    return default
+
+class _RenameLoadName(ast.NodeTransformer):
+    """Rename every ``Load`` use of ``old`` to ``new`` in a tasklet's Python code."""
+
+    def __init__(self, old: str, new: str):
+        self._old = old
+        self._new = new
+
+    def visit_Name(self, node: ast.Name):
+        if node.id == self._old and isinstance(node.ctx, ast.Load):
+            return ast.copy_location(ast.Name(id=self._new, ctx=ast.Load()), node)
+        return node
+
+
+def _rewrite_scalar_reads_in_tasklets(
+    inner_sdfg: SDFG, inner_name: str, outer_name: str, offset_dims: list[sympy.Basic]
+) -> None:
+    """Convert a folded scalar read of a widened connector into a dataflow read.
+
+    A scalar NSDFG input can be consumed SYMBOLICALLY -- its value bound into an interstate
+    assignment (``C_slice = tmp``) that ``ConstantPropagation`` then inlines into a tasklet's code
+    (``__out = tmp * ...``). Once :func:`_replace_desc_and_uncollapse_dims` widens ``tmp`` to the full
+    array ``outer_name``, that bare name is an array in a scalar expression -- invalid C (pointer
+    arithmetic on ``const T*``). A tasklet cannot index an array in its code either; the value must
+    arrive through a CONNECTOR. So for every tasklet that reads ``inner_name`` as a bare (non-
+    connector) name, add an input connector fed by the single element ``outer_name[offset_dims]`` and
+    rewrite the code reference to that connector. Runs BEFORE ``replace_dict`` so it matches the still-
+    distinct ``inner_name``; the memlet already names the widened ``outer_name`` descriptor."""
+    for state in inner_sdfg.states():
+        for tnode in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
+            if tnode.language != dtypes.Language.Python:
+                # The code below is parsed as PYTHON. A C++ tasklet is not, and the scatter guard's
+                # C++ tasklet (e.g. the tile vectorizer's remainder guard) raises SyntaxError here rather than
+                # being skipped. Nothing to rewrite either way: a non-Python tasklet reads its
+                # symbols directly, not through this connector-folding path.
+                continue
+            if inner_name in tnode.in_connectors:
+                continue  # already a dataflow read, not a symbolic one
+            loads = {
+                n.id
+                for n in ast.walk(ast.parse(tnode.code.as_string))
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            }
+            if inner_name not in loads:
+                continue
+
+            cin = "__" + inner_name + "_elem"
+            while cin in tnode.in_connectors or cin in tnode.out_connectors:
+                cin += "_"
+            tnode.add_in_connector(cin)
+            read = state.add_read(outer_name)
+            memlet = Memlet(data=outer_name, subset=Range([(o, o, 1) for o in offset_dims]))
+            scope = state.entry_node(tnode)
+            if scope is None:
+                state.add_edge(read, None, tnode, cin, memlet)
+            else:
+                state.add_memlet_path(read, scope, tnode, dst_conn=cin, memlet=memlet)
+
+            tree = ast.parse(tnode.code.as_string)
+            _RenameLoadName(inner_name, cin).visit(tree)
+            ast.fix_missing_locations(tree)
+            tnode.code = CodeBlock(astutils.unparse(tree))
 
 
 def _full_subset(sdfg: SDFG, arr_name: str) -> subsets.Range:
     return subsets.Range.from_array(sdfg.arrays[arr_name])
 
 
-def _collect_read_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Dict[str, Tuple[str, Range]]:
+def _container_window(
+    sdfg: SDFG, nsdfg_node: nodes.NestedSDFG, conn: str, outer_name: str, outer_subset: subsets.Range
+) -> tuple[subsets.Range, list[bool]]:
+    """The outer window a connector's inner memlets are relative to, and which of its dimensions they collapse.
+
+    A connector that describes the whole container (the No-View nested SDFG contract) is indexed in the
+    container's own coordinates, whatever the narrower footprint on the outer edge: its window is the full array
+    and it collapses nothing. Offsetting its memlets by the edge's start indexes ``C[i + i]``.
+    """
+    inner_desc, outer_desc = nsdfg_node.sdfg.arrays[conn], sdfg.arrays[outer_name]
+    if inner_desc.is_equivalent(outer_desc, symbol_mapping=nsdfg_node.symbol_mapping):
+        return _full_subset(sdfg, outer_name), [False] * len(outer_desc.shape)
+    return outer_subset, [(e + 1 - b) // s == 1 for (b, e, s) in as_range(outer_subset).ranges]
+
+
+def _collect_read_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> dict[str, tuple[str, Range]]:
     """Collect the original read subsets on every NSDFG input edge, keyed
     by the inner connector name. Used for the Map-scope case to capture
     the per-iteration tile offset."""
@@ -74,7 +140,7 @@ def _collect_read_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Dic
     return read_subsets
 
 
-def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Dict[str, Tuple[str, Range]]:
+def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> dict[str, tuple[str, Range]]:
     """Collect the original write subsets on every NSDFG output edge, keyed
     by the inner connector name. Used for the Map-scope case to capture
     the per-iteration tile offset."""
@@ -95,59 +161,179 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
     return write_subsets
 
 
-def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims: List[sympy.Basic],
-                                 collapsed_dims: List[bool]) -> None:
+def keeps_absolute_index(
+    lo: int | sympy.Basic,
+    offset: int | sympy.Basic,
+    inner_shape: tuple[int | sympy.Basic, ...],
+    dim: int,
+) -> bool:
+    """True if inner begin ``lo`` of axis ``dim`` is an absolute in-place access (``lo == offset``).
+    A constant ``lo`` inside the inner extent is relative even when it equals the window start
+    (``A[4, 1:3]`` written at inner ``[0, 1]``)."""
+    # A subscript reparsed from text and a map-range offset name one iterator with different dtypes
+    lo_expr, offset_expr = symbolic.equalize_symbols_across(
+        symbolic.pystr_to_symbolic(lo), symbolic.pystr_to_symbolic(offset)
+    )
+    if lo_expr - offset_expr != 0:
+        return False
+    in_extent = (
+        lo_expr.is_Integer
+        and lo_expr >= 0
+        and dim < len(inner_shape)
+        and bool((symbolic.pystr_to_symbolic(inner_shape[dim]) - lo_expr).is_positive)
+    )
+    return not in_extent
+
+
+def widened_range(
+    lo: sympy.Basic, hi: sympy.Basic, stp: sympy.Basic, offset: sympy.Basic, step: sympy.Basic
+) -> tuple[sympy.Basic, sympy.Basic, sympy.Basic]:
+    """An inner range of a window starting at ``offset`` with outer step ``step``, in outer coordinates: inner
+    position ``p`` is outer ``offset + p * step``."""
+    # a single element keeps its own step: there is nothing to stride over
+    return (
+        offset + as_expr(lo) * as_expr(step),
+        offset + as_expr(hi) * as_expr(step),
+        stp if lo == hi else as_expr(stp) * as_expr(step),
+    )
+
+
+def outer_indices(
+    indices: Sequence[sympy.Basic],
+    offset_dims: list[sympy.Basic],
+    collapsed_dims: list[bool],
+    step_dims: list[sympy.Basic],
+    inner_shape: tuple,
+) -> list[sympy.Basic]:
+    """Map the inner indices of a symbolic subscript to the outer array, as ``_rewrite_memlets_with_offset`` maps
+    memlet begins: a full-rank subscript maps each axis, a rank-reduced one reads collapsed axes at their offset."""
+    if len(indices) == len(offset_dims):
+        return [
+            index if keeps_absolute_index(index, offset, inner_shape, dim) else offset + as_expr(index) * as_expr(step)
+            for dim, (index, offset, step) in enumerate(zip(indices, offset_dims, step_dims))
+        ]
+    surviving = iter(indices)
+    return [
+        offset if collapsed else offset + as_expr(next(surviving)) * as_expr(step)
+        for offset, collapsed, step in zip(offset_dims, collapsed_dims, step_dims)
+    ]
+
+
+def uncollapsed_indices(
+    indices: Sequence[sympy.Basic], offset_dims: list[sympy.Basic], collapsed_dims: list[bool]
+) -> list[sympy.Basic]:
+    """Reinsert the collapsed axes of an already offset subscript at their offsets."""
+    surviving = iter(indices)
+    return [offset if collapsed else next(surviving) for offset, collapsed in zip(offset_dims, collapsed_dims)]
+
+
+def window_steps(
+    outer_subset: subsets.Range, collapsed_dims: list[bool], inner_desc: data.Data, outer_desc: data.Data
+) -> list[sympy.Basic]:
+    """Per outer dim, the step an inner index is scaled by when the window is widened: the window's step where
+    the inner array is a COMPACT view of it (inner stride = outer stride * step, so ``x[k]`` is element ``k``
+    of ``a[0:N:2]``), ``1`` where the inner array keeps the outer stride and its indices already carry the
+    step (``x[2*i]`` over the same window)."""
+    full_rank = len(inner_desc.shape) == len(outer_subset.ranges)
+    steps, inner_dim = [], 0
+    for d, ((_lo, _hi, stp), collapsed) in enumerate(zip(outer_subset.ranges, collapsed_dims)):
+        if not full_rank and collapsed:
+            steps.append(1)
+            continue
+        inner_stride = inner_desc.strides[d if full_rank else inner_dim]
+        inner_dim += 1
+        compact = stp != 1 and symbolic.simplify(inner_stride - outer_desc.strides[d] * stp) == 0
+        steps.append(stp if compact else 1)
+    return steps
+
+
+def widen_far_side_of_copy(
+    state: SDFGState,
+    edge: MultiConnectorEdge,
+    inner_name: str,
+    inner_shape: tuple,
+    outer_ranges: Callable[[list], tuple[list, bool]],
+) -> None:
+    """A copy whose memlet names the OTHER array addresses ``inner_name`` through ``other_subset``, or,
+    with none, through the whole of it. Once ``inner_name`` becomes a window of the outer array that
+    side has to move with it: ``tmp -> x`` with ``x`` widened to ``s[j]`` otherwise writes ``s[0]``."""
+    endpoints = (edge.src, edge.dst)
+    if not any(isinstance(n, nodes.AccessNode) and n.data == inner_name for n in endpoints):
+        return
+    memlet = edge.data
+    far = memlet.other_subset
+    if far is None:
+        far = subsets.Range([(0, s - 1, 1) for s in inner_shape])
+    memlet.other_subset = subsets.Range(outer_ranges(far.ranges)[0])
+
+
+def remap_reduce_axes(node: nodes.Node, collapsed_dims: list[bool]) -> None:
+    """A ``Reduce`` whose rank-reduced input memlet is uncollapsed keeps reducing the same data: its
+    ``axes`` (indices into the input subset) move onto the dims that survived the collapse. Left as
+    they were, ``axes=[0]`` over ``x[0:M]`` widened to ``a[j, 0:M]`` reduces the length-1 dim, a copy."""
+    from dace.libraries.standard.nodes.reduce import Reduce
+
+    if not isinstance(node, Reduce) or node.axes is None:
+        return
+    surviving = [d for d, collapsed in enumerate(collapsed_dims) if not collapsed]
+    node.axes = [surviving[axis] for axis in node.axes]
+
+
+def _rewrite_memlets_with_offset(
+    inner_sdfg: SDFG,
+    inner_name: str,
+    offset_dims: list[sympy.Basic],
+    collapsed_dims: list[bool],
+    inner_shape: tuple,
+    step_dims: list[sympy.Basic] | None = None,
+) -> None:
     """Rewrite every memlet referencing ``inner_name``: add ``offset_dims``, uncollapse
-    ``collapsed_dims``. Runs BEFORE ``replace_dict({inner_name: outer_name})`` so it matches
-    only THIS inner_name's memlets -- else two connectors binding the same outer array at
-    different offsets (``A[1,i,j]`` AND ``A[0,i,j]``) clobber cross-iteration.
+    ``collapsed_dims``, and scale a strided window's inner index by its outer ``step_dims``. Runs BEFORE
+    ``replace_dict({inner_name: outer_name})`` so it matches only THIS inner_name's memlets -- else two
+    connectors binding the same outer array at different offsets (``A[1,i,j]`` AND ``A[0,i,j]``) clobber
+    cross-iteration.
     """
-    for state in inner_sdfg.all_states():
+    step_dims = step_dims or [1] * len(offset_dims)
+
+    def outer_ranges(inner_subset: list) -> tuple[list, bool]:
+        # ``offset_dims`` / ``collapsed_dims`` span the FULL outer rank; an inner subset aligns two ways.
+        #  * Full-rank (``len(inner_subset) == len(offset_dims)``): 1:1 dim map, the boundary begin is added to
+        #    EACH dim, length-1 collapsed ones included -- a 3-point stencil reads ``A[0,0]/A[0,1]/A[0,2]`` with
+        #    dim0 collapsed, and the ``+1``/``+2`` lives in the inner begin.
+        #  * Rank-reduced (collapsed dims dropped): a collapsed dim contributes only its offset and
+        #    ``memlet_access_idx`` walks the surviving inner dims.
+        new_range_list = []
+        memlet_access_idx = 0
+        inner_is_full_rank = len(inner_subset) == len(offset_dims)
+        for d, (offset, collapsed, step) in enumerate(zip(offset_dims, collapsed_dims, step_dims)):
+            if inner_is_full_rank:
+                (lo, hi, stp) = inner_subset[d]
+                # Nest rebases each access relative to the boundary begin, so the outer begin is
+                # ``lo + offset``; in-place RMW keeps its access ABSOLUTE (``lo == offset``), and re-adding
+                # there double-counts (``i + i = 2*i``). No ``sympy.simplify``: too slow on Min/int_floor.
+                if keeps_absolute_index(lo, offset, inner_shape, d):
+                    new_range_list.append((lo, hi, stp))
+                else:
+                    new_range_list.append(widened_range(lo, hi, stp, offset, step))
+            elif collapsed is True:
+                new_range_list.append((offset, offset, 1))
+            else:
+                (lo, hi, stp) = inner_subset[memlet_access_idx]
+                new_range_list.append(widened_range(lo, hi, stp, offset, step))
+                memlet_access_idx += 1
+        return new_range_list, inner_is_full_rank
+
+    for state in inner_sdfg.states():
         for edge in state.edges():
             memlet = edge.data
-            if memlet is None or memlet.data != inner_name:
+            if memlet is None or memlet.is_empty():
                 continue
-            new_range_list = []
-            memlet_access_idx = 0
-            inner_subset = memlet.subset.ranges
-            # ``offset_dims`` / ``collapsed_dims`` span the FULL outer rank. Inner memlet aligns
-            # two ways:
-            #  * Full-rank inner (``len(inner_subset) == len(offset_dims)``): 1:1 dim map. Add
-            #    boundary begin to EACH dim's begin, including length-1 collapsed dims (inner
-            #    begin 0 → just offset). Modern NestInnermostMapBodyIntoNSDFG produces this: a
-            #    3-point j-stencil reads ``A[0,0]/A[0,1]/A[0,2]`` as 2-D memlets even with dim0
-            #    ``i:i`` length-1, so the intra-window ``+1``/``+2`` lives in the inner begin and
-            #    MUST be carried through.
-            #  * Rank-reduced inner (collapsed dims dropped): one entry per non-collapsed outer
-            #    dim; collapsed dim contributes only the offset, ``memlet_access_idx`` walks the
-            #    surviving inner dims.
-            # Indexing rank-reduced against a full-rank inner = classic stencil miscompile:
-            # ``A[0,1]`` consumes collapsed dim0's inner begin (``0``) for dim1, dropping ``+1``.
-            inner_is_full_rank = (len(inner_subset) == len(offset_dims))
-            for d, (offset, collapsed) in enumerate(zip(offset_dims, collapsed_dims)):
-                if inner_is_full_rank:
-                    (lo, hi, stp) = inner_subset[d]
-                    # Nest rebases each access RELATIVE to boundary begin
-                    # (``lo = original_begin - offset``): ``0`` collapsed, intra-window
-                    # ``0``/``1``/``2`` stencil, or ``begin - bbox_begin`` for a multi-access
-                    # array (non-affine ``Min(...)`` bbox begin). So absolute outer begin =
-                    # ``lo + offset`` in every relative case. ONE exception: in-place RMW keeps
-                    # its access ABSOLUTE (``A[i,j]`` verbatim, inner begin == boundary begin);
-                    # re-adding there double-counts (``i + i = 2*i``). Detect via ``lo == offset``
-                    # -- a free-symbol overlap test mis-fires on relative ``i - Min(i, i+H)``
-                    # (begin shares ``i`` yet must still rebase), dropping the slide. ``lo==offset``
-                    # found via sympy Add cancellation (``i - i`` → 0, relative ``(i-Min)-Min`` stays
-                    # ``i-2*Min``). No ``sympy.simplify`` -- too slow on Min/int_floor in a codegen-hot pass.
-                    if (sympy.sympify(lo) - sympy.sympify(offset)) == 0:
-                        new_range_list.append((lo, hi, stp))
-                    else:
-                        new_range_list.append((lo + offset, hi + offset, stp))
-                elif collapsed is True:
-                    new_range_list.append((offset, offset, 1))
-                else:
-                    (lo, hi, stp) = inner_subset[memlet_access_idx]
-                    new_range_list.append((lo + offset, hi + offset, stp))
-                    memlet_access_idx += 1
+            if memlet.data != inner_name:
+                widen_far_side_of_copy(state, edge, inner_name, inner_shape, outer_ranges)
+                continue
+            new_range_list, inner_is_full_rank = outer_ranges(as_range(memlet.subset).ranges)
+            if not inner_is_full_rank:
+                remap_reduce_axes(edge.dst, collapsed_dims)
             # WCR (reduction) memlet only relocates -- accumulation preserved. Offset the data
             # subset like any memlet and carry the ``wcr`` lambda through (dropping it would
             # miscompile gramschmidt / correlation).
@@ -166,11 +352,14 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                 if src_is_inner and dst_is_inner:
                     # Both sides ARE the offset array: ``other_subset`` would need the offset too.
                     # No current lowering produces this; refuse rather than drop it (miscompile).
-                    raise NotImplementedError("Cannot offset a self-copy of the boundary array %r on both sides" %
-                                              inner_name)
-                new_memlet = Memlet(data=memlet.data,
-                                    subset=subsets.Range(new_range_list),
-                                    other_subset=copy.deepcopy(memlet.other_subset))
+                    raise NotImplementedError(
+                        "Cannot offset a self-copy of the boundary array %r on both sides" % inner_name
+                    )
+                new_memlet = Memlet(
+                    data=memlet.data,
+                    subset=subsets.Range(new_range_list),
+                    other_subset=copy.deepcopy(memlet.other_subset),
+                )
                 new_memlet.wcr = memlet.wcr
                 # Preserve dynamic flag: a masked/conditional write (``A[mask] = v``) may not
                 # write every element; dropping it → codegen writes unconditionally.
@@ -183,22 +372,64 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                 edge.data = new_memlet
 
 
-def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
-                                      state: SDFGState,
-                                      inner_name: str,
-                                      outer_name: str,
-                                      desc: data.Array,
-                                      collapsed_dims: List[bool],
-                                      offset_dims: List[sympy.Basic],
-                                      direction: str,
-                                      apply_offset: bool = True) -> None:
+def reaches_further(state: SDFGState, edge: MultiConnectorEdge, other: MultiConnectorEdge) -> bool:
+    """True if ``edge``'s memlet path leaves more scopes than ``other``'s, so it keeps the connector.
+
+    A path ending at an access node inside the enclosing map publishes nothing past it: keeping that
+    one strands the node beyond the MapExit without a producer, and its readers (CloudSC's ``pfsqrf``
+    device-to-host copy) run before the kernel.
+    """
+    return len(state.memlet_path(edge)) > len(state.memlet_path(other))
+
+
+def fold_duplicate_boundary_edge(state: SDFGState, edge: MultiConnectorEdge, is_input: bool) -> None:
+    """Remove ``edge``'s whole memlet path (a partial removal dangles the scope's ``IN_x``/``OUT_x``).
+
+    The access node at the far end of the path can outlive it, still inside its scope and still
+    ordering whatever reads or writes it. Its last hop is restated as an empty memlet, which keeps
+    it in its scope and after (for a write) or before (for a read) the nested SDFG.
+    """
+    path = state.memlet_path(edge)
+    end, hop = (path[0].src, path[0].dst) if is_input else (path[-1].dst, path[-1].src)
+    state.remove_memlet_path(edge, remove_orphans=True)
+    nodes_left = state.nodes()
+    if end not in nodes_left or hop not in nodes_left:
+        return
+    # A fresh Memlet per edge -- never the object the old edge carried.
+    if is_input:
+        state.add_nedge(end, hop, Memlet())
+    else:
+        state.add_nedge(hop, end, Memlet())
+
+
+def _replace_desc_and_uncollapse_dims(
+    nsdfg_node: nodes.NestedSDFG,
+    state: SDFGState,
+    inner_name: str,
+    outer_name: str,
+    desc: data.Array,
+    collapsed_dims: list[bool],
+    offset_dims: list[sympy.Basic],
+    direction: str,
+    apply_offset: bool = True,
+    step_dims: list[sympy.Basic] | None = None,
+) -> None:
     # Replace inner_name occurrences + data descriptor with outer_name.
     assert isinstance(inner_name, str) and isinstance(outer_name, str)
 
     # Remove old array, add new, so occurrences can be safely replaced.
     inner_sdfg: SDFG = nsdfg_node.sdfg
+    # An output connector can already lack its descriptor; remove_data tolerates that, so the shape lookup does too.
+    inner_shape = inner_sdfg.arrays[inner_name].shape if inner_name in inner_sdfg.arrays else ()
     inner_sdfg.remove_data(inner_name, validate=False)
     copy_desc = copy.deepcopy(desc)
+    # A View is a view only next to the data it views: the ``views`` edge stays in the outer state,
+    # which resolves it before the memlet reaches this connector. Carrying the View class inward
+    # leaves an access node with nothing to view, which validation rejects as an ambiguous edge.
+    if isinstance(copy_desc, data.StructureView):
+        copy_desc = copy_desc.as_structure()
+    elif isinstance(copy_desc, data.View):
+        copy_desc = copy_desc.as_array()
     copy_desc.transient = False
     if outer_name not in inner_sdfg.arrays:
         inner_sdfg.add_datadesc(outer_name, copy_desc)
@@ -210,8 +441,9 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # renaming ``__tmp_b`` → A would match BOTH A-memlets and erase the [1] offset.
     # Offset once per array (``apply_offset``): a second pass (array read AND written, shared
     # outer name) still renames/widens its own connector, but re-offsetting double-counts.
+    step_dims = step_dims or [1] * len(offset_dims)
     if apply_offset:
-        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims)
+        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims, inner_shape, step_dims)
 
     # ``expr.replace(SubscriptClass, fn)``: SymPy splats the matched node's args positionally
     # (not the node), so the callback takes ``*args`` = Subscript arity: ``args[0]`` container,
@@ -237,11 +469,11 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             # whenever a dim was collapsed to size 1. A ``zip(args[1:], ...)`` truncated to that
             # shorter length, so a collapsed mask ``I[0]`` on an (N, N) map widened to ``I[__i0]``
             # (a whole row) instead of ``I[__i0, __i1]`` -- dropping every trailing map dim.
-            orig_indices = iter(args[1:])
-            new_indices = [
-                offset if collapsed else next(orig_indices) for offset, collapsed in zip(offset_dims, collapsed_dims)
-            ]
-            return symbolic.Subscript(base, *new_indices)
+            if not apply_offset:
+                return symbolic.Subscript(base, *uncollapsed_indices(args[1:], offset_dims, collapsed_dims))
+            return symbolic.Subscript(
+                base, *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims, inner_shape)
+            )
         # Not our target: rebuild the original Subscript verbatim.
         return symbolic.Subscript(*args)
 
@@ -257,7 +489,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     outer_is_scalar = isinstance(desc, data.Scalar)
 
     # Uncollapse dims (interstate edges).
-    for edge in inner_sdfg.edges():
+    for edge in inner_sdfg.all_interstate_edges():
         assignments = edge.data.assignments
         new_assignments = dict()
         for var, str_expr in assignments.items():
@@ -270,8 +502,9 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
                     new_assignments[var] = str_expr
                 else:
                     matching_syms = {s for s in symexpr.free_symbols if str(s) == inner_name}
-                    assert len(matching_syms) == 1, \
+                    assert len(matching_syms) == 1, (
                         f"Expected exactly one matching symbol for {inner_name} in {symexpr}, found {matching_syms}"
+                    )
                     sym = matching_syms.pop()
                     new_assignments[var] = symbolic.symstr(symexpr.subs(sym, _uncollapse_scalar(sym)))
             else:
@@ -304,6 +537,9 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
             return cb
         return CodeBlock(symbolic.symstr(_rewrite_connector_refs(sym)))
 
+    for edge in inner_sdfg.all_interstate_edges():
+        if not edge.data.is_unconditional():
+            edge.data.condition = _rewrite_codeblock(edge.data.condition)
     for cfg in inner_sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion):
             cfg.loop_condition = _rewrite_codeblock(cfg.loop_condition)
@@ -313,8 +549,12 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     for cfg in inner_sdfg.all_control_flow_blocks():
         if isinstance(cfg, ConditionalBlock):
             for i, (cond, body) in enumerate(cfg.branches):
-                cfg.branches[i] = (CodeBlock(
-                    symbolic.symstr(_rewrite_connector_refs(symbolic.pystr_to_symbolic(cond.as_string)))), body)
+                if cond is None:  # else branch -- nothing to rewrite
+                    continue
+                cfg.branches[i] = (
+                    CodeBlock(symbolic.symstr(_rewrite_connector_refs(symbolic.pystr_to_symbolic(cond.as_string)))),
+                    body,
+                )
 
     # Uncollapse dims in dataflow memlet SUBSET exprs -- 4th connector-reference site (after
     # interstate assignments, loop heads, branch conditions). A gather/scatter INDEX array is
@@ -333,15 +573,23 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         outer_sym = symbolic.symbol(outer_name)
 
         def _index_to_outer(*args):
-            # ``inner_name[x...]`` -> ``outer_name[x...]`` (keep the existing index).
-            if str(args[0]) == inner_name:
+            # ``inner_name[x...]`` -> ``outer_name[offset + x * step...]``.
+            if str(args[0]) == inner_name and not apply_offset:
                 return symbolic.Subscript(outer_sym, *args[1:])
+            if str(args[0]) == inner_name:
+                return symbolic.Subscript(
+                    outer_sym, *outer_indices(args[1:], offset_dims, collapsed_dims, step_dims, inner_shape)
+                )
             return symbolic.Subscript(*args)
 
         def _rw_index_expr(expr):
+            # A strip-mined bound is a SymExpr, whose ``str`` prints "main (approx)" -- text that
+            # sympy then reads as a call and rejects with "'One' object is not callable". Rewrite
+            # the two halves and keep the pair.
+            if isinstance(expr, symbolic.SymExpr):
+                return symbolic.SymExpr(_rw_index_expr(expr.expr), _rw_index_expr(expr.approx))
             symexpr = symbolic.pystr_to_symbolic(str(expr))
-            if inner_name not in symbolic.arrays(symexpr) and \
-                    inner_name not in {str(s) for s in symexpr.free_symbols}:
+            if inner_name not in symbolic.arrays(symexpr) and inner_name not in {str(s) for s in symexpr.free_symbols}:
                 return expr
             # Already-subscripted uses first, then any surviving bare-scalar use.
             symexpr = symexpr.replace(symbolic.Subscript, _index_to_outer)
@@ -352,10 +600,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
         def _uncollapse_subset_refs(sub) -> None:
             if isinstance(sub, subsets.Range):
                 sub.ranges = [(_rw_index_expr(b), _rw_index_expr(e), _rw_index_expr(s)) for (b, e, s) in sub.ranges]
-            elif isinstance(sub, subsets.Indices):
-                sub.indices = [_rw_index_expr(i) for i in sub.indices]
 
-        for st in inner_sdfg.all_states():
+        for st in inner_sdfg.states():
             for edge in st.edges():
                 memlet = edge.data
                 # Own-array memlets already handled by ``_rewrite_memlets_with_offset``; here
@@ -365,53 +611,51 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
                 _uncollapse_subset_refs(memlet.subset)
                 _uncollapse_subset_refs(memlet.other_subset)
 
+    # A widened scalar consumed symbolically (its value inlined into a tasklet's code as a bare
+    # name) has no valid array form as a bare name -- convert those reads to a dataflow connector
+    # fed by ``outer_name[offset_dims]``. Only for an Array source read into the NSDFG (``in``);
+    # a Scalar source stays a bare symbol, and outputs already flow through a memlet.
+    if not outer_is_scalar and direction == "in":
+        _rewrite_scalar_reads_in_tasklets(inner_sdfg, inner_name, outer_name, offset_dims)
+
     inner_sdfg.replace_dict({inner_name: outer_name})
 
     # Replace connectors. If ``outer_name`` already has an edge on this side (a previous
     # iteration merged another connector binding the same outer array, e.g. ``A[1,i,j]`` →
     # ``__tmp_a`` AND ``A[0,i,j]`` → ``__tmp_b`` both bind outer ``A``), keep ONE merged edge and
-    # REMOVE the duplicate. Its subset is the full-array ``_full_subset`` so the post-widening
-    # contract holds regardless of which connector contributed which slice.
-    assert direction in ('in', 'out')
-    if direction == 'in':
-        existing_target = any(e.dst_conn == outer_name and e.dst_conn != inner_name for e in state.in_edges(nsdfg_node))
-        for iedge in list(state.in_edges(nsdfg_node)):
-            if iedge.dst_conn == inner_name:
-                if existing_target:
-                    # Drop this edge -- existing ``outer_name`` edge already covers the full
-                    # subset. Remove the whole memlet PATH: the source is typically a MapEntry
-                    # pass-through (``ME.OUT_x -> NSDFG``), so dropping only the NSDFG-incident
-                    # edge dangles ``ME``'s ``IN_x``/``OUT_x`` + feeding edge (invalid SDFG).
-                    # symm (``A[i,k]`` + ``A[k,i]`` through two connectors) hits this.
-                    state.remove_memlet_path(iedge, remove_orphans=True)
-                else:
-                    iedge.dst_conn = outer_name
-                    iedge.data.subset = _full_subset(state.sdfg, outer_name)
-                    # Inner descriptor now mirrors the full outer array; inner memlets carry the
-                    # offset (above). Any ``other_subset`` described the OLD collapsed inner shape
-                    # (K>=2 broadcast ``a[i//2] -> inner_a[0]``, inner ``(1,)``) → stale after
-                    # widening. Clear it for a clean full-array passthrough (design 2.4).
-                    iedge.data.other_subset = None
-        # ``remove_memlet_path`` already dropped the connector on the dedup branch; guard the
-        # idempotent explicit removal.
+    # fold the other away. Its subset is the full-array ``_full_subset`` so the post-widening
+    # contract holds regardless of which connector contributed which slice. The two edges are
+    # interchangeable as transfers, NOT as dependences: see :func:`reaches_further`.
+    assert direction in ("in", "out")
+    is_input = direction == "in"
+    boundary = state.in_edges(nsdfg_node) if is_input else state.out_edges(nsdfg_node)
+    existing = [
+        e for e in boundary if (e.dst_conn if is_input else e.src_conn) == outer_name and outer_name != inner_name
+    ]
+    for edge in [e for e in boundary if (e.dst_conn if is_input else e.src_conn) == inner_name]:
+        if existing and not all(reaches_further(state, edge, other) for other in existing):
+            fold_duplicate_boundary_edge(state, edge, is_input)
+            continue
+        for other in existing:
+            fold_duplicate_boundary_edge(state, other, is_input)
+        existing = []
+        if is_input:
+            edge.dst_conn = outer_name
+        else:
+            edge.src_conn = outer_name
+        edge.data.subset = _full_subset(state.sdfg, outer_name)
+        # Inner descriptor now mirrors the full outer array; inner memlets carry the offset
+        # (above). Any ``other_subset`` described the OLD collapsed inner shape (K>=2 broadcast
+        # ``a[i//2] -> inner_a[0]``, inner ``(1,)``) → stale after widening. Clear it for a clean
+        # full-array passthrough (design 2.4).
+        edge.data.other_subset = None
+    # A fold already dropped its connector; guard the idempotent explicit removal.
+    if is_input:
         if inner_name in nsdfg_node.in_connectors:
             nsdfg_node.remove_in_connector(inner_name)
         if outer_name not in nsdfg_node.in_connectors:
             nsdfg_node.add_in_connector(outer_name, force=True)
     else:
-        existing_target = any(e.src_conn == outer_name and e.src_conn != inner_name
-                              for e in state.out_edges(nsdfg_node))
-        for oedge in list(state.out_edges(nsdfg_node)):
-            if oedge.src_conn == inner_name:
-                if existing_target:
-                    # Drop the whole path (mirrors in-edge dedup): the sink is typically a
-                    # MapExit pass-through, so removing only the NSDFG-incident edge dangles its
-                    # ``IN_x``/``OUT_x``.
-                    state.remove_memlet_path(oedge, remove_orphans=True)
-                else:
-                    oedge.src_conn = outer_name
-                    oedge.data.subset = _full_subset(state.sdfg, outer_name)
-                    oedge.data.other_subset = None  # stale after widening (see in-edge note)
         if inner_name in nsdfg_node.out_connectors:
             nsdfg_node.remove_out_connector(inner_name)
         if outer_name not in nsdfg_node.out_connectors:
@@ -421,6 +665,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # per-inner_name offsets BEFORE replace_dict, to avoid clobbering an earlier connector.)
 
 
+@make_properties
 class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
     """Pre-processor for :class:`InlineMultistateSDFG`: widen narrowed NSDFG in/out memlets to
     full-array subsets, reshape inner descriptors, offset inner memlets.
@@ -433,6 +678,13 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
+    top_level_only = Property(
+        dtype=bool,
+        default=False,
+        desc="If True, only apply to top-level NSDFGs, i.e. NSDFGs that are "
+        "not nested inside a Map scope (their enclosing scope entry is None).",
+    )
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.nested_sdfg)]
@@ -444,6 +696,9 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
     def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False) -> bool:
         nsdfg_node = self.nested_sdfg
         if nsdfg_node.no_inline:
+            return False
+        # Restrict to top-level NSDFGs (no enclosing Map) when requested.
+        if self.top_level_only and state.entry_node(nsdfg_node) is not None:
             return False
         # Refuse when every in/out edge already reads the full outer array -- nothing to widen,
         # and re-applying would spin ``apply_transformations_repeated`` forever.
@@ -461,6 +716,11 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                 continue
             if edge.data.subset != _full_subset(sdfg, edge.data.data):
                 return True
+            # A whole-array edge can still bind a connector of lower rank (``mass[0:N, 0]`` of an
+            # ``(N, 1)`` array as an ``(N,)`` connector), which the inner memlets index by that rank.
+            inner_arr = nsdfg_node.sdfg.arrays.get(edge.dst_conn if edge.dst is nsdfg_node else edge.src_conn)
+            if inner_arr is not None and len(inner_arr.shape) != len(outer_arr.shape):
+                return True
         return False
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> None:
@@ -469,12 +729,12 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
         # Offset symbols to propagate outer→NSDFG (into ``symbol_mapping`` + inner ``symbols``
         # so inner memlet refs validate).
-        introduced_symbols: Set[str] = set()
+        introduced_symbols: set[str] = set()
 
         # Inner arrays already widened. A connector used for BOTH an in- and out-edge (same outer
         # array read AND written in-place, e.g. ``A[i,j,k+1] = A[i,j,k] + A[i,j,k-1]``) shares the
         # inner array; without dedup we'd offset its memlets TWICE, corrupting numerics.
-        processed_inner_arrays: Set[str] = set()
+        processed_inner_arrays: set[str] = set()
 
         read_subsets = _collect_read_subsets(state, nsdfg_node)
         write_subsets = _collect_write_subsets(state, nsdfg_node)
@@ -491,15 +751,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
 
             # Widen if not already full: find collapsed dims (outer [N,N,N], read [1,0:N,0:N] →
             # inner [N,N]).
-            inner_desc = inner_sdfg.arrays[in_conn]
-            collapsed_dims = []
-            for (b, e, s) in iedge.data.subset.ranges:
-                if (e + 1 - b) // s == 1:
-                    collapsed_dims.append(True)
-                else:
-                    collapsed_dims.append(False)
-
-            read_subsets[in_conn] = (iedge.data.data, iedge.data.subset, collapsed_dims)
+            window, collapsed_dims = _container_window(sdfg, nsdfg_node, in_conn, iedge.data.data, iedge.data.subset)
+            read_subsets[in_conn] = (iedge.data.data, window, collapsed_dims)
 
         for oedge in state.out_edges(nsdfg_node):
             if oedge.data is None or oedge.data.data is None:
@@ -511,15 +764,8 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             if out_conn is None:
                 continue
 
-            inner_desc = inner_sdfg.arrays[out_conn]
-            collapsed_dims = []
-            for (b, e, s) in oedge.data.subset.ranges:
-                if (e + 1 - b) // s == 1:
-                    collapsed_dims.append(True)
-                else:
-                    collapsed_dims.append(False)
-
-            write_subsets[out_conn] = (oedge.data.data, oedge.data.subset, collapsed_dims)
+            window, collapsed_dims = _container_window(sdfg, nsdfg_node, out_conn, oedge.data.data, oedge.data.subset)
+            write_subsets[out_conn] = (oedge.data.data, window, collapsed_dims)
 
         # ``_rewrite_memlets_with_offset`` offsets EVERY inner memlet referencing ``conn``'s
         # array, not just the boundary edge. When the same inner array is read AND written
@@ -528,29 +774,45 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # (``i - Min`` → ``i`` → ``i + Min``), collapsing the slide. So offset only on the FIRST
         # pass (``apply_offset``); BOTH passes still rename/widen their own connector (direction-
         # gated; skipping a pass leaves a dangling connector → hang).
-        for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in read_subsets.items():
+        # Before any rename: an array both read and written loses its inner name on the first pass.
+        steps = {
+            (direction, conn): window_steps(
+                outer_subset, collapsed_dims, nsdfg_node.sdfg.arrays[conn], sdfg.arrays[outer_arr_name]
+            )
+            for direction, subsets_by_conn in (("in", read_subsets), ("out", write_subsets))
+            for conn, (outer_arr_name, outer_subset, collapsed_dims) in subsets_by_conn.items()
+        }
+        for conn, (outer_arr_name, outer_subset, collapsed_dims) in read_subsets.items():
             apply_offset = conn not in processed_inner_arrays
             processed_inner_arrays.add(conn)
-            _replace_desc_and_uncollapse_dims(nsdfg_node,
-                                              state,
-                                              conn,
-                                              outer_arr_name,
-                                              sdfg.arrays[outer_arr_name],
-                                              collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
-                                              direction='in',
-                                              apply_offset=apply_offset)
+            _replace_desc_and_uncollapse_dims(
+                nsdfg_node,
+                state,
+                conn,
+                outer_arr_name,
+                sdfg.arrays[outer_arr_name],
+                collapsed_dims,
+                [lo for (lo, _hi, _stp) in outer_subset.ranges],
+                direction="in",
+                apply_offset=apply_offset,
+                step_dims=steps["in", conn],
+            )
 
-        for (conn, (outer_arr_name, outer_subset, collapsed_dims)) in write_subsets.items():
+        for conn, (outer_arr_name, outer_subset, collapsed_dims) in write_subsets.items():
             apply_offset = conn not in processed_inner_arrays
             processed_inner_arrays.add(conn)
-            _replace_desc_and_uncollapse_dims(nsdfg_node,
-                                              state,
-                                              conn,
-                                              outer_arr_name,
-                                              sdfg.arrays[outer_arr_name],
-                                              collapsed_dims, [lo for (lo, _hi, _stp) in outer_subset.ranges],
-                                              direction='out',
-                                              apply_offset=apply_offset)
+            _replace_desc_and_uncollapse_dims(
+                nsdfg_node,
+                state,
+                conn,
+                outer_arr_name,
+                sdfg.arrays[outer_arr_name],
+                collapsed_dims,
+                [lo for (lo, _hi, _stp) in outer_subset.ranges],
+                direction="out",
+                apply_offset=apply_offset,
+                step_dims=steps["out", conn],
+            )
 
         # Thread any gather/scatter INDEX array referenced inside an inner memlet SUBSET but
         # absent from ``inner_sdfg.arrays``. ``A[B[i]]`` where ``B`` was never a boundary
@@ -558,20 +820,20 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # ``A``'s subset) leaves ``B`` dangling → can't codegen through inline, no per-lane index
         # tile. Add ``B`` as a full-array read boundary (like ``A``): non-transient inner
         # descriptor, in-connector, access-node edge routed through the enclosing Map (if any).
-        def _subset_arrays(sub) -> Set[str]:
+        def _subset_arrays(sub) -> set[str]:
             if isinstance(sub, subsets.Range):
                 exprs = [x for r in sub.ranges for x in r]
-            elif isinstance(sub, subsets.Indices):
-                exprs = list(sub.indices)
             else:
                 return set()
-            names: Set[str] = set()
+            names: set[str] = set()
             for ex in exprs:
-                names |= symbolic.arrays(symbolic.pystr_to_symbolic(str(ex)))
+                # Same SymExpr trap as ``_rw_index_expr``: read the two halves, not the printed pair.
+                for part in (ex.expr, ex.approx) if isinstance(ex, symbolic.SymExpr) else (ex,):
+                    names |= symbolic.arrays(symbolic.pystr_to_symbolic(str(part)))
             return names
 
-        referenced: Set[str] = set()
-        for st in inner_sdfg.all_states():
+        referenced: set[str] = set()
+        for st in inner_sdfg.states():
             for edge in st.edges():
                 if edge.data is None:
                     continue
@@ -593,15 +855,17 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
             # subset, not a per-iter slice. FRESH Memlet per edge (DaCe forbids shared subset
             # objects); route through the enclosing Map with the full extent on both edges.
             if entry is not None:
-                in_conn, out_conn = 'IN_' + arr_name, 'OUT_' + arr_name
+                in_conn, out_conn = "IN_" + arr_name, "OUT_" + arr_name
                 entry.add_in_connector(in_conn)
                 entry.add_out_connector(out_conn)
                 state.add_edge(src, None, entry, in_conn, Memlet(data=arr_name, subset=_full_subset(sdfg, arr_name)))
-                state.add_edge(entry, out_conn, nsdfg_node, arr_name,
-                               Memlet(data=arr_name, subset=_full_subset(sdfg, arr_name)))
+                state.add_edge(
+                    entry, out_conn, nsdfg_node, arr_name, Memlet(data=arr_name, subset=_full_subset(sdfg, arr_name))
+                )
             else:
-                state.add_edge(src, None, nsdfg_node, arr_name,
-                               Memlet(data=arr_name, subset=_full_subset(sdfg, arr_name)))
+                state.add_edge(
+                    src, None, nsdfg_node, arr_name, Memlet(data=arr_name, subset=_full_subset(sdfg, arr_name))
+                )
 
         # A connector's inner array MUST be non-transient (boundary interface, not storage).
         # When a connector name collides with a same-named inner transient (accumulator ``tmp``
@@ -623,19 +887,29 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # Per user direction 2026-06-10: all symbols in any array's shape/strides/offsets must be
         # added to the inner NSDFG (if absent) AND bound in symbol_mapping (identity default). Use
         # ``Data.free_symbols`` (aggregates shape+strides+offset) not per-field walking.
-        for inner_arr_name, inner_desc in inner_sdfg.arrays.items():
+        #
+        # A symbol the inner SDFG DEFINES itself is excluded: a scope-lifetime transient may be
+        # sized by an inner loop iterator (a triangular reduction buffer ``_red_buf[M - it - 1]``
+        # inside the ``it`` loop). Such a name has no binding in the caller's scope, so putting it
+        # in ``symbol_mapping`` makes codegen pass an undeclared variable at the call site.
+        inner_defined = (set(inner_sdfg.symbols.keys()) - {str(s) for s in inner_sdfg.free_symbols}) | (
+            scope_bound_names(inner_sdfg) | interstate_bound_names(inner_sdfg)
+        )
+        for inner_desc in inner_sdfg.arrays.values():
             for sym in inner_desc.free_symbols:
                 sym_name = str(sym)
                 if sym_name in nsdfg_node.in_connectors or sym_name in nsdfg_node.out_connectors:
+                    continue
+                if sym_name in inner_sdfg.constants_prop or sym_name in inner_defined:
                     continue
                 if sym_name not in nsdfg_node.symbol_mapping:
                     introduced_symbols.add(sym_name)
 
         # Propagate offset symbols not already in symbol_mapping. Identity binding is the default
-        # (outer ``ii`` → inner ``ii``); validation surfaces a truly-undefined symbol on the next
-        # pass (a real caller bug). Resolve each symbol's type by walking the outer SDFG ancestry
-        # + LoopRegion loop variables -- silently defaulting to ``int64`` would mismatch a caller
-        # that declared another integer width.
+        # (outer ``ii`` → inner ``ii``). Each type is resolved at the NSDFG node's scope in the outer
+        # SDFG, the only table that sees an enclosing loop iterator or map parameter; a name nothing
+        # declares raises instead of defaulting to ``int64`` against another integer width.
+        resolver = scopes.ScopedSymbolResolver()
         for sym_name in introduced_symbols:
             if sym_name in nsdfg_node.symbol_mapping:
                 continue
@@ -646,6 +920,6 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                 nsdfg_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
                 continue
             # New to both inner and the mapping: resolve type from outer scope and copy through.
-            outer_type = _resolve_outer_symbol_type(sym_name, sdfg)
+            outer_type = resolver.resolve_dtype(sym_name, sdfg, state=state, node=nsdfg_node)
             inner.add_symbol(sym_name, outer_type)
             nsdfg_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)

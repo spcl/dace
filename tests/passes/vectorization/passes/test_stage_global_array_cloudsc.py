@@ -20,8 +20,6 @@ The pass module does not exist yet — the implementation agent creates it. Unti
 then this file raises an ``ImportError`` for the pass *only*.
 """
 
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import copy
 
 import numpy
@@ -30,10 +28,11 @@ import pytest
 import dace
 from dace import data as dt
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars, )
-
+    StageGlobalArrayThroughScalars,
+)
 from tests.passes.vectorization.helpers.harness import (
-    _get_cloudsc_snippet_four, )
+    _get_cloudsc_snippet_four,
+)
 
 #: Number of species in the cloudsc-style ``[i, j, 5]`` global arrays.
 NSPECIES = 5
@@ -66,12 +65,11 @@ def _global_write_edges(sdfg: dace.SDFG, array_name: str) -> list:
     """
     writes = []
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue
-                for edge in state.in_edges(node):
-                    writes.append((edge, state))
+                writes.extend((edge, state) for edge in state.in_edges(node))
     return writes
 
 
@@ -87,7 +85,7 @@ def _global_to_tasklet_edges(sdfg: dace.SDFG, array_name: str) -> int:
     """
     count = 0
     for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.all_states():
+        for state in sd.states():
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue
@@ -144,11 +142,13 @@ def test_cloudsc_four_zqlhs_chain_numerics(klon: int):
     ref.compile()(**ref_arrays, **params)
     vec.compile()(**vec_arrays, **params)
     for key in arrays:
-        numpy.testing.assert_allclose(vec_arrays[key],
-                                      ref_arrays[key],
-                                      rtol=RTOL,
-                                      atol=ATOL,
-                                      err_msg=f"cloudsc_four[klon={klon}]: array {key!r} diverged after staging")
+        numpy.testing.assert_allclose(
+            vec_arrays[key],
+            ref_arrays[key],
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=f"cloudsc_four[klon={klon}]: array {key!r} diverged after staging",
+        )
 
 
 def test_cloudsc_four_preserves_global_store_and_adds_transients():
@@ -174,8 +174,7 @@ def test_cloudsc_four_removes_global_to_tasklet_reads():
     vec.validate()
     assert applied, "expected stageable hops in the zqlhs chain"
     assert before > 0, "fixture precondition: the chain reads zqlhs through the global node"
-    assert _global_to_tasklet_edges(vec, "zqlhs") == 0, \
-        "staging must remove every global-zqlhs -> tasklet read edge"
+    assert _global_to_tasklet_edges(vec, "zqlhs") == 0, "staging must remove every global-zqlhs -> tasklet read edge"
 
 
 def test_cloudsc_four_is_idempotent():

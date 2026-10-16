@@ -1,106 +1,55 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+from copy import deepcopy as dc
+from typing import Any, NamedTuple
+
 import numpy as np
-from dace import dtypes, data
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
-if TYPE_CHECKING:
-    from dace.sdfg import SDFG, SDFGState
+import dace
+from dace import data, dtypes, symbolic, SDFG, SDFGState
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
-def is_device_resident(storage: dtypes.StorageType) -> bool:
-    """Return whether an array on ``storage`` is already a device (cupy) array.
-
-    Used by the CuPy BLAS expansions to decide whether operands need a host
-    ``cupy.asarray`` / ``cupy.asnumpy`` round-trip. In the cuTile pipeline
-    ``apply_gpu_transformations()`` places every array on
-    :attr:`~dace.dtypes.StorageType.GPU_Global`, so the operands passed to the
-    generated Python tasklet are already ``cupy`` arrays; converting the result
-    back to NumPy then fails to assign into the ``cupy`` output. Treating such
-    operands as device-resident keeps the whole matmul on the device.
-
-    :param storage: The storage type of the operand array.
-    :returns: ``True`` when the storage is GPU-resident (no host conversion
-        needed), ``False`` otherwise.
+def matrix_view(subset) -> tuple[list[Any], list[int]]:
     """
-    return storage in dtypes.GPU_RESIDENT_STORAGES
+    Returns an operand's matrix view: the raw subset if it is already 2D, otherwise the squeezed one.
 
+    Squeezing unconditionally rejects a genuine ``(N, 1)`` column as "not a matrix"; not squeezing at
+    all rejects an ``(NQ, 1, NP)`` reshape. Callers that read a size, a stride or a dimension index
+    must all use this view, or they disagree about which dimensions the operand has.
 
-def cupy_in_wrap(name: str, storage: dtypes.StorageType) -> str:
-    """Return an expression that yields a ``cupy`` view of a tasklet input.
-
-    Device-resident operands are passed through unchanged; host operands are
-    wrapped in ``cupy.asarray`` (a host-to-device copy).
-
-    :param name: The tasklet input connector name (e.g. ``'__a'``).
-    :param storage: The storage type of the backing array.
-    :returns: A Python expression string producing a ``cupy`` array.
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view, and the subset dimensions it kept.
     """
-    return name if is_device_resident(storage) else f'cupy.asarray({name})'
-
-
-def cupy_out_wrap(expr: str, storage: dtypes.StorageType) -> str:
-    """Return an expression converting a ``cupy`` result to the output storage.
-
-    Device-resident outputs keep the ``cupy`` array (no round-trip); host
-    outputs are converted back with ``cupy.asnumpy``.
-
-    :param expr: The Python expression producing a ``cupy`` result.
-    :param storage: The storage type of the output array.
-    :returns: A Python expression string matching the output storage kind.
-    """
-    return expr if is_device_resident(storage) else f'cupy.asnumpy({expr})'
-
-
-def add_cupy_sync_state(sdfg: "SDFG", after_state: "SDFGState", storage: dtypes.StorageType) -> Optional["SDFGState"]:
-    """Append a stream-synchronization state for a device-resident CuPy output.
-
-    CuPy operations and assignments to CuPy arrays are asynchronous. The
-    assignment generated for a tasklet's outgoing memlet runs *after* the
-    tasklet body, so synchronizing inside the tasklet would not wait for that
-    final write. A successor state places the synchronization after both the
-    CuPy operation and its output-memlet writeback.
-
-    Host outputs need no additional state because :func:`cupy_out_wrap` emits
-    ``cupy.asnumpy``, which already waits for the device result.
-
-    :param sdfg: Nested SDFG produced by a CuPy library expansion.
-    :param after_state: State containing the CuPy tasklet and output writeback.
-    :param storage: Storage of the expansion's output array.
-    :returns: The added synchronization state, or ``None`` for host output.
-    """
-    if not is_device_resident(storage):
-        return None
-
-    sync_state = sdfg.add_state_after(after_state, 'cupy_sync')
-    sync_state.add_tasklet(
-        'cupy_sync',
-        {},
-        {},
-        'import cupy\ncupy.cuda.get_current_stream().synchronize()',
-        language=dtypes.Language.Python,
-    )
-    return sync_state
+    size = subset.size()
+    if len(size) == 2:
+        return size, list(range(len(size)))
+    squeezed = dc(subset)
+    dims = squeezed.squeeze()
+    return squeezed.size(), dims
 
 
 def to_blastype(dtype):
-    """ Returns a BLAS character that corresponds to the input type.
-        Used in MKL/CUBLAS calls. """
+    """Returns a BLAS character that corresponds to the input type.
+    Used in MKL/CUBLAS calls."""
 
     if dtype == np.float16:
-        return 'H'
+        return "H"
     elif dtype == np.float32:
-        return 'S'
+        return "S"
     elif dtype == np.float64:
-        return 'D'
+        return "D"
     elif dtype == np.complex64:
-        return 'C'
+        return "C"
     elif dtype == np.complex128:
-        return 'Z'
+        return "Z"
     else:
-        raise TypeError('Type %s not supported in BLAS operations' % dtype.__name__)
+        raise TypeError(f"Type {dtype.__name__} not supported in BLAS operations")
 
 
-def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
+def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
     """
     Returns type metadata on a given dace dtype.
 
@@ -108,59 +57,87 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
     """
 
     if dtype == dtypes.float16:
-        return 'H', '__half', 'Half'
+        return "H", "__half", "Half"
     elif dtype == dtypes.float32:
-        return 'S', 'float', 'Float'
+        return "S", "float", "Float"
     elif dtype == dtypes.float64:
-        return 'D', 'double', 'Double'
+        return "D", "double", "Double"
     elif dtype == dtypes.complex64:
-        return 'C', 'cuComplex', 'Complex64'
+        return "C", "cuComplex", "Complex64"
     elif dtype == dtypes.complex128:
-        return 'Z', 'cuDoubleComplex', 'Complex128'
+        return "Z", "cuDoubleComplex", "Complex128"
     else:
-        raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
+        raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
+
+
+def rocblas_type(ctype: str) -> str:
+    """Map a CUDA vendor C type from :func:`cublas_type_metadata` to its rocBLAS spelling.
+
+    Only the complex types differ; ``float`` and ``double`` are the same C type in both. A
+    rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
+    where that type does not exist, so quatrex_rgf's complex128 ``Inv`` failed to compile there.
+    """
+    return {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(ctype, ctype)
 
 
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
-        dtypes.float16: 'CUDA_R_16F',
-        dtypes.float32: 'CUDA_R_32F',
-        dtypes.complex64: 'CUDA_C_32F',
-        dtypes.float64: 'CUDA_R_64F',
-        dtypes.complex128: 'CUDA_C_64F',
-        dtypes.int8: 'CUDA_R_8I',
-        dtypes.uint8: 'CUDA_R_8U',
-        dtypes.int32: 'CUDA_R_32I',
-        #dtypes.complex32: 'CUDA_C_16F',
-        #dtypes.bfloat16: 'CUDA_R_16BF',
-        #dtypes.bcomplex32: 'CUDA_C_16BF',
-        #dtypes.icomplex16: 'CUDA_C_8I',
-        #dtypes.iucomplex16: 'CUDA_C_8U',
-        #dtypes.icomplex64: 'CUDA_C_32I',
+        dtypes.float16: "CUDA_R_16F",
+        dtypes.float32: "CUDA_R_32F",
+        dtypes.complex64: "CUDA_C_32F",
+        dtypes.float64: "CUDA_R_64F",
+        dtypes.complex128: "CUDA_C_64F",
+        dtypes.int8: "CUDA_R_8I",
+        dtypes.uint8: "CUDA_R_8U",
+        dtypes.int32: "CUDA_R_32I",
+        # dtypes.complex32: 'CUDA_C_16F',
+        # dtypes.bfloat16: 'CUDA_R_16BF',
+        # dtypes.bcomplex32: 'CUDA_C_16BF',
+        # dtypes.icomplex16: 'CUDA_C_8I',
+        # dtypes.iucomplex16: 'CUDA_C_8U',
+        # dtypes.icomplex64: 'CUDA_C_32I',
     }
     return types[dtype]
 
 
 def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
     types = {
-        dtypes.float16: '16F',
-        dtypes.float32: '32F',
-        dtypes.float64: '64F',
-        dtypes.complex64: '32F',
-        dtypes.complex128: '64F',
-        dtypes.int8: '32I',
-        dtypes.int16: '32I',
-        dtypes.int32: '32I',
-        dtypes.int64: '32I',
-        dtypes.uint8: '32I',
-        dtypes.uint16: '32I',
-        dtypes.uint32: '32I',
-        dtypes.uint64: '32I',
+        dtypes.float16: "16F",
+        dtypes.float32: "32F",
+        dtypes.float64: "64F",
+        dtypes.complex64: "32F",
+        dtypes.complex128: "64F",
+        dtypes.int8: "32I",
+        dtypes.int16: "32I",
+        dtypes.int32: "32I",
+        dtypes.int64: "32I",
+        dtypes.uint8: "32I",
+        dtypes.uint16: "32I",
+        dtypes.uint32: "32I",
+        dtypes.uint64: "32I",
     }
     return types[dtype]
 
 
-def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
+def packed_unit_extent(shape, strides) -> list:
+    """``strides`` with the free stride of a single row or column replaced by a packed matrix's.
+
+    A dimension of extent 1 is never stepped over, so its stride is free, but BLAS still checks the
+    leading dimension against the other extent: the ``(1, K)`` row an ``abij,ab->aij`` einsum lowers
+    to reached ``cblas_zgemm`` with ``lda = 1 < K``, which OpenBLAS refuses without computing anything
+    (npbench vexx_k's augmentation). Both strides 1 name a single row or column whose extents may be
+    symbolic; the row-major form with the column count as the row stride is exact for either.
+    """
+    *batch, s_rows, s_cols = strides
+    rows, cols = shape[-2:]
+    if symbolic.equal_valued(1, cols) and symbolic.equal_valued(1, s_rows):
+        s_cols = rows
+    elif symbolic.equal_valued(1, s_cols) and (symbolic.equal_valued(1, rows) or symbolic.equal_valued(1, s_rows)):
+        s_rows = cols
+    return [*batch, s_rows, s_cols]
+
+
+def get_gemm_opts(a_strides, b_strides, c_strides) -> dict[str, Any]:
     """
     Returns GEMM argument order, transposition, and leading dimensions
     based on column-major storage from dace arrays.
@@ -192,102 +169,311 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     sCM, sCN = c_strides[-2:]
 
     opts = {
-        'mkm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mnm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'knm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'T'
-        },
-        'knn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'mnn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mkn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'T'
-        },
+        "mkm": {"swap": False, "lda": sAK, "ldb": sBN, "ldc": sCN, "ta": "N", "tb": "N"},
+        "kkm": {"swap": False, "lda": sAM, "ldb": sBN, "ldc": sCN, "ta": "T", "tb": "N"},
+        "mnm": {"swap": False, "lda": sAK, "ldb": sBK, "ldc": sCN, "ta": "N", "tb": "T"},
+        "knm": {"swap": False, "lda": sAM, "ldb": sBK, "ldc": sCN, "ta": "T", "tb": "T"},
+        "knn": {"swap": True, "lda": sAM, "ldb": sBK, "ldc": sCM, "ta": "N", "tb": "N"},
+        "kkn": {"swap": True, "lda": sAM, "ldb": sBN, "ldc": sCM, "ta": "N", "tb": "T"},
+        "mnn": {"swap": True, "lda": sAK, "ldb": sBK, "ldc": sCM, "ta": "T", "tb": "N"},
+        "mkn": {"swap": True, "lda": sAK, "ldb": sBN, "ldc": sCM, "ta": "T", "tb": "T"},
     }
 
     if sAM == 1 and sAK != 1:
-        optA = 'm'
+        optA = "m"
     elif sAK == 1:
-        optA = 'k'
+        optA = "k"
     else:
         raise Exception("sAM or sAK should be 1")
 
     if sBN == 1:
-        optB = 'n'
+        optB = "n"
     elif sBK == 1:
-        optB = 'k'
+        optB = "k"
     else:
         raise Exception("sBK or sBN should be 1")
 
     if sCM == 1:
-        optC = 'm'
+        optC = "m"
     elif sCN == 1:
-        optC = 'n'
+        optC = "n"
     else:
         raise Exception("sCM or sCN should be 1")
 
     return opts[optA + optB + optC]
 
 
-def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
-    """ If schedule cannot access all passed descriptors, through an error.
+def check_one_device(*descs: data.Data):
+    """Raise unless one device can access every operand: a register vector and a heap matrix both live on the
+    host, although their storage types differ.
 
-        :param schedule: the schedule.
-        :param descs: the descriptors to check.
+    :param descs: the operand descriptors.
+    """
+    if not any(
+        all(dtypes.can_access(schedule, desc.storage) for desc in descs)
+        for schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
+    ):
+        raise ValueError("Input matrices must be accessible from one device")
+
+
+def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
+    """If schedule cannot access all passed descriptors, through an error.
+
+    :param schedule: the schedule.
+    :param descs: the descriptors to check.
     """
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+
+
+def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
+    """Shared validation for BLAS Level-1 nodes whose shape is
+    ``vector -> scalar`` (``ASUM``, ``NRM2``, ``IAMAX``, ``DOT``, ...).
+
+    Every such node takes one rank-1 input and writes a single-element
+    output; the only thing that differs across the operations is the
+    error-message name and the post-validation work the caller does
+    with the descriptor / stride / length.  Returns the same canonical
+    tuple every per-op ``validate`` was constructing by hand.
+
+    :param node: the library node being validated.
+    :param sdfg: parent SDFG.
+    :param state: parent state.
+    :param op_name: short operation name used in error messages
+        (``"ASUM"``, ``"NRM2"``, ...).
+    :returns: ``((desc_x, stride_x), desc_res, n)``.
+    :raises ValueError: arity / rank / output-size mismatches.
+    """
+    import copy as _copy
+
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        raise ValueError(f"{op_name} expects one input and one output")
+    in_memlet = in_edges[0].data
+    desc_x = sdfg.arrays[in_memlet.data]
+    desc_res = sdfg.arrays[out_edges[0].data.data]
+    squeezed = _copy.deepcopy(in_memlet.subset)
+    sqdims = squeezed.squeeze()
+    if len(squeezed.size()) != 1:
+        raise ValueError(f"{op_name} only supported on 1-D arrays")
+    stride_x = desc_x.strides[sqdims[0]]
+    n = squeezed.num_elements()
+    if out_edges[0].data.subset.num_elements() != 1:
+        raise ValueError(f"Output of {op_name} must be a single element")
+    return (desc_x, stride_x), desc_res, n
+
+
+def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
+    """Feed ``node`` a copy of every operand on ``connectors`` whose element type is not ``dtype``,
+    cast to ``dtype``.
+
+    A vendor BLAS routine takes ONE element type for all its matrices, and the expansions name it
+    after one operand while casting every pointer to it. A real matrix times a complex one (npbench
+    cegterg's ``deeq @ ps``) then reads the real buffer as complex numbers: the OpenBLAS build rejects
+    the pointer, the rocBLAS/cuBLAS C-style casts compile and return wrong numbers. NumPy promotes
+    the operands to the result type, so the copy is exactly that promotion. The copy covers the
+    memlet's subset only, with the same size, so every shape and matrix-view rule reading the
+    connector sees what it saw before; it is contiguous, so the leading dimension is its own.
+
+    :param node: The library node whose inputs are promoted.
+    :param state: The state containing ``node``.
+    :param connectors: The input connectors that carry matrix or vector operands.
+    :param dtype: The element type the vendor call computes in.
+    """
+    from dace import Memlet  # Avoid import loop
+    from dace.symbolic import symstr
+
+    sdfg = state.sdfg
+    for edge in [e for e in state.in_edges(node) if e.dst_conn in connectors]:
+        src_desc = sdfg.arrays[edge.data.data]
+        if src_desc.dtype == dtype:
+            continue
+        subset = edge.data.subset
+        shape = subset.size()
+        name, desc = sdfg.add_transient(
+            f"{node.label}{edge.dst_conn}_as_{dtype.to_string()}",
+            shape,
+            dtype,
+            storage=src_desc.storage,
+            find_new_name=True,
+        )
+        params = [f"__promote{d}" for d in range(len(shape))]
+        index = ", ".join(
+            f"{symstr(begin)} + ({symstr(step)}) * {p}" for (begin, _, step), p in zip(subset.ranges, params)
+        )
+        # A device-resident operand is cast by a kernel: host code cannot read GPU_Global memory.
+        schedule = (
+            dtypes.ScheduleType.GPU_Device
+            if src_desc.storage == dtypes.StorageType.GPU_Global
+            else dtypes.ScheduleType.Default
+        )
+        entry, exit_ = state.add_map(
+            f"{name}_cast", {p: f"0:{symstr(n)}" for p, n in zip(params, shape)}, schedule=schedule
+        )
+        cast = state.add_tasklet(f"{name}_cast", {"__inp"}, {"__out"}, "__out = __inp")
+        promoted = state.add_access(name)
+        state.add_memlet_path(
+            edge.src,
+            entry,
+            cast,
+            src_conn=edge.src_conn,
+            dst_conn="__inp",
+            memlet=Memlet(data=edge.data.data, subset=index),
+        )
+        state.add_memlet_path(
+            cast, exit_, promoted, src_conn="__out", memlet=Memlet(data=name, subset=", ".join(params))
+        )
+        state.add_edge(promoted, None, node, edge.dst_conn, Memlet.from_array(name, desc))
+        state.remove_edge(edge)
+
+
+class Operand(NamedTuple):
+    """The data on a BLAS connector, with its unit dimensions squeezed out."""
+
+    desc: data.Data
+    shape: list
+    strides: list
+
+
+def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", connector: str) -> Operand:
+    if connector in node.in_connectors:
+        edge = sdutil.in_edge_with_name(node, state, connector)
+    else:
+        edge = sdutil.out_edge_with_name(node, state, connector)
+    desc = sdfg.arrays[edge.data.data]
+    subset = copy.deepcopy(edge.data.subset)
+    dims = subset.squeeze()
+    return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
+
+
+class MatrixLayout(NamedTuple):
+    """How BLAS reads matrices: all in row-major or all in column-major order, each with its leading dimension."""
+
+    row_major: bool
+    leading: list
+
+
+def matrix_layout(*matrices: Operand) -> MatrixLayout | None:
+    """The common layout of ``matrices``, or ``None`` if one has no contiguous dimension or they differ."""
+    if all(m.strides[1] == 1 for m in matrices):
+        return MatrixLayout(True, [m.strides[0] for m in matrices])
+    if all(m.strides[0] == 1 for m in matrices):
+        return MatrixLayout(False, [m.strides[1] for m in matrices])
+    return None
+
+
+def blas_prefix(dtype: dtypes.typeclass) -> str | None:
+    """The BLAS letter of ``dtype`` (``D`` for ``double``), or ``None`` if BLAS has no routines for it."""
+    try:
+        func, _, _ = cublas_type_metadata(dtype)
+    except TypeError:
+        return None
+    return None if func == "H" else func
+
+
+def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[str, str]]:
+    """Declares each of ``values`` as a scalar of ``dtype``; returns the declarations and, per name, the argument
+    passing it to CBLAS: the value itself to a real routine, its address to a complex one."""
+    declarations = "".join(f"{dtype.ctype} __{name} = {dtype.ctype}({value});\n" for name, value in values.items())
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        return declarations, {name: f"&__{name}" for name in values}
+    return declarations, {name: f"__{name}" for name in values}
+
+
+def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
+    """A nested SDFG with one array per connector of ``node``, in the squeezed shape and strides of its data."""
+    nsdfg = dace.SDFG(f"{node.label}_sdfg")
+    for connector in list(node.in_connectors) + list(node.out_connectors):
+        desc, shape, strides = operand(node, state, sdfg, connector)
+        nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)
+    return nsdfg
+
+
+def in_place_call(
+    node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", source: str, target: str, code: str
+) -> "dace.SDFG":
+    """A nested SDFG for a BLAS routine that updates an operand in place: copies connector ``source`` to ``target``,
+    then runs ``code``, which reads the other inputs and updates ``target``, each by its connector's name with one
+    more leading underscore (``__A`` for ``_A``): a tasklet connector named as the array would shadow it."""
+    nsdfg = connector_sdfg(node, state, sdfg)
+    copy_state = nsdfg.add_state(f"{node.label}_copy")
+    copy_state.add_nedge(
+        copy_state.add_read(source), copy_state.add_write(target), dace.Memlet.from_array(source, nsdfg.arrays[source])
+    )
+    call_state = nsdfg.add_state_after(copy_state, f"{node.label}_call")
+    inputs = [c for c in node.in_connectors if c != source]
+    # The call reads ``target`` too, so the copy into it is not dead
+    reads = {f"_{c}": c for c in inputs} | {f"_{target}_before": target}
+    tasklet = call_state.add_tasklet(node.label, set(reads), {f"_{target}"}, code, language=dtypes.Language.CPP)
+    for connector, name in reads.items():
+        call_state.add_edge(
+            call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
+        )
+    call_state.add_edge(
+        tasklet, f"_{target}", call_state.add_write(target), None, dace.Memlet.from_array(target, nsdfg.arrays[target])
+    )
+    return nsdfg
+
+
+def cupy_in_wrap(name: str, storage: dtypes.StorageType) -> str:
+    """Return an expression that yields a ``cupy`` view of a tasklet input.
+
+    Device-resident operands are passed through unchanged; host operands are
+    wrapped in ``cupy.asarray`` (a host-to-device copy).
+
+    :param name: The tasklet input connector name (e.g. ``'__a'``).
+    :param storage: The storage type of the backing array.
+    :returns: A Python expression string producing a ``cupy`` array.
+    """
+    return name if is_device_resident(storage) else f'cupy.asarray({name})'
+
+
+def cupy_out_wrap(expr: str, storage: dtypes.StorageType) -> str:
+    """Return an expression converting a ``cupy`` result to the output storage.
+
+    Device-resident outputs keep the ``cupy`` array (no round-trip); host
+    outputs are converted back with ``cupy.asnumpy``.
+
+    :param expr: The Python expression producing a ``cupy`` result.
+    :param storage: The storage type of the output array.
+    :returns: A Python expression string matching the output storage kind.
+    """
+    return expr if is_device_resident(storage) else f'cupy.asnumpy({expr})'
+
+
+def add_cupy_sync_state(sdfg: "SDFG", after_state: "SDFGState", storage: dtypes.StorageType) -> "SDFGState | None":
+    """Append a stream-synchronization state for a device-resident CuPy output.
+
+    CuPy operations and assignments to CuPy arrays are asynchronous. The
+    assignment generated for a tasklet's outgoing memlet runs *after* the
+    tasklet body, so synchronizing inside the tasklet would not wait for that
+    final write. A successor state places the synchronization after both the
+    CuPy operation and its output-memlet writeback.
+
+    Host outputs need no additional state because :func:`cupy_out_wrap` emits
+    ``cupy.asnumpy``, which already waits for the device result.
+
+    :param sdfg: Nested SDFG produced by a CuPy library expansion.
+    :param after_state: State containing the CuPy tasklet and output writeback.
+    :param storage: Storage of the expansion's output array.
+    :returns: The added synchronization state, or ``None`` for host output.
+    """
+    if not is_device_resident(storage):
+        return None
+
+    sync_state = sdfg.add_state_after(after_state, 'cupy_sync')
+    sync_state.add_tasklet(
+        'cupy_sync',
+        {},
+        {},
+        'import cupy\ncupy.cuda.get_current_stream().synchronize()',
+        language=dtypes.Language.Python,
+    )
+    return sync_state
+
+
+def is_device_resident(storage: dtypes.StorageType) -> bool:
+    """Whether a Python-backend array already lives on the GPU."""
+    return storage in GPU_RESIDENT_STORAGES

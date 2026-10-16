@@ -1,42 +1,59 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Applies the canonicalization stages to a real CloudSC SDFG.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Applies the canonicalization stages to a real CloudSC SDFG.
 
-    Uses the in-repo Python-frontend-derived CloudSC SDFG (306 states, 139
-    LoopRegions, 79 conditional blocks) as a realistic structural fixture --
-    "copy parts from CloudSC and ensure we can apply". In the loop-centric
-    pipeline every stage through ``parallelize`` (``LoopToMap``) must apply
-    and keep the SDFG valid. Canonicalizing the *full* CloudSC SDFG
-    end-to-end is intentionally out of scope for now.
+Uses the Python-frontend-derived, simplified CloudSC SDFG as a realistic structural
+fixture -- "copy parts from CloudSC and ensure we can apply". In the loop-centric
+pipeline every stage through ``parallelize`` (``LoopToMap``) must apply and keep the
+SDFG valid. Canonicalizing the *full* CloudSC SDFG end-to-end is intentionally out of
+scope for now; that walk lives in ``cloudsc_canonicalize_staged_test.py``.
+
+The fixture comes from ``build_cloudsc_sdfg`` (same builder ``cloudsc_canonicalize_staged_test.py``
+uses): a fresh parse on a cache miss, a cached ``.sdfgz`` otherwise (see
+``generate_data_for_cloudsc.cloudsc_cache_dir``). Never point this at a hand-picked file --
+self-contained is the whole point. The parse this falls back to is minutes long, so this stays
+``integration``.
 """
-import os
 
 import pytest
 
 import dace
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, DERIVE_PARALLELISM
+from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
 
-_CLOUDSC = os.path.join(os.path.dirname(__file__), os.pardir, "sdfg", "data", "sdfg_reconstruction",
-                        "cloudsc_simplified.sdfgz")
-
-
-def _load() -> dace.SDFG:
-    return dace.SDFG.from_file(_CLOUDSC)
+pytestmark = pytest.mark.integration
 
 
-@pytest.mark.skipif(not os.path.exists(_CLOUDSC), reason="CloudSC fixture not present")
-def test_canonicalization_stages_apply_to_cloudsc():
-    sdfg = _load()
+def residual_loops(sdfg: dace.SDFG) -> int:
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def map_entries(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+def test_the_loop_centric_stages_expose_parallelism_in_cloudsc():
+    """Every stage through the ``derive_parallelism`` phase applies, keeps CloudSC valid, and leaves it with fewer
+    loops and more Maps than it started with -- which a recipe of no-ops cannot do."""
+    sdfg = build_cloudsc_sdfg(simplify=True)
     sdfg.validate()  # fixture must start valid
-    prev = None
-    for label, unit in _build_stages():
-        if prev is not None and label != prev:
-            sdfg.validate()  # each stage boundary must preserve a valid SDFG
-            if prev == "parallelize":
-                return  # proven-valid canonicalization-sub-pass scope (through LoopToMap)
-        unit.apply_pass(sdfg, {})
-        prev = label
-    sdfg.validate()
+    loops_before, maps_before = residual_loops(sdfg), map_entries(sdfg)
+
+    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == DERIVE_PARALLELISM)
+    applied = []
+    for label, factory in CANONICALIZE_STAGES[: last_parallelize + 1]:
+        applied.extend((label, type(unit).__name__) for unit in factory() if unit.apply_pass(sdfg, {}) is not None)
+        sdfg.validate()  # each stage boundary must preserve a valid SDFG
+
+    assert applied, "not one stage through derive_parallelism rewrote anything"
+    assert map_entries(sdfg) > maps_before, (
+        f"LoopToMap exposed no parallelism: {maps_before} -> {map_entries(sdfg)} maps"
+    )
+    assert residual_loops(sdfg) < loops_before, (
+        f"no loop was lifted: {loops_before} -> {residual_loops(sdfg)} LoopRegions"
+    )
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_the_loop_centric_stages_expose_parallelism_in_cloudsc()

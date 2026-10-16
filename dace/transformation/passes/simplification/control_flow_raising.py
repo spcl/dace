@@ -1,21 +1,61 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from typing import Dict, List, Optional, Tuple
 import warnings
 
-import networkx as nx
 import sympy
 
+from dace import graphlib as nx
 from dace import properties
 from dace.frontend.python import astutils
+from dace.ordered import OrderedSet
+from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock, UnstructuredControlFlow
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    ReturnBlock,
+    UnstructuredControlFlow,
+)
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_lifting import LoopLifting
+
+
+def region_has_cycle(region: AbstractControlFlowRegion) -> bool:
+    """Whether the blocks of ``region`` form a cycle, self-edges included (Kahn's algorithm over the whole graph)."""
+    in_degree: dict[ControlFlowBlock, int] = dict.fromkeys(region.nodes(), 0)
+    for edge in region.edges():
+        in_degree[edge.dst] += 1
+    ready: list[ControlFlowBlock] = [block for block, degree in in_degree.items() if degree == 0]
+    removed = 0
+    while ready:
+        block = ready.pop()
+        removed += 1
+        for edge in region.out_edges(block):
+            in_degree[edge.dst] -= 1
+            if in_degree[edge.dst] == 0:
+                ready.append(edge.dst)
+    return removed != len(in_degree)
+
+
+def remove_unreachable_blocks(sdfg: SDFG) -> int:
+    """Removes the blocks no path from their region's start block reaches, since they never run. Returns the count."""
+    removed = 0
+    for region in list(sdfg.all_control_flow_regions()):
+        if region.number_of_nodes() < 2 or isinstance(region, (ConditionalBlock, UnstructuredControlFlow)):
+            continue
+        reachable = OrderedSet(region.bfs_nodes(region.start_block))
+        if len(reachable) == region.number_of_nodes():
+            continue
+        dead = [block for block in region.nodes() if block not in reachable]
+        region.remove_nodes_from(dead)
+        removed += len(dead)
+    return removed
 
 
 @properties.make_properties
@@ -25,12 +65,14 @@ class ControlFlowRaising(ppl.Pass):
     Raises all detectable control flow that can be expressed with native SDFG structures, such as loops and branching.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     raise_sink_node_returns = properties.Property(
         dtype=bool,
         default=False,
-        desc='Whether or not to lift sink nodes in an SDFG context to explicit return blocks.')
+        category="Parameters",
+        desc="Whether or not to lift sink nodes in an SDFG context to explicit return blocks.",
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -60,17 +102,16 @@ class ControlFlowRaising(ppl.Pass):
 
             # First check if there is an unconditional outgoing edge.
             has_unconditional = False
-            full_cond_expression: Optional[List[ast.AST]] = None
+            full_cond_expression: list[ast.AST] | None = None
             oedges = sdfg.out_edges(nd)
             for oe in oedges:
                 if oe.data.is_unconditional():
                     has_unconditional = True
                     break
+                elif full_cond_expression is None:
+                    full_cond_expression = oe.data.condition.code[0]
                 else:
-                    if full_cond_expression is None:
-                        full_cond_expression = oe.data.condition.code[0]
-                    else:
-                        full_cond_expression = astutils.and_expr(full_cond_expression, oe.data.condition.code[0])
+                    full_cond_expression = astutils.and_expr(full_cond_expression, oe.data.condition.code[0])
             # If there is no unconditional outgoing edge, there may be a catchall that is the negation of all other
             # conditions.
             # NOTE: Checking that for the general case is expensive. For now, we check it for the case of two outgoing
@@ -80,23 +121,22 @@ class ControlFlowRaising(ppl.Pass):
             #       and does not lead to any negative side effects.
             if has_unconditional:
                 insert_return = False
+            elif len(oedges) == 2 and oedges[0].data.condition_sympy() == sympy.Not(oedges[1].data.condition_sympy()):
+                insert_return = False
             else:
-                if len(oedges) == 2 and oedges[0].data.condition_sympy() == sympy.Not(oedges[1].data.condition_sympy()):
-                    insert_return = False
-                else:
-                    insert_return = True
+                insert_return = True
 
             if insert_return:
                 if full_cond_expression is None:
                     # If there is no condition, there are no outgoing edges - so this is already an explicit program
                     # exit by being a sink node.
                     if self.raise_sink_node_returns:
-                        ret_block = ReturnBlock(sdfg.name + '_return')
+                        ret_block = ReturnBlock(sdfg.name + "_return")
                         sdfg.add_node(ret_block, ensure_unique_name=True)
                         sdfg.add_edge(nd, ret_block, InterstateEdge())
                         returns_lifted += 1
                 else:
-                    ret_block = ReturnBlock(nd.label + '_return')
+                    ret_block = ReturnBlock(nd.label + "_return")
                     sdfg.add_node(ret_block, ensure_unique_name=True)
                     catchall_condition_expression = astutils.negate_expr(full_cond_expression)
                     ret_edge = InterstateEdge(condition=properties.CodeBlock([catchall_condition_expression]))
@@ -120,7 +160,8 @@ class ControlFlowRaising(ppl.Pass):
                 # already have lifted all loops, so this should not occur in practice and this warning would be cause
                 # for closer inspection.
                 warnings.warn(
-                    f'Control flow raising: Skipping lifting conditionals for region {region.name} with cycles.')
+                    f"Control flow raising: Skipping lifting conditionals for region {region.name} with cycles."
+                )
                 continue
 
             # If there are multiple sinks, create a dummy exit node for finding branch merges. If there is at least one
@@ -128,12 +169,17 @@ class ControlFlowRaising(ppl.Pass):
             # connect unnecessarily, thus preventing lifting.
             non_return_sinks = [s for s in region.sink_nodes() if not isinstance(s, ReturnBlock)]
             sinks = non_return_sinks if len(non_return_sinks) > 0 else region.sink_nodes()
+            if len(sinks) <= 1 and all(len(region.out_edges(block)) <= 1 for block in region.nodes()):
+                # Without branches there is nothing to lift, so the (costly) dominator analysis is skipped. The start
+                # block is still queried to fail on an ambiguous start block as the analysis would.
+                region.start_block
+                continue
             dummy_exit = None
             if len(sinks) > 1:
-                dummy_exit = region.add_state('__DACE_DUMMY')
+                dummy_exit = region.add_state("__DACE_DUMMY")
                 for s in sinks:
                     region.add_edge(s, dummy_exit, InterstateEdge())
-            idom = nx.immediate_dominators(region.nx, region.start_block)
+            idom = sdutil.immediate_dominators(region.nx, region.start_block)
             alldoms = cfg_analysis.all_dominators(region, idom)
             branch_merges = cfg_analysis.branch_merges(region, idom, alldoms)
 
@@ -144,7 +190,7 @@ class ControlFlowRaising(ppl.Pass):
                     merge_block = branch_merges[block]
 
                     # Construct the branching block.
-                    conditional = ConditionalBlock('conditional_' + block.label, sdfg, graph)
+                    conditional = ConditionalBlock("conditional_" + block.label, sdfg, graph)
                     graph.add_node(conditional)
                     # Connect it.
                     graph.add_edge(block, conditional, InterstateEdge())
@@ -159,18 +205,20 @@ class ControlFlowRaising(ppl.Pass):
                     # cumulative ``full_cond_expression`` build below relies
                     # on.
                     ordered_oedges = sorted(oedges, key=lambda e: 1 if e.data.is_unconditional() else 0)
-                    full_cond_expression: Optional[sympy.Basic] = None
+                    full_cond_expression: sympy.Basic | None = None
                     uncond_generated = False
                     for i, oe in enumerate(ordered_oedges):
-                        branch_name = 'branch_' + str(i) + '_' + block.label
+                        branch_name = "branch_" + str(i) + "_" + block.label
                         branch = ControlFlowRegion(branch_name, sdfg)
 
                         if not oe.data.is_unconditional():
                             if i == len(ordered_oedges) - 1 and oe.data.condition_sympy() == sympy.Not(
-                                    full_cond_expression):
+                                full_cond_expression
+                            ):
                                 if uncond_generated:
                                     warnings.warn(
-                                        f'Control flow raising: Found multiple unconditional branches in {block.label}')
+                                        f"Control flow raising: Found multiple unconditional branches in {block.label}"
+                                    )
                                 uncond_generated = True
                                 cond = None
                             else:
@@ -182,19 +230,24 @@ class ControlFlowRaising(ppl.Pass):
                         else:
                             if uncond_generated:
                                 warnings.warn(
-                                    f'Control flow raising: Found multiple unconditional branches in {block.label}')
+                                    f"Control flow raising: Found multiple unconditional branches in {block.label}"
+                                )
                             uncond_generated = True
                             cond = None
 
                         conditional.add_branch(cond, branch)
                         if oe.dst is merge_block:
-                            # Empty branch.
-                            branch.add_state('noop')
+                            # Empty branch; it still runs the edge's assignments.
+                            noop = branch.add_state("noop", is_start_block=True)
+                            if oe.data.assignments:
+                                branch.add_edge(
+                                    noop, branch.add_state("noop_end"), InterstateEdge(assignments=oe.data.assignments)
+                                )
                             graph.remove_edge(oe)
                             continue
 
-                        branch_nodes = set(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
-                        branch_start = branch.add_state(branch_name + '_start', is_start_block=True)
+                        branch_nodes = OrderedSet(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
+                        branch_start = branch.add_state(branch_name + "_start", is_start_block=True)
                         branch.add_nodes_from(branch_nodes)
                         branch.add_edge(branch_start, oe.dst, InterstateEdge(assignments=oe.data.assignments))
                         added = set()
@@ -205,7 +258,7 @@ class ControlFlowRaising(ppl.Pass):
                                     continue
                                 elif e.dst is merge_block:
                                     if e.data.assignments or not e.data.is_unconditional():
-                                        branch.add_edge(e.src, branch.add_state(branch_name + '_end'), e.data)
+                                        branch.add_edge(e.src, branch.add_state(branch_name + "_end"), e.data)
                                 else:
                                     branch.add_edge(e.src, e.dst, e.data)
                         graph.remove_nodes_from(branch_nodes)
@@ -219,7 +272,6 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_post = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
         lifted = n_cond_regions_post - n_cond_regions_pre
         if lifted:
-            sdfg.reset_cfg_list()
             sdfg.root_sdfg.using_explicit_control_flow = True
         return lifted
 
@@ -242,9 +294,9 @@ class ControlFlowRaising(ppl.Pass):
                 continue
 
             # Compute immediate dominators
-            idom: Dict[ControlFlowBlock, ControlFlowBlock] = nx.immediate_dominators(cfg.nx, cfg.start_block)
+            idom: dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
-            back_edges = set([(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)])
+            back_edges = {(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)}
 
             # DFS tree edges
             dfs_tree_edges = set(nx.dfs_edges(cfg.nx, cfg.start_block))
@@ -253,24 +305,27 @@ class ControlFlowRaising(ppl.Pass):
             structured_edges = dfs_tree_edges | back_edges
 
             # Unstructured edges: all edges not in structured set
-            unstructured_edges = set(cfg.nx.edges) - structured_edges
+            unstructured_edges = [e for e in cfg.nx.edges if e not in structured_edges]
 
             # Find the single entry / single exit region around the unstructured edges and turn it into a region
             # of unstructured control flow.
             if len(unstructured_edges) > 0:
-                tgt_nodes = set()
-                for u, v in unstructured_edges:
-                    if u not in tgt_nodes:
-                        tgt_nodes.add(u)
-                    if v not in tgt_nodes:
-                        tgt_nodes.add(v)
+                tgt_nodes = OrderedSet.union(*unstructured_edges)
                 unstructured_nodes, region_entry, region_exit = cfg_analysis.find_sese_region(cfg, tgt_nodes)
 
-                unstructured_region = UnstructuredControlFlow('unstructured_' + str(cfg.name) + '_' + str(lifted))
+                unstructured_region = UnstructuredControlFlow("unstructured_" + str(cfg.name) + "_" + str(lifted))
                 unstructured_region.add_node(region_entry, is_start_block=True)
                 for edge in cfg.edges():
                     if edge.src in unstructured_nodes and edge.dst in unstructured_nodes or edge.dst is region_exit:
                         unstructured_region.add_edge(edge.src, edge.dst, edge.data)
+                # Re-assert the start block: adding edges (in particular back-edges
+                # to the entry when the unstructured region contains a cycle) may
+                # have invalidated the manually-set start block, leaving it
+                # ambiguous since the region has no source nodes.
+                try:
+                    assert unstructured_region.start_block is region_entry
+                except ValueError:
+                    unstructured_region.start_block = unstructured_region.node_id(region_entry)
                 if cfg.in_degree(region_entry) == 0:
                     # If there is no incoming edge, this is a start block.
                     cfg.add_node(unstructured_region, is_start_block=True)
@@ -287,27 +342,38 @@ class ControlFlowRaising(ppl.Pass):
 
                 lifted += 1
 
-                sdfg.reset_cfg_list()
         return lifted
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int, int]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> tuple[int, int, int] | None:
         lifted_returns = 0
         lifted_loops = 0
         lifted_unstructured = 0
         lifted_branches = 0
+        removed_blocks = 0
         for sdfg in top_sdfg.all_sdfgs_recursive():
+            # Dominance and DFS walks start at the start block, so a dead block would read as an unstructured entry.
+            removed_blocks += remove_unreachable_blocks(sdfg)
             lifted_returns += self._lift_returns(sdfg)
-            lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
+            # Every loop LoopLifting accepts closes a back edge, so the VF2 sweep can only match in a cyclic region.
+            if any(region_has_cycle(region) for region in sdfg.all_control_flow_regions(recursive=True)):
+                lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
             lifted_unstructured += self._lift_unstructured(sdfg)
             lifted_branches += self._lift_conditionals(sdfg)
-        if lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0 and lifted_returns == 0:
+        if (
+            removed_blocks == 0
+            and lifted_branches == 0
+            and lifted_loops == 0
+            and lifted_unstructured == 0
+            and lifted_returns == 0
+        ):
             return None
-        top_sdfg.reset_cfg_list()
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
 
-    def report(self, pass_retval: Optional[Tuple[int, int, int]]):
-        if pass_retval and any([x > 0 for x in pass_retval]):
-            return (f'Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, ' +
-                    f'and {pass_retval[3]} unstructured control flow regions')
+    def report(self, pass_retval: tuple[int, int, int] | None):
+        if pass_retval and any(x > 0 for x in pass_retval):
+            return (
+                f"Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, "
+                f"and {pass_retval[3]} unstructured control flow regions"
+            )
         else:
-            return 'No control flow lifted'
+            return "No control flow lifted"

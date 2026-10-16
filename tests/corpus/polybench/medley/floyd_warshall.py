@@ -1,13 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.int32
 
 # Dataset sizes
 sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2800}, {N: 5600}]
+#: ported from npbench bench_info floyd_warshall.json parameters.paper
 
 args = [([N, N], datatype)]
 
@@ -22,22 +25,17 @@ def init_array(path, n):
 
 @dace.program
 def floyd_warshall(path: datatype[N, N]):
-
-    @dace.mapscope
-    def k_map(k: _[0:N]):
-
-        @dace.map
-        def ij_map(i: _[0:N], j: _[0:N]):
-            ik_dist << path[i, k]
-            kj_dist << path[k, j]
-            out >> path(1, lambda x, y: min(x, y))[i, j]
-            out = ik_dist + kj_dist
+    # npbench formulation: each k-step is a vectorized ``np.minimum`` against the outer-sum
+    # ``np.add.outer(path[:, k], path[k, :])`` (elementwise maps, no scalar min-reduction loop).
+    for k in range(N):
+        path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     if polybench:
-        polybench.main(sizes, args, [(0, 'path')], init_array, floyd_warshall)
+        polybench.main(sizes, args, [(0, "path")], init_array, floyd_warshall)
     else:
         init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         floyd_warshall(*args)

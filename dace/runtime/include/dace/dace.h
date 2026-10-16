@@ -7,14 +7,19 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <new>  // std::align_val_t (aligned heap-array allocation)
+#include <type_traits>  // std::is_trivially_destructible (aligned deallocation guard)
 #include <numeric>
 #include <tuple>
 
 // The order in which these are included matters - sorting them
 // alphabetically causes compilation to fail.
+#include "alloc.h"
+#include "arg_reduction.h"
 #include "comm.h"
 #include "complex.h"
 #include "copy.h"
+#include "detect.h"
 #include "intset.h"
 #include "math.h"
 #include "os.h"
@@ -30,6 +35,9 @@
 #include "cuda/copy.cuh"
 #include "cuda/cudacommon.cuh"
 #include "cuda/dynmap.cuh"
+// After cudacommon.cuh, whose gpu* aliases it uses, and after vector.h, which cudacommon needs in
+// turn -- so this cannot go back into the GPU block of types.h, which precedes both.
+#include "cuda/multidim_gbar.cuh"
 #else
 #include "cudainterop.h"
 #endif

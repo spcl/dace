@@ -6,6 +6,7 @@ inside a parallel map) into WCR-on-scalar + init + writeback. The resulting
 SDFG has a transient ``Scalar`` accumulator the OMP codegen can name in a
 ``reduction(op:scalar)`` clause.
 """
+
 import numpy as np
 
 import dace
@@ -38,7 +39,7 @@ def _build_wcr_map(prog) -> dace.SDFG:
 def _count_wcr_edges(sdfg: dace.SDFG):
     wcr_arr_elem = 0
     wcr_scalar = 0
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for e in st.edges():
             if e.data is None or e.data.wcr is None:
                 continue
@@ -46,6 +47,7 @@ def _count_wcr_edges(sdfg: dace.SDFG):
             if desc is None:
                 continue
             from dace import data
+
             if isinstance(desc, data.Scalar):
                 wcr_scalar += 1
             else:
@@ -53,9 +55,7 @@ def _count_wcr_edges(sdfg: dace.SDFG):
     return wcr_arr_elem, wcr_scalar
 
 
-# ---------------------------------------------------------------------------
 # Basic shape: a dot product whose accumulator is an array slot.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -88,6 +88,7 @@ def test_array_slot_dot_product_privatized():
     priv_arrays = sorted(k for k in sdfg.arrays if k.startswith("_priv_"))
     assert len(priv_arrays) == 1, priv_arrays
     from dace import data
+
     assert isinstance(sdfg.arrays[priv_arrays[0]], data.Scalar)
 
     # Numerical correctness.
@@ -100,10 +101,8 @@ def test_array_slot_dot_product_privatized():
     assert np.isclose(dot[0], float((a * b).sum()))
 
 
-# ---------------------------------------------------------------------------
 # Multiple reductions in the same SDFG -- the pass must mint UNIQUE scalar
 # names across loop nests (no collisions).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -145,11 +144,9 @@ def test_two_reductions_get_unique_scalar_names():
     assert np.isclose(out[0], float(a.sum()))
 
 
-# ---------------------------------------------------------------------------
 # Two reductions targeting the SAME array name (e.g. ``acc[0]`` and ``acc[1]``)
 # -- still must mint distinct scalar names, AND the writeback subsets must
 # point at the correct slots.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -185,9 +182,7 @@ def test_two_reductions_same_array_get_unique_names():
     assert np.isclose(acc[1], float(a.sum()))
 
 
-# ---------------------------------------------------------------------------
 # Idempotence: a second invocation must NOT re-privatize already-scalar WCRs.
-# ---------------------------------------------------------------------------
 
 
 def test_idempotent_no_double_privatize():
@@ -211,7 +206,8 @@ def test_targeted_helper_rewrites_single_wcr_edge():
     one specific edge.
     """
     from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
-        privatize_reduction_accumulator, )
+        privatize_reduction_accumulator,
+    )
 
     sdfg = _build_wcr_map(_array_slot_dot)
 
@@ -219,7 +215,7 @@ def test_targeted_helper_rewrites_single_wcr_edge():
     target_state = None
     target_map_exit = None
     target_edge = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if not isinstance(n, nodes.MapExit):
                 continue
@@ -241,8 +237,9 @@ def test_targeted_helper_rewrites_single_wcr_edge():
     sdfg.validate()
     # The rewrite added a transient scalar; the original array's descriptor stays.
     new_arrays = set(sdfg.arrays.keys()) - arrays_before
-    assert any(n.startswith("_priv_")
-               for n in new_arrays), (f"expected a ``_priv_*`` scalar descriptor to appear; new arrays: {new_arrays}")
+    assert any(n.startswith("_priv_") for n in new_arrays), (
+        f"expected a ``_priv_*`` scalar descriptor to appear; new arrays: {new_arrays}"
+    )
 
     # Numerical sanity: re-run the SDFG and confirm the dot product still matches.
     n = 64
@@ -261,7 +258,8 @@ def test_targeted_helper_refuses_non_wcr_edge():
     non-matches.
     """
     from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
-        privatize_reduction_accumulator, )
+        privatize_reduction_accumulator,
+    )
 
     sdfg = _build_wcr_map(_array_slot_dot)
     # Pick a MapExit and an OUT-edge of it -- not a WCR IN-edge, so the
@@ -269,7 +267,7 @@ def test_targeted_helper_refuses_non_wcr_edge():
     target_state = None
     target_map_exit = None
     non_wcr_edge = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if not isinstance(n, nodes.MapExit):
                 continue
@@ -286,6 +284,88 @@ def test_targeted_helper_refuses_non_wcr_edge():
     ok = privatize_reduction_accumulator(target_state, target_map_exit, non_wcr_edge)
     assert ok is False, "the helper must reject a non-WCR edge"
     assert set(sdfg.arrays.keys()) == arrays_before
+
+
+def test_ordering_memlet_is_not_an_in_state_init():
+    """An empty memlet into a second accumulator AccessNode writes nothing, so it must not be
+    mistaken for an in-state ``acc = 0``: that drops the incoming seed."""
+    n = 16
+    sdfg = dace.SDFG("priv_ordering")
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("dot", [1], dace.float64)
+    sdfg.add_array("z", [1], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i=f"0:{n}"))
+    me.add_in_connector("IN_a")
+    me.add_out_connector("OUT_a")
+    mx.add_in_connector("IN_dot")
+    mx.add_out_connector("OUT_dot")
+    tasklet = state.add_tasklet("acc", {"__a"}, {"__o"}, "__o = __a")
+    state.add_edge(state.add_read("a"), None, me, "IN_a", dace.Memlet(f"a[0:{n}]"))
+    state.add_edge(me, "OUT_a", tasklet, "__a", dace.Memlet("a[i]"))
+    wcr = "lambda x, y: x + y"
+    state.add_edge(tasklet, "__o", mx, "IN_dot", dace.Memlet(data="dot", subset="0", wcr=wcr))
+    state.add_edge(mx, "OUT_dot", state.add_write("dot"), None, dace.Memlet(data="dot", subset="0", wcr=wcr))
+    state.add_edge(state.add_read("z"), None, state.add_access("dot"), None, dace.Memlet())
+    sdfg.validate()
+
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    rng = np.random.default_rng(5)
+    a = rng.random(n)
+    dot = np.array([7.0])
+    sdfg(a=a, dot=dot, z=np.zeros(1))
+    assert np.allclose(dot[0], 7.0 + a.sum()), f"seed dropped: got {dot[0]}, want {7.0 + a.sum()}"
+
+
+def test_reader_after_the_reduction_in_the_same_state_blocks_privatization():
+
+    @dace.program
+    def reduce_then_read(a: dace.float64[8], s: dace.float64[1], out: dace.float64[1]):
+        for i in dace.map[0:8]:
+            s[0] += a[i]
+        out[0] = 2.0 * s[0]
+
+    sdfg = reduce_then_read.to_sdfg(simplify=True)
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) is None
+    s, out = np.ones(1), np.zeros(1)
+    sdfg(a=np.arange(8.0), s=s, out=out)
+    assert out[0] == 58.0
+
+
+def test_in_state_seed_is_written_before_the_reduction_map():
+    """``s[0] = 5; for i in map: s[0] += a[i]; c[0] = 2 * s[0]`` with the seed in the map's state, which the
+    frontend no longer fuses into one state."""
+    sdfg = dace.SDFG("seed_reduce_read")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    state = sdfg.add_state()
+    seed = state.add_tasklet("seed", {}, {"__o"}, "__o = 5.0")
+    s_init = state.add_access("s")
+    state.add_edge(seed, "__o", s_init, None, dace.Memlet("s[0]"))
+    s_out = state.add_write("s")
+    _, me, _ = state.add_mapped_tasklet(
+        "acc",
+        {"i": "0:8"},
+        {"__a": dace.Memlet("a[i]")},
+        "__o = __a",
+        {"__o": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
+        output_nodes={"s": s_out},
+        external_edges=True,
+    )
+    state.add_nedge(s_init, me, dace.Memlet())
+    double = state.add_tasklet("double", {"__s"}, {"__c"}, "__c = __s * 2.0")
+    state.add_edge(s_out, None, double, "__s", dace.Memlet("s[0]"))
+    state.add_edge(double, "__c", state.add_write("c"), None, dace.Memlet("c[0]"))
+    sdfg.validate()
+
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    s, c = np.ones(1), np.zeros(1)
+    sdfg(a=np.arange(8.0), s=s, c=c)
+    assert c[0] == 66.0
 
 
 if __name__ == "__main__":

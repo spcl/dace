@@ -28,3 +28,4 @@ capabilities DaCe provides by default.
     preprocessing
     pysupport
     npsupport
+    tile

@@ -2,15 +2,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
-
+import pytest
 import scipy
 
 import dace
-from dace.memlet import Memlet
-
-import dace.libraries.blas as blas
-
+from dace.libraries import blas
 from dace.libraries.standard.memory import aligned_ndarray
+from dace.memlet import Memlet
 
 
 def run_test(configs, target):
@@ -18,7 +16,6 @@ def run_test(configs, target):
     n = int(1 << 13)
 
     for i, config in enumerate(configs):
-
         a, veclen, dtype = config
 
         x = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type), alignment=256)
@@ -32,8 +29,7 @@ def run_test(configs, target):
         sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
-        with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
-
+        with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
             program(x=x, y=y, a=a, n=np.int32(n))
             ref_norm = np.linalg.norm(y - ref_result) / n
 
@@ -78,6 +74,31 @@ def pure_graph(veclen, dtype, implementation, test_case):
     sdfg.expand_library_nodes()
 
     return sdfg
+
+
+def test_validate_accepts_reparsed_symbol_instances():
+    """Same-named ``n`` reaching Axpy.validate at two dtypes (a shape's dace.int32
+    instance vs another array's dace.int64 instance) must compare equal by name --
+    and a genuine size mismatch must still be rejected."""
+    N32 = dace.symbol("N", dace.int32)
+    N64 = dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG("axpy_validate_symbol_identity")
+    sdfg.add_array("x", [N32], dace.float64)
+    sdfg.add_array("y", [N64], dace.float64)
+    sdfg.add_array("res", [N32], dace.float64)
+    state = sdfg.add_state()
+    node = blas.axpy.Axpy("axpy")
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_x", Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(state.add_read("y"), None, node, "_y", Memlet.from_array("y", sdfg.arrays["y"]))
+    state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32),)
+    y_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_y")
+    y_edge.data = Memlet.from_array("y", sdfg.arrays["y"])
+    with pytest.raises(ValueError):
+        node.validate(sdfg, state)
 
 
 def test_pure():

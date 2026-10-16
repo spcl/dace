@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 def generate_invertible_matrix(size, dtype):
@@ -74,8 +75,8 @@ def test_tensordot_0():
 
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='pure'):
-        assert (np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B)))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="pure"):
+        assert np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B))
 
 
 def test_tensordot_01():
@@ -86,8 +87,8 @@ def test_tensordot_01():
 
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
-        assert (np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B)))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="TTGT"):
+        assert np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B))
 
 
 @pytest.mark.gpu
@@ -99,8 +100,8 @@ def test_tensordot_02():
 
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='cuTENSOR'):
-        assert (np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B)))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="cuTENSOR"):
+        assert np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B))
 
 
 def test_tensordot_1():
@@ -111,8 +112,8 @@ def test_tensordot_1():
 
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='pure'):
-        assert (np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B)))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="pure"):
+        assert np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B))
 
 
 def test_tensordot_11():
@@ -123,8 +124,8 @@ def test_tensordot_11():
 
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
-        assert (np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B)))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="TTGT"):
+        assert np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B))
 
 
 @pytest.mark.gpu
@@ -136,8 +137,8 @@ def test_tensordot_12():
 
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='cuTENSOR'):
-        assert (np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B)))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="cuTENSOR"):
+        assert np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B))
 
 
 def test_tensordot_2():
@@ -149,8 +150,8 @@ def test_tensordot_2():
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[7, 6, 5, 4, 3, 2, 1, 0])
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='pure'):
-        assert (np.allclose(tensordot_2a(A.copy(), B.copy()), ref))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="pure"):
+        assert np.allclose(tensordot_2a(A.copy(), B.copy()), ref)
 
     @dace.program
     def tensordot_2b(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
@@ -159,8 +160,8 @@ def test_tensordot_2():
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[0, 7, 1, 6, 2, 5, 3, 4])
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='pure'):
-        assert (np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="pure"):
+        assert np.allclose(tensordot_2b(A.copy(), B.copy()), ref)
 
 
 def test_tensordot_21():
@@ -172,8 +173,8 @@ def test_tensordot_21():
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[7, 6, 5, 4, 3, 2, 1, 0])
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
-        assert (np.allclose(tensordot_2a(A.copy(), B.copy()), ref))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="TTGT"):
+        assert np.allclose(tensordot_2a(A.copy(), B.copy()), ref)
 
     @dace.program
     def tensordot_2b(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
@@ -182,8 +183,8 @@ def test_tensordot_21():
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[0, 7, 1, 6, 2, 5, 3, 4])
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
-        assert (np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="TTGT"):
+        assert np.allclose(tensordot_2b(A.copy(), B.copy()), ref)
 
 
 @pytest.mark.gpu
@@ -196,8 +197,8 @@ def test_tensordot_22():
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[7, 6, 5, 4, 3, 2, 1, 0])
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='cuTENSOR'):
-        assert (np.allclose(tensordot_2a(A.copy(), B.copy()), ref))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="cuTENSOR"):
+        assert np.allclose(tensordot_2a(A.copy(), B.copy()), ref)
 
     @dace.program(device=dace.dtypes.DeviceType.GPU, auto_optimize=True)
     def tensordot_2b(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
@@ -206,8 +207,31 @@ def test_tensordot_22():
     A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
     ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[0, 7, 1, 6, 2, 5, 3, 4])
-    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='cuTENSOR'):
-        assert (np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="cuTENSOR"):
+        assert np.allclose(tensordot_2b(A.copy(), B.copy()), ref)
+
+
+def test_tensordot_cutensor_extent_buffer_covers_every_mode():
+    """The extents are looked up by mode, so the buffer must be indexable by the largest mode and
+    hold a written entry for each. Codegen only: no GPU, and no cuTENSOR needed to emit the call."""
+    import re
+
+    @dace.program(device=dace.dtypes.DeviceType.GPU)
+    def tensordot_extents(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[3, 2, 7, 1, 6, 0, 5, 4])
+
+    A = np.zeros((3, 3, 3, 3, 3, 3), dtype=np.float32)
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="cuTENSOR"):
+        code = "\n".join(o.clean_code for o in tensordot_extents.to_sdfg(A, A).generate_code())
+
+    size = int(re.search(r"std::vector<int64_t> extent\((\d+)\)", code).group(1))
+    written = {int(m) for m in re.findall(r"extent\[(\d+)\] =", code)}
+    read = {
+        int(m) for group in re.findall(r"std::vector<int32_t> mode[ABC]\{([\d,]+)\}", code) for m in group.split(",")
+    }
+
+    assert max(written) < size, "the extents are written out of bounds"
+    assert read <= written, f"modes {sorted(read - written)} have no extent, so they read a zero"
 
 
 if __name__ == "__main__":
@@ -223,3 +247,4 @@ if __name__ == "__main__":
     test_tensordot_2()
     test_tensordot_21()
     test_tensordot_22()
+    test_tensordot_cutensor_extent_buffer_covers_every_mode()

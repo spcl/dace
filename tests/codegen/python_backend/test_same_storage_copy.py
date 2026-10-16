@@ -418,15 +418,13 @@ def _build_vadd_with_tile_copy(name: str, width: int = 8) -> Tuple[SDFG, str]:
     """Lower a vadd kernel via ``VectorizeCuTile``, then splice a tile copy.
 
     After lowering, the result tile (produced by the binop) flows straight
-    into the ``TileStore``.  We insert a new ``CuTile_Tile`` transient
+    into the ``TileScatter``.  We insert a new ``CuTile_Tile`` transient
     ``C_tile_copy`` between them, so the store reads from the copy.  The cuTile
     AccessNode-centric codegen emits ``C_tile_copy = <out tile>`` -- the
     ``CuTile_Tile -> CuTile_Tile`` tile-rename path -- and the result must be
     unchanged (``C == A + B``).
 
-    The result tile's name is ``C_tile_out`` under the legacy order and
-    ``gpu_C_tile_out`` under the GPU-first order (arrays are renamed with a
-    ``gpu_`` prefix by the GPU transform); it is resolved by suffix match.
+    The result tile is located through its store node.
 
     :param name: Unique SDFG name.
     :param width: Tile width (power of two).
@@ -448,20 +446,25 @@ def _build_vadd_with_tile_copy(name: str, width: int = 8) -> Tuple[SDFG, str]:
     )
     VectorizeCuTile(widths=(width, )).apply_pass(sdfg, {})
 
-    # Locate the kernel state, the result-tile AccessNode, and the store edge.
-    # The tile transient is named ``C_tile_out`` (legacy) or ``gpu_C_tile_out``
-    # (GPU-first) -- match by suffix.
-    def _is_out_tile(n) -> bool:
-        data = getattr(n, "data", None)
-        return isinstance(data, str) and data.endswith("C_tile_out")
+    # Find the output through its store, independent of GPU clone naming.
+    from dace.libraries.tileops.nodes.masked_copy import MaskedCopyLibraryNode
+    from dace.libraries.tileops.nodes.tile_scatter import TileScatter
 
-    kstate = next(s for s in sdfg.states() if any(_is_out_tile(n) for n in s.nodes()))
-    c_out = next(n for n in kstate.nodes() if _is_out_tile(n))
+    kstate, store_edge = next(
+        (state, edge)
+        for state in sdfg.states()
+        for edge in state.edges()
+        if isinstance(edge.src, nodes.AccessNode)
+        and sdfg.arrays[edge.src.data].storage == ST.CuTile_Tile
+        and ((isinstance(edge.dst, MaskedCopyLibraryNode) and edge.dst.stores(state))
+             or isinstance(edge.dst, TileScatter))
+        and edge.dst_conn != "_mask"
+    )
+    c_out = store_edge.src
     out_name = c_out.data
-    store_edge = next(e for e in kstate.out_edges(c_out) if isinstance(e.dst, nodes.LibraryNode))
     store = store_edge.dst
 
-    # Splice a CuTile_Tile copy: <out tile> -> C_tile_copy -> TileStore.
+    # Splice a CuTile_Tile copy: <out tile> -> C_tile_copy -> TileScatter.
     sdfg.add_array("C_tile_copy", sdfg.arrays[out_name].shape, dace.float64,
                    storage=ST.CuTile_Tile, transient=True)
     c_copy = kstate.add_access("C_tile_copy")

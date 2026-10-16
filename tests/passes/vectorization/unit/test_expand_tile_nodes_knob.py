@@ -16,21 +16,23 @@ The kernel exercises a divisible 2-D map so the run finishes cleanly
 in both modes (no postamble interaction needed for this knob).
 """
 
-import dace
 import pytest
 
-from dace.libraries.tileops import TileBinop, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
+import dace
+from dace.libraries.tileops import TileBinop, TileGather, TileMaskGen, TileReduce, TileScatter, TileUnop
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
+    VectorizeCPUMultiDim,
+)
 
-_TILE_LIB_NODE_TYPES = (
+TILE_LIB_NODE_TYPES = (
     TileBinop,
-    TileLoad,
+    TileGather,
     TileMaskGen,
     TileReduce,
-    TileStore,
+    TileScatter,
     TileUnop,
 )
 
@@ -47,10 +49,12 @@ def _axpy_2d(a: dace.float64[KLEV, KLON], b: dace.float64[KLEV, KLON], c: dace.f
 
 def _count_tile_lib_nodes(sdfg: dace.SDFG) -> int:
     """Total number of ``Tile*`` library nodes anywhere in ``sdfg``."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, _TILE_LIB_NODE_TYPES))
+    return sum(1 for n, graph in sdfg.all_nodes_recursive() if isinstance(n, TILE_LIB_NODE_TYPES))
 
 
 def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(sdfg, validate=True)
     VectorizeCPUMultiDim(
         VectorizeConfig(
             widths=(8, 8),
@@ -58,7 +62,8 @@ def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:
             remainder_strategy=RemainderStrategy.FULL_MASK,
             branch_mode=BranchMode.MERGE,
             expand_tile_nodes=expand_tile_nodes,
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
 
 
 def test_expand_tile_nodes_true_leaves_no_tile_lib_nodes():
@@ -69,8 +74,9 @@ def test_expand_tile_nodes_true_leaves_no_tile_lib_nodes():
     sdfg.validate()
     _vectorize(sdfg, expand_tile_nodes=True)
     sdfg.validate()
-    assert _count_tile_lib_nodes(sdfg) == 0, (f"with expand_tile_nodes=True every Tile* lib node must be lowered; "
-                                              f"found {_count_tile_lib_nodes(sdfg)}")
+    assert _count_tile_lib_nodes(sdfg) == 0, (
+        f"with expand_tile_nodes=True every Tile* lib node must be lowered; found {_count_tile_lib_nodes(sdfg)}"
+    )
 
 
 def test_expand_tile_nodes_false_preserves_tile_lib_nodes():
@@ -82,14 +88,14 @@ def test_expand_tile_nodes_false_preserves_tile_lib_nodes():
     _vectorize(sdfg, expand_tile_nodes=False)
     sdfg.validate()
     n_tile = _count_tile_lib_nodes(sdfg)
-    assert n_tile > 0, (f"with expand_tile_nodes=False at least one Tile* lib node must "
-                        f"survive; found {n_tile}")
+    assert n_tile > 0, f"with expand_tile_nodes=False at least one Tile* lib node must survive; found {n_tile}"
 
     # Explicit expansion by the caller still works and reduces the count to 0.
     sdfg.expand_library_nodes()
     sdfg.validate()
-    assert _count_tile_lib_nodes(sdfg) == 0, ("manual sdfg.expand_library_nodes() after deferred return must "
-                                              "lower every Tile* lib node")
+    assert _count_tile_lib_nodes(sdfg) == 0, (
+        "manual sdfg.expand_library_nodes() after deferred return must lower every Tile* lib node"
+    )
 
 
 if __name__ == "__main__":

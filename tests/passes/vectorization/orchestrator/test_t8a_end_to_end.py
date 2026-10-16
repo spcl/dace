@@ -12,16 +12,16 @@ Both arms must match the unvectorized scalar reference bit-equally
 (rtol=0, atol=0) on non-FMA kernels.
 """
 
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
+    VectorizeCPUMultiDim,
+)
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 
 def _k1_axpy_sdfg(name="e2e_k1_axpy"):
@@ -32,17 +32,14 @@ def _k1_axpy_sdfg(name="e2e_k1_axpy"):
     """
     N = dace.symbol("N")
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", (N, ), dace.float64)
-    sdfg.add_array("B", (N, ), dace.float64)
-    sdfg.add_array("C", (N, ), dace.float64)
+    sdfg.add_array("A", (N,), dace.float64)
+    sdfg.add_array("B", (N,), dace.float64)
+    sdfg.add_array("C", (N,), dace.float64)
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "axpy",
         {"i": "0:N"},
-        {
-            "_a": dace.Memlet("A[i]"),
-            "_b": dace.Memlet("B[i]")
-        },
+        {"_a": dace.Memlet("A[i]"), "_b": dace.Memlet("B[i]")},
         "_c = _a + _b",
         {"_c": dace.Memlet("C[i]")},
         external_edges=True,
@@ -65,14 +62,8 @@ def _k2_axpy_sdfg(name="e2e_k2_axpy"):
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "axpy",
-        {
-            "i": "0:M",
-            "j": "0:N"
-        },
-        {
-            "_a": dace.Memlet("A[i, j]"),
-            "_b": dace.Memlet("B[i, j]")
-        },
+        {"i": "0:M", "j": "0:N"},
+        {"_a": dace.Memlet("A[i, j]"), "_b": dace.Memlet("B[i, j]")},
         "_c = _a + _b",
         {"_c": dace.Memlet("C[i, j]")},
         external_edges=True,
@@ -84,7 +75,8 @@ def test_k1_axpy_aligned_trip_matches_numpy():
     """K=1 axpy under ``VectorizeCPUMultiDim(widths=(8,))`` matches numpy
     on a trip aligned to ``W=8``."""
     sdfg = _k1_axpy_sdfg("e2e_k1_axpy_aligned_trip")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k1_axpy_sdfg())
     sdfg.validate()
     rng = np.random.default_rng(seed=101)
     n = 64
@@ -99,7 +91,8 @@ def test_k1_axpy_aligned_trip_matches_numpy():
 def test_k1_axpy_aligned_sizes(n):
     """K=1 axpy across several aligned sizes."""
     sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_aligned_{n}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k1_axpy_sdfg())
     rng = np.random.default_rng(seed=n)
     A = rng.random(n)
     B = rng.random(n)
@@ -113,6 +106,7 @@ def test_k2_axpy_aligned_trip_matches_numpy():
     numpy on aligned ``M x N``."""
     sdfg = _k2_axpy_sdfg("e2e_k2_axpy_aligned_trip")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k2_axpy_sdfg())
     sdfg.validate()
     rng = np.random.default_rng(seed=202)
     m, n = 16, 32
@@ -125,13 +119,16 @@ def test_k2_axpy_aligned_trip_matches_numpy():
 
 @pytest.mark.parametrize("m,n", [(16, 32), (17, 20), (20, 17), (9, 9)])
 def test_k2_axpy_scalar_postamble_matches_numpy(m, n):
-    """K=2 axpy under ``remainder_strategy='scalar_postamble'`` matches numpy
+    """K=2 axpy under ``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE`` matches numpy
     across aligned + unaligned ``M x N`` trips. scalar_postamble is no longer
     K=1-only: ``SplitMapForTileRemainder`` splits a per-dim divisible interior
     (W-strided tiles) off from step-1 scalar boundary slabs, so a non-divisible
     K>=2 trip vectorizes the interior and runs the boundary scalar."""
     sdfg = _k2_axpy_sdfg(f"e2e_k2_axpy_scalar_{m}_{n}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)
+    ).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k2_axpy_sdfg())
     sdfg.validate()
     rng = np.random.default_rng(seed=m * 100 + n)
     A = rng.random((m, n))
@@ -150,7 +147,8 @@ def test_k1_axpy_unaligned_trip_matches_numpy():
     against numpy validates the mask path.
     """
     sdfg = _k1_axpy_sdfg("e2e_k1_axpy_unaligned_trip")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k1_axpy_sdfg())
     rng = np.random.default_rng(seed=303)
     n = 17  # 17 // 8 = 2 full tiles + 1 tail
     A = rng.random(n)

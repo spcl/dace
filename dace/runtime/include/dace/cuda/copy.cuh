@@ -372,11 +372,8 @@ namespace dace
                     if (ltid < REMAINDER)
                     {
                         // Read remainder
-                        smem[(REMOFF + ltid) * DST_ZSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
-                            *(ptr +
-                              src_xstride * (REMOFF + ltid) +
-                              src_ystride * j +
-                              src_zstride * i);
+                        smem[(REMOFF + ltid) * DST_XSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
+                            *(ptr + src_xstride * (REMOFF + ltid) + src_ystride * j + src_zstride * i);
                     }
                 }
             }
@@ -413,6 +410,56 @@ namespace dace
                          ASYNC>(
             ptr, 1, src_ystride, src_xstride, smem);
     }
+
+    // Coalescing lane width: CDNA3 (gfx942) wavefront is 64 lanes, NVIDIA warp is 32.
+#if defined(__HIPCC__) || defined(__HIP_DEVICE_COMPILE__)
+    static constexpr int COLLECTIVE_LANE_WIDTH = 64;
+#else
+    static constexpr int COLLECTIVE_LANE_WIDTH = 32;
+#endif
+
+    // Block-collective staging copy of a 1-D to 3-D region between global and shared memory.
+    // Wavefront groups take rows of the middle axis, the slowest axis is iterated, and lanes
+    // keep a wavefront on one contiguous run of the fastest axis. Extents and strides are plain
+    // arguments (not template parameters) so the emitter's static-shape literals still fold.
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
+    struct BlockCollective3D {
+      static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
+
+      static DACE_DFI void Copy(const T* src, int src_zstride, int src_ystride, int src_xstride, T* dst,
+                                int dst_zstride, int dst_ystride, int dst_xstride, int zlen, int ylen, int xlen) {
+        const int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
+
+        int lanes = (xlen >= COLLECTIVE_LANE_WIDTH)
+                        ? ((xlen + COLLECTIVE_LANE_WIDTH - 1) / COLLECTIVE_LANE_WIDTH) * COLLECTIVE_LANE_WIDTH
+                        : xlen;
+        if (lanes > BLOCK_SIZE) lanes = BLOCK_SIZE;
+        if (lanes < 1) lanes = 1;  // an empty region still needs sane loop bounds
+
+        const int rows_at_once = BLOCK_SIZE / lanes;
+        const int y0 = ltid / lanes;
+        const int x0 = ltid - y0 * lanes;
+
+        // lanes need not divide BLOCK_SIZE (a 53-wide row leaves 44 threads over). Parking the
+        // remainder keeps two groups from writing the same row.
+        if (y0 < rows_at_once) {
+          // Middle-axis distribution only: a region with ylen < rows_at_once leaves the
+          // surplus wavefront groups idle.
+          for (int z = 0; z < zlen; ++z) {
+            const T* szp = src + z * src_zstride;
+            T* dzp = dst + z * dst_zstride;
+            for (int y = y0; y < ylen; y += rows_at_once) {
+              const T* srow = szp + y * src_ystride;
+              T* drow = dzp + y * dst_ystride;
+              // Bounded by the real extent, so a partial edge tile touches nothing past it.
+              for (int x = x0; x < xlen; x += lanes) drow[x * dst_xstride] = srow[x * src_xstride];
+            }
+          }
+        }
+
+        if (!ASYNC) __syncthreads();
+      }
+    };
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
               bool ASYNC>
@@ -652,11 +699,8 @@ namespace dace
                     if (ltid < REMAINDER)
                     {
                         // Read remainder
-                        smem[(REMOFF + ltid) * DST_ZSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
-                            *(ptr +
-                              src_xstride * (REMOFF + ltid) +
-                              src_ystride * j +
-                              src_zstride * i);
+                        smem[(REMOFF + ltid) * DST_XSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
+                            *(ptr + src_xstride * (REMOFF + ltid) + src_ystride * j + src_zstride * i);
                     }
                 }
             }

@@ -1,10 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.transformation import pass_pipeline as ppl
-from dace.sdfg import utils as sdutil
 from dace import SDFG, properties
-from typing import Optional
-
+from dace.sdfg import utils as sdutil
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -19,7 +17,7 @@ class ConsolidateEdges(ppl.Pass):
     per-tasklet memlets.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets
@@ -27,7 +25,7 @@ class ConsolidateEdges(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return (modified & ppl.Modifies.AccessNodes) or (modified & ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """
         Consolidates edges on the given SDFG.
 
@@ -43,4 +41,4 @@ class ConsolidateEdges(ppl.Pass):
         return edges_removed
 
     def report(self, pass_retval: int) -> str:
-        return f'Consolidated {pass_retval} edges.'
+        return f"Consolidated {pass_retval} edges."

@@ -8,9 +8,10 @@ dependence. Legality follows Allen & Kennedy loop-distribution (no dependence
 edge may run from a later group to an earlier group). Cases mirror that catalog:
 aligned producer->consumer SPLITS; scalar recurrence and backward deps REFUSE.
 """
+
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
@@ -22,67 +23,85 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
+from dace.transformation.passes.canonicalize.pipeline import build_stages
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 def _to_loops(prog):
-    """Run the canonicalize recipe up to (not including) the loop_to_x stage,
-    where the body is loops-only -- the window this pass runs in."""
+    """Run the canonicalize recipe up to (not including) this pass's own stage.
+
+    Running through it hands the tests an already-distributed SDFG on which a second application
+    correctly reports ``None``.
+    """
     sdfg = prog.to_sdfg(simplify=True)
-    for label, unit in _build_stages():
-        if label == 'loop_to_x':
+    for label, unit in build_stages():
+        if isinstance(unit, DistributeProducerConsumerLoop):
             break
         unit.apply_pass(sdfg, {})
     return sdfg
 
 
 def _nloops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
 
 
 def _run_full(prog, **kw):
-    """Canonicalize fully WITH the distribution injected before loop_to_x, run,
-    return the outputs. Used for the bit-exact value checks."""
+    """Canonicalize fully, run, return the SDFG. Used for the bit-exact value checks.
+
+    The recipe carries its own ``distribute`` stage, so this just runs it. Applying the pass a
+    second time before ``loop_to_x`` (as this helper used to) re-splits an already-distributed
+    body into a shape the einsum lift then mis-classifies.
+    """
     sdfg = prog.to_sdfg(simplify=True)
-    for label, unit in _build_stages():
-        if label == 'loop_to_x':
-            DistributeProducerConsumerLoop().apply_pass(sdfg, {})
+    for label, unit in build_stages():
         unit.apply_pass(sdfg, {})
     sdfg(**kw)
     return sdfg
 
 
+@dace.program
+def atax_loops(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[N]):
+    """atax in its loop form: ``tmp = A @ x`` then ``y = tmp @ A``, sharing one for-i loop."""
+    tmp = np.zeros([M], dtype=np.float64)
+    for i in range(M):
+        for j in range(N):
+            tmp[i] += A[i, j] * x[j]
+        for j in range(N):
+            y[j] += A[i, j] * tmp[i]
+
+
 def test_atax_matvecs_distribute_and_lift():
     """atax's two matvecs share a for-i loop coupled through tmp[i]; the
     distribution splits them, after which the pipeline lifts a matvec to an
-    Einsum. Value must stay bit-exact."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("atax", "tests/corpus/polybench/linear_algebra/kernels/atax.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
+    Einsum. Value must stay bit-exact.
 
-    sdfg = _to_loops(m.atax)
+    The kernel is written out here rather than imported from the polybench corpus: that copy is now
+    ``y[:] = (A @ x) @ A``, which the frontend lowers straight to two Gemv library nodes, so it
+    contains no loop for this pass to distribute.
+    """
+    sdfg = _to_loops(atax_loops)
     before = _nloops(sdfg)
     assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
-    assert _nloops(sdfg) == before + 1, 'the coupled for-i loop must split into two'
+    assert _nloops(sdfg) == before + 1, "the coupled for-i loop must split into two"
     sdfg.validate()
 
     mm, nn = 38, 42
     rng = np.random.default_rng(0)
     A = rng.standard_normal((mm, nn))
-    x = rng.standard_normal((nn, ))
-    yref = np.zeros(nn)
-    m.atax.to_sdfg(simplify=True)(A=A.copy(), x=x.copy(), y=yref, M=mm, N=nn)
+    x = rng.standard_normal((nn,))
+    yref = (A @ x) @ A
 
     y = np.zeros(nn)
-    lifted = _run_full(m.atax, A=A.copy(), x=x.copy(), y=y, M=mm, N=nn)
-    assert np.allclose(y, yref), 'distribution + lift must be value-preserving'
+    lifted = _run_full(atax_loops, A=A.copy(), x=x.copy(), y=y, M=mm, N=nn)
+    assert np.allclose(y, yref), "distribution + lift must be value-preserving"
     libs = {type(n).__name__ for n, _ in lifted.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)}
-    assert 'Einsum' in libs, 'a split matvec should lift to an Einsum node'
+    assert "Einsum" in libs, "a split matvec should lift to an Einsum node"
 
 
 def test_forward_aligned_producer_consumer_splits():
@@ -90,7 +109,7 @@ def test_forward_aligned_producer_consumer_splits():
 
     @dace.program
     def two_matvec(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
-        tmp = dace.define_local([M], dace.float64)
+        tmp = np.zeros([M], dtype=np.float64)
         for i in range(M):
             for j in range(N):
                 tmp[i] += A[i, j] * x[j]
@@ -105,7 +124,7 @@ def test_forward_aligned_producer_consumer_splits():
     mm, nn = 12, 9
     rng = np.random.default_rng(1)
     A = rng.standard_normal((mm, nn))
-    x = rng.standard_normal((nn, ))
+    x = rng.standard_normal((nn,))
     ref = np.zeros(mm)
     two_matvec.to_sdfg(simplify=True)(A=A.copy(), x=x.copy(), y=ref, M=mm, N=nn)
     got = np.zeros(mm)
@@ -140,14 +159,14 @@ def test_scalar_carried_recurrence_refuses():
     # Either the body is a single state (out of block-level scope -> None) or the
     # scalar's non-per-iteration write blocks the split. Both are a no-op here.
     if result is not None:
-        pytest.fail('scalar recurrence must not be distributed')
+        pytest.fail("scalar recurrence must not be distributed")
 
     mm = 7
-    a = np.random.default_rng(2).standard_normal((mm, ))
+    a = np.random.default_rng(2).standard_normal((mm,))
     ref = np.cumsum(a)
     got = np.zeros(mm)
     _run_full(cross_i_scalar, a=a.copy(), b=got, M=mm)
-    assert np.allclose(got, ref), 'running-sum semantics must be preserved'
+    assert np.allclose(got, ref), "running-sum semantics must be preserved"
 
 
 def test_backward_dependence_refuses():
@@ -158,26 +177,160 @@ def test_backward_dependence_refuses():
     def war(a: dace.float64[M], b: dace.float64[M]):
         for i in range(M):
             for j in range(1):
-                b[i] += a[i]          # reads a[i]
+                b[i] += a[i]  # reads a[i]
             for j in range(1):
-                a[i] = b[i] * 0.5     # later block WRITES a that the earlier read
+                a[i] = b[i] * 0.5  # later block WRITES a that the earlier read
 
     sdfg = _to_loops(war)
     groups_split = DistributeProducerConsumerLoop().apply_pass(sdfg, {})
 
     mm = 6
-    a = np.random.default_rng(3).standard_normal((mm, ))
+    a = np.random.default_rng(3).standard_normal((mm,))
     b0 = np.zeros(mm)
     ref_a, ref_b = a.copy(), b0.copy()
     war.to_sdfg(simplify=True)(a=ref_a, b=ref_b, M=mm)
     ga, gb = a.copy(), np.zeros(mm)
     _run_full(war, a=ga, b=gb, M=mm)
-    assert np.allclose(ga, ref_a) and np.allclose(gb, ref_b), 'WAR case must stay value-preserving'
+    assert np.allclose(ga, ref_a) and np.allclose(gb, ref_b), "WAR case must stay value-preserving"
 
 
-if __name__ == '__main__':
+def test_mask_read_through_an_interstate_edge_refuses():
+    """A container read only via an interstate edge still blocks the split.
+
+    ``if mask[i]:`` lowers to an assignment ``mask_index = mask[i]`` on the edge into a
+    ConditionalBlock plus a condition on the resulting symbol -- never an AccessNode. A
+    read/write analysis that walks AccessNodes alone therefore called the second reader group
+    independent of the group producing the mask, and split them. The consumer loop then ran
+    against the mask left by the producer loop's LAST iteration instead of its own, which is a
+    silent wrong answer: npbench mandelbrot1 reported an integer mismatch and nothing else.
+    """
+    M = dace.symbol("M", dtype=dace.int64)
+    K = dace.symbol("K", dtype=dace.int64)
+
+    @dace.program
+    def mask_loop(Z: dace.float64[M], C: dace.float64[M], NN: dace.int64[M]):
+        for n in range(K):
+            mask = Z < 4.0
+            for i in range(M):
+                if mask[i]:
+                    Z[i] = Z[i] * Z[i] + C[i]
+            for i in range(M):
+                if mask[i]:
+                    NN[i] = n
+
+    sdfg = mask_loop.to_sdfg(simplify=True)
+    before = len(
+        [
+            r
+            for sd in sdfg.all_sdfgs_recursive()
+            for r in sd.all_control_flow_regions(recursive=True)
+            if isinstance(r, LoopRegion)
+        ]
+    )
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) is None, "the mask must keep its readers"
+    after = len(
+        [
+            r
+            for sd in sdfg.all_sdfgs_recursive()
+            for r in sd.all_control_flow_regions(recursive=True)
+            if isinstance(r, LoopRegion)
+        ]
+    )
+    assert after == before
+
+    # Values, on inputs whose mask CHANGES per iteration -- with a constant mask both orders agree
+    # and the bug is invisible.
+    seed_z = np.array([0.1, 0.5, 1.5, 1.9, 2.5, 3.5])
+    seed_c = np.full(6, 0.05)
+    z, c = seed_z.copy(), seed_c.copy()
+    nn = np.zeros(6, dtype=np.int64)
+    sdfg(Z=z, C=c, NN=nn, M=6, K=4)
+
+    ref_z, ref_nn = seed_z.copy(), np.zeros(6, dtype=np.int64)
+    for n in range(4):
+        m = ref_z < 4.0
+        for i in range(6):
+            if m[i]:
+                ref_z[i] = ref_z[i] * ref_z[i] + seed_c[i]
+        for i in range(6):
+            if m[i]:
+                ref_nn[i] = n
+    assert np.array_equal(nn, ref_nn), f"{nn} != {ref_nn}"
+    assert np.allclose(z, ref_z)
+
+
+def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """The split clones the coupled loop per group; the clones are listed where a reset would list them."""
+    sdfg = _to_loops(atax_loops)
+    resets = spy_on_resets(monkeypatch)
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
+    monkeypatch.undo()
+    assert resets == []
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
+
+
+NNZ = dace.symbol("NNZ")
+K = dace.symbol("K")
+
+
+@dace.program
+def hybrid_csr_recurrence(
+    row_ptr: dace.int64[N + 1], col: dace.int64[NNZ], val: dace.float64[NNZ], x: dace.float64[N], y: dace.float64[N]
+):
+    for i in range(N):
+        s = 0.0
+        for k in range(row_ptr[i], row_ptr[i + 1]):
+            s += val[k] * x[col[k]]
+        if i < K:
+            y[i] = s
+        else:
+            y[i] = s + y[i - 1]
+
+
+def hybrid_reference(row_ptr, col, val, x, y, k):
+    for i in range(x.size):
+        s = 0.0
+        for kk in range(row_ptr[i], row_ptr[i + 1]):
+            s += val[kk] * x[col[kk]]
+        y[i] = s if i < k else s + y[i - 1]
+
+
+def test_private_accumulator_is_expanded_to_split_a_reduction_from_a_recurrence():
+    """The row sum ``s`` couples the CSR reduction to the ``y`` recurrence; ``s[i]`` lets the reduction leave.
+
+    Without the expansion the whole row loop stays sequential behind ``y[i - 1]`` and the reduction runs once
+    per row in order. The row-pointer symbols assigned on the body edge stay with the inner loop they bound."""
+    sdfg = _to_loops(hybrid_csr_recurrence)
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
+
+    full = hybrid_csr_recurrence.to_sdfg(simplify=True)
+    for label, unit in build_stages():
+        unit.apply_pass(full, {})
+    sequential = [
+        r for r in full.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    ]
+    assert len(sequential) == 1, "only the y recurrence stays a loop"
+    assert any(isinstance(n, nodes.MapEntry) and n.map.range.size()[0] == N for n, _ in full.all_nodes_recursive())
+
+    rng = np.random.default_rng(11)
+    for n, k in ((50, 2), (50, 49), (200, 7), (1, 0), (3, 5)):
+        row_ptr = np.concatenate([[0], np.cumsum(rng.integers(0, 6, n))]).astype(np.int64)
+        nnz = max(int(row_ptr[-1]), 1)
+        col = rng.integers(0, n, nnz).astype(np.int64)
+        val = rng.random(nnz)
+        x = rng.random(n)
+        want = np.zeros(n)
+        hybrid_reference(row_ptr, col, val, x, want, k)
+        got = np.zeros(n)
+        full(row_ptr=row_ptr, col=col, val=val, x=x, y=got, N=n, NNZ=nnz, K=k)
+        assert np.allclose(got, want)
+
+
+if __name__ == "__main__":
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()
     test_scalar_carried_recurrence_refuses()
     test_backward_dependence_refuses()
+    test_mask_read_through_an_interstate_edge_refuses()
     print("OK")

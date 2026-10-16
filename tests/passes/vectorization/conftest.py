@@ -17,10 +17,13 @@ to ``run_vectorization_test``. Tests with no branches do not need it.
 Both modes must produce numerically identical results against the
 unvectorized scalar reference, otherwise the two lowerings have drifted.
 """
+
 import zlib
 
 import numpy as np
 import pytest
+
+from dace.transformation.passes.vectorization.enums import BranchMode
 
 
 @pytest.fixture(autouse=True)
@@ -38,8 +41,8 @@ def _deterministic_global_numpy_seed(request):
     np.random.seed(zlib.crc32(request.node.nodeid.encode()) & 0xFFFFFFFF)
 
 
-@pytest.fixture(params=["fp_factor", "merge"])
-def branch_mode(request) -> str:
+@pytest.fixture(params=[BranchMode.FP_FACTOR, BranchMode.MERGE])
+def branch_mode(request) -> BranchMode:
     """Branch lowering variant the K=1 tile path must support:
 
     - ``"merge"`` — same-write-set if/else -> per-lane ``TileITE`` select.
@@ -49,28 +52,6 @@ def branch_mode(request) -> str:
     Both must produce numerically identical results against the unvectorized
     scalar reference."""
     return request.param
-
-
-@pytest.fixture(params=["no_copies", "copies"])
-def tile_emit_mode(request):
-    """Tile-arm boundary-copy emission toggle, opt-in.
-
-    Selects whether the tile arm emits boundary copies (``insert_copies``).
-    Tests opt in by taking ``tile_emit_mode`` in their signature; tests that
-    don't take it inherit the harness default (``insert_copies=False``).
-
-    - ``"no_copies"`` — ``insert_copies=False`` (default tile arm, no
-      boundary-copy emission).
-    - ``"copies"`` — ``insert_copies=True`` (boundary copy emission), used by
-      stencil tests that exercise the boundary-copy path.
-
-    :returns: the ``insert_copies`` bool — forward to
-        :func:`run_vectorization_test`.
-    """
-    return {
-        "no_copies": False,
-        "copies": True,
-    }[request.param]
 
 
 @pytest.fixture(params=["default"])
@@ -95,11 +76,12 @@ def pytest_configure(config):
         "tile_nodes: legacy marker; the K-dim tile-op config "
         "(VectorizeCPUMultiDim) is now the sole vectorize_config arm.",
     )
+    # pytest-xdist registers this itself when installed; register it here too so the corpus
+    # marks don't raise PytestUnknownMarkWarning when it is not.
     config.addinivalue_line(
         "markers",
-        "simple: redundant / trivial test (duplicates lib_nodes coverage or "
-        "a more comprehensive sibling). Skipped by default; opt in with "
-        "``--run-simple`` to include them in the sweep.",
+        "xdist_group(name): corpus kernel group -- keeps one kernel's phases on one worker "
+        "(so the memoized base SDFG is built once) under ``--dist loadgroup``.",
     )
 
 
@@ -109,21 +91,12 @@ def pytest_addoption(parser):
     :param parser: The pytest option parser.
     """
     parser.addoption(
-        "--run-simple",
-        action="store_true",
-        default=False,
-        help="Include tests marked ``@pytest.mark.simple`` (redundant / "
-        "trivial duplicates of a more comprehensive sibling test or of "
-        "``lib_nodes/`` coverage). Default sweep skips these to keep the "
-        "feedback loop fast; the hardening sweep / CI includes them.",
-    )
-    parser.addoption(
         "--run-full-matrix",
         action="store_true",
         default=False,
         help="Hyper-thorough sweep mode: every test that goes through "
         "``run_vectorization_test`` is parametrised over the full knob "
-        "matrix (branch_mode x tile_emit_mode x emission_style x "
+        "matrix (branch_mode x emission_style x "
         "remainder_strategy), even when the test signature only declares "
         "a subset. The harness picks up the missing knobs from "
         "``request.getfixturevalue`` so tests don't need code changes. "
@@ -160,8 +133,7 @@ def pytest_generate_tests(metafunc):
     if not full_matrix:
         return
     knob_params = {
-        "branch_mode": ["fp_factor", "merge"],
-        "tile_emit_mode": ["flat", "nested", "nested_copies"],
+        "branch_mode": [BranchMode.FP_FACTOR, BranchMode.MERGE],
         "emission_style": ["default"],
         "remainder_strategy": ["scalar", "masked"],
     }
@@ -176,33 +148,15 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize(knob, vals, indirect=True)
 
 
-def pytest_collection_modifyitems(config, items):
-    """Skip ``@pytest.mark.simple`` items unless ``--run-simple`` is given.
-
-    :param config: The pytest config object.
-    :param items: The collected test items (filtered in place).
-    """
-    # Skip ``@pytest.mark.simple`` items unless ``--run-simple`` is given.
-    # A skip (rather than a deselect) keeps the test visible in collection
-    # reports so the gate is observable.
-    if not config.getoption("--run-simple"):
-        skip_simple = pytest.mark.skip(reason="@pytest.mark.simple — pass --run-simple to include")
-        for item in items:
-            if "simple" in item.keywords:
-                item.add_marker(skip_simple)
-
-
 @pytest.fixture
 def vectorize_config(request) -> str:
     """Backend pipeline under test (parametrised by ``pytest_generate_tests``).
 
     - ``"tile_nodes"`` — the K-dim tile-op routing through
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
-      (TileBinop / TileLoad / TileStore / TileITE / TileLoad (gather) /
-      TileStore (scatter)), expanded to the per-ISA backend (scalar reference in
-      the harness). Boundary-copy emission is controlled per-test via the
-      ``tile_emit_mode`` fixture (or an explicit ``insert_copies``
-      kwarg to :func:`run_vectorization_test`).
+      (TileBinop / TileGather / TileScatter / TileITE / TileGather (gather) /
+      TileScatter (scatter)), expanded to the per-ISA backend (scalar reference in
+      the harness).
 
     The tile arm must match the unvectorized scalar reference."""
     return request.param

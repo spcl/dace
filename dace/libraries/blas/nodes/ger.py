@@ -1,21 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.properties import SymbolicProperty
-from dace.transformation.transformation import ExpandTransformation
-from dace.frontend.common import op_repository as oprepo
-from dace.sdfg.nodes import LibraryNode
-import dace.library as library
-from dace.sdfg import SDFG, SDFGState, nodes
-from dace.symbolic import equal_valued, symstr
-from dace import data as dt, memlet as mm, subsets as sbs
-import dace
 import copy
 
+import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import data as dt
+from dace import library, symbolic
+from dace import memlet as mm
+from dace import subsets as sbs
+from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas.blas_helpers import operand
+from dace.ordered import OrderedSet
+from dace.properties import SymbolicProperty
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.nodes import LibraryNode
+from dace.symbolic import equal_valued, symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
-@library.expansion
+@dace.library.expansion
 class ExpandGerPure(ExpandTransformation):
     """
     Generic expansion of GER.
@@ -26,8 +31,8 @@ class ExpandGerPure(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
-        inputs = ('_A', '_x', '_y')
-        outputs = ('_res', )
+        inputs = ("_A", "_x", "_y")
+        outputs = ("_res",)
         in_edges = [next(parent_state.in_edges_by_connector(node, conn)) for conn in inputs]
         out_edges = [next(parent_state.out_edges_by_connector(node, conn)) for conn in outputs]
         arrays = {}
@@ -40,10 +45,10 @@ class ExpandGerPure(ExpandTransformation):
         if any(e.data.subset != sbs.Range.from_array(arrays[a]) for a, e in zip(outputs, out_edges)):
             raise NotImplementedError
 
-        sdfg = dace.SDFG(f'{node.label}_sdfg')
-        sdfg.add_symbol('M', int)
-        sdfg.add_symbol('N', int)
-        sdfg.add_symbol('alpha', arrays['_A'].dtype)
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg.add_symbol("M", int)
+        sdfg.add_symbol("N", int)
+        sdfg.add_symbol("alpha", arrays["_A"].dtype)
 
         for name, desc in arrays.items():
             newdesc = copy.deepcopy(desc)
@@ -52,29 +57,104 @@ class ExpandGerPure(ExpandTransformation):
 
         state = sdfg.add_state()
         state.add_mapped_tasklet(
-            'ger',
-            {
-                '_i': f'0:M',
-                '_j': f'0:N'
-            },
-            {
-                'a': mm.Memlet('_A[_i, _j]'),
-                'xin': mm.Memlet('_x[_i]'),
-                'yin': mm.Memlet(f'_y[_j]')
-            },
-            f'aout = alpha * xin * yin + a',
-            {'aout': mm.Memlet('_res[_i, _j]')},
+            "ger",
+            {"_i": "0:M", "_j": "0:N"},
+            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet("_y[_j]")},
+            "aout = alpha * xin * yin + a",
+            {"aout": mm.Memlet("_res[_i, _j]")},
             external_edges=True,
         )
 
-        outshape = arrays['_res'].shape
-        nsdfg_node = nodes.NestedSDFG(node.label, sdfg, set(inputs), set(outputs), {
-            'M': outshape[0],
-            'N': outshape[1],
-            'alpha': node.alpha
-        })
+        outshape = arrays["_res"].shape
+        nsdfg_node = nodes.NestedSDFG(
+            node.label, sdfg, set(inputs), set(outputs), {"M": outshape[0], "N": outshape[1], "alpha": node.alpha}
+        )
 
         return nsdfg_node
+
+
+def ger_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_res = _A``, then ``?ger`` (``?geru`` for complex data: ``Ger`` does not conjugate) updates ``_res`` in
+    place, through CBLAS or the GPU library of ``dialect``."""
+    res, x, y = (operand(node, state, sdfg, c) for c in ("_res", "_x", "_y"))
+    prefix = blas_helpers.blas_prefix(res.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, res)
+        return ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y)
+    layout = blas_helpers.matrix_layout(res)
+    if layout is None or prefix is None:
+        return ExpandGerPure.expansion(node, state, sdfg)
+    routine = f"{prefix}geru" if res.desc.dtype.is_complex() else f"{prefix}ger"
+    scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, alpha=node.alpha)
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    (m, n), (lda,) = res.shape, layout.leading
+    call = (
+        f"cblas_{routine.lower()}({order}, {m}, {n}, {arg['alpha']}, __x, {x.strides[0]}, __y, {y.strides[0]}, "
+        f"__res, {lda});"
+    )
+    return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
+
+
+def ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y) -> SDFG:
+    """The column-major vendor ``?ger``. A row-major ``_res`` is its transpose in column-major order, which is the
+    outer product of ``y`` and ``x``: the two vectors and the two dimensions swap."""
+    gpu = gpu_dialect.gpu_call(dialect, res.desc.dtype)
+    routine = gpu.routine("geru" if res.desc.dtype.is_complex() else "ger")
+    scalars, arg = gpu_dialect.scalar_pointers(gpu, res.desc.dtype, alpha=node.alpha)
+    (m, n), (lda,) = res.shape, layout.leading
+    first, second = (("__y", y), ("__x", x)) if layout.row_major else (("__x", x), ("__y", y))
+    rows, cols = (n, m) if layout.row_major else (m, n)
+    call = (
+        f"{routine}({dialect.handle}, {rows}, {cols}, {arg['alpha']}, {gpu.pointer(first[0])}, {first[1].strides[0]}, "
+        f"{gpu.pointer(second[0])}, {second[1].strides[0]}, {gpu.pointer('__res')}, {lda})"
+    )
+    code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+    return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", code)
+
+
+@dace.library.expansion
+class ExpandGerOpenBLAS(ExpandTransformation):
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
+
+
+@dace.library.expansion
+class ExpandGerMKL(ExpandTransformation):
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
+
+
+@dace.library.expansion
+class ExpandGerGPUBLAS(ExpandTransformation):
+    """The vendor ``?ger`` through :func:`ger_call`, which copies ``_A`` into ``_res`` and updates it in place."""
+
+    environments: list[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg, cls.dialect, cls.environments[0])
+
+
+@dace.library.expansion
+class ExpandGerCuBLAS(ExpandGerGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandGerRocBLAS(ExpandGerGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
 
 
 @library.expansion
@@ -88,25 +168,24 @@ class ExpandGerCuPy(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node: 'Ger', state: SDFGState,
-                  sdfg: SDFG) -> SDFG:
+    def expansion(node: "Ger", state: SDFGState, sdfg: SDFG) -> SDFG:
         node.validate(sdfg, state)
 
         # Collect array descriptors from edges.
         adesc = xdesc = ydesc = resdesc = None
         shape_a = shape_x = shape_y = shape_res = None
         for e in state.in_edges(node):
-            if e.dst_conn == '_A':
+            if e.dst_conn == "_A":
                 adesc = sdfg.arrays[e.data.data]
                 shape_a = e.data.subset.size()
-            elif e.dst_conn == '_x':
+            elif e.dst_conn == "_x":
                 xdesc = sdfg.arrays[e.data.data]
                 shape_x = e.data.subset.size()
-            elif e.dst_conn == '_y':
+            elif e.dst_conn == "_y":
                 ydesc = sdfg.arrays[e.data.data]
                 shape_y = e.data.subset.size()
         for e in state.out_edges(node):
-            if e.src_conn == '_res':
+            if e.src_conn == "_res":
                 resdesc = sdfg.arrays[e.data.data]
                 shape_res = e.data.subset.size()
 
@@ -116,60 +195,52 @@ class ExpandGerCuPy(ExpandTransformation):
         dtype_res = resdesc.dtype.type
 
         # Create nested SDFG.
-        nsdfg = dace.SDFG(node.label + '_cupy')
+        nsdfg = dace.SDFG(node.label + "_cupy")
         nstate = nsdfg.add_state()
 
-        nsdfg.add_array('_A', shape_a, dtype_a, strides=adesc.strides,
-                        storage=adesc.storage)
-        nsdfg.add_array('_x', shape_x, dtype_x, strides=xdesc.strides,
-                        storage=xdesc.storage)
-        nsdfg.add_array('_y', shape_y, dtype_y, strides=ydesc.strides,
-                        storage=ydesc.storage)
-        nsdfg.add_array('_res', shape_res, dtype_res, strides=resdesc.strides,
-                        storage=resdesc.storage)
+        nsdfg.add_array("_A", shape_a, dtype_a, strides=adesc.strides, storage=adesc.storage)
+        nsdfg.add_array("_x", shape_x, dtype_x, strides=xdesc.strides, storage=xdesc.storage)
+        nsdfg.add_array("_y", shape_y, dtype_y, strides=ydesc.strides, storage=ydesc.storage)
+        nsdfg.add_array("_res", shape_res, dtype_res, strides=resdesc.strides, storage=resdesc.storage)
 
         # Build tasklet code.
         alpha = node.alpha
-        code_lines = ['import cupy']
+        code_lines = ["import cupy"]
         if equal_valued(1, alpha):
             code_lines.append(
-                '__res_out = cupy.asnumpy(cupy.outer(cupy.asarray(__x), '
-                'cupy.asarray(__y)) + cupy.asarray(__A))')
+                "__res_out = cupy.asnumpy(cupy.outer(cupy.asarray(__x), cupy.asarray(__y)) + cupy.asarray(__A))"
+            )
         elif equal_valued(0, alpha):
-            code_lines.append(
-                '__res_out = cupy.asnumpy(cupy.asarray(__A))')
+            code_lines.append("__res_out = cupy.asnumpy(cupy.asarray(__A))")
         else:
             alpha_str = symstr(alpha)
             code_lines.append(
-                f'__res_out = cupy.asnumpy({alpha_str} '
-                f'* cupy.outer(cupy.asarray(__x), '
-                f'cupy.asarray(__y)) + cupy.asarray(__A))')
+                f"__res_out = cupy.asnumpy({alpha_str} "
+                f"* cupy.outer(cupy.asarray(__x), "
+                f"cupy.asarray(__y)) + cupy.asarray(__A))"
+            )
 
-        code = '\n'.join(code_lines)
+        code = "\n".join(code_lines)
 
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.label + '_cupy_tasklet',
-            {'__A': None, '__x': None, '__y': None},
-            {'__res_out': None},
+            node.label + "_cupy_tasklet",
+            {"__A": None, "__x": None, "__y": None},
+            {"__res_out": None},
             code,
             language=dace.dtypes.Language.Python,
         )
         nstate.add_node(tasklet)
 
         # Wire edges.
-        a_read = nstate.add_read('_A')
-        x_read = nstate.add_read('_x')
-        y_read = nstate.add_read('_y')
-        res_write = nstate.add_write('_res')
+        a_read = nstate.add_read("_A")
+        x_read = nstate.add_read("_x")
+        y_read = nstate.add_read("_y")
+        res_write = nstate.add_write("_res")
 
-        nstate.add_edge(a_read, None, tasklet, '__A',
-                        dace.Memlet.from_array('_A', nsdfg.arrays['_A']))
-        nstate.add_edge(x_read, None, tasklet, '__x',
-                        dace.Memlet.from_array('_x', nsdfg.arrays['_x']))
-        nstate.add_edge(y_read, None, tasklet, '__y',
-                        dace.Memlet.from_array('_y', nsdfg.arrays['_y']))
-        nstate.add_edge(tasklet, '__res_out', res_write, None,
-                        dace.Memlet.from_array('_res', nsdfg.arrays['_res']))
+        nstate.add_edge(a_read, None, tasklet, "__A", dace.Memlet.from_array("_A", nsdfg.arrays["_A"]))
+        nstate.add_edge(x_read, None, tasklet, "__x", dace.Memlet.from_array("_x", nsdfg.arrays["_x"]))
+        nstate.add_edge(y_read, None, tasklet, "__y", dace.Memlet.from_array("_y", nsdfg.arrays["_y"]))
+        nstate.add_edge(tasklet, "__res_out", res_write, None, dace.Memlet.from_array("_res", nsdfg.arrays["_res"]))
 
         return nsdfg
 
@@ -185,21 +256,31 @@ class Ger(LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandGerPure, "CuPy": ExpandGerCuPy}
+    implementations = {
+        "CuPy": ExpandGerCuPy,
+        "pure": ExpandGerPure,
+        "OpenBLAS": ExpandGerOpenBLAS,
+        "MKL": ExpandGerMKL,
+        "cuBLAS": ExpandGerCuBLAS,
+        "rocBLAS": ExpandGerRocBLAS,
+    }
     default_implementation = None
 
     # Object fields
-    n_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    m_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    n_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1, category="Scheduling")
+    m_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1, category="Scheduling")
 
-    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
-    m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"))
+    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"), category="Semantics")
+    m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"), category="Semantics")
 
     alpha = SymbolicProperty(
-        default=1, desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A")
+        default=1,
+        category="Semantics",
+        desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A",
+    )
 
     def __init__(self, name, n=dace.symbolic.symbol("n"), m=dace.symbolic.symbol("m"), alpha=1, location=None):
-        super().__init__(name, location=location, inputs={"_x", "_y", "_A"}, outputs={"_res"})
+        super().__init__(name, location=location, inputs=OrderedSet(("_x", "_y", "_A")), outputs={"_res"})
 
         self.n = n
         self.m = m
@@ -208,9 +289,11 @@ class Ger(LibraryNode):
 
     def compare(self, other):
 
-        if (self.implementation == other.implementation and self.n_tile_size == other.n_tile
-                and self.m_tile_size == other.m_tile):
-
+        if (
+            self.implementation == other.implementation
+            and self.n_tile_size == other.n_tile
+            and self.m_tile_size == other.m_tile
+        ):
             return True
         else:
             return False
@@ -247,7 +330,7 @@ class Ger(LibraryNode):
             raise ValueError("Expected exactly one output from Ger (vector y).")
 
         # The following checks don't work for streams
-        if (not isinstance(desc_x, dt.Array) or not isinstance(desc_y, dt.Array) or not isinstance(desc_a, dt.Array)):
+        if not isinstance(desc_x, dt.Array) or not isinstance(desc_y, dt.Array) or not isinstance(desc_a, dt.Array):
             return
 
         if len(size_a) != 2:
@@ -257,7 +340,7 @@ class Ger(LibraryNode):
         if len(size_y) != 1:
             raise ValueError("y must be a vector")
 
-        if size_a[0] != size_x[0] or size_a[1] != size_y[0]:
+        if symbolic.inequal_symbols(size_a[0], size_x[0]) or symbolic.inequal_symbols(size_a[1], size_y[0]):
             raise ValueError("Input vectors x and y (outer product) must match with the matrix A dimensions.")
 
         out_edges = state.out_edges(self)
@@ -269,27 +352,27 @@ class Ger(LibraryNode):
         out_subset.squeeze()
         size_out = out_subset.size()
 
-        if (len(size_out) != 2 or size_out[0] != size_a[0] or size_out[1] != size_a[1]):
+        if len(size_out) != 2 or size_out[0] != size_a[0] or size_out[1] != size_a[1]:
             raise ValueError("Output matrix must match input matrix a and outer product x*yT.")
 
         return desc_a, desc_x, desc_y
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.ger')
-@oprepo.replaces('dace.libraries.blas.Ger')
-def ger_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, output, alpha):
+@oprepo.replaces("dace.libraries.blas.ger")
+@oprepo.replaces("dace.libraries.blas.Ger")
+def ger_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, output, alpha):
     # Add nodes
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     out = state.add_write(output)
 
-    libnode = Ger('ger', alpha=alpha)
+    libnode = Ger("ger", alpha=alpha)
     state.add_node(libnode)
 
     # Connect nodes
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
-    state.add_edge(libnode, '_res', out, None, mm.Memlet(output))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, "_y", mm.Memlet(y))
+    state.add_edge(libnode, "_res", out, None, mm.Memlet(output))
 
     return []

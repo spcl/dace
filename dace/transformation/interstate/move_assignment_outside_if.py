@@ -5,11 +5,12 @@ questionable.
 """
 
 import ast
-from typing import Dict, List, Tuple
+
 import sympy as sp
 
 from dace import sdfg as sd
-from dace.sdfg import utils as sdutil, nodes as nd
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation
@@ -17,7 +18,6 @@ from dace.transformation import transformation
 
 @transformation.explicit_cf_compatible
 class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
-
     conditional = transformation.PatternNode(ConditionalBlock)
 
     @classmethod
@@ -31,19 +31,20 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
             return False
         fcond = self.conditional.branches[0][0]
         scond = self.conditional.branches[1][0]
-        if (fcond is None or (scond is not None and
-                              (pystr_to_symbolic(fcond.as_string)) != sp.Not(pystr_to_symbolic(scond.as_string)))):
+        if fcond is None or (
+            scond is not None and (pystr_to_symbolic(fcond.as_string)) != sp.Not(pystr_to_symbolic(scond.as_string))
+        ):
             return False
 
         # set of the variables which get a const value assigned
         assigned_const = set()
         # Dict which collects all AccessNodes for each variable together with its state
-        access_nodes: Dict[str, List[Tuple[nd.AccessNode, sd.SDFGState]]] = {}
+        access_nodes: dict[str, list[tuple[nd.AccessNode, sd.SDFGState]]] = {}
         # set of the variables which are only written to
         self.write_only_values = set()
         # Dictionary which stores additional information for the variables which are written only
         self.assign_context = {}
-        for state in self.conditional.all_states():
+        for state in self.conditional.states():
             for node in state.nodes():
                 if isinstance(node, nd.Tasklet):
                     # If node is a tasklet, check if assigns a constant value
@@ -55,7 +56,7 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
                         for edge in state.out_edges(node):
                             if isinstance(edge.dst, nd.AccessNode):
                                 assigned_const.add(edge.dst.data)
-                                self.assign_context[edge.dst.data] = {'state': state, 'tasklet': node}
+                                self.assign_context[edge.dst.data] = {"state": state, "tasklet": node}
                 elif isinstance(node, nd.AccessNode):
                     if node.data not in access_nodes:
                         access_nodes[node.data] = []
@@ -65,15 +66,15 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
         for data, nodes in access_nodes.items():
             write_only = True
             for node, state in nodes:
-                if node.has_reads(state):
-                    # The read is only a problem if it is not written before -> the access node has no incoming edge
-                    if state.in_degree(node) == 0:
+                # A WCR in-edge accumulates onto the incoming value, so the node is read-modify-written
+                # even when nothing reads it in this state.
+                if any(edge.data.wcr is not None for edge in state.in_edges(node)):
+                    write_only = False
+                elif node.has_reads(state):
+                    # The read is only a problem if it is not written before. An empty in-edge is an
+                    # ordering constraint, not a write, so in_degree is the wrong question.
+                    if not node.has_writes(state):
                         write_only = False
-                    else:
-                        # There is also a problem if any edge is an update instead of write
-                        for edge in [*state.out_edges(node), *state.out_edges(node)]:
-                            if edge.data.wcr is not None:
-                                write_only = False
 
             if write_only:
                 self.write_only_values.add(data)
@@ -87,12 +88,12 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # create a new state before the guard state where the zero assignment happens
-        new_assign_state = graph.add_state_before(self.conditional, label='const_assignment_state')
+        new_assign_state = graph.add_state_before(self.conditional, label="const_assignment_state")
 
         # Move all the Tasklets together with the AccessNode
         for value in self.write_only_values:
-            state: sd.SDFGState = self.assign_context[value]['state']
-            tasklet: nd.Tasklet = self.assign_context[value]['tasklet']
+            state: sd.SDFGState = self.assign_context[value]["state"]
+            tasklet: nd.Tasklet = self.assign_context[value]["tasklet"]
             new_assign_state.add_node(tasklet)
             for edge in state.out_edges(tasklet):
                 state.remove_edge(edge)

@@ -1,9 +1,30 @@
+import copy
+
 import dace
 from dace.sdfg.state import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
-from typing import Optional
-import copy
 from dace.transformation.transformation import explicit_cf_compatible
+
+
+def view_keeps_a_data_binding(
+    state: dace.SDFGState, view: dace.nodes.AccessNode, dropped: MultiConnectorEdge[dace.Memlet]
+) -> bool:
+    """Whether ``view`` binds data through some edge other than ``dropped`` (else the fold leaves it dangling)."""
+    for e in state.in_edges(view):
+        if (
+            e is not dropped
+            and not e.data.is_empty()
+            and isinstance(state.memlet_path(e)[0].src, dace.nodes.AccessNode)
+        ):
+            return True
+    for e in state.out_edges(view):
+        if (
+            e is not dropped
+            and not e.data.is_empty()
+            and isinstance(state.memlet_path(e)[-1].dst, dace.nodes.AccessNode)
+        ):
+            return True
+    return False
 
 
 @dace.properties.make_properties
@@ -36,7 +57,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
     """
 
     permissive = dace.properties.Property(
-        dtype=bool, default=False, desc="If permissive the pass does not check if scalar is used in other states")
+        dtype=bool, default=False, desc="If permissive the pass does not check if scalar is used in other states"
+    )
 
     def __init__(self, permissive: bool = False):
         self.permissive = permissive
@@ -47,8 +69,9 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _check_pattern(self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet],
-                       access_node: dace.nodes.AccessNode):
+    def _check_pattern(
+        self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet], access_node: dace.nodes.AccessNode
+    ):
         """Match ``access_node -> A_slice(scalar transient) -> tasklet``.
 
         :param state: State holding the candidate subgraph.
@@ -83,8 +106,10 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         if desc is None or not desc.transient:
             return None, None, None
 
-        if not (isinstance(desc, dace.data.Scalar) or
-                (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
+        if not (
+            isinstance(desc, dace.data.Scalar)
+            or (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)
+        ):
             return None, None, None
         if isinstance(desc, dace.data.View):
             return None, None, None
@@ -110,25 +135,22 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
 
         return access_node, an2, tasklet
 
-    def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, this_state: dace.SDFGState) -> bool:
-        """Return whether ``scalar_name`` appears in the read/write set of
-        any state other than ``this_state``, or in any interstate edge.
+    def _scalar_reused_elsewhere(self, sdfg: dace.SDFG, scalar_name: str, an_slice: dace.nodes.AccessNode) -> bool:
+        """Return whether ``scalar_name`` is used anywhere besides the matched
+        ``an_slice`` node -- another data node in the same state, a data node in
+        another state, or an interstate edge.
 
-        The structural match already guarantees the scalar's only uses in
-        ``this_state`` are the copy write + the single tasklet read, so a
-        reuse can only be in another state's data nodes or an interstate
-        edge's assignments / condition.
+        The same state can hold a second AccessNode reading the value this copy defines
+        (TSVC s255's rotated ``x``); dropping the scalar there leaves it uninitialised.
 
         :param sdfg: SDFG to scan.
         :param scalar_name: The scalar transient's data name.
-        :param this_state: The state the pattern was matched in (excluded).
+        :param an_slice: The matched scalar AccessNode (the only use that folds away).
         :returns: ``True`` if the scalar is read or written elsewhere.
         """
-        for state in sdfg.all_states():
-            if state is this_state:
-                continue
+        for state in sdfg.states():
             for dn in state.data_nodes():
-                if dn.data == scalar_name:
+                if dn.data == scalar_name and dn is not an_slice:
                     return True
         for ise in sdfg.all_interstate_edges():
             if any(str(s) == scalar_name for s in ise.data.free_symbols):
@@ -161,14 +183,19 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
             return None, None
         return an1.data, copy.deepcopy(ie.data.other_subset)
 
-    def _apply_recursive(self, sdfg: dace.SDFG):
-        for state in list(sdfg.all_states()):
+    def _apply_recursive(self, sdfg: dace.SDFG) -> int:
+        """Fold every matching pattern in ``sdfg`` and its nested SDFGs.
+
+        :returns: Number of patterns folded.
+        """
+        folded = 0
+        for state in list(sdfg.states()):
             pre_transform_state_nodes = list(state.nodes())
             for node in pre_transform_state_nodes:
                 if node not in state.nodes():
                     continue
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_recursive(node.sdfg)
+                    folded += self._apply_recursive(node.sdfg)
                     continue
                 for e in list(state.out_edges(node)):
                     an1, an2, tasklet = self._check_pattern(state, e, node)
@@ -208,27 +235,57 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                     if src_array_written_here:
                         continue
 
-                    reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, state)
+                    # A View source binds via whichever edge reaches an access node; this fold retargets one.
+                    if (
+                        isinstance(an1, dace.nodes.AccessNode)
+                        and isinstance(sdfg.arrays[an1.data], dace.data.View)
+                        and not view_keeps_a_data_binding(state, an1, ie)
+                    ):
+                        continue
+
+                    reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, an2)
 
                     if reused:
                         # Keep the scalar; replace the copy with an assignment
                         # tasklet that casts in its body. No map is introduced.
                         state.remove_edge(ie)
-                        cast = state.add_tasklet(name=f"_assign_in_{array_name}_to_{an2.data}",
-                                                 inputs={"_in"},
-                                                 outputs={"_out"},
-                                                 code="_out = _in")
-                        state.add_edge(ie.src, ie.src_conn, cast, "_in",
-                                       dace.memlet.Memlet(data=array_name, subset=read_subset))
-                        state.add_edge(cast, "_out", an2, None,
-                                       dace.memlet.Memlet(data=an2.data, subset=dace.subsets.Range([(0, 0, 1)])))
+                        cast = state.add_tasklet(
+                            name=f"_assign_in_{array_name}_to_{an2.data}",
+                            inputs={"_in"},
+                            outputs={"_out"},
+                            code="_out = _in",
+                        )
+                        state.add_edge(
+                            ie.src, ie.src_conn, cast, "_in", dace.memlet.Memlet(data=array_name, subset=read_subset)
+                        )
+                        state.add_edge(
+                            cast,
+                            "_out",
+                            an2,
+                            None,
+                            dace.memlet.Memlet(data=an2.data, subset=dace.subsets.Range([(0, 0, 1)])),
+                        )
                     else:
                         # Not reused: drop the scalar and wire the source
                         # (array AccessNode or MapEntry connector) straight
                         # into the tasklet.
                         state.remove_node(an2)
-                        state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn,
-                                       dace.memlet.Memlet(data=array_name, subset=read_subset))
+                        state.add_edge(
+                            ie.src,
+                            ie.src_conn,
+                            oe.dst,
+                            oe.dst_conn,
+                            dace.memlet.Memlet(data=array_name, subset=read_subset),
+                        )
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
-        self._apply_recursive(sdfg)
+                    folded += 1
+
+        return folded
+
+    def apply_pass(self, sdfg: dace.SDFG, _) -> int | None:
+        """Fold every ``A -> A_slice -> tasklet`` pattern in the SDFG hierarchy.
+
+        :returns: Number of patterns folded, or ``None`` if none matched.
+        """
+        folded = self._apply_recursive(sdfg)
+        return folded or None

@@ -1,58 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Typed knobs for the multi-dim tile-op vectorizer.
 
-Each optimization variant is a string-valued :class:`enum.Enum`, so a member both
-reads nicely (``ISA.AVX512``) and compares/serialises as its string value
-(``ISA.AVX512 == "AVX512"`` is ``True``). That lets a caller pass either the enum
-member or the raw string; :func:`coerce` normalises a string to the member.
+:class:`ISA` lives with the tile-op dispatch tables that consume it and is re-exported here with the other knobs.
 """
+
 import enum
-from typing import Union
+
+from dace.libraries.tileops.dispatch import ISA
+
+__all__ = ["ISA", "RemainderStrategy", "BranchMode"]
 
 
-class ISA(str, enum.Enum):
-    """Target instruction set for the tile-op backend.
-
-    Per-ISA intrinsic expansions (AVX512/AVX2/ARM_SVE/ARM_NEON/CUDA) exist for
-    K=1 only; CUTILE and the ``pure`` fallback cover K<=3.
-    """
-    AUTO = "AUTO"            #: resolve to the host's best ISA at expansion
-    AVX512 = "AVX512"
-    AVX2 = "AVX2"
-    ARM_SVE = "ARM_SVE"
-    ARM_NEON = "ARM_NEON"
-    SCALAR = "SCALAR"        #: portable scalar reference
-    CUDA = "CUDA"           #: GPU half2 (implies device=GPU)
-    CUTILE = "CUTILE"       #: cuTile ``cuda.tile`` CuTile Python-backend
-
-
-class RemainderStrategy(str, enum.Enum):
+class RemainderStrategy(enum.Enum):
     """How the tiler handles a map extent not divisible by the tile width."""
-    FULL_MASK = "full_mask"                #: single W-strided map, mask every tile
-    MASKED_TAIL = "masked_tail"            #: mask-free interior + masked boundary
-    SCALAR_POSTAMBLE = "scalar_postamble"  #: divisible interior + step-1 scalar tail (K=1 only)
+
+    FULL_MASK = enum.auto()  #: single W-strided map, mask every tile
+    MASKED_TAIL = enum.auto()  #: mask-free interior + masked boundary
+    SCALAR_POSTAMBLE = enum.auto()  #: divisible interior + step-1 scalar tail (K=1 only)
+    BRANCHED_TAIL = enum.auto()  #: GPU K=1 only: one kernel, if(full-tile)=vector / else=scalar
+    BRANCHED_MASKED_TAIL = enum.auto()  #: GPU K=1 DEFAULT: else arm masked, not scalar
 
 
-class BranchMode(str, enum.Enum):
+class BranchMode(enum.Enum):
     """How a same-write-set ``if/else`` is lowered to a per-lane select."""
-    MERGE = "merge"          #: per-lane ``TileITE`` blend
-    FP_FACTOR = "fp_factor"  #: ``c*x + (1-c)*y`` tile-binop arithmetic (K=1 only)
 
-
-def coerce_enum(enum_cls, value):
-    """Return ``value`` as a member of ``enum_cls`` (accepts a member or its string)."""
-    if isinstance(value, enum_cls):
-        return value
-    return enum_cls(value)  # raises ValueError on an unknown string
-
-
-def coerce_isa(value: Union["ISA", str]) -> "ISA":
-    return coerce_enum(ISA, value)
-
-
-def coerce_remainder_strategy(value: Union["RemainderStrategy", str]) -> "RemainderStrategy":
-    return coerce_enum(RemainderStrategy, value)
-
-
-def coerce_branch_mode(value: Union["BranchMode", str]) -> "BranchMode":
-    return coerce_enum(BranchMode, value)
+    MERGE = enum.auto()  #: per-lane ``TileITE`` blend
+    FP_FACTOR = enum.auto()  #: ``c*t + (1-c)*e`` tile-binop arithmetic (K=1 only)

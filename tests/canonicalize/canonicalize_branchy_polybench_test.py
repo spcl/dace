@@ -9,8 +9,9 @@ branchy polybench kernels are concentrated in:
   ``if i + 1 < N`` (invariant over the inner ``j`` loop -- a textbook
   ``MoveLoopInvariantIfUp`` candidate);
 * **floyd_warshall** -- ``if path[i, k] + path[k, j] < path[i, j]: ...``
-  guard inside ``k, i, j``: the guard is data-dependent and the ``i, j``
-  pair is per-step parallel, ``k`` is sequential;
+  guard inside ``k, i, j``: the guard is data-dependent, ``k`` is sequential,
+  and per step only ``i`` is parallel (after an index-set split at ``i == k``)
+  -- ``j`` carries a dependence through ``path[i, k]``;
 * **correlation** -- masked write ``stddev[stddev <= 0.1] = 1.0``,
   expressed scalarly as ``if a[i] <= thr: a[i] = 1.0`` (elementwise
   data-dependent guard);
@@ -27,15 +28,19 @@ expectation depends on an unimplemented pass (e.g. the deferred
 the test is marked ``strict=True`` xfail with a precise reason linking to
 the design doc.
 """
+
+import re
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -46,9 +51,26 @@ def _ncond_blocks(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
 
 
-# ----------------------------------------------------------------------
+def outer_inner_loops(sdfg):
+    """The two LoopRegions of a single two-deep nest, outermost first."""
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert len(loops) == 2, f"expected a two-deep nest, got {[r.label for r in loops]}"
+    first, second = loops
+    return (first, second) if second in first.all_control_flow_blocks() else (second, first)
+
+
+def branch_conditions(region):
+    """Condition strings of every ConditionalBlock anywhere inside ``region``."""
+    return [
+        cond.as_string
+        for blk in region.all_control_flow_blocks()
+        if isinstance(blk, ConditionalBlock)
+        for cond, _ in blk.branches
+        if cond is not None
+    ]
+
+
 # Nussinov boundary guards
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -92,17 +114,26 @@ def test_nussinov_boundary_guards_value_preserving():
     assert np.array_equal(got, exp)
 
 
-# ----------------------------------------------------------------------
+def test_nussinov_invariant_boundary_guard_not_evaluated_per_j():
+    """``i + 1 < N`` is invariant over the inner ``j`` loop and must not be evaluated per ``j``. Inside the inner loop
+    ``i + 1 <= j <= N - 1`` holds, so the guard (like ``j - 1 >= 0``) is provably true there and is dropped."""
+    sdfg = nussinov_boundary_guards.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    outer, inner = outer_inner_loops(sdfg)
+    per_j = [c for c in branch_conditions(inner) if re.search(rf"\b{re.escape(outer.loop_variable)}\b", c)]
+    assert not per_j, f"the i-invariant boundary guard is re-evaluated per j iteration: {per_j}"
+
+
 # Floyd-Warshall: data-dependent guarded update
-# ----------------------------------------------------------------------
 
 
 @dace.program
 def floyd_warshall_step(path: dace.float64[N, N], k: dace.int32):
-    """One outer-``k`` step of Floyd-Warshall: the ``i, j`` pair is fully
-    parallel given ``k``; canonicalize must produce one (i, j) map carrying
-    the data-dependent guard, not a 1D map + an inner sequential ``j``
-    fallback.
+    """One outer-``k`` step of Floyd-Warshall. Both ``i`` and ``j`` conflict on
+    row/column ``k``; splitting the index set at ``i == k`` makes ``i`` parallel,
+    while ``j`` stays order-carried for an arbitrary ``path`` (see
+    ``test_floyd_warshall_step_i_parallel_via_index_split``).
     """
     for i in range(N):
         for j in range(N):
@@ -131,29 +162,51 @@ def test_floyd_warshall_step_value_preserving():
         sdfg.validate()
         got = base.copy()
         sdfg(path=got, k=np.int32(k), N=n)
-        assert np.allclose(got, exp), f'fw step k={k} mismatch'
+        assert np.allclose(got, exp), f"fw step k={k} mismatch"
         base = exp
 
 
-def test_floyd_warshall_step_ij_parallel_one_map():
-    """Structural check: after canonicalize the (i, j) pair fuses to one
-    parallel map (the inner data-dependent guard does not break parallelism
-    because each (i, j) write is independent of every other write in the
-    same k-step). A degraded result -- two separate maps or a remaining
-    sequential inner LoopRegion -- means the data-dependent guard is
-    blocking fusion.
+def test_floyd_warshall_step_nonzero_diagonal_stays_ordered():
+    """The counterexample that makes ``j``-parallelism observable: a non-zero
+    ``path[k, k]`` (which the value test above rules out by construction). A
+    ``j``-parallel step would read the pre-step ``path[0, 1] = 5`` and store
+    ``path[0, 2] = 7``; the loop as written must store ``4``.
+    """
+    base = np.array([[0.0, 5.0, 9.0], [7.0, -3.0, 2.0], [4.0, 6.0, 0.0]])
+    exp = _fw_step_oracle(base.copy(), 1)
+    assert exp[0, 2] == 4.0
+    sdfg = floyd_warshall_step.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = base.copy()
+    sdfg(path=got, k=np.int32(1), N=3)
+    assert np.allclose(got, exp)
+
+
+def test_floyd_warshall_step_i_parallel_via_index_split():
+    """Structural check: ``i`` is parallelized by an index-set split at ``i == k``
+    into ``[0, k)``, ``{k}``, ``(k, N)`` -- three 1D maps -- and ``j`` stays
+    sequential, which is the strongest SOUND result for this kernel.
+
+    ``j`` is NOT parallel: iteration ``j == k`` writes ``path[i, k]``, which every
+    other ``j`` reads, so the loop is order-carried. With ``k = 1`` and
+    ``path = [[0, 5, 9], [7, -3, 2], [4, 6, 0]]`` the loop as written yields
+    ``path[0, 2] = 4`` (it reuses the ``path[0, 1] = 2`` written at ``j == 1``)
+    while any ``j``-parallel form yields ``7``. Real Floyd-Warshall gets away with
+    the parallel form only because ``path[k, k] == 0`` makes the ``i == k`` /
+    ``j == k`` updates no-ops; ``path`` here is an arbitrary input, so canonicalize
+    must not assume it. ``i`` has the same conflict on row ``k`` and that is
+    exactly what the split at ``k`` removes.
     """
     sdfg = floyd_warshall_step.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    n_maps = _nmaps(sdfg)
-    assert n_maps <= 2, (f'expected at most 2 MapEntries (one for the i,j scope and '
-                         f'optionally one inner micro-map for the guarded update), got {n_maps}')
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(maps) == 3, f"expected the three i-segments of the split at k to map, got {len(maps)}"
+    assert all(len(m.map.params) == 1 for m in maps), "each segment maps the i dimension alone"
 
 
-# ----------------------------------------------------------------------
 # Correlation-style masked write
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -193,12 +246,10 @@ def test_masked_threshold_write_stays_one_map():
     sdfg = masked_threshold_write.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'masked elementwise write split to {_nmaps(sdfg)} maps'
+    assert _nmaps(sdfg) == 1, f"masked elementwise write split to {_nmaps(sdfg)} maps"
 
 
-# ----------------------------------------------------------------------
 # Loop-invariant boundary guard (synthetic nussinov-like distilled case)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -228,7 +279,7 @@ def test_loop_invariant_guard_over_inner_value_preserving():
         got = np.zeros_like(a)
         sdfg(a=a, b=got, lim=np.int32(lim), N=n)
         exp = a * (2.0 if lim < n else 1.0)
-        assert np.allclose(got, exp), f'lim={lim}'
+        assert np.allclose(got, exp), f"lim={lim}"
 
 
 def test_loop_invariant_guard_over_inner_hoisted_to_top():
@@ -241,16 +292,19 @@ def test_loop_invariant_guard_over_inner_hoisted_to_top():
     parallel maps."""
     sdfg = loop_invariant_guard_over_inner.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert len(top_conds) == 1, ('expected the (lim < N) guard hoisted to the SDFG '
-                                 f'top level; got {_ncond_blocks(sdfg)} conditional '
-                                 f'block(s) total, {len(top_conds)} at top level')
+    assert len(top_conds) == 1, (
+        "expected the (lim < N) guard hoisted to the SDFG "
+        f"top level; got {_ncond_blocks(sdfg)} conditional "
+        f"block(s) total, {len(top_conds)} at top level"
+    )
 
 
-# ----------------------------------------------------------------------
 # Gramschmidt-style safety guard around a division
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -279,7 +333,7 @@ def test_safety_guarded_divide_value_preserving():
         out = np.zeros(n)
         sdfg(a=a, out=out, denom=np.float64(denom), N=n)
         exp = (a / denom) if denom > 0 else np.zeros(n)
-        assert np.allclose(out, exp), f'denom={denom}'
+        assert np.allclose(out, exp), f"denom={denom}"
 
 
 def test_safety_guarded_divide_keeps_outer_guard_at_top():
@@ -290,9 +344,10 @@ def test_safety_guarded_divide_keeps_outer_guard_at_top():
     sdfg = safety_guarded_divide.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert any(isinstance(c, ConditionalBlock) for c in sdfg.nodes()), \
-        'top-level safety guard was pushed inside the map nest'
+    assert any(isinstance(c, ConditionalBlock) for c in sdfg.nodes()), (
+        "top-level safety guard was pushed inside the map nest"
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -1,17 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop peeling transformation """
+"""Loop peeling transformation"""
 
 import ast
 import copy
+
 import sympy as sp
-from typing import List, Optional
 
 from dace import sdfg as sd
 from dace import symbolic
+from dace.frontend.python.astutils import ASTFindReplace
+from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
-from dace.frontend.python.astutils import ASTFindReplace
-from dace.properties import Property, make_properties, CodeBlock
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
@@ -28,7 +28,8 @@ class LoopPeeling(LoopUnroll):
     begin = Property(
         dtype=bool,
         default=True,
-        desc='If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.',
+        category="Parameters",
+        desc="If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.",
     )
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -40,36 +41,37 @@ class LoopPeeling(LoopUnroll):
         condition = pystr_to_symbolic(condition.as_string)
         itersym = pystr_to_symbolic(var)
         # Find condition by matching expressions
-        end: Optional[sp.Expr] = None
-        a = sp.Wild('a')
-        op = ''
+        end: sp.Expr | None = None
+        a = sp.Wild("a")
+        op = ""
         match = condition.match(itersym < a)
         if match:
-            op = '<'
+            op = "<"
             end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym <= a)
             if match:
-                op = '<='
+                op = "<="
                 end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym > a)
             if match:
-                op = '>'
+                op = ">"
                 end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym >= a)
             if match:
-                op = '>='
+                op = ">="
                 end = match[a] - self.count * step
         if len(op) == 0:
-            raise ValueError('Cannot match loop condition for peeling')
+            raise ValueError("Cannot match loop condition for peeling")
 
         res = str(itersym) + op + str(end)
         return res
 
-    def _instantiate_peeled_iteration(self, graph: ControlFlowRegion, value: symbolic.SymbolicType,
-                                      label_suffix: Optional[str]) -> ControlFlowBlock:
+    def _instantiate_peeled_iteration(
+        self, graph: ControlFlowRegion, value: symbolic.SymbolicType, label_suffix: str | None
+    ) -> ControlFlowBlock:
         """Instantiate one peeled iteration of ``self.loop`` directly into
         ``graph``, choosing the FLATTEST representation that still preserves
         the body's control flow:
@@ -105,30 +107,33 @@ class LoopPeeling(LoopUnroll):
         loop = self.loop
         loop_var = loop.loop_variable
         suffix = label_suffix if label_suffix is not None else str(value)
-        it_label = f'{loop.label}_{loop_var}{suffix}'
+        it_label = f"{loop.label}_{loop_var}{suffix}"
 
         body_blocks = list(loop.nodes())
-        single_state = (len(body_blocks) == 1 and isinstance(body_blocks[0], SDFGState))
+        single_state = len(body_blocks) == 1 and isinstance(body_blocks[0], SDFGState)
 
         if single_state:
             src_state: SDFGState = body_blocks[0]
             new_state = graph.add_state(it_label)
             node_map = {}
+            # ONE memo across every node: a scope's entry and exit share a single ``Map`` object, and
+            # copying each node against its own memo hands them two, silently breaking the
+            # ``entry.map is exit.map`` invariant that codegen keys its map-scope bookkeeping on.
+            memo = {}
             for n in src_state.nodes():
-                nn = copy.deepcopy(n)
+                nn = copy.deepcopy(n, memo)
                 node_map[n] = nn
                 new_state.add_node(nn)
             for e in src_state.edges():
                 new_state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, copy.deepcopy(e.data))
             self._replace_loop_var_in_block(new_state, loop_var, value)
-            graph.reset_cfg_list()
             return new_state
 
         # Multi-state body: keep the CFR wrapping so internal interstate
         # edges live with the iter, but use the same deepcopy-and-remap
         # pattern as the single-state case.
         new_cfr = ControlFlowRegion(it_label, graph.sdfg, graph)
-        graph.add_node(new_cfr)
+        graph.add_node(new_cfr, ensure_unique_name=True)
         block_map = {}
         for b in body_blocks:
             nb = copy.deepcopy(b)
@@ -141,7 +146,6 @@ class LoopPeeling(LoopUnroll):
         for e, _parent in new_cfr.all_edges_recursive():
             if isinstance(e.data, sd.InterstateEdge):
                 self._replace_loop_var_in_iedge(e.data, loop_var, value)
-        graph.reset_cfg_list()
         return new_cfr
 
     @staticmethod
@@ -150,12 +154,12 @@ class LoopPeeling(LoopUnroll):
         ``replace_dict`` covers tasklets/memlets/connectors, and walks any
         nested SDFGs' ``symbol_mapping``)."""
         block.replace_dict({loop_var: value})
-        for n in block.all_nodes_recursive() if hasattr(block, 'all_nodes_recursive') else []:
+        for n in block.all_nodes_recursive() if hasattr(block, "all_nodes_recursive") else []:
             if isinstance(n, NestedSDFG):
                 if loop_var in n.symbol_mapping:
-                    n.symbol_mapping[loop_var] = ASTFindReplace({
-                        loop_var: str(value)
-                    }).visit(n.symbol_mapping[loop_var])
+                    n.symbol_mapping[loop_var] = ASTFindReplace({loop_var: str(value)}).visit(
+                        n.symbol_mapping[loop_var]
+                    )
                 if loop_var in n.symbol_mapping:
                     del n.symbol_mapping[loop_var]
 
@@ -179,10 +183,13 @@ class LoopPeeling(LoopUnroll):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
-        is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
+        # A symbolic bound makes every iterate value symbolic too, so the label falls back to the
+        # iteration index. Upstream dropped this in favour of always indexing; extended still needs
+        # it because _instantiate_peeled_iteration takes the suffix rather than an index.
+        is_symbolic = any(symbolic.issymbolic(r) for r in (start, end))
 
         if self.begin:
-            peeled_iterations: List[ControlFlowBlock] = []
+            peeled_iterations: list[ControlFlowBlock] = []
             for i in range(self.count):
                 current_index = start + (i * stride)
                 is_symbolic |= symbolic.issymbolic(current_index)
@@ -199,9 +206,9 @@ class LoopPeeling(LoopUnroll):
                 graph.add_edge(peeled_iterations[-1], self.loop, sd.InterstateEdge())
 
                 new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
-                self.loop.init_statement = CodeBlock(f'{self.loop.loop_variable} = {new_start}')
+                self.loop.init_statement = CodeBlock(f"{self.loop.loop_variable} = {new_start}")
         else:
-            peeled_iterations: List[ControlFlowBlock] = []
+            peeled_iterations: list[ControlFlowBlock] = []
             for i in reversed(range(self.count)):
                 # Anchor the iterate value on the loop end (never the loop
                 # variable) so back-peeled iterations don't leak a loop-defined

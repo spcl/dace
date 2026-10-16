@@ -53,7 +53,7 @@ from dace.dtypes import DeviceType
 # ============================================================
 
 
-def _vectorize_cutile(sdfg: SDFG, widths: Tuple[int, ...]) -> None:
+def _vectorize_cutile(sdfg: SDFG, widths: Tuple[int, ...], gpu: bool = False) -> None:
     """Run the building-block vectorizer config for the cuTile lowering.
 
     Uses ``device=CPU`` (host maps) so the individual lowering passes can be
@@ -62,13 +62,15 @@ def _vectorize_cutile(sdfg: SDFG, widths: Tuple[int, ...]) -> None:
     :param sdfg: The SDFG to vectorize in place.
     :param widths: Per-dim tile widths, innermost-last.
     """
+    sdfg.backend = dtypes.BackendLanguage.Python
+    if gpu:
+        sdfg.apply_gpu_transformations(simplify=True)
     VectorizeMultiDim(
         VectorizeConfig(widths=widths,
                         target_isa=ISA.CUTILE,
                         expand_tile_nodes=False,
                         validate=False,
-                        assumption_guard=False,
-                        device=DeviceType.CPU)).apply_pass(sdfg, {})
+                        device=DeviceType.GPU if gpu else DeviceType.CPU)).apply_pass(sdfg, {})
 
 
 def _build_unvectorized_vadd_sdfg() -> SDFG:
@@ -83,14 +85,14 @@ def _build_unvectorized_vadd_sdfg() -> SDFG:
     return cutile_lowering_vadd_plain.to_sdfg()
 
 
-def _build_vadd_k1_sdfg() -> SDFG:
+def _build_vadd_k1_sdfg(gpu: bool = False) -> SDFG:
     """Symbolic-size K=1 vadd, vectorized with ``widths=(8,)``."""
     sdfg = _build_unvectorized_vadd_sdfg()
-    _vectorize_cutile(sdfg, (8, ))
+    _vectorize_cutile(sdfg, (8, ), gpu=gpu)
     return sdfg
 
 
-def _build_vadd_k2_sdfg() -> SDFG:
+def _build_vadd_k2_sdfg(gpu: bool = False) -> SDFG:
     """Symbolic-size K=2 vadd, vectorized with ``widths=(8, 4)``."""
     M = dace.symbol("M")
     N = dace.symbol("N")
@@ -101,11 +103,11 @@ def _build_vadd_k2_sdfg() -> SDFG:
             C[i, j] = A[i, j] + B[i, j]
 
     sdfg = cutile_lowering_vadd_k2.to_sdfg()
-    _vectorize_cutile(sdfg, (8, 4))
+    _vectorize_cutile(sdfg, (8, 4), gpu=gpu)
     return sdfg
 
 
-def _build_vadd_concrete_sdfg() -> SDFG:
+def _build_vadd_concrete_sdfg(gpu: bool = False) -> SDFG:
     """Concrete-size vadd with a non-divisible boundary (100 % 8 != 0)."""
 
     @dace.program
@@ -114,7 +116,7 @@ def _build_vadd_concrete_sdfg() -> SDFG:
             C[i] = A[i] + B[i]
 
     sdfg = cutile_lowering_vadd_n100.to_sdfg()
-    _vectorize_cutile(sdfg, (8, ))
+    _vectorize_cutile(sdfg, (8, ), gpu=gpu)
     return sdfg
 
 
@@ -225,12 +227,15 @@ def _outermost_anchored_entries(sdfg: SDFG) -> Set[nodes.MapEntry]:
     """
     outermost: Set[nodes.MapEntry] = set()
     for node, state in _tileops_nodes(sdfg):
-        scope_dict = state.scope_dict()
-        scope = scope_dict.get(node)
         last = None
-        while scope is not None:
-            last = scope
-            scope = scope_dict.get(scope)
+        while state is not None:
+            scope_dict = state.scope_dict()
+            scope = scope_dict.get(node)
+            while scope is not None:
+                last = scope
+                scope = scope_dict.get(scope)
+            node = state.sdfg.parent_nsdfg_node
+            state = state.sdfg.parent if node is not None else None
         if last is not None:
             outermost.add(last)
     return outermost
@@ -251,11 +256,6 @@ def _apply_gpu_and_adapt(sdfg: SDFG) -> None:
     Replaces the old ``CuTileSetSchedules`` + ``CuTileSetGlobalStorage``
     sequence.
     """
-    sdfg.apply_gpu_transformations(
-        sequential_innermaps=True,
-        register_transients=True,
-        simplify=True,
-    )
     GPUDeviceToCuTile().apply_pass(sdfg, {})
 
 
@@ -311,13 +311,8 @@ class TestGPUDeviceToCuTile:
         """Build vadd sdfg, vectorize, validate, apply_gpu_transformations,
         then GPUDeviceToCuTile -- verify tileops-anchored maps get CuTile
         schedule."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         CuTileValidateTiles().apply_pass(sdfg, {})
-        sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
-            simplify=True,
-        )
         # Before the adapter pass, tileops-anchored maps should be GPU_Device
         gpu_device_maps = [n for n, _ in _all_map_entries(sdfg) if n.map.schedule == dtypes.ScheduleType.GPU_Device]
         assert len(gpu_device_maps) >= 1, "Expected at least one GPU_Device map"
@@ -331,13 +326,8 @@ class TestGPUDeviceToCuTile:
 
     def test_returns_kernel_count(self):
         """Verify return value is positive for a vectorized vadd."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         CuTileValidateTiles().apply_pass(sdfg, {})
-        sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
-            simplify=True,
-        )
         result = GPUDeviceToCuTile().apply_pass(sdfg, {})
         assert result is not None and result >= 1
 
@@ -357,7 +347,7 @@ class TestGPUDeviceToCuTile:
         """A residual GPU_Device map with provably tiny volume (<= 4) is the
         intended scalar-control case: demoted to Sequential with no warning."""
         sdfg = _build_vadd_k1_sdfg()
-        sdfg.apply_gpu_transformations(sequential_innermaps=True, register_transients=True, simplify=True)
+        sdfg.apply_gpu_transformations( simplify=True)
         entry = _add_residual_gpu_map(sdfg, "0:2")
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -369,7 +359,7 @@ class TestGPUDeviceToCuTile:
         """A large residual GPU_Device map warns (naming map/state/volume and
         the host-loop consequence) but is still demoted in non-strict mode."""
         sdfg = _build_vadd_k1_sdfg()
-        sdfg.apply_gpu_transformations(sequential_innermaps=True, register_transients=True, simplify=True)
+        sdfg.apply_gpu_transformations( simplify=True)
         entry = _add_residual_gpu_map(sdfg, "0:1024")
         with pytest.warns(UserWarning, match="residual_map.*volume 1024.*per-element host loop"):
             GPUDeviceToCuTile().apply_pass(sdfg, {})
@@ -378,7 +368,7 @@ class TestGPUDeviceToCuTile:
     def test_symbolic_residual_map_demotion_warns(self):
         """A symbolic-volume residual map is not provably tiny: warns too."""
         sdfg = _build_vadd_k1_sdfg()
-        sdfg.apply_gpu_transformations(sequential_innermaps=True, register_transients=True, simplify=True)
+        sdfg.apply_gpu_transformations( simplify=True)
         entry = _add_residual_gpu_map(sdfg, "0:N")
         with pytest.warns(UserWarning, match="per-element host loop"):
             GPUDeviceToCuTile().apply_pass(sdfg, {})
@@ -387,7 +377,7 @@ class TestGPUDeviceToCuTile:
     def test_large_residual_map_strict_raises(self):
         """strict=True: the large-residual-map demotion raises instead."""
         sdfg = _build_vadd_k1_sdfg()
-        sdfg.apply_gpu_transformations(sequential_innermaps=True, register_transients=True, simplify=True)
+        sdfg.apply_gpu_transformations( simplify=True)
         entry = _add_residual_gpu_map(sdfg, "0:1024")
         with pytest.raises(ValueError, match="per-element host loop"):
             GPUDeviceToCuTile(strict=True).apply_pass(sdfg, {})
@@ -416,13 +406,8 @@ class TestBlasOnlyConfiguration:
 
     def test_idempotent(self):
         """Running twice on already-CuTile map returns None."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         CuTileValidateTiles().apply_pass(sdfg, {})
-        sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
-            simplify=True,
-        )
         GPUDeviceToCuTile().apply_pass(sdfg, {})
         # Second run: maps are already CuTile (not GPU_Device), so nothing to re-stamp
         result = GPUDeviceToCuTile().apply_pass(sdfg, {})
@@ -430,13 +415,8 @@ class TestBlasOnlyConfiguration:
 
     def test_k2_stamps_kernels(self):
         """K=2 widths, verify tileops-anchored maps become CuTile."""
-        sdfg = _build_vadd_k2_sdfg()
+        sdfg = _build_vadd_k2_sdfg(gpu=True)
         CuTileValidateTiles().apply_pass(sdfg, {})
-        sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
-            simplify=True,
-        )
         result = GPUDeviceToCuTile().apply_pass(sdfg, {})
         assert result is not None and result >= 1
         cutile_maps = _cutile_map_entries(sdfg)
@@ -452,19 +432,20 @@ class TestSetTileStorage:
 
     def test_k1_tile_and_mask_transients_stamped(self):
         """K=1: the 4 Register tile/mask transients become CuTile_Tile."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         _apply_gpu_and_adapt(sdfg)
         result = CuTileSetTileStorage().apply_pass(sdfg, {})
         assert result is not None and result > 0
-        stamped = {name for name, desc in sdfg.arrays.items() if desc.storage == dtypes.StorageType.CuTile_Tile}
+        stamped = [desc for owner in sdfg.all_sdfgs_recursive() for desc in owner.arrays.values()
+                   if desc.storage == dtypes.StorageType.CuTile_Tile]
         assert len(stamped) >= 1
-        for name in stamped:
-            assert sdfg.arrays[name].transient, f"{name} is not transient"
-            assert isinstance(sdfg.arrays[name], data.Array)
+        for desc in stamped:
+            assert desc.transient
+            assert isinstance(desc, data.Array)
 
     def test_scalar_descriptors_untouched(self):
         """No Scalar descriptor changes storage (and none becomes a tile)."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         _apply_gpu_and_adapt(sdfg)
         scalar_storage_before = {(owner, name): storage for (owner, name), storage in _storage_snapshot(sdfg).items()}
         CuTileSetTileStorage().apply_pass(sdfg, {})
@@ -490,7 +471,7 @@ class TestSetTileStorage:
 
     def test_idempotent_second_run(self):
         """A second run stamps nothing (returns None), storages unchanged."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         _apply_gpu_and_adapt(sdfg)
         CuTileSetTileStorage().apply_pass(sdfg, {})
         before = _storage_snapshot(sdfg)
@@ -512,7 +493,7 @@ class TestSetImplementations:
         lib_nodes = _tileops_nodes(sdfg)
         assert len(lib_nodes) == 9
         for node, _ in lib_nodes:
-            assert node.target_isa == "CUTILE", f"{node.label}: target_isa {node.target_isa}"
+            assert node.target_isa == ISA.CUTILE, f"{node.label}: target_isa {node.target_isa}"
             assert node.implementation == "cutile", f"{node.label}: implementation {node.implementation}"
 
     def test_k2_nodes_stamped(self):
@@ -543,7 +524,7 @@ class TestSetImplementations:
         sdfg = _build_tile_iota_sdfg()
         assert CuTileSetImplementations().apply_pass(sdfg, {}) == 1
         for node, _ in _tileops_nodes(sdfg):
-            assert node.target_isa == "CUTILE"
+            assert node.target_isa == ISA.CUTILE
             assert node.implementation == "cutile"
 
     def test_tile_iota_expands_to_python_tasklet(self):
@@ -571,11 +552,11 @@ class TestSetImplementations:
                 CuTileSetImplementations().apply_pass(sdfg, {})
 
     def test_idempotent_second_run(self):
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         CuTileSetImplementations().apply_pass(sdfg, {})
         assert CuTileSetImplementations().apply_pass(sdfg, {}) == 9
         for node, _ in _tileops_nodes(sdfg):
-            assert node.target_isa == "CUTILE"
+            assert node.target_isa == ISA.CUTILE
             assert node.implementation == "cutile"
 
 
@@ -589,11 +570,6 @@ class TestPipelineOrdering:
     def _run_full_sequence(self, sdfg: SDFG) -> None:
         """Apply the passes in documented order, then expand + backend."""
         CuTileValidateTiles().apply_pass(sdfg, {})
-        sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
-            simplify=True,
-        )
         GPUDeviceToCuTile().apply_pass(sdfg, {})
         CuTileSetTileStorage().apply_pass(sdfg, {})
         CuTileSetImplementations().apply_pass(sdfg, {})
@@ -602,7 +578,7 @@ class TestPipelineOrdering:
 
     def test_full_sequence_k2_generates_cutile_code(self):
         """Documented sequence on K=2 vadd -> Python backend cuTile code."""
-        sdfg = _build_vadd_k2_sdfg()
+        sdfg = _build_vadd_k2_sdfg(gpu=True)
         self._run_full_sequence(sdfg)
         assert not any(isinstance(n, nodes.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
         assert sdfg.backend == dtypes.BackendLanguage.Python
@@ -621,11 +597,6 @@ class TestPipelineOrdering:
         """Concrete non-divisible size (100 % 8 != 0) through the sequence."""
         sdfg = _build_vadd_concrete_sdfg()
         assert CuTileValidateTiles().apply_pass(sdfg, {}) == 9
-        sdfg.apply_gpu_transformations(
-            sequential_innermaps=True,
-            register_transients=True,
-            simplify=True,
-        )
         assert GPUDeviceToCuTile().apply_pass(sdfg, {}) >= 1
         result = CuTileSetTileStorage().apply_pass(sdfg, {})
         assert result is not None and result > 0
@@ -639,7 +610,7 @@ class TestPipelineOrdering:
     def test_storage_before_gpu_transforms_is_warned_noop_then_recovers(self):
         """Out-of-order: a storage pass run first warns and is a no-op; the
         documented order afterwards still works on the same SDFG."""
-        sdfg = _build_vadd_k1_sdfg()
+        sdfg = _build_vadd_k1_sdfg(gpu=True)
         before = _storage_snapshot(sdfg)
         with pytest.warns(UserWarning, match="no CuTile-scheduled map found"):
             assert CuTileSetTileStorage().apply_pass(sdfg, {}) is None
@@ -696,15 +667,15 @@ def _build_nsdfg_boundary_sdfg(name: str, with_tileops: bool) -> SDFG:
         (tileops-fed connector); otherwise a plain tasklet chain.
     """
     inner = dace.SDFG(f"{name}_inner")
-    inner.add_array("_in_A", (8, ), dace.float64)
-    inner.add_array("_out_C", (8, ), dace.float64)
+    inner.add_array("_in_A", (100, ), dace.float64)
+    inner.add_array("_out_C", (100, ), dace.float64)
     istate = inner.add_state("body")
     if with_tileops:
         binop = TileBinop(name="tb", widths=(8, ), op="+")
         istate.add_node(binop)
-        istate.add_edge(istate.add_access("_in_A"), None, binop, "_a", dace.Memlet("_in_A[0:8]"))
-        istate.add_edge(istate.add_access("_in_A"), None, binop, "_b", dace.Memlet("_in_A[0:8]"))
-        istate.add_edge(binop, "_c", istate.add_access("_out_C"), None, dace.Memlet("_out_C[0:8]"))
+        istate.add_edge(istate.add_access("_in_A"), None, binop, "_a", dace.Memlet("_in_A[96:104]", allow_oob=True))
+        istate.add_edge(istate.add_access("_in_A"), None, binop, "_b", dace.Memlet("_in_A[96:104]", allow_oob=True))
+        istate.add_edge(binop, "_c", istate.add_access("_out_C"), None, dace.Memlet("_out_C[96:104]", allow_oob=True))
     else:
         tasklet = istate.add_tasklet("t", {"_a"}, {"_c"}, "_c = _a")
         istate.add_edge(istate.add_access("_in_A"), None, tasklet, "_a", dace.Memlet("_in_A[0]"))
@@ -818,9 +789,9 @@ class TestClampPropagatedOOBMemlets:
         marked = dace.Memlet("A[i:i+8]")
         marked.allow_oob = True
         rng = sbs.Range.from_string("0:100:8")
-        dropped = propagate_subset([unmarked, marked], arr, ["i"], rng)
+        dropped = propagate_subset([unmarked, marked], arr, ["i"], rng, dace.symbolic.Facts.none())
         assert not dropped.allow_oob  # flag of memlets[1] silently dropped
-        kept = propagate_subset([marked, unmarked], arr, ["i"], rng)
+        kept = propagate_subset([marked, unmarked], arr, ["i"], rng, dace.symbolic.Facts.none())
         assert kept.allow_oob
 
     @pytest.mark.gpu

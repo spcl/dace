@@ -10,15 +10,18 @@ the operand depends on the tile iter-vars.
 Both pieces are consumed by the prep / emitter passes; this module
 contains no SDFG mutation — only analysis.
 """
+
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple
 
-from dace import subsets
-from dace.symbolic import pystr_to_symbolic
+import sympy
+
+from dace import subsets, symbolic
+from dace.sdfg.narrowing import as_expr
+from dace.symbolic import equalize_symbols_across, pystr_to_symbolic
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TileDimSpec:
     """Per-map tile specification.
 
@@ -33,16 +36,18 @@ class TileDimSpec:
         (string form so symbolic expressions survive serialization).
     """
 
-    iter_vars: Tuple[str, ...]
-    widths: Tuple[int, ...]
-    global_ubs: Tuple[str, ...]
+    iter_vars: tuple[str, ...]
+    widths: tuple[int, ...]
+    global_ubs: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (1 <= len(self.widths) <= 3):
             raise ValueError(f"TileDimSpec: K must be in {{1, 2, 3}}, got {len(self.widths)}")
         if not (len(self.iter_vars) == len(self.widths) == len(self.global_ubs)):
-            raise ValueError(f"TileDimSpec: iter_vars / widths / global_ubs lengths must agree; "
-                             f"got {len(self.iter_vars)}, {len(self.widths)}, {len(self.global_ubs)}")
+            raise ValueError(
+                f"TileDimSpec: iter_vars / widths / global_ubs lengths must agree; "
+                f"got {len(self.iter_vars)}, {len(self.widths)}, {len(self.global_ubs)}"
+            )
 
     @property
     def K(self) -> int:
@@ -55,12 +60,12 @@ class TileAccessKind(Enum):
 
     :cvar CONTIGUOUS: Every tile dim's index is ``base_d + tile_var_d``
         and the source array has unit stride on that dim — emit
-        :class:`TileLoad` / :class:`TileStore` with ``dim_strides``
+        :class:`TileGather` / :class:`TileScatter` with ``dim_strides``
         all 1.
     :cvar STRIDED: At least one tile dim's index is
         ``base_d + s_d * tile_var_d`` with ``s_d > 1`` (or a non-unit
-        array stride on that dim) — emit :class:`TileLoad` /
-        :class:`TileStore` with the actual ``dim_strides``.
+        array stride on that dim) — emit :class:`TileGather` /
+        :class:`TileScatter` with the actual ``dim_strides``.
     :cvar BROADCAST_SYMBOL: The subset has no dependency on any tile
         iter-var — the operand is broadcast inline as
         :class:`TileBinop` ``kind=Symbol``.
@@ -77,7 +82,7 @@ class TileAccessKind(Enum):
     :cvar GATHER: A source-array dim's index is data-dependent / not a
         perfect box: read from a SEPARATE index array (``b[idx[i]]``), a
         diagonal (``a[i, i]`` — one tile var in two dims), or a dim mixing
-        tile vars (``a[i + j]``). Emit ``TileLoad`` / ``TileStore``.
+        tile vars (``a[i + j]``). Emit ``TileGather`` / ``TileScatter``.
     :cvar UNRECOGNIZED: Anything the classifier cannot put into the
         above buckets (a tile var bound to no subset dim, etc.).
     """
@@ -90,7 +95,7 @@ class TileAccessKind(Enum):
     UNRECOGNIZED = "Unrecognized"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TileAccessClassification:
     """Output of :func:`classify_tile_access`.
 
@@ -111,11 +116,11 @@ class TileAccessClassification:
     """
 
     kind: TileAccessKind
-    dim_strides: Tuple[int, ...] = field(default_factory=tuple)
-    match_dims: Tuple[int, ...] = field(default_factory=tuple)
+    dim_strides: tuple[int, ...] = field(default_factory=tuple)
+    match_dims: tuple[int, ...] = field(default_factory=tuple)
 
 
-def _coeff_of(expr_sym, var_sym) -> Optional[int]:
+def _coeff_of(expr_sym: sympy.Basic, var_sym: sympy.Symbol) -> int | None:
     """Return the integer coefficient of ``var_sym`` in ``expr_sym``.
 
     :param expr_sym: Sympy expression.
@@ -125,7 +130,7 @@ def _coeff_of(expr_sym, var_sym) -> Optional[int]:
         dependency on this expression; else ``None``.
     """
     try:
-        poly = expr_sym.as_poly(var_sym)
+        poly = as_expr(expr_sym).as_poly(var_sym)
     except Exception:
         return None
     if poly is None:
@@ -143,7 +148,7 @@ def _coeff_of(expr_sym, var_sym) -> Optional[int]:
 _STRUCTURED_FN_NAMES = {"int_floor", "int_ceil"}
 
 
-def _structured_subtrees(expr):
+def _structured_subtrees(expr: sympy.Basic) -> list[sympy.Basic]:
     """Yield every ``int_floor`` / ``int_ceil`` sub-expression of ``expr``.
 
     :param expr: A sympy expression (from :func:`pystr_to_symbolic`).
@@ -157,7 +162,7 @@ def _structured_subtrees(expr):
     return out
 
 
-def _structured_coeff_in(b_sym, var_sym) -> Optional[int]:
+def _structured_coeff_in(b_sym: sympy.Basic, var_sym: sympy.Symbol) -> int | None:
     """Coefficient of ``var_sym`` when it appears ONLY inside ``int_floor`` /
     ``int_ceil`` with an affine argument (a deterministic replication index,
     e.g. ``int_floor(2*i + 1, 2)``), or ``None`` if not such a structured form.
@@ -172,6 +177,8 @@ def _structured_coeff_in(b_sym, var_sym) -> Optional[int]:
     :returns: The affine coefficient of ``var_sym`` inside the structured
         function (e.g. ``2`` for ``int_floor(2*i, 2)``), else ``None``.
     """
+    # membership, subs and the coeff walk below all go through identity; equalize first
+    b_sym, var_sym = equalize_symbols_across(b_sym, var_sym)
     if var_sym not in b_sym.free_symbols:
         return None
     subtrees = [s for s in _structured_subtrees(b_sym) if var_sym in s.free_symbols]
@@ -193,7 +200,7 @@ def _structured_coeff_in(b_sym, var_sym) -> Optional[int]:
     return coeff
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DimIndex:
     """Per-array-dim summary of how one access dim's index depends on the
     tile iter-vars — the single analysis the box taxonomy projects from.
@@ -207,15 +214,15 @@ class DimIndex:
         replication, no data dependence).
     """
 
-    dep: Tuple[int, ...]
-    affine_coeffs: dict = field(default_factory=dict)
+    dep: tuple[int, ...]
+    affine_coeffs: dict[int, int] = field(default_factory=dict)
     structured: bool = False
 
 
 def build_dim_index_map(
     subset: subsets.Range,
-    tile_iter_vars: Tuple[str, ...],
-) -> Optional[List[DimIndex]]:
+    tile_iter_vars: tuple[str, ...],
+) -> list[DimIndex] | None:
     """Build the per-array-dim index map for ``subset`` under ``tile_iter_vars``.
 
     For each array dim, records which tile vars its begin expression depends on
@@ -231,15 +238,15 @@ def build_dim_index_map(
     """
     tile_syms = [pystr_to_symbolic(v) for v in tile_iter_vars]
     name_to_pos = {v: p for p, v in enumerate(tile_iter_vars)}
-    out: List[DimIndex] = []
-    for (b, _e, _s) in subset.ranges:
+    out: list[DimIndex] = []
+    for b, _e, _s in subset.ranges:
         try:
             b_sym = pystr_to_symbolic(str(b))
         except Exception:
             return None
         free = {str(s) for s in b_sym.free_symbols}
         dep = sorted(name_to_pos[v] for v in tile_iter_vars if v in free)
-        affine_coeffs: dict = {}
+        affine_coeffs: dict[int, int] = {}
         structured = False
         for p in dep:
             tsym = tile_syms[p]
@@ -254,8 +261,8 @@ def build_dim_index_map(
 
 def classify_tile_access(
     subset: subsets.Range,
-    array_strides: Tuple,
-    tile_iter_vars: Tuple[str, ...],
+    array_strides: tuple[symbolic.SymbolicType, ...],
+    tile_iter_vars: tuple[str, ...],
 ) -> TileAccessClassification:
     """Classify how a memlet subset depends on the tile iter-vars.
 
@@ -290,14 +297,14 @@ def classify_tile_access(
 
     K = len(tile_iter_vars)
     if all(not di.dep for di in dims):
-        return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=(0, ) * K)
+        return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=(0,) * K)
 
     # Bijection check: each tile var must bind to exactly one array dim, and
     # each tile-dependent dim to exactly one tile var.
     tilevar_dims = {p: [d for d, di in enumerate(dims) if p in di.dep] for p in range(K)}
     if any(len(ds) > 1 for ds in tilevar_dims.values()):
         # A tile var spanning ≥2 array dims is a diagonal (``a[i, i]``).
-        # K=1 lowers it via a TileLoad (gather_dims) over an affine per-dim index map
+        # K=1 lowers it via a TileGather (gather_dims) over an affine per-dim index map
         # (one shared lane offset folded into every spanned dim). For K>1 a
         # diagonal inside a multi-dim register tile is unsupported — the
         # gather map would have to fold one shared tile var across multiple
@@ -324,8 +331,8 @@ def classify_tile_access(
 
     # Perfect box (or partial box): per tile dim, classify affine vs structured
     # vs unbound vs neither.
-    match_dims: List[int] = []
-    per_tile_dim_strides: List[int] = []
+    match_dims: list[int] = []
+    per_tile_dim_strides: list[int] = []
     structured = False
     # First pick a fallback ``match_dims`` value for the unbound lanes (any
     # bound dim works; default to 0 when nothing is bound — but at K=1 a
@@ -351,9 +358,9 @@ def classify_tile_access(
     dim_strides = tuple(per_tile_dim_strides)
     match_dims_t = tuple(match_dims)
     if structured:
-        return TileAccessClassification(kind=TileAccessKind.STRUCTURED,
-                                        dim_strides=dim_strides,
-                                        match_dims=match_dims_t)
+        return TileAccessClassification(
+            kind=TileAccessKind.STRUCTURED, dim_strides=dim_strides, match_dims=match_dims_t
+        )
 
     # CONTIGUOUS = aligned to the last K dims, unit coefficients, unit
     # innermost memory stride; else STRIDED. Both lower via
@@ -361,7 +368,7 @@ def classify_tile_access(
     ndim = len(array_strides)
     aligned = all(match_dims[p] == ndim - K + p for p in range(K))
     try:
-        innermost_unit_stride = int(array_strides[match_dims[-1]]) == 1
+        innermost_unit_stride = int(as_expr(array_strides[match_dims[-1]])) == 1
     except (TypeError, ValueError):
         innermost_unit_stride = pystr_to_symbolic(str(array_strides[match_dims[-1]] - 1)) == 0
 

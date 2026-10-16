@@ -1,17 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
-import dace
 import numpy as np
 
-N = dace.symbol('N')
+import dace
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+N = dace.symbol("N")
+
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
 sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
+#: ported from the npbench bench_info paper row
+
 args = [([N, N], datatype)]
+
+#: ``np.linalg.cholesky`` links LAPACKE: tests running this kernel carry the ``lapack`` marker.
+LAPACK = True
 
 
 def init_array(A, n):
@@ -28,48 +33,29 @@ def init_array(A, n):
 
 @dace.program
 def cholesky(A: datatype[N, N]):
-    for i in range(0, N, 1):
-        for j in range(0, i, 1):
-
-            @dace.map
-            def k_loop1(k: _[0:j]):
-                i_in << A[i, k]
-                j_in << A[j, k]
-                out >> A(1, lambda x, y: x + y)[i, j]
-                out = -i_in * j_in
-
-            @dace.tasklet
-            def div():
-                ij_in << A[i, j]
-                jj_in << A[j, j]
-                out >> A[i, j]
-                out = ij_in / jj_in
-
-        @dace.map
-        def k_loop2(k: _[0:i]):
-            k_in << A[i, k]
-            out >> A(1, lambda x, y: x + y)[i, i]
-            out = -k_in * k_in
-
-        @dace.tasklet
-        def sqrt():
-            inp << A[i, i]
-            out >> A[i, i]
-            out = math.sqrt(inp)
+    # ``numpy.linalg.cholesky`` returns the lower-triangular factor ``L`` (``A = L @ L.T``),
+    # which the DaCe frontend lowers to the LAPACK-backed ``Cholesky`` (POTRF) library node
+    # instead of a hand-written Crout loop nest. The original in-place kernel wrote ``L`` into
+    # ``A``'s lower triangle + diagonal and left the strictly-upper triangle (the symmetric
+    # input) untouched, so copy back only the lower triangle to preserve that exact convention.
+    L = np.linalg.cholesky(A)
+    for i in dace.map[0:N]:
+        for j in dace.map[0 : i + 1]:
+            A[i, j] = L[i, j]
 
 
 def print_result(filename, *args, n=None, **kwargs):
-    with open(filename, 'w') as fp:
+    with open(filename, "w") as fp:
         fp.write("==BEGIN DUMP_ARRAYS==\n")
-        fp.write("begin dump: %s\n" % 'A')
+        fp.write("begin dump: %s\n" % "A")
         for i in range(0, n):
-            for j in range(0, i + 1):
-                fp.write("{:.7f} ".format(args[0][i, j]))
+            fp.writelines(f"{args[0][i, j]:.7f} " for j in range(0, i + 1))
             fp.write("\n")
-        fp.write("\nend   dump: %s\n" % 'A')
+        fp.write("\nend   dump: %s\n" % "A")
         fp.write("==END   DUMP_ARRAYS==\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     polybench.main(sizes, args, print_result, init_array, cholesky)

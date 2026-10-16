@@ -7,12 +7,12 @@ legacy ``PromoteNSDFGBodyToTiles`` descent that used to tile such a body in
 place was DELETED in the walker-primary migration; :class:`VectorizeCPUMultiDim`
 now owns this end to end (``NestInnermostMapBodyIntoNSDFG`` mints the body NSDFG,
 then ``WidenAccesses`` / ``InsertTileLoadStore`` / ``ConvertTaskletsToTileOps``
-turn connector reads into :class:`TileLoad`, the split scalar chain into
+turn connector reads into masked loads, the split scalar chain into
 :class:`TileBinop` / :class:`TileUnop`, and connector writes into
-:class:`TileStore`). These tests pin that the walker:
+masked stores). These tests pin that the walker:
 
 * tiles a const-store output (``a[i] = 3.0``) correctly, masked tail included;
-* emits TileLoad / TileBinop / TileStore for the vbor scalar chain;
+* emits masked loads, TileBinop and masked stores for the vbor scalar chain;
 * emits TileUnop for unary-minus tasklets in a reused-scalar chain;
 * vectorizes the carried-dependency ``s231`` nest correctly -- the inner ``j``
   loop carries a dependency so LoopToMap leaves it sequential and only the
@@ -24,18 +24,25 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileBinop, TileLoad, TileStore, TileUnop
+from dace.libraries.tileops import TileBinop, TileUnop
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.interstate import LoopToMap
+from tests.passes.vectorization.tile_assertions import sdfg_masked_loads, sdfg_masked_stores
 
 L = dace.symbol("LEN_2D")
 
 
 @dace.program
-def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
-          x: dace.float64[L]):
+def _vbor(
+    a: dace.float64[L],
+    b: dace.float64[L],
+    c: dace.float64[L],
+    d: dace.float64[L],
+    e: dace.float64[L],
+    x: dace.float64[L],
+):
     for i in range(L):
         a1 = a[i]
         b1 = b[i]
@@ -43,17 +50,33 @@ def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.fl
         d1 = d[i]
         e1 = e[i]
         f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
-              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
-        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
+        a1 = (
+            a1 * b1 * c1
+            + a1 * b1 * d1
+            + a1 * b1 * e1
+            + a1 * b1 * f1
+            + a1 * c1 * d1
+            + a1 * c1 * e1
+            + a1 * c1 * f1
+            + a1 * d1 * e1
+            + a1 * d1 * f1
+            + a1 * e1 * f1
+        )
+        b1 = b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         d1 = d1 * e1 * f1
         x[i] = a1 * b1 * c1 * d1
 
 
 @dace.program
-def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
-                x: dace.float64[L]):
+def _unop_chain(
+    a: dace.float64[L],
+    b: dace.float64[L],
+    c: dace.float64[L],
+    d: dace.float64[L],
+    e: dace.float64[L],
+    x: dace.float64[L],
+):
     # vbor verbatim with two unary-minus unops injected on reused scalars: same
     # boundary-connector structure as _vbor, so the e2e isolates the TileUnop path.
     for i in range(L):
@@ -63,10 +86,20 @@ def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: d
         d1 = d[i]
         e1 = e[i]
         f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
-              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        a1 = (
+            a1 * b1 * c1
+            + a1 * b1 * d1
+            + a1 * b1 * e1
+            + a1 * b1 * f1
+            + a1 * c1 * d1
+            + a1 * c1 * e1
+            + a1 * c1 * f1
+            + a1 * d1 * e1
+            + a1 * d1 * f1
+            + a1 * e1 * f1
+        )
         a1 = -a1  # unary-minus unop on a reused scalar
-        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
+        b1 = b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         c1 = -c1  # unary-minus unop
         d1 = d1 * e1 * f1
@@ -101,8 +134,9 @@ def _vectorize(prog, name, expand=True):
     ``expand=False`` leaves the tile lib nodes in place (for structural
     assertions); ``expand=True`` expands them to tasklets (for e2e compile/run)."""
     sdfg = _build(prog, name)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
-                                         expand_tile_nodes=expand)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR, expand_tile_nodes=expand)).apply_pass(
+        sdfg, {}
+    )
     sdfg.validate()
     return sdfg
 
@@ -110,7 +144,7 @@ def _vectorize(prog, name, expand=True):
 @pytest.mark.parametrize("n", [16, 17])
 def test_const_store_to_output_matches_reference(n):
     """``a[i] = 3.0`` into an output connector, nested into an NSDFG body, tiles
-    through the walker (const-fill tile + masked TileStore) and matches the
+    through the walker (const-fill tile + masked store) and matches the
     reference (n=17 forces the masked tail -- the mask must keep the const out of
     the OOB lanes of the output array)."""
     ref = _build(_const_store, f"const_ref{n}")
@@ -140,15 +174,15 @@ def test_vbor_nsdfg_body_matches_reference(n):
 
 
 def test_vbor_emits_tile_ops():
-    """The walker leaves TileLoad / TileBinop / TileStore lib nodes inside the
+    """The walker leaves masked loads, TileBinop and masked stores inside the
     body NSDFG (before ``expand_library_nodes``)."""
     sdfg = _vectorize(_vbor, "vbor_struct", expand=False)
-    loads = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)]
+    loads = sdfg_masked_loads(sdfg)
     binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
-    stores = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileStore)]
-    assert loads, "expected TileLoad nodes for the connector reads"
+    stores = sdfg_masked_stores(sdfg)
+    assert loads, "expected masked loads for the connector reads"
     assert binops, "expected TileBinop nodes for the scalar chain"
-    assert stores, "expected a TileStore for x[i]"
+    assert stores, "expected a masked store for x[i]"
 
 
 @pytest.mark.parametrize("n", [16, 17])
@@ -195,3 +229,16 @@ def test_s231_carried_dep_vectorizes_on_parallel_dim(n):
     ref.compile()(aa=ar, bb=bb.copy(), LEN_2D=n)
     vec.compile()(aa=av, bb=bb.copy(), LEN_2D=n)
     np.testing.assert_allclose(av, ar, rtol=1e-12, atol=1e-12)
+
+
+if __name__ == "__main__":
+    test_const_store_to_output_matches_reference(16)
+    test_const_store_to_output_matches_reference(17)
+    test_vbor_nsdfg_body_matches_reference(16)
+    test_vbor_nsdfg_body_matches_reference(17)
+    test_vbor_emits_tile_ops()
+    test_unop_chain_matches_reference(16)
+    test_unop_chain_matches_reference(17)
+    test_unop_chain_emits_tile_unop()
+    test_s231_carried_dep_vectorizes_on_parallel_dim(16)
+    test_s231_carried_dep_vectorizes_on_parallel_dim(17)

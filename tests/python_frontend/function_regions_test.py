@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+
 import dace
 from dace.sdfg.state import FunctionCallRegion
 from dace.transformation.passes.simplify import SimplifyPass
@@ -19,7 +20,7 @@ def test_function_call():
     sdfg = prog.to_sdfg(simplify=False)
     SimplifyPass(no_inline_function_call_regions=True, no_inline_named_regions=True).apply_pass(sdfg, {})
     call_region: FunctionCallRegion = sdfg.nodes()[0]
-    assert call_region.arguments == {'A': 'I'}
+    assert call_region.arguments == {"A": "I"}
     assert sdfg(np.array([+1], dtype=np.float64), N=1) == 15
     assert sdfg(np.array([-1], dtype=np.float64), N=1) == 5
 
@@ -42,8 +43,8 @@ def test_function_call_with_args():
     SimplifyPass(no_inline_function_call_regions=True, no_inline_named_regions=True).apply_pass(sdfg, {})
     call1: FunctionCallRegion = sdfg.nodes()[0]
     call2: FunctionCallRegion = sdfg.nodes()[1]
-    assert call1.arguments == {'A': 'E', 'B': 'F', 'C': 'G'}
-    assert call2.arguments == {'A': 'G', 'B': 'E', 'C': 'E'}
+    assert call1.arguments == {"A": "E", "B": "F", "C": "G"}
+    assert call2.arguments == {"A": "G", "B": "E", "C": "E"}
 
 
 def test_function_call_with_transients():
@@ -61,8 +62,8 @@ def test_function_call_with_transients():
     SimplifyPass(no_inline_function_call_regions=True, no_inline_named_regions=True).apply_pass(sdfg, {})
     call1: FunctionCallRegion = sdfg.nodes()[0]
     call2: FunctionCallRegion = sdfg.nodes()[1]
-    assert call1.arguments == {'A': 'array_expr', 'B': 'array_expr_0', 'C': 'array_expr_1'}
-    assert call2.arguments == {'A': 'array_expr_2', 'B': 'array_expr_3', 'C': 'array_expr_4'}
+    assert call1.arguments == {"A": "array_expr", "B": "array_expr_0", "C": "array_expr_1"}
+    assert call2.arguments == {"A": "array_expr_2", "B": "array_expr_3", "C": "array_expr_4"}
 
 
 if __name__ == "__main__":

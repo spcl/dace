@@ -9,18 +9,20 @@ to unit copies keeps the rewrite a value-preserving scalar assignment and
 removes ``other_subset`` from such edges so subset-substituting passes (e.g.
 ``NormalizeLoopsAndMaps``) never have to reason about copy memlets.
 """
-import copy as _copy
-from typing import Any, Dict, Optional
 
-from dace import subsets
-from dace import nodes
+import copy as _copy
+from typing import Any
+
+from dace import nodes, subsets
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
+from dace.sdfg.narrowing import as_range
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
-def _is_unit_subset(subset: Optional[subsets.Subset]) -> bool:
+def _is_unit_subset(subset: subsets.Subset | None) -> bool:
     """Return whether ``subset`` provably addresses exactly one element.
 
     Conservative: a symbolic extent that is not structurally ``1`` counts as
@@ -33,13 +35,14 @@ def _is_unit_subset(subset: Optional[subsets.Subset]) -> bool:
         return False
     if subset.num_elements() != 1:
         return False
-    return all(sz == 1 for sz in subset.size())
+    return all(sz == 1 for sz in as_range(subset).size())
 
 
 @transformation.explicit_cf_compatible
 class InsertAssignTaskletsForUnitCopies(ppl.Pass):
     """Rewrite single-element ``AccessNode -> AccessNode`` copies as assign tasklets."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -50,7 +53,7 @@ class InsertAssignTaskletsForUnitCopies(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Split every qualifying unit copy edge in ``sdfg``.
 
         :param sdfg: The SDFG to transform in place.
@@ -96,21 +99,19 @@ class InsertAssignTaskletsForUnitCopies(ppl.Pass):
             src_an = edge.src
             dst_an = edge.dst
             mem = edge.data
-            # The memlet subset addresses ``mem.data``; the opposite side uses
-            # ``other_subset`` when set, else its own (single-element) array.
-            if mem.data == src_an.data:
-                src_subset = _copy.deepcopy(mem.subset)
-                if mem.other_subset is not None:
-                    dst_subset = _copy.deepcopy(mem.other_subset)
-                else:
-                    dst_subset = subsets.Range.from_array(sdfg.arrays[dst_an.data])
-            else:
-                assert mem.data == dst_an.data
-                dst_subset = _copy.deepcopy(mem.subset)
-                if mem.other_subset is not None:
-                    src_subset = _copy.deepcopy(mem.other_subset)
-                else:
-                    src_subset = subsets.Range.from_array(sdfg.arrays[src_an.data])
+            # Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
+            # ``_is_data_src`` flag, NOT by the endpoint names: a self-copy ``A -> A`` matches
+            # ``mem.data`` on BOTH sides, so a name test picks the source arbitrarily and reverses
+            # half of them. A memlet carrying only one side leaves the other ``None``; derive it from
+            # the endpoint's (single-element) array exactly as before.
+            src_side = mem.get_src_subset(edge, state)
+            dst_side = mem.get_dst_subset(edge, state)
+            src_subset = (
+                _copy.deepcopy(src_side) if src_side is not None else subsets.Range.from_array(sdfg.arrays[src_an.data])
+            )
+            dst_subset = (
+                _copy.deepcopy(dst_side) if dst_side is not None else subsets.Range.from_array(sdfg.arrays[dst_an.data])
+            )
             tasklet = state.add_tasklet(
                 name=f"_assign_{src_an.data}_to_{dst_an.data}",
                 inputs={"_in"},

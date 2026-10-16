@@ -5,10 +5,11 @@ import pytest
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import torch
+from test_single_state import SDFGBackwardRunner, run_correctness
 
 import dace
 from dace import SDFG, InterstateEdge, Memlet
-from test_single_state import SDFGBackwardRunner, run_correctness
+from dace.autodiff import add_backward_pass
 
 
 @pytest.mark.autodiff
@@ -49,11 +50,9 @@ def test_two_state_add_mul():
     tasklet_mul = state2.add_tasklet("mul", {"z"}, {"s"}, "s = z * z")
 
     state2.add_memlet_path(Z_read, map_entry2, tasklet_mul, dst_conn="z", memlet=Memlet("Z[i, j]"))
-    state2.add_memlet_path(tasklet_mul,
-                           map_exit2,
-                           S_write,
-                           src_conn="s",
-                           memlet=Memlet("S[0]", wcr="lambda a, b: a + b"))
+    state2.add_memlet_path(
+        tasklet_mul, map_exit2, S_write, src_conn="s", memlet=Memlet("S[0]", wcr="lambda a, b: a + b")
+    )
 
     sdfg.add_edge(state1, state2, InterstateEdge())
 
@@ -272,11 +271,9 @@ def test_multi_output_state():
 
     state2.add_memlet_path(Y_read2, map_entry2, tasklet_mul, dst_conn="y", memlet=Memlet("Y[i]"))
     state2.add_memlet_path(Z_read2, map_entry2, tasklet_mul, dst_conn="z", memlet=Memlet("Z[i]"))
-    state2.add_memlet_path(tasklet_mul,
-                           map_exit2,
-                           S_write2,
-                           src_conn="s",
-                           memlet=Memlet("S[0]", wcr="lambda a, b: a + b"))
+    state2.add_memlet_path(
+        tasklet_mul, map_exit2, S_write2, src_conn="s", memlet=Memlet("S[0]", wcr="lambda a, b: a + b")
+    )
 
     # Connect states
     sdfg.add_edge(state1, state2, InterstateEdge())
@@ -296,9 +293,57 @@ def test_multi_output_state():
     )
 
 
+@pytest.mark.autodiff
+def test_extremal_reduction_in_loop_resets_tie_counter():
+    """``max`` reduced once per loop iteration: every window's argmax must get the full gradient.
+
+    The extremal backward splits the gradient between elements tied for the maximum, which needs a
+    per-output counter. That counter has to be cleared on every execution of the backward, not once
+    where it is allocated -- otherwise it accumulates across iterations and the k-th reversed
+    iteration hands back ``grad / k``. Random inputs have no ties, so the exact answer is the 0/1
+    indicator of each window's argmax and any division shows up immediately.
+    """
+
+    S0, S1, S2, S3 = (dace.symbol(n, dtype=dace.int64) for n in ("S0", "S1", "S2", "S3"))
+
+    @dace.program
+    def pooled(x: dace.float32[S0, S1, S2, S3]):
+        out = np.ndarray([S0, S1 // 2, S2 // 2, S3], dtype=np.float32)
+        for i in range(S1 // 2):
+            for j in range(S2 // 2):
+                out[:, i, j, :] = np.max(x[:, 2 * i : 2 * i + 2, 2 * j : 2 * j + 2, :], axis=(1, 2))
+        return np.sum(out)
+
+    sdfg = pooled.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["__return"])
+
+    x = (
+        np.array(
+            [[0.9, 0.1, 0.2, 0.8], [0.3, 0.4, 0.7, 0.6], [0.5, 0.95, 0.15, 0.25], [0.35, 0.45, 0.85, 0.55]],
+            dtype=np.float32,
+        )
+        .reshape(1, 4, 4, 1)
+        .copy(order="C")
+    )
+    gradient_x = np.zeros_like(x)
+    sdfg(x, S0=1, S1=4, S2=4, S3=1, gradient_x=gradient_x, gradient___return=np.ones((1,), dtype=np.float32))
+
+    expected = np.zeros_like(x)
+    for i in range(2):
+        for j in range(2):
+            window = x[0, 2 * i : 2 * i + 2, 2 * j : 2 * j + 2, 0]
+            di, dj = np.unravel_index(int(np.argmax(window)), window.shape)
+            expected[0, 2 * i + di, 2 * j + dj, 0] = 1.0
+
+    assert np.array_equal(gradient_x, expected), (
+        f"expected the argmax of every window to carry gradient 1, got {gradient_x[0, :, :, 0].tolist()}"
+    )
+
+
 if __name__ == "__main__":
     test_two_state_add_mul()
     test_conditional_simple()
     test_for_loop()
     test_diamond_pattern_conditional()
     test_multi_output_state()
+    test_extremal_reduction_in_loop_resets_tie_counter()

@@ -1,16 +1,16 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module provides a function to change the stride in a given SDFG """
-from typing import List, Union, Tuple
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""This module provides a function to change the stride in a given SDFG"""
+
 import sympy
 
 import dace
-from dace.dtypes import ScheduleType
-from dace.sdfg import SDFG, nodes, SDFGState
 from dace.data import Array, Scalar
+from dace.dtypes import ScheduleType
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
 
 
-def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> List[Tuple[nodes.AccessNode, Union[SDFGState, dace.SDFG]]]:
+def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> list[tuple[nodes.AccessNode, SDFGState | dace.SDFG]]:
     """
     Find all access nodes in the SDFG of the given array name. Does not recourse into nested SDFGs.
 
@@ -21,15 +21,15 @@ def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> List[Tuple[nodes.Acce
     :return: List of the found access nodes together with their state
     :rtype: List[Tuple[nodes.AccessNode, Union[dace.SDFGState, dace.SDFG]]]
     """
-    found_nodes = []
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == array_name:
-                found_nodes.append((node, state))
-    return found_nodes
+    return [
+        (node, state)
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.AccessNode) and node.data == array_name
+    ]
 
 
-def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: ScheduleType) -> SDFG:
+def change_strides(sdfg: dace.SDFG, stride_one_values: list[str], schedule: ScheduleType) -> SDFG:
     """
     Change the strides of the arrays on the given SDFG such that the given dimension has stride 1. Returns a new SDFG.
 
@@ -49,8 +49,9 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     new_sdfg = SDFG(original_name)
     for dname, value in sdfg.constants.items():
         new_sdfg.add_constant(dname, value)
+    predicates = sdfg.symbol_repo.params.predicates
     for dname, stype in sdfg.symbols.items():
-        new_sdfg.add_symbol(dname, stype)
+        new_sdfg.add_symbol(dname, stype, predicates=predicates.get(dname, frozenset()))
 
     changed_stride_state = new_sdfg.add_state("with_changed_strides", is_start_block=True)
     inputs, outputs = sdfg.read_and_write_sets()
@@ -84,8 +85,16 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     for dname, desc in sdfg.arrays.items():
         if not desc.transient:
             if isinstance(desc, Array):
-                new_sdfg.add_array(dname, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient,
-                                   desc.strides, desc.offset)
+                new_sdfg.add_array(
+                    dname,
+                    desc.shape,
+                    desc.dtype,
+                    desc.storage,
+                    desc.location,
+                    desc.transient,
+                    desc.strides,
+                    desc.offset,
+                )
             elif isinstance(desc, Scalar):
                 new_sdfg.add_scalar(dname, desc.dtype, desc.storage, desc.transient, desc.lifetime, desc.debuginfo)
 
@@ -149,31 +158,31 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
         if not desc.transient:
             flipped_name = f"{dname}_flipped"
             flipped_names_map[dname] = flipped_name
-            new_sdfg.add_array(flipped_name, desc.shape, desc.dtype, desc.storage, desc.location, True, desc.strides,
-                               desc.offset)
+            new_sdfg.add_array(
+                flipped_name, desc.shape, desc.dtype, desc.storage, desc.location, True, desc.strides, desc.offset
+            )
 
     # Deal with the inputs: Create tasklet to flip them and connect via memlets
     # for input in inputs:
-    for input in set([*inputs, *outputs]):
+    for input in {*inputs, *outputs}:
         if input in new_order:
             flipped_data = flipped_names_map[input]
             if input in inputs:
-                changed_stride_state.add_memlet_path(changed_stride_state.add_access(flipped_data),
-                                                     nsdfg,
-                                                     dst_conn=input,
-                                                     memlet=Memlet(data=flipped_data))
+                changed_stride_state.add_memlet_path(
+                    changed_stride_state.add_access(flipped_data),
+                    nsdfg,
+                    dst_conn=input,
+                    memlet=Memlet(data=flipped_data),
+                )
             # Simply need to copy the data, the different strides take care of the transposing
             arr = sdfg.arrays[input]
             tasklet, map_entry, map_exit = transform_state.add_mapped_tasklet(
                 name=f"transpose_{input}",
-                map_ranges={
-                    f"_i{i}": f"0:{s}"
-                    for i, s in enumerate(arr.shape)
-                },
-                inputs={'_in': Memlet(data=input, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                code='_out = _in',
+                map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
+                inputs={"_in": Memlet(data=input, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                code="_out = _in",
                 outputs={
-                    '_out': Memlet(data=flipped_data, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))
+                    "_out": Memlet(data=flipped_data, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))
                 },
                 external_edges=True,
                 schedule=schedule,
@@ -182,21 +191,17 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     for output in outputs:
         if output in new_order:
             flipped_data = flipped_names_map[output]
-            changed_stride_state.add_memlet_path(nsdfg,
-                                                 changed_stride_state.add_access(flipped_data),
-                                                 src_conn=output,
-                                                 memlet=Memlet(data=flipped_data))
+            changed_stride_state.add_memlet_path(
+                nsdfg, changed_stride_state.add_access(flipped_data), src_conn=output, memlet=Memlet(data=flipped_data)
+            )
             # Simply need to copy the data, the different strides take care of the transposing
             arr = sdfg.arrays[output]
             tasklet, map_entry, map_exit = transform_state_back.add_mapped_tasklet(
                 name=f"transpose_{output}",
-                map_ranges={
-                    f"_i{i}": f"0:{s}"
-                    for i, s in enumerate(arr.shape)
-                },
-                inputs={'_in': Memlet(data=flipped_data, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                code='_out = _in',
-                outputs={'_out': Memlet(data=output, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
+                inputs={"_in": Memlet(data=flipped_data, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                code="_out = _in",
+                outputs={"_out": Memlet(data=output, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
                 external_edges=True,
                 schedule=schedule,
             )
@@ -204,14 +209,14 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     for dname, desc in sdfg.arrays.items():
         if not desc.transient and dname not in new_order:
             if dname in inputs:
-                changed_stride_state.add_memlet_path(changed_stride_state.add_access(dname),
-                                                     nsdfg,
-                                                     dst_conn=dname,
-                                                     memlet=Memlet(data=dname))
+                changed_stride_state.add_memlet_path(
+                    changed_stride_state.add_access(dname), nsdfg, dst_conn=dname, memlet=Memlet(data=dname)
+                )
             if dname in outputs:
-                changed_stride_state.add_memlet_path(nsdfg,
-                                                     changed_stride_state.add_access(dname),
-                                                     src_conn=dname,
-                                                     memlet=Memlet(data=dname))
+                changed_stride_state.add_memlet_path(
+                    nsdfg, changed_stride_state.add_access(dname), src_conn=dname, memlet=Memlet(data=dname)
+                )
+
+    dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
     return new_sdfg

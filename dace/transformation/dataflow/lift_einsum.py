@@ -2,11 +2,10 @@
 
 import ast
 import copy
-from typing import Dict
 
 import sympy
 
-from dace import SDFG, SDFGState, dtypes, nodes, symbolic
+from dace import SDFG, SDFGState, dtypes, nodes, properties, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
@@ -14,15 +13,32 @@ from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation as xf
 
 
+@properties.make_properties
 class LiftEinsum(xf.SingleStateTransformation):
     """
     Detects a tensor operation that can be represented by an Einstein-notation sum (einsum, e.g., matrix
     multiplication) and replaces the pattern with an ``Einsum`` library node.
     """
-    EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
+
+    EINSUM_CHARS = "ijklmnopqrstuvwxyzabcdefgh"
 
     map_entry = xf.PatternNode(nodes.MapEntry)
     tasklet = xf.PatternNode(nodes.Tasklet)
+
+    contraction_only = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Only lift a genuine contraction (a summed index). Refuse a pure outer product "
+        "(``a[i]*b[j] -> i,j->ij``): it has no contracted axis, so it is elementwise dataflow, "
+        "and lifting it to a degenerate K=1 GEMM is no BLAS win -- and the tile vectorizer "
+        "mis-lowers that GEMM (unbound inner dims -> illegal DGEMM leading dimension). Left as a "
+        "map, an outer product tiles per-lane like any other broadcast. Used by the vectorizer; "
+        "off by default so the standalone lift still hoists outer products.",
+    )
+
+    def __init__(self, contraction_only: bool = False):
+        super().__init__()
+        self.contraction_only = contraction_only
 
     @classmethod
     def expressions(cls):
@@ -33,7 +49,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         dimension whose lower bound is not 0 or whose step is not 1. Such a range
         does not span the full operand extent the einsum contraction assumes."""
         for rng in self.map_entry.map.range:
-            if str(rng[0]) != '0' or str(rng[2]) != '1':
+            if str(rng[0]) != "0" or str(rng[2]) != "1":
                 return True
         return False
 
@@ -83,45 +99,33 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
-            ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
+            ind = {str(rb) for rb, _, _ in memlet.subset.ndrange()}
             unique_chars |= ind
-            if any(i != '0' and i not in self.map_entry.map.params for i in ind):
+            if any(i != "0" and i not in self.map_entry.map.params for i in ind):
                 return False
 
             # Keep track of input/output indices for WCR check
             if e.dst is self.tasklet:
                 input_chars |= ind
-                if not (ind - {'0'}):
+                if not (ind - {"0"}):
                     num_coeffs += 1
                 else:
                     num_tensor_inputs += 1
-                    tensor_input_chars.append(ind - {'0'})
+                    tensor_input_chars.append(ind - {"0"})
             else:
                 output_chars |= ind
 
         if len(input_chars) == 0:
             return False
 
-        # Require a genuine multi-operand contraction (matmul: a chain of >=2 tensor
-        # operands). A single tensor operand is a unary copy / transpose / reduction
-        # (einsum 'i->i', 'ij->ji', 'ij->i'), NOT a matmul -- lifting it to an Einsum
-        # node is pointless and miscompiles (durbin's ``y[i] = z[i]`` copy -> 'i->i'
-        # silently corrupts the solver). Those belong to the copy / reduction passes.
+        # A single tensor operand is a copy, transpose or reduction (``i->i``, ``ij->ji``, ``ij->i``), not a
+        # contraction. Those have their own nodes (CopyLibraryNode, Transpose, Reduce), so they are left to them.
         if num_tensor_inputs < 2:
             return False
 
-        # A scalar output (no free output index) is a DOT / full reduction, NOT a GEMM --
-        # do NOT lift it. A vector-vector dot lowers to ``cblas_ddot``, which sums in an
-        # implementation-defined blocked / vectorized order and so REASSOCIATES relative to
-        # the source reduction. That FP-order divergence is harmless for a well-conditioned
-        # kernel but catastrophic for an ill-conditioned one (gramschmidt's near-rank-deficient
-        # ``R[k,j] = sum_i Q[i,k]*A[i,j]`` at a column that has collapsed to ~1e-14 amplifies
-        # the ULP difference to 100% relative error). BLAS is no win for a 1-D dot anyway, and
-        # keeping it as its WCR reduction stays bit-exact with the baseline (and avoids the
-        # degenerate 1x1-GEMM lowering entirely). Only a matrix einsum -- a free output index --
-        # lifts. Matvec/matmul (``ij,j->i`` / ``ik,kj->ij``) have a free output index, so they
-        # are unaffected.
-        if not (output_chars - {'0'}):
+        # A scalar output (no free output index) is a dot product or a full reduction: a 1x1 GEMM gains nothing over
+        # the WCR reduction it came from, so only an einsum with a free output index lifts.
+        if not (output_chars - {"0"}):
             return False
 
         # Reject an ELEMENTWISE op: NO contracted index (every input index also appears in
@@ -132,8 +136,16 @@ class LiftEinsum(xf.SingleStateTransformation):
         # matvec/matmul HAS a contracted index (``input_chars - output_chars`` non-empty,
         # so this guard is skipped) -- neither is caught. A genuine outer product
         # (``a[i]*b[j]`` -> ``i,j->ij``, no input matching the FULL output index) is preserved.
-        out_idx = output_chars - {'0'}
+        out_idx = output_chars - {"0"}
         if not (input_chars - output_chars) and any(ci == out_idx for ci in tensor_input_chars):
+            return False
+
+        # In ``contraction_only`` mode (the vectorizer), refuse any op with NO contracted index
+        # -- a pure outer product ``a[i]*b[j] -> i,j->ij``. It is elementwise (every output
+        # element independent, no sum), so it tiles per-lane like any broadcast; lifting it to a
+        # degenerate K=1 GEMM is no BLAS win and the tile widener mis-lowers it (unbound inner
+        # dims -> illegal DGEMM leading dimension, the gemver rank-2 update).
+        if self.contraction_only and not (input_chars - output_chars):
             return False
 
         # At most one runtime scalar coefficient is supported (wired as the
@@ -172,6 +184,11 @@ class LiftEinsum(xf.SingleStateTransformation):
             symexpr = pystr_to_symbolic(astutils.unparse(expr.value))
         except (TypeError, sympy.SympifyError):
             return False
+        # Only a product of the operands is an einsum. A comparison or a logical op parses to a
+        # sympy ``Boolean`` (``LessThan``, ``And``), which has no quotient -- CP2K's broadcast
+        # ``zi <= si`` mask reached the ratio test below and raised a ``TypeError`` there.
+        if not isinstance(symexpr, sympy.Expr):
+            return False
 
         expected = 1
         for iconn in self.tasklet.in_connectors:
@@ -186,12 +203,12 @@ class LiftEinsum(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        import dace.libraries.blas as blas
+        from dace.libraries import blas
 
         map_exit = state.exit_node(self.map_entry)
 
         scope = state.scope_subgraph(self.map_entry)
-        einsum = blas.Einsum('einsum')
+        einsum = blas.Einsum("einsum")
 
         connector_product = 1  # product of TENSOR-operand connectors (for alpha)
 
@@ -200,20 +217,22 @@ class LiftEinsum(xf.SingleStateTransformation):
         # map-parameter-free input (e.g. ``alpha[0]``) is a runtime scalar
         # COEFFICIENT, wired as the einsum's explicit ``_alpha`` scalar input
         # connector (the data read stays explicit; the expansion consumes it).
-        connectors: Dict[str, str] = {}
+        connectors: dict[str, str] = {}
+        # One map input can feed several operands (``centroids * centroids``), so each keeps its own.
+        operands: dict[str, list[str]] = {}
         in_edges = []
         out_edge = None
         coeff_edges = []  # scalar-coefficient input edges (alpha-like)
-        coeff_map_conns: Dict[str, str] = {}  # map-entry IN-conn -> einsum coeff conn
+        coeff_map_conns: dict[str, str] = {}  # map-entry IN-conn -> einsum coeff conn
         for e in state.in_edges(self.tasklet):
             if e.data.is_empty():
                 continue
-            ind = set(str(rb) for rb, _, _ in e.data.subset.ndrange())
-            if not (ind - {'0'}):  # scalar coefficient: no map parameter
+            ind = {str(rb) for rb, _, _ in e.data.subset.ndrange()}
+            if not (ind - {"0"}):  # scalar coefficient: no map parameter
                 coeff_edges.append(e)
-                coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = '_alpha'
+                coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = "_alpha"
                 continue
-            connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
+            operands.setdefault(state.memlet_path(e)[-2].dst_conn, []).append(e.dst_conn)
             connector_product *= symbolic.symbol(e.dst_conn)
             einsum.add_in_connector(e.dst_conn, self.tasklet.in_connectors[e.dst_conn])
             in_edges.append(e)
@@ -236,7 +255,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         # coefficient composes (the expansion multiplies property by connector).
         for e in coeff_edges:
             alpha = alpha.subs(symbolic.symbol(e.dst_conn), 1)
-            einsum.add_in_connector('_alpha', self.tasklet.in_connectors[e.dst_conn])
+            einsum.add_in_connector("_alpha", self.tasklet.in_connectors[e.dst_conn])
         einsum.alpha = alpha
 
         # Collect the einsum string. CRITICAL: the expansion feeds operands in
@@ -245,17 +264,17 @@ class LiftEinsum(xf.SingleStateTransformation):
         # operand<->term pairing (and hence the contracted dimensions) is wrong
         # whenever the tasklet's edge order differs from alphabetical (e.g. 2mm/3mm,
         # where it manifested as a dimension mismatch / silently wrong result).
-        param_mapping: Dict[str, str] = {}
-        input_terms: Dict[str, str] = {}  # einsum in-connector -> index string
-        einsum_output = ''
-        for e in (in_edges + [out_edge]):
+        param_mapping: dict[str, str] = {}
+        input_terms: dict[str, str] = {}  # einsum in-connector -> index string
+        einsum_output = ""
+        for e in in_edges + [out_edge]:
             # Create parameter mapping
             ind = [str(rb) for rb, _, _ in e.data.subset.ndrange()]
-            expr = ''
+            expr = ""
             for i in ind:
-                if i != '0' and i not in param_mapping:
+                if i != "0" and i not in param_mapping:
                     param_mapping[i] = self.EINSUM_CHARS[len(param_mapping)]
-                expr += '' if i == '0' else param_mapping[i]
+                expr += "" if i == "0" else param_mapping[i]
             if e is out_edge:
                 einsum_output = expr
             else:
@@ -280,7 +299,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         #   3. Else the output is a non-transient argument -> the CALLER provides
         #      the prior value (a bare ``C += A@B`` over an input) -> FOLD (beta=1).
         #   4. Else it is a fresh, uninitialized transient -> OVERWRITE (beta=0)
-        #      rather than fold garbage (the AccumulatorToMapAndReduce seed hazard).
+        #      rather than fold garbage (the accumulator-seed hazard).
         if out_edge.data.wcr is not None:
             # Only a tensor output (a free output index) reaches here -- can_be_applied refuses
             # a scalar-output dot (``i,i->``), which stays a WCR reduction. The output matrix's
@@ -290,8 +309,11 @@ class LiftEinsum(xf.SingleStateTransformation):
             has_identity = isinstance(out_node, nodes.AccessNode) and out_node.setzero
             # Scoped to THIS sdfg (not all_sdfgs_recursive) so a same-named array in
             # an unrelated nested SDFG cannot false-positive a prior writer.
-            has_prior_writer = any(n.data == out_data and st.in_degree(n) > 0 and n is not out_node
-                                   for st in sdfg.states() for n in st.data_nodes())
+            has_prior_writer = any(
+                n.data == out_data and st.in_degree(n) > 0 and n is not out_node
+                for st in sdfg.states()
+                for n in st.data_nodes()
+            )
             if has_identity:
                 einsum.beta = 0.0
             elif has_prior_writer or not sdfg.arrays[out_data].transient:
@@ -309,13 +331,12 @@ class LiftEinsum(xf.SingleStateTransformation):
         # Add new subgraph
         state.add_node(einsum)
         for e in state.in_edges(self.map_entry):
-            if e.dst_conn in connectors:  # einsum tensor operand
-                data = e.data
+            for operand in operands.get(e.dst_conn, ()):  # einsum tensor operands
+                data = copy.deepcopy(e.data)
                 if restrict:
-                    data = copy.deepcopy(e.data)
                     data.subset = copy.deepcopy(maprange)
-                state.add_edge(e.src, e.src_conn, einsum, connectors[e.dst_conn], data)
-            elif e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
+                state.add_edge(e.src, e.src_conn, einsum, operand, data)
+            if e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
                 state.add_edge(e.src, e.src_conn, einsum, coeff_map_conns[e.dst_conn], e.data)
         for e in state.out_edges(map_exit):
             e.data.wcr = None  # Cancel WCR now that it is nested in the einsum

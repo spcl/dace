@@ -1,53 +1,67 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``TileMaskGen`` — allocate a K-dim ``bool`` mask whose lanes encode
-the ANY-dim-OOB conjunction
-``(i_0 + l_0 < ub_0) && ... && (i_{K-1} + l_{K-1} < ub_{K-1})``.
-
-The pure expansion emits a CPP tasklet that writes the K-fold mask
-into the linear ``_o`` buffer; the outer iter-vars and upper-bound
-expressions are resolved from the surrounding scope.
-"""
-from typing import Optional, Tuple
+"""``TileMaskGen``: the iteration mask of a tile."""
 
 import dace
-from dace import library, properties
+from dace import library, properties, tile_functions
+from dace.libraries.tileops.cutile import cutile_bid_lines, cutile_tile_dim_bids
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
+from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.isa import call_text, lane_start, pointer, require_k1
+from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock
+from dace.optionals import required
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import _isa_codegen
-from .._pure_codegen import cutile_bid_lines, cutile_tile_dim_bids, nested_loops, tile_offset
 
 
 @library.expansion
-class ExpandTileMaskGenPure(ExpandTransformation):
-    """CPP tasklet writing the ANY-OOB conjunction into ``_o``."""
+class ExpandTileMaskGenPure(ExpandTilePure):
+    pass
 
-    environments = []
 
-    @staticmethod
-    def expansion(node: "TileMaskGen", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        """Return a CPP tasklet that fills the mask tile lane by lane.
+@library.expansion
+class ExpandTileMaskGenScalar(ExpandTileIsa):
+    environments = [TileOpsScalar]
+    backend = "scalar"
 
-        :param node: The ``TileMaskGen`` lib node being expanded.
-        :param parent_state: State that owns the lib node (unused).
-        :param parent_sdfg: SDFG that owns ``parent_state`` (unused).
-        :returns: A CPP tasklet replacing the lib node in place.
-        """
-        widths = list(node.widths)
-        iter_vars = list(node.iter_vars)
-        global_ubs = list(node.global_ubs)
-        off = tile_offset(widths)
-        terms = [f"((({iv}) + __l{k}) < ({ub}))" for k, (iv, ub) in enumerate(zip(iter_vars, global_ubs))]
-        cond = " && ".join(terms) if terms else "true"
-        body = f"_o[{off}] = {cond};"
-        code = nested_loops(widths, body)
-        return nodes.Tasklet(
-            label=f"{node.label}_pure",
-            inputs=set(),
-            outputs={"_o": None},
-            code=code,
-            language=dace.dtypes.Language.CPP,
-        )
+
+@library.expansion
+class ExpandTileMaskGenAVX512(ExpandTileIsa):
+    environments = [TileOpsAVX512]
+    backend = "avx512"
+
+
+@library.expansion
+class ExpandTileMaskGenAVX2(ExpandTileIsa):
+    environments = [TileOpsAVX2]
+    backend = "avx2"
+
+
+@library.expansion
+class ExpandTileMaskGenNeon(ExpandTileIsa):
+    environments = [TileOpsNeon]
+    backend = "neon"
+
+
+@library.expansion
+class ExpandTileMaskGenSVE(ExpandTileIsa):
+    environments = [TileOpsSVE]
+    backend = "sve"
+
+
+@library.expansion
+class ExpandTileMaskGenCUDA(ExpandTileIsa):
+    environments = [TileOpsCUDA]
+    backend = "cuda"
 
 
 @library.expansion
@@ -110,89 +124,110 @@ class ExpandTileMaskGenCutile(ExpandTransformation):
 
 
 @library.node
-class TileMaskGen(nodes.LibraryNode):
-    """Produce the K-dim iteration mask ``bool[widths]``.
+class TileMaskGen(TileOp):
+    """The ``bool[widths]`` mask ``_o`` of the lanes that are in range.
 
-    No inputs; one output ``_o``. Each dim has a corresponding
-    ``iter_vars[k]`` (the surrounding-map iter-var name) and
-    ``global_ubs[k]`` (the original exclusive upper-bound expression).
-    The lane ``(l_0, ..., l_{K-1})`` is active iff every per-dim check
-    ``iter_var_k + l_k < global_ub_k`` holds.
+    Lane ``(l_0, ..., l_{K-1})`` is active iff ``iter_vars[k] + l_k < global_ubs[k]`` for every dim ``k``, where the
+    iteration variables and the exclusive upper bounds are expressions of the symbols in scope. A ``guard_predicate``
+    is one more conjunct.
     """
 
+    lanes_independent = True
     implementations = {
-        "pure": ExpandTileMaskGenPure,
         "cutile": ExpandTileMaskGenCutile,
-        # K=1 ISA backends (scalar / avx512 / avx2 / neon / sve): a call into
-        # dace/tile_ops/<backend>.h -- same call, the backend's env pulls in the
-        # matching header. Built by the shared factory (selector routes K>=2 to
-        # ``pure``).
-        **_isa_codegen.make_isa_expansions("MaskGen", _isa_codegen.make_mask_tasklet, globals()),
+        "pure": ExpandTileMaskGenPure,
+        "scalar": ExpandTileMaskGenScalar,
+        "avx512": ExpandTileMaskGenAVX512,
+        "avx2": ExpandTileMaskGenAVX2,
+        "neon": ExpandTileMaskGenNeon,
+        "sve": ExpandTileMaskGenSVE,
+        "cuda": ExpandTileMaskGenCUDA,
     }
     default_implementation = "pure"
 
-    target_isa = properties.Property(
-        dtype=str,
-        allow_none=False,
-        default="SCALAR",
-        desc="CPU target ISA the Auto-dispatch lowers to for K==1 "
-        "(SCALAR | AVX512 | AVX2 | ARM_SVE | ARM_NEON | CUTILE); K>=2 is pure. "
-        "Stamped by the VectorizeCPUMultiDim orchestrator before expansion.",
-    )
-
-    widths = properties.ListProperty(
-        element_type=int,
-        default=[],
-        desc="Per-dim mask widths, innermost-last.",
-    )
     iter_vars = properties.ListProperty(
         element_type=str,
         default=[],
-        desc="Per-dim outer-map iter-var name; symbol is resolved in the surrounding scope.",
+        desc="Per-dim name of the iteration variable of the enclosing map.",
     )
     global_ubs = properties.ListProperty(
         element_type=str,
         default=[],
-        desc="Per-dim exclusive upper-bound expressions; symbols resolved in the surrounding scope.",
+        desc="Per-dim exclusive upper bound, an expression of the symbols in scope.",
+    )
+    guard_predicate = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="A per-lane predicate AND-ed into the mask, a C++ expression over the lane indices ``__l0, __l1, ...`` "
+        "and the symbols in scope, such as ``((i) + __l0) < (mid)``. It carries a branch guard the if-conversion "
+        "could not lower, so the guarded region runs under the mask instead of as control flow.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: Tuple[int, ...],
-                 iter_vars: Tuple[str, ...],
-                 global_ubs: Tuple[str, ...],
-                 location: Optional[str] = None):
-        """Construct a ``TileMaskGen`` node.
-
-        :param name: Node label.
-        :param widths: Per-dim mask widths, innermost-last.
-        :param iter_vars: Per-dim outer iter-var name.
-        :param global_ubs: Per-dim exclusive upper-bound expressions.
-        :param location: Optional DaCe node location override.
-        :raises ValueError: On length mismatch or invalid K.
-        """
-        if not (1 <= len(widths) <= 3):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        iter_vars: tuple[str, ...],
+        global_ubs: tuple[str, ...],
+        guard_predicate: str | None = None,
+        location: str | None = None,
+    ):
+        if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileMaskGen: widths length {len(widths)} not in {{1, 2, 3}}")
         if len(iter_vars) != len(widths) or len(global_ubs) != len(widths):
-            raise ValueError(f"TileMaskGen: widths / iter_vars / global_ubs lengths must agree; "
-                             f"got {len(widths)}, {len(iter_vars)}, {len(global_ubs)}")
+            raise ValueError(
+                f"TileMaskGen: widths / iter_vars / global_ubs lengths must agree; "
+                f"got {len(widths)}, {len(iter_vars)}, {len(global_ubs)}"
+            )
         super().__init__(name, location=location, inputs=set(), outputs={"_o"})
         self.widths = list(widths)
         self.iter_vars = list(iter_vars)
         self.global_ubs = list(global_ubs)
+        self.guard_predicate = guard_predicate
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Confirm ``_o`` is connected and its descriptor satisfies the design
-        section 10.2 mask descriptor lock (``Array(shape=widths, dtype=bool_,
-        storage=Register, transient=True)``).
-
-        :param sdfg: SDFG that owns ``state``.
-        :param state: State that owns ``self``.
-        :raises ValueError: If ``_o`` is not connected or fails the lock.
-        """
-        from .._pure_codegen import validate_mask_descriptor_lock
-        out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
-        if "_o" not in out_e:
+        out_edges = {edge.src_conn: edge for edge in state.out_edges(self) if edge.src_conn is not None}
+        if "_o" not in out_edges:
             raise ValueError(f"{self.label}: required output '_o' not connected")
-        mask_arr = sdfg.arrays[out_e["_o"].data.data]
-        validate_mask_descriptor_lock(self.label, "_o", mask_arr, tuple(self.widths))
+        validate_mask_descriptor_lock(
+            self.label, "_o", sdfg.arrays[required(out_edges["_o"].data.data)], tuple(self.widths)
+        )
+
+    def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
+        # The headers build the mask from the bounds alone and would drop the guard, running every lane.
+        return not self.guard_predicate
+
+    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        terms = [
+            f"((({iter_var}) + __l{dim}) < ({bound}))"
+            for dim, (iter_var, bound) in enumerate(zip(self.iter_vars, self.global_ubs, strict=True))
+        ]
+        if self.guard_predicate:
+            terms.append(f"({self.guard_predicate})")
+        condition = " && ".join(terms) if terms else "true"
+        return nodes.Tasklet(
+            label=f"{self.label}_pure",
+            inputs={},
+            outputs={"_o": None},
+            code=nested_loops(self.widths, f"_o[{tile_offset(self.widths)}] = {condition};"),
+            language=dace.dtypes.Language.CPP,
+        )
+
+    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+        self.validate(sdfg, state)
+        vlen = require_k1(self)
+        start = lane_start(self.iter_vars[0])
+        bounds = [f"({start})", f"({self.global_ubs[0]})"]
+        if backend in tile_functions.ISAS:
+            out = pointer("_o", next(edge for edge in state.out_edges(self) if edge.src_conn == "_o"))
+            code = call_text(TileFunction("maskgen", backend, "i64", vlen).name, [out, *bounds])
+        else:
+            code = call_text(f"dace::tileops::tile_mask_gen<int64_t, {vlen}>", ["_o", *bounds])
+        return nodes.Tasklet(
+            label=f"{self.label}_{backend}",
+            inputs={},
+            outputs={"_o": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )

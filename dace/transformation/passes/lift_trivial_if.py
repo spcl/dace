@@ -1,19 +1,70 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
+
 import ast
 import re
+from functools import lru_cache
+from typing import Any
+
+import sympy
+
 import dace
-from typing import Any, Dict, Optional, Set, Union
-from dace import SDFG, ControlFlowRegion
-from dace import symbolic
+from dace import SDFG, ControlFlowRegion, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
-from dace.sdfg.state import ControlFlowBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, SymbolResolver
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
-from dace.transformation import pass_pipeline as ppl, transformation
-import dace.sdfg.utils as sdutil
-import sympy
-from sympy import pycode
+
+
+@lru_cache(maxsize=16384, typed=True)
+def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
+    """Whether ``code_string`` provably reduces to the constant ``val``.
+
+    A pure function of the condition string, so its sympy-heavy evaluation is memoized across the many
+    conditionals that share a guard and -- because the cache is module-level, not per-instance -- across
+    the ``FixedPointPipeline``'s repeated ``LiftTrivialIf`` re-invocations (a fresh pass instance each
+    time). ``typed=True`` per the codebase rule. The language gate lives in the calling method.
+    """
+    # Primary: pystr_to_symbolic already handles Python and/or/not and comparison operators. We require
+    # a concrete literal back -- bool() of an unevaluated sympy expression (e.g. ``A[0]`` -> Function(0))
+    # is truthy, which would mis-classify dynamic conditions as trivial.
+    try:
+        expr = symbolic.pystr_to_symbolic(code_string)
+        result = symbolic.evaluate(expr, symbols={})
+        if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
+            return bool(result) is val
+    except Exception:
+        pass
+
+    # Fallback: Some SDFGs (e.g. Fortran frontend) produce nested comparisons like ``(a == 1) == 0`` that
+    # sympy refuses to compare bool against an int. Try as best effort to rewrite boolean ops/literals to
+    # arithmetic over 0/1 and let SymExpr.simplify reduce it.
+    try:
+        tokens = re.split(r"(\s+|[()\[\]])", code_string)
+        replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
+        rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
+        # Cheap screen before the sledgehammer. ``evaluate`` below only ever returns a verdict for a
+        # symbol-FREE expression, and ``sympy.simplify`` of a relational routes through
+        # ``equals``/``is_constant``, which samples numerically via mpmath PSLQ -- on CLOUDSC that is
+        # seconds spent proving that ``zqx_index_9 < yrecldp_rlmin`` is not a constant, once per
+        # truth value per distinct guard. ``expand`` settles the cancellations an SDFG guard can
+        # actually contain (polynomials over integer symbols, which sympy's own constructors already
+        # fold most of) for a fraction of the cost; whatever it leaves holding a free symbol cannot
+        # come back a literal, so there is nothing for the expensive path to find.
+        if sympy.expand(symbolic.pystr_to_symbolic(rewritten)).free_symbols:
+            return False
+        simplified = dace.symbolic.SymExpr(rewritten).simplify()
+        # symstr, not sympy's printer: this string is re-parsed by SymExpr, so it must stay in
+        # DaCe's own vocabulary -- and sympy raises outright on int_floor/int_ceil, which the
+        # bare ``except`` below would silently turn into "not a trivial condition".
+        result = symbolic.evaluate(dace.symbolic.SymExpr(symbolic.symstr(simplified)), symbols={})
+        if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
+            return bool(result) is val
+    except Exception:
+        pass
+    return False
 
 
 @transformation.explicit_cf_compatible
@@ -38,29 +89,35 @@ class LiftTrivialIf(ppl.Pass):
         return ppl.Modifies.CFG | ppl.Modifies.States
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return modified & ppl.Modifies.CFG
+        # Re-run only when the number of control-flow blocks changed -- a ConditionalBlock added or
+        # removed, or a loop peel that shifts an enclosing iteration range and can make a boundary
+        # guard newly trivial. Interstate-edge content changes (conditions/assignments) never create
+        # or destroy a conditional, so reacting to them only re-scanned the SDFG for no new work.
+        return bool(modified & ppl.Modifies.States)
 
     def depends_on(self):
         return []
 
-    def _make_unique_names(self, sdfg: dace.SDFG):
-        """Relabel every block so labels are unique across the whole SDFG.
-
-        Lifting a branch up splices its blocks into the parent region, which can
-        collide with existing labels; uniquifying first keeps the result valid.
-
-        :param sdfg: SDFG whose blocks are relabeled in place.
+    @staticmethod
+    def _repair_moved_nested_sdfg_refs(block) -> None:
+        """Repair the nested-SDFG parent pointers left dangling when a branch body is deep-copied up
+        into its parent CFG. ``ControlFlowRegion.add_node`` already fixed every moved control-flow
+        block's ``parent_graph``/``sdfg``; only the ``NestedSDFG`` dataflow nodes are left over --
+        deep-copy could not resolve the enclosing SDFG because it sits outside the copied subtree.
+        Scoped to the moved ``block``, never the whole SDFG.
         """
-        all_blocks = {
-            n
-            for n, _ in sdfg.all_nodes_recursive()
-            if isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion) or isinstance(n, ControlFlowBlock)
-        }
-        all_labels: Set[str] = set()
-        for n in all_blocks:
-            new_label = dace.utils.find_new_name(n.label, all_labels)
-            all_labels.add(new_label)
-            n.label = new_label
+        if isinstance(block, dace.SDFGState):
+            states = [block]
+        elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
+            states = []
+        else:
+            states = block.states()
+        for state in states:
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg is not None:
+                    node.sdfg.parent = state
+                    node.sdfg.parent_sdfg = state.sdfg
+                    node.sdfg.parent_nsdfg_node = node
 
     def _trivial_cond_check(self, code: CodeBlock, val: bool) -> bool:
         """Whether ``code`` provably evaluates to the constant truth value ``val``.
@@ -71,44 +128,36 @@ class LiftTrivialIf(ppl.Pass):
         """
         if code.language != dace.dtypes.Language.Python:
             return False
+        return _trivial_cond_check_cached(code.as_string, val)
 
-        # Primary: pystr_to_symbolic already handles Python and/or/not and
-        # comparison operators. We require a concrete literal back -- bool() of
-        # an unevaluated sympy expression (e.g. ``A[0]`` -> Function(0)) is
-        # truthy, which would mis-classify dynamic conditions as trivial.
-        try:
-            expr = symbolic.pystr_to_symbolic(code.as_string)
-            result = symbolic.evaluate(expr, symbols={})
-            if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
-                return bool(result) is val
-        except Exception:
-            pass
-
-        # Fallback: Some SDFGs (e.g. Fortran frontend) produce nested comparisons like
-        # ``(a == 1) == 0`` that sympy refuses to compare bool against an int.
-        # Try as best effort to rewrite boolean ops/literals to arithmetic over 0/1 and let
-        # SymExpr.simplify reduce it.
-        try:
-            tokens = re.split(r'(\s+|[()\[\]])', code.as_string)
-            replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
-            rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
-            simplified = dace.symbolic.SymExpr(rewritten).simplify()
-            result = symbolic.evaluate(dace.symbolic.SymExpr(pycode(simplified)), symbols={})
-            if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
-                return bool(result) is val
-        except Exception:
-            pass
-        return False
-
-    def _trivially_true(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
+    def _trivially_true(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, True):
             return True
-        return cfb is not None and self._range_verdict(code, cfb) == 'true'
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
+        )
 
-    def _trivially_false(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
+    def _trivially_false(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, False):
             return True
-        return cfb is not None and self._range_verdict(code, cfb) == 'false'
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "false" or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE
+        )
+
+    @classmethod
+    def _facts_verdict(cls, code: CodeBlock, cfb: ConditionalBlock) -> symbolic.Truth:
+        """Whether a comparison guard (or its negation) holds under the facts at ``cfb``."""
+        if code is None or code.language != dace.dtypes.Language.Python:
+            return symbolic.Truth.UNKNOWN
+        condition = symbolic.pystr_to_symbolic(code.as_string)
+        negated = isinstance(condition, sympy.Not)
+        relation = symbolic.comparison_relation(condition.args[0] if negated else condition)
+        if relation is None:
+            return symbolic.Truth.UNKNOWN
+        truth = symbolic.ask(relation, SymbolResolver().facts_at(cfb))
+        if negated and truth is not symbolic.Truth.UNKNOWN:
+            return symbolic.Truth.FALSE if truth is symbolic.Truth.TRUE else symbolic.Truth.TRUE
+        return truth
 
     def _loop_iter_ranges(self, cfb: ConditionalBlock):
         """The ``(loop_variable, start, end)`` iteration range of every
@@ -116,6 +165,7 @@ class LiftTrivialIf(ppl.Pass):
         the inclusive bounds under normal (no-break) termination."""
         from dace.sdfg.state import LoopRegion
         from dace.transformation.passes.analysis import loop_analysis
+
         ranges = []
         graph = cfb.parent_graph
         seen = set()
@@ -126,18 +176,18 @@ class LiftTrivialIf(ppl.Pass):
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
                     ranges.append((graph.loop_variable, start, end))
-            graph = getattr(graph, 'parent_graph', None)
+            graph = getattr(graph, "parent_graph", None)
         return ranges
 
     @staticmethod
-    def _cmp_verdict(opname: str, c, start, end) -> str:
+    def _cmp_verdict(opname: str, c, start, end, facts: symbolic.Facts) -> str:
         """Whether ``i <opname> c`` is ``'true'`` / ``'false'`` for every ``i`` in
         ``[start, end]``, or ``'unknown'`` when the bounds are too symbolic to
         decide. ``c``, ``start`` and ``end`` are symbolic; a verdict is only
         returned when the deciding difference reduces to a concrete number."""
 
         def num(x):
-            s = symbolic.simplify(x)
+            s = symbolic.simplify(x, facts)
             return s if s.is_number else None
 
         def pos(x):  # provably x > 0
@@ -151,37 +201,37 @@ class LiftTrivialIf(ppl.Pass):
         def single_point(x_lo, x_hi, target):  # provably start == end == target
             return nonneg(x_hi - x_lo) and not pos(x_hi - x_lo) and num(x_lo - target) == 0
 
-        if opname == 'Eq':  # i == c
+        if opname == "Eq":  # i == c
             if pos(start - c) or pos(c - end):
-                return 'false'
+                return "false"
             if single_point(start, end, c):
-                return 'true'
-        elif opname == 'NotEq':  # i != c
+                return "true"
+        elif opname == "NotEq":  # i != c
             if pos(start - c) or pos(c - end):
-                return 'true'
+                return "true"
             if single_point(start, end, c):
-                return 'false'
-        elif opname == 'Lt':  # i < c
+                return "false"
+        elif opname == "Lt":  # i < c
             if pos(c - end):
-                return 'true'
+                return "true"
             if nonneg(start - c):
-                return 'false'
-        elif opname == 'LtE':  # i <= c
+                return "false"
+        elif opname == "LtE":  # i <= c
             if nonneg(c - end):
-                return 'true'
+                return "true"
             if pos(start - c):
-                return 'false'
-        elif opname == 'Gt':  # i > c
+                return "false"
+        elif opname == "Gt":  # i > c
             if pos(start - c):
-                return 'true'
+                return "true"
             if nonneg(c - end):
-                return 'false'
-        elif opname == 'GtE':  # i >= c
+                return "false"
+        elif opname == "GtE":  # i >= c
             if nonneg(start - c):
-                return 'true'
+                return "true"
             if pos(c - end):
-                return 'false'
-        return 'unknown'
+                return "false"
+        return "unknown"
 
     def _range_verdict(self, code: CodeBlock, cfb: ConditionalBlock) -> str:
         """Whether guard ``code`` is a tautology (``'true'``) or contradiction
@@ -190,21 +240,21 @@ class LiftTrivialIf(ppl.Pass):
         and ``not(<compare>)``, matching the compared variable to the enclosing
         ``LoopRegion`` whose iterator it is."""
         if code is None or code.language != dace.dtypes.Language.Python:
-            return 'unknown'
+            return "unknown"
         ranges = self._loop_iter_ranges(cfb)
         if not ranges:
-            return 'unknown'
+            return "unknown"
         try:
             node = code.code[0]
         except (AttributeError, IndexError, TypeError):
-            return 'unknown'
+            return "unknown"
         if isinstance(node, ast.Expr):
             node = node.value
         negate = isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)
         if negate:
             node = node.operand
         if not isinstance(node, ast.Compare) or len(node.ops) != 1:
-            return 'unknown'
+            return "unknown"
         left, op, right = node.left, node.ops[0], node.comparators[0]
         opname = type(op).__name__
 
@@ -212,31 +262,47 @@ class LiftTrivialIf(ppl.Pass):
             return n.id if isinstance(n, ast.Name) else None
 
         ivar_to_range = {iv: (s, e) for iv, s, e in ranges}
-        lname, rname = name_of(left), name_of(right)
-        if lname in ivar_to_range and rname not in ivar_to_range:
-            ivar, other = lname, right
-        elif rname in ivar_to_range and lname not in ivar_to_range:
-            ivar, other = rname, left
-            opname = {'Lt': 'Gt', 'LtE': 'GtE', 'Gt': 'Lt', 'GtE': 'LtE'}.get(opname, opname)
+
+        def ivar_in(n):
+            names = {sub.id for sub in ast.walk(n) if isinstance(sub, ast.Name)} & ivar_to_range.keys()
+            return next(iter(names)) if len(names) == 1 else None
+
+        lvar, rvar = ivar_in(left), ivar_in(right)
+        if lvar and not rvar:
+            ivar, varying, other = lvar, left, right
+        elif rvar and not lvar:
+            ivar, varying, other = rvar, right, left
+            opname = {"Lt": "Gt", "LtE": "GtE", "Gt": "Lt", "GtE": "LtE"}.get(opname, opname)
         else:
-            return 'unknown'
+            return "unknown"
         try:
             c = symbolic.pystr_to_symbolic(ast.unparse(other))
+            if name_of(varying) != ivar:
+                # An increasing guard ``g(i) < c`` is ``i < x`` at its crossing ``x`` (``i * 8192 < N``, ``i * i < N``
+                # over ``i >= 0``): the bare comparison the split that put ``x`` into the loop bounds decides.
+                if opname not in ("Lt", "LtE", "Gt", "GtE") or not symbolic.provably_nonnegative(
+                    ivar_to_range[ivar][0], cfb.sdfg.facts()
+                ):
+                    return "unknown"
+                c = symbolic.guard_crossing(ast.unparse(varying), ivar, c, strict=opname in ("Lt", "GtE"))
+                if c is None:
+                    return "unknown"
+                opname = {"Lt": "Lt", "LtE": "Lt", "Gt": "GtE", "GtE": "GtE"}[opname]
         except Exception:
-            return 'unknown'
+            return "unknown"
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
-            return 'unknown'  # C must be loop-invariant
+            return "unknown"  # C must be loop-invariant
         start, end = ivar_to_range[ivar]
-        verdict = self._cmp_verdict(opname, c, start, end)
-        if negate and verdict != 'unknown':
-            verdict = 'false' if verdict == 'true' else 'true'
+        verdict = self._cmp_verdict(opname, c, start, end, cfb.sdfg.facts())
+        if negate and verdict != "unknown":
+            verdict = "false" if verdict == "true" else "true"
         return verdict
 
     @staticmethod
     def _is_conjunction(expr) -> bool:
         # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
         # ``func`` is named ``AND``), not ``sympy.And``; accept either.
-        return isinstance(expr, sympy.And) or getattr(getattr(expr, 'func', None), '__name__', '') == 'AND'
+        return isinstance(expr, sympy.And) or getattr(getattr(expr, "func", None), "__name__", "") == "AND"
 
     def _flatten_conjuncts(self, expr) -> list:
         """All conjuncts of a (possibly nested) conjunction, flattened.
@@ -274,7 +340,7 @@ class LiftTrivialIf(ppl.Pass):
                 return True
         return False
 
-    def _detect_and_remove_top_level_trivial_ifs(self, graph: Union[ControlFlowRegion, SDFG]) -> int:
+    def _detect_and_remove_top_level_trivial_ifs(self, graph: ControlFlowRegion | SDFG) -> int:
         """Process the conditionals directly in ``graph`` (one level, no recursion).
 
         :param graph: Region or SDFG whose top-level conditionals are simplified.
@@ -321,9 +387,9 @@ class LiftTrivialIf(ppl.Pass):
                     # Either one of them must be none
                     if cond1 is not None and cond2 is not None:
                         continue
-                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (((cond1, cfg1),
-                                                                             (cond2, cfg2)) if cond1 is not None else
-                                                                            ((cond2, cfg2), (cond1, cfg1)))
+                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (
+                        ((cond1, cfg1), (cond2, cfg2)) if cond1 is not None else ((cond2, cfg2), (cond1, cfg1))
+                    )
 
                     if self._trivially_true(not_none_cond, cfb):  # 2.1
                         cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
@@ -331,16 +397,26 @@ class LiftTrivialIf(ppl.Pass):
                         cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
+            existing = {n.label for n in graph.nodes()}
+            before = {id(n) for n in graph.nodes()}
             move_branch_cfg_up_discard_conditions(cfb, cfg)
             assert cfb not in graph.nodes()
+            # Bookkeep only the spliced-in subtree, not the whole SDFG -- the old whole-SDFG walk here
+            # ran once per control-flow block and was quadratic (on CLOUDSC ~10s of a 15s run).
+            # ``add_node`` already set parent_graph/sdfg on every moved control-flow block; the branch
+            # body is deep-copied, so relabel just the new top-level blocks against ``graph`` (their
+            # internal labels are region-scoped and already unique) and repair the dangling
+            # nested-SDFG parent pointers.
+            for moved in [n for n in graph.nodes() if id(n) not in before]:
+                if moved.label in existing:
+                    moved.label = dace.utils.find_new_name(moved.label, existing)
+                existing.add(moved.label)
+                self._repair_moved_nested_sdfg_refs(moved)
             rmed_count += 1
-
-        sdutil.set_nested_sdfg_parent_references(graph.sdfg)
-        graph.sdfg.reset_cfg_list()
 
         return rmed_count
 
-    def _detect_trivial_ifs_and_rm_cfg(self, graph: Union[ControlFlowRegion, SDFG]) -> int:
+    def _detect_trivial_ifs_and_rm_cfg(self, graph: ControlFlowRegion | SDFG) -> int:
         """Simplify trivial conditionals in ``graph`` and all blocks nested below it.
 
         :param graph: Region or SDFG to simplify recursively.
@@ -359,18 +435,39 @@ class LiftTrivialIf(ppl.Pass):
             rmed_count += local_rmed_count
 
         # Recurse in to nSDFGs
-        for state in graph.all_states():
+        for state in graph.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     rmed_count += self._detect_trivial_ifs_and_rm_cfg(node.sdfg)
 
         return rmed_count
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        # Start with top level nodes and continue further to ensure a trivial if within another trivial if
-        # can be processed correctly
-        self._make_unique_names(sdfg)
-        sdfg.reset_cfg_list()
-        self._detect_trivial_ifs_and_rm_cfg(sdfg)
-        sdfg.reset_cfg_list()
-        return None
+    def lift_in_region(self, region, recursive: bool = True) -> int:
+        """Scoped entry point: collapse decidable conditionals inside ``region`` -- recursively by
+        default, one level only with ``recursive=False`` -- without walking the whole SDFG. For a
+        caller that just made a guard constant (TrivialLoopElimination substituting the iterator
+        into a spliced single-trip body) and wants the cleanup local to what it touched.
+
+        :param region: The control flow region to simplify in place.
+        :param recursive: Also descend into nested regions and SDFGs.
+        :returns: Number of branches/conditionals removed.
+        """
+        if recursive:
+            return self._detect_trivial_ifs_and_rm_cfg(region)
+        return self._detect_and_remove_top_level_trivial_ifs(region)
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, int] | None:
+        """Collapse every statically-decidable conditional in ``sdfg`` into its taken branch.
+
+        :param sdfg: The SDFG to simplify in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: ``{'lifted_conditionals': <removed>}``, or ``None`` if nothing was removed. Labeling and
+                  nested-SDFG parent bookkeeping are done incrementally per splice, scoped to the moved
+                  subtree, so a no-op invocation touches nothing and a ``FixedPointPipeline`` converges.
+        """
+        rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
+        if not rmed_count:
+            return None
+        # ``add_node`` / ``remove_node`` / ``remove_branch`` keep the CFG list exact per splice, and the
+        # parent references were repaired per splice too: nothing left to rebuild.
+        return {"lifted_conditionals": rmed_count}

@@ -3,11 +3,13 @@
 Tests the ``dace.inline`` preprocessor call.
 """
 
-import dace
-from dace.frontend.python.common import DaceSyntaxError
 import math
+
 import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import DaceSyntaxError
 
 
 def _find_in_tasklet(sdfg: dace.SDFG, term: str) -> bool:
@@ -42,8 +44,8 @@ def test_inlinepp_simple():
     assert np.allclose(a[11], 13)
 
     sdfg = tester.to_sdfg(a)
-    assert _find_in_tasklet(sdfg, '13'), 'Inlined expression not found in tasklets'
-    assert _find_in_memlet(sdfg, '11'), 'Inlined expression not found in memlets'
+    assert _find_in_tasklet(sdfg, "13"), "Inlined expression not found in tasklets"
+    assert _find_in_memlet(sdfg, "11"), "Inlined expression not found in memlets"
 
 
 def test_inlinepp_fail():
@@ -95,9 +97,9 @@ def test_inlinepp_stateful():
         a[2] = dace.inline(stateful() * 2)
 
     sdfg = tester.to_sdfg()
-    assert _find_in_tasklet(sdfg, '12')
-    assert _find_in_tasklet(sdfg, '13')
-    assert _find_in_tasklet(sdfg, '28')
+    assert _find_in_tasklet(sdfg, "12")
+    assert _find_in_tasklet(sdfg, "13")
+    assert _find_in_tasklet(sdfg, "28")
 
     a = np.random.rand(3)
     sdfg(a)
@@ -118,18 +120,85 @@ def test_inlinepp_in_unroll():
             a[i] = dace.inline(stateful(i))
 
     sdfg = tester.to_sdfg()
-    assert _find_in_tasklet(sdfg, '12')
-    assert _find_in_tasklet(sdfg, '14')
-    assert _find_in_tasklet(sdfg, '16')
+    assert _find_in_tasklet(sdfg, "12")
+    assert _find_in_tasklet(sdfg, "14")
+    assert _find_in_tasklet(sdfg, "16")
 
     a = np.random.rand(3)
     sdfg(a)
     assert np.allclose(a, np.array([12, 14, 16]))
 
 
-if __name__ == '__main__':
+class _TracerRegistry:
+    """An object whose methods are meant to be resolved at parse time."""
+
+    def __init__(self, *names: str):
+        self._mapping = {name: index for index, name in enumerate(names)}
+
+    @dace.always_inline
+    def index(self, name: str) -> int:
+        return self._mapping[name]
+
+    def __len__(self) -> int:
+        return len(self._mapping)
+
+
+_tracers = _TracerRegistry("vapor", "liquid", "ice")
+
+
+@dace.always_inline
+def _tracer_count() -> int:
+    return len(_tracers)
+
+
+def test_always_inline_method():
+    # Regular Python semantics are unaffected by the decorator
+    assert _tracers.index("ice") == 2
+
+    @dace.program
+    def tester(a: dace.float64[10]):
+        a[_tracers.index("liquid")] = 1.0
+
+    sdfg = tester.to_sdfg()
+    assert _find_in_memlet(sdfg, "1")
+
+    a = np.zeros(10)
+    sdfg(a)
+    expected = np.zeros(10)
+    expected[1] = 1.0
+    assert np.allclose(a, expected)
+
+
+def test_always_inline_function():
+
+    @dace.program
+    def tester(a: dace.float64[10]):
+        a[_tracer_count()] = 2.0
+
+    a = np.zeros(10)
+    tester(a)
+    expected = np.zeros(10)
+    expected[3] = 2.0
+    assert np.allclose(a, expected)
+
+
+def test_always_inline_fail():
+    """A non-constant argument is an error, not a silent fallback to a callback."""
+
+    @dace.program
+    def tester(a: dace.float64[10], i: dace.int64):
+        a[_tracers.index(i)] = 1.0
+
+    with pytest.raises(DaceSyntaxError):
+        tester(np.zeros(10), 1)
+
+
+if __name__ == "__main__":
     test_inlinepp_simple()
     test_inlinepp_fail()
     test_inlinepp_tuple_retval()
     test_inlinepp_stateful()
     test_inlinepp_in_unroll()
+    test_always_inline_method()
+    test_always_inline_function()
+    test_always_inline_fail()

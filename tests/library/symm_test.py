@@ -9,15 +9,17 @@ reference builds the full symmetric matrix and compares against dense numpy.
 scalar connectors (``_alpha`` / ``_beta``); the vendor path is exercised on the CPU
 (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS).
 """
+
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 import numpy as np
 import pytest
 
 import dace
 from dace.libraries.blas import Symm
+from dace.memlet import Memlet
 
 M, N = dace.symbol("M"), dace.symbol("N")
 
@@ -50,11 +52,10 @@ def _device_wrap(sdfg, state, mats):
         dev = name + "_dev"
         sdfg.add_datadesc(
             dev,
-            dace.data.Array(desc.dtype,
-                            desc.shape,
-                            storage=dace.StorageType.GPU_Global,
-                            transient=True,
-                            strides=desc.strides))
+            dace.data.Array(
+                desc.dtype, desc.shape, storage=dace.StorageType.GPU_Global, transient=True, strides=desc.strides
+            ),
+        )
         for n in state.data_nodes():
             if n.data == name:
                 n.data = dev
@@ -90,13 +91,15 @@ def _make_sdfg(dtype, m, n, alpha, beta, side, uplo, impl, alpha_rt=False, beta_
     if beta_rt:
         sdfg.add_array("beta", [1], dtype)
     state = sdfg.add_state()
-    node = Symm("symm",
-                side=side,
-                uplo=uplo,
-                alpha=1 if alpha_rt else alpha,
-                beta=1 if beta_rt else beta,
-                alpha_input=alpha_rt,
-                beta_input=beta_rt)
+    node = Symm(
+        "symm",
+        side=side,
+        uplo=uplo,
+        alpha=1 if alpha_rt else alpha,
+        beta=1 if beta_rt else beta,
+        alpha_input=alpha_rt,
+        beta_input=beta_rt,
+    )
     node.implementation = impl
     if gpu:
         # Device operands + host coefficient scalars leave the node schedule ambiguous
@@ -128,7 +131,7 @@ _IMPLS = ["pure", "OpenBLAS", pytest.param("MKL", marks=pytest.mark.mkl), pytest
 def test_symm(impl, side, uplo, alpha, beta):
     m, n = 12, 9
     rng = np.random.default_rng(0)
-    A = np.ascontiguousarray(rng.random((m if side == "L" else n, ) * 2))
+    A = np.ascontiguousarray(rng.random((m if side == "L" else n,) * 2))
     B = rng.random((m, n))
     C = rng.random((m, n))
     ref = _reference(A, B, C, alpha, beta, side, uplo)
@@ -149,7 +152,7 @@ def test_symm_runtime_coeffs(impl, side, uplo, beta_input):
     m, n = 12, 9
     alpha, beta = 1.5, (1.2 if beta_input else 0.0)
     rng = np.random.default_rng(1)
-    A = np.ascontiguousarray(rng.random((m if side == "L" else n, ) * 2))
+    A = np.ascontiguousarray(rng.random((m if side == "L" else n,) * 2))
     B = rng.random((m, n))
     C = rng.random((m, n))
     ref = _reference(A, B, C, alpha, beta, side, uplo)
@@ -161,6 +164,31 @@ def test_symm_runtime_coeffs(impl, side, uplo, beta_input):
         kwargs["beta"] = np.array([beta])
     sdfg(**kwargs)
     assert np.allclose(Cwork, ref, rtol=1e-11, atol=1e-13), f"maxdiff {np.max(np.abs(Cwork - ref))}"
+
+
+def test_validate_accepts_reparsed_symbol_instances():
+    """A same-named dim reaching Symm.validate as two distinct sympy instances (one
+    operand's dace.int32 shape vs another's dace.int64 shape) must compare equal by
+    name -- and a genuine shape mismatch must still be rejected."""
+    Ma, Mb = dace.symbol("M", dace.int32), dace.symbol("M", dace.int64)
+    Na, Nb = dace.symbol("N", dace.int32), dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG("symm_validate_symbol_identity")
+    sdfg.add_array("A", [Ma, Mb], dace.float64)
+    sdfg.add_array("B", [Ma, Na], dace.float64)
+    sdfg.add_array("C", [Mb, Nb], dace.float64)
+    state = sdfg.add_state()
+    node = Symm("symm", side="L")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("B"), None, node, "_b", Memlet.from_array("B", sdfg.arrays["B"]))
+    state.add_edge(node, "_c", state.add_write("C"), None, Memlet.from_array("C", sdfg.arrays["C"]))
+    node.validate(sdfg, state)  # must not raise
+
+    sdfg.arrays["B"].shape = (Ma, dace.symbol("P", dace.int32))
+    b_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_b")
+    b_edge.data = Memlet.from_array("B", sdfg.arrays["B"])
+    with pytest.raises(ValueError):
+        node.validate(sdfg, state)
 
 
 if __name__ == "__main__":

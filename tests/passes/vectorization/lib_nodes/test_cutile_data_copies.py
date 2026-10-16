@@ -1,3 +1,4 @@
+from dace.transformation.passes.vectorization.enums import ISA
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the cuTile data-copy pipeline via ``apply_gpu_transformations()``.
 
@@ -133,14 +134,12 @@ def _lower_full_pipeline(sdfg: SDFG, widths: Tuple[int, ...] = (8,)) -> None:
     vec = VectorizeCPUMultiDim(
         VectorizeConfig(
             widths=widths,
-            target_isa="CUTILE",
+            target_isa=ISA.CUTILE,
             expand_tile_nodes=False,
         ))
     vec.apply_pass(sdfg, {})
     CuTileValidateTiles().apply_pass(sdfg, {})
     sdfg.apply_gpu_transformations(
-        sequential_innermaps=True,
-        register_transients=True,
         simplify=True,
     )
     GPUDeviceToCuTile().apply_pass(sdfg, {})

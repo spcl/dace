@@ -1,17 +1,20 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library
-from dace.utils import prod as _prod
-from dace.libraries.mpi import utils
+from dace.libraries.mpi import environments, utils
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    count_expression,
+    expanded_input_connectors,
+    input_descriptor_name,
+    resolve_comm,
+)
 from dace.sdfg import nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.utils import prod as _prod
 
 
 @library.expansion
 class ExpandScatterMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -25,20 +28,27 @@ class ExpandScatterMPI(ExpandTransformation):
         if root.dtype.base_type != dtypes.int32:
             raise ValueError("Scatter root must be an integer!")
 
+        comm = resolve_comm(node, parent_state)
+
         code = f"""
             int _commsize;
-            MPI_Comm_size(MPI_COMM_WORLD, &_commsize);
+            MPI_Comm_size({comm}, &_commsize);
             MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
                         _outbuffer, {out_count_str}, {out_mpi_dtype_str},
-                        _root, MPI_COMM_WORLD);
+                        _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class Scatter(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandScatterMPI,
@@ -46,7 +56,7 @@ class Scatter(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inbuffer", "_root"], outputs=["_outbuffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -70,20 +80,17 @@ class Scatter(MPINode):
         in_count_str = "XXX"
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
+            if src_conn == "_outbuffer":
+                out_count_str = count_expression(data.subset.num_elements_exact())
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+            if dst_conn == "_inbuffer":
+                in_count_str = count_expression(data.subset.num_elements_exact())
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root
 
 
 @library.expansion
 class ExpandBlockScatterMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -94,37 +101,38 @@ class ExpandBlockScatterMPI(ExpandTransformation):
         if inp_buffer.dtype.veclen > 1:
             raise NotImplementedError
 
-        subarray_type = input_descriptor_name(node, parent_state, '_subarray')
-        scatter_grid = input_descriptor_name(node, parent_state, '_scatter_grid')
-        bcast_grid = input_descriptor_name(node, parent_state, '_bcast_grid')
+        subarray_type = input_descriptor_name(node, parent_state, "_subarray")
+        scatter_grid = input_descriptor_name(node, parent_state, "_scatter_grid")
+        bcast_grid = input_descriptor_name(node, parent_state, "_bcast_grid")
         if subarray_type is None:
-            raise ValueError('BlockScatter requires an incoming _subarray connector')
+            raise ValueError("BlockScatter requires an incoming _subarray connector")
         if scatter_grid is None:
-            raise ValueError('BlockScatter requires an incoming _scatter_grid connector')
+            raise ValueError("BlockScatter requires an incoming _scatter_grid connector")
 
         code = f"""
             if (__state->{scatter_grid}_valid) {{
-                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _scatter_grid);
+                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {count_expression(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _scatter_grid);
             }}
         """
         if bcast_grid:
             code += f"""
                 if (__state->{bcast_grid}_valid) {{
-                    MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _bcast_grid);
+                    MPI_Bcast(_out_buffer, {count_expression(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _bcast_grid);
                 }}
             """
 
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class BlockScatter(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBlockScatterMPI,
@@ -132,7 +140,7 @@ class BlockScatter(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inp_buffer"], outputs=["_out_buffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """

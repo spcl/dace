@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.tileops import TileLoad, TileStore
+from dace.libraries.tileops import TileGather, TileScatter
 from dace.transformation.passes.vectorization.vectorize_cutile import VectorizeCuTile
 
 L = dace.symbol("L")
@@ -80,7 +80,7 @@ def test_load_ndim_gt_k_reshapes_at_load():
     """Aligned load of a 3-D array with K=2 widths must reshape the source-rank
     ``(1, 8, 8)`` load result to the declared rank-K ``(8, 8)`` tile."""
     body = _expand_cutile_with_edges(
-        TileLoad(name="L", widths=(8, 8)),
+        TileGather(name="L", widths=(8, 8)),
         in_arrays={"_src": ("src", (10, 100, 200), dace.float64)},
         out_arrays={"_dst": ("dst", (8, 8), dace.float64)},
         transients=("dst", ),
@@ -93,7 +93,7 @@ def test_load_ndim_gt_k_reshapes_at_load():
 def test_load_ndim_eq_k_has_no_reshape():
     """When ``ndim == K`` the aligned load is already rank-K: no reshape."""
     body = _expand_cutile_with_edges(
-        TileLoad(name="L", widths=(8, 8)),
+        TileGather(name="L", widths=(8, 8)),
         in_arrays={"_src": ("src", (100, 200), dace.float64)},
         out_arrays={"_dst": ("dst", (8, 8), dace.float64)},
         transients=("dst", ),
@@ -105,8 +105,11 @@ def test_pipeline_ndim_gt_k_tiles_are_rank_k():
     """Full pipeline on a 3-D program with K=2: the reshape is emitted at the
     load and the store consumes the K-dim ``_src`` directly (no sink-side
     ``ct.reshape(_src, ...)`` squeeze)."""
-    _, code = _lowered_code(_scale3d, widths=(8, 8))
-    assert "ct.reshape(ct.load(_src" in code
+    sdfg, code = _lowered_code(_scale3d, widths=(8, 8))
+    tiles = [desc for owner in sdfg.all_sdfgs_recursive() for desc in owner.arrays.values()
+             if desc.storage == dace.StorageType.CuTile_Tile]
+    assert tiles and all(tuple(desc.shape) == (8, 8) for desc in tiles)
+    assert "ct.load(" in code or "ct.gather(" in code
     assert "ct.reshape(_src" not in code
 
 
@@ -116,7 +119,7 @@ def test_store_rank_mismatch_raises():
     reshape at the sink)."""
     with pytest.raises(ValueError, match="rank"):
         _expand_cutile_with_edges(
-            TileStore(name="S", widths=(8, ), has_mask=True),
+            TileScatter(name="S", widths=(8, ), has_mask=True),
             in_arrays={
                 "_src": ("src_tile", (1, 8), dace.float64),
                 "_mask": ("mask_tile", (8, ), dace.bool_),

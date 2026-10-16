@@ -9,9 +9,10 @@ from dace import dtypes
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.codegen.py.compiled_sdfg import PythonCompiledSDFG
 from dace.config import set_temporary
-from dace.libraries.tileops.nodes import TILEOPS_NODE_TYPES
+from dace.libraries.tileops.nodes import TILE_NODES
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim, VectorizeCuTile
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -29,10 +30,10 @@ def compiled_matrix(request: pytest.FixtureRequest) -> CompiledSDFG | PythonComp
     if request.param == "cutile":
         VectorizeCuTile(widths=(8, 4)).apply_pass(sdfg, {})
     else:
-        config = VectorizeConfig(widths=(8, 4), target_isa="SCALAR", remainder_strategy="full_mask")
+        config = VectorizeConfig(widths=(8, 4), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.FULL_MASK)
         VectorizeCPUMultiDim(config).apply_pass(sdfg, {})
         sdfg.backend = dtypes.BackendLanguage.CPP
-    assert any(isinstance(node, TILEOPS_NODE_TYPES) for node, _ in sdfg.all_nodes_recursive())
+    assert any(isinstance(node, TILE_NODES) for node, _ in sdfg.all_nodes_recursive())
     # The classic CPU backend isolates this test from unrelated readable-backend library conflicts.
     with set_temporary("compiler", "cpu", "implementation", value="legacy"):
         with set_temporary("compiler", "cpu", "explicit_copy", value=False):

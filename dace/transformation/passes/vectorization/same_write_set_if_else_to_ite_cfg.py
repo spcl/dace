@@ -1,47 +1,304 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Rewrite same-write-set ``if/else`` → compute-then/compute-else/apply-ITE CFGs.
+"""Rewrite same-write-set ``if/else`` -> compute-then/compute-else/apply-ITE CFGs.
 
-Arms → sequential states producing ``_then_<arr>`` / ``_else_<arr>`` temps; final
-state folds them with symbolic ``ITE`` (see :mod:`dace.runtime.include.dace.ITE`),
-lowered to SIMD blend. Only two-branch ``if/else``, single-state arms, shared writes
-= matching element subsets, bodies = tasklets/access nodes; else raises
-:class:`NotImplementedError`.
+Arms -> sequential states producing ``_then_<arr>``/``_else_<arr>`` temps; final state
+folds them via symbolic ``ITE`` (:mod:`dace.runtime.include.dace.ITE`), lowered to SIMD
+blend. Requires two-branch ``if/else``, single-state arms, matching shared-write subsets,
+tasklet/access-node bodies; else raises :class:`NotImplementedError`.
 """
+
 import ast
 import copy
+import itertools
 import re
-from typing import Dict, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 import sympy
 
 import dace
-from dace import properties, symbolic
+from dace import properties, subsets, symbolic
+from dace.memlet import Memlet
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
     copy_state_contents,
 )
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.graph import Edge, MultiConnectorEdge
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
+from dace.symbolic_engine import to_sympy
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
+
+def array_read_parts(node: sympy.Basic) -> tuple[str | None, tuple[sympy.Basic, ...] | None]:
+    """``(array, indices)`` of a parsed read ``A[i, j]`` or ``A(i, j)``; a bare ``A`` has no indices."""
+    if isinstance(node, symbolic.Subscript):
+        return str(node.args[0]), tuple(node.args[1:])
+    if isinstance(node, sympy.Function):
+        return str(node.func), tuple(node.args)
+    if isinstance(node, sympy.Symbol):
+        return str(node), None
+    return None, None
+
+
+def replace_element_reads_with_connectors(
+    text: str, reads: Iterable[str], arrays: Iterable[str]
+) -> tuple[str, list[tuple[str, str | None, str]]]:
+    """Replace each read of ``reads`` with a connector, one per distinct element: ``A[0, i] + A[1, i]`` reads two.
+
+    :returns: the rewritten text and ``(array, element or None for a bare read, connector)`` in first-seen order.
+    """
+    names = OrderedSet(reads)
+    parsed = symbolic.SymExpr(text)
+    base = parsed.expr if isinstance(parsed, symbolic.SymExpr) else parsed
+    if to_sympy is not None:
+        converted = to_sympy(base)
+        if converted is not None:
+            base = converted
+    printer = symbolic.DaceSympyPrinter(OrderedSet(arrays))
+    connectors: dict[tuple[str, str | None], str] = {}
+    rewrites: dict[sympy.Basic, sympy.Basic] = {}
+    walk = sympy.preorder_traversal(base)
+    for node in walk:
+        name, indices = array_read_parts(node)
+        if name not in names:
+            continue
+        # The read is replaced whole; its head symbol is not a second, bare read.
+        walk.skip()
+        element = None if indices is None else ", ".join(printer.doprint(index) for index in indices)
+        if (name, element) not in connectors:
+            connectors[(name, element)] = f"_in_{name}_{len(connectors)}"
+        rewrites[node] = sympy.Symbol(connectors[(name, element)])
+    rewritten = printer.doprint(base.xreplace(rewrites) if rewrites else base)
+    return rewritten, [(name, element, connector) for (name, element), connector in connectors.items()]
+
+
+def wire_element_reads(
+    sdfg: dace.SDFG,
+    state: dace.SDFGState,
+    tasklet: dace.nodes.Tasklet,
+    element_reads: list[tuple[str, str | None, str]],
+    subset_str: str,
+) -> None:
+    """Feed each element read into ``tasklet``: one-element sources at their origin, bare reads at ``subset_str``."""
+    for name, element, connector in element_reads:
+        desc = sdfg.arrays[name]
+        if desc.total_size == 1:
+            subset = ", ".join(["0"] * len(desc.shape))
+        elif element:
+            subset = element
+        else:
+            subset = subset_str
+        state.add_edge(state.add_access(name), None, tasklet, connector, dace.Memlet(expr=f"{name}[{subset}]"))
+
+
+def free_names_outside_subscript_indices(code: str) -> set[str] | None:
+    """Names in ``code`` used at least once OUTSIDE an array-subscript index.
+
+    An index-only name (``a[i] < 0.0``) selects data, not iteration range, so it doesn't count.
+    Parsed via ``ast``, not ``pystr_to_symbolic`` (raises on plain conditions and conflates
+    index-only vs constraining occurrences of the same name).
+
+    :param code: the condition (or assignment RHS) source.
+    :returns: names outside indices, or ``None`` if ``code`` doesn't parse as a Python expression
+        (e.g. a ``Language.CPP`` guard). ``None`` != ``set()``: callers fail closed on "cannot tell".
+    """
+    try:
+        tree = ast.parse(code, mode="eval")
+    except SyntaxError:
+        return None
+
+    names = set()
+
+    def walk(node: ast.AST, in_index: bool) -> None:
+        if isinstance(node, ast.Name):
+            if not in_index:
+                names.add(node.id)
+            return
+        if isinstance(node, ast.Subscript):
+            walk(node.value, in_index)
+            walk(node.slice, True)
+            return
+        for child in ast.iter_child_nodes(node):
+            walk(child, in_index)
+
+    walk(tree, False)
+    return names
+
+
+def enclosing_iteration_symbols(cb: ConditionalBlock) -> set[str]:
+    """Iteration symbols of every map/loop scope enclosing ``cb``.
+
+    Loop vars and map params aren't in ``sdfg.symbols``; walk defined-symbol scopes instead
+    (crosses nested-SDFG boundaries via symbol mappings).
+
+    :param cb: the conditional block whose scopes are collected.
+    :returns: names of the enclosing loop variables and map params.
+    """
+    params = set()
+    for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
+        params |= scope_defined_symbols(scope)
+    return params
+
+
+def scope_defined_symbols(scope: dace.nodes.MapEntry | LoopRegion) -> set[str]:
+    """Symbols ``scope`` defines for the code inside it.
+
+    A ``LoopRegion`` defines its loop variable. A map defines its params plus any non-pass-through
+    in-connector name (a dynamic/symbolic input, not half of an ``IN_x``/``OUT_x`` data pair).
+
+    :param scope: an enclosing ``MapEntry`` or ``LoopRegion``.
+    :returns: names the scope binds.
+    """
+    if isinstance(scope, dace.nodes.MapEntry):
+        return set(scope.map.params) | {c for c in scope.in_connectors if not c.startswith("IN_")}
+    assert isinstance(scope, LoopRegion)
+    return {scope.loop_variable}
+
+
+def iteration_symbol_ranges(
+    cb: ConditionalBlock,
+) -> dict[str, tuple[symbolic.SymbolicType, symbolic.SymbolicType]] | None:
+    """``{iteration symbol: (min, max)}`` for every map/loop scope enclosing ``cb``.
+
+    :param cb: the conditional block whose enclosing scopes are measured.
+    :returns: per-symbol inclusive range, or ``None`` if a scope's range can't be read (e.g. a
+        ``LoopRegion``, whose bounds live in init/condition/update code, not a range).
+    """
+    ranges: dict[str, tuple] = {}
+    for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
+        if not isinstance(scope, dace.nodes.MapEntry):
+            return None
+        for param, (lo, hi, _step) in zip(scope.map.params, scope.map.range.ndrange()):
+            ranges[str(param)] = (lo, hi)
+    return ranges
+
+
+def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
+    """Whether every access in every arm stays in bounds with the guard removed.
+
+    If-conversion makes both arms unconditional, so it's sound only when arm accesses never
+    relied on the guard for their range (vs. the guard itself being the bounds check that
+    if-conversion would then bypass). Proof: substitute enclosing iteration symbols at range
+    CORNERS (valid only for affine indices) and check each subset stays in bounds there. Fails
+    closed on an unreadable range, non-affine index, or unprovable bound.
+
+    :param cb: the candidate conditional block.
+    :returns: ``True`` only if every arm access is provably in range without the guard.
+    """
+    ranges = iteration_symbol_ranges(cb)
+    if not ranges:  # no enclosing map: nothing guarded
+        return False
+    syms = [symbolic.pystr_to_symbolic(name) for name in ranges]
+    # Inside the enclosing scopes: their ranges are what make a corner an executed iteration
+    facts = SymbolResolver().facts_at(cb)
+    corners = [dict(zip(ranges, combo)) for combo in itertools.product(*(ranges[n] for n in ranges))]
+
+    for _cond, body in cb.branches:
+        if not isinstance(body, ControlFlowRegion):
+            return False
+        for state in body.states():
+            for edge in state.edges():
+                memlet = edge.data
+                if memlet is None or memlet.data is None:
+                    continue
+                desc = cb.sdfg.arrays.get(memlet.data)
+                if desc is None or memlet.subset is None:
+                    return False
+                if len(memlet.subset.ndrange()) != len(desc.shape):
+                    return False
+                for (begin, end, _step), extent in zip(memlet.subset.ndrange(), desc.shape):
+                    for expr, bound, low in ((begin, None, True), (end, extent - 1, False)):
+                        expr = symbolic.pystr_to_symbolic(str(expr))
+                        if any(sympy.degree(expr, s) > 1 for s in syms if s in expr.free_symbols):
+                            return False  # corners do not bound a non-affine index
+                        for corner in corners:
+                            at = expr.subs({symbolic.pystr_to_symbolic(k): v for k, v in corner.items()})
+                            if not symbolic.provably_nonnegative(at if low else bound - at, facts):
+                                return False
+    return True
+
+
+def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
+    """Whether some arm condition of ``cb`` constrains an enclosing iteration symbol.
+
+    True for a direct mention (``i < N - 1``) and a transitive one via an interstate-assignment
+    chain (``ip1 = i + 1``, guard ``ip1 < N``). Such a guard keeps arm accesses in range, so
+    if-converting it would fabricate out-of-bounds reads on excluded lanes; needs masking instead.
+
+    :param cb: the candidate conditional block.
+    :returns: ``True`` if the block must be refused.
+    """
+    return condition_guards_symbols(cb, enclosing_iteration_symbols(cb))
+
+
+def condition_guards_symbols(cb: ConditionalBlock, symbols: set[str]) -> bool:
+    """Whether some arm condition of ``cb`` constrains any name in ``symbols``.
+
+    Fails closed: an unparseable condition counts as constraining ("cannot prove independent"
+    is not "independent").
+
+    :param cb: the candidate conditional block.
+    :param symbols: the names whose constraint matters to the caller.
+    :returns: ``True`` if the block must be refused.
+    """
+    if not symbols:
+        return False
+
+    free_syms = set()
+    for cond, _body in cb.branches:
+        if cond is None:
+            continue
+        names = free_names_outside_subscript_indices(cond.as_string)
+        if names is None:
+            return True
+        free_syms |= names
+
+    # Widen through interstate assignment chains reaching ``cb`` (a symbol bound to an expr over
+    # ``i`` carries it in just as directly). Collect back-reachable edges at every nesting level,
+    # ascending past each exhausted graph, since a binding edge may sit outside it.
+    edges = []
+    node = cb
+    graph = cb.parent_graph
+    while graph is not None and not isinstance(graph, dace.SDFG):
+        to_check = {node}
+        seen = set()
+        while to_check:
+            cur = to_check.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            for ie in graph.in_edges(cur):
+                edges.append(ie)
+                to_check.add(ie.src)
+        node = graph
+        graph = graph.parent_graph
+
+    # Fixed point: a chain ``ip1 = j1; j1 = i + 1`` needs more than one sweep.
+    widened = True
+    while widened:
+        widened = False
+        for ie in edges:
+            for sym, rhs in ie.data.assignments.items():
+                if sym not in free_syms:
+                    continue
+                names = free_names_outside_subscript_indices(rhs)
+                if names is None:
+                    return True
+                new = names - free_syms
+                if new:
+                    free_syms |= new
+                    widened = True
+
+    return bool(symbols & free_syms)
 
 
 def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:
-    """Render WCR reduction lambda as Python expr over two connectors.
-
-    WCR memlet stores reduction as ``lambda a, b: <expr>``: ``a`` = dest, ``b`` =
-    contribution (``c[i] += s`` -> ``lambda a,b: a+b``). Predicating WCR escape into
-    ITE, ``_then`` = ``dest <op> contribution`` (base ``dest`` the WCR would have read);
-    ``identity <op> contribution`` silently drops base.
-
-    Emitted Python (``a`` -> ``base_conn``, ``b`` -> ``acc_conn``), consumed by Python
-    tasklet so unparser keeps Python operator semantics — ``%`` -> ``dace::math::py_mod``
-    not C truncated ``%`` (differ in sign for negatives). Never hand-write operator in C.
-
-    :param wcr_str: memlet ``wcr`` string (2-arg lambda).
-    :param base_conn: connector for the destination operand.
-    :param acc_conn: connector for the contribution operand.
-    :returns: Python expression string, e.g. ``"(_base + _acc)"``.
-    """
+    # Render WCR reduction lambda as Python expr over two connectors.
     expr = ast.parse(wcr_str, mode="eval").body
     if not isinstance(expr, ast.Lambda) or len(expr.args.args) != 2:
         raise NotImplementedError(f"SameWriteSetIfElseToITECFG: unsupported WCR (expected a 2-arg lambda): {wcr_str!r}")
@@ -49,8 +306,7 @@ def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:
     sub = {a0: base_conn, a1: acc_conn}
 
     class _Rename(ast.NodeTransformer):
-
-        def visit_Name(self, node):  # noqa: N802
+        def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
             if node.id in sub:
                 return ast.copy_location(ast.Name(id=sub[node.id], ctx=node.ctx), node)
             return node
@@ -59,57 +315,33 @@ def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:
 
 
 def _rhs_is_predicate(rhs: str) -> bool:
-    """Whether RHS is a boolean predicate — comparison (``a > b``) or boolean
-    combination (``a or b``, ``a and b``, ``not a``).
+    # Whether RHS is a comparison or a boolean combination (``and`` / ``or`` / ``not``).
+    import ast
 
-    Decides lifted-cond transient dtype: predicate RHS -> ``bool`` element (downstream
-    boolean ops + ITE mask); bare-value RHS (``b[i]`` feeding ``b[i] > 0``) keeps operand
-    dtype. Upstream simplification may rewrite Python operators to C (``||`` / ``&&`` /
-    ``!``) -> normalise back before parsing.
-
-    :param rhs: RHS expression text from the interstate edge.
-    :returns: ``True`` if top-level expr is Compare / BoolOp / ``not`` UnaryOp;
-        ``False`` otherwise (incl. unparseable).
-    """
-    import ast as _ast
     text = re.sub(r"\|\|", " or ", str(rhs))
     text = re.sub(r"&&", " and ", text)
     text = re.sub(r"!\s*\(", "not (", text)
     try:
-        node = _ast.parse(text.strip(), mode="eval").body
+        node = ast.parse(text.strip(), mode="eval").body
     except SyntaxError:
         return False
-    if isinstance(node, (_ast.Compare, _ast.BoolOp)):
+    if isinstance(node, (ast.Compare, ast.BoolOp)):
         return True
-    if isinstance(node, _ast.UnaryOp) and isinstance(node.op, _ast.Not):
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return True
     return False
 
 
-def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge, skip_cb=None) -> bool:
-    """Whether ``sym_name`` is consumed outside its own defining edge.
-
-    Decides if lift can delete the assignment + drop the symbol. Walks interstate
-    assignment RHSs/conditions, ConditionalBlock branch conditions, LoopRegion
-    init/cond/update, Tasklet code, parent NestedSDFG ``symbol_mapping``.
-
-    :param sdfg: SDFG to scan.
-    :param sym_name: symbol being lifted.
-    :param defining_edge: interstate edge assigning ``sym_name`` (own lhs use excluded).
-    :param skip_cb: ``ConditionalBlock`` being rewritten; its branch conditions =
-        consumer being rewired away -> not external.
-    :returns: ``True`` if an external consumer remains.
-    """
-    from dace.sdfg.state import LoopRegion as _LoopRegion
-    from dace.sdfg.state import ConditionalBlock as _ConditionalBlock
+def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, skip_cb: ConditionalBlock | None = None) -> bool:
+    # Whether ``sym_name`` is consumed outside its own defining edge.
+    from dace.sdfg.state import ConditionalBlock, LoopRegion
 
     only = {sym_name}
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for e in cfg.edges():
             for lhs, rhs in (e.data.assignments or {}).items():
-                # Skip the symbol's OWN definitions (a definition is not a consumption, and every
-                # def is being deleted). Covers ALL defining edges, not just one -- a symbol
-                # assigned on several edges would otherwise flag its own siblings as consumers.
+                # Skip the symbol's own definitions (not a consumption); checked over ALL
+                # defining edges so a multi-edge symbol doesn't flag its own siblings.
                 if lhs == sym_name:
                     continue
                 if symbolic.symbols_in_code(str(rhs), potential_symbols=only):
@@ -119,8 +351,10 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 if symbolic.symbols_in_code(cond_text, potential_symbols=only):
                     return True
 
-    for block in sdfg.all_control_flow_blocks():
-        if isinstance(block, _ConditionalBlock):
+    # Scan recursively: the deletion walks nested SDFGs too (CloudSC guards the same block at top level
+    # and inside the LoopToMap ``loop_body`` NSDFG), so the consumer check must reach as deep.
+    for block in sdfg.all_control_flow_blocks(recursive=True):
+        if isinstance(block, ConditionalBlock):
             if block is skip_cb:
                 continue
             for c, _ in block.branches:
@@ -131,7 +365,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                     return True
 
     for region in sdfg.all_control_flow_regions(recursive=True):
-        if isinstance(region, _LoopRegion):
+        if isinstance(region, LoopRegion):
             for code in (region.loop_condition, region.update_statement, region.init_statement):
                 if code is None:
                     continue
@@ -139,18 +373,21 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 if symbolic.symbols_in_code(text, potential_symbols=only):
                     return True
 
-    for state in sdfg.all_states():
-        for n in state.nodes():
-            if isinstance(n, dace.nodes.Tasklet):
-                code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
-                if symbolic.symbols_in_code(code, potential_symbols=only):
-                    return True
-            elif isinstance(n, dace.nodes.NestedSDFG):
-                # A child nested SDFG consumes the symbol iff it binds an inner symbol to an
-                # expression over it (``symbol_mapping`` VALUES live in this SDFG's scope).
-                for _k, v in n.symbol_mapping.items():
-                    if symbolic.symbols_in_code(str(v), potential_symbols=only):
+    # Same reach as the ConditionalBlock scan above: ``all_states`` stops at this SDFG, so walk
+    # every nested SDFG's states too.
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for n in state.nodes():
+                if isinstance(n, dace.nodes.Tasklet):
+                    code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
+                    if symbolic.symbols_in_code(code, potential_symbols=only):
                         return True
+                elif isinstance(n, dace.nodes.NestedSDFG):
+                    # A child nested SDFG consumes the symbol iff it binds an inner symbol to an
+                    # expression over it (``symbol_mapping`` VALUES live in this SDFG's scope).
+                    for v in n.symbol_mapping.values():
+                        if symbolic.symbols_in_code(str(v), potential_symbols=only):
+                            return True
 
     if sdfg.parent_nsdfg_node is not None:
         for k, v in sdfg.parent_nsdfg_node.symbol_mapping.items():
@@ -171,30 +408,34 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     CATEGORY: str = "Vectorization Preparation"
 
+    # Buffered ``(sdfg, sym, edges, skip_cb)`` deletions during a compound cond lift (``None`` outside
+    # one), so a later refusal leaves no committed deletion behind: no partial lifts.
+    _deferred_drops: list[tuple[Any, ...]] | None = None
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Rewrite every matching same-write-set block.
 
         :param sdfg: SDFG to transform in place.
         :returns: number of blocks rewritten, or ``None`` if none.
         """
-        # Python frontend often emits empty entry state in an arm whose only effect is
-        # an interstate symbol binding (``__sym_<x> = <x>``). That extra state bumps arm
-        # node count past the single-state guard below -> broken sequential-single-arm
-        # path in ``BranchNormalization``. Hoist those bindings out of every arm first so
-        # they're invisible to the match check.
+        # Hoist arm-entry symbol bindings (``__sym_<x> = <x>``) the frontend puts in an otherwise empty
+        # state, so they do not defeat the single-state guard below.
         from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
-            BranchNormalization, )
-        _bn = BranchNormalization()
+            BranchNormalization,
+        )
+
+        normalizer = BranchNormalization()
+        flattened = normalizer.flatten_multi_arm_blocks(sdfg)
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             for block in list(cfg.nodes()):
                 if isinstance(block, ConditionalBlock):
-                    _bn._hoist_branch_invariant_assignments(block)
+                    normalizer._hoist_branch_invariant_assignments(block)
         rewritten = 0
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             for block in list(cfg.nodes()):
@@ -204,19 +445,12 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                     continue
                 self._rewrite(sdfg, block)
                 rewritten += 1
-        return rewritten or None
+        return (flattened + rewritten) or None
 
     def _matches(self, cb: ConditionalBlock) -> bool:
-        """Whether ``cb`` is a rewritable conditional block.
-
-        - **Two-arm** ``if/else``: >=1 shared element write across both single-state arms.
-        - **Single-arm** ``if`` (no ``else``): lone arm IS the shared-write set (absent
-          else reads pre-cb target via ITE ``else_op = arr``) -> any element-write arm
-          matches.
-
-        :param cb: candidate conditional block.
-        :returns: ``True`` if ``cb`` matches a variant above.
-        """
+        # Whether ``cb`` is a rewritable conditional block.
+        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
+            return False
         if len(cb.branches) == 2:
             (cond0, body0), (cond1, body1) = cb.branches
             if cond0 is None or cond1 is not None:
@@ -236,12 +470,12 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             # Arm writing same array at multiple distinct subsets (in-place chain) can't
             # use single-temp clone-redirect below -> defer to BranchNormalization
             # per-write ITE rewrite.
-            if (self._arm_writes_array_at_multiple_subsets(s0) or self._arm_writes_array_at_multiple_subsets(s1)):
+            if self._arm_writes_array_at_multiple_subsets(s0) or self._arm_writes_array_at_multiple_subsets(s1):
                 return False
             shared = self._shared_writes(s0, s1)
             return bool(shared)
         if len(cb.branches) == 1:
-            (cond0, body0), = cb.branches
+            ((cond0, body0),) = cb.branches
             if cond0 is None:
                 return False
             if not isinstance(body0, ControlFlowRegion):
@@ -266,37 +500,21 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             return bool(w0)
         return False
 
-    def _collect_write_subsets(self, state: dace.SDFGState):
-        """Element-wise writes of a state.
-
-        :param state: arm state to inspect.
-        :returns: ``{arr_name: subset}`` for every element-wise write.
-        :raises NotImplementedError: if any write is not element-wise (ITE rewrite can't
-            produce per-element tasklets; ``_shared_writes`` swallows -> ``{}``).
-        """
+    def _collect_write_subsets(self, state: dace.SDFGState) -> dict[str, subsets.Range]:
+        # Element-wise writes of a state.
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
+
         out = collect_element_write_subsets(state)
         if out is None:
             raise NotImplementedError(
-                f"SameWriteSetIfElseToITECFG: non-element write subset found in state {state.label}")
+                f"SameWriteSetIfElseToITECFG: non-element write subset found in state {state.label}"
+            )
         return out
 
     @staticmethod
     def _arm_writes_array_at_multiple_subsets(state: dace.SDFGState) -> bool:
-        """Whether some array is element-written at >1 distinct subset in ``state``.
-
-        Single-temp clone-redirect allocates ONE ``_then_<arr>`` / ``_else_<arr>``
-        (1,)-shaped scratch per array *name*, redirects every write to it
-        (:meth:`_clone_with_redirect`). Collapses an in-place chain writing same array
-        at different subsets (cloudsc ``zsolqa[0,3,i] += ...`` then ``zsolqa[3,0,i] -=
-        ...``) into one cell, dropping all but one write -> miscompiled ITE. Such an arm
-        -> :class:`BranchNormalization` (``_rewrite_writes_to_ite`` gates each write node
-        -> each subset keeps own ITE). Detect so :meth:`_matches` can defer.
-
-        :param state: an arm body state.
-        :returns: ``True`` if any array has >=2 distinct write subsets.
-        """
-        subsets_per_array: Dict[str, set] = {}
+        # Whether some array is element-written at >1 distinct subset in ``state``.
+        subsets_per_array: dict[str, set] = {}
         for n in state.nodes():
             if not isinstance(n, dace.nodes.AccessNode):
                 continue
@@ -306,45 +524,27 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 subsets_per_array.setdefault(n.data, set()).add(str(e.data.subset))
         return any(len(subs) > 1 for subs in subsets_per_array.values())
 
-    def _shared_writes(self, s0: dace.SDFGState, s1: dace.SDFGState) -> dict:
-        """Shared element writes of both arms.
-
-        :param s0: the ``if`` arm state.
-        :param s1: the ``else`` arm state.
-        :returns: ``{arr_name: subset}`` for arrays written in both arms with identical
-            subsets; empty if either arm has a non-element-wise write (caller treats as
-            non-match).
-        """
+    def _shared_writes(self, s0: dace.SDFGState, s1: dace.SDFGState) -> dict[str, subsets.Range]:
+        # Shared element writes of both arms.
         try:
             w0 = self._collect_write_subsets(s0)
             w1 = self._collect_write_subsets(s1)
         except NotImplementedError:
             return {}
-        shared = {}
-        for k, v in w0.items():
-            if k in w1 and str(v) == str(w1[k]):
-                shared[k] = v
+        shared = {k: v for k, v in w0.items() if k in w1 and str(v) == str(w1[k])}
         return shared
 
-    def _rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock):
-        """Replace ``cb`` with compute-then / compute-else / apply-ITE states.
-
-        Clones each arm (redirecting escaping writes to ``_then_<arr>`` / ``_else_<arr>``
-        transients), emits one ``ITE`` tasklet per escaping target; arm-local writes stay
-        inline.
-
-        :param sdfg: SDFG used for name resolution.
-        :param cb: conditional block to rewrite (removed in place).
-        """
+    def _rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock) -> None:
+        # Replace ``cb`` with compute-then / compute-else / apply-ITE states.
         parent = cb.parent_graph
-        single_arm = (len(cb.branches) == 1)
+        single_arm = len(cb.branches) == 1
         if single_arm:
-            (cond_block, then_body), = cb.branches
+            ((cond_block, then_body),) = cb.branches
             else_body = None
         else:
             (cond_block, then_body), (_, else_body) = cb.branches
         then_state: dace.SDFGState = then_body.nodes()[0]
-        else_state: Optional[dace.SDFGState] = else_body.nodes()[0] if else_body is not None else None
+        else_state: dace.SDFGState | None = else_body.nodes()[0] if else_body is not None else None
         # ``cb`` may live in a NestedSDFG; arms' arrays live on the immediate enclosing
         # SDFG, not outermost ``sdfg``.
         local_sdfg: dace.SDFG = cb.sdfg
@@ -352,7 +552,9 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Per-arm escape set drives temp allocation + clone-redirect. Arm-local
         # intermediate nothing outside reads stays inline.
         from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
-            compute_arm_escape_writes, )
+            compute_arm_escape_writes,
+        )
+
         escape_plan = compute_arm_escape_writes(local_sdfg, cb)
         all_escapes = escape_plan.get(0, set()) | escape_plan.get(1, set())
         if not all_escapes:
@@ -364,19 +566,17 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else_writes = self._collect_write_subsets(else_state) if else_state is not None else {}
 
         def _alloc(prefix: str, arr_name: str) -> str:
-            # Element-wise writes (each escaping arm-write subset size 1, per
-            # ``_collect_write_subsets``) need only a 1-element scratch, not full base
-            # shape. Full-shape forced a heap VLA for symbol-shaped bases (cloudsc
-            # ``zliqfrac[kfdia, klev]``) the K-dim tile path can't register-promote,
-            # leaving outer scope with untouched ``new[]``. Shape (1,) keeps temp
-            # Register-allocable everywhere.
+            # Element-wise writes need only a ``(1,)`` scratch; a full symbol-shaped base (cloudsc
+            # ``zliqfrac[kfdia, klev]``) would force a heap VLA the tile path cannot register-promote.
             base = local_sdfg.arrays[arr_name]
-            name, _ = local_sdfg.add_array(name=f"{prefix}_{arr_name}",
-                                           shape=(1, ),
-                                           dtype=base.dtype,
-                                           storage=dace.dtypes.StorageType.Register,
-                                           transient=True,
-                                           find_new_name=True)
+            name, _ = local_sdfg.add_array(
+                name=f"{prefix}_{arr_name}",
+                shape=(1,),
+                dtype=base.dtype,
+                storage=dace.dtypes.StorageType.Register,
+                transient=True,
+                find_new_name=True,
+            )
             return name
 
         temp_then = {arr: _alloc("_then", arr) for arr in sorted(all_escapes) if arr in then_writes}
@@ -385,17 +585,22 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Subset per target: arms must agree when both write it (element-write
         # convention M3.1b enforces upstream).
         write_subsets = {}
-        for arr in all_escapes:
+        for arr in sorted(all_escapes):  # hash order here would decide ITE tasklet creation order
             t, e = then_writes.get(arr), else_writes.get(arr)
             if t is not None and e is not None and str(t) != str(e):
                 raise NotImplementedError(
-                    f"SameWriteSetIfElseToITECFG: arms write {arr!r} with different subsets ({t} vs {e})")
+                    f"SameWriteSetIfElseToITECFG: arms write {arr!r} with different subsets ({t} vs {e})"
+                )
             write_subsets[arr] = t if t is not None else e
+
+        # Read before adding states: each add_state drops a disconnected node into
+        # ``parent``, so ``start_block`` turns ambiguous and raises.
+        was_start = parent.start_block is cb
 
         # New 3-CFG states in parent graph. compute-else = empty pass-through for
         # single-arm conditionals (no else to clone); apply-merge reads pre-cb value of
         # each target via ``else_op = arr`` fallback.
-        ct_state = parent.add_state(f"compute_then_{cb.label}")
+        ct_state = parent.add_state(f"compute_then_{cb.label}", is_start_block=was_start)
         ce_state = parent.add_state(f"compute_else_{cb.label}")
         am_state = parent.add_state(f"apply_ITE_{cb.label}")
 
@@ -403,6 +608,20 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         self._clone_with_redirect(then_state, ct_state, temp_then)
         if else_state is not None:
             self._clone_with_redirect(else_state, ce_state, temp_else)
+
+        # Wire the new states in and drop the block before resolving the cond, so a staged-read symbol
+        # defined ahead of ``cb`` still dominates ``am_state`` (TSVC s279) and is not reported free.
+        in_edges = list(parent.in_edges(cb))
+        out_edges = list(parent.out_edges(cb))
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(cb)
+        for e in in_edges:
+            parent.add_edge(required(e).src, ct_state, required(e).data)
+        parent.add_edge(ct_state, ce_state, dace.InterstateEdge())
+        parent.add_edge(ce_state, am_state, dace.InterstateEdge())
+        for e in out_edges:
+            parent.add_edge(am_state, required(e).dst, required(e).data)
 
         # ITE tasklets. Non-writing arm contributes pre-cb value (reads original ``arr``,
         # intact because writing arm targets its private temp). Resolve cond once so the
@@ -418,72 +637,41 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         for arr, subset in write_subsets.items():
             then_op = temp_then.get(arr, arr)
             else_op = temp_else.get(arr, arr)
-            self._emit_ite_tasklet(local_sdfg,
-                                   am_state,
-                                   arr,
-                                   subset,
-                                   then_op,
-                                   else_op,
-                                   cond_text,
-                                   cond_array_name=cond_array_name,
-                                   cond_producer=cond_producer)
-
-        # Stitch ConditionalBlock in/out edges onto ct_state -> ce_state -> am_state, drop
-        # original block.
-        in_edges = list(parent.in_edges(cb))
-        out_edges = list(parent.out_edges(cb))
-        was_start = (parent.start_block is cb)
-        for e in in_edges + out_edges:
-            parent.remove_edge(e)
-        parent.remove_node(cb)
-        for e in in_edges:
-            parent.add_edge(e.src, ct_state, e.data)
-        parent.add_edge(ct_state, ce_state, dace.InterstateEdge())
-        parent.add_edge(ce_state, am_state, dace.InterstateEdge())
-        for e in out_edges:
-            parent.add_edge(am_state, e.dst, e.data)
-        if was_start:
-            parent.start_block = parent.node_id(ct_state)
+            self._emit_ite_tasklet(
+                local_sdfg,
+                am_state,
+                arr,
+                subset,
+                then_op,
+                else_op,
+                cond_text,
+                cond_array_name=cond_array_name,
+                cond_producer=cond_producer,
+            )
 
         # End-of-pass invariant: every emitted state has well-formed connectors.
         for s in (ct_state, ce_state, am_state):
             assert_connector_role_matches_edges(s)
 
-    def _clone_with_redirect(self, src: dace.SDFGState, dst: dace.SDFGState, rename: dict):
-        """Deep-copy ``src`` into ``dst``; rename writes safely.
-
-        Two write-rename rules (in order) stop the clone producing a multi-state write to
-        the same array name:
-
-        1. **Escape writes** (in ``rename``): caller pre-allocated a per-arm temp per
-           escaping array needing ITE merge. Redirect write to temp; rebind memlets to
-           ``[0]`` (temps length-1).
-        2. **Internal transient writes** not in ``rename`` but written in the clone ->
-           fresh unique name (per arm, per array). Else ``src`` and ``dst`` clone both
-           write same internal transient -> downstream single-writer-scalar passes raise.
-
-        Read-only access nodes keep original name — load-bearing for read-modify-write
-        arms (``a = a + b*d``): RHS read of ``a`` must reference original array; only LHS
-        write redirected.
-        """
+    def _clone_with_redirect(self, src: dace.SDFGState, dst: dace.SDFGState, rename: dict[str, str]) -> None:
+        # Deep-copy ``src`` into ``dst``; rename writes safely.
         node_map = copy_state_contents(src, dst)
         sdfg = dst.sdfg
         # Pass 1: escape-write redirects (caller-supplied).
         redirected_nodes: set = set()
-        # Predicated WCR escape (``c[i] += s`` under ``if``) carries reduction on write
-        # memlet; redirecting to ``_then`` temp while keeping WCR makes temp accumulate
-        # onto its identity (``0`` for ``+``), dropping base ``c[i]``. Capture such edges
-        # here (before subset rebound to ``[0]``), rebuild as explicit base-read
-        # accumulate in Pass 3.
+        # A predicated WCR write (``c[i] += s`` under ``if``) redirected to ``_then`` would accumulate onto
+        # the identity and drop ``c[i]``; capture it here and rebuild as an explicit base-read accumulate.
         wcr_escapes: list = []  # (edge, base_name, base_subset)
-        for _old, new in node_map.items():
+        for new in node_map.values():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
             if new.data in rename and dst.in_degree(new) > 0:
                 base_name = new.data
-                for ie in dst.in_edges(new):
-                    if ie.data is not None and ie.data.wcr is not None:
-                        wcr_escapes.append((ie, base_name, copy.deepcopy(ie.data.subset)))
+                wcr_escapes.extend(
+                    (ie, base_name, copy.deepcopy(ie.data.subset))
+                    for ie in dst.in_edges(new)
+                    if ie.data is not None and ie.data.wcr is not None
+                )
                 new.data = rename[base_name]
                 redirected_nodes.add(new)
         for e in dst.edges():
@@ -493,8 +681,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Pass 2: per-clone-unique renames for INTERNAL transient writes (no multi-state
         # writes). One fresh name per source array; every clone-side AccessNode +
         # incident memlet rewritten to it.
+        # A read-only node keeps the original name, so only the memlets of the renamed nodes follow it: a
+        # read-modify-write (``z = z * x``) still reads the value from before the clone.
         internal_renames: dict = {}
-        for _old, new in node_map.items():
+        renamed_nodes: list = []
+        for new in node_map.values():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
             if new in redirected_nodes:
@@ -504,39 +695,33 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             if desc is None or not desc.transient:
                 continue
             if dst.in_degree(new) == 0:
-                continue  # read-only in this clone -- keep the original name
+                continue
             if arr_name not in internal_renames:
                 internal_renames[arr_name] = sdfg.add_datadesc(arr_name, copy.deepcopy(desc), find_new_name=True)
-            new.data = internal_renames[arr_name]
-        if internal_renames:
-            for e in dst.edges():
-                if e.data is not None and e.data.data in internal_renames:
-                    e.data.data = internal_renames[e.data.data]
+            renamed_nodes.append((new, arr_name))
+        for node, arr_name in renamed_nodes:
+            for edge in dst.all_edges(node):
+                for tree_edge in dst.memlet_tree(edge):
+                    if tree_edge.data is not None and tree_edge.data.data == arr_name:
+                        tree_edge.data.data = internal_renames[arr_name]
+            node.data = internal_renames[arr_name]
         # Pass 3: rebuild predicated WCR escapes as ``_then = base <op> acc``.
         for edge, base_name, base_subset in wcr_escapes:
             self._seed_wcr_then(dst, edge, base_name, base_subset)
 
-    def _seed_wcr_then(self, state: dace.SDFGState, edge, base_name: str, base_subset):
-        """Replace a redirected WCR escape write with an explicit base accumulate.
-
-        ``edge`` = already-redirected write ``src -[wcr]-> _then_arr[0]``. Its reduction
-        needs base ``base_name[base_subset]`` the original WCR memlet would have read.
-        Rebuild as Python tasklet ``_then = op(base, acc)`` (see :func:`_wcr_apply_code`
-        for why operator stays Python — correct ``%``) so ITE then operand carries
-        ``c[i] + s`` not ``0 + s``.
-
-        :param state: clone (compute-then / compute-else) state.
-        :param edge: redirected WCR write edge (``_then_arr`` = dst).
-        :param base_name: destination array name (``c``).
-        :param base_subset: original element subset of the WCR write (``i``).
-        """
+    def _seed_wcr_then(
+        self, state: dace.SDFGState, edge: MultiConnectorEdge[Memlet], base_name: str, base_subset: subsets.Subset
+    ) -> None:
+        # Replace a redirected WCR escape write with an explicit base accumulate.
         write_node = edge.dst  # the _then_<arr> access node
         src = edge.src
         sdfg = state.sdfg
         if not isinstance(src, dace.nodes.AccessNode) or sdfg.arrays[src.data].total_size != 1:
+            detail = src.data if isinstance(src, dace.nodes.AccessNode) else type(src).__name__
             raise NotImplementedError(
                 "SameWriteSetIfElseToITECFG: predicated WCR write must come from a "
-                f"single-element access node (got {type(src).__name__} {getattr(src, 'data', '')!r})")
+                f"single-element access node (got {detail!r})"
+            )
         op_code = _wcr_apply_code(edge.data.wcr, "_base", "_acc")
         then_name = write_node.data
         src_name = src.data
@@ -544,7 +729,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.remove_edge(edge)
         acc_t = state.add_tasklet(
             name=f"wcr_acc_{base_name}",
-            inputs={"_base", "_acc"},
+            inputs=OrderedSet(("_base", "_acc")),
             outputs={"_o"},
             code=f"_o = {op_code}",
         )
@@ -553,24 +738,20 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.add_edge(src, src_conn, acc_t, "_acc", dace.Memlet(expr=f"{src_name}[0]"))
         state.add_edge(acc_t, "_o", write_node, None, dace.Memlet(expr=f"{then_name}[0]"))
 
-    def _emit_ite_tasklet(self,
-                          sdfg: dace.SDFG,
-                          state: dace.SDFGState,
-                          arr_name: str,
-                          subset,
-                          then_name: str,
-                          else_name: str,
-                          cond_text: str,
-                          *,
-                          cond_array_name: Optional[str] = None,
-                          cond_producer: Optional[dace.nodes.AccessNode] = None):
-        """Emit ``arr[subset] = ITE(_c, _t, _e)``, 3 operands wired as in-connectors.
-
-        ``cond_array_name`` = bool transient already lifted for this cond (``None`` ->
-        cond stays free-symbol text in tasklet body). ``cond_producer`` = access node the
-        lift/combine tasklet wrote transient through; reuse keeps ITE on same connected
-        dataflow path (else codegen may emit ITE before cond). ``None`` -> fresh read node
-        (recipe-1 array, produced elsewhere)."""
+    def _emit_ite_tasklet(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        arr_name: str,
+        subset: subsets.Subset,
+        then_name: str,
+        else_name: str,
+        cond_text: str,
+        *,
+        cond_array_name: str | None = None,
+        cond_producer: dace.nodes.AccessNode | None = None,
+    ) -> None:
+        # Emit ``arr[subset] = ITE(_c, _t, _e)``, 3 operands wired as in-connectors.
         access_then = state.add_access(then_name)
         access_else = state.add_access(else_name)
         access_out = state.add_access(arr_name)
@@ -580,7 +761,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
             t = state.add_tasklet(
                 name=f"ITE_{arr_name}",
-                inputs={"_c", "_t", "_e"},
+                inputs=OrderedSet(("_c", "_t", "_e")),
                 outputs={"_o"},
                 code="_o = ITE(_c, _t, _e)",
             )
@@ -589,7 +770,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else:
             t = state.add_tasklet(
                 name=f"ITE_{arr_name}",
-                inputs={"_t", "_e"},
+                inputs=OrderedSet(("_t", "_e")),
                 outputs={"_o"},
                 code=f"_o = ITE({cond_text}, _t, _e)",
             )
@@ -599,64 +780,48 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # original array, reads its subset.
         then_arr = sdfg.arrays.get(then_name)
         else_arr = sdfg.arrays.get(else_name)
-        then_subset = "0" if then_arr is not None and tuple(then_arr.shape) == (1, ) else subset_str
-        else_subset = "0" if else_arr is not None and tuple(else_arr.shape) == (1, ) else subset_str
+        then_subset = "0" if then_arr is not None and tuple(then_arr.shape) == (1,) else subset_str
+        else_subset = "0" if else_arr is not None and tuple(else_arr.shape) == (1,) else subset_str
         state.add_edge(access_then, None, t, "_t", dace.Memlet(expr=f"{then_name}[{then_subset}]"))
         state.add_edge(access_else, None, t, "_e", dace.Memlet(expr=f"{else_name}[{else_subset}]"))
         state.add_edge(t, "_o", access_out, None, dace.Memlet(expr=f"{arr_name}[{subset_str}]"))
 
-    def _resolve_cond_to_array(self,
-                               sdfg: dace.SDFG,
-                               state: dace.SDFGState,
-                               cond_text: str,
-                               subset_str: str,
-                               *,
-                               skip_cb=None) -> Optional[Tuple[str, Optional[dace.nodes.AccessNode]]]:
-        """Resolve ``cond_text`` to a per-lane bool transient for the ITE ``_c`` source.
-
-        :returns: ``None`` when no transient can be produced (caller keeps cond as
-            free-symbol text), or ``(array_name, producer_access)`` where
-            ``producer_access`` = access node the emitted lift/combine tasklet writes
-            transient through in *this* state — consumers must read from that exact node
-            so dataflow stays one connected path. ``producer_access`` is ``None`` only for
-            recipe 1 (name already an array produced elsewhere; caller adds own read node).
-
-        Recipes, in order:
-
-        1. ``cond_text`` already names an SDFG array -> return name.
-        2. single symbol set by interstate edge -> lift assignment into comparison tasklet.
-        3. compound expr (``(c1 or c2)``) over several such symbols -> lift each name
-           recursively + emit one combine tasklet over the transients.
-        """
+    def _resolve_cond_to_array(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        cond_text: str,
+        subset_str: str,
+        *,
+        skip_cb: ConditionalBlock | None = None,
+    ) -> tuple[str, dace.nodes.AccessNode | None] | None:
+        # Resolve ``cond_text`` to a per-lane bool transient for the ITE ``_c`` source.
         cond_text = cond_text.strip()
         if cond_text in sdfg.arrays:
             return cond_text, None
         direct = self._lift_interstate_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if direct is not None:
             return direct
-        # Recipe 2.5: cond DIRECTLY reads an array subscript (data-dependent guard
-        # ``A[i] > K`` never routed through an interstate symbol). Stage each element
-        # through an in-connector -> per-lane tile; free-symbol text would inline array
-        # head as scalar -> tile-op converter emits ``(int)(A)`` pointer cast. Runs before
-        # compound recipe (boolean combination of interstate-defined symbols, not array
-        # reads).
-        array_pred = self._lift_array_predicate_cond(sdfg, state, cond_text, subset_str)
+        # Recipe 2.5: the cond reads an array subscript directly (``A[i] > K``); stage each element through
+        # an in-connector so the converter does not see the array head as a scalar.
+        array_pred = self._lift_array_predicate_cond(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if array_pred is not None:
             return array_pred
         return self._lift_compound_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
 
-    def _lift_compound_cond_to_tasklet(self,
-                                       sdfg: dace.SDFG,
-                                       state: dace.SDFGState,
-                                       cond_text: str,
-                                       subset_str: str,
-                                       *,
-                                       skip_cb=None):
-        """``cond_text`` = Python boolean expr over multiple symbols each set by an
-        interstate-edge assignment (``(__tmp0 or __tmp1)``). Recursively lift each name,
-        emit one combine tasklet whose body = ``cond_text`` with each name swapped for its
-        in-connector."""
-        import ast as _ast
+    def _lift_compound_cond_to_tasklet(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        cond_text: str,
+        subset_str: str,
+        *,
+        skip_cb: ConditionalBlock | None = None,
+    ) -> tuple[str, dace.nodes.AccessNode] | None:
+        # ``cond_text`` = Python boolean expr over multiple symbols each set by an interstate-edge assignment (``(__tmp0
+        # or __tmp1)``).
+        import ast
+
         # Upstream simplification may rewrite Python boolean operators to C++ (``||``,
         # ``&&``, ``!``). Normalise back for the AST parser; substituted form = emitted
         # tasklet body.
@@ -664,36 +829,53 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         py_text = re.sub(r"&&", " and ", py_text)
         py_text = re.sub(r"!\s*\(", "not (", py_text)
         try:
-            tree = _ast.parse(py_text, mode="eval").body
+            tree = ast.parse(py_text, mode="eval").body
         except SyntaxError:
             return None
-        names = sorted({n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)})
+        names = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)})
         # Direct lift handles the bare-name case (``cond_text`` == one symbol). Zero names
         # (pure constant) can't be lifted here -> caller bakes inline.
         if not names or cond_text in names:
             return None
 
-        # Recurse; every name must resolve to an array (no partial lifts).
-        # ``_resolve_cond_to_array`` -> ``(array_name, producer_access)``; producer_access
-        # = node a lift/combine tasklet in *this* state writes through (``None`` when name
-        # was already a pre-existing array).
-        lifted = {}
-        for name in names:
-            resolved = self._resolve_cond_to_array(sdfg, state, name, subset_str, skip_cb=skip_cb)
-            if resolved is None:
-                return None
-            lifted[name] = resolved
+        # Recurse; every name must resolve to an array (no partial lifts). Buffer each component's symbol
+        # deletions (see ``_deferred_drops``); a nested compound discards only its own slice on refusal.
+        outer_buffer = self._deferred_drops
+        buffer = [] if outer_buffer is None else outer_buffer
+        mark = len(buffer)
+        self._deferred_drops = buffer
+        try:
+            lifted = {}
+            for name in names:
+                resolved = self._resolve_cond_to_array(sdfg, state, name, subset_str, skip_cb=skip_cb)
+                if resolved is None:
+                    del buffer[mark:]
+                    return None
+                lifted[name] = resolved
+        finally:
+            self._deferred_drops = outer_buffer
+        # Every name resolved, so this compound has committed. Hand its buffered deletions to an
+        # enclosing compound if there is one -- that one has still to commit -- else apply them.
+        pending = buffer[mark:]
+        del buffer[mark:]
+        if outer_buffer is not None:
+            outer_buffer.extend(pending)
+        else:
+            for drop_sdfg, drop_sym, drop_edges, drop_skip in pending:
+                self._drop_interstate_symbol(drop_sdfg, drop_sym, drop_edges, skip_cb=drop_skip)
 
         # Shape from any lifted transient; all describe the same per-lane bool result.
         any_arr = next(iter(lifted.values()))[0]
         shape = sdfg.arrays[any_arr].shape
 
-        cond_name, _ = sdfg.add_array(name="_cond_compound",
-                                      shape=shape,
-                                      dtype=dace.bool_,
-                                      storage=dace.dtypes.StorageType.Register,
-                                      transient=True,
-                                      find_new_name=True)
+        cond_name, _ = sdfg.add_array(
+            name="_cond_compound",
+            shape=shape,
+            dtype=dace.bool_,
+            storage=dace.dtypes.StorageType.Register,
+            transient=True,
+            find_new_name=True,
+        )
 
         # Substitute each lifted name in the normalised expr with its in-connector.
         # Word-boundary regex avoids touching names that are substrings of others.
@@ -705,17 +887,16 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             cleaned = re.sub(rf"\b{re.escape(name)}\b", conn, cleaned)
 
         out_conn = f"_out_{cond_name}"
-        t = state.add_tasklet(name=f"combine_cond_{cond_name}",
-                              inputs=set(in_conn_names.values()),
-                              outputs={out_conn},
-                              code=f"{out_conn} = ({cleaned})")
+        t = state.add_tasklet(
+            name=f"combine_cond_{cond_name}",
+            inputs=dict.fromkeys(in_conn_names.values()),
+            outputs={out_conn},
+            code=f"{out_conn} = ({cleaned})",
+        )
         for name, conn in in_conn_names.items():
             lifted_name, lifted_producer = lifted[name]
-            # Reuse producing access node so ``lift_cond -> transient -> combine_cond`` =
-            # one connected path. Fresh ``state.add_access`` leaves producer disconnected
-            # -> codegen may emit combine before lift (TSVC s271: ``_cond_compound =
-            # _cond_b_index>0`` ahead of ``_cond_b_index = b``). Only already-an-array case
-            # (producer ``None``) needs a fresh read node.
+            # Reuse the producing access node so lift -> transient -> combine is one connected path (TSVC s271
+            # otherwise ran combine before lift).
             lifted_access = lifted_producer if lifted_producer is not None else state.add_access(lifted_name)
             lifted_total = sdfg.arrays[lifted_name].total_size
             lifted_subset = "0" if lifted_total == 1 else subset_str
@@ -725,7 +906,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Lifted transient flat 1-D ``(N,)``: ``[0]`` for single-element conds, ``[0:N]``
         # for vector. ``subset_str`` (may be multi-dim ``"j, i"``) was for the legacy
         # full-source-shape transient only.
-        if shape == (1, ):
+        if shape == (1,):
             cond_subset = "0"
         elif len(shape) == 1:
             cond_subset = f"0:{shape[0]}"
@@ -734,99 +915,118 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access
 
-    def _promote_gather_indices(self, sdfg: dace.SDFG, def_edge, rhs: str) -> str:
-        """Rewrite gather reads ``w[idx[i], k]`` in ``rhs`` to ``w[_gidx, k]`` by promoting each
-        NESTED array-read index ``idx[i]`` to a fresh interstate integer symbol assigned on
-        ``def_edge`` -- the pre-existing interstate edge that defined the cond value (``w_index =
-        w[idx[i], k]``), which dominates the ITE states the lift is building. The staged read
-        then carries a symbolic-indexed subset -- the representation a body gather uses and the
-        tile machinery vectorizes -- instead of a nested subscript no plain memlet can express.
-
-        Returns ``rhs`` unchanged when it contains no nested (indirect) array subscript.
-        """
-        if def_edge is None:
-            return rhs
+    def _nested_gather_subscripts(self, sdfg: dace.SDFG, rhs: str) -> dict[str, "sympy.Basic"]:
+        # The unique NESTED array subscripts in ``rhs`` -- an ``arr[...]`` read sitting inside another array subscript's
+        # index (``w[idx[i], k]`` -> the ``idx[i]`` under ``w``), i.e. a gather index -- keyed by printed form (so a
+        # repeated ``idx[i]`` collapses to one).
         arrays = set(sdfg.arrays.keys())
         try:
             expr = symbolic.SymExpr(rhs)
             base = expr.expr if isinstance(expr, symbolic.SymExpr) else expr
         except Exception:
-            return rhs
+            return {}
         printer = symbolic.DaceSympyPrinter(arrays)
-        # A NESTED array read -- an ``arr[...]`` subscript sitting inside another array
-        # subscript's index (``w[idx[i], k]`` -> the ``idx[i]`` under ``w``) -- is a gather
-        # index. Collect the unique ones structurally (sympy ``Subscript`` nodes), dedup by
-        # their printed form so a repeated ``idx[i]`` promotes to a single symbol.
-        nested: Dict[str, sympy.Basic] = {}
+        nested: dict[str, sympy.Basic] = {}
         for node in sympy.preorder_traversal(base):
             if isinstance(node, symbolic.Subscript) and str(node.args[0]) in arrays:
                 for index_arg in node.args[1:]:
                     for sub in sympy.preorder_traversal(index_arg):
                         if isinstance(sub, symbolic.Subscript) and str(sub.args[0]) in arrays:
                             nested.setdefault(printer.doprint(sub), sub)
-        if not nested:
+        return nested
+
+    def _has_nested_subscript(self, sdfg: dace.SDFG, rhs: str) -> bool:
+        # Whether ``rhs`` still carries an un-promotable nested gather subscript.
+        return bool(self._nested_gather_subscripts(sdfg, rhs))
+
+    def _promote_gather_indices(
+        self, sdfg: dace.SDFG, def_edges: Iterable[Edge[InterstateEdge] | None] | None, rhs: str
+    ) -> str:
+        # Rewrite gather reads ``w[idx[i], k]`` in ``rhs`` to ``w[_gidx, k]`` by promoting each NESTED array-read index
+        # ``idx[i]`` to a fresh interstate integer symbol.
+        edges = [e for e in (def_edges or []) if e is not None]
+        nested = self._nested_gather_subscripts(sdfg, rhs)
+        if not nested or not edges:
             return rhs
-        replace: Dict[sympy.Basic, sympy.Symbol] = {}
+        arrays = set(sdfg.arrays.keys())
+        expr = symbolic.SymExpr(rhs)
+        base = expr.expr if isinstance(expr, symbolic.SymExpr) else expr
+        printer = symbolic.DaceSympyPrinter(arrays)
+        replace: dict[sympy.Basic, sympy.Symbol] = {}
         for index_text, sub in nested.items():
             index_array = str(sub.args[0])
+            # The index expression's non-array free symbols (e.g. the loop iterator) must be
+            # in scope to assign on ``def_edges``; if any is not a registered SDFG symbol,
+            # do NOT promote this index -- leave the nested subscript so the caller refuses
+            # the lift rather than plant an out-of-scope ``_gidx = idx[i]`` assignment.
+            index_syms = set()
+            for index_arg in sub.args[1:]:
+                index_syms |= {str(s) for s in index_arg.free_symbols}
+            if any((s not in sdfg.symbols and s not in arrays) for s in index_syms):
+                continue
             gidx = 0
-            while f'_gidx_{gidx}' in sdfg.symbols or f'_gidx_{gidx}' in sdfg.arrays:
+            while f"_gidx_{gidx}" in sdfg.symbols or f"_gidx_{gidx}" in sdfg.arrays:
                 gidx += 1
-            gsym = f'_gidx_{gidx}'
+            gsym = f"_gidx_{gidx}"
             sdfg.add_symbol(gsym, sdfg.arrays[index_array].dtype)
-            def_edge.data.assignments[gsym] = index_text
-            replace[sub] = sympy.Symbol(gsym)
+            for de in edges:
+                de.data.assignments[gsym] = index_text
+            replace[sub] = symbolic.pystr_to_symbolic(gsym)
+        if not replace:
+            return rhs
         return printer.doprint(base.xreplace(replace))
 
-    def _inline_interstate_scalar_symbols(self, sdfg: dace.SDFG, rhs_text: str, exclude: set) -> Tuple[str, dict]:
-        """Substitute interstate-defined scalar symbols in ``rhs_text`` with their
-        definitions, recursively, so a lifted cond tasklet references only SDFG arrays
-        (staged through connectors) and mapped symbols (loop iterators / kernel params).
+    def _inline_interstate_scalar_symbols(
+        self, sdfg: dace.SDFG, rhs_text: str, exclude: set[str]
+    ) -> tuple[str, dict[str, list[Edge[InterstateEdge]]]]:
+        # Substitute interstate-defined scalar symbols in ``rhs_text`` recursively so the lifted cond reads
+        # only arrays and mapped symbols. Scans are deferred to the names present: ``_protected_symbols``
+        # re-walks ``sdfg.free_symbols`` and cost 17% of the vectorizer on CloudSC when run eagerly.
+        arrays = set(sdfg.arrays.keys())
+        all_defs: dict[str, list] | None = None
+        protected: set | None = None
+        defs: dict[str, tuple[str, list] | None] = {}  # name -> definition, or None = not inlinable
 
-        A cond RHS such as ``(b_index_0 > a_index_0)`` may mix an array transient
-        (``b_index_0``, materialised because the arm rewrote ``b[i]``) with a bare
-        interstate symbol (``a_index_0 = a[_loop_it_1]``, a staged element read that was
-        only loaded). Left as free-symbol text, ``a_index_0`` becomes a free symbol of the
-        (nested) SDFG whose interstate definition no longer dominates the relocated
-        apply-ITE state -> validation error ("Missing symbols on nested SDFG"); it is also
-        a per-lane value that must vectorise. Inlining it into ``a[_loop_it_1]`` lets the
-        downstream array-read staging turn it into a connector like any other operand.
+        def definition_of(name: str) -> tuple[str, list[Edge[InterstateEdge]]] | None:
+            """``(rhs, edges)`` for a name safe to inline, else ``None``. Classified once per name.
 
-        Only names that (a) are assigned on some interstate edge, (b) are NOT SDFG arrays
-        (arrays stage through connectors, never inline), and (c) are not in ``exclude`` (the
-        symbol currently being lifted) are substituted.
-
-        :param sdfg: SDFG whose interstate edges hold the scalar-symbol definitions.
-        :param rhs_text: cond RHS expression to expand.
-        :param exclude: symbol names to leave untouched (the lifted cond symbol itself).
-        :returns: ``(expanded_text, inlined)`` where ``inlined`` maps each substituted symbol name
-            to the LIST of interstate edges that assign it (caller prunes all of them together).
-        """
-        # Collect EVERY interstate definition of each symbol. A symbol is safe to inline only if
-        # it has exactly ONE distinct RHS across all its assigning edges (a single, path-independent
-        # reaching value) and is NOT self-referential (``k = k + 1`` is a loop-carried recurrence,
-        # not a staged read -- inlining it would re-fire the fixpoint and grow the text). Protected
-        # symbols (free / parent-bound / loop variables) are never inlined or pruned.
-        all_defs: Dict[str, list] = {}
-        for cfg in sdfg.all_control_flow_regions(recursive=True):
-            for e in cfg.edges():
-                for lhs, rhs in (e.data.assignments or {}).items():
-                    all_defs.setdefault(lhs, []).append((str(rhs), e))
-        protected = self._protected_symbols(sdfg)
-        defs: Dict[str, Tuple[str, list]] = {}
-        for lhs, deflist in all_defs.items():
-            if lhs in protected:
-                continue
+            A symbol is safe to inline only if it has exactly ONE distinct RHS across all its
+            assigning edges (a single, path-independent reaching value) and is NOT self-referential
+            (``k = k + 1`` is a loop-carried recurrence, not a staged read -- inlining it would
+            re-fire the fixpoint and grow the text). Protected symbols (free / parent-bound / loop
+            variables) are never inlined or pruned.
+            """
+            nonlocal all_defs, protected
+            if name in defs:
+                return defs[name]
+            if all_defs is None:
+                all_defs = {}
+                for cfg in sdfg.all_control_flow_regions(recursive=True):
+                    for e in cfg.edges():
+                        for lhs, rhs in (e.data.assignments or {}).items():
+                            all_defs.setdefault(lhs, []).append((str(rhs), e))
+            deflist = all_defs.get(name)
+            if deflist is None:
+                defs[name] = None
+                return None
+            if protected is None:
+                protected = self._protected_symbols(sdfg)
+            if name in protected:
+                defs[name] = None
+                return None
             if len({r for r, _ in deflist}) != 1:
-                continue  # path-dependent reaching value -- inlining an arbitrary one is unsound
+                defs[name] = None  # path-dependent reaching value -- inlining an arbitrary one is unsound
+                return None
             rhs_i = deflist[0][0]
             try:
-                if lhs in set(symbolic.free_symbols_and_functions(rhs_i)):
-                    continue  # self-referential recurrence, not a staged read
+                if name in set(symbolic.free_symbols_and_functions(rhs_i)):
+                    defs[name] = None  # self-referential recurrence, not a staged read
+                    return None
             except Exception:
                 pass
-            defs[lhs] = (rhs_i, [e for _, e in deflist])
-        arrays = set(sdfg.arrays.keys())
+            defs[name] = (rhs_i, [e for _, e in deflist])
+            return defs[name]
+
         inlined: dict = {}  # sym -> [edges assigning it]; all pruned together by the caller
         text = rhs_text
         # Fixpoint with an iteration cap guarding against pathological (mutually-recursive) cycles;
@@ -836,7 +1036,9 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 names = set(symbolic.free_symbols_and_functions(text))
             except Exception:
                 break
-            targets = sorted(n for n in names if n in defs and n not in arrays and n not in exclude)
+            # Order the cheap refusals (an array name, the lifted symbol itself) ahead of
+            # ``definition_of``, so a text naming only arrays never triggers a scan.
+            targets = sorted(n for n in names if n not in arrays and n not in exclude and definition_of(n) is not None)
             if not targets:
                 break
             for name in targets:
@@ -845,11 +1047,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 inlined[name] = def_edges
         return text, inlined
 
-    def _protected_symbols(self, sdfg: dace.SDFG) -> set:
-        """Symbols that must never be inlined or dropped: externally-required free symbols,
-        parameters bound by the parent nested-SDFG mapping, and loop variables (whose updates live
-        in loop metadata, not interstate edges). Mirrors ``SymbolDedup._protected_symbols``."""
+    def _protected_symbols(self, sdfg: dace.SDFG) -> set[str]:
+        # Symbols that must never be inlined or dropped: externally-required free symbols, parameters bound by the
+        # parent nested-SDFG mapping, and loop variables (whose updates live in loop metadata, not interstate edges).
         from dace.sdfg.state import LoopRegion
+
         protected = set(map(str, sdfg.free_symbols))
         if sdfg.parent_nsdfg_node is not None:
             protected |= set(sdfg.parent_nsdfg_node.symbol_mapping.keys())
@@ -858,20 +1060,31 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 protected.add(str(cfg.loop_variable))
         return protected
 
-    def _drop_interstate_symbol(self, sdfg: dace.SDFG, sym: str, edges, *, skip_cb=None) -> None:
-        """Delete ``sym``'s assignment from EVERY edge in ``edges``, then drop it from the symbol
-        registry + parent mapping ONLY once no interstate edge still assigns it. Deleting from every
-        assigning edge (not just one) avoids leaving a dangling assignment to a removed symbol; the
-        protected-symbol and external-consumer guards keep a still-needed symbol in place."""
+    def _drop_interstate_symbol(
+        self,
+        sdfg: dace.SDFG,
+        sym: str,
+        edges: Iterable[Edge[InterstateEdge] | None],
+        *,
+        skip_cb: ConditionalBlock | None = None,
+    ) -> None:
+        # Delete ``sym``'s assignment from EVERY edge in ``edges``, then drop it from the symbol registry + parent
+        # mapping ONLY once no interstate edge still assigns it.
+        if self._deferred_drops is not None:
+            self._deferred_drops.append((sdfg, sym, edges, skip_cb))
+            return
         if sym in self._protected_symbols(sdfg):
             return
-        if _symbol_has_external_consumer(sdfg, sym, None, skip_cb=skip_cb):
+        if _symbol_has_external_consumer(sdfg, sym, skip_cb=skip_cb):
             return
         for e in edges:
             if e is not None and sym in (e.data.assignments or {}):
                 del e.data.assignments[sym]
-        still_assigned = any(sym in (e.data.assignments or {})
-                             for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges())
+        still_assigned = any(
+            sym in (e.data.assignments or {})
+            for cfg in sdfg.all_control_flow_regions(recursive=True)
+            for e in cfg.edges()
+        )
         if still_assigned:
             return
         if sym in sdfg.symbols:
@@ -879,16 +1092,16 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         if sdfg.parent_nsdfg_node is not None and sym in sdfg.parent_nsdfg_node.symbol_mapping:
             del sdfg.parent_nsdfg_node.symbol_mapping[sym]
 
-    def _lift_interstate_cond_to_tasklet(self,
-                                         sdfg: dace.SDFG,
-                                         state: dace.SDFGState,
-                                         cond_sym: str,
-                                         subset_str: str,
-                                         *,
-                                         skip_cb=None):
-        """Walk the CFG for an interstate-edge assignment to ``cond_sym``. If found, emit
-        a tasklet in ``state`` computing RHS via array-read in-connectors, writing a fresh
-        transient. Returns transient name, or ``None`` if no assignment found."""
+    def _lift_interstate_cond_to_tasklet(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        cond_sym: str,
+        subset_str: str,
+        *,
+        skip_cb: ConditionalBlock | None = None,
+    ) -> tuple[str, dace.nodes.AccessNode] | None:
+        # Walk the CFG for an interstate-edge assignment to ``cond_sym``.
         rhs = None
         def_edge = None
         for cfg in sdfg.all_control_flow_regions(recursive=True):
@@ -902,33 +1115,28 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 break
         if rhs is None:
             return None
+        # Only a symbol with one path-independent definition has a value to lift (the inliner's rule):
+        # a free, self-referential (``k = k - 1``) or multiply-defined symbol does not.
+        if cond_sym not in self._inline_interstate_scalar_symbols(sdfg, cond_sym, exclude=set())[1]:
+            return None
         # Cond RHS may reference OTHER interstate-defined scalar symbols (staged element
         # reads like ``a_index_0 = a[_loop_it_1]``). Inline them into their array-read
         # definitions so the lifted tasklet stages them through connectors instead of
         # leaving orphaned free symbols on the (nested) SDFG.
         rhs, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, str(rhs), exclude={cond_sym})
-        # Delete the cond symbol's assignment(s) + drop it only when no other consumer. With
-        # consumers, the kept assignment serves them while the per-lane lift tasklet supplies the
-        # vector form for the ITE. Collect ALL edges assigning cond_sym (not just ``defining_edge``)
-        # so a multi-edge symbol is not left dangling by removing it globally after deleting one.
-        cond_edges = [e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
-                      if cond_sym in (e.data.assignments or {})]
-        self._drop_interstate_symbol(sdfg, cond_sym, cond_edges, skip_cb=skip_cb)
-        # Prune each inlined scalar symbol's definitions once it has no remaining consumer (its only
-        # use was the now-inlined cond RHS). A still-consumed symbol keeps its def -- the inlined
-        # tasklet form is an equivalent per-lane duplicate.
-        for sym, def_edges in inlined_syms.items():
-            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
+        # No mutation yet: a refusal below keeps the cond as free-symbol text, which must still have its
+        # definition. The prune happens on the committed path.
 
-        # A GATHER read in the cond value (``w[idx[i], k]``) is an un-representable nested
-        # subscript for a plain memlet. Promote each nested index read ``idx[i]`` to a fresh
-        # interstate INTEGER symbol (``_gidx = idx[i]`` on the edge feeding this state), so the
-        # staged read becomes a symbolic-indexed memlet ``w[_gidx, k]`` -- the same shape a body
-        # gather carries, which the tile machinery vectorizes. No-op when the RHS is not indirect.
-        rhs = self._promote_gather_indices(sdfg, def_edge, rhs)
+        # Promote nested gather index reads in the cond value (``w[idx[i], k]``) to interstate integer
+        # symbols so the staged read is a symbolic-indexed memlet ``w[_gidx, k]``.
+        rhs = self._promote_gather_indices(sdfg, [def_edge], rhs)
+        # An un-promotable gather (no def edge, or an out-of-scope index) cannot be staged as a
+        # memlet -- refuse the lift rather than emit a bare-pointer read that miscompiles.
+        if self._has_nested_subscript(sdfg, rhs):
+            return None
 
         # Collect arrays the RHS reads. Subscript ``c[i]``'s ``free_symbols`` = indices
-        # only, so ``free_symbols_and_functions`` misses the array head —
+        # only, so ``free_symbols_and_functions`` misses the array head --
         # :func:`symbolic.arrays` gets it. Union both to catch a bare ref
         # (``cond_sym = c``) and a bracketed one (``cond_sym = c[i]``).
         try:
@@ -937,31 +1145,17 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)
 
-        # Size lifted transient to cond range. ``cond_sym``'s RHS is often a *value*
-        # operand a downstream comparison consumes (``cond_sym = b[i]`` feeding
-        # ``b[i] > 0.0``), not a boolean; typing ``bool`` truncates float to ``b != 0`` ->
-        # wrong comparison (TSVC s271 -> all negative-b lanes wrongly taken). Bare-value
-        # RHS carries RHS's own dtype (first array read's).
-        #
-        # RHS *itself* a predicate — comparison (``c1 > c0``) or boolean combination
-        # (``a or b``, ``not a``) — -> lifted element is a bool downstream boolean ops
-        # (``_cond_compound`` combine / ITE mask) consume. Typing it after operand dtype
-        # (``int64`` from ``c0``) collides with ``bool`` combine output -> tile-op
-        # converter rejects mixed-dtype binop. Type predicate RHSs ``bool`` -> single-dtype
-        # boolean chain.
+        # Type the lifted transient by the RHS: a bare value (``cond_sym = b[i]``) keeps its own dtype (bool
+        # would truncate it, TSVC s271); a predicate RHS is ``bool`` so the boolean chain stays single-dtype.
         if arr_reads and not _rhs_is_predicate(rhs):
             template = sdfg.arrays[arr_reads[0]]
             cond_dtype = template.dtype
-            # Size to cond range's TOTAL element count, not full source-array shape. TSVC
-            # s343 (``if bb[j, i] > 0.0``) reads one element; ``bb``'s full
-            # ``(LEN_2D, LEN_2D)`` shape leaves downstream 1-D ``[k]`` merge memlet
-            # dim-mismatched with 2-D transient -> ``StateFusionExtended`` refuses
-            # ("expected 2, got 1"). Flat 1-D extent matches what cond holds; codegen
-            # treats length-1 transient as scalar automatically.
+            # Size to the cond range's element count, not the source shape (TSVC s343 reads one element of
+            # ``bb``; a 2-D transient mismatches the 1-D merge memlet).
             try:
                 subset_obj = dace.subsets.Range.from_string(subset_str)
                 total = subset_obj.num_elements_exact()
-                shape = (int(total), ) if int(total) > 0 else (1, )
+                shape = (int(total),) if int(total) > 0 else (1,)
             except Exception:
                 shape = template.shape
         elif arr_reads:
@@ -970,121 +1164,131 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             try:
                 subset_obj = dace.subsets.Range.from_string(subset_str)
                 total = subset_obj.num_elements_exact()
-                shape = (int(total), ) if int(total) > 0 else (1, )
+                shape = (int(total),) if int(total) > 0 else (1,)
             except Exception:
-                shape = (1, )
-        else:
-            shape = (1, )
+                shape = (1,)
+        elif _rhs_is_predicate(rhs):
+            shape = (1,)
             cond_dtype = dace.bool_
-        cond_name, _ = sdfg.add_array(name=f"_cond_{cond_sym}",
-                                      shape=shape,
-                                      dtype=cond_dtype,
-                                      storage=dace.dtypes.StorageType.Register,
-                                      transient=True,
-                                      find_new_name=True)
+        else:
+            # A symbolic value (``m = n - 1`` feeding ``m > 1``) keeps the symbol's type; ``bool`` truncates it.
+            shape = (1,)
+            cond_dtype = (
+                sdfg.symbols[cond_sym]
+                if cond_sym in sdfg.symbols
+                else required(def_edge).data.new_symbols(sdfg, sdfg.symbols)[cond_sym]
+            )
+        cond_name, _ = sdfg.add_array(
+            name=f"_cond_{cond_sym}",
+            shape=shape,
+            dtype=cond_dtype,
+            storage=dace.dtypes.StorageType.Register,
+            transient=True,
+            find_new_name=True,
+        )
 
         # Substitute each array reference with its in-connector. RHS may write
         # ``arr[idx]`` or bare ``arr``; ``replace_array_accesses_with_connectors`` parses
         # via :class:`SymExpr`, rewrites both structurally so identifier overlaps (``arr``
         # vs ``arr10``) can't corrupt the result.
-        in_conn_names = {arr: f"_in_{arr}_{i}" for i, arr in enumerate(arr_reads)}
-        cleaned_rhs, extracted_subsets = symbolic.replace_array_accesses_with_connectors(
-            rhs, in_conn_names, set(sdfg.arrays.keys()))
+        cleaned_rhs, element_reads = replace_element_reads_with_connectors(rhs, arr_reads, sdfg.arrays.keys())
 
         out_conn = f"_out_{cond_name}"
-        t = state.add_tasklet(name=f"lift_cond_{cond_sym}",
-                              inputs=set(in_conn_names.values()),
-                              outputs={out_conn},
-                              code=f"{out_conn} = ({cleaned_rhs})")
-        for arr, conn in in_conn_names.items():
-            an = state.add_access(arr)
-            # length-1 / Scalar operand = loop-invariant value (non-transient scalar
-            # source like kernel arg ``c`` in ``a[i, j] > c``): must stay a 1-element
-            # ``[0]`` read so the vectorizer broadcasts it (array-op-scalar); captured /
-            # W-wide subset would OOB-read the 1-element source, can't be reshaped
-            # (parent-fed connector). Else prefer the subset RHS wrote (``arr[i, j]`` ->
-            # ``[i, j]``), else ``subset_str``.
-            captured = extracted_subsets.get(arr)
-            if sdfg.arrays[arr].total_size == 1:
-                arr_subset = "0"
-            elif captured:
-                arr_subset = captured.strip("[]")
-            else:
-                arr_subset = subset_str
-            state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
+        t = state.add_tasklet(
+            name=f"lift_cond_{cond_sym}",
+            inputs=dict.fromkeys(connector for _, _, connector in element_reads),
+            outputs={out_conn},
+            code=f"{out_conn} = ({cleaned_rhs})",
+        )
+        wire_element_reads(sdfg, state, t, element_reads, subset_str)
         cond_access = state.add_access(cond_name)
         # Flat 1-D transient indexing (as in the compound recipe): ``[0]`` single-element,
         # ``[0:N]`` vector; ``subset_str`` only for the legacy full-source-shape transient.
-        if shape == (1, ):
+        if shape == (1,):
             cond_subset = "0"
         elif len(shape) == 1:
             cond_subset = f"0:{shape[0]}"
         else:
             cond_subset = subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
+
+        # Committed: delete every edge assigning ``cond_sym`` and drop it only when nothing else reads it.
+        # Collected after the rewrites above so the edge list is current.
+        cond_edges = [
+            e
+            for cfg in sdfg.all_control_flow_regions(recursive=True)
+            for e in cfg.edges()
+            if cond_sym in (e.data.assignments or {})
+        ]
+        self._drop_interstate_symbol(sdfg, cond_sym, cond_edges, skip_cb=skip_cb)
+        # Prune each inlined scalar symbol's definitions once it has no remaining consumer (its only
+        # use was the now-inlined cond RHS). A still-consumed symbol keeps its def -- the inlined
+        # tasklet form is an equivalent per-lane duplicate.
+        for sym, def_edges in inlined_syms.items():
+            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
         return cond_name, cond_access
 
-    def _lift_array_predicate_cond(self, sdfg: dace.SDFG, state: dace.SDFGState, cond_text: str,
-                                   subset_str: str) -> Optional[Tuple[str, dace.nodes.AccessNode]]:
-        """Stage a guard that DIRECTLY reads array subscripts (``A[i] > K``) into a
-        per-lane bool transient, each element read through an in-connector.
-
-        Interstate recipe (:meth:`_lift_interstate_cond_to_tasklet`) fires only when the
-        whole cond is a single interstate-assigned symbol; a guard naming an array
-        subscript directly falls through. Left as free-symbol text, ITE tasklet inlines
-        array head as scalar -> tile-op converter emits ``(int)(A)`` pointer cast. Here
-        each read is a connector (captured subset, or ``[0]`` for length-1 / scalar) ->
-        operand becomes a tile; genuine symbols (kernel args like ``K``) stay free-symbol
-        text.
-
-        :returns: ``(cond_name, cond_access)`` for the lifted bool transient, or ``None``
-            when cond reads no SDFG array or can't be parsed (caller keeps free-symbol
-            text).
-        """
-        # Union both accessors: ``symbolic.arrays`` catches a bracketed read (``A[i]``)
-        # array-head ``free_symbols`` misses; ``free_symbols_and_functions`` catches a
-        # BARE array ref (``A`` as current-lane element, the shape the ConditionalBlock
-        # cond carries here -- ``threshold_data > K``). Bare read has no captured subset ->
-        # wired at ``subset_str`` (write's per-lane subset).
+    def _lift_array_predicate_cond(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        cond_text: str,
+        subset_str: str,
+        *,
+        skip_cb: ConditionalBlock | None = None,
+    ) -> tuple[str, dace.nodes.AccessNode] | None:
+        # Stage a guard that directly reads array subscripts (``A[i] > K``) into a per-lane bool transient.
+        # Symbol expansion does not mutate; the prune fires only once the recipe commits.
+        expanded, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, cond_text, exclude=set())
+        # Promote nested gather indices in the guard (``w[idx[i], k] > K``) to integer symbols on every edge
+        # feeding this state; a string-rebuilt nested subscript degenerates to a pointer read.
+        expanded = self._promote_gather_indices(sdfg, state.parent_graph.in_edges(state), expanded)
+        # If a gather index survives (no dominating edge to hoist onto -- a CFG start block --
+        # or an out-of-scope index symbol), the guard cannot be represented as a memlet;
+        # refuse the lift (the caller keeps it as free-symbol text) rather than emit a
+        # bare-pointer read that miscompiles.
+        if self._has_nested_subscript(sdfg, expanded):
+            return None
+        # Union both accessors: ``symbolic.arrays`` catches bracketed reads, ``free_symbols_and_functions``
+        # a bare array ref (current-lane element), which is wired at ``subset_str``.
         try:
-            free_vars = set(symbolic.arrays(cond_text)) | set(symbolic.free_symbols_and_functions(cond_text))
+            free_vars = set(symbolic.arrays(expanded)) | set(symbolic.free_symbols_and_functions(expanded))
         except Exception:  # noqa: BLE001 -- unparsable expr: let the caller fall back
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)
         if not arr_reads:
             return None
+        # Recipe commits: the inlined symbols now live inside the lifted tasklet body, so
+        # prune each interstate definition whose only remaining consumer was this guard
+        # (``_drop_interstate_symbol`` keeps a still-consumed / protected symbol in place).
+        cond_text = expanded
+        for sym, def_edges in inlined_syms.items():
+            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
         # Guard is a predicate -> one bool per lane; size transient to cond range (flat
         # 1-D extent, as interstate recipe).
         try:
             total = int(dace.subsets.Range.from_string(subset_str).num_elements_exact())
-            shape = (total, ) if total > 0 else (1, )
+            shape = (total,) if total > 0 else (1,)
         except Exception:  # noqa: BLE001
-            shape = (1, )
-        cond_name, _ = sdfg.add_array(name="_cond_expr",
-                                      shape=shape,
-                                      dtype=dace.bool_,
-                                      storage=dace.dtypes.StorageType.Register,
-                                      transient=True,
-                                      find_new_name=True)
-        in_conn_names = {arr: f"_in_{arr}_{i}" for i, arr in enumerate(arr_reads)}
-        cleaned_rhs, extracted_subsets = symbolic.replace_array_accesses_with_connectors(
-            cond_text, in_conn_names, set(sdfg.arrays.keys()))
+            shape = (1,)
+        cond_name, _ = sdfg.add_array(
+            name="_cond_expr",
+            shape=shape,
+            dtype=dace.bool_,
+            storage=dace.dtypes.StorageType.Register,
+            transient=True,
+            find_new_name=True,
+        )
+        cleaned_rhs, element_reads = replace_element_reads_with_connectors(cond_text, arr_reads, sdfg.arrays.keys())
         out_conn = f"_out_{cond_name}"
-        t = state.add_tasklet(name="lift_cond_expr",
-                              inputs=set(in_conn_names.values()),
-                              outputs={out_conn},
-                              code=f"{out_conn} = ({cleaned_rhs})")
-        for arr, conn in in_conn_names.items():
-            an = state.add_access(arr)
-            captured = extracted_subsets.get(arr)
-            if sdfg.arrays[arr].total_size == 1:
-                arr_subset = "0"
-            elif captured:
-                arr_subset = captured.strip("[]")
-            else:
-                arr_subset = subset_str
-            state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
+        t = state.add_tasklet(
+            name="lift_cond_expr",
+            inputs=dict.fromkeys(connector for _, _, connector in element_reads),
+            outputs={out_conn},
+            code=f"{out_conn} = ({cleaned_rhs})",
+        )
+        wire_element_reads(sdfg, state, t, element_reads, subset_str)
         cond_access = state.add_access(cond_name)
-        cond_subset = "0" if shape == (1, ) else f"0:{shape[0]}"
+        cond_subset = "0" if shape == (1,) else f"0:{shape[0]}"
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access

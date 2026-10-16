@@ -1,39 +1,52 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Transformation helper API. """
+"""Transformation helper API."""
+
 import ast
 import copy
 import itertools
 import warnings
-from networkx import MultiDiGraph
+from collections.abc import Collection, Iterable
+from collections.abc import Set as AbstractSet
 
-from dace.properties import CodeBlock
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
-from dace.subsets import Range, Subset, union
+import dace
 import dace.subsets as subsets
-from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
-
-from dace import data, dtypes, symbolic
-from dace.sdfg import nodes, utils
-from dace.sdfg.graph import Edge, SubgraphView, MultiConnectorEdge
-from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
-from dace.sdfg import graph
+from dace import data, dtypes, symbolic, typeclass
+from dace.graphlib import MultiDiGraph
 from dace.memlet import Memlet
-from dace import typeclass
+from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
+from dace.sdfg.graph import Edge, MultiConnectorEdge, SubgraphView
+from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    StateSubgraphView,
+    SymbolResolver,
+)
+from dace.subsets import Range, union
 
 
-def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
+def nest_sdfg_subgraph(
+    sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | None = None, keep_outside: Collection[str] = ()
+) -> SDFGState:
     """
     Nests an SDFG subgraph (SDFGStates and InterstateEdges).
 
     :param sdfg: The SDFG containing the subgraph.
     :param subgraph: The SubgraphView description of the subgraph.
     :param start: The start state of the subgraph.
+    :param keep_outside: Transients that stay in ``sdfg`` and cross the boundary as connectors even when
+                         only the subgraph uses them.
     :return: The SDFGState containing the NestedSDFG node (containing the nested SDFG subgraph).
     """
 
     # Nest states
-    blocks: List[ControlFlowBlock] = subgraph.nodes()
+    blocks: list[ControlFlowBlock] = subgraph.nodes()
     return_state = None
     if len(blocks) > 1 or isinstance(blocks[0], AbstractControlFlowRegion):
         # Avoid cyclic imports
@@ -45,8 +58,10 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         else:
             src_nodes = subgraph.source_nodes()
             if len(src_nodes) != 1:
-                raise ValueError('Ambiguous start state of the SDFG subgraph. '
-                                 'Please provide the start state via the "start" argument.')
+                raise ValueError(
+                    "Ambiguous start state of the SDFG subgraph. "
+                    'Please provide the start state via the "start" argument.'
+                )
             source_node = src_nodes[0]
 
         sink_nodes = subgraph.sink_nodes()
@@ -54,25 +69,22 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             raise NotImplementedError
         sink_node = sink_nodes[0]
 
-        all_blocks: List[ControlFlowBlock] = []
-        is_edges: List[Edge[InterstateEdge]] = []
+        all_blocks: list[ControlFlowBlock] = []
+        is_edges: list[Edge[InterstateEdge]] = []
         for b in blocks:
             if isinstance(b, AbstractControlFlowRegion):
                 all_blocks.append(b)
-                for nb in b.all_control_flow_blocks():
-                    all_blocks.append(nb)
-                for e in b.all_interstate_edges():
-                    is_edges.append(e)
+                all_blocks.extend(b.all_control_flow_blocks())
+                is_edges.extend(b.all_interstate_edges())
             else:
                 all_blocks.append(b)
-        states: List[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
+        states: list[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
         for src in blocks:
             for dst in blocks:
-                for edge in graph.edges_between(src, dst):
-                    is_edges.append(edge)
-        return_blocks: Set[ReturnBlock] = set([b for b in all_blocks if isinstance(b, ReturnBlock)])
+                is_edges.extend(graph.edges_between(src, dst))
+        return_blocks: set[ReturnBlock] = {b for b in all_blocks if isinstance(b, ReturnBlock)}
         if len(return_blocks) > 0:
-            did_return_inner = '_did_ret_from_nsdfg'
+            did_return_inner = "_did_ret_from_nsdfg"
             did_return_inner = sdfg._find_new_name(did_return_inner)
             sdfg.add_scalar(did_return_inner, dtypes.int32, transient=True)
         else:
@@ -113,60 +125,108 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     if s in sdfg.arrays:
                         read_set.add(s)
 
-        # Find NestedSDFG's unique data
+        # Find NestedSDFG's unique data -- the transients nothing OUTSIDE the subgraph observes, which
+        # move into the nest instead of crossing its boundary as connectors.
         rw_set = read_set | write_set
+        #
+        # ``blocks`` is the subgraph at BLOCK level, so it holds a control-flow region as ONE node
+        # while ``sdfg.states()`` yields the states nested inside it -- ``state in blocks`` therefore
+        # never matched for a region subgraph, and a transient used only inside an outlined
+        # LoopRegion still came back out as a connector. ``all_blocks`` is the same subgraph
+        # flattened to every block it contains, which is the container this test has to consult.
+        inside = set(all_blocks)
+        outside_names: set[str] = set()
+        for block in sdfg.all_control_flow_blocks():
+            if block in inside:
+                continue
+            if isinstance(block, SDFGState):
+                outside_names.update(n.data for n in block.data_nodes())
+            elif isinstance(block, ConditionalBlock):
+                for c, _ in block.branches:
+                    if c is not None:
+                        outside_names.update(c.get_free_symbols())
+            elif isinstance(block, LoopRegion):
+                outside_names.update(block.loop_condition.get_free_symbols())
+        # A promoted scalar is read by NAME on an interstate edge, not through an access node, so the
+        # node walk alone would call it unused and move a live value into the nest.
+        for edge in sdfg.all_interstate_edges():
+            if edge.src not in inside or edge.dst not in inside:
+                outside_names.update(edge.data.free_symbols)
         unique_set = set()
         for name in rw_set:
-            if not sdfg.arrays[name].transient:
-                continue
-            found = False
-            for state in sdfg.states():
-                if state in blocks:
-                    continue
-                for node in state.nodes():
-                    if (isinstance(node, nodes.AccessNode) and node.data == name):
-                        found = True
-                        break
-            if not found:
+            if sdfg.arrays[name].transient and name not in outside_names and name not in keep_outside:
                 unique_set.add(name)
 
-        # Find NestedSDFG's connectors
-        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
-        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+        # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
+        # the order its access nodes are wired, which numbers the enclosing map's IN_n / OUT_n.
+        # Sorted, since a set of container names carries no order of its own to preserve.
+        read_set = OrderedSet(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
+        write_set = OrderedSet(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
+        use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all queries
+        inside_sites: set[int] = {id(b) for b in all_blocks}
+        inside_sites.update(id(e) for e in is_edges)
+        # Read before anything assigns them, so the value comes from this SDFG's caller.
+        incoming_symbols = sdfg.free_symbols
+
         defined_symbols = set()
         strictly_defined_symbols = set()
+        internal_symbols: set[str] = set()
         for e in is_edges:
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
                 try:
-                    if k not in sdfg.symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
-                        strictly_defined_symbols.add(k)
+                    self_referencing = k in {str(a) for a in symbolic.pystr_to_symbolic(v).args}
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
-                    pass
-        for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable:
-                defined_symbols.add(b.loop_variable)
-                if b.loop_variable not in sdfg.symbols:
-                    if b.init_statement:
-                        init_assignment = loop_analysis.get_init_assignment(b)
-                        if b.loop_variable not in {str(s) for s in symbolic.pystr_to_symbolic(init_assignment).args}:
-                            strictly_defined_symbols.add(b.loop_variable)
-                    else:
-                        strictly_defined_symbols.add(b.loop_variable)
+                    continue
+                if self_referencing:
+                    continue
+                # ``sdfg.symbols`` does not answer where the value comes from -- the Python frontend
+                # declares its indirection indices there too. Mapping a symbol the subgraph owns makes
+                # it free at the PARENT boundary, surfacing as a required root-SDFG argument.
+                if k not in incoming_symbols and not loop_analysis.symbol_used_outside(
+                    k, inside_sites, use_sites, descriptor_symbols
+                ):
+                    internal_symbols.add(k)
+                    strictly_defined_symbols.add(k)
+                elif k not in sdfg.symbols:
+                    strictly_defined_symbols.add(k)
+        # A counter is internal iff its init binds it outright (``i = 0``, not ``i = i + 1``) AND nothing
+        # outside the loop observes it. Declaration in ``sdfg.symbols`` answers neither question: DaCe
+        # declares every counter there, and this function deletes the declaration again.
+        loop_regions: list[LoopRegion] = [b for b in all_blocks if isinstance(b, LoopRegion) and b.loop_variable]
+        internal_counters: set[str] = set()
+        external_counters: set[str] = set()
+        for b in loop_regions:
+            defined_symbols.add(b.loop_variable)
+            # ``get_init_assignment`` returns None -- it does not raise -- when the init assigns the
+            # counter ambiguously or not at all. That is not "binds outright": the value comes in from
+            # outside, so the counter must keep both its declaration and its outbound propagation.
+            init = loop_analysis.get_init_assignment(b) if b.init_statement else None
+            binds_outright = not b.init_statement or (
+                init is not None and b.loop_variable not in symbolic.free_symbols_and_functions(init)
+            )
+            internal = binds_outright and not loop_analysis.counter_used_outside_loop(
+                b.loop_variable, b, sdfg, use_sites=use_sites, descriptor_symbols=descriptor_symbols
+            )
+            (internal_counters if internal else external_counters).add(b.loop_variable)
+        # Classification is per REGION but every consumer below is keyed by NAME, so a name several
+        # regions share is internal only when every one of them binds it internally.
+        internal_counters -= external_counters
+        strictly_defined_symbols.update(internal_counters)
 
-        return_state = new_state = graph.add_state('nested_sdfg_parent')
+        return_state = new_state = graph.add_state("nested_sdfg_parent")
 
         # If there is a return that is being nested in, a conditional return is added right after the new nested SDFG
         # which will be taken if the inner, nested return was hit.
         ret_cond = None
         if len(return_blocks) > 0:
-            ret_cond = ConditionalBlock('return_' + sdfg.label + '_from_nested', sdfg, graph)
+            ret_cond = ConditionalBlock("return_" + sdfg.label + "_from_nested", sdfg, graph)
             graph.add_node(ret_cond, ensure_unique_name=True)
-            ret_branch = ControlFlowRegion('return_' + sdfg.label + '_from_nested_body', sdfg, ret_cond)
-            ret_block = ReturnBlock('return', sdfg, ret_branch)
+            ret_branch = ControlFlowRegion("return_" + sdfg.label + "_from_nested_body", sdfg, ret_cond)
+            ret_block = ReturnBlock("return", sdfg, ret_branch)
             ret_branch.add_node(ret_block)
             ret_cond.add_branch(CodeBlock(did_return_inner), ret_branch)
 
@@ -182,18 +242,18 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             for blk in nsdfg.all_control_flow_blocks():
                 if blk in return_blocks:
                     pre_state = blk.parent_graph.add_state_before(blk)
-                    did_ret_tasklet = pre_state.add_tasklet('__did_ret_set', {}, {'out'}, 'out = 1')
+                    did_ret_tasklet = pre_state.add_tasklet("__did_ret_set", {}, {"out"}, "out = 1")
                     did_ret_access = pre_state.add_access(did_return_inner)
-                    pre_state.add_edge(did_ret_tasklet, 'out', did_ret_access, None, Memlet(did_return_inner + '[0]'))
+                    pre_state.add_edge(did_ret_tasklet, "out", did_ret_access, None, Memlet(did_return_inner + "[0]"))
                     write_set.add(did_return_inner)
 
         if ret_cond is not None:
-            pre_state = graph.add_state('before_nested_sdfg_parent')
+            pre_state = graph.add_state("before_nested_sdfg_parent")
             for e in graph.in_edges(source_node):
                 graph.add_edge(e.src, pre_state, e.data)
-            did_ret_tasklet = pre_state.add_tasklet('__did_ret_init', {}, {'out'}, 'out = 0')
+            did_ret_tasklet = pre_state.add_tasklet("__did_ret_init", {}, {"out"}, "out = 0")
             did_ret_access = pre_state.add_access(did_return_inner)
-            pre_state.add_edge(did_ret_tasklet, 'out', did_ret_access, None, Memlet(did_return_inner + '[0]'))
+            pre_state.add_edge(did_ret_tasklet, "out", did_ret_access, None, Memlet(did_return_inner + "[0]"))
             graph.add_edge(pre_state, new_state, InterstateEdge())
             graph.add_edge(new_state, ret_cond, InterstateEdge())
             for e in graph.out_edges(sink_node):
@@ -221,29 +281,76 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         ndefined_symbols = set()
         out_mapping = {}
         out_state = None
+        # A loop that initializes its variable binds it, so the variable is not visible after the loop
+        # A name an edge assigns without a declaration is typed by its edge, as code generation types it
+        types = {**sdfg.symbols, **nsdfg.symbols}
+        enclosing = graph
+        while enclosing is not None and enclosing is not sdfg:
+            types.update(enclosing.new_symbols(types))
+            enclosing = enclosing.parent_graph
+        for region in nsdfg.all_control_flow_regions():
+            types.update(region.new_symbols(types))
         for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
-        for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '' and b.init_statement:
-                ndefined_symbols.add(b.loop_variable)
+            types.update({k: v for k, v in e.data.new_symbols(nsdfg, types).items() if k not in types})
+        # Nothing outside reads these, so the scalar and the extra state would be dead weight.
+        ndefined_symbols -= internal_symbols
+        # Export a counter only if something outside the loop observes it. Exporting unconditionally
+        # costs a ``symbolic_output`` state, and that state is a second component -- which defeated
+        # MapFission's single-component termination guard and let it renest forever (TSVC s1119).
+        for b in loop_regions:
+            if b.init_statement:
+                if b.loop_variable in internal_counters:
+                    ndefined_symbols.discard(b.loop_variable)
+                else:
+                    ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
-            out_state = nsdfg.add_state('symbolic_output')
+            # Type every exported symbol BEFORE adding any state: an untypeable one has to raise out of a
+            # function that has not touched the graph yet, or the caller is left holding a half-built
+            # nested SDFG it cannot roll back. A counter's own loop is the authority on its type, since
+            # the declaration may sit in an SDFG this subgraph does not contain (TSVC s114 raised a bare
+            # ``KeyError: '_loop_it_0'`` here) -- consulted only for the counters actually exported,
+            # because ``new_symbols`` re-infers three expressions and copies every array dtype.
+            counter_regions = {b.loop_variable: b for b in loop_regions}
+            symbol_dtypes: dict[str, dtypes.typeclass] = {}
+            for s in ndefined_symbols:
+                if s in types:
+                    symbol_dtypes[s] = types[s]
+                else:
+                    region = counter_regions.get(s)
+                    inferred = region.new_symbols(sdfg.symbols) if region is not None else {}
+                    if s not in inferred:
+                        raise KeyError(
+                            f"symbol {s} is assigned inside the nested subgraph but declared "
+                            f"nowhere it can be typed from (neither SDFG's symbols, nor a loop "
+                            f"iterator); cannot build its symbol-scalar-symbol output"
+                        )
+                    symbol_dtypes[s] = inferred[s]
+
+            out_state = nsdfg.add_state("symbolic_output")
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
-                if s in nsdfg.symbols:
-                    dtype = nsdfg.symbols[s]
-                else:
-                    dtype = sdfg.symbols[s]
-                name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
+                dtype = symbol_dtypes[s]
+                # The connector connects the two scalars by name, so it must be free in both SDFGs
+                name = sdfg._find_new_name(f"__sym_out_{s}")
+                suffix = 0
+                while nsdfg.is_name_used(name):
+                    name = sdfg._find_new_name(f"__sym_out_{s}_{suffix}")
+                    suffix += 1
+                sdfg.add_scalar(name, dtype, transient=True)
                 out_mapping[s] = name
-                nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                nname, ndesc = nsdfg.add_scalar(name, dtype)
                 # Part (1)
-                tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
+                tasklet = out_state.add_tasklet(f"set_{nname}", {}, {"__out"}, f"__out = {s}")
                 acc = out_state.add_access(nname)
-                out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
+                out_state.add_edge(tasklet, "__out", acc, None, Memlet.from_array(nname, ndesc))
                 write_set.add(name)
 
-        # Add NestedSDFG node
+        # Add NestedSDFG node. ``strictly_defined_symbols`` already carries the counters the subgraph
+        # binds itself, and subtracting it is what keeps a region-bound iterator out of the mapping --
+        # mapping one makes it free at the PARENT boundary, where nothing defines it. Do NOT also drop
+        # the rest of ``defined_symbols``: an inter-state assignment target still crosses the boundary
+        # (nest-forge stages a float read as exactly such a symbol and needs it in the ABI).
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols
@@ -263,7 +370,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
         # Part (2)
         if out_state is not None:
-            extra_state = graph.add_state('symbolic_output')
+            extra_state = graph.add_state("symbolic_output")
             for e in graph.out_edges(new_state):
                 graph.add_edge(extra_state, e.dst, e.data)
                 graph.remove_edge(e)
@@ -285,31 +392,128 @@ def nest_sdfg_control_flow(sdfg: SDFG):
     for nd in sdfg.nodes():
         if isinstance(nd, AbstractControlFlowRegion):
             nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [nd]))
-            sdfg.reset_cfg_list()
 
 
-def nest_state_subgraph(sdfg: SDFG,
-                        state: SDFGState,
-                        subgraph: SubgraphView,
-                        name: Optional[str] = None,
-                        full_data: bool = False) -> nodes.NestedSDFG:
-    """ Turns a state subgraph into a nested SDFG. Operates in-place.
+def drop_folded_boundary_edge(
+    sdfg: SDFG,
+    state: SDFGState,
+    edge: MultiConnectorEdge,
+    kept: MultiConnectorEdge,
+    nested_sdfg: nodes.NestedSDFG,
+    is_input: bool,
+) -> None:
+    """Remove ``edge`` and its scope plumbing once ``kept`` owns the nested connector they share.
 
-        :param sdfg: The SDFG containing the state subgraph.
-        :param state: The state containing the subgraph.
-        :param subgraph: Subgraph to nest.
-        :param name: An optional name for the nested SDFG.
-        :param full_data: If True, nests entire input/output data.
-        :return: The nested SDFG node.
-        :raise KeyError: Some or all nodes in the subgraph are not located in
-                         this state, or the state does not belong to the given
-                         SDFG.
-        :raise ValueError: The subgraph is contained in more than one scope.
+    :func:`nest_state_subgraph` gives the nested SDFG one descriptor -- hence one connector -- per
+    data name, so several boundary edges fold onto the same connector and only the first is
+    reconnected. Dropping the rest by simply not reconnecting them strands the ``IN_x``/``OUT_x``
+    pair each entered the enclosing scope through: nothing feeds it once the subgraph is removed,
+    and validation rejects the dangling connector. :func:`~dace.sdfg.utils.consolidate_edges` folds
+    such pairs away up front where it can, but it refuses to fold a read whose source access node is
+    written in the same state (that would move the read in front of the write), which is exactly the
+    case reaching here.
+
+    The nested connector carries the union of every folded subset, so ``kept``'s outer memlets are
+    widened to cover ``edge``'s before its path goes away.
+
+    ``edge`` is a happens-before as well as a transfer, and ``kept`` inherits only its own endpoint's
+    half of that. The outer endpoint of a folded edge that still has users is therefore left
+    concurrent with the nest -- the state then means whatever node order says, which is how cavity
+    flow's lid assignment ended up racing the column zeroing it must follow. Re-state the constraint
+    as an ordering edge instead.
+
+    A folded WRITE goes further: its outer access node is left with no producer at all, because the
+    write it received is now covered by ``kept``'s widened memlet on a DIFFERENT node. Anything
+    ordered after the stranded node is then ordered after nothing. The constraint has not gone away,
+    it has moved -- to the scope that now delivers the write -- so the ordering edges move with it.
+    ``u[:, 0] = 0; u[:, -1] = 0; u[-1, :] = 1`` is the case: both column writes fold onto one node,
+    and the lid's ordering edges are left hanging off the other, so the lid ran first and zeroed
+    corners came out where ones belong.
+
+    :param sdfg: SDFG holding the descriptors the union falls back to.
+    :param state: State holding both edges.
+    :param edge: Boundary edge being folded away.
+    :param kept: Boundary edge already reconnected to the shared nested connector.
+    :param nested_sdfg: The nested SDFG node both edges cross into.
+    :param is_input: ``edge`` enters the nested SDFG (its outer endpoint is ``edge.src``).
+    """
+    kept_level, level = state.memlet_tree(kept).parent, state.memlet_tree(edge).parent
+    while kept_level is not None and level is not None and kept_level.edge is not level.edge:
+        kept_memlet, memlet = kept_level.edge.data, level.edge.data
+        if kept_memlet.data == memlet.data and kept_memlet.subset is not None and memlet.subset is not None:
+            widened = union(kept_memlet.subset, memlet.subset, SymbolResolver().facts_at(state))
+            kept_memlet.subset = widened if widened is not None else Range.from_array(sdfg.arrays[kept_memlet.data])
+        kept_level, level = kept_level.parent, level.parent
+    outer = edge.src if is_input else edge.dst
+    # The far end of the memlet PATH, not the immediate endpoint: a boundary edge of a nested map
+    # body ends at the enclosing MapExit, while the access node the write lands on -- and whose
+    # ordering edges are what go stale -- sits beyond it. Taken before the removal, which is what
+    # strands it.
+    path = state.memlet_path(edge)
+    path_end = path[0].src if is_input else path[-1].dst
+    # What delivered the folded write to ``path_end``: the last hop's source, or the nested SDFG when
+    # ``edge`` is that hop. NOT ``kept``'s access node -- it may have other writers ordered after
+    # ``path_end`` (CloudSC: a later map writes the same node), so anchoring there closes a cycle.
+    anchor = nested_sdfg if path[-1] is edge else path[-1].src
+    # The inner endpoint has already moved into the nested state, where its own edges still use its connectors
+    # (a scope node's IN_/OUT_ pair included). Only the parent-side path is pruned; the moved node keeps them all.
+    inner = edge.dst if is_input else edge.src
+    kept_in, kept_out = dict(inner.in_connectors), dict(inner.out_connectors)
+    utils.remove_edge_and_dangling_path(state, edge)
+    for name, dtype in kept_in.items():
+        if name not in inner.in_connectors:
+            inner.add_in_connector(name, dtype, force=True)
+    for name, dtype in kept_out.items():
+        if name not in inner.out_connectors:
+            inner.add_out_connector(name, dtype, force=True)
+    if is_input:
+        # A dropped path can take its own root with it, and an endpoint nothing else uses carries no
+        # constraint worth restating. A fresh Memlet per edge -- never the object the old edge carried.
+        if (
+            outer in state.nodes()
+            and state.degree(outer) > 0
+            and not any(e.dst is nested_sdfg for e in state.out_edges(outer))
+        ):
+            state.add_nedge(outer, nested_sdfg, Memlet())
+        return
+    if utils.reanchor_stranded_ordering(state, path_end, anchor, is_input):
+        return
+    # ``path_end`` keeps other writers or readers, and it still happens after the folded write.
+    present = state.nodes()
+    if (
+        anchor in present
+        and path_end in present
+        and state.degree(path_end) > 0
+        and not any(e.src is anchor for e in state.in_edges(path_end))
+    ):
+        state.add_nedge(anchor, path_end, Memlet())
+
+
+def nest_state_subgraph(
+    sdfg: SDFG,
+    state: SDFGState,
+    subgraph: SubgraphView,
+    name: str | None = None,
+    bound_inside: AbstractSet[str] = frozenset(),
+) -> nodes.NestedSDFG:
+    """Turns a state subgraph into a nested SDFG. Operates in-place.
+
+    :param sdfg: The SDFG containing the state subgraph.
+    :param state: The state containing the subgraph.
+    :param subgraph: Subgraph to nest.
+    :param name: An optional name for the nested SDFG.
+    :param bound_inside: Symbols the caller binds inside the nested SDFG next; they are neither mapped nor
+                         declared (see ``SDFGState.add_nested_sdfg``).
+    :return: The nested SDFG node.
+    :raise KeyError: Some or all nodes in the subgraph are not located in
+                     this state, or the state does not belong to the given
+                     SDFG.
+    :raise ValueError: The subgraph is contained in more than one scope.
     """
     if state.sdfg != sdfg:
-        raise KeyError('State does not belong to given SDFG')
+        raise KeyError("State does not belong to given SDFG")
     if subgraph is not state and subgraph.graph is not state:
-        raise KeyError('Subgraph does not belong to given state')
+        raise KeyError("Subgraph does not belong to given state")
 
     # Find the top-level scope
     scope_tree = state.scope_tree()
@@ -319,141 +523,212 @@ def nest_state_subgraph(sdfg: SDFG,
 
     for node in subgraph.nodes():
         if node not in scope_dict:
-            raise KeyError('Node not found in state')
+            raise KeyError("Node not found in state")
 
         # If scope entry/exit, ensure entire scope is in subgraph
         if isinstance(node, nodes.EntryNode):
             scope_nodes = scope_dict_children[node]
             if any(n not in subgraph.nodes() for n in scope_nodes):
-                raise ValueError('Subgraph contains partial scopes (entry)')
+                raise ValueError("Subgraph contains partial scopes (entry)")
         elif isinstance(node, nodes.ExitNode):
             entry = state.entry_node(node)
             scope_nodes = scope_dict_children[entry] + [entry]
             if any(n not in subgraph.nodes() for n in scope_nodes):
-                raise ValueError('Subgraph contains partial scopes (exit)')
+                raise ValueError("Subgraph contains partial scopes (exit)")
 
         scope_node = scope_dict[node]
         if scope_node not in subgraph.nodes():
             if top_scopenode != -1 and top_scopenode != scope_node:
-                raise ValueError('Subgraph is contained in more than one scope')
+                raise ValueError("Subgraph is contained in more than one scope")
             top_scopenode = scope_node
 
     scope = scope_tree[top_scopenode]
     ###
 
-    # Consolidate edges in top scope
-    utils.consolidate_edges(sdfg, scope)
+    # Consolidate edges in top scope. A subgraph at the top level of its state has none: the
+    #  consolidation then matches no state and returns 0 after scanning every state of the SDFG.
+    if scope.entry is not None:
+        utils.consolidate_edges(sdfg, scope)
     snodes = subgraph.nodes()
 
     # Collect inputs and outputs of the nested SDFG
-    inputs: List[MultiConnectorEdge] = []
-    outputs: List[MultiConnectorEdge] = []
+    inputs: list[MultiConnectorEdge] = []
+    outputs: list[MultiConnectorEdge] = []
     for node in snodes:
-        for edge in state.in_edges(node):
-            if edge.src not in snodes:
-                inputs.append(edge)
-        for edge in state.out_edges(node):
-            if edge.dst not in snodes:
-                outputs.append(edge)
+        inputs.extend(edge for edge in state.in_edges(node) if edge.src not in snodes)
+        outputs.extend(edge for edge in state.out_edges(node) if edge.dst not in snodes)
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
-    data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
+    # NOTE: the name collections below are ORDERED (``dict`` used as an ordered set), not
+    # ``set``. They are iterated to insert descriptors into the nested SDFG, and a ``set`` of
+    # strings iterates in an order that depends on PYTHONHASHSEED -- so the nested SDFG's
+    # descriptor/connector order, and with it the generated code, changed from run to run.
+    # That is the durbin miscompile: same structure, different wiring, correct on some seeds.
+    data_in_subgraph = dict.fromkeys(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
-    other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
-                      if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
-    subgraph_transients = set()
-    for data in data_in_subgraph:
-        datadesc = sdfg.arrays[data]
-        if datadesc.transient and data not in other_nodes:
-            subgraph_transients.add(data)
+    # ``other_nodes`` is only ever queried for these names, so collect occurrences of THESE and
+    # nothing else. Building a dict of every data name in the SDFG (two full scans) to then read a
+    # handful of entries was 20% of ``MapToForLoop.apply``.
+    wanted = {dname for dname in data_in_subgraph if sdfg.arrays[dname].transient}
 
-    # All transients of edges between code nodes are also added to nested graph
-    for edge in subgraph.edges():
-        if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
-            subgraph_transients.add(edge.data.data)
+    subgraph_edge_ids = {id(e) for e in subgraph.edges()}
+    subgraph_node_set = dict.fromkeys(subgraph.nodes())  # hoisted: membership below else rebuilt per scanned node
+    other_nodes = {}
+    # Lazily: the scan mostly stops at the first state, and ``states()`` would list every state first.
+    for s in sdfg.states():
+        if len(other_nodes) == len(wanted):
+            break  # every name already has an occurrence outside; the rest of the scan cannot change an answer
+        for n in s.nodes():
+            if isinstance(n, nodes.AccessNode) and n.data in wanted and n not in subgraph_node_set:
+                other_nodes[n.data] = None
+        for e in s.edges():
+            dname = e.data.data
+            if (
+                dname in wanted
+                and isinstance(e.src, nodes.CodeNode)
+                and isinstance(e.dst, nodes.CodeNode)
+                and id(e) not in subgraph_edge_ids
+            ):
+                other_nodes[dname] = None
+
+    subgraph_transients = {}
+    # ``dname``, not ``data``: the module is imported under that name and is read further down.
+    for dname in data_in_subgraph:
+        if dname in wanted and dname not in other_nodes:
+            subgraph_transients[dname] = None
+
+    # A boundary memlet must name the container on the PARENT side of its edge, and it does not
+    # always: a versioning pass renames the inner end of a staging copy and the memlet on the
+    # boundary edge follows the INNER name (``ScalarFission`` versioning ``c2`` into an outer
+    # ``c2_1`` plus a scope-local ``c2_0``, ``replicate_scope`` giving a remainder tail its own
+    # ``c2_0_0``). That container moves into the nested SDFG below, so a parent edge left naming it
+    # would reference data the parent no longer has, and its connector would be minted around the
+    # moved descriptor (moved-in ``c2_0_0`` -> connector ``c2_0_0_0``, parent memlet still
+    # ``c2_0_0`` -> ``KeyError`` in every consumer that resolves the memlet against the parent).
+    # Re-anchor such an edge on the AccessNode outside the subgraph. A wider memlet is unambiguous
+    # only when it carries the outer subset as its other subset (icon_scatter's per-iteration
+    # slice copy); then every edge from the outer node up to the boundary is restated in it. Any
+    # other wide memlet does not say which outer elements it moves, so it is left exactly as it is.
+    # An empty boundary edge names no container, and a scope-binding one may carry a connector on one side only
+    outer_ends = []
+    for e in inputs:
+        if e.data.data is not None:
+            path = state.memlet_path(e)
+            outer_ends.append((e, path[0].src, path[: path.index(e) + 1], True))
+    for e in outputs:
+        if e.data.data is not None:
+            path = state.memlet_path(e)
+            outer_ends.append((e, path[-1].dst, path[path.index(e) :], False))
+    for boundary_edge, outer_node, outer_path, is_input in outer_ends:
+        inner_name = boundary_edge.data.data
+        if inner_name not in subgraph_transients:
+            continue
+        if not isinstance(outer_node, nodes.AccessNode):
+            continue
+        if boundary_edge.data.other_subset is not None:
+            for edge in outer_path:
+                memlet = edge.data
+                if memlet.data == inner_name and memlet.other_subset is not None:
+                    memlet.data, memlet.subset, memlet.other_subset = (
+                        outer_node.data,
+                        memlet.other_subset,
+                        memlet.subset,
+                    )
+                    memlet._is_data_src = is_input
+            continue
+        outer_desc = sdfg.arrays[outer_node.data]
+        if outer_desc.total_size != 1 or boundary_edge.data.subset.num_elements() != 1:
+            continue
+        boundary_edge.data.data = outer_node.data
+        boundary_edge.data.subset = Range.from_array(outer_desc)
 
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
-    input_arrays = set()
+    input_arrays = {}
     output_arrays = {}
+    # A boundary edge's own endpoint is that boundary's interface, whatever its other edges are.
+    carried = {id(e.dst) for e in inputs if e.data.data is not None} | {
+        id(e.src) for e in outputs if e.data.data is not None
+    }
     for node in subgraph.nodes():
-        if (isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients):
+        if isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients:
+            if id(node) in carried:
+                continue
             if node.has_reads(state):
-                input_arrays.add(node.data)
+                input_arrays[node.data] = None
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
+    # One container, one connector: a container a boundary edge already moves in a direction needs no
+    # full-array interface in that direction, and its boundary connector takes the container's own name
+    # (below). A second interface binds the same outer container twice, and its writebacks are unordered
+    # with the boundary one's.
+    for edge in inputs:
+        input_arrays.pop(edge.data.data, None)
+    for edge in outputs:
+        output_arrays.pop(edge.data.data, None)
 
     # Create the nested SDFG
-    nsdfg = SDFG(name or 'nested_' + state.label)
+    nsdfg = SDFG(name or "nested_" + state.label)
 
-    # Transients are added to the nested graph as-is
+    # Transients are added to the nested graph as-is. Copied, not shared: the parent keeps its own
+    # descriptor whenever the transient has another user (below), and one descriptor object living
+    # in two SDFGs is what validation rejects as a duplicate reference.
     for name in subgraph_transients:
-        nsdfg.add_datadesc(name, sdfg.arrays[name])
+        nsdfg.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in (input_arrays | output_arrays.keys()):
+    # ``input_arrays.keys() | output_arrays.keys()`` would be a plain ``set`` again --
+    # union the ordered way.
+    for name in dict.fromkeys([*input_arrays, *output_arrays]):
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
+
+    def boundary_descriptor(name: str) -> dace.data.Data:
+        """A View is a view only next to the data it views; the parent keeps its ``views`` edge, so inside the
+        nested SDFG the connector is a plain array."""
+        desc = sdfg.arrays[name]
+        datadesc = desc.as_array() if isinstance(desc, dace.data.View) else copy.deepcopy(desc)
+        datadesc.transient = False
+        return datadesc
 
     # Connected source/sink nodes outside subgraph become global data
     # descriptors in nested SDFG
     input_names = {}
     output_names = {}
-    global_subsets: Dict[str, Tuple[str, Subset]] = {}
+    nested_names: dict[str, str] = {name: name for name in [*input_arrays, *output_arrays]}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
         name = edge.data.data
-        if name not in global_subsets:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-            datadesc.transient = False
-            if not full_data:
-                datadesc.shape = edge.data.subset.size()
-            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
-            global_subsets[name] = (new_name, edge.data.subset)
-        else:
-            new_name, subset = global_subsets[name]
-            if not full_data:
-                new_subset = union(subset, edge.data.subset)
-                if new_subset is None:
-                    new_subset = Range.from_array(sdfg.arrays[name])
-                global_subsets[name] = (new_name, new_subset)
-                nsdfg.arrays[new_name].shape = new_subset.size()
+        if name not in nested_names:
+            nested_names[name] = nsdfg.add_datadesc(name, boundary_descriptor(name), find_new_name=True)
+        new_name = nested_names[name]
         input_names[edge] = new_name
     for edge in outputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
         name = edge.data.data
-        if name not in global_subsets:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-            datadesc.transient = False
-            if not full_data:
-                datadesc.shape = edge.data.subset.size()
-            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
-            global_subsets[name] = (new_name, edge.data.subset)
-        else:
-            new_name, subset = global_subsets[name]
-            if not full_data:
-                new_subset = union(subset, edge.data.subset)
-                if new_subset is None:
-                    new_subset = Range.from_array(sdfg.arrays[name])
-                global_subsets[name] = (new_name, new_subset)
-                nsdfg.arrays[new_name].shape = new_subset.size()
+        if name not in nested_names:
+            nested_names[name] = nsdfg.add_datadesc(name, boundary_descriptor(name), find_new_name=True)
+        new_name = nested_names[name]
         output_names[edge] = new_name
     ###################
 
-    # Add scope symbols to the nested SDFG
+    # Add scope symbols to the nested SDFG with their original data types
     symbols_at_top = state.symbols_defined_at(top_scopenode)
-    defined_vars = set(
-        symbolic.pystr_to_symbolic(s) for s in (state.symbols_defined_at(top_scopenode).keys()
-                                                | sdfg.symbols))
-    for v in defined_vars:
-        if v in sdfg.symbols:
-            sym = sdfg.symbols[v]
-            nsdfg.add_symbol(v, sym.dtype)
+    if isinstance(top_scopenode, nodes.EntryNode):
+        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
+    # Ordered: this drives ``add_symbol`` order, which is the nested SDFG's symbol order.
+    # Only what the moved nodes or their containers name: an unused one would become a free symbol outside.
+    used_symbols = StateSubgraphView(state, subgraph.nodes()).used_symbols(all_symbols=False)
+    used_symbols |= {str(s) for desc in nsdfg.arrays.values() for s in desc.free_symbols}
+    for v in dict.fromkeys([*symbols_at_top, *sdfg.symbols]):
+        if v in nsdfg.symbols or v not in used_symbols:
+            continue
+        nsdfg.add_symbol(v, (sdfg.symbols[v] if v in sdfg.symbols else symbols_at_top[v]).dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():
@@ -474,75 +749,97 @@ def nest_state_subgraph(sdfg: SDFG,
             node.sdfg.parent_sdfg = nsdfg
             node.sdfg.parent_nsdfg_node = node
 
-    # Add access nodes and edges as necessary
-    edges_to_offset = []
+    def reads_whole_connector(edge: MultiConnectorEdge, name: str) -> bool:
+        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``'s whole container.
+
+        Then it needs no access node of its own inside: the ``name -> name`` copy that would be
+        added is a no-op, and its write turns the input connector into a written descriptor, which
+        validation rejects. The connector IS that array inside the nested SDFG, so an access node of
+        it already reads the boundary data. Restricted to a whole-container access -- a partial one
+        still needs the copy that rebases it into the connector's coordinates.
+        """
+        if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != name:
+            return False
+        return edge.data.subset is not None and edge.data.subset.num_elements() == nsdfg.arrays[name].total_size
+
+    # Add access nodes and edges as necessary, each with the outer name its memlet tree spoke
+    edges_to_rename = []
     for edge, name in input_names.items():
+        if reads_whole_connector(edge, name):
+            continue
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge, nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge)))
+        edges_to_rename.append((nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge), edge.data.data))
     for edge, name in output_names.items():
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge, nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge)))
+        edges_to_rename.append((nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge), edge.data.data))
 
-    # Offset memlet paths inside nested SDFG according to subsets
-    for original_edge, new_edge in edges_to_offset:
+    # Rename memlet paths inside nested SDFG to the nested data names
+    for new_edge, outer_name in edges_to_rename:
         for edge in nstate.memlet_tree(new_edge):
+            # An empty memlet on the same scope connector is a happens-before ordering edge;
+            # stamping ``data`` on it makes a connector-less fake data edge later passes drop.
+            if edge.data.is_empty():
+                continue
+            # A copy memlet named after its OTHER end (``row[0:K] -> src[j, 0:K]`` into ``row``) keeps that name:
+            # its subset is that container's, not the connector's.
+            if edge.data.data != outer_name and edge is not new_edge:
+                continue
             edge.data.data = new_edge.data.data
-            # A whole-array / scalar access carries ``subset is None`` (a legal memlet
-            # representation, e.g. a bare scalar accumulator ``Memlet('delta')``). There is
-            # nothing to re-base into the nested SDFG's coordinate space in that case -- the
-            # nested descriptor is the whole array too -- so skip the offset instead of
-            # dereferencing ``None`` (the ``subset is not None`` guard is the idiom used for
-            # the same case throughout ``propagation.py`` / the memlet helpers below).
-            if not full_data and edge.data.subset is not None:
-                edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
-                edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
+            # A bare whole-container memlet (``Memlet(data='s')``) names the whole connector, which validation
+            # can only check through an explicit subset.
+            if edge.data.subset is None:
+                edge.data.subset = Range.from_array(nsdfg.arrays[edge.data.data])
 
-    # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg,
-                                        set(input_names.values()) | input_arrays,
-                                        set(output_names.values()) | output_arrays.keys())
+    # Add nested SDFG node to the input state. Ordered: these become the node's in/out
+    # CONNECTORS, so a hash-ordered set here reorders the nested SDFG's interface.
+    nested_sdfg = state.add_nested_sdfg(
+        nsdfg,
+        dict.fromkeys([*input_names.values(), *input_arrays]),
+        dict.fromkeys([*output_names.values(), *output_arrays]),
+        bound_inside=bound_inside,
+    )
 
-    # Reconnect memlets to nested SDFG
-    reconnected_in = set()
-    reconnected_out = set()
-    empty_input = None
-    empty_output = None
+    # Reconnect memlets to nested SDFG. Each map holds the boundary edge that CLAIMED the nested
+    # connector, not a bare marker: every later edge folding onto the same connector is dropped, and
+    # ``drop_folded_boundary_edge`` needs the claimant to widen and the scope pair to strip.
+    reconnected_in: dict[str, MultiConnectorEdge] = {}
+    reconnected_out: dict[str, MultiConnectorEdge] = {}
+    # An edge carrying an EMPTY memlet is a happens-before constraint, not a data
+    # transfer: it is how a state orders two accesses that dataflow alone would leave
+    # concurrent. Every one of them must survive the nesting, so collect them all --
+    # a single slot silently kept only the last.
+    empty_inputs = []
+    empty_outputs = []
     for edge in inputs:
         if edge.data.data is None:
-            empty_input = edge
+            empty_inputs.append(edge)
             continue
 
         name = input_names[edge]
         if name in reconnected_in:
+            drop_folded_boundary_edge(sdfg, state, edge, reconnected_in[name], nested_sdfg, True)
             continue
-        if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
-        else:
-            data = copy.deepcopy(edge.data)
-            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
+        data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
-        reconnected_in.add(name)
+        reconnected_in[name] = edge
 
     for edge in outputs:
         if edge.data.data is None:
-            empty_output = edge
+            empty_outputs.append(edge)
             continue
 
         name = output_names[edge]
         if name in reconnected_out:
+            drop_folded_boundary_edge(sdfg, state, edge, reconnected_out[name], nested_sdfg, False)
             continue
-        if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
-        else:
-            data = copy.deepcopy(edge.data)
-            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
+        data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
-        reconnected_out.add(name)
+        reconnected_out[name] = edge
 
     # Connect access nodes to internal input/output data as necessary
     entry = scope.entry
@@ -558,35 +855,40 @@ def nest_state_subgraph(sdfg: SDFG,
             state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr))
 
-    # Graph was not reconnected, but needs to be
-    if state.in_degree(nested_sdfg) == 0 and empty_input is not None:
-        state.add_edge(empty_input.src, empty_input.src_conn, nested_sdfg, None, empty_input.data)
-    if state.out_degree(nested_sdfg) == 0 and empty_output is not None:
-        state.add_edge(nested_sdfg, None, empty_output.dst, empty_output.dst_conn, empty_output.data)
+    # Restore the ordering edges. This used to fire only when the nested SDFG ended up
+    # with degree 0 -- treating an empty memlet as a mere connectivity fallback. It is a
+    # DEPENDENCE: dropping it leaves the two endpoints concurrent, and the state's meaning
+    # then depends on node order (polybench durbin lost the edge ordering ``alpha``'s write
+    # against the ``y[k] = alpha`` read, and answered differently per PYTHONHASHSEED).
+    # A fresh Memlet per edge -- never reuse the object the old edge carried.
+    for edge in empty_inputs:
+        state.add_edge(edge.src, edge.src_conn, nested_sdfg, None, Memlet())
+    for edge in empty_outputs:
+        state.add_edge(nested_sdfg, None, edge.dst, edge.dst_conn, Memlet())
 
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())
 
-    # Remove subgraph transients from top-level graph
-    for transient in subgraph_transients:
+    # Remove subgraph transients from top-level graph -- only the ones that really were
+    # subgraph-local. A code-node bridge transient some other part of the SDFG still names stays
+    # put; the nested SDFG was given its own copy of the descriptor above.
+    for transient in (t for t in subgraph_transients if t not in other_nodes):
         del sdfg.arrays[transient]
 
-    # Remove newly isolated nodes due to memlet consolidation
-    for edge in inputs:
-        if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
-            state.remove_node(edge.src)
-    for edge in outputs:
-        if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
-            state.remove_node(edge.dst)
-
-    sdfg.reset_cfg_list()
+    # Remove newly isolated nodes due to memlet consolidation. Deduplicated (one node is the
+    # endpoint of several boundary edges) and membership-guarded: ``degree`` raises on a node
+    # ``drop_folded_boundary_edge`` already took away as the isolated root of a folded path.
+    present = dict.fromkeys(state.nodes())
+    for node in dict.fromkeys([*(edge.src for edge in inputs), *(edge.dst for edge in outputs)]):
+        if node in present and state.degree(node) == 0:
+            state.remove_node(node)
 
     return nested_sdfg
 
 
 def state_fission(
     subgraph: graph.SubgraphView,
-    label: Optional[str] = None,
+    label: str | None = None,
     allow_isolated_nodes: bool = True,
 ) -> SDFGState:
     """Splits the state into two connected states such that `subgraph` is located in the first/top state.
@@ -631,7 +933,7 @@ def state_fission(
     # State fissions can not occur within a scope, i.e., the MapEntry of a Map scope can not end up
     #  in the first state while the MapExit lands in the second state. Extend the set of nodes to
     #  make sure we have only top level nodes and their scope.
-    initial_first_nodes: Set[nodes.Node] = set()
+    initial_first_nodes: OrderedSet[nodes.Node] = OrderedSet()
     scope_dict = state.scope_dict()
     for node in subgraph.nodes():
         containing_scope = scope_dict[node]
@@ -655,7 +957,7 @@ def state_fission(
             initial_first_nodes.update(state.scope_subgraph(top_entry_node).nodes())
 
     # Notes that should end up in the first state.
-    first_nodes: Set[nodes.Node] = set()
+    first_nodes: OrderedSet[nodes.Node] = OrderedSet()
     for node in initial_first_nodes:
         utils.find_upstream_nodes(
             node_to_start=node,
@@ -666,14 +968,15 @@ def state_fission(
     # For semantic reasons we can only split certain Memlets, i.e. Memlets that started at an
     #  AccessNode. We now have to inspect the boundary of the nodes defining `first_nodes`.
     #  If we found a Memlet that can not be split, then we add the node also to `first_nodes`.
-    nodes_to_scan: List[nodes.Node] = list(first_nodes)
-    boundary_nodes: Set[nodes.Node] = set()
-    pure_first_nodes: Set[nodes.Node] = set()
+    nodes_to_scan: list[nodes.Node] = list(first_nodes)
+    boundary_nodes: OrderedSet[nodes.Node] = OrderedSet()
+    pure_first_nodes: OrderedSet[nodes.Node] = OrderedSet()
 
     while len(nodes_to_scan) > 0:
         node_to_scan = nodes_to_scan.pop()
         non_first_state_consumer = [
-            oedge.dst for oedge in state.out_edges(node_to_scan)
+            oedge.dst
+            for oedge in state.out_edges(node_to_scan)
             if (oedge.dst not in first_nodes) and (not oedge.data.is_empty())
         ]
 
@@ -693,7 +996,7 @@ def state_fission(
         else:
             # There are non first state consumer and `node_to_scan` does not qualify to be a boundary
             #  node. Thus we have to add all its consumer and their producer, to the first state as well.
-            new_first_nodes: Set[nodes.Node] = set()
+            new_first_nodes: OrderedSet[nodes.Node] = OrderedSet()
             for new_first_state_node_seed in non_first_state_consumer:
                 utils.find_upstream_nodes(
                     node_to_start=new_first_state_node_seed,
@@ -712,12 +1015,13 @@ def state_fission(
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
     assert boundary_nodes.isdisjoint(pure_first_nodes)
-    assert boundary_nodes.union(pure_first_nodes) == first_nodes
+    assert (boundary_nodes | pure_first_nodes) == first_nodes
 
     if len(first_nodes) == 1:
         warnings.warn(
-            f"While splitting `{state.label}` the supplied `subgraph` leads to isolated nodes in the first state" +
-            (", that will be removed." if not allow_isolated_nodes else "."))
+            f"While splitting `{state.label}` the supplied `subgraph` leads to isolated nodes in the first state"
+            + (", that will be removed." if not allow_isolated_nodes else ".")
+        )
 
     # Now create the new states on which we will operate. It is important that the newly created
     #  state is at the top.
@@ -732,7 +1036,7 @@ def state_fission(
     # This map maps the nodes from the old/original state to the corresponding node in the first/new
     #  state. The pure nodes are the exact same objects, but the we copy the boundary nodes, since
     #  they have also to be present inside the second state.
-    first_nodes_map: Dict[nodes.Node, nodes.Node] = {node: node for node in pure_first_nodes}
+    first_nodes_map: dict[nodes.Node, nodes.Node] = {node: node for node in pure_first_nodes}
     first_nodes_map.update({old_bnode: copy.deepcopy(old_bnode) for old_bnode in boundary_nodes})
 
     # Save the edges that we have to copy.
@@ -760,7 +1064,11 @@ def state_fission(
     #   should be `None` anyway.
     for second_state_boundary_node in boundary_nodes:
         first_state_boundary_node = first_nodes_map[second_state_boundary_node]
-        assert second_state.in_degree(second_state_boundary_node) == 0
+        # Only DATA in-edges must be gone: everything producing into a boundary node moved to the
+        # first state. An empty memlet carries no data, it orders one node after another, and two
+        # boundary nodes ordered that way both stay in the second state -- so their ordering edge
+        # legitimately survives here (``__return`` before the arrays it aliases, in spmv).
+        assert all(iedge.data.is_empty() for iedge in second_state.in_edges(second_state_boundary_node))
         first_state_boundary_node._out_connectors.clear()
         second_state_boundary_node._in_connectors.clear()
 
@@ -790,7 +1098,7 @@ def isolate_nested_sdfg(
     state: SDFGState,
     nsdfg_node: nodes.NestedSDFG,
     test_if_applicable: bool = False,
-) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
+) -> tuple[SDFGState, SDFGState, SDFGState] | bool:
     """Isolate the nested SDFG.
 
     The function will split ``state`` into three states:
@@ -826,7 +1134,7 @@ def isolate_nested_sdfg(
     #  as input to the nested SDFG and the nested SDFG itself.
     #  Note that the AccessNodes serving as input and output of the nested SDFG
     #  belonging to the pre and post set, respectively, as well.
-    middle_nodes: Set[nodes.Node] = {nsdfg_node}
+    middle_nodes: OrderedSet[nodes.Node] = OrderedSet((nsdfg_node,))
     for iedge in state.in_edges(nsdfg_node):
         if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedge.src.desc(state.sdfg), data.View):
             if test_if_applicable:
@@ -839,8 +1147,11 @@ def isolate_nested_sdfg(
         #  requires that the whole array is mapped inside. So if there would be
         #  multiple incoming edges the original SDFG would be invalid, because the
         #  same memory would be written to multiple times.
-        if ((not all(iedge.src is nsdfg_node for iedge in state.in_edges(oedge.dst)))
-                or (not isinstance(oedge.dst, nodes.AccessNode)) or isinstance(oedge.dst, data.View)):
+        if (
+            (not all(iedge.src is nsdfg_node for iedge in state.in_edges(oedge.dst)))
+            or (not isinstance(oedge.dst, nodes.AccessNode))
+            or isinstance(oedge.dst, data.View)
+        ):
             if test_if_applicable:
                 return False
             raise ValueError(
@@ -857,7 +1168,7 @@ def isolate_nested_sdfg(
     #  NSDFG via the array memory itself and must also land in the pre state.
     #  Writers that belong to ``middle_nodes`` (the NSDFG's own output AccessNodes)
     #  are excluded so we never put a successor on the wrong side of the split.
-    data_writers: Dict[str, Set[nodes.AccessNode]] = {}
+    data_writers: dict[str, set[nodes.AccessNode]] = {}
     for n in state.nodes():
         if isinstance(n, nodes.AccessNode) and state.in_degree(n) != 0 and n not in middle_nodes:
             data_writers.setdefault(n.data, set()).add(n)
@@ -870,8 +1181,8 @@ def isolate_nested_sdfg(
     # ``B = f(A); A = f(B)`` pair) is sequenced AFTER the NSDFG by the real
     # output-edge chain, even though it shares the input's data name. The
     # edge-implied ordering is authoritative and wins over the name-based guess.
-    forward_from_nsdfg: Set[nodes.Node] = set()
-    fwd_stack: List[nodes.Node] = [oedge.dst for oedge in state.out_edges(nsdfg_node)]
+    forward_from_nsdfg: OrderedSet[nodes.Node] = OrderedSet()
+    fwd_stack: list[nodes.Node] = [oedge.dst for oedge in state.out_edges(nsdfg_node)]
     while fwd_stack:
         fnode = fwd_stack.pop()
         if fnode in forward_from_nsdfg:
@@ -879,17 +1190,38 @@ def isolate_nested_sdfg(
         forward_from_nsdfg.add(fnode)
         fwd_stack.extend(oedge.dst for oedge in state.out_edges(fnode))
 
-    pre_nodes: Set[nodes.Node] = set()
-    to_visit: List[nodes.Node] = []
+    # Likewise a writer reachable FORWARD from an AccessNode that the pre walk reads: it overwrites the
+    # data after every read of that node (CloudSC's ``safe = where(x != 0, x, 1)`` beside
+    # ``x = where(m, x - e, x)``, both off one ``x`` node). In PRE it would run before those reads.
+    downstream: dict[nodes.AccessNode, set[nodes.Node]] = {}
+
+    def overwrites_after(read: nodes.AccessNode, writer: nodes.AccessNode) -> bool:
+        if read not in downstream:
+            reached: set[nodes.Node] = set()
+            stack = [oedge.dst for oedge in state.out_edges(read)]
+            while stack:
+                node = stack.pop()
+                if node not in reached:
+                    reached.add(node)
+                    stack.extend(oedge.dst for oedge in state.out_edges(node))
+            downstream[read] = reached
+        return writer in downstream[read]
+
+    pre_nodes: OrderedSet[nodes.Node] = OrderedSet()
+    to_visit: list[nodes.Node] = []
     for iedge in state.in_edges(nsdfg_node):
         input_node: nodes.AccessNode = iedge.src
         assert isinstance(input_node, nodes.AccessNode)
         if state.in_degree(input_node) != 0:
             to_visit.append(input_node)
-        for other_writer in data_writers.get(input_node.data, ()):
-            if other_writer is not input_node and other_writer not in forward_from_nsdfg:
-                to_visit.append(other_writer)
-    visited: Set[nodes.Node] = set()
+        to_visit.extend(
+            other_writer
+            for other_writer in data_writers.get(input_node.data, ())
+            if other_writer is not input_node
+            and other_writer not in forward_from_nsdfg
+            and not overwrites_after(input_node, other_writer)
+        )
+    visited: OrderedSet[nodes.Node] = OrderedSet()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
         if node_to_process in visited:
@@ -898,18 +1230,21 @@ def isolate_nested_sdfg(
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
         if isinstance(node_to_process, nodes.AccessNode):
-            for other_writer in data_writers.get(node_to_process.data, ()):
-                if (other_writer is not node_to_process and other_writer not in visited
-                        and other_writer not in forward_from_nsdfg):
-                    to_visit.append(other_writer)
+            to_visit.extend(
+                other_writer
+                for other_writer in data_writers.get(node_to_process.data, ())
+                if other_writer is not node_to_process
+                and other_writer not in visited
+                and other_writer not in forward_from_nsdfg
+                and not overwrites_after(node_to_process, other_writer)
+            )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
     #  The first is that the node does not belong to any other set.
-    post_nodes: Set[nodes.Node] = {
-        node
-        for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
-    }
+    post_nodes: OrderedSet[nodes.Node] = OrderedSet(
+        node for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
+    )
 
     # The second reason, are read dependencies, for this we have to look at the incoming
     #  edges and add any node that we need.
@@ -924,20 +1259,49 @@ def isolate_nested_sdfg(
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
                     post_nodes.add(node)
 
+    # A read node replicated into POST loses the paths through the middle state. If such a path was all
+    # that ordered one of its POST readers before a POST overwrite of the same data, the split would leave
+    # that read and the overwrite unordered, so it is refused.
+    def reaches_in_post(source: nodes.Node, target: nodes.Node) -> bool:
+        seen: set[nodes.Node] = set()
+        stack = [source]
+        while stack:
+            node = stack.pop()
+            if node is target:
+                return True
+            if node not in seen:
+                seen.add(node)
+                stack.extend(oedge.dst for oedge in state.out_edges(node) if oedge.dst in post_nodes)
+        return False
+
+    for read in post_nodes:
+        if not isinstance(read, nodes.AccessNode) or (read not in middle_nodes and read not in pre_nodes):
+            continue
+        readers = [oedge.dst for oedge in state.out_edges(read) if oedge.dst in post_nodes]
+        for writer in data_writers.get(read.data, ()):
+            if writer in post_nodes and overwrites_after(read, writer):
+                if any(not reaches_in_post(reader, writer) for reader in readers):
+                    if test_if_applicable:
+                        return False
+                    raise ValueError(
+                        f'Cannot isolate NestedSDFG "{nsdfg_node}": a read of "{read.data}" would lose its ordering '
+                        "before an overwrite of it."
+                    )
+
     if test_if_applicable:
         return True
 
     # Now we are creating the two new states.
     parent_graph = state.parent_graph
-    pre_state: dace.SDFGState = parent_graph.add_state_before(state=state,
-                                                              label=(state.label +
-                                                                     "_pre_state" if state.label else None))
-    post_state: dace.SDFGState = parent_graph.add_state_after(state=state,
-                                                              label=(state.label +
-                                                                     "_post_state" if state.label else None))
+    pre_state: dace.SDFGState = parent_graph.add_state_before(
+        state=state, label=(state.label + "_pre_state" if state.label else None)
+    )
+    post_state: dace.SDFGState = parent_graph.add_state_after(
+        state=state, label=(state.label + "_post_state" if state.label else None)
+    )
 
     # We will now populate the pre state.
-    pre_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
+    pre_old_to_new_map: dict[nodes.Node, nodes.Node] = dict()
     for node in pre_nodes:
         new_node = copy.deepcopy(node) if node in middle_nodes else node
         pre_old_to_new_map[node] = new_node
@@ -959,7 +1323,7 @@ def isolate_nested_sdfg(
                 )
 
     # Now we will populate the post state.
-    post_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
+    post_old_to_new_map: dict[nodes.Node, nodes.Node] = dict()
     for node in post_nodes:
         new_node = copy.deepcopy(node) if (node in middle_nodes or node in pre_nodes) else node
         post_old_to_new_map[node] = new_node
@@ -990,53 +1354,72 @@ def isolate_nested_sdfg(
     return (pre_state, state, post_state)
 
 
-def _get_internal_subset(internal_memlet: Memlet,
-                         external_memlet: Memlet,
-                         use_src_subset: bool = False,
-                         use_dst_subset: bool = False) -> subsets.Subset:
-    if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
-        return internal_memlet.other_subset
+def _get_internal_subset(
+    internal_memlet: Memlet, external_memlet: Memlet, use_src_subset: bool = False, use_dst_subset: bool = False
+) -> tuple[subsets.Subset, bool]:
+    """
+    Determines the internal memlet's subset to use based on the external memlet and the flags.
+
+    :param internal_memlet: The internal memlet (inside nested SDFG).
+    :param external_memlet: The external memlet before modification.
+    :param use_src_subset: If both sides of the memlet refer to the same array, prefer source subset.
+    :param use_dst_subset: If both sides of the memlet refer to the same array, prefer destination subset.
+    :return: The internal subset to use and a boolean indicating if the ``other_subset`` field was used.
+    """
     if not use_src_subset and not use_dst_subset:
-        return internal_memlet.subset
+        if internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None:
+            return internal_memlet.other_subset, True
+        return internal_memlet.subset, False
     if use_src_subset and use_dst_subset:
-        raise ValueError('Source and destination subsets cannot be specified at the same time')
+        raise ValueError("Source and destination subsets cannot be specified at the same time")
     if use_src_subset and internal_memlet.src_subset is not None:
-        return internal_memlet.src_subset
+        return internal_memlet.src_subset, not internal_memlet._is_data_src
     if use_dst_subset and internal_memlet.dst_subset is not None:
-        return internal_memlet.dst_subset
-    return internal_memlet.subset
+        return internal_memlet.dst_subset, internal_memlet._is_data_src
+    return internal_memlet.subset, False
 
 
-def unsqueeze_memlet(internal_memlet: Memlet,
-                     external_memlet: Memlet,
-                     preserve_minima: bool = False,
-                     use_src_subset: bool = False,
-                     use_dst_subset: bool = False,
-                     internal_offset: Tuple[int] = None,
-                     external_offset: Tuple[int] = None) -> Memlet:
-    """ Unsqueezes and offsets a memlet, as per the semantics of nested
-        SDFGs.
+def unsqueeze_memlet(
+    internal_memlet: Memlet,
+    external_memlet: Memlet,
+    use_src_subset: bool = False,
+    use_dst_subset: bool = False,
+    internal_offset: tuple[int] = None,
+    external_offset: tuple[int] = None,
+    return_dims: bool = False,
+) -> Memlet | list[int]:
+    """Unsqueezes and offsets a memlet, as per the semantics of nested SDFGs.
+    Generally, this function is the inverse of the array narrowing rules found in languages such as Python
+    (specifically in frameworks such as NumPy or PyTorch) and FORTRAN.
 
-        :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
-        :param external_memlet: The external memlet before modification.
-        :param preserve_minima: Do not change the subset's minimum elements.
-        :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
-        :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
-        :param internal_offset: The internal memlet's data descriptor offset.
-        :param external_offset: The external memlet's data descriptor offset.
-        :return: Offset Memlet to set on the resulting graph.
+    :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
+    :param external_memlet: The external memlet before modification.
+    :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
+    :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
+    :param internal_offset: The internal memlet's data descriptor offset.
+    :param external_offset: The external memlet's data descriptor offset.
+    :param return_dims: If ``True``, returns the dimensions that were detected as squeezed.
+    :return: Offset Memlet to set on the resulting graph, or a list of squeezed dimensions if ``return_dims`` is
+             ``True``.
     """
     # A dependency edge (empty memlet) carries no subset to reindex -- the nested->outer
     # semantics are identity. Guarding here covers every caller (e.g. InlineSDFG's
     # _modify_memlet_path / _modify_access_to_access) with one fresh-copy return.
     if internal_memlet.is_empty():
         return Memlet.from_memlet(internal_memlet)
-    internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    # We always use external_memlet's subset as the base.
+    # We either modify the internal memlet's subset or other_subset. Find out which one to use.
+    internal_subset, used_other_subset = _get_internal_subset(
+        internal_memlet, external_memlet, use_src_subset, use_dst_subset
+    )
     internal_offset = internal_offset or [0] * len(internal_subset)
     external_offset = external_offset or [0] * len(external_memlet.subset)
     internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
+    if used_other_subset:
+        result.other_subset = result.subset
     result.subset = internal_subset
+    to_unsqueeze = []
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
@@ -1044,8 +1427,13 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_subset) == 1 and ones == list(range(len(shape)))
-                and (internal_subset[0] == (0, 0, 1) or internal_subset[0] == 0)):
+        # Single element, not necessarily spelled as the literal 0: a squeezed view indexed by a
+        # map parameter that ranges over one element (``tmp[_o0]``) selects the same thing.
+        if (
+            len(internal_subset) == 1
+            and ones == list(range(len(shape)))
+            and symbolic.equal(internal_subset.num_elements(), 1) is True
+        ):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
@@ -1067,41 +1455,26 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # Try to squeeze internal memlet
         remaining = result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
-            raise ValueError('Unexpected extra dimensions in internal memlet '
-                             'while un-squeezing memlet.\nExternal memlet: %s\n'
-                             'Internal memlet: %s' % (external_memlet, internal_memlet))
+            raise ValueError(
+                "Unexpected extra dimensions in internal memlet "
+                f"while un-squeezing memlet.\nExternal memlet: {external_memlet}\n"
+                f"Internal memlet: {internal_memlet}"
+            )
         internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
     external_subset = external_memlet.subset.offset_new(external_offset, False)
     result.subset.offset(external_subset, False)
     result.subset.offset(external_offset, True)
 
-    if preserve_minima:
-        if len(result.subset) != len(external_memlet.subset):
-            raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
-                             'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-        original_minima = external_memlet.subset.min_element()
-        for i in set(range(len(original_minima))):
-            rb, re, rs = result.subset.ranges[i]
-            result.subset.ranges[i] = (original_minima[i], re, rs)
-    # TODO: Offset rest of memlet according to other_subset
-    if external_memlet.other_subset is not None:
-        raise NotImplementedError
+    result.data = external_memlet.data
+    if use_src_subset:
+        result._is_data_src = True
+    elif use_dst_subset:
+        result._is_data_src = False
 
-    # Actual result preserves 'other subset' and placement of subsets in memlet
-    actual_result = Memlet.from_memlet(internal_memlet)
-    actual_result.data = external_memlet.data
-    if actual_result.other_subset:
-        if internal_memlet.data == external_memlet.data:
-            actual_result.subset = result.subset
-        else:
-            actual_result.other_subset = actual_result.subset
-            actual_result.subset = result.subset
-            actual_result._is_data_src = not actual_result._is_data_src
-    else:
-        actual_result.subset = result.subset
-
-    return actual_result
+    if return_dims:
+        return to_unsqueeze
+    return result
 
 
 def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> ScopeSubgraphView:
@@ -1120,17 +1493,39 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     new_nodes = []
     new_entry = None
     new_exit = None
-    to_find_new_names: Set[nodes.AccessNode] = set()
+    # List, not a set: rename order must stay deterministic run to run.
+    to_find_new_names: list[nodes.AccessNode] = []
+    # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+    # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+    # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+    # The explicit new_exit.map fix-up below only repairs the OUTERMOST pair; nested maps need this.
+    memo = {}
+    # Rename only a scope- or state-lifetime transient local to the scope. One the scope never writes holds a
+    # value from outside it, and one accessed outside it too carries its value across the boundary: a replica
+    # renaming either reads a container nothing writes or writes one nothing reads. A longer lifetime keeps
+    # its value across calls, so it keeps its name.
+    scope_nodes = OrderedSet(scope.nodes())
+    local_lifetimes = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State)
+    scope_local: OrderedSet[str] = OrderedSet(
+        n.data
+        for n in scope_nodes
+        if isinstance(n, nodes.AccessNode)
+        and n.desc(sdfg).transient
+        and n.desc(sdfg).lifetime in local_lifetimes
+        and any(e.data is not None and not e.data.is_empty() for e in state.in_edges(n))
+    )
+    scope_local -= OrderedSet(n.data for n in state.data_nodes() if n not in scope_nodes)
+    if scope_local:
+        scope_local -= OrderedSet(sdfg.shared_transients(check_toplevel=False))
     for node in scope.nodes():
-        node_copy = copy.deepcopy(node)
+        node_copy = copy.deepcopy(node, memo)
         if node == scope.entry:
             new_entry = node_copy
         elif node == exit_node:
             new_exit = node_copy
 
-        if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
-                and node.desc(sdfg).transient):
-            to_find_new_names.add(node_copy)
+        if isinstance(node, nodes.AccessNode) and node.data in scope_local:
+            to_find_new_names.append(node_copy)
         state.add_node(node_copy)
         new_nodes.append(node_copy)
 
@@ -1148,11 +1543,16 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     # Set the exit node's map to match the entry node
     new_exit.map = new_entry.map
 
-    # Replicate all temporary transients within scope
+    # Replicate all temporary transients within scope. One new name per container, shared by
+    # every AccessNode replica of it, so a later reader stays bound to its writer's name.
+    renamed: dict[str, str] = {}
     for node in to_find_new_names:
         desc = node.desc(sdfg)
         old_name = node.data
-        new_name = sdfg.add_datadesc(old_name, copy.deepcopy(desc), find_new_name=True)
+        new_name = renamed.get(old_name)
+        if new_name is None:
+            new_name = sdfg.add_datadesc(old_name, copy.deepcopy(desc), find_new_name=True)
+            renamed[old_name] = new_name
         node.data = new_name
         for edge in state.all_edges(node):
             for e in state.memlet_tree(edge):
@@ -1163,8 +1563,19 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
                 # blindly renaming every edge corrupts those unrelated memlets. A
                 # dependency edge (structural, no data) carries ``data is None`` and
                 # is skipped by the same guard.
-                if e.data is not None and e.data.data == old_name:
-                    e.data.data = new_name
+                if e.data is None or e.data.data != old_name:
+                    continue
+                # Skip an edge touching an out-of-scope AccessNode of the same container (its
+                # container wasn't renamed); an in-scope sibling replica shares the new name.
+                if any(
+                    n is not node
+                    and isinstance(n, nodes.AccessNode)
+                    and n.data == old_name
+                    and not any(n is m for m in new_nodes)
+                    for n in (e.src, e.dst)
+                ):
+                    continue
+                e.data.data = new_name
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
@@ -1184,9 +1595,80 @@ def offset_map(state: SDFGState, entry: nodes.MapEntry, dim: int, offset: symbol
     subgraph = state.scope_subgraph(entry)
     # Offset map param by -offset, contents by +offset and vice versa
     if negative:
-        subgraph.replace(param, f'({param} + {offset})')
+        subgraph.replace(param, f"({param} + {offset})")
     else:
-        subgraph.replace(param, f'({param} - {offset})')
+        subgraph.replace(param, f"({param} - {offset})")
+
+
+def wrap_code_node_in_unit_gpu_map(state: SDFGState, node: nodes.CodeNode) -> tuple[nodes.MapEntry, nodes.MapExit]:
+    """
+    Wraps a free (top-level) code node in a one-iteration ``GPU_Device`` map, so that it executes
+    as a single-thread GPU kernel instead of host code.
+
+    :param state: The state in which the code node resides.
+    :param node: The code node to wrap. Must be at the top level of the state.
+    :return: The new map entry and exit nodes.
+    """
+    return wrap_code_node_in_unit_map(state, node, dtypes.ScheduleType.GPU_Device, "_gmap")
+
+
+def wrap_code_node_in_unit_map(
+    state: SDFGState, node: nodes.CodeNode, schedule: dtypes.ScheduleType, suffix: str = "_umap"
+) -> tuple[nodes.MapEntry, nodes.MapExit]:
+    """
+    Wraps a free (top-level) code node in a one-iteration map of the given schedule, so that the
+    node executes inside that scope instead of at the state's top level.
+
+    All edges of the node are rerouted through the new map entry/exit. Edges without connectors
+    (empty dependency memlets, common in autodiff-generated graphs) are rerouted without
+    connectors instead of being turned into ``IN_None``/``OUT_None`` connector names.
+
+    :param state: The state in which the code node resides.
+    :param node: The code node to wrap. Must be at the top level of the state.
+    :param schedule: The schedule of the new map.
+    :param suffix: Appended to the node's label to name the map and its parameter.
+    :return: The new map entry and exit nodes.
+    """
+    me, mx = state.add_map(node.label + suffix, {node.label + suffix + "i": "0:1"}, schedule=schedule)
+    in_edges = list(state.in_edges(node))
+    out_edges = list(state.out_edges(node))
+    me.in_connectors = {("IN_" + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+    me.out_connectors = {("OUT_" + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+    mx.in_connectors = {("IN_" + e.src_conn): None for e in out_edges if e.src_conn is not None}
+    mx.out_connectors = {("OUT_" + e.src_conn): None for e in out_edges if e.src_conn is not None}
+
+    # A data edge to/from the wrapped code node always carries a named connector, so a connector-less
+    # edge must be an empty-memlet ORDERING edge -- routing a non-empty memlet with no IN_/OUT_
+    # connector would silently drop its data path; assert the invariant to fail loud. Every new edge
+    # gets its own Memlet: never hand two live edges the same object.
+    for e in in_edges:
+        state.remove_edge(e)
+        if e.dst_conn is None:
+            assert e.data is None or e.data.is_empty(), (
+                f"connector-less in-edge into {node.label} carries a non-empty memlet {e.data}"
+            )
+            state.add_edge(e.src, e.src_conn, me, None, Memlet())
+            state.add_edge(me, None, e.dst, None, Memlet())
+        else:
+            state.add_edge(e.src, e.src_conn, me, "IN_" + e.dst_conn, copy.deepcopy(e.data))
+            state.add_edge(me, "OUT_" + e.dst_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+    for e in out_edges:
+        state.remove_edge(e)
+        if e.src_conn is None:
+            assert e.data is None or e.data.is_empty(), (
+                f"connector-less out-edge from {node.label} carries a non-empty memlet {e.data}"
+            )
+            state.add_edge(e.src, None, mx, None, Memlet())
+            state.add_edge(mx, None, e.dst, e.dst_conn, Memlet())
+        else:
+            state.add_edge(e.src, e.src_conn, mx, "IN_" + e.src_conn, copy.deepcopy(e.data))
+            state.add_edge(mx, "OUT_" + e.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+
+    # Keep the node inside the new scope even if it has no (remaining) inputs
+    if len(in_edges) == 0:
+        state.add_nedge(me, node, Memlet())
+
+    return me, mx
 
 
 def split_interstate_edges(cfg: ControlFlowRegion) -> None:
@@ -1230,13 +1712,15 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     return True
 
 
-def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, dim: int = None) -> bool:
+def are_subsets_contiguous(
+    subset_a: subsets.Subset, subset_b: subsets.Subset, facts: symbolic.Facts, dim: int = None
+) -> bool:
 
     if dim is not None:
         # A version that only checks for contiguity in certain
         # dimension (e.g., to prioritize stride-1 range)
-        if (not isinstance(subset_a, subsets.Range) or not isinstance(subset_b, subsets.Range)):
-            raise NotImplementedError('Contiguous subset check only implemented for ranges')
+        if not isinstance(subset_a, subsets.Range) or not isinstance(subset_b, subsets.Range):
+            raise NotImplementedError("Contiguous subset check only implemented for ranges")
 
         # Other dimensions must be equal
         for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
@@ -1251,10 +1735,10 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
         ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
         b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
         # NOTE: Must check with "==" due to sympy using special types
-        return (ab == True or a_overlap_b == True or ba == True or b_overlap_a == True)
+        return ab == True or a_overlap_b == True or ba == True or b_overlap_a == True
 
     # General case
-    bbunion = subsets.bounding_box_union(subset_a, subset_b)
+    bbunion = subsets.bounding_box_union(subset_a, subset_b, facts)
     try:
         if bbunion.num_elements() == (subset_a.num_elements() + subset_b.num_elements()):
             return True
@@ -1264,7 +1748,9 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
     return False
 
 
-def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
+def find_contiguous_subsets(
+    subset_list: list[subsets.Subset], facts: symbolic.Facts, dim: int = None
+) -> set[subsets.Subset]:
     """
     Finds the set of largest contiguous subsets in a list of subsets.
 
@@ -1273,28 +1759,28 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) 
     :return: A list of contiguous subsets.
     """
     # Currently O(n^3) worst case. TODO: improve
-    subset_set = set(subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s for s in subset_list)
+    subset_set = set(subset_list)
     while True:
         for sa, sb in itertools.product(subset_set, subset_set):
             if sa is sb:
                 continue
-            if sa.covers(sb):
+            if sa.covers(sb, facts):
                 subset_set.remove(sb)
                 break
-            elif sb.covers(sa):
+            elif sb.covers(sa, facts):
                 subset_set.remove(sa)
                 break
-            elif are_subsets_contiguous(sa, sb, dim):
+            elif are_subsets_contiguous(sa, sb, facts, dim):
                 subset_set.remove(sa)
                 subset_set.remove(sb)
-                subset_set.add(subsets.bounding_box_union(sa, sb))
+                subset_set.add(subsets.bounding_box_union(sa, sb, facts))
                 break
         else:  # No modification performed
             break
     return subset_set
 
 
-def constant_symbols(sdfg: SDFG) -> Set[str]:
+def constant_symbols(sdfg: SDFG) -> set[str]:
     """
     Returns a set of symbols that will never change values throughout the course
     of the given SDFG. Specifically, these are the input symbols (i.e., not
@@ -1337,7 +1823,7 @@ def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph
     # wcr edges and connect their predecessors and successors
     for n in state.nodes():
         if n in G.nodes():
-            if (not isinstance(n, nodes.AccessNode) or (remove_views and isinstance(sdfg.arrays[n.data], data.View))):
+            if not isinstance(n, nodes.AccessNode) or (remove_views and isinstance(sdfg.arrays[n.data], data.View)):
                 for p in G.predecessors(n):
                     for c in G.successors(n):
                         G.add_edge(p, c)
@@ -1374,22 +1860,22 @@ def tile(sdfg: SDFG, map_entry: nodes.MapEntry, divides_evenly: bool, skew: bool
     from dace.transformation.dataflow import StripMining
 
     for k, v in tile_sizes.items():
-        StripMining.apply_to(sdfg,
-                             dict(dim_idx=map_entry.params.index(k),
-                                  tile_size=str(v),
-                                  divides_evenly=divides_evenly,
-                                  skew=skew),
-                             map_entry=map_entry)
+        StripMining.apply_to(
+            sdfg,
+            dict(dim_idx=map_entry.params.index(k), tile_size=str(v), divides_evenly=divides_evenly, skew=skew),
+            map_entry=map_entry,
+        )
 
 
-def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
-    """ Permutes indices of a map according to a given list of integers. """
+def permute_map(map_entry: nodes.MapEntry, perm: list[int]):
+    """Permutes indices of a map according to a given list of integers."""
     map_entry.map.params = [map_entry.map.params[p] for p in perm]
     map_entry.map.range = [map_entry.map.range[p] for p in perm]
 
 
-def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
-                     dims: List[int]) -> Tuple[nodes.MapEntry, Optional[nodes.MapEntry]]:
+def extract_map_dims(
+    sdfg: SDFG, map_entry: nodes.MapEntry, dims: list[int]
+) -> tuple[nodes.MapEntry, nodes.MapEntry | None]:
     """
     Helper function that extracts specific map dimensions into an outer map.
 
@@ -1438,7 +1924,54 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
     return extracted_map, map_to_collapse
 
 
-def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = None) -> ScopeTree:
+def small_map_axes(state: SDFGState, map_entry: nodes.MapEntry, resolver: SymbolResolver) -> list[bool]:
+    """Per parameter of ``map_entry``, whether its range spans ``SMALL`` symbols only, at the facts around the map."""
+    facts = resolver.facts_at(state, map_entry)
+    return [symbolic.is_small(end - begin, facts) for begin, end, _ in map_entry.map.range.ranges]
+
+
+def isolate_small_map_axes(
+    state: SDFGState, map_entry: nodes.MapEntry, resolver: SymbolResolver | None = None
+) -> nodes.MapEntry | None:
+    """Move the ``SMALL`` axes of ``map_entry`` (``nblks``: a handful, much smaller than every other size) into an
+    inner map, so that the map that remains -- the one a schedule shares out -- holds only the others, in their
+    order. The inner map keeps the schedule :func:`extract_map_dims` gives it, ``Sequential``.
+
+    A map over ``SMALL`` axes only is first collapsed with the map it holds, when that is all it holds and that map
+    has an axis that is not ``SMALL``. Otherwise a map without both kinds of axis is left as it is.
+
+    :param resolver: shared across calls to reuse the facts it derives.
+    :return: the map entry over the remaining axes, or ``None`` if nothing changed.
+    """
+    # Avoid import loop
+    from dace.transformation.dataflow import MapCollapse
+
+    resolver = resolver or SymbolResolver()
+    small = small_map_axes(state, map_entry, resolver)
+    if all(small):
+        children = {edge.dst for edge in state.out_edges(map_entry)}
+        if len(children) != 1:
+            return None
+        inner = next(iter(children))
+        if not isinstance(inner, nodes.MapEntry) or all(small_map_axes(state, inner, resolver)):
+            return None
+        # ``permissive``: a map nested in a scheduled one is already ``Sequential``, and the collapse takes the outer
+        # schedule. It still refuses an inner range that reads an outer parameter.
+        if not MapCollapse.can_be_applied_to(
+            state.sdfg, outer_map_entry=map_entry, inner_map_entry=inner, permissive=True
+        ):
+            return None
+        map_entry, _ = MapCollapse.apply_to(
+            state.sdfg, outer_map_entry=map_entry, inner_map_entry=inner, permissive=True, save=False
+        )
+        small = small_map_axes(state, map_entry, resolver)
+    if all(small) or not any(small):
+        return None
+    outer, _ = extract_map_dims(state.sdfg, map_entry, [dim for dim, is_small in enumerate(small) if not is_small])
+    return outer
+
+
+def scope_tree_recursive(state: SDFGState, entry: nodes.EntryNode | None = None) -> ScopeTree:
     """
     Returns a scope tree that includes scopes from nested SDFGs.
 
@@ -1468,17 +2001,16 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
                     treenode.children.append(ntree)
 
         for child in treenode.children:
-            if hasattr(child, 'state') and child.state != state:
+            if hasattr(child, "state") and child.state != state:
                 traverse(child.state, child)
 
     traverse(state, stree)
     return stree
 
 
-def get_internal_scopes(state: SDFGState,
-                        entry: nodes.EntryNode,
-                        immediate: bool = False,
-                        recursive_scope_tree: Optional[ScopeTree] = None) -> List[Tuple[SDFGState, nodes.EntryNode]]:
+def get_internal_scopes(
+    state: SDFGState, entry: nodes.EntryNode, immediate: bool = False, recursive_scope_tree: ScopeTree | None = None
+) -> list[tuple[SDFGState, nodes.EntryNode]]:
     """
     Returns all internal scopes within a given scope, including if they
     reside in nested SDFGs.
@@ -1513,8 +2045,10 @@ def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) 
     """
     rstree = scope_tree_recursive(state, entry)
     internal_maps = get_internal_scopes(state, entry, recursive_scope_tree=rstree)
-    if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-           for _, m in internal_maps):
+    if any(
+        m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+        for _, m in internal_maps
+    ):
         return True
 
     imm_maps = get_internal_scopes(state, entry, immediate=True, recursive_scope_tree=rstree)
@@ -1536,8 +2070,11 @@ def gpu_map_has_explicit_dyn_threadblocks(state: SDFGState, entry: nodes.EntryNo
 
 
 def reconnect_edge_through_map(
-        state: SDFGState, edge: graph.MultiConnectorEdge[Memlet], new_node: Union[nodes.EntryNode, nodes.ExitNode],
-        keep_src: bool) -> Tuple[graph.MultiConnectorEdge[Memlet], graph.MultiConnectorEdge[Memlet]]:
+    state: SDFGState,
+    edge: graph.MultiConnectorEdge[Memlet],
+    new_node: nodes.EntryNode | nodes.ExitNode,
+    keep_src: bool,
+) -> tuple[graph.MultiConnectorEdge[Memlet], graph.MultiConnectorEdge[Memlet]]:
     """
     Reconnects an edge through a map scope, removes old edge, and returns the
     two new edges.
@@ -1549,20 +2086,22 @@ def reconnect_edge_through_map(
                      keeps destination of edge.
     :return: A 2-tuple of (incoming edge, outgoing edge).
     """
+    if edge.data.is_empty():
+        # An empty memlet binds to a scope without connectors; a connector pair would leave one side ``None``
+        result = (
+            state.add_edge(edge.src, edge.src_conn, new_node, None, Memlet()),
+            state.add_edge(new_node, None, edge.dst, edge.dst_conn, Memlet()),
+        )
+        state.remove_edge(edge)
+        return result
     if keep_src:
-        result = state.add_edge_pair(new_node,
-                                     edge.dst,
-                                     edge.src,
-                                     edge.data,
-                                     internal_connector=edge.dst_conn,
-                                     external_connector=edge.src_conn)
+        result = state.add_edge_pair(
+            new_node, edge.dst, edge.src, edge.data, internal_connector=edge.dst_conn, external_connector=edge.src_conn
+        )
     else:
-        result = state.add_edge_pair(new_node,
-                                     edge.src,
-                                     edge.dst,
-                                     edge.data,
-                                     internal_connector=edge.src_conn,
-                                     external_connector=edge.dst_conn)
+        result = state.add_edge_pair(
+            new_node, edge.src, edge.dst, edge.data, internal_connector=edge.src_conn, external_connector=edge.dst_conn
+        )
     state.remove_edge(edge)
     return result
 
@@ -1589,7 +2128,7 @@ def contained_in(state: SDFGState, node: nodes.Node, scope: nodes.EntryNode) -> 
     return False
 
 
-def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optional[Tuple[nodes.EntryNode, SDFGState]]:
+def get_parent_map(state: SDFGState, node: nodes.Node | None = None) -> tuple[nodes.EntryNode, SDFGState] | None:
     """
     Returns the map in which the state (and node) are contained in, or None if
     it is free.
@@ -1612,14 +2151,32 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
     return None
 
 
-def redirect_edge(state: SDFGState,
-                  edge: graph.MultiConnectorEdge[Memlet],
-                  new_src: Optional[nodes.Node] = None,
-                  new_dst: Optional[nodes.Node] = None,
-                  new_src_conn: Optional[str] = None,
-                  new_dst_conn: Optional[str] = None,
-                  new_data: Optional[str] = None,
-                  new_memlet: Optional[Memlet] = None) -> graph.MultiConnectorEdge[Memlet]:
+def get_parent_maps(state: SDFGState, node: nodes.Node) -> list[tuple[nodes.EntryNode, SDFGState]]:
+    """
+    Returns every scope enclosing the node, innermost first, continuing through enclosing nested SDFGs.
+
+    :param state: The state of the node.
+    :param node: The node to test.
+    :return: A list of (entry node, state) tuples, as get_parent_map returns them one at a time.
+    """
+    scopes = []
+    parent = get_parent_map(state, node)
+    while parent is not None:
+        scopes.append(parent)
+        parent = get_parent_map(parent[1], parent[0])
+    return scopes
+
+
+def redirect_edge(
+    state: SDFGState,
+    edge: graph.MultiConnectorEdge[Memlet],
+    new_src: nodes.Node | None = None,
+    new_dst: nodes.Node | None = None,
+    new_src_conn: str | None = None,
+    new_dst_conn: str | None = None,
+    new_data: str | None = None,
+    new_memlet: Memlet | None = None,
+) -> graph.MultiConnectorEdge[Memlet]:
     """
     Redirects an edge in a state. Choose which elements to override by setting
     the keyword arguments.
@@ -1638,7 +2195,7 @@ def redirect_edge(state: SDFGState,
     :note: ``new_data`` and ``new_memlet`` cannot be used at the same time.
     """
     if new_data is not None and new_memlet is not None:
-        raise ValueError('new_data and new_memlet cannot both be given.')
+        raise ValueError("new_data and new_memlet cannot both be given.")
     mtree = None
     if new_data is not None:
         mtree = state.memlet_tree(edge)
@@ -1651,30 +2208,15 @@ def redirect_edge(state: SDFGState,
             e.data.data = new_data
     else:
         memlet = new_memlet or edge.data
-    new_edge = state.add_edge(new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn
-                              or edge.dst_conn, memlet)
+    new_edge = state.add_edge(
+        new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn or edge.dst_conn, memlet
+    )
     return new_edge
 
 
-def replace_code_to_code_edges(sdfg: SDFG):
-    """
-    Adds access nodes between all code->code edges in each state.
-
-    :param sdfg: The SDFG to process.
-    """
-    for state in sdfg.states():
-        for edge in state.edges():
-            if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
-                continue
-            # Add access nodes
-            aname = state.add_access(edge.data.data)
-            state.add_edge(edge.src, edge.src_conn, aname, None, edge.data)
-            state.add_edge(aname, None, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-            state.remove_edge(edge)
-
-
-def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
-                                     sink: nodes.AccessNode):
+def make_map_internal_write_external(
+    sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode, sink: nodes.AccessNode
+):
     """
     Any writes to the Access node `access` that occur inside the Map with exit node `map_exit` are redirected to the
     Access node `sink` that is outside the Map. This method will remove, if possible, `access` and replace it with a
@@ -1697,6 +2239,7 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
         return
 
     # Compute the union of the destination subsets of the edges that write to `access.`
+    facts = SymbolResolver().facts_at(state, access)
     in_union = None
     map_dependency = False
     for e in state.in_edges(access):
@@ -1706,7 +2249,7 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
         if in_union is None:
             in_union = subset
         else:
-            in_union = in_union.union(subset)
+            in_union = subsets.union(in_union, subset, facts)
 
     # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
     if not map_dependency:
@@ -1719,7 +2262,7 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
     else:
         for e in state.out_edges(access):
             subset = e.data.get_src_subset(e, state)
-            if not in_union.covers(subset):
+            if not in_union.covers(subset, facts):
                 covers_out = False
                 break
 
@@ -1745,16 +2288,24 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
                 dst_subset = e2.data.get_dst_subset(e2, state)
                 dst = new_n if e2.dst is access else e2.dst
                 state.add_edge(
-                    e2.src, e2.src_conn, dst, e2.dst_conn,
-                    Memlet(data=name, subset=dst_subset.offset_new(offset, negative=True), other_subset=src_subset))
+                    e2.src,
+                    e2.src_conn,
+                    dst,
+                    e2.dst_conn,
+                    Memlet(data=name, subset=dst_subset.offset_new(offset, negative=True), other_subset=src_subset),
+                )
             src_subset = e.data.get_src_subset(e, state)
             dst_subset = e.data.get_dst_subset(e, state)
-            state.add_memlet_path(new_n,
-                                  map_exit,
-                                  sink,
-                                  memlet=Memlet(data=sink.data,
-                                                subset=copy.deepcopy(dst_subset),
-                                                other_subset=dst_subset.offset_new(dst_subset, negative=True)))
+            state.add_memlet_path(
+                new_n,
+                map_exit,
+                sink,
+                memlet=Memlet(
+                    data=sink.data,
+                    subset=copy.deepcopy(dst_subset),
+                    other_subset=dst_subset.offset_new(dst_subset, negative=True),
+                ),
+            )
         for e in state.out_edges(access):
             if e in visited:
                 continue
@@ -1768,8 +2319,12 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
                 dst_subset = e2.data.get_dst_subset(e2, state)
                 src = new_n if e2.src is access else e2.src
                 state.add_edge(
-                    src, e2.src_conn, e2.dst, e2.dst_conn,
-                    Memlet(data=name, subset=src_subset.offset_new(offset, negative=True), other_subset=dst_subset))
+                    src,
+                    e2.src_conn,
+                    e2.dst,
+                    e2.dst_conn,
+                    Memlet(data=name, subset=src_subset.offset_new(offset, negative=True), other_subset=dst_subset),
+                )
         for e in visited:
             state.remove_edge(e)
         state.remove_node(access)
@@ -1777,12 +2332,12 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
     else:
         for e in state.in_edges(access):
             subset = e.data.get_dst_subset(e, state)
-            state.add_memlet_path(access,
-                                  map_exit,
-                                  sink,
-                                  memlet=Memlet(data=sink.data,
-                                                subset=copy.deepcopy(subset),
-                                                other_subset=copy.deepcopy(subset)))
+            state.add_memlet_path(
+                access,
+                map_exit,
+                sink,
+                memlet=Memlet(data=sink.data, subset=copy.deepcopy(subset), other_subset=copy.deepcopy(subset)),
+            )
 
 
 def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterable[Edge[InterstateEdge]]:
@@ -1799,27 +2354,29 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
              any path from ``src`` to ``dst``.
     """
 
-    def _parent_chain(block: ControlFlowBlock) -> List[ControlFlowRegion]:
+    def _parent_chain(block: ControlFlowBlock) -> list[ControlFlowRegion]:
         result = [block.parent_graph]
         while not isinstance(result[-1], SDFG):
             result.append(result[-1].parent_graph)
         return result
 
-    def _edge_key(edge: Edge[InterstateEdge]) -> Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]]:
+    def _edge_key(edge: Edge[InterstateEdge]) -> tuple[int, int, str | None, tuple[tuple[str, str], ...]]:
         condition = edge.data.condition.as_string if edge.data.condition else None
         assignments = tuple(sorted((str(k), str(v)) for k, v in edge.data.assignments.items()))
         return (id(edge.src), id(edge.dst), condition, assignments)
 
-    def _add_edge(edges: Dict[Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]], Edge[InterstateEdge]],
-                  edge: Edge[InterstateEdge]) -> None:
+    def _add_edge(
+        edges: dict[tuple[int, int, str | None, tuple[tuple[str, str], ...]], Edge[InterstateEdge]],
+        edge: Edge[InterstateEdge],
+    ) -> None:
         edges[_edge_key(edge)] = edge
 
     if src.sdfg is not dst.sdfg:
-        raise RuntimeError('Blocks reside in different SDFGs')
+        raise RuntimeError("Blocks reside in different SDFGs")
 
     if src.parent_graph is dst.parent_graph:
         # Simple case where both blocks reside in the same graph:
-        edges: Dict[Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]], Edge[InterstateEdge]] = {}
+        edges: dict[tuple[int, int, str | None, tuple[tuple[str, str], ...]], Edge[InterstateEdge]] = {}
         for p in src.parent_graph.all_simple_paths(src, dst, as_edges=True):
             for e in p:
                 _add_edge(edges, e)
@@ -1841,18 +2398,18 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
         #    the source and destination.
         # Note that for each edge, if the destination is a control flow region, any edges inside of it may also
         # be on the path and consequently also need to be added.
-        edges: Dict[Tuple[int, int, Optional[str], Tuple[Tuple[str, str], ...]], Edge[InterstateEdge]] = {}
+        edges: dict[tuple[int, int, str | None, tuple[tuple[str, str], ...]], Edge[InterstateEdge]] = {}
 
         # Step 1.a): Find the lowest common parent region.
         all_parent_regions_src = _parent_chain(src)
         all_parent_regions_dst = _parent_chain(dst)
         common_parent = next((region for region in all_parent_regions_src if region in all_parent_regions_dst), None)
         if common_parent is None:
-            raise RuntimeError('No common parent found')
+            raise RuntimeError("No common parent found")
 
         # Step 1.b) and 1.c): Determine the list of parents involved in the path for the source and destination.
-        involved_src: List[ControlFlowRegion] = []
-        involved_dst: List[ControlFlowRegion] = []
+        involved_src: list[ControlFlowRegion] = []
+        involved_dst: list[ControlFlowRegion] = []
         for r in all_parent_regions_src:
             if r is common_parent:
                 break
@@ -1905,7 +2462,7 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
         return list(edges.values())
 
 
-def _assigned_names_in_ast(node: ast.AST) -> Set[str]:
+def _assigned_names_in_ast(node: ast.AST) -> set[str]:
     """
     Returns symbol names assigned by an assignment-target AST node (left-hand side of an assignment).
 
@@ -1922,7 +2479,7 @@ def _assigned_names_in_ast(node: ast.AST) -> Set[str]:
     return set()
 
 
-def _symbols_assigned_in_codeblock(codeblock: Optional[CodeBlock]) -> Set[str]:
+def _symbols_assigned_in_codeblock(codeblock: CodeBlock | None) -> set[str]:
     """
     Collects symbols assigned within a Python code block.
 
@@ -1947,7 +2504,7 @@ def _symbols_assigned_in_codeblock(codeblock: Optional[CodeBlock]) -> Set[str]:
     return result
 
 
-def _modified_symbols_in_region(region: ControlFlowRegion) -> Set[str]:
+def _modified_symbols_in_region(region: ControlFlowRegion) -> set[str]:
     """
     Collects symbols modified directly by control flow region metadata.
 
@@ -1966,7 +2523,7 @@ def _modified_symbols_in_region(region: ControlFlowRegion) -> Set[str]:
     return result
 
 
-def modified_symbols_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Set[str]:
+def modified_symbols_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> set[str]:
     """
     Returns symbols that may be modified on any path between two blocks.
 
@@ -2016,7 +2573,7 @@ def replace_sdfg_dtypes(
 def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     # Swap nodes
     for node, _ in sdfg.all_nodes_recursive():
-        if hasattr(node, "in_connectors"):
+        if isinstance(node, nodes.Node):
             for in_con_name, in_con_type in node.in_connectors.items():
                 if in_con_type == from_type:
                     node.in_connectors[in_con_name] = to_type
@@ -2026,7 +2583,6 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
                         node.in_connectors[in_con_name] = dtypes.pointer(to_type)
                         swaps_count += 1
 
-        if hasattr(node, "out_connectors"):
             for out_con_name, out_con_type in node.out_connectors.items():
                 if out_con_type == from_type:
                     node.out_connectors[out_con_name] = to_type
@@ -2039,11 +2595,11 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
     # Swap symbols
     for sym_name, sym_type in sdfg.symbols.items():
         if sym_type == from_type:
-            sdfg.symbols[sym_name] = to_type
+            sdfg.symbol_repo.set_type(sym_name, to_type)
             swaps_count += 1
 
     # Swap array types
-    for array_name, array_desc in sdfg.arrays.items():
+    for array_desc in sdfg.arrays.values():
         if array_desc.dtype == from_type:
             array_desc.dtype = to_type
             swaps_count += 1
@@ -2095,16 +2651,15 @@ def _change_struct_type(descriptor: dtypes.struct, from_type: typeclass, to_type
 
 def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     """Change member types for descriptors with members attribute."""
-    if not hasattr(descriptor, "members"):
+    if not isinstance(descriptor, data.Structure):
         raise TypeError(f"Expected type with member attr but got {descriptor}")
 
-    for member_name, member_descriptor in descriptor.members.items():
+    for member_descriptor in descriptor.members.values():
         if _is_structure(member_descriptor):
             swaps_count = _change_structure_type(member_descriptor, from_type, to_type, swaps_count)
-        else:
-            if member_descriptor.dtype == from_type:
-                member_descriptor.dtype = to_type
-                swaps_count += 1
+        elif member_descriptor.dtype == from_type:
+            member_descriptor.dtype = to_type
+            swaps_count += 1
     return swaps_count
 
 
@@ -2144,17 +2699,26 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
     new_start_block = None
     new_end_block = None
 
+    # Read both entries BEFORE the loop: the first add_node gives `graph` a second source, after
+    # which `graph.start_block` raises instead of answering.
+    body_start_block = body_to_take.start_block
+    if_block_is_start = graph.start_block == if_block
+
     for node in body_to_take.nodes():
         copynode = copy.deepcopy(node)
         node_map[node] = copynode
-        start_block_case = (body_to_take.start_block == node) and (graph.start_block == if_block)
-        if body_to_take.start_block == node:
+        start_block_case = (body_start_block == node) and if_block_is_start
+        if body_start_block == node:
             assert new_start_block is None
             new_start_block = copynode
         if body_to_take.out_degree(node) == 0:
             assert new_end_block is None
             new_end_block = copynode
-        graph.add_node(copynode, is_start_block=start_block_case)
+        # ``ensure_unique_name``: the copy keeps the branch's label, and the destination may
+        # already hold a block of that name -- two arms spliced into one parent, or one arm
+        # spliced beside an earlier copy of itself. A duplicate block name is an invalid SDFG,
+        # and it is caught far downstream, at whichever pass validates next.
+        graph.add_node(copynode, is_start_block=start_block_case, ensure_unique_name=True)
 
     for edge in body_to_take.edges():
         src = node_map[edge.src]
@@ -2169,9 +2733,11 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
     graph.remove_node(if_block)
 
 
-def get_parent_map_and_loop_scopes(root_sdfg: SDFG, node: Union[nodes.MapEntry, ControlFlowRegion, nodes.Tasklet,
-                                                                ConditionalBlock], parent_state: Union[SDFGState,
-                                                                                                       None]):
+def get_parent_map_and_loop_scopes(
+    root_sdfg: SDFG,
+    node: nodes.MapEntry | ControlFlowRegion | nodes.Tasklet | ConditionalBlock,
+    parent_state: SDFGState | None,
+):
     """Collect parent ``MapEntry`` / ``LoopRegion`` scopes enclosing
     ``node``, walking scope dicts, control-flow regions and nested-SDFG
     boundaries up to the root SDFG.  ``SDFG.parent`` (O(1)) finds the
@@ -2188,7 +2754,12 @@ def get_parent_map_and_loop_scopes(root_sdfg: SDFG, node: Union[nodes.MapEntry, 
     cur_node = node
     parent_scopes = list()
 
-    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet)):
+    if isinstance(cur_node, (nodes.MapEntry, nodes.Tasklet, nodes.LibraryNode)):
+        # A LibraryNode is a scope child like a Tasklet (a "special tasklet"): its enclosing
+        # MapEntry scopes are read from the same ``scope_dict``. Without it, a caller asking for
+        # the parent maps of a library node (e.g. the SharedMemoryCollective GPU_ThreadBlock
+        # rejection, or the libnode-schedule decision in canonicalize's finalize) would miss every
+        # map in the node's own state.
         while scope_dict[cur_node] is not None:
             if isinstance(scope_dict[cur_node], nodes.MapEntry):
                 parent_scopes.append(scope_dict[cur_node])

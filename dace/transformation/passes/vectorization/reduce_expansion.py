@@ -13,10 +13,12 @@ API requires):
   ``#pragma omp parallel for reduction(...)`` owns per-thread accumulators +
   cross-thread combine (thread count = OpenMP runtime concern,
   ``omp_get_max_threads()``, never an SDFG symbol; no manual ``M/NUM_CORES`` tiling).
-- Any other schedule (GPU, MPI, Snitch, …) or unsupported reduction op -> raise
+- Any other schedule (GPU, MPI, Snitch, ...) or unsupported reduction op -> raise
   ``NotImplementedError``. An unexpected schedule or a non-associative / custom
   reduction must surface, not be silently mis-lowered.
 """
+
+from collections.abc import Callable
 from copy import deepcopy as dcpy
 
 import dace
@@ -28,14 +30,17 @@ from dace.libraries.standard.nodes.reduce import (
     ExpandReducePure,
     Reduce,
 )
+from dace.optionals import required
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.narrowing import as_range
 from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 #: Reduction ops with an associative identity + matching ``horizontal_reduce_<op>``
-#: primitive; value = op-token suffix used by ``cpu_vectorizable_math_*.h``. Sub /
-#: Div / Logical_* / *_Location / Exchange / Custom absent — no associative-fold
+#: primitive; value = op-token suffix used by ``horizontal_reduce.h``. Sub /
+#: Div / Logical_* / *_Location / Exchange / Custom absent -- no associative-fold
 #: identity, must raise rather than mis-reduce.
-REDTYPE_TO_OP = {
+REDTYPE_TO_OP: dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Sum: "add",
     dtypes.ReductionType.Product: "mul",
     dtypes.ReductionType.Max: "max",
@@ -45,14 +50,14 @@ REDTYPE_TO_OP = {
     dtypes.ReductionType.Bitwise_Xor: "bxor",
 }
 
-_VECTORIZED_SEQUENTIAL_SCHEDULES = (
+_VECTORIZED_SEQUENTIAL_SCHEDULES: tuple[dtypes.ScheduleType, ...] = (
     dtypes.ScheduleType.Default,
     dtypes.ScheduleType.Sequential,
 )
 
 #: Per-op C++ binary fold ``OP(x, y)`` for the W-wide partials + scalar tail;
 #: paired with the identity element when ``Reduce`` carries no ``identity``.
-_OP_CXX = {
+_OP_CXX: dict[str, Callable[[str, str], str]] = {
     "add": lambda x, y: f"(({x}) + ({y}))",
     "mul": lambda x, y: f"(({x}) * ({y}))",
     "max": lambda x, y: f"std::max(({x}), ({y}))",
@@ -61,7 +66,7 @@ _OP_CXX = {
     "bor": lambda x, y: f"(({x}) | ({y}))",
     "bxor": lambda x, y: f"(({x}) ^ ({y}))",
 }
-_OP_IDENTITY_CXX = {
+_OP_IDENTITY_CXX: dict[str, str] = {
     "add": "({T})0",
     "mul": "({T})1",
     "max": "(-INFINITY)",
@@ -72,66 +77,56 @@ _OP_IDENTITY_CXX = {
 }
 
 #: horizontal-reduce primitive is templated on a compile-time lane count; use the
-#: pipeline default width (runtime header handles any width — single instruction
+#: pipeline default width (runtime header handles any width -- single instruction
 #: where the ISA has it, portable log-depth tree otherwise).
 _VEC_W = 8
 
 
-def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
-    """Vectorized 1-D full-reduction nested SDFG, or ``None`` if out of scope.
-
-    Scope: full reduction (every axis reduced) of a contiguous 1-D input to a
-    single output element — the shape the vectorizer's lifted accumulators
-    produce. Anything else (partial / multi-axis / multi-element output) ->
-    ``None``, caller delegates to :class:`ExpandReducePure` (still correct).
-
-    Kernel keeps ``_VEC_W`` partial accumulators, folds with one
-    ``horizontal_reduce_<op>`` intrinsic, then a scalar tail handles the
-    non-``W``-multiple remainder.
-
-    :param node: the ``Reduce`` node.
-    :param state: state containing ``node``.
-    :param sdfg: containing SDFG.
-    :param opname: the ``horizontal_reduce_<opname>`` suffix.
-    :returns: expanded nested SDFG, or ``None`` if unsupported here.
-    """
+def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG, opname: str) -> SDFG | None:
+    # Vectorized 1-D full-reduction nested SDFG, or ``None`` if out of scope.
     node.validate(sdfg, state)
     inedge = state.in_edges(node)[0]
     outedge = state.out_edges(node)[0]
     insubset = dcpy(inedge.data.subset)
-    isqdim = insubset.squeeze()
+    isqdim = as_range(insubset).squeeze()
     outsubset = dcpy(outedge.data.subset)
-    outsubset.squeeze()
-    input_data = sdfg.arrays[inedge.data.data]
-    output_data = sdfg.arrays[outedge.data.data]
+    as_range(outsubset).squeeze()
+    input_data = sdfg.arrays[required(inedge.data.data)]
+    output_data = sdfg.arrays[required(outedge.data.data)]
 
     axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
-    in_sizes = insubset.size()
+    in_sizes = as_range(insubset).size()
     out_elems = 1
-    for s in outsubset.size():
+    for s in as_range(outsubset).size():
         out_elems *= s
 
     # Only contiguous 1-D full-reduction-to-scalar. Non-unit step (strided input
     # ``a[0:2N:2]``) can't use the contiguous SIMD load ``__inp[_i + _l]`` below ->
     # fall back to pure/OpenMP (strided SIMD gather not worth it).
-    if (len(axes) != len(inedge.data.subset) or len(in_sizes) != 1 or out_elems != 1
-            or any(str(step) != "1" for (_, _, step) in insubset.ranges)):
+    if (
+        len(axes) != len(inedge.data.subset)
+        or len(in_sizes) != 1
+        or out_elems != 1
+        or any(str(step) != "1" for (_, _, step) in as_range(insubset).ranges)
+    ):
         return None
 
     ctype = input_data.dtype.ctype
     m_expr = symstr(in_sizes[0])
 
     nsdfg = dace.SDFG("reduce_vectorized")
-    nsdfg.add_array("_in",
-                    insubset.size(),
-                    input_data.dtype,
-                    strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
-                    storage=input_data.storage)
-    nsdfg.add_array("_out", outsubset.size(), output_data.dtype, storage=output_data.storage)
-    nsdfg.append_global_code('#include "dace/cpu_vectorizable_math.h"')
+    nsdfg.add_array(
+        "_in",
+        as_range(insubset).size(),
+        input_data.dtype,
+        strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
+        storage=input_data.storage,
+    )
+    nsdfg.add_array("_out", as_range(outsubset).size(), output_data.dtype, storage=output_data.storage)
+    nsdfg.append_global_code('#include "dace/horizontal_reduce.h"')
 
-    inedge._dst_conn = "_in"
-    outedge._src_conn = "_out"
+    inedge.dst_conn = "_in"
+    outedge.src_conn = "_out"
     node.add_in_connector("_in")
     node.add_out_connector("_out")
 
@@ -173,10 +168,10 @@ __out = _s;
 class ExpandReduceVectorized(pm.ExpandTransformation):
     """Schedule-aware ``"vectorized"`` expansion of a ``Reduce`` node."""
 
-    environments = []
+    environments: list[type] = []
 
     @staticmethod
-    def expansion(node: Reduce, state, sdfg):
+    def expansion(node: Reduce, state: SDFGState, sdfg: SDFG) -> SDFG:
         """Dispatch the reduction by operator and schedule.
 
         :param node: the ``Reduce`` library node.
@@ -192,7 +187,8 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
             raise NotImplementedError(
                 f"ExpandReduceVectorized: reduction operator {redtype} has no associative "
                 f"horizontal-reduce lowering; supported: {sorted(t.name for t in REDTYPE_TO_OP)}. "
-                f"wcr={node.wcr!r}")
+                f"wcr={node.wcr!r}"
+            )
 
         schedule = node.schedule
         if schedule in _VECTORIZED_SEQUENTIAL_SCHEDULES:
@@ -210,10 +206,12 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
             # clause; per-thread chunk is the inner kernel.
             return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
-        raise NotImplementedError(f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
-                                  f"vectorization pipeline (expected Sequential/Default or CPU_Multicore). "
-                                  f"A GPU/MPI/other-scheduled reduction must use its own implementation, "
-                                  f"not 'vectorized'.")
+        raise NotImplementedError(
+            f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
+            f"vectorization pipeline (expected Sequential/Default or CPU_Multicore). "
+            f"A GPU/MPI/other-scheduled reduction must use its own implementation, "
+            f"not 'vectorized'."
+        )
 
 
 Reduce.register_implementation("vectorized", ExpandReduceVectorized)

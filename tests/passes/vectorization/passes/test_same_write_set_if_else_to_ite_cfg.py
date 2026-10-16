@@ -13,11 +13,12 @@ The third assertion uses ``sdfg.compile()`` end-to-end. Per the project rule,
 the reference is an unfolded scalar Python evaluation — not a different
 SDFG variant.
 """
-import os
 
 import numpy as np
+import pytest
 
 import dace
+from dace.config import set_temporary
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
@@ -25,8 +26,18 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
     _symbol_has_external_consumer,
 )
 
-# This pass emits ``merge(...)`` tasklets which need ``dace/ITE.h``.
-os.environ.setdefault("DACE_compiler_cpu_args", "")
+
+@pytest.fixture(autouse=True)
+def blank_cpu_args():
+    """This pass emits ``merge(...)`` tasklets which need ``dace/ITE.h``.
+
+    Scoped to this module rather than written into ``os.environ`` at import time: a marker
+    expression only DESELECTS, so the module is still imported in every xdist worker of every
+    lane, and ``Config.get`` reads the environment ahead of the config -- which pinned empty
+    compiler flags process-wide and left nothing able to restore them.
+    """
+    with set_temporary("compiler", "cpu", "args", value=""):
+        yield
 
 
 def _build_same_write_if_else_sdfg():
@@ -36,8 +47,8 @@ def _build_same_write_if_else_sdfg():
     where ``c`` is a scalar bool symbol.
     """
     sdfg = dace.SDFG("if_else_same_write")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
 
     entry = sdfg.add_state("entry", is_start_block=True)
@@ -77,9 +88,9 @@ def test_pass_removes_conditional_block_and_inserts_three_states():
     blocks = list(sdfg.all_control_flow_blocks())
     assert not any(isinstance(b, ConditionalBlock) for b in blocks), [b.label for b in blocks]
     labels = {s.label for s in sdfg.states()}
-    assert any(l.startswith("compute_then_") for l in labels)
-    assert any(l.startswith("compute_else_") for l in labels)
-    assert any(l.startswith("apply_ITE_") for l in labels)
+    assert any(lbl.startswith("compute_then_") for lbl in labels)
+    assert any(lbl.startswith("compute_else_") for lbl in labels)
+    assert any(lbl.startswith("apply_ITE_") for lbl in labels)
 
 
 def test_pass_creates_then_else_transients_with_matching_dtype():
@@ -95,8 +106,9 @@ def test_pass_creates_then_else_transients_with_matching_dtype():
     for n in (then_names[0], else_names[0]):
         arr = sdfg.arrays[n]
         assert arr.dtype == base.dtype
-        assert tuple(
-            arr.shape) == (1, ), (f"per-arm temp {n!r} shape must be (1,) (element-wise scratch); got {arr.shape}")
+        assert tuple(arr.shape) == (1,), (
+            f"per-arm temp {n!r} shape must be (1,) (element-wise scratch); got {arr.shape}"
+        )
         assert arr.transient is True
         assert arr.storage == dace.dtypes.StorageType.Register
 
@@ -105,9 +117,9 @@ def test_pass_does_not_match_disjoint_write_set():
     """When the two arms write to *different* arrays, the pass leaves the
     ConditionalBlock alone."""
     sdfg = dace.SDFG("if_else_disjoint")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("Src", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("Src", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -159,7 +171,7 @@ def test_pass_numerical_correctness():
     csdfg = sdfg.compile()
     for c in (True, False):
         for b in (-2.0, 0.5, 7.0):
-            A = np.zeros((1, ), dtype=np.float64)
+            A = np.zeros((1,), dtype=np.float64)
             B = np.array([b], dtype=np.float64)
             csdfg(A=A, B=B, c=c)
             expected = reference(c, B)
@@ -174,7 +186,6 @@ def test_pass_is_idempotent_after_first_run():
     assert second is None
 
 
-# ---------------------------------------------------------------------------
 # Two-arm same-write-set with the python-frontend empty entry-state pattern.
 # Each arm begins with an EMPTY state whose only out-edge carries an
 # interstate symbol binding (e.g. ``__sym_z = z``); the substantive compute
@@ -183,7 +194,6 @@ def test_pass_is_idempotent_after_first_run():
 # sequential single-arm fallback in ``BranchNormalization`` would silently
 # wire ``_old`` to the original output array, breaking the dataflow.
 # These tests pin the hoist + entry-state removal.
-# ---------------------------------------------------------------------------
 
 
 def _build_same_write_if_else_with_empty_entry_states_sdfg():
@@ -191,8 +201,8 @@ def _build_same_write_if_else_with_empty_entry_states_sdfg():
     same-write-set ``if/else`` whose IF arm starts with an empty state
     that only carries an interstate symbol binding ``__sym_z = z``."""
     sdfg = dace.SDFG("if_else_with_empty_entry")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     sdfg.add_symbol("z", dace.int64)
     sdfg.add_symbol("__sym_z", dace.int64)
@@ -252,9 +262,9 @@ def test_apply_pass_hoists_empty_entry_state_and_matches():
     assert rewritten == 1
     assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
     labels = {s.label for s in sdfg.states()}
-    assert any(l.startswith("compute_then_") for l in labels)
-    assert any(l.startswith("compute_else_") for l in labels)
-    assert any(l.startswith("apply_ITE_") for l in labels)
+    assert any(lbl.startswith("compute_then_") for lbl in labels)
+    assert any(lbl.startswith("compute_else_") for lbl in labels)
+    assert any(lbl.startswith("apply_ITE_") for lbl in labels)
     # The per-arm temp transients must exist (single-arm fallback never
     # allocates ``_then_*`` / ``_else_*`` — its presence is what proves
     # the kernel took the right path).
@@ -292,7 +302,7 @@ def test_empty_entry_state_numerical_correctness():
     csdfg = sdfg.compile()
     for c in (True, False):
         for b in (-2.0, 0.5, 7.0):
-            A = np.zeros((1, ), dtype=np.float64)
+            A = np.zeros((1,), dtype=np.float64)
             B = np.array([b], dtype=np.float64)
             csdfg(A=A, B=B, c=c, z=1)
             expected = reference(c, B)
@@ -305,9 +315,9 @@ def _build_two_writes_per_arm_sdfg():
     C = 1 - A in the IF arm). Single-state arms (this test verifies the
     plain two-write match — the multi-state companion is covered above)."""
     sdfg = dace.SDFG("if_else_two_writes")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("C", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("C", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
 
     entry = sdfg.add_state("entry", is_start_block=True)
@@ -357,7 +367,9 @@ def test_two_writes_per_arm_uses_per_arm_temps():
         assert any(n.startswith(f"_then_{arr}") for n in sdfg.arrays), f"missing _then_{arr}"
         assert any(n.startswith(f"_else_{arr}") for n in sdfg.arrays), f"missing _else_{arr}"
     ITE_tasklets = [
-        n for state in sdfg.states() for n in state.nodes()
+        n
+        for state in sdfg.states()
+        for n in state.nodes()
         if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("ITE_")
     ]
     assert len(ITE_tasklets) == 2, f"expected 2 ITEs (one per written array), got {len(ITE_tasklets)}"
@@ -415,8 +427,9 @@ def test_2d_base_array_yields_scalar_per_arm_temps():
         names = [n for n in sdfg.arrays if n.startswith(prefix)]
         assert len(names) == 1, f"expected one {prefix} transient, got {names}"
         arr = sdfg.arrays[names[0]]
-        assert tuple(
-            arr.shape) == (1, ), (f"per-arm temp for 2D base must remain (1,) (Register-allocable); got {arr.shape}")
+        assert tuple(arr.shape) == (1,), (
+            f"per-arm temp for 2D base must remain (1,) (Register-allocable); got {arr.shape}"
+        )
 
 
 def test_2d_base_array_memlets_subset_zero_on_temps():
@@ -432,7 +445,8 @@ def test_2d_base_array_memlets_subset_zero_on_temps():
                 continue
             if e.data.data.startswith("_then_") or e.data.data.startswith("_else_"):
                 assert str(e.data.subset) == "0", (
-                    f"per-arm temp memlet must read/write ``[0]``; got {e.data.subset} on {e.data.data}")
+                    f"per-arm temp memlet must read/write ``[0]``; got {e.data.subset} on {e.data.data}"
+                )
 
 
 def test_two_writes_per_arm_numerical_correctness():
@@ -454,18 +468,16 @@ def test_two_writes_per_arm_numerical_correctness():
 
     for c in (True, False):
         for b in (-2.0, 0.5, 7.0):
-            A = np.zeros((1, ), dtype=np.float64)
+            A = np.zeros((1,), dtype=np.float64)
             B = np.array([b], dtype=np.float64)
-            C = np.zeros((1, ), dtype=np.float64)
+            C = np.zeros((1,), dtype=np.float64)
             csdfg(A=A, B=B, C=C, c=c)
             exp_A, exp_C = reference(c, B)
             np.testing.assert_allclose(A, exp_A, err_msg=f"A: c={c}, b={b}, got={A}, want={exp_A}")
             np.testing.assert_allclose(C, exp_C, err_msg=f"C: c={c}, b={b}, got={C}, want={exp_C}")
 
 
-# ---------------------------------------------------------------------------
 # Use-count gating, _symbol_has_external_consumer
-# ---------------------------------------------------------------------------
 
 
 def _build_sdfg_with_cb_only(sym_name: str):
@@ -473,7 +485,7 @@ def _build_sdfg_with_cb_only(sym_name: str):
     assigned on the entry->cb interstate edge. The cb cond is the *only*
     consumer of sym_name."""
     sdfg = dace.SDFG(f"only_{sym_name}")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol(sym_name, dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     exit_state = sdfg.add_state("exit")
@@ -484,22 +496,21 @@ def _build_sdfg_with_cb_only(sym_name: str):
     body = ControlFlowRegion("then_body", sdfg=sdfg)
     body.add_state("body_state", is_start_block=True)
     cb.add_branch(CodeBlock(sym_name), body)
-    defining = next(e for e in sdfg.edges() if sym_name in (e.data.assignments or {}))
-    return sdfg, cb, defining
+    return sdfg, cb
 
 
 def test_symbol_has_external_consumer_when_only_cb_uses_it():
     """Only consumer is the cb's own branch condition (which the pass is
     about to rewrite away). With ``skip_cb=cb`` the helper sees no
     external consumer."""
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is False
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is False
 
 
 def test_symbol_has_external_consumer_when_downstream_assignment_reads_it():
     """A second interstate edge after the cb assigns ``out_sym = flag``,
     that second use counts as external."""
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     sdfg.add_symbol("out_sym", dace.bool_)
     after = sdfg.add_state("after_cb")
     exit_state = next(s for s in sdfg.states() if s.label == "exit")
@@ -507,11 +518,11 @@ def test_symbol_has_external_consumer_when_downstream_assignment_reads_it():
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, after, dace.InterstateEdge(assignments={"out_sym": "flag"}))
     sdfg.add_edge(after, exit_state, dace.InterstateEdge())
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_symbol_has_external_consumer_when_sibling_cb_condition_reads_it():
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     sibling = ConditionalBlock("cb_sibling")
     sdfg.add_node(sibling)
     sibling.add_branch(CodeBlock("flag"), ControlFlowRegion("sib_body", sdfg=sdfg))
@@ -521,23 +532,23 @@ def test_symbol_has_external_consumer_when_sibling_cb_condition_reads_it():
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, sibling, dace.InterstateEdge())
     sdfg.add_edge(sibling, exit_state, dace.InterstateEdge())
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_symbol_has_external_consumer_when_tasklet_body_reads_it():
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     exit_state = next(s for s in sdfg.states() if s.label == "exit")
     exit_state.add_tasklet("uses_flag", set(), set(), "x = flag")
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_symbol_has_external_consumer_when_interstate_condition_reads_it():
-    sdfg, cb, defining = _build_sdfg_with_cb_only("flag")
+    sdfg, cb = _build_sdfg_with_cb_only("flag")
     exit_state = next(s for s in sdfg.states() if s.label == "exit")
     for e in list(sdfg.out_edges(cb)):
         sdfg.remove_edge(e)
     sdfg.add_edge(cb, exit_state, dace.InterstateEdge(condition=CodeBlock("flag")))
-    assert _symbol_has_external_consumer(sdfg, "flag", defining, skip_cb=cb) is True
+    assert _symbol_has_external_consumer(sdfg, "flag", skip_cb=cb) is True
 
 
 def test_promote_gather_indices_rewrites_nested_subscript():
@@ -549,18 +560,20 @@ def test_promote_gather_indices_rewrites_nested_subscript():
     sdfg = dace.SDFG("gather_cond")
     sdfg.add_array("w", [n, n], dace.float64)
     sdfg.add_array("idx", [n], dace.int64)
+    sdfg.add_symbol("i", dace.int64)  # index symbols must be in scope to hoist idx[i] onto the edge
+    sdfg.add_symbol("k", dace.int64)
     s0 = sdfg.add_state("s0", is_start_block=True)
     s1 = sdfg.add_state("s1")
     edge = sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"w_index": "w[idx[i], k]"}))
 
     p = SameWriteSetIfElseToITECFG()
-    new_rhs = p._promote_gather_indices(sdfg, edge, "w[idx[i], k]")
+    new_rhs = p._promote_gather_indices(sdfg, [edge], "w[idx[i], k]")
     assert new_rhs == "w[_gidx_0, k]", new_rhs
     # The nested index was promoted to a fresh int symbol defined on the edge.
     assert edge.data.assignments.get("_gidx_0") == "idx[i]"
     assert "_gidx_0" in sdfg.symbols and sdfg.symbols["_gidx_0"] == dace.int64
     # No-op on an affine (non-gather) read -- the subset has no nested subscript.
-    assert p._promote_gather_indices(sdfg, edge, "w[i, k]") == "w[i, k]"
+    assert p._promote_gather_indices(sdfg, [edge], "w[i, k]") == "w[i, k]"
 
 
 def test_promote_gather_indices_noop_without_edge():
@@ -570,3 +583,264 @@ def test_promote_gather_indices_noop_without_edge():
     sdfg.add_array("idx", [dace.symbol("n")], dace.int64)
     p = SameWriteSetIfElseToITECFG()
     assert p._promote_gather_indices(sdfg, None, "w[idx[i]]") == "w[idx[i]]"
+
+
+# Array-predicate guard lifting (``_lift_array_predicate_cond``).
+
+
+def test_lift_array_predicate_cond_stages_array_read_as_connector():
+    """An array-subscript guard is staged via an in-connector, never inlined
+    (regression: tsvc_2_5 ``masked_store_sym`` / ``move_if_data_dep_nest``)."""
+    sdfg = dace.SDFG("lift_array_pred")
+    sdfg.add_array("A", (16,), dace.float64)
+    sdfg.add_symbol("K", dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    res = SameWriteSetIfElseToITECFG()._lift_array_predicate_cond(sdfg, state, "A > K", "i")
+    assert res is not None, "an array-reading guard must be staged, not left as inline free-symbol text"
+    cond_name, _ = res
+    assert sdfg.arrays[cond_name].dtype == dace.bool_, "lifted guard transient must be bool"
+    tasklets = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert len(tasklets) == 1
+    body = tasklets[0].code.as_string
+    assert "A" not in body.replace("_in_A", ""), f"array head A must not be inlined in the tasklet body: {body!r}"
+    a_edges = [e for e in state.in_edges(tasklets[0]) if e.data is not None and e.data.data == "A"]
+    assert len(a_edges) == 1, "A must be wired as exactly one in-connector"
+    assert str(a_edges[0].data.subset) == "i", "the bare array read is staged at the write's per-lane subset"
+
+
+def test_lift_array_predicate_cond_skips_pure_symbol_condition():
+    """A pure-symbol guard has nothing to stage; helper returns None."""
+    sdfg = dace.SDFG("lift_pure_sym")
+    sdfg.add_symbol("K", dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    assert SameWriteSetIfElseToITECFG()._lift_array_predicate_cond(sdfg, state, "K > 0", "i") is None
+
+
+# s279-shaped mixed cond: array transient vs interstate staged array read.
+
+
+def build_s279_shaped_guard_sdfg():
+    """Single-arm guard whose condition MIXES a directly-read array transient
+    (``b_index_0``) with an interstate-defined staged read of an array
+    (``a_index_0 = a[0]``) -- the shape TSVC s279's nested ``if b[i] > a[i]`` takes
+    after canonicalization::
+
+        b_index_0 = b[0]              (staged in entry)
+        a_index_0 = a[0]              (interstate assignment)
+        if b_index_0 > a_index_0:
+            c[0] = c[0] + 1.0
+
+    The array-predicate recipe fires (``b_index_0`` is an array) but must also inline
+    the interstate staged read ``a_index_0`` into ``a[0]`` and stage it through a
+    connector -- else ``a_index_0`` is left as free-symbol text and orphaned when the
+    apply-ITE state is relocated ("Missing symbols on nested SDFG").
+    """
+    sdfg = dace.SDFG("s279_shaped_guard")
+    sdfg.add_array("a", (1,), dace.float64)
+    sdfg.add_array("b", (1,), dace.float64)
+    sdfg.add_array("c", (1,), dace.float64)
+    sdfg.add_array("b_index_0", (1,), dace.float64, transient=True)
+    sdfg.add_symbol("a_index_0", dace.float64)
+
+    entry = sdfg.add_state("entry", is_start_block=True)
+    rb = entry.add_access("b")
+    wbi = entry.add_access("b_index_0")
+    tb = entry.add_tasklet("stage_b", {"_b"}, {"_bi"}, "_bi = _b")
+    entry.add_edge(rb, None, tb, "_b", dace.Memlet("b[0]"))
+    entry.add_edge(tb, "_bi", wbi, None, dace.Memlet("b_index_0[0]"))
+
+    mid = sdfg.add_state("mid")
+    sdfg.add_edge(entry, mid, dace.InterstateEdge(assignments={"a_index_0": "a[0]"}))
+
+    cb = ConditionalBlock("guard")
+    sdfg.add_node(cb)
+    sdfg.add_edge(mid, cb, dace.InterstateEdge())
+    exit_s = sdfg.add_state("exit")
+    sdfg.add_edge(cb, exit_s, dace.InterstateEdge())
+
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    s = arm.add_state("arm_s", is_start_block=True)
+    rc = s.add_access("c")
+    wc = s.add_access("c")
+    t = s.add_tasklet("body", {"_c"}, {"_o"}, "_o = _c + 1.0")
+    s.add_edge(rc, None, t, "_c", dace.Memlet("c[0]"))
+    s.add_edge(t, "_o", wc, None, dace.Memlet("c[0]"))
+    cb.add_branch(CodeBlock("(b_index_0 > a_index_0)"), arm)
+    return sdfg
+
+
+def test_pass_converts_mixed_array_and_interstate_staged_read_cond():
+    """s279's nested guard: conversion fires and the interstate staged read
+    ``a_index_0 = a[0]`` is inlined + dropped (no orphaned free symbol)."""
+    sdfg = build_s279_shaped_guard_sdfg()
+    rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+    assert rewritten == 1, "the s279-shaped guard must be converted, not refused"
+
+    # No ConditionalBlock remains; the three ITE states are in place.
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+
+    # The staged-read symbol is fully eliminated -- not a symbol, not free, and no
+    # interstate edge still assigns it (that is what caused the missing-symbol error).
+    assert "a_index_0" not in sdfg.symbols
+    assert "a_index_0" not in set(map(str, sdfg.free_symbols))
+    assert not [
+        e
+        for cfg in sdfg.all_control_flow_regions(recursive=True)
+        for e in cfg.edges()
+        if "a_index_0" in (e.data.assignments or {})
+    ], "the dead a_index_0 assignment must be pruned"
+
+    # The lifted guard stages BOTH operands through in-connectors (never the bare
+    # symbol / array head) so both become per-lane tiles downstream.
+    lift = [
+        n for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.Tasklet) and "lift_cond" in n.label
+    ]
+    assert len(lift) == 1, "exactly one lifted cond tasklet expected"
+    lift_state = next(st for st in sdfg.states() if lift[0] in st.nodes())
+    assert "a_index_0" not in lift[0].code.as_string
+    staged = {e.data.data for e in lift_state.in_edges(lift[0])}
+    assert staged == {"a", "b_index_0"}, f"both operands must be staged reads, got {staged}"
+
+    sdfg.validate()
+
+
+def test_pass_mixed_cond_numerical_correctness():
+    """End-to-end compile-run of the s279-shaped guard; reference = scalar branch."""
+    sdfg = build_s279_shaped_guard_sdfg()
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+    csdfg = sdfg.compile()
+    for av in (-1.0, 0.5, 3.0):
+        for bv in (-2.0, 1.0, 5.0):
+            for cv in (7.0, -4.0):
+                a = np.array([av], dtype=np.float64)
+                b = np.array([bv], dtype=np.float64)
+                c = np.array([cv], dtype=np.float64)
+                csdfg(a=a, b=b, c=c)
+                expected = cv + 1.0 if bv > av else cv
+                np.testing.assert_allclose(c[0], expected, err_msg=f"a={av} b={bv} c={cv}")
+
+
+# Extended gather-index promotion (``_promote_gather_indices``) edge cases.
+# A guard reading a gather (``w[idx[i], k] > K``) carries a nested subscript no
+# plain memlet can express; the lift promotes each nested index ``idx[i]`` to a
+# fresh interstate symbol ``_gidx`` assigned on the edge(s) feeding the merge
+# state, so the staged read becomes ``w[_gidx, k]``.
+
+
+def _gather_merge_two_preds_sdfg():
+    """SDFG whose merge state has TWO interstate predecessors, plus arrays ``w``
+    (gathered), ``idx`` (index), and a registered loop-iterator symbol ``i``."""
+    sdfg = dace.SDFG("gather_two_preds")
+    sdfg.add_array("w", (8, 8), dace.float64)
+    sdfg.add_array("idx", (8,), dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    p1 = sdfg.add_state("p1")
+    p2 = sdfg.add_state("p2")
+    merge = sdfg.add_state("merge")
+    sdfg.add_edge(start, p1, dace.InterstateEdge(condition="i < 4"))
+    sdfg.add_edge(start, p2, dace.InterstateEdge(condition="i >= 4"))
+    sdfg.add_edge(p1, merge, dace.InterstateEdge())
+    sdfg.add_edge(p2, merge, dace.InterstateEdge())
+    return sdfg, merge
+
+
+def test_promote_gather_indices_defines_symbol_on_every_predecessor():
+    """The promoted ``_gidx`` must be assigned on EVERY edge into the merge state --
+    a merge with several predecessors would otherwise read an unbound ``_gidx`` on
+    the path that skipped the single (``[0]``) edge."""
+    sdfg, merge = _gather_merge_two_preds_sdfg()
+    in_edges = list(merge.parent_graph.in_edges(merge))
+    assert len(in_edges) == 2
+
+    out = SameWriteSetIfElseToITECFG()._promote_gather_indices(sdfg, in_edges, "w[idx[i], 0] > 0.0")
+
+    assert "idx[" not in out and "_gidx_0" in out, f"gather index not promoted: {out!r}"
+    assigned = [("_gidx_0" in (e.data.assignments or {})) for e in in_edges]
+    assert all(assigned), f"_gidx_0 must be assigned on all predecessors, got {assigned}"
+
+
+def test_promote_gather_indices_refuses_without_a_def_edge():
+    """With no edge to hoist the assignment onto (a CFG start block), the nested
+    subscript survives unchanged and ``_has_nested_subscript`` flags it so the
+    caller refuses the lift instead of emitting a bare-pointer read."""
+    sdfg, merge = _gather_merge_two_preds_sdfg()
+    p = SameWriteSetIfElseToITECFG()
+    rhs = "w[idx[i], 0] > 0.0"
+
+    out = p._promote_gather_indices(sdfg, [], rhs)
+
+    assert out == rhs, "no def edge -> promotion must be a no-op"
+    assert p._has_nested_subscript(sdfg, out), "surviving gather must be flagged so the caller refuses"
+
+
+def test_promote_gather_indices_refuses_out_of_scope_index_symbol():
+    """An index symbol that is not a registered SDFG symbol is not in scope to assign
+    ``_gidx = idx[i]`` on the edge; the promotion must leave the nested subscript (so
+    the caller refuses) rather than plant an out-of-scope assignment."""
+    sdfg = dace.SDFG("gather_oos")
+    sdfg.add_array("w", (8, 8), dace.float64)
+    sdfg.add_array("idx", (8,), dace.int64)
+    # 'i' intentionally NOT registered as an SDFG symbol -> out of scope.
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    edge = list(sdfg.out_edges(s0))[0]
+    p = SameWriteSetIfElseToITECFG()
+    rhs = "w[idx[i], 0] > 0.0"
+
+    out = p._promote_gather_indices(sdfg, [edge], rhs)
+
+    assert out == rhs and p._has_nested_subscript(sdfg, out)
+    assert "_gidx_0" not in (edge.data.assignments or {}), "must not plant an out-of-scope assignment"
+
+
+def symbol_guarded_if_else(name: str, guard: str, before: dict[str, str], after: dict[str, str]) -> dace.SDFG:
+    """``<before>; if <guard>: A[0] = 1.0 else: A[0] = 2.0; <after>``, with ``k`` an int64 argument."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    for cond, value in ((CodeBlock(guard), "1.0"), (None, "2.0")):
+        arm = ControlFlowRegion(f"arm_{value[0]}", sdfg=sdfg)
+        state = arm.add_state(f"set_{value[0]}", is_start_block=True)
+        tasklet = state.add_tasklet("set", {}, {"_a"}, f"_a = {value}")
+        state.add_edge(tasklet, "_a", state.add_write("A"), None, dace.Memlet("A[0]"))
+        cb.add_branch(cond, arm)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge(assignments=before))
+    sdfg.add_edge(cb, sdfg.add_state("exit"), dace.InterstateEdge(assignments=after))
+    return sdfg
+
+
+def run_for_each_k(sdfg: dace.SDFG) -> list[float]:
+    csdfg = sdfg.compile()
+    results = []
+    for k in (0, 1, 2, 3):
+        A = np.zeros((1,), dtype=np.float64)
+        csdfg(A=A, k=k)
+        results.append(float(A[0]))
+    return results
+
+
+def test_guard_symbol_rebound_after_the_branch_is_tested_at_its_incoming_value():
+    """``k = k - 1`` after the branch is not the value the guard ``k > 0`` sees; lifting it would test ``k - 1``."""
+    sdfg = symbol_guarded_if_else("guard_symbol_decremented_after", "k > 0", {}, {"k": "k - 1"})
+
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+    assert not any(name.startswith("_cond_k") for name in sdfg.arrays)
+    assert run_for_each_k(sdfg) == [2.0, 1.0, 1.0, 1.0]
+
+
+def test_lifted_guard_symbol_bound_to_a_value_keeps_the_symbol_type():
+    """``m = k - 1`` feeding ``m > 1`` is an integer; a ``bool`` lift would read every nonzero ``m`` as 1."""
+    sdfg = symbol_guarded_if_else("guard_symbol_bound_to_value", "m > 1", {"m": "k - 1"}, {})
+
+    SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
+
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+    assert sdfg.arrays["_cond_m"].dtype == dace.int64
+    assert run_for_each_k(sdfg) == [2.0, 2.0, 2.0, 1.0]

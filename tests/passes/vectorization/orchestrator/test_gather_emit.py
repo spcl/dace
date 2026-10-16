@@ -3,7 +3,7 @@
 
 A diagonal access ``a[i, i]`` (the tile var ``i`` indexes two array dims) is
 NOT a perfect box, so ``classify_tile_access`` reports GATHER and
-``EmitTileOps`` lowers it to a :class:`TileLoad` (gather) (read) / :class:`TileStore` (scatter)
+``EmitTileOps`` lowers it to a :class:`TileGather` (gather) (read) / :class:`TileScatter` (scatter)
 (write) over an affine per-dim index map (``_idx_k[lane] = i + lane``), rather
 than a strided load. This pins the diagonal numerically against the
 unvectorized reference and asserts the gather/scatter lib nodes are emitted.
@@ -15,10 +15,13 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops import TileGather
+from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.interstate import LoopToMap
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 N = dace.symbol("N")
 
@@ -61,7 +64,10 @@ def test_data_gather_with_elementwise_input_matches_reference(n):
     ref.name = f"dgb_ref{n}"
     vec = _data_gather_binop_kernel.to_sdfg(simplify=True)
     vec.name = f"dgb_vec{n}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(vec, validate=True)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
 
     ref.compile()(a=a_ref, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
@@ -83,10 +89,41 @@ def test_structured_int_floor_replication_matches_reference(n):
     ref.simplify()
     vec = copy.deepcopy(ref)
     vec.name = f"sk_vec{n}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
     vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
     np.testing.assert_allclose(vo, ro, rtol=1e-12, atol=1e-12)
+
+
+@dace.program
+def half_group_offset_kernel(a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        b[i] = a[(i + 1) // 2]
+
+
+def test_floor_division_index_off_the_group_boundary_is_gathered() -> None:
+    a, b = np.arange(16.0), np.zeros(16)
+    sdfg = half_group_offset_kernel.to_sdfg(simplify=True)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert {tuple(n.gather_dims) for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)} == {(0,)}
+    sdfg(a=a, b=b, N=16)
+    np.testing.assert_array_equal(b, [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8])
+
+
+@dace.program
+def tasklet_index_kernel(a: dace.float64[2 * N], idx: dace.int32[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        k = idx[i] * 2
+        b[i] = a[k]
+
+
+def test_gather_through_a_tasklet_computed_index_matches_reference() -> None:
+    a, idx, b = np.arange(32.0), np.arange(16, dtype=np.int32)[::-1].copy(), np.zeros(16)
+    sdfg = tasklet_index_kernel.to_sdfg(simplify=True)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    sdfg(a=a, idx=idx, b=b, N=16)
+    np.testing.assert_array_equal(b, 2 * idx)
 
 
 def _prepped(tag=""):
@@ -110,7 +147,8 @@ def test_diagonal_gather_numerically_matches_reference(n):
 
     ref = _prepped(f"ref{n}")
     vec = _prepped(f"vec{n}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
 
     ref.compile()(aa=ref_aa, bb=bb.copy(), cc=cc.copy(), N=n)
     vec.compile()(aa=vec_aa, bb=bb.copy(), cc=cc.copy(), N=n)

@@ -14,10 +14,8 @@ Round-robin (rather than the full knob cross-product) keeps the corpus-wide run
 tractable while still exercising every knob across the suite. A kernel that
 canonicalization renders as a 2-D nested map additionally gets a ``K=2`` multidim
 config.
-
-Known multidim vectorize gaps are marked ``xfail`` with the tracking
-reason -- see ``_MULTIDIM_XFAIL``.
 """
+
 import os
 
 # dace lazily ``from mpi4py import MPI`` during ``to_sdfg``. Left to auto-init,
@@ -31,27 +29,74 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+import copy
+
 import numpy as np
 import pytest
 
+from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 
-_KERNELS = [k.name for k in tsvc.collect()]
+KERNELS = [k.name for k in tsvc.collect()]
+
+#: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
+#: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
+UNTILED_KERNELS = frozenset(
+    {
+        "s123_d_single",
+        "s13110_d_single",
+        "s141_d_single",
+        "s161_d_single",
+        "s2111_d_single",
+        "s232_d_single",
+        "s257_d_single",
+        "s258_d_single",
+        "s277_d_single",
+        "s3110_d_single",
+        "s3112_d_single",
+        "s311_d_single",
+        "s312_d_single",
+        "s314_d_single",
+        "s316_d_single",
+        "s317_d_single",
+        "s318_d_single",
+        "s321_d_single",
+        "s322_d_single",
+        "s332_d_single",
+        "s343_d_single",
+        "vsumr_d_single",
+    }
+)
 
 # Round-robin knob sets (valid combinations only; see VectorizeCPU /
-# VectorizeCPUMultiDim constructors).
-_MULTIDIM_KNOBS = [
-    dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa="AVX512", remainder_strategy="full_mask", branch_mode="merge"),
-    dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
+# VectorizeCPUMultiDim constructors). The SIMD ISA is the HOST's best runnable one
+# (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a
+# hardcoded AVX-512: vectorization enforces arch-native, so a forced non-host ISA
+# would SIGILL at runtime (see ``dace.libraries.tileops.dispatch.host_supported_isas``).
+HOST_ISA = detect_host_isa()
+MULTIDIM_KNOBS = [
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE, branch_mode=BranchMode.MERGE),
+    dict(target_isa=HOST_ISA, remainder_strategy=RemainderStrategy.FULL_MASK, branch_mode=BranchMode.MERGE),
+    dict(target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.FP_FACTOR),
 ]
+
+# Kernels whose canonical 2-D map contains a 1-D array indexed by a linearized
+# combination of the two map params (e.g. TSVC s125 ``flat[i*LEN_2D + j]``).
+# A K=2 tile would see the single array dim as jointly-affine in both iter-vars
+# and would be refused; vectorizing the inner (unit-stride) dim alone is both
+# correct and contiguous. Force K=1 for these kernels.
+FORCE_K1_KERNELS = {
+    "s125_d_single",
+}
+
 
 def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     """Assert every float output matches the reference, ``nan``/``inf`` equal.
@@ -64,9 +109,10 @@ def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     for n, a in got.items():
         if not (isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size):
             continue
-        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9,
-                           equal_nan=True), (f"{name}/{n}: {stage} diverges from numpy reference, "
-                                             f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
+        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9, equal_nan=True), (
+            f"{name}/{n}: {stage} diverges from numpy reference, "
+            f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}"
+        )
 
 
 def _canonicalized(name, tag="cvc"):
@@ -89,23 +135,25 @@ def _canonicalized(name, tag="cvc"):
 
 
 def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
+    untransformed = copy.deepcopy(sdfg)
     vec_pass.apply_pass(sdfg, {})
     sdfg.validate()
+    assert_tiled_unless_pinned(sdfg, untransformed, name, UNTILED_KERNELS)
     work = {n: a.copy() for n, a in arrays.items()}
     sdfg.compile()(**work, **ck)
     _assert_matches(name, work, ref, "vectorization")
 
 
-@pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
+@pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
 def test_tsvc_canonicalize(idx, name):
     """Canonicalize -> verify e2e against numpy. Canonicalization alone is
-    value-preserving; this is the first of the three corpus paths (this, then
-    ``+legacy`` / ``+multidim`` vectorize). ``_canonicalized`` asserts the
+    value-preserving; this is the first of the two corpus paths (this, then
+    ``+multidim`` vectorize). ``_canonicalized`` asserts the
     post-canon output matches the reference."""
     _canonicalized(name, tag="canon")
 
 
-@pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
+@pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
 def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
@@ -115,15 +163,27 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # any 1-D map (an init / reduction / boundary beside a 2-D body) cannot be
     # tiled with a uniform K=2 -- mixed-K within one SDFG is unsupported by the
     # tile pipeline (it aborts) -- so such kernels fall back to K=1.
-    if map_param_counts and min(map_param_counts) >= 2:
+    # A 2-D map whose single 1-D output is indexed linearly across both params
+    # (s125) is also forced to K=1: vectorizing only the inner (unit-stride)
+    # dim yields a plain contiguous TileScatter; a K=2 tile cannot express the
+    # strided box over one array dim.
+    if name in FORCE_K1_KERNELS:
+        vec = VectorizeCPUMultiDim(
+            VectorizeConfig(widths=(8,), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)])
+        )
+    elif map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, 8),
-                            target_isa=ISA.SCALAR,
-                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                            branch_mode=BranchMode.MERGE,
-                            validate_all=True))
+            VectorizeConfig(
+                widths=(8, 8),
+                target_isa=ISA.SCALAR,
+                remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                branch_mode=BranchMode.MERGE,
+                validate_all=True,
+            )
+        )
     else:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8,), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)])
+        )
     _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec)

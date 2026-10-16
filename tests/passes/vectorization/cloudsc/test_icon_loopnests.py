@@ -22,12 +22,10 @@ equivalence of the vectorised SDFG vs the non-vectorised reference via
 ``run_vectorization_test``.
 """
 
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import numpy
 import pytest
-import dace
 
+import dace
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 NB = dace.symbol("NB")
@@ -36,9 +34,13 @@ NPROMA = dace.symbol("NPROMA")
 
 
 @dace.program
-def icon_one_loop(vn: dace.float64[NB, NLEV, NPROMA], wgtfac_e: dace.float64[NB, NLEV, NPROMA],
-                  vt: dace.float64[NB, NLEV, NPROMA], vn_ie: dace.float64[NB, NLEV, NPROMA], zkh: dace.float64[NB, NLEV,
-                                                                                                               NPROMA]):
+def icon_one_loop(
+    vn: dace.float64[NB, NLEV, NPROMA],
+    wgtfac_e: dace.float64[NB, NLEV, NPROMA],
+    vt: dace.float64[NB, NLEV, NPROMA],
+    vn_ie: dace.float64[NB, NLEV, NPROMA],
+    zkh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(1, NLEV):
             for je in range(NPROMA):
@@ -55,18 +57,8 @@ def test_icon_one_loop(remainder_strategy, branch_mode, emission_style):
     zkh = numpy.zeros((nb, nlev, nproma))
     run_vectorization_test(
         dace_func=icon_one_loop,
-        arrays={
-            "vn": vn,
-            "wgtfac_e": wgtfac_e,
-            "vt": vt,
-            "vn_ie": vn_ie,
-            "zkh": zkh
-        },
-        params={
-            "NB": nb,
-            "NLEV": nlev,
-            "NPROMA": nproma
-        },
+        arrays={"vn": vn, "wgtfac_e": wgtfac_e, "vt": vt, "vn_ie": vn_ie, "zkh": zkh},
+        params={"NB": nb, "NLEV": nlev, "NPROMA": nproma},
         sdfg_name="icon_one_loop",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
@@ -75,15 +67,21 @@ def test_icon_one_loop(remainder_strategy, branch_mode, emission_style):
 
 
 @dace.program
-def icon_zekinh_gather(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA,
-                                                                                3], edge_blk: dace.int32[NB, NPROMA, 3],
-                       z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def icon_zekinh_gather(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]] +
-                                       e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]] +
-                                       e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
+                z_ekinh[jb, jk, jc] = (
+                    e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]]
+                    + e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]]
+                    + e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]]
+                )
 
 
 def test_icon_zekinh_gather(remainder_strategy, branch_mode, emission_style):
@@ -114,13 +112,9 @@ def test_icon_zekinh_gather(remainder_strategy, branch_mode, emission_style):
             "edge_idx": edge_idx,
             "edge_blk": edge_blk,
             "z_kin_hor_e": z_kin_hor_e,
-            "z_ekinh": z_ekinh
+            "z_ekinh": z_ekinh,
         },
-        params={
-            "NB": nb,
-            "NLEV": nlev,
-            "NPROMA": nproma
-        },
+        params={"NB": nb, "NLEV": nlev, "NPROMA": nproma},
         sdfg_name="icon_zekinh_gather",
         remainder_strategy=remainder_strategy,
         branch_mode=branch_mode,
@@ -130,4 +124,5 @@ def test_icon_zekinh_gather(remainder_strategy, branch_mode, emission_style):
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-q"])

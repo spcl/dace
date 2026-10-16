@@ -1,11 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests loop overwrite elimination transformations."""
 
-import numpy as np
-import dace
-from dace.transformation.interstate import LoopOverwriteElimination
-from dace.sdfg.state import LoopRegion
 from copy import deepcopy
+
+import numpy as np
+
+import dace
+from dace.sdfg.state import LoopRegion
+from dace.transformation.interstate import LoopOverwriteElimination
 
 
 def _test_for_unchanged_behavior(prog, num_loops, num_eliminations):
@@ -321,7 +323,7 @@ def test_overwrite_elimination_tmp2():
 
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
-        tmp = dace.ndarray(shape=(2, ), dtype=dace.float32)
+        tmp = dace.ndarray(shape=(2,), dtype=dace.float32)
         for i in range(10):
             tmp[1] = B[i]
             A[0] = tmp[0]

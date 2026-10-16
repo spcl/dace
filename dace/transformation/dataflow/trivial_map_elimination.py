@@ -1,12 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the trivial-map-elimination transformation. """
+"""Contains classes that implement the trivial-map-elimination transformation."""
 
 import dace
+from dace.memlet import Memlet
+from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
-from dace.memlet import Memlet
 
 
 @make_properties
@@ -37,8 +37,9 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
             return False
         if not any(r[0] == r[1] for r in map_entry.map.range):
             return False
-        if (map_entry.map.get_param_num()) == 1 and (any(not e.dst_conn.startswith("IN_")
-                                                         for e in graph.in_edges(map_entry) if not e.data.is_empty())):
+        if (map_entry.map.get_param_num()) == 1 and (
+            any(not e.dst_conn.startswith("IN_") for e in graph.in_edges(map_entry) if not e.data.is_empty())
+        ):
             # There is only one map parameter and there are dynamic map ranges, this can not be resolved.
             return False
         return True
@@ -78,6 +79,7 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
     def remove_empty_map(self, graph, sdfg):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
+        ordering = self.ordering_pairs(graph, map_entry, map_exit)
 
         # Redirect map entry's out edges
         write_only_map = True
@@ -104,5 +106,36 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
                     if outer_entry is not None:
                         graph.add_edge(outer_entry, None, edge.src, None, Memlet())
 
+        for src, dst in ordering:
+            if not graph.edges_between(src, dst):
+                graph.add_edge(src, None, dst, None, Memlet())
+
         # Remove map
         graph.remove_nodes_from([map_entry, map_exit])
+
+    @staticmethod
+    def ordering_pairs(graph, map_entry, map_exit):
+        """Return the (src, dst) pairs that keep the order the scope nodes impose after they are removed. An empty
+        edge that ends at the entry or starts at the exit exists only to order the whole body, and a body node that
+        the entry reaches only by an empty edge runs after everything the entry waits for. Both orderings vanish
+        with the scope nodes unless they are re-attached to the body."""
+        preds = [e.src for e in graph.in_edges(map_entry)]
+        succs = [e.dst for e in graph.out_edges(map_exit)]
+        heads = [e.dst for e in graph.out_edges(map_entry) if e.dst is not map_exit]
+        tails = [e.src for e in graph.in_edges(map_exit) if e.src is not map_entry]
+        pairs = []
+        for e in graph.in_edges(map_entry):
+            if e.data.is_empty():
+                pairs += [(e.src, head) for head in heads]
+        for e in graph.out_edges(map_entry):
+            if e.data.is_empty() and e.dst is not map_exit:
+                pairs += [(pred, e.dst) for pred in preds]
+        for e in graph.out_edges(map_exit):
+            if e.data.is_empty():
+                pairs += [(tail, e.dst) for tail in tails]
+        for e in graph.in_edges(map_exit):
+            if e.data.is_empty() and e.src is not map_entry:
+                pairs += [(e.src, succ) for succ in succs]
+        return [
+            (src, dst) for src, dst in pairs if src not in (map_entry, map_exit) and dst not in (map_entry, map_exit)
+        ]

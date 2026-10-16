@@ -8,6 +8,11 @@ on:
   merge_group:
     branches: [ main, ci-fix, romanc/stree-v2 ]
 
+env:
+  PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+
 defaults:
     run:
       shell: bash
@@ -19,19 +24,25 @@ concurrency:
 jobs:
   configure:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     name: "Read test configuration"
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
      - name: Checkout to repository
-       uses: actions/checkout@v6
+       uses: actions/checkout@v7
+     - name: Install uv
+       uses: astral-sh/setup-uv@v7
+       with:
+         enable-cache: true
      - name: Set matrix data
        id: set-matrix
        run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT
 
   build_and_validate_pyFV3:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: configure
     strategy:
       fail-fast: false
@@ -40,37 +51,53 @@ jobs:
 
     steps:
     - name: Checkout pyFV3
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         repository: 'NOAA-GFDL/pyFV3'
         path: 'pyFV3'
 
     - name: Checkout dace
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         path: 'dace'
         submodules: 'recursive'
 
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v6
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: 3.12
+        enable-cache: true
+        pyproject-file: dace/pyproject.toml
+        cache-dependency-glob: dace/pyproject.toml
 
     - name: Install OpenMPI
-      run: pip install openmpi
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopenmpi-dev openmpi-bin
+
+    # Duplicated from .github/actions/setup-dace rather than taken from it: this job checks dace out
+    # into a subdirectory and installs pyFV3 before dace on purpose, which the action's fused install
+    # step would undo. Only the compiler selection is needed here.
+    - name: Select a C++ compiler without the GCC 13 vectorizer miscompile
+      run: |
+        # GCC 13's auto-vectorizer mislowers the select the readable code generator emits: it reuses
+        # the low-half lane mask for the high-half vmaskmovpd, so the upper half of each vector reads
+        # back as zeros. A silent wrong answer, fixed in GCC 14.
+        sudo apt-get install -y g++-14
+        echo "CXX=g++-14" >> $GITHUB_ENV
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "DACE_compiler_cpu_executable=$(command -v g++-14)" >> $GITHUB_ENV
 
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
-        pip install ./pyFV3[ndsl,test]
-        pip install ./dace
-
-    - name: Print versions
-      run: |
-        gcc --version
-        python --version
-        pip --version
-        pip list
+        uv venv .venv
+        export VIRTUAL_ENV="$PWD/.venv"
+        export PATH="$VIRTUAL_ENV/bin:$PATH"
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> "$GITHUB_ENV"
+        echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
+        uv pip install ./pyFV3[ndsl,test]
+        uv pip install ./dace
 
     - name: Download data
       # Skip "Riemann Solver on D-grid" (currently failing)
@@ -88,8 +115,12 @@ jobs:
       env:
         FV3_DACEMODE: BuildAndRun
         NDSL_LOGLEVEL: Debug
+        # Makes the pyfv3_legacy_nested_sdfgs plugin importable (see its docstring)
+        PYTHONPATH: ${{ github.workspace }}/dace/ci
       run: |
-        pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
+        source .venv/bin/activate
+        # -p pyfv3_legacy_nested_sdfgs converts gt4py's legacy origin/domain wrapper before it is inlined
+        pytest -v -s -p pyfv3_legacy_nested_sdfgs --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
             --backend=orch:dace:cpu:KIJ --which_modules=${{ matrix.module }} \
             ${{ matrix.extra_args }} \
             --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \

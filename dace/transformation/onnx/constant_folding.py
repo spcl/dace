@@ -1,48 +1,47 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 
 import dace
-import torch
-from dace import config
-from dace.properties import make_properties
-from dace.transformation import transformation
-from dace.sdfg import nodes as nd
-from dace.sdfg import utils as sdutil
-
 import dace.libraries.onnx as donnx
+from dace import config
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+from dace.properties import make_properties
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 
 if TYPE_CHECKING:
     from dace.frontend.ml.onnx import ONNXModel
 
 # blocklist of nondeterministic ops
-# yapf: disable
-NONDETERMINISTIC_OPS = {'ONNXDropout',
-                        'ONNXGradient',
-                        'ONNXGraphCall',
-                        'ONNXIf',
-                        'ONNXLoop',
-                        'ONNXMomentum',
-                        'ONNXMultinomial',
-                        'ONNXRandomNormal',
-                        'ONNXRandomNormalLike',
-                        'ONNXRandomUniform',
-                        'ONNXRandomUniformLike',
-                        'ONNXSVMClassifier',
-                        'ONNXSVMRegressor',
-                        'ONNXScan',
-                        'ONNXTreeEnsembleClassifier',
-                        'ONNXTreeEnsembleRegressor'}
-# yapf: enable
+# fmt: off
+NONDETERMINISTIC_OPS = {"ONNXDropout",
+                        "ONNXGradient",
+                        "ONNXGraphCall",
+                        "ONNXIf",
+                        "ONNXLoop",
+                        "ONNXMomentum",
+                        "ONNXMultinomial",
+                        "ONNXRandomNormal",
+                        "ONNXRandomNormalLike",
+                        "ONNXRandomUniform",
+                        "ONNXRandomUniformLike",
+                        "ONNXSVMClassifier",
+                        "ONNXSVMRegressor",
+                        "ONNXScan",
+                        "ONNXTreeEnsembleClassifier",
+                        "ONNXTreeEnsembleRegressor"}
+# fmt: on
 
 
 @make_properties
 class ConstantFolding(transformation.SingleStateTransformation):
-    """ Remove nodes where all inputs are known and replace them with constant nodes by precomputing the output.
-    """
+    """Remove nodes where all inputs are known and replace them with constant nodes by precomputing the output."""
+
     # pattern matching only checks that the type of the node matches,
     onnx_node = transformation.PatternNode(ONNXOp)
 
@@ -61,11 +60,9 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
         return False
 
-    def can_be_applied(self,
-                       graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                       expr_index: int,
-                       sdfg,
-                       permissive: bool = False):
+    def can_be_applied(
+        self, graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph, expr_index: int, sdfg, permissive: bool = False
+    ):
 
         node = self.onnx_node
 
@@ -73,7 +70,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
         if not hasattr(sdfg, "_parent_onnx_model"):
             return False
 
-        if not 'ONNX' + node.schema.name not in NONDETERMINISTIC_OPS:
+        if not "ONNX" + node.schema.name not in NONDETERMINISTIC_OPS:
             return False
 
         if isinstance(node, donnx.ONNXShape):
@@ -99,12 +96,12 @@ class ConstantFolding(transformation.SingleStateTransformation):
     @classmethod
     def match_to_str(cls, graph):
         node: ONNXOp = cls.onnx_node
-        return "Precompute outputs of {}".format(node)
+        return f"Precompute outputs of {node}"
 
     def apply(self, state: dace.SDFGState, sdfg: dace.SDFG):
-        parent: "ONNXModel" = sdfg._parent_onnx_model
+        parent: ONNXModel = sdfg._parent_onnx_model
         node = self.onnx_node
-        if config.Config.get_bool('debugprint'):
+        if config.Config.get_bool("debugprint"):
             print(f"Applying constant folding: {node} in {state}")
 
         if isinstance(node, donnx.ONNXShape):
@@ -116,7 +113,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
             constant_name = sdfg.temp_data_name()
             clean_constant_name = clean_onnx_name(constant_name)
-            sdfg.add_array(clean_constant_name, (len(shape_desc.shape), ), dace.int64)
+            sdfg.add_array(clean_constant_name, (len(shape_desc.shape),), dace.int64)
 
             assert constant_name not in parent.clean_weights
             parent.weights[constant_name] = torch.from_numpy(np.array(shape_desc.shape, np.int64))
@@ -124,21 +121,22 @@ class ConstantFolding(transformation.SingleStateTransformation):
             assert len(state.out_edges(node)) == 1
             output_edge = state.out_edges(node)[0]
             access_shape = state.add_access(clean_constant_name)
-            state.add_edge(access_shape, None, output_edge.dst, output_edge.dst_conn,
-                           sdfg.make_array_memlet(clean_constant_name))
+            state.add_edge(
+                access_shape, None, output_edge.dst, output_edge.dst_conn, sdfg.make_array_memlet(clean_constant_name)
+            )
 
         # remove all now useless nodes with a reverse BFS
         remove_node_and_computation(sdfg, state, node)
 
 
-def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, connector: Optional[str] = None):
-    """ Remove a node and the parent nodes that compute this node, if the outputs are not used elsewhere.
+def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, connector: str | None = None):
+    """Remove a node and the parent nodes that compute this node, if the outputs are not used elsewhere.
 
-        :param sdfg: the sdfg containing the node.
-        :param state: the state containing the node.
-        :param node: the node to remove
-        :param connector: if not None, the computation of the connector of
-                          ``node`` will be removed, but not ``node`` itself.
+    :param sdfg: the sdfg containing the node.
+    :param state: the state containing the node.
+    :param node: the node to remove
+    :param connector: if not None, the computation of the connector of
+                      ``node`` will be removed, but not ``node`` itself.
     """
     if connector is not None:
         if connector not in node.in_connectors:
@@ -154,5 +152,5 @@ def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd
 
     # remove dangling nodes, this can happen with non-transients
     for node, parent in sdfg.all_nodes_recursive():
-        if (isinstance(node, nd.AccessNode) and parent.in_degree(node) + parent.out_degree(node) == 0):
+        if isinstance(node, nd.AccessNode) and parent.in_degree(node) + parent.out_degree(node) == 0:
             parent.remove_node(node)

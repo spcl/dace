@@ -1,8 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-from common import compare_numpy_output
 import pytest
+from common import compare_numpy_output
+
+import dace
 
 M = 10
 N = 20
@@ -34,9 +35,9 @@ def test_concatenate_out():
 
 
 def test_concatenate_symbolic():
-    n = dace.symbol('n')
-    m = dace.symbol('m')
-    k = dace.symbol('k')
+    n = dace.symbol("n")
+    m = dace.symbol("m")
+    k = dace.symbol("k")
 
     @dace.program
     def tester(a: dace.float64[k, m], b: dace.float64[k, n]):

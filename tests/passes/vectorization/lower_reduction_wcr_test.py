@@ -6,6 +6,7 @@ a body edge (``src -[wcr]-> acc``, ``acc`` a non-transient output connector): a 
 gets the tile-foldable ``acc = acc <op> src`` form; a step-1 postamble tail keeps the
 per-iteration boundary WCR (the in-body copy is simply dropped).
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -13,7 +14,6 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-import numpy as np
 import pytest
 
 import dace
@@ -50,8 +50,9 @@ def test_tiled_rewrites_to_augassign():
     # acc is written plain by the tasklet AND read back to feed __in1.
     acc_writes = [e for e in state.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == "acc"]
     assert len(acc_writes) == 1 and acc_writes[0].data.wcr is None
-    assert any(isinstance(e.src, nodes.AccessNode) and e.src.data == "acc" and e.dst_conn == "__in1"
-               for e in state.edges()), "expected an accumulator read-back into __in1"
+    assert any(
+        isinstance(e.src, nodes.AccessNode) and e.src.data == "acc" and e.dst_conn == "__in1" for e in state.edges()
+    ), "expected an accumulator read-back into __in1"
 
 
 def test_tail_strips_wcr():
@@ -74,12 +75,17 @@ def test_min_max_use_function_form():
 
 def test_transient_sink_untouched():
     """A WCR into a TRANSIENT sink is not a reduction output -- left alone."""
-    sdfg = dace.SDFG("t")
+    sdfg = dace.SDFG("t_transient_sink_untouched")
     sdfg.add_array("v", [1], dace.float32, transient=True)
     sdfg.add_array("acc", [1], dace.float32, transient=True)  # transient sink
     state = sdfg.add_state()
-    state.add_edge(state.add_access("v"), None, state.add_access("acc"), None,
-                   dace.Memlet(data="acc", subset="0", wcr="lambda x, y: (x + y)"))
+    state.add_edge(
+        state.add_access("v"),
+        None,
+        state.add_access("acc"),
+        None,
+        dace.Memlet(data="acc", subset="0", wcr="lambda x, y: (x + y)"),
+    )
     assert lower_reduction_wcr_in_body(sdfg, tiled=True) == 0
     assert any(e.data is not None and e.data.wcr is not None for e in state.edges())
 
@@ -87,8 +93,8 @@ def test_transient_sink_untouched():
 def test_nest_reduction_is_idempotent():
     """``NestInnermostMapBodyIntoNSDFG`` run twice on a reduction map is a no-op the second time
     and never re-buries the boundary WCR inside the body NSDFG."""
-    from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+    from dace.transformation.interstate import LoopToMap
     from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
     from dace.transformation.passes.vectorization.utils.pass_invariants import no_wcr_inside_nested_sdfgs
 
@@ -107,8 +113,9 @@ def test_nest_reduction_is_idempotent():
     sdfg.simplify()
     assert NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {}), "first run must nest"
     assert no_wcr_inside_nested_sdfgs(sdfg) is None, "no loose WCR may remain inside the body NSDFG"
-    assert NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {}) is None, \
+    assert NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {}) is None, (
         "second run must be a no-op (idempotent)"
+    )
     assert no_wcr_inside_nested_sdfgs(sdfg) is None, "second run must not re-bury the boundary WCR"
 
 

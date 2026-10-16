@@ -15,22 +15,21 @@ write / index-tile-fill is a tile lib node.
 """
 
 import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
-import dace
-import pytest
 
-from dace.libraries.tileops import TileLoad
-from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
+import dace
+from dace.libraries.tileops import TileGather
+from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
-from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
 
 NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")
 NPROMA = dace.symbol("NPROMA")
 
-_WIDTHS = (8, 8)
+WIDTHS = (8, 8)
 
 
 @dace.program
@@ -45,9 +44,11 @@ def _icon_zekinh_gather(
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]] +
-                                       e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]] +
-                                       e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
+                z_ekinh[jb, jk, jc] = (
+                    e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]]
+                    + e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]]
+                    + e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]]
+                )
 
 
 def _count_tasklets(sdfg: dace.SDFG) -> int:
@@ -57,22 +58,29 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     lib nodes" -- so a tasklet is unlowered residue iff it reads/writes a tile
     (full ``widths`` or a ``ONE``-broadcast tile). Excluded as legitimate:
 
-    * Trivial ``_out = _in`` assign tasklets (``_is_assign_tasklet``) -- the
+    * Trivial ``_out = _in`` assign tasklets (``is_assign_tasklet``) -- the
       descent leaves these as one-element copies (collapsing into AN -> AN
       would drop source-side coordinates, per user directive).
-    * ``tile_runtime_*`` trip-guard tasklets (SYMBOLIC-dim ``__builtin_trap``
+    * ``tile_runtime_*`` trip-guard tasklets (SYMBOLIC-dim ``std::abort``
       control, not a compute residual).
     * Scalar ``__tile_k1_tail`` remainder tasklets operating purely on ``(1,)``
       scalars -- scalar-load -> scalar chains stay python scalar tasklets (user
       direction 2026-06-15); they touch no tile, so are not counted.
     """
-    return sum(1 for n, parent in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
-               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, _WIDTHS))
+    return sum(
+        1
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet)
+        and not is_assign_tasklet(n)
+        and not n.label.startswith("tile_runtime")
+        and tasklet_reads_or_writes_tile(parent, n, WIDTHS)
+    )
 
 
 def _count_tile_gathers(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileLoad) and tuple(n.gather_dims)))
+    return sum(
+        1 for n, node_state in sdfg.all_nodes_recursive() if (isinstance(n, TileGather) and tuple(n.gather_dims))
+    )
 
 
 def test_icon_zekinh_descent_to_tile_only():
@@ -86,6 +94,8 @@ def test_icon_zekinh_descent_to_tile_only():
     """
     sdfg = _icon_zekinh_gather.to_sdfg()
     sdfg.validate()
+    # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
+    canonicalize(sdfg, validate=True)
 
     VectorizeCPUMultiDim(
         VectorizeConfig(
@@ -93,17 +103,19 @@ def test_icon_zekinh_descent_to_tile_only():
             target_isa=ISA.SCALAR,
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
-            loop_to_map_permissive=False,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
 
     n_tasklet = _count_tasklets(sdfg)
     n_gather = _count_tile_gathers(sdfg)
-    assert n_tasklet == 0, (f"icon_zekinh_gather must lower to tile lib nodes only at the K-dim layer; "
-                            f"got {n_tasklet} raw Tasklet nodes after the descent.")
-    assert n_gather >= 1, (f"The 3-edge mixed gather must yield at least one TileLoad (gather); got {n_gather}.")
+    assert n_tasklet == 0, (
+        f"icon_zekinh_gather must lower to tile lib nodes only at the K-dim layer; "
+        f"got {n_tasklet} raw Tasklet nodes after the descent."
+    )
+    assert n_gather >= 1, f"The 3-edge mixed gather must yield at least one TileGather (gather); got {n_gather}."
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import dataclasses
 from dataclasses import is_dataclass
 from enum import Enum, EnumMeta
 from typing import Any
@@ -11,7 +12,7 @@ class _ExtensibleAttributeEnumMeta(EnumMeta):
         # Find and remove dataclasses from namespace before enum creation
         dataclass_members = {}
         for key in list(namespace.keys()):
-            if not key.startswith('_'):
+            if not key.startswith("_"):
                 value = namespace[key]
                 if isinstance(value, type) and is_dataclass(value):
                     dataclass_members[key] = value
@@ -20,7 +21,7 @@ class _ExtensibleAttributeEnumMeta(EnumMeta):
         for key in dataclass_members:
             del namespace[key]
             # Also remove from EnumDict's member tracking if present
-            if hasattr(namespace, '_member_names') and key in namespace._member_names:
+            if hasattr(namespace, "_member_names") and key in namespace._member_names:
                 if isinstance(namespace._member_names, list):
                     namespace._member_names.remove(key)
                 else:
@@ -188,10 +189,14 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
         return obj
 
     def __getattr__(self, name: str):
-        if name.startswith('_'):
+        if name.startswith("_"):
             raise AttributeError(name)
         if self._dataclass_type is not None and not isinstance(self._value_, type):
             return getattr(self._value_, name)
+        # A template reads as its dataclass defaults
+        field = self._dataclass_type.__dataclass_fields__.get(name) if self._is_template else None
+        if field is not None and field.default is not dataclasses.MISSING:
+            return field.default
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     def __eq__(self, other):
@@ -207,6 +212,13 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
             return True
         # Two instances compare by their dataclass values
         return self._value_ == other._value_
+
+    def __reduce_ex__(self, protocol):
+        # By name, not by value: a template's value is its dataclass, which pickles as a class nested in the enum
+        # that its own name no longer resolves to; an instance is rebuilt by calling its template.
+        if self._is_template or self._dataclass_type is None:
+            return getattr, (self.__class__, self._name_)
+        return instantiate_template, (self.__class__, self._name_, dataclasses.asdict(self._value_))
 
     def __hash__(self):
         return hash(self._name_)
@@ -290,19 +302,30 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
         """
         Deserialize an ExtensibleAttributeEnum member from a JSON object.
         """
-        type_name = json_obj['type']
-        member_name = type_name.split('.')[-1]
+        type_name = json_obj["type"]
+        member_name = type_name.split(".")[-1]
         member = cls[member_name]
 
         if member._is_template:
             # Try to create instance from dataclass fields
             from dace import serialize
+
+            fields = member._dataclass_type.__dataclass_fields__
+            # Only a class can guide deserialization; a typing annotation such as ``Optional[bool]`` cannot
             data_fields = {
-                k: serialize.from_json(v, context, known_type=member._dataclass_type.__dataclass_fields__[k].type)
-                for k, v in json_obj.items() if k != 'type'
+                k: serialize.from_json(
+                    v, context, known_type=fields[k].type if isinstance(fields[k].type, type) else None
+                )
+                for k, v in json_obj.items()
+                if k != "type"
             }
             if data_fields:
                 return member(**data_fields)
             return member  # Uninstantiated template
         else:
             return member
+
+
+def instantiate_template(cls: type, name: str, fields: dict) -> ExtensibleAttributeEnum:
+    """The instance of template ``name`` of ``cls`` with ``fields``; the counterpart of ``__reduce_ex__``."""
+    return getattr(cls, name)(**fields)

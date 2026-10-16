@@ -1,19 +1,17 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.sdfg.graph import SubgraphView
 import numpy as np
 
+import dace
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
-from dace.sdfg.graph import SubgraphView
-
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
 def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N]):
 
-    for i in dace.map[0:N // 2]:
+    for i in dace.map[0 : N // 2]:
         with dace.tasklet:
             in1 << A[2 * i]
             in2 << A[2 * i + 1]
@@ -21,7 +19,7 @@ def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.flo
 
             out = in1 + in2
 
-    for i in dace.map[0:N // 2]:
+    for i in dace.map[0 : N // 2]:
         with dace.tasklet:
             in1 << B[2 * i]
             in2 << B[2 * i + 1]
@@ -29,10 +27,10 @@ def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.flo
 
             out = in1 + in2
 
-    for i in dace.map[0:N // 2]:
+    for i in dace.map[0 : N // 2]:
         with dace.tasklet:
-            in1 << C[2 * i:2 * i + 2]
-            out1 >> D[2 * i:2 * i + 2]
+            in1 << C[2 * i : 2 * i + 2]
+            out1 >> D[2 * i : 2 * i + 2]
 
             out1[0] = in1[0] * in1[0]
             out1[1] = in1[1] * in1[1]
@@ -51,7 +49,7 @@ def _test_quantitatively(sdfg):
     csdfg(A=A, B=B, C=C1, D=D1, N=1000)
     del csdfg
 
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
 
     me = MultiExpansion()
     me.setup_match(subgraph)
@@ -73,18 +71,27 @@ def _test_quantitatively(sdfg):
 def test_mimo():
     sdfg = mimo.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
+
     sdfg.apply_transformations_repeated(StateFusion, permissive=True)
     # merge the C array
     C1 = None
     C2 = None
     for node in sdfg.nodes()[0].nodes():
-        if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data == 'C':
+        if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data == "C":
             if not C1:
                 C1 = node
             elif not C2:
                 C2 = node
                 break
     if C1 is not None and C2 is not None:
+        # Ordering edges that touch the C node being merged become cyclic once
+        # both C instances collapse to one (e.g. C -> B -> map24 -> C). Drop
+        # these connector-less edges; the data dependencies still sequence the
+        # maps that read and write C correctly.
+        for edge in list(sdfg.nodes()[0].edges()):
+            if edge.src_conn is None and edge.dst_conn is None:
+                if edge.src in (C1, C2) or edge.dst in (C1, C2):
+                    sdfg.nodes()[0].remove_edge(edge)
         dace.sdfg.utils.change_edge_dest(sdfg.nodes()[0], C2, C1)
         dace.sdfg.utils.change_edge_src(sdfg.nodes()[0], C2, C1)
         sdfg.nodes()[0].remove_node(C2)
@@ -96,8 +103,14 @@ def test_mimo():
 def test_single_data_multiple_intermediate_accesses():
 
     @dace.program
-    def sdmi_accesses(ZSOLQA: dace.float64[1, 5, 5], ZEPSEC: dace.float64, ZQX: dace.float64[1, 137, 5],
-                      LLINDEX3: dace.bool[1, 5, 5], ZRATIO: dace.float64[1, 5], ZSINKSUM: dace.float64[1, 5]):
+    def sdmi_accesses(
+        ZSOLQA: dace.float64[1, 5, 5],
+        ZEPSEC: dace.float64,
+        ZQX: dace.float64[1, 137, 5],
+        LLINDEX3: dace.bool[1, 5, 5],
+        ZRATIO: dace.float64[1, 5],
+        ZSINKSUM: dace.float64[1, 5],
+    ):
 
         for i in dace.map[0:5]:
             ZSINKSUM[0, i] = 0.0
@@ -114,7 +127,7 @@ def test_single_data_multiple_intermediate_accesses():
             ZRATIO[0, i] = t0 / t1
 
     sdfg = sdmi_accesses.to_sdfg(simplify=True)
-    assert len(sdfg.states()) == 1
+    assert sdfg.num_states() == 1
 
     rng = np.random.default_rng(42)
     ZSOLQA = rng.random((1, 5, 5))
@@ -129,8 +142,8 @@ def test_single_data_multiple_intermediate_accesses():
 
     sdfg(ZSOLQA=ZSOLQA, ZEPSEC=ZEPSEC, ZQX=ZQX, LLINDEX3=ref_LLINDEX3, ZRATIO=ref_ZRATIO, ZSINKSUM=ref_ZSINKSUM)
 
-    graph = sdfg.states()[0]
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    graph = next(iter(sdfg.states()))
+    subgraph = SubgraphView(graph, list(graph.nodes()))
 
     me = MultiExpansion()
     me.setup_match(subgraph)
@@ -149,6 +162,6 @@ def test_single_data_multiple_intermediate_accesses():
     assert np.allclose(ref_ZSINKSUM, val_ZSINKSUM)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_mimo()
     test_single_data_multiple_intermediate_accesses()

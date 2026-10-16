@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 
 
@@ -34,10 +35,10 @@ def test_elementwise():
 
     optest(A, B, C)
     diff = np.linalg.norm(C - ((-A) * B))
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_elem_assignment()
     test_elementwise()

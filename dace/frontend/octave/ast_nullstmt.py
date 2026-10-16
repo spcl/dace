@@ -3,7 +3,6 @@ from .ast_node import AST_Node
 
 
 class AST_NullStmt(AST_Node):
-
     def __init__(self, context):
         AST_Node.__init__(self, context)
 
@@ -21,7 +20,6 @@ class AST_NullStmt(AST_Node):
 
 
 class AST_EndStmt(AST_Node):
-
     def __init__(self, context):
         AST_Node.__init__(self, context)
 
@@ -36,7 +34,6 @@ class AST_EndStmt(AST_Node):
 
 
 class AST_Comment(AST_Node):
-
     def __init__(self, context, text):
         AST_Node.__init__(self, context)
         self.text = text
@@ -53,4 +50,4 @@ class AST_Comment(AST_Node):
     def __repr__(self):
         text = self.text
         text = text.encode("unicode_escape").decode("utf-8")
-        return "AST_Comment(\"" + text + "\")"
+        return 'AST_Comment("' + text + '")'

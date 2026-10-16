@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from typing import TYPE_CHECKING
-from dace import registry, dtypes
+
+from dace import dtypes, registry
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpu import CPUCodeGen
@@ -12,12 +13,13 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
-@registry.autoregister_params(name='mlir')
+@registry.autoregister_params(name="mlir")
 class MLIRCodeGen(TargetCodeGenerator):
-    target_name = 'mlir'
-    title = 'MLIR'
+    target_name = "mlir"
+    title = "MLIR"
 
-    def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
+    def __init__(self, frame_codegen: "DaCeCodeGenerator", sdfg: SDFG):
+        self._frame = frame_codegen
         self._codeobjects = []
         self._cpu_codegen: CPUCodeGen = frame_codegen.dispatcher.get_generic_node_dispatcher()
         frame_codegen.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
@@ -44,5 +46,5 @@ class MLIRCodeGen(TargetCodeGenerator):
 
     @staticmethod
     def cmake_files():
-        mlir_cmake = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mlir.cmake')
+        mlir_cmake = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mlir.cmake")
         return [mlir_cmake]

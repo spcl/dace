@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Internal helpers for the :mod:`dace.libraries.sort` library nodes."""
+
 import dace
 
 _INTEGER_DTYPES = {

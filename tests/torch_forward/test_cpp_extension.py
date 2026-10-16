@@ -6,19 +6,18 @@ import os
 
 import torch
 import torch.utils.cpp_extension
-from dace.codegen import targets, compiler
-from dace.codegen.codeobject import CodeObject
 from torch import nn
 
 import dace
+from dace.codegen import compiler, targets
+from dace.codegen.codeobject import CodeObject
 from dace.libraries.torch import PyTorch
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 from tests.utils import torch_tensors_close
 
 op_source = """
 #include <torch/torch.h>
 #include <torch/script.h>
-
-#include <ATen/NamedTensorUtils.h>
 
 using torch::Tensor;
 using torch::DeviceType;
@@ -82,38 +81,38 @@ TORCH_LIBRARY_IMPL(myops, Autograd, m) {
 
 @pytest.mark.torch
 def test_extension():
-    program = CodeObject("myadd",
-                         op_source,
-                         "cpp",
-                         targets.cpu.CPUCodeGen,
-                         "MyAddFunction",
-                         environments={PyTorch.full_class_path()})
+    program = CodeObject(
+        "myadd", op_source, "cpp", targets.cpu.CPUCodeGen, "MyAddFunction", environments={PyTorch.full_class_path()}
+    )
 
-    BUILD_PATH = os.path.join('.dacecache', "pt_extension")
+    BUILD_PATH = os.path.join(".dacecache", "pt_extension")
     compiler.generate_program_folder(None, [program], BUILD_PATH)
     torch.utils.cpp_extension.load(
-        name='pt_extension',
-        sources=[os.path.join(BUILD_PATH, 'src', 'cpu', 'myadd.cpp')],
+        name="pt_extension",
+        sources=[os.path.join(BUILD_PATH, "src", "cpu", "myadd.cpp")],
         is_python_module=False,
     )
     torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32))
 
 
 @pytest.mark.torch
-def test_module_with_constant():
+@pytest.mark.parametrize("device", DEVICES)
+def test_module_with_constant(device):
 
-    @dace.ml.module(sdfg_name="test_module_with_constant")
+    dev = torch_device(device)
+
+    @dace.ml.module(sdfg_name=f"test_module_with_constant_{device}", cuda=is_gpu(device))
     class Module(nn.Module):
-
         def forward(self, x):
             return x + 1
 
-    inp = torch.ones((5, 5))
-    output = Module()(inp)
+    inp = torch.ones((5, 5)).to(dev)
+    with experimental_cuda():
+        output = Module()(inp)
 
-    torch_tensors_close("output", inp + 1, output.cpu())
+    torch_tensors_close("output", (inp + 1).cpu(), output.cpu())
 
 
 if __name__ == "__main__":
     test_extension()
-    test_module_with_constant()
+    test_module_with_constant(device="cpu")

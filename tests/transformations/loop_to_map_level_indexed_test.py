@@ -12,6 +12,7 @@ refuse with "dynamic write ... not indexed by the iteration variable". This test
 exercises both: it would regress if ``LoopToMap``'s analysis tightens beyond what is
 sound, *and* if memlet propagation's enclosing-loop-symbol handling regresses.
 """
+
 import numpy as np
 import pytest
 
@@ -19,7 +20,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.interstate.loop_to_map import LoopToMap
 
-NS, NL, NH = (dace.symbol(s) for s in ('NS', 'NL', 'NH'))
+NS, NL, NH = (dace.symbol(s) for s in ("NS", "NL", "NH"))
 
 
 @dace.program
@@ -47,6 +48,7 @@ def test_level_indexed_write_maps_and_propagates():
     assert np.allclose(out, src * 2.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__]))

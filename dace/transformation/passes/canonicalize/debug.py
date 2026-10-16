@@ -23,21 +23,23 @@ Typical use::
     # first failing stage:
     bad = next((r for r in results if not r.ok), None)
 """
+
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
-from dace import SDFG, data as dt, dtypes, symbolic
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace import SDFG, dtypes, symbolic
+from dace import data as dt
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 
 #: Default small value assigned to every free (sizing) symbol.
 DEFAULT_SYMBOL_VALUE: int = 3
 #: Default small-magnitude range for random floating-point input data.
-DEFAULT_FLOAT_RANGE: Tuple[float, float] = (0.25, 1.0)
+DEFAULT_FLOAT_RANGE: tuple[float, float] = (0.25, 1.0)
 #: Default small range for random integer input data.
-DEFAULT_INT_RANGE: Tuple[int, int] = (1, 4)
+DEFAULT_INT_RANGE: tuple[int, int] = (1, 4)
 
 
 @dataclass
@@ -55,14 +57,15 @@ class StageCheckResult:
         across all compared arrays, or ``None`` if not run.
     :param run_error: Compile/run exception text, or ``None``.
     """
+
     index: int
     label: str
     pass_name: str
     valid: bool
-    validation_error: Optional[str]
-    numerically_correct: Optional[bool]
-    max_abs_diff: Optional[float]
-    run_error: Optional[str]
+    validation_error: str | None
+    numerically_correct: bool | None
+    max_abs_diff: float | None
+    run_error: str | None
 
     @property
     def ok(self) -> bool:
@@ -70,19 +73,19 @@ class StageCheckResult:
         return self.valid and self.numerically_correct is True
 
     def __str__(self) -> str:
-        v = 'valid' if self.valid else f'INVALID({self.validation_error})'
+        v = "valid" if self.valid else f"INVALID({self.validation_error})"
         if self.run_error is not None:
-            n = f'RUN-ERROR({self.run_error})'
+            n = f"RUN-ERROR({self.run_error})"
         elif self.numerically_correct is None:
-            n = 'not-run'
+            n = "not-run"
         elif self.numerically_correct:
-            n = f'numeric-ok(maxdiff={self.max_abs_diff:.2e})'
+            n = f"numeric-ok(maxdiff={self.max_abs_diff:.2e})"
         else:
-            n = f'NUMERIC-MISMATCH(maxdiff={self.max_abs_diff:.2e})'
-        return f'[{self.index:2}] {self.label:24s} {self.pass_name:36s} {v} | {n}'
+            n = f"NUMERIC-MISMATCH(maxdiff={self.max_abs_diff:.2e})"
+        return f"[{self.index:2}] {self.label:24s} {self.pass_name:36s} {v} | {n}"
 
 
-def _resolve_shape(shape: Tuple[Any, ...], symbol_values: Dict[str, int]) -> Tuple[int, ...]:
+def _resolve_shape(shape: tuple[Any, ...], symbol_values: dict[str, int]) -> tuple[int, ...]:
     """Substitute symbol values into a (symbolic) descriptor shape.
 
     :param shape: Descriptor shape; each dimension is an int or a symbolic
@@ -90,14 +93,14 @@ def _resolve_shape(shape: Tuple[Any, ...], symbol_values: Dict[str, int]) -> Tup
     :param symbol_values: Concrete value for every free symbol in ``shape``.
     :returns: The fully concrete shape.
     """
-    out: List[int] = []
+    out: list[int] = []
     for dim in shape:
         val = symbolic.evaluate(dim, symbol_values) if symbolic.issymbolic(dim) else dim
         out.append(int(val))
     return tuple(out)
 
 
-def _random_for_dtype(dtype: dtypes.typeclass, shape: Tuple[int, ...], rng: np.random.Generator) -> Any:
+def _random_for_dtype(dtype: dtypes.typeclass, shape: tuple[int, ...], rng: np.random.Generator) -> Any:
     """Build small-magnitude random data of ``dtype`` and ``shape``.
 
     :param dtype: Element type of the data.
@@ -120,8 +123,9 @@ def _random_for_dtype(dtype: dtypes.typeclass, shape: Tuple[int, ...], rng: np.r
     return data.astype(np_dtype)
 
 
-def _build_random_inputs(sdfg: SDFG, symbol_value: int,
-                         rng: np.random.Generator) -> Tuple[Dict[str, int], Dict[str, Any]]:
+def _build_random_inputs(
+    sdfg: SDFG, symbol_value: int, rng: np.random.Generator
+) -> tuple[dict[str, int], dict[str, Any]]:
     """Build ``(symbol_values, data_values)`` for one run of ``sdfg``.
 
     Every free symbol is set to ``symbol_value``; every non-transient
@@ -132,10 +136,10 @@ def _build_random_inputs(sdfg: SDFG, symbol_value: int,
     :param rng: Random generator drawn from for the data.
     :returns: ``(symbols, arrays)`` -- two dicts keyed by argument name.
     """
-    free_syms = {str(s) for s in sdfg.free_symbols}
-    symbols: Dict[str, int] = {s: symbol_value for s in free_syms}
+    free_syms = dict.fromkeys(str(s) for s in sdfg.free_symbols)
+    symbols: dict[str, int] = dict.fromkeys(free_syms, symbol_value)
 
-    arrays: Dict[str, Any] = {}
+    arrays: dict[str, Any] = {}
     for name, desc in sdfg.arglist().items():
         if name in symbols:
             continue  # a sizing symbol, handled above
@@ -149,7 +153,7 @@ def _build_random_inputs(sdfg: SDFG, symbol_value: int,
     return symbols, arrays
 
 
-def _run_capture(sdfg: SDFG, symbols: Dict[str, int], arrays: Dict[str, Any], tag: str) -> Dict[str, np.ndarray]:
+def _run_capture(sdfg: SDFG, symbols: dict[str, int], arrays: dict[str, Any], tag: str) -> dict[str, np.ndarray]:
     """Run a fresh copy of ``sdfg`` on copies of the inputs.
 
     A copy of every input is passed so callers can reuse the same inputs
@@ -163,14 +167,14 @@ def _run_capture(sdfg: SDFG, symbols: Dict[str, int], arrays: Dict[str, Any], ta
     :returns: The post-run array values (outputs), keyed by argument name.
     """
     run_sdfg = copy.deepcopy(sdfg)
-    run_sdfg.name = f'{run_sdfg.name}_{tag}'
+    run_sdfg.name = f"{run_sdfg.name}_{tag}"
     call_args = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
     call_args.update(symbols)
     run_sdfg(**call_args)
     return {k: v for k, v in call_args.items() if isinstance(v, np.ndarray)}
 
 
-def _compare(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], rtol: float, atol: float) -> Tuple[bool, float]:
+def _compare(ref: dict[str, np.ndarray], got: dict[str, np.ndarray], rtol: float, atol: float) -> tuple[bool, float]:
     """Compare two output dicts arraywise.
 
     :param ref: Reference outputs from the un-canonicalized SDFG.
@@ -185,20 +189,21 @@ def _compare(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], rtol: float
         if name not in got:
             continue
         got_val = got[name]
-        diff = float(np.max(np.abs(ref_val.astype(np.float64) - got_val.astype(np.float64)))) \
-            if ref_val.size else 0.0
+        diff = float(np.max(np.abs(ref_val.astype(np.float64) - got_val.astype(np.float64)))) if ref_val.size else 0.0
         max_diff = max(max_diff, diff)
         if not np.allclose(ref_val, got_val, rtol=rtol, atol=atol, equal_nan=True):
             all_close = False
     return all_close, max_diff
 
 
-def canonicalize_with_stage_checks(sdfg: SDFG,
-                                   symbol_value: int = DEFAULT_SYMBOL_VALUE,
-                                   seed: int = 0,
-                                   rtol: float = 1e-6,
-                                   atol: float = 1e-9,
-                                   stop_on_failure: bool = False) -> List[StageCheckResult]:
+def canonicalize_with_stage_checks(
+    sdfg: SDFG,
+    symbol_value: int = DEFAULT_SYMBOL_VALUE,
+    seed: int = 0,
+    rtol: float = 1e-6,
+    atol: float = 1e-9,
+    stop_on_failure: bool = False,
+) -> list[StageCheckResult]:
     """Canonicalize ``sdfg`` stage-by-stage, checking validity + numerical
     equivalence after every stage.
 
@@ -219,13 +224,13 @@ def canonicalize_with_stage_checks(sdfg: SDFG,
     symbols, arrays = _build_random_inputs(original, symbol_value, rng)
 
     try:
-        reference = _run_capture(original, symbols, arrays, 'ref')
+        reference = _run_capture(original, symbols, arrays, "ref")
     except Exception as e:
-        raise RuntimeError(f'cannot run the original SDFG to get a numerical reference: {e}') from e
+        raise RuntimeError(f"cannot run the original SDFG to get a numerical reference: {e}") from e
 
-    results: List[StageCheckResult] = []
+    results: list[StageCheckResult] = []
     work = copy.deepcopy(sdfg)
-    for index, (label, unit) in enumerate(_build_stages()):
+    for index, (label, unit) in enumerate(build_stages()):
         unit.apply_pass(work, {})
 
         valid, verr = True, None
@@ -234,31 +239,34 @@ def canonicalize_with_stage_checks(sdfg: SDFG,
         except Exception as e:
             valid, verr = False, str(e).splitlines()[0]
 
-        num_ok: Optional[bool] = None
-        max_diff: Optional[float] = None
-        rerr: Optional[str] = None
+        num_ok: bool | None = None
+        max_diff: float | None = None
+        rerr: str | None = None
         if valid:
             try:
-                got = _run_capture(work, symbols, arrays, f's{index}')
+                got = _run_capture(work, symbols, arrays, f"s{index}")
                 num_ok, max_diff = _compare(reference, got, rtol, atol)
             except Exception as e:
                 rerr = str(e).splitlines()[0]
 
         results.append(
-            StageCheckResult(index=index,
-                             label=label,
-                             pass_name=type(unit).__name__,
-                             valid=valid,
-                             validation_error=verr,
-                             numerically_correct=num_ok,
-                             max_abs_diff=max_diff,
-                             run_error=rerr))
+            StageCheckResult(
+                index=index,
+                label=label,
+                pass_name=type(unit).__name__,
+                valid=valid,
+                validation_error=verr,
+                numerically_correct=num_ok,
+                max_abs_diff=max_diff,
+                run_error=rerr,
+            )
+        )
         if stop_on_failure and not results[-1].ok:
             break
     return results
 
 
-def first_failing_stage(sdfg: SDFG, **kwargs) -> Optional[StageCheckResult]:
+def first_failing_stage(sdfg: SDFG, **kwargs: Any) -> StageCheckResult | None:
     """Convenience: return the first stage that broke validity or values,
     or ``None`` if the whole pipeline stayed valid + numerically correct.
 
@@ -266,6 +274,6 @@ def first_failing_stage(sdfg: SDFG, **kwargs) -> Optional[StageCheckResult]:
     :param kwargs: Forwarded to :func:`canonicalize_with_stage_checks`.
     :returns: The first failing :class:`StageCheckResult`, or ``None``.
     """
-    kwargs.setdefault('stop_on_failure', True)
+    kwargs.setdefault("stop_on_failure", True)
     results = canonicalize_with_stage_checks(sdfg, **kwargs)
     return next((r for r in results if not r.ok), None)

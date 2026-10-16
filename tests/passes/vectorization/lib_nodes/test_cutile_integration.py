@@ -1,8 +1,9 @@
+from dace.transformation.passes.vectorization.enums import ISA
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """End-to-end integration tests for the cuTile expansion + Python backend pipeline.
 
 Each test creates an SDFG (via API or @dace.program), applies the
-``VectorizeCuTile`` orchestrator (vectorize with target_isa="CUTILE", lower
+``VectorizeCuTile`` orchestrator (vectorize with target_isa=ISA.CUTILE, lower
 schedules/storage/implementations, expand library nodes, select the Python
 backend), generates Python code, compiles, runs on GPU, and compares results
 against a NumPy reference. The structural tests double as regression tests of
@@ -627,7 +628,7 @@ class TestMultiDimGather:
     @pytest.mark.parametrize("NB_val", [1, 2])
     def test_gather_indexed_by_non_innermost_dim(self, NB_val):
         """Gather whose index tile walks the MIDDLE tiled loop (``jk``), not the
-        innermost (``jc``). The index ``TileLoad`` is K=1 on a non-trailing tile
+        innermost (``jc``). The index ``TileGather`` is K=1 on a non-trailing tile
         dim, so the per-lane block id must resolve ``jk``'s grid axis -- the
         positional trailing-K offset would read the wrong ``ct.bid`` axis."""
         NB = dace.symbol("NB")

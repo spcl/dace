@@ -13,25 +13,45 @@ to a ``.cu``, lowers to native ``f16x2`` PTX) is covered by
 Coverage: elementwise arithmetic, broadcast constants (at input precision),
 the transcendental unops (sin / cos / exp / log / sqrt / tanh / tan), min/max,
 a 2-D stencil, and an fp16 bit-exactness check.
+
+Every numeric check is paired with a structural one: a numbers-only check also passes
+when the pass refuses and the orchestrator hands back the untransformed SDFG (it
+trivially matches its own reference). ``_vectorize`` therefore also returns the
+pristine pre-pass SDFG, so each test can assert the tile-op count went from the
+empty-bracket 0 to a nonzero count -- proof that vectorization actually ran.
 """
+
+import copy
+
 import numpy as np
 import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES, VectorizeCPUMultiDim
 
 M = 64  # exact multiple of every tested width (2 / 4)
 
 
-def _vectorize(prog, isa="SCALAR", width=4, assume_even=False):
+def _vectorize(prog, isa=ISA.SCALAR, width=4, assume_even=False):
     sdfg = prog.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(width, ), target_isa=isa,
-                                         assume_even=assume_even)).apply_pass(sdfg, {})
-    return sdfg
+    pristine = copy.deepcopy(sdfg)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(width,), target_isa=isa, assume_even=assume_even)).apply_pass(sdfg, {})
+    return sdfg, pristine
 
 
-# --------------------------- elementwise arithmetic ---------------------------
+def _tile_op_count(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES))
+
+
+def _assert_really_vectorized(sdfg: dace.SDFG, pristine: dace.SDFG) -> None:
+    """Empty-bracket control (0 tile ops pre-pass) plus the real assertion (>0 post-pass)."""
+    assert _tile_op_count(pristine) == 0, "untransformed reference must carry no tile ops"
+    assert _tile_op_count(sdfg) > 0, "no tile op emitted -- the pass refused and returned the pristine SDFG"
+
+
+# elementwise arithmetic
 @dace.program
 def _arith(A: dace.float32[M], B: dace.float32[M], D: dace.float32[M], C: dace.float32[M]):
     for i in dace.map[0:M]:
@@ -39,17 +59,19 @@ def _arith(A: dace.float32[M], B: dace.float32[M], D: dace.float32[M], C: dace.f
 
 
 def test_elementwise_arithmetic():
-    sdfg = _vectorize(_arith, width=4)
-    A = np.random.rand(M).astype(np.float32) + 0.5
-    B = np.random.rand(M).astype(np.float32) + 0.5
-    D = np.random.rand(M).astype(np.float32) + 0.5
+    rng = np.random.default_rng(42)
+    sdfg, pristine = _vectorize(_arith, width=4)
+    _assert_really_vectorized(sdfg, pristine)
+    A = rng.random(M).astype(np.float32) + 0.5
+    B = rng.random(M).astype(np.float32) + 0.5
+    D = rng.random(M).astype(np.float32) + 0.5
     C = np.zeros(M, np.float32)
     sdfg(A=A, B=B, D=D, C=C)
     ref = (A + B) * D - A / (B + 1.0)
     assert np.allclose(C, ref, rtol=1e-5, atol=1e-5), np.max(np.abs(C - ref))
 
 
-# --------------------------- broadcast constant ---------------------------
+# broadcast constant
 @dace.program
 def _axpy_const(A: dace.float32[M], B: dace.float32[M], C: dace.float32[M]):
     for i in dace.map[0:M]:
@@ -57,16 +79,18 @@ def _axpy_const(A: dace.float32[M], B: dace.float32[M], C: dace.float32[M]):
 
 
 def test_broadcast_constant():
-    sdfg = _vectorize(_axpy_const, width=4)
-    A = np.random.rand(M).astype(np.float32)
-    B = np.random.rand(M).astype(np.float32)
+    rng = np.random.default_rng(42)
+    sdfg, pristine = _vectorize(_axpy_const, width=4)
+    _assert_really_vectorized(sdfg, pristine)
+    A = rng.random(M).astype(np.float32)
+    B = rng.random(M).astype(np.float32)
     C = np.zeros(M, np.float32)
     sdfg(A=A, B=B, C=C)
     ref = 0.25 * A + 3.0 * B
     assert np.allclose(C, ref, rtol=1e-5, atol=1e-5), np.max(np.abs(C - ref))
 
 
-# --------------------------- transcendental unops ---------------------------
+# transcendental unops
 # One @dace.program per op (the frontend needs each at module scope). The numpy
 # oracle is looked up by name; inputs are drawn in a safe domain per op.
 @dace.program
@@ -111,25 +135,30 @@ def _u_tan(A: dace.float32[M], C: dace.float32[M]):
         C[i] = np.tan(A[i])
 
 
-@pytest.mark.parametrize("prog,ref", [
-    (_u_sin, np.sin),
-    (_u_cos, np.cos),
-    (_u_exp, np.exp),
-    (_u_log, np.log),
-    (_u_sqrt, np.sqrt),
-    (_u_tanh, np.tanh),
-    (_u_tan, np.tan),
-])
+@pytest.mark.parametrize(
+    "prog,ref",
+    [
+        (_u_sin, np.sin),
+        (_u_cos, np.cos),
+        (_u_exp, np.exp),
+        (_u_log, np.log),
+        (_u_sqrt, np.sqrt),
+        (_u_tanh, np.tanh),
+        (_u_tan, np.tan),
+    ],
+)
 def test_transcendental_unop(prog, ref):
-    sdfg = _vectorize(prog, width=4)
+    rng = np.random.default_rng(42)
+    sdfg, pristine = _vectorize(prog, width=4)
+    _assert_really_vectorized(sdfg, pristine)
     # Domain (0.2, 1.0): valid for log/sqrt and away from tan's asymptotes.
-    A = (np.random.rand(M).astype(np.float32) * 0.8 + 0.2)
+    A = rng.random(M).astype(np.float32) * 0.8 + 0.2
     C = np.zeros(M, np.float32)
     sdfg(A=A, C=C)
     assert np.allclose(C, ref(A), rtol=1e-4, atol=1e-5), np.nanmax(np.abs(C - ref(A)))
 
 
-# --------------------------- min / max with a constant ---------------------------
+# min / max with a constant
 @dace.program
 def _clamp(A: dace.float32[M], C: dace.float32[M]):
     for i in dace.map[0:M]:
@@ -137,24 +166,28 @@ def _clamp(A: dace.float32[M], C: dace.float32[M]):
 
 
 def test_min_max_constant():
-    sdfg = _vectorize(_clamp, width=4)
-    A = np.random.rand(M).astype(np.float32)
+    rng = np.random.default_rng(42)
+    sdfg, pristine = _vectorize(_clamp, width=4)
+    _assert_really_vectorized(sdfg, pristine)
+    A = rng.random(M).astype(np.float32)
     C = np.zeros(M, np.float32)
     sdfg(A=A, C=C)
     ref = np.minimum(np.maximum(A, 0.3), 0.7)
     assert np.allclose(C, ref, rtol=1e-6, atol=1e-6), np.max(np.abs(C - ref))
 
 
-# --------------------------- 2-D stencil ---------------------------
+# 2-D stencil
 @dace.program
 def _jacobi2d(A: dace.float32[M, M], B: dace.float32[M, M]):
-    for i, j in dace.map[1:M - 1, 1:M - 1]:
+    for i, j in dace.map[1 : M - 1, 1 : M - 1]:
         B[i, j] = dace.float32(0.2) * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i + 1, j] + A[i - 1, j])
 
 
 def test_stencil_jacobi2d():
-    sdfg = _vectorize(_jacobi2d, width=4)
-    A = np.random.rand(M, M).astype(np.float32)
+    rng = np.random.default_rng(42)
+    sdfg, pristine = _vectorize(_jacobi2d, width=4)
+    _assert_really_vectorized(sdfg, pristine)
+    A = rng.random((M, M)).astype(np.float32)
     B = np.zeros((M, M), np.float32)
     sdfg(A=A, B=B)
     ref = B.copy()
@@ -162,7 +195,7 @@ def test_stencil_jacobi2d():
     assert np.allclose(B, ref, rtol=1e-5, atol=1e-5), np.max(np.abs(B - ref))
 
 
-# --------------------------- fp16 bit-exactness (the half2 element type) ------
+# fp16 bit-exactness (the half2 element type)
 @dace.program
 def _fp16_fma(A: dace.float16[M], B: dace.float16[M], C: dace.float16[M]):
     for i in dace.map[0:M]:
@@ -172,22 +205,25 @@ def _fp16_fma(A: dace.float16[M], B: dace.float16[M], C: dace.float16[M]):
 def test_fp16_matches_numpy():
     """The fp16 tile arithmetic (the half2 element type) matches numpy fp16.
     Width-2 tile is exactly the half2 packing the GPU path uses."""
-    sdfg = _vectorize(_fp16_fma, width=2)
-    A = np.random.rand(M).astype(np.float16)
-    B = np.random.rand(M).astype(np.float16)
+    rng = np.random.default_rng(42)
+    sdfg, pristine = _vectorize(_fp16_fma, width=2)
+    _assert_really_vectorized(sdfg, pristine)
+    A = rng.random(M).astype(np.float16)
+    B = rng.random(M).astype(np.float16)
     C = np.zeros(M, np.float16)
     sdfg(A=A, B=B, C=C)
-    ref = (np.float16(0.5) * A + B)
+    ref = np.float16(0.5) * A + B
     # fp16 ops round each step; numpy does the same per-element, so this is tight.
-    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), \
-        np.max(np.abs(C.astype(np.float32) - ref.astype(np.float32)))
+    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), np.max(
+        np.abs(C.astype(np.float32) - ref.astype(np.float32))
+    )
 
 
 def test_constant_adopts_input_precision():
     """A bare python-float constant in an fp16 kernel is materialised at the input
     precision (fp16), not left fp64 -- so the tile op stays uniform-dtype (and the
     GPU half2 fast path, which requires a ``__half`` tile, still fires)."""
-    sdfg = _vectorize(_fp16_fma, width=2)
+    sdfg, _ = _vectorize(_fp16_fma, width=2)
     code = "\n".join(c.clean_code for c in sdfg.generate_code())
     # The constant is cast to float16, and no float64 literal operand leaks in.
     assert "float16(" in code

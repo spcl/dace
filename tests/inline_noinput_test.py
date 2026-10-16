@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -23,8 +24,8 @@ def test():
 
     inline_noinput(A)
 
-    diff = np.linalg.norm(A - np.array([5., 3.]))
-    print('Difference:', diff)
+    diff = np.linalg.norm(A - np.array([5.0, 3.0]))
+    print("Difference:", diff)
     assert diff < 1e-5
 
 

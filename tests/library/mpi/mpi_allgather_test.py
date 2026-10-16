@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.memlet import Memlet
-import dace.libraries.mpi as mpi
 import numpy as np
 import pytest
+
+import dace
+from dace.libraries import mpi
+from dace.memlet import Memlet
 
 ###############################################################################
 
@@ -23,10 +24,9 @@ def make_sdfg(dtype):
     allgather_node = mpi.nodes.allgather.Allgather("allgather")
 
     state.add_memlet_path(inA, allgather_node, dst_conn="_inbuffer", memlet=Memlet.simple(inA, "0:n", num_accesses=n))
-    state.add_memlet_path(allgather_node,
-                          outA,
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple(outA, "0:n*p", num_accesses=1))
+    state.add_memlet_path(
+        allgather_node, outA, src_conn="_outbuffer", memlet=Memlet.simple(outA, "0:n*p", num_accesses=1)
+    )
 
     return sdfg
 
@@ -36,6 +36,7 @@ def make_sdfg(dtype):
 
 def _test_mpi(info, sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()

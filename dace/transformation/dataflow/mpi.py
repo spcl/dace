@@ -1,14 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains the MPITransformMap transformation. """
+"""Contains the MPITransformMap transformation."""
 
 from dace import dtypes
-from dace.sdfg import has_dynamic_map_inputs
+from dace.properties import make_properties
+from dace.sdfg import has_dynamic_map_inputs, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties
 
 
 @make_properties
@@ -96,8 +95,8 @@ class MPITransformMap(transformation.SingleStateTransformation):
         map_entry = self.map_entry
 
         # Avoiding import loops
+        from dace.transformation.dataflow.local_storage import InLocalStorage, LocalStorage, OutLocalStorage
         from dace.transformation.dataflow.strip_mining import StripMining
-        from dace.transformation.dataflow.local_storage import InLocalStorage, OutLocalStorage, LocalStorage
 
         rangeexpr = str(map_entry.map.range.num_elements())
 
@@ -126,7 +125,7 @@ class MPITransformMap(transformation.SingleStateTransformation):
                 continue
             in_local_storage_subgraph = {
                 LocalStorage.node_a: graph.node_id(outer_map),
-                LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry]
+                LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry],
             }
             cfg_id = graph.parent_graph.cfg_id
             in_local_storage = InLocalStorage()
@@ -144,7 +143,7 @@ class MPITransformMap(transformation.SingleStateTransformation):
             name = e.data.data
             outlocalstorage_subgraph = {
                 LocalStorage.node_a: graph.node_id(in_map_exit),
-                LocalStorage.node_b: graph.node_id(out_map_exit)
+                LocalStorage.node_b: graph.node_id(out_map_exit),
             }
             cfg_id = graph.parent_graph.cfg_id
             outlocalstorage = OutLocalStorage()

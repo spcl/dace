@@ -45,9 +45,6 @@ checks that only validate the program.
      - Recognizes ``mpi4py`` communicator method calls and rewrites them into
        the corresponding ``dace.comm`` library calls. Skipped silently if
        ``mpi4py`` is not installed.
-   * - :class:`~dace.frontend.python.preprocessing.ModuloConverter`
-     - Normalizes Python's modulo operator to DaCe's C-style semantics (see
-       :doc:`pysupport`, section 6.7).
    * - :func:`~dace.frontend.python.preprocessing.find_disallowed_statements`
      - Walks the AST and raises a ``TypeError`` if any statement listed in
        :data:`~dace.frontend.python.newast.DISALLOWED_STMTS` is present

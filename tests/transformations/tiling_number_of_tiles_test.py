@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 from dace.transformation.dataflow import StripMining
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -29,10 +30,10 @@ def test_tiling_number_of_tiles():
     Z = np.copy(Y)
     sdfg = axpy.to_sdfg()
     sdfg.simplify()
-    sdfg.apply_transformations(StripMining, options=[{'tile_size': '16', 'tiling_type': dace.TilingType.NumberOfTiles}])
+    sdfg.apply_transformations(StripMining, options=[{"tile_size": "16", "tiling_type": dace.TilingType.NumberOfTiles}])
     sdfg(A=A, X=X, Y=Y, N=size)
     assert np.allclose(Y, A * X + Z)
-    print('PASS')
+    print("PASS")
 
 
 if __name__ == "__main__":

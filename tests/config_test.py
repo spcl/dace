@@ -1,12 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.config import Config, set_temporary, temporary_config
 import threading
+
+from dace.config import Config, set_temporary, temporary_config
 
 
 def test_set_temporary():
     path = ["compiler", "build_type"]
     current_value = Config.get(*path)
     with set_temporary(*path, value="I'm not a build type"):
+        assert Config.get(*path) == "I'm not a build type"
+    assert Config.get(*path) == current_value
+
+
+def test_set_temporary_takes_a_dotted_path():
+    """``set_temporary("a.b", ...)`` is the same key as ``set_temporary("a", "b", ...)``."""
+    path = ["compiler", "build_type"]
+    current_value = Config.get(*path)
+    with set_temporary(".".join(path), value="I'm not a build type"):
         assert Config.get(*path) == "I'm not a build type"
     assert Config.get(*path) == current_value
 
@@ -30,7 +40,7 @@ def test_temporary_config_exception():
         with temporary_config():
             Config.set(*path, value=new_value)
             assert Config.get(*path) == new_value
-            raise ValueError()
+            raise ValueError
     except ValueError:
         assert Config.get(*path) == initial_value
 
@@ -51,7 +61,7 @@ def test_set_temporary_exception():
     try:
         with set_temporary(*path, value=new_value):
             assert Config.get(*path) == new_value
-            raise ValueError()
+            raise ValueError
     except ValueError:
         assert Config.get(*path) == initial_value
 
@@ -79,7 +89,7 @@ def test_config_isolation_multi_thread():
         #  parent they are set to the default.
         initial_value = Config.get(CONFIG_KEY)
         assert initial_value == Config.get_default(CONFIG_KEY)
-        assert initial_value != "master", f"Configuration was inherited please update the test."
+        assert initial_value != "master", "Configuration was inherited please update the test."
 
         with temporary_config():
             Config.set(CONFIG_KEY, value="thread1")
@@ -103,7 +113,7 @@ def test_config_isolation_multi_thread():
 
         # This is just a reminder, that we would expect `master` if the context is inherit.
         #  This does not work, but it is nice to have a feedback if it works.
-        assert initial_value != "master", f"Configuration was inherited please update the test."
+        assert initial_value != "master", "Configuration was inherited please update the test."
 
         with temporary_config():
             Config.set(CONFIG_KEY, value="thread2")
@@ -143,8 +153,9 @@ def test_config_isolation_multi_thread():
     assert initial_value == Config.get(CONFIG_KEY)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_set_temporary()
+    test_set_temporary_takes_a_dotted_path()
     test_temporary_config()
     test_temporary_config_exception()
     test_set_temporary_exception()

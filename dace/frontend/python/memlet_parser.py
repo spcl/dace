@@ -1,27 +1,30 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
+from typing import Any
 
 from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
-from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
+from dace.memlet import Memlet
+from dace.symbolic import SymbolicType, pystr_to_symbolic, shapes_equal
 
-MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
+MemletType = ast.Call | ast.Attribute | ast.Subscript | ast.Name
 
 
 @dataclass
 class MemletExpr:
     name: str
     accesses: SymbolicType
-    wcr: Optional[ast.AST]
+    wcr: ast.AST | None
     subset: subsets.Range
-    new_axes: List[int]
-    arrdims: Dict[int, str]
+    new_axes: list[int]
+    arrdims: dict[int, str]
+    #: ``subset`` indices of dims from a slice/full-range (kept as axes) vs a scalar index (collapsed).
+    #: numpy: ``A[:, 1:2]`` keeps the axis, ``A[:, 1]`` drops it. ``None`` = untracked (squeeze all singletons).
+    slice_dims: list[int] | None = None
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -41,19 +44,19 @@ def inner_eval_ast(defined, node, additional_syms=None):
     except:  # Literally anything can happen here
         # If doesn't work, try to evaluate as a sympy expression
         # Replace subscript expressions with function calls (sympy support)
-        code = code.replace('[', '(')
-        code = code.replace(']', ')')
+        code = code.replace("[", "(")
+        code = code.replace("]", ")")
         return pystr_to_symbolic(code)
 
 
-def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any], expr_ast: ast.AST):
-    """ Converts a Python AST expression to a DaCe symbolic expression
-        with error checks (raises `SyntaxError` on failure).
+def pyexpr_to_symbolic(defined_arrays_and_symbols: dict[str, Any], expr_ast: ast.AST):
+    """Converts a Python AST expression to a DaCe symbolic expression
+    with error checks (raises `SyntaxError` on failure).
 
-        :param defined_arrays_and_symbols: Defined arrays and symbols
-               in the context of this expression.
-        :param expr_ast: The Python AST expression to convert.
-        :return: Symbolic expression.
+    :param defined_arrays_and_symbols: Defined arrays and symbols
+           in the context of this expression.
+    :param expr_ast: The Python AST expression to convert.
+    :return: Symbolic expression.
     """
     # TODO!
     return inner_eval_ast(defined_arrays_and_symbols, expr_ast)
@@ -85,18 +88,19 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     ndslice = [None] * len(array.shape)
     offsets = []
     new_axes = []
-    arrdims: Dict[int, str] = {}
+    arrdims: dict[int, str] = {}
     idx = 0
     new_idx = 0
     has_ellipsis = False
 
     # Count new axes
-    num_new_axes = sum(1 for dim in ast_ndslice
-                       if (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)))
+    num_new_axes = sum(
+        1 for dim in ast_ndslice if (dim is None or (isinstance(dim, ast.Constant) and dim.value is None))
+    )
 
     for dim in ast_ndslice:
         if isinstance(dim, (str, list, slice)):
-            dim = ast.Name(id=dim)
+            dim = ast.Name(id=dim, ctx=ast.Load())
 
         if isinstance(dim, tuple):
             rb = _parse_dim_atom(das, dim[0] or 0)
@@ -117,17 +121,21 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             offsets.append(idx)
             idx += 1
             new_idx += 1
-        elif (dim is Ellipsis or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
-              or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
+        elif (
+            dim is Ellipsis
+            or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
+            or (isinstance(dim, ast.Name) and dim.id is Ellipsis)
+        ):
             if has_ellipsis:
                 raise IndexError('an index can only have a single ellipsis ("...")')
             has_ellipsis = True
             remaining_dims = len(ast_ndslice) - num_new_axes - idx - 1
             for j in range(idx, len(ndslice) - remaining_dims):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
+                offsets.append(idx)  # ellipsis full ranges keep their axis
                 idx += 1
                 new_idx += 1
-        elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)):
+        elif dim is None or (isinstance(dim, ast.Constant) and dim.value is None):
             new_axes.append(new_idx)
             new_idx += 1
             # NOTE: Do not increment idx here
@@ -148,25 +156,36 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 rs = 1
 
             ndslice[idx] = (rb, re - 1, rs)
+            offsets.append(idx)  # a slice keeps its axis, even length-1
             idx += 1
             new_idx += 1
-        elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Array)):
+        elif isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Array):
             # Accessing an array with another
             desc = das[dim.id]
             if desc.dtype == dtypes.bool:
                 # Boolean array indexing
                 if len(ast_ndslice) > 1:
                     raise IndexError(f'Invalid indexing into array "{dim.id}". Only one boolean array is allowed.')
-                if tuple(desc.shape) != tuple(array.shape):
-                    raise IndexError(f'Invalid indexing into array "{dim.id}". '
-                                     'Shape of boolean index must match original array.')
-            elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16,
-                                dtypes.uint32, dtypes.uint64):
+                if not shapes_equal(desc.shape, array.shape):
+                    raise IndexError(
+                        f'Invalid indexing into array "{dim.id}". Shape of boolean index must match original array.'
+                    )
+            elif desc.dtype in (
+                dtypes.int8,
+                dtypes.int16,
+                dtypes.int32,
+                dtypes.int64,
+                dtypes.uint8,
+                dtypes.uint16,
+                dtypes.uint32,
+                dtypes.uint64,
+            ):
                 # Integer array indexing
                 pass
             else:
-                raise ValueError(f'Unsupported indexing into array "{dim.id}". '
-                                 'Only integer and boolean arrays are supported.')
+                raise ValueError(
+                    f'Unsupported indexing into array "{dim.id}". Only integer and boolean arrays are supported.'
+                )
 
             if data._prod(desc.shape) == 1:
                 # Special case: one-element array treated as scalar
@@ -177,7 +196,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
             idx += 1
             new_idx += 1
-        elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Scalar)):
+        elif isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Scalar):
             ndslice[idx] = (dim.id, dim.id, 1)
             idx += 1
             new_idx += 1
@@ -199,10 +218,9 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     return ndslice, offsets, new_axes, arrdims
 
 
-def parse_memlet_subset(array: data.Data,
-                        node: Union[ast.Name, ast.Subscript],
-                        das: Dict[str, Any],
-                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
+def parse_memlet_subset(
+    array: data.Data, node: ast.Name | ast.Subscript, das: dict[str, Any], parsed_slice: Any = None
+) -> tuple[subsets.Range, list[int], dict[int, str], list[int] | None]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -211,12 +229,14 @@ def parse_memlet_subset(array: data.Data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
-    :return: A 3-tuple of (subset, list of new axis indices, list of index-to-array-dimension correspondence).
+    :return: A 4-tuple of (subset, list of new axis indices, index-to-array-dimension correspondence,
+             list of subset dimensions that came from a slice/full range and must not be squeezed --
+             or ``None`` when that provenance was not tracked).
     """
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
     extra_dims = []
-    arrdims: Dict[int, str] = {}
+    arrdims: dict[int, str] = {}
     if isinstance(node, ast.Subscript):
         # Parse and evaluate ND slice(s) (possibly nested)
         if parsed_slice:
@@ -237,9 +257,9 @@ def parse_memlet_subset(array: data.Data,
             # Loop over the N dimensions
             ndslice, offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, narray, offsets)
             if new_extra_dims and idx != (len(ast_ndslices) - 1):
-                raise NotImplementedError('New axes only implemented for last slice')
+                raise NotImplementedError("New axes only implemented for last slice")
             if arrdims and len(ast_ndslices) != 1:
-                raise NotImplementedError('Array dimensions not implemented for consecutive subscripts')
+                raise NotImplementedError("Array dimensions not implemented for consecutive subscripts")
             extra_dims = new_extra_dims
             subset_array.append(_ndslice_to_subset(ndslice))
 
@@ -249,22 +269,27 @@ def parse_memlet_subset(array: data.Data,
         for i in range(1, len(subset_array)):
             subset = subset.compose(subset_array[i])
 
-    else:  # Use entire range
+        # 1:1 with ``subset`` only for a single subscript; nested A[i][j] narrows the space, leave untracked.
+        slice_dims = list(offsets) if len(ast_ndslices) == 1 else None
+    else:  # entire range -- every dim survives
         subset = _ndslice_to_subset(ndslice)
+        slice_dims = list(range(len(array.shape)))
 
-    return subset, extra_dims, arrdims
+    return subset, extra_dims, arrdims, slice_dims
 
 
 # Parses a memlet statement
-def ParseMemlet(visitor,
-                defined_arrays_and_symbols: Dict[str, Any],
-                node: MemletType,
-                parsed_slice: Any = None,
-                arrname: Optional[str] = None) -> MemletExpr:
+def ParseMemlet(
+    visitor,
+    defined_arrays_and_symbols: dict[str, Any],
+    node: MemletType,
+    parsed_slice: Any = None,
+    arrname: str | None = None,
+) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
     if arrname not in das:
-        raise DaceSyntaxError(visitor, node, 'Use of undefined data "%s" in memlet' % arrname)
+        raise DaceSyntaxError(visitor, node, f'Use of undefined data "{arrname}" in memlet')
     array = das[arrname]
 
     # Determine number of accesses to the memlet (default is the slice size)
@@ -274,35 +299,42 @@ def ParseMemlet(visitor,
     if isinstance(node, ast.Call):
         if len(node.args) < 1 or len(node.args) > 3:
             raise DaceSyntaxError(
-                visitor, node, 'Number of accesses in memlet must be a number, symbolic '
-                'expression, or -1 (dynamic)')
+                visitor, node, "Number of accesses in memlet must be a number, symbolic expression, or -1 (dynamic)"
+            )
         num_accesses = pyexpr_to_symbolic(das, node.args[0])
         if len(node.args) >= 2:
             write_conflict_resolution = node.args[1]
     elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
         if len(node.value.args) < 1 or len(node.value.args) > 3:
             raise DaceSyntaxError(
-                visitor, node, 'Number of accesses in memlet must be a number, symbolic '
-                'expression, or -1 (dynamic)')
+                visitor, node, "Number of accesses in memlet must be a number, symbolic expression, or -1 (dynamic)"
+            )
         num_accesses = pyexpr_to_symbolic(das, node.value.args[0])
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
     try:
-        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
-    except IndexError:
+        subset, new_axes, arrdims, slice_dims = parse_memlet_subset(array, node, das, parsed_slice)
+    except IndexError as reason:
+        # the raising site names the construct it rejected; reporting only the rank sends a reader
+        # looking at dimensionality when the cause is a boolean mask's position or its shape
+        detail = str(reason).strip()
         raise DaceSyntaxError(
-            visitor, node, 'Failed to parse memlet expression due to dimensionality. '
-            f'Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}')
+            visitor,
+            node,
+            "Failed to parse memlet expression due to dimensionality. "
+            f"Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}"
+            + (f" Rejected by: {detail}" if detail else ""),
+        ) from reason
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
         num_accesses = subset.num_elements()
 
-    return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset, new_axes, arrdims)
+    return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset, new_axes, arrdims, slice_dims)
 
 
-def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: Dict[str, data.Data]):
+def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: dict[str, data.Data]):
     srcexpr, dstexpr, localvar = None, None, None
     if isinstance(src, ast.Name) and rname(src) not in defined_arrays_and_symbols:
         localvar = rname(src)
@@ -310,7 +342,7 @@ def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_s
         srcexpr = ParseMemlet(visitor, defined_arrays_and_symbols, src)
     if isinstance(dst, ast.Name) and rname(dst) not in defined_arrays_and_symbols:
         if localvar is not None:
-            raise DaceSyntaxError(visitor, src, 'Memlet source and destination cannot both be local variables')
+            raise DaceSyntaxError(visitor, src, "Memlet source and destination cannot both be local variables")
         localvar = rname(dst)
     else:
         dstexpr = ParseMemlet(visitor, defined_arrays_and_symbols, dst)

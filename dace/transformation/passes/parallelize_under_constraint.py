@@ -34,14 +34,37 @@ Constraint types:
   the one written) is deliberately excluded: a ``coeff != 0`` condition does not
   make that data-parallel.
 """
-from typing import Optional, Set
+
+from dataclasses import dataclass
 
 from dace import SDFG, symbolic
+from dace.optionals import required
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.narrowing import as_expr
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 from dace.transformation.transformation import explicit_cf_compatible
+
+
+@dataclass(slots=True)
+class ScopeFacts:
+    """Whole-SDFG facts the stride matcher reads, built on first use and valid until ``sdfg`` mutates."""
+
+    sdfg: SDFG
+    invariant: set[str] | None = None
+    bindings: dict[str, str | None] | None = None
+
+    def invariant_names(self) -> set[str]:
+        if self.invariant is None:
+            self.invariant = set(self.sdfg.free_symbols) | set(self.sdfg.constants_prop)
+        return self.invariant
+
+    def binding_table(self) -> dict[str, str | None]:
+        if self.bindings is None:
+            self.bindings = consistent_bindings(self.sdfg)
+        return self.bindings
 
 
 @explicit_cf_compatible
@@ -54,7 +77,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
     ``inc != 0``) always holds. Default ``False`` keeps the sound ``if cond: par
     else: seq`` guard."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def __init__(self, assume_constraint: bool = False):
         super().__init__()
@@ -69,19 +92,22 @@ class ParallelizeUnderConstraint(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
         """Specialize every constraint-parallel loop into ``if cond: par else: seq``.
 
         :param sdfg: SDFG to mutate in place.
         :returns: The number of loops specialized, or ``None`` if none.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         specialized = 0
         for sd in sdfg.all_sdfgs_recursive():
             owner = sd
             while owner.parent_sdfg is not None:
                 owner = owner.parent_sdfg
+            # Probes and the matcher are read-only, so these stay valid until a specialization.
+            facts = ScopeFacts(sd)
             for loop in list(sd.all_control_flow_regions(recursive=True)):
                 if not (isinstance(loop, LoopRegion) and loop.loop_variable):
                     continue
@@ -92,7 +118,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # stride injective-write shape is a candidate. Probing every loop
                 # with LoopToMap (below) is both wasteful and unsafe on shapes it
                 # cannot handle (e.g. 2-D recurrences), so gate on structure first.
-                condition = self._symbolic_stride_condition(loop, sd)
+                condition = self.symbolic_stride_condition(loop, sd, facts)
                 if condition is None:
                     continue
                 # Confirm the only blocker is the constrained condition: LoopToMap
@@ -108,16 +134,15 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # (WCR-free, vectorizable) Map -- injective under ``condition`` --
                 # and the else branch keeps the original sequential loop for when
                 # the condition fails at runtime.
-                def _parallelize(par_loop, par_region, own):
-                    inst = LoopToMap()
-                    inst.loop = par_loop
-                    inst.apply(par_region, own)
+                def parallelize(par_loop: LoopRegion, par_region: ControlFlowRegion, own: SDFG) -> None:
+                    ParallelizeLoops().parallelize_loop(own, par_loop, proven=True)
 
-                specialize_loop_under_condition(loop, condition, _parallelize, owner, assume=self.assume_constraint)
+                specialize_loop_under_condition(loop, condition, parallelize, owner, assume=self.assume_constraint)
+                facts = ScopeFacts(sd)
                 specialized += 1
         return specialized or None
 
-    def _symbolic_stride_condition(self, loop: LoopRegion, sdfg: SDFG) -> Optional[str]:
+    def symbolic_stride_condition(self, loop: LoopRegion, sdfg: SDFG, facts: ScopeFacts | None = None) -> str | None:
         """The parallel-validity condition for a symbolic-stride **injective write**.
 
         Targets a non-transient array written at a subset with a *symbolic*
@@ -139,15 +164,18 @@ class ParallelizeUnderConstraint(ppl.Pass):
 
         :param loop: The candidate loop region.
         :param sdfg: The SDFG owning ``loop``'s arrays.
+        :param facts: Cached whole-SDFG facts of an unmutated ``sdfg``; ``None`` builds fresh ones.
         :returns: The parallel-validity condition string, or ``None``.
         """
+        if facts is None:
+            facts = ScopeFacts(sdfg)
         loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
         # (array, subset-string) pairs read from / written to non-transient arrays.
-        # Resolve descriptors against each state's OWN SDFG -- ``loop.all_states()``
+        # Resolve descriptors against each state's OWN SDFG -- ``loop.states()``
         # may descend into nested SDFGs whose data names are absent from ``sdfg``.
-        reads: Set = set()
+        reads: set = set()
         writes: dict = {}
-        for state in loop.all_states():
+        for state in loop.states():
             arrays = state.sdfg.arrays
             for e in state.edges():
                 if e.data is None or e.data.is_empty() or e.data.subset is None:
@@ -161,7 +189,10 @@ class ParallelizeUnderConstraint(ppl.Pass):
         reads_by_arr: dict = {}
         for rarr, rkey in reads:
             reads_by_arr.setdefault(rarr, set()).add(rkey)
-        coeffs: Set = set()
+        # Symbols bound outside the loop -- a subset built only from these is genuinely
+        # loop-invariant, and anything else is a relation the matcher failed to resolve.
+        # Names, not symbol objects: ``SDFG.free_symbols`` is a set of strings. Built on first need.
+        coeffs: set[str] = set()
         for (arr, key), subset in writes.items():
             # Admit an injective write: either a same-subset read-modify-write
             # (``key`` is among the array's read subsets) or a plain store (the
@@ -174,17 +205,39 @@ class ParallelizeUnderConstraint(ppl.Pass):
             for rb, re_, _ in subset.ndrange():
                 if rb != re_:
                     continue
-                expr = symbolic.pystr_to_symbolic(rb)
-                if loop_var not in expr.free_symbols:
+                # ``in free_symbols`` and ``coeff`` go through symbol IDENTITY, and the subset's
+                # instances come from a different source than the reparsed loop variable -- one
+                # name, several instances, and both operations then quietly answer "not there".
+                expr, lvar = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(rb), loop_var)
+                if lvar not in expr.free_symbols:
+                    # The loop variable may be hidden behind a promoted index symbol
+                    # (``a[__sym_i_times_inc]``), which SymbolPropagation binds but deliberately
+                    # does not substitute into the graph. Resolve the binding for the QUERY --
+                    # but only for a subset that actually carries an unexplained symbol, since
+                    # collecting the bindings walks every interstate edge.
+                    if not {str(sym) for sym in expr.free_symbols} - facts.invariant_names():
+                        continue
+                    expr, lvar = symbolic.equalize_symbols_across(
+                        resolve_bindings(expr, sdfg, bindings=facts.binding_table()), loop_var
+                    )
+                if lvar not in expr.free_symbols:
+                    # Fail closed. A write whose index still carries a symbol this pass cannot
+                    # relate to the loop variable is NOT known to be loop-invariant -- it may well
+                    # be a data-dependent scatter -- and ``coeff() == 0`` must not be read as one.
+                    if {str(sym) for sym in expr.free_symbols} - facts.invariant_names():
+                        return None
                     continue
-                coeff = expr.coeff(loop_var)
+                coeff = as_expr(expr).coeff(as_expr(lvar))
                 # Symbolic (not provably numeric) nonzero coefficient only.
-                if coeff == 0 or not coeff.free_symbols:
+                if coeff == 0 or not required(coeff).free_symbols:
                     continue
-                coeffs.add(coeff)
+                # Keyed by SPELLING: two writes can carry the same coefficient as two symbol
+                # instances (one stamped with assumptions, one not), and a set of objects would
+                # then hold "two" coefficients and refuse a loop that has exactly one.
+                coeffs.add(symbolic.symstr(coeff))
         if len(coeffs) != 1:
             return None
-        return f"({symbolic.symstr(next(iter(coeffs)))}) != 0"
+        return f"({next(iter(coeffs))}) != 0"
 
 
-__all__ = ['ParallelizeUnderConstraint']
+__all__ = ["ParallelizeUnderConstraint"]

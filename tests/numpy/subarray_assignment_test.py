@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 
 
@@ -17,5 +18,5 @@ def test_subarray_assignment():
     assert np.allclose(B[0, :], A[0, :])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_subarray_assignment()

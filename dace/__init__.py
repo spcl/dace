@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import sys
+from typing import TYPE_CHECKING
+
 from .version import __version__
 from . import attr_enum
 from .dtypes import *
@@ -16,11 +18,31 @@ from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
 from .symbolic import symbol
 
+if TYPE_CHECKING:
+    from .codegen.cpf import EntrySignature
+
 # Python frontend
 from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
+
+
+def cpf(sdfg: "SDFG", validate: bool = True, language: str = "c++", signature: "EntrySignature | None" = None) -> str:
+    """Render ``sdfg`` as one self-contained translation unit (see :func:`dace.codegen.cpf.cpf`).
+
+    ``language`` is ``'c++'`` (C++20, the default) or ``'c'`` (C23); both build with a bare host
+    compiler and no DaCe runtime. ``signature`` (a :class:`dace.codegen.cpf.EntrySignature`) fixes
+    the entry point's parameter order and adds a workspace pair; ``None`` keeps CPF's.
+
+    Imported on call rather than at module scope: the code generators pull in ``dace.nodes``, which
+    does not exist yet this early in ``dace/__init__``, and every ``import dace`` would otherwise
+    pay for a code generator most programs never run.
+    """
+    from dace.codegen.cpf import cpf as _cpf
+
+    return _cpf(sdfg, validate=validate, language=language, signature=signature)
+
 
 # Run Jupyter notebook code
 from .jupyter import *
@@ -28,7 +50,6 @@ from .jupyter import *
 # Import hooks from config last (as it may load classes from within dace)
 hooks._install_hooks_from_config()
 
-import sys
 import os
 
 raw_path = Config.get("external_transformations_path")
@@ -39,11 +60,12 @@ if raw_path is not None:
 
 # Lazy loading for ml module to avoid eager TensorFlow/PyTorch imports
 def __getattr__(name):
-    if name == 'ml':
+    if name == "ml":
         import importlib
-        ml_module = importlib.import_module('.ml', package='dace')
+
+        ml_module = importlib.import_module(".ml", package="dace")
         # Cache the module to avoid re-importing
-        globals()['ml'] = ml_module
+        globals()["ml"] = ml_module
         return ml_module
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
@@ -51,7 +73,6 @@ def __getattr__(name):
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
 class DaceModule(sys.modules[__name__].__class__):
-
     def __call__(self, *args, **kwargs):
         return function(*args, **kwargs)
 

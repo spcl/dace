@@ -1,13 +1,38 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tile-op library node exports for the v2 multi-dim vectorization track."""
-from .tile_mask_gen import TileMaskGen
-from .tile_load import TileLoad
-from .tile_store import TileStore
-from .tile_binop import TileBinop
-from .tile_unop import TileUnop
-from .tile_ite import TileITE
-from .tile_reduce import TileReduce
-from .tile_iota import TileIota
-from .tile_mma import TileMMA
+"""The tile library nodes."""
 
-TILEOPS_NODE_TYPES = (TileBinop, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA, TileReduce, TileStore, TileUnop)
+from dace import library
+from dace.libraries.tileops.expansions import ExpandTileBlock
+
+from dace.libraries.tileops.nodes.tile_mask_gen import TileMaskGen
+from dace.libraries.tileops.nodes.tile_gather import TileGather
+from dace.libraries.tileops.nodes.tile_scatter import TileScatter
+from dace.libraries.tileops.nodes.tile_binop import TileBinop
+from dace.libraries.tileops.nodes.tile_fma import TileFMA
+from dace.libraries.tileops.nodes.tile_unop import TileUnop
+from dace.libraries.tileops.nodes.tile_ite import TileITE
+from dace.libraries.tileops.nodes.tile_reduce import TileReduce
+from dace.libraries.tileops.nodes.tile_scan import TileScan
+from dace.libraries.tileops.nodes.tile_iota import TileIota
+from dace.libraries.tileops.nodes.tile_mma import TileMMA
+from dace.libraries.tileops.nodes.masked_copy import MaskedCopyLibraryNode
+
+#: The nodes that move a tile between an array and registers.
+TILE_TRANSFER_NODES = (MaskedCopyLibraryNode, TileGather, TileScatter)
+
+#: Every tile library node.
+TILE_NODES = (
+    *TILE_TRANSFER_NODES,
+    TileBinop,
+    TileFMA,
+    TileIota,
+    TileITE,
+    TileMaskGen,
+    TileMMA,
+    TileReduce,
+    TileScan,
+    TileUnop,
+)
+
+for _node in TILE_NODES:
+    library.register_expansion(_node, "block")(type(f"Expand{_node.__name__}Block", (ExpandTileBlock,), {}))

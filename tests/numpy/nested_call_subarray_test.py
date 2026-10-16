@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-N = dace.symbol('N')
+import dace
+
+N = dace.symbol("N")
 
 
 @dace.program
@@ -64,7 +65,7 @@ def test_nested_selfcopy_slice():
     assert np.allclose(q, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_sa_call()
     test_ncs_local_program()
     test_nested_selfcopy_slice()

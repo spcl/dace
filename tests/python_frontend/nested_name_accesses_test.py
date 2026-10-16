@@ -1,9 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import dace as dc
 import numpy as np
-import os
 
-N = dc.symbol('N')
+import dace as dc
+
+N = dc.symbol("N")
 
 
 @dc.program
@@ -158,11 +158,8 @@ def test_nested_offset_access_nested_dependency():
         return out
 
     inp = np.reshape(np.arange(6 * 5 * 5, dtype=np.float64), (6, 5, 5)).copy()
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
-    with dc.config.set_temporary('testing', 'serialization', value=False):
+    with dc.config.set_temporary("testing", "serialization", value=False):
         out = nested_offset_access_nested_dep(inp)
-    os.environ['DACE_testing_serialization'] = last_value
     ref = nested_offset_access_nested_dep.f(inp)
     assert np.allclose(out, ref)
 
@@ -266,9 +263,9 @@ def test_issue_1139():
     of transients (or add new ones via inlining, which is happening in this bug), the ``_temp_transients``
     field becomes out of date and renaming the fields during inlining removes data descriptors.
     """
-    XN = dc.symbol('XN')
-    YN = dc.symbol('YN')
-    N = dc.symbol('N')
+    XN = dc.symbol("XN")
+    YN = dc.symbol("YN")
+    N = dc.symbol("N")
 
     @dc.program
     def nester(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
@@ -280,7 +277,7 @@ def test_issue_1139():
     def tester(xmin: dc.float64, xmax: dc.float64):
         a = np.ndarray((XN, YN), dtype=np.int64)
         b = np.ndarray((XN, YN), dtype=np.int64)
-        c = np.ndarray((XN, ), dtype=np.float64)
+        c = np.ndarray((XN,), dtype=np.float64)
         nester(xmin, xmax, c)
         return c
 
@@ -295,14 +292,12 @@ def test_issue_2100():
     Reproduction of issue #2100, where a nested SDFG with a fill operation
     would not register the filled array as an output, causing a validation failure.
     """
-    N = dc.symbol('N')
+    N = dc.symbol("N")
 
     @dc.program
     def global_matmul(C: dc.float32[N, N] @ dc.StorageType.GPU_Global):
         for i, j in dc.map[0:N:N, 0:N:N] @ dc.ScheduleType.GPU_Device:
-
             for l in dc.map[0:64] @ dc.ScheduleType.GPU_ThreadBlock:
-
                 c = dc.ndarray(
                     [N, N],
                     dtype=dc.float32,
@@ -313,12 +308,67 @@ def test_issue_2100():
                 for k in dc.map[0:1] @ dc.ScheduleType.Sequential:
                     c.fill(0.0)
 
-                C[i:i + N, j:j + N] = c[:, :]
+                C[i : i + N, j : j + N] = c[:, :]
 
     sdfg = global_matmul.to_sdfg(simplify=False)
     sdfg.validate()
     sdfg.simplify()
     sdfg.validate()
+
+
+def test_nonzero_start_loop_in_map_keeps_its_origin():
+    """A loop inside a ``dc.map`` whose range does not start at 0.
+
+    ``_add_access`` rebases the nested connector to the local symbol's range -- with ``j`` over
+    ``1:N`` the descriptor is ``N-1`` long and the body indexes ``[j-1]``. The memlet feeding it must
+    carry the matching outer range ``[1:N]``; built from the raw ``[j]`` it resolves to the whole row,
+    so the callee indexed from an origin the caller never passed and every access shifted down by one.
+    The loop then ran ``0..N-2`` instead of ``1..N-1``: silently wrong numbers, no error.
+
+    Carry-free on purpose -- the defect is the non-zero START, not the dependence.
+    """
+    M = dc.symbol("M")
+
+    @dc.program
+    def shifted(aa: dc.float64[M, M], bb: dc.float64[M, M]):
+        for i in dc.map[0:M]:
+            for j in range(1, M):
+                aa[i, j] = aa[i, j] + bb[i, j]
+
+    n = 5
+    rng = np.random.default_rng(0)
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    expected = aa.copy()
+    for i in range(n):
+        for j in range(1, n):
+            expected[i, j] = expected[i, j] + bb[i, j]
+
+    shifted(aa=aa, bb=bb, M=n)
+    assert np.allclose(aa, expected)
+
+
+def test_nonzero_start_loop_in_map_with_carry():
+    """The same shape carrying a loop-carried dependence (TSVC s1119), which is how this surfaced."""
+    M = dc.symbol("M")
+
+    @dc.program
+    def carried(aa: dc.float64[M, M], bb: dc.float64[M, M]):
+        for i in dc.map[0:M]:
+            for j in range(1, M):
+                aa[i, j] = aa[i, j - 1] + bb[i, j]
+
+    n = 5
+    rng = np.random.default_rng(1)
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    expected = aa.copy()
+    for i in range(n):
+        for j in range(1, n):
+            expected[i, j] = expected[i, j - 1] + bb[i, j]
+
+    carried(aa=aa, bb=bb, M=n)
+    assert np.allclose(aa, expected)
 
 
 if __name__ == "__main__":
@@ -335,3 +385,5 @@ if __name__ == "__main__":
     test_access_to_nested_transient_dappy()
     test_issue_1139()
     test_issue_2100()
+    test_nonzero_start_loop_in_map_keeps_its_origin()
+    test_nonzero_start_loop_in_map_with_carry()

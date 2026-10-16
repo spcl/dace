@@ -17,6 +17,7 @@ These tests pin the contracts the passes will rely on:
   (matches :class:`IfExpr`'s behaviour).
 - The header on disk is well-formed and has the expected template signature.
 """
+
 import os
 import re
 
@@ -24,7 +25,7 @@ import numpy as np
 import sympy
 
 import dace
-from dace.symbolic import DaceSympyPrinter, SymExpr, ITE
+from dace.symbolic import ITE, DaceSympyPrinter, SymExpr
 
 
 def test_ite_parses_via_symexpr():
@@ -99,10 +100,11 @@ def test_ite_header_exists_and_declares_template():
     with open(header) as f:
         text = f.read()
     assert "template" in text
-    # Loose signature check -- must accept (bool, T, T). The function lives at
-    # top level (un-namespaced) to match the codegen convention used for
-    # ``left_shift``/``ROUND`` in ``dace/math.h``.
-    assert re.search(r"ITE\s*\(\s*bool\s+\w+\s*,\s*T\s+\w+\s*,\s*T\s+\w+\s*\)", text), text
+    # Loose signature check -- must accept a bool condition and two arms. The arms are
+    # independently deduced (``TA``/``TB``) so a blend against a differently-typed literal still
+    # deduces. The function lives at top level (un-namespaced) to match the codegen convention
+    # used for ``left_shift``/``ROUND`` in ``dace/math.h``.
+    assert re.search(r"ITE\s*\(\s*bool\s+\w+\s*,\s*\w+\s+\w+\s*,\s*\w+\s+\w+\s*\)", text), text
 
 
 def test_ite_compiled_in_sdfg_matches_python_reference():
@@ -110,16 +112,16 @@ def test_ite_compiled_in_sdfg_matches_python_reference():
     compile, run, and compare against the plain-Python ternary for every
     combination of ``c`` and a small set of operand values."""
     sdfg = dace.SDFG("ite_e2e")
-    sdfg.add_array("a", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("b", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("out", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("b", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("out", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
 
     state = sdfg.add_state("s", is_start_block=True)
     ra = state.add_access("a")
     rb = state.add_access("b")
     wo = state.add_access("out")
-    t = state.add_tasklet("m", {"_a", "_b"}, {"_o"}, "_o = ITE(c, _a, _b)")
+    t = state.add_tasklet("m", {"_a": None, "_b": None}, {"_o": None}, "_o = ITE(c, _a, _b)")
     state.add_edge(ra, None, t, "_a", dace.Memlet("a[0]"))
     state.add_edge(rb, None, t, "_b", dace.Memlet("b[0]"))
     state.add_edge(t, "_o", wo, None, dace.Memlet("out[0]"))
@@ -129,7 +131,7 @@ def test_ite_compiled_in_sdfg_matches_python_reference():
         for av, bv in ((3.0, -1.0), (0.0, 9.5), (-7.25, 4.5)):
             a = np.array([av], dtype=np.float64)
             b = np.array([bv], dtype=np.float64)
-            out = np.zeros((1, ), dtype=np.float64)
+            out = np.zeros((1,), dtype=np.float64)
             csdfg(a=a, b=b, out=out, c=cv)
             expected = av if cv else bv
             np.testing.assert_allclose(out, np.array([expected]), err_msg=f"c={cv} a={av} b={bv} got={out[0]}")

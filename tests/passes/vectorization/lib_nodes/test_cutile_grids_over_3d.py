@@ -7,7 +7,7 @@ tiled ``CuTile`` map with more than three dimensions (e.g. a 4-D or 5-D
 elementwise kernel, ``softmax``, ``conv2d``) therefore has its extra grid
 dimensions FOLDED, row-major, onto grid axis 0 and recovered inside the kernel
 via integer div/mod. The single canonical fold layout lives in
-:mod:`dace.libraries.tileops._pure_codegen` and is shared by the map-entry
+:mod:`dace.libraries.tileops.cutile` and is shared by the map-entry
 codegen (``codegen/py/cutile_target.py``) and every tile-op ``cutile``
 expansion, so map-entry block IDs and tile-op block IDs agree.
 
@@ -26,7 +26,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.tileops._pure_codegen import cutile_bid_expr, cutile_launch_grid_dims
+from dace.libraries.tileops.cutile import cutile_bid_expr, cutile_launch_grid_dims
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cutile import VectorizeCuTile
 
@@ -54,7 +54,7 @@ def _lower(prog, widths):
     # ``assumption_guard=False`` mirrors ``canonicalize_for_cutile``: the guard-on
     # canonicalize injects a CPP ``__builtin_trap`` tasklet the Python backend
     # cannot codegen.
-    canonicalize(sdfg, assumption_guard=False)
+    canonicalize(sdfg)
     VectorizeCuTile(widths=widths).apply_pass(sdfg, {})
     sdfg.backend = dtypes.BackendLanguage.Python
     return sdfg
