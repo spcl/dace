@@ -119,8 +119,12 @@ class Dialect:
     def dot(self, a: str, b: str) -> str:
         raise NotImplementedError
 
-    def reduce(self, op: str, value: str, axis: int | None) -> str:
-        """``value`` reduced with ``op`` along ``axis``, or fully."""
+    def identity(self, op: str) -> str:
+        """What a masked lane contributes to a reduction with ``op``."""
+        return IDENTITIES[op]
+
+    def reduce(self, op: str, value: str, axis: int | None, rank: int) -> str:
+        """``value``, a tile of ``rank`` dims, reduced with ``op`` along ``axis``, or fully."""
         return f"{self[ops.PY_REDUCE_OPS[op]]}({value}{'' if axis is None else f', {axis}'})"
 
     def scan(self, op: str, value: str) -> str:
@@ -463,7 +467,8 @@ class TileStatement:
         node = self.node
         if node.op not in ops.PY_REDUCE_OPS:
             raise CodegenError(f"Python backend: no tile reduction combines with {node.op!r}")
-        return self.dialect.reduce(node.op, self.masked(self.input("_src"), IDENTITIES[node.op]), node.axis)
+        source = self.masked(self.input("_src"), self.dialect.identity(node.op))
+        return self.dialect.reduce(node.op, source, node.axis, len(node.widths))
 
     def mma(self) -> str:
         node = self.node

@@ -94,10 +94,10 @@ class Triton(Dialect):
     def dot(self, a: str, b: str) -> str:
         return f"tl.dot({a}, {b})"
 
-    def reduce(self, op: str, value: str, axis: int | None) -> str:
+    def reduce(self, op: str, value: str, axis: int | None, rank: int) -> str:
         if op == "*":
             return f"tl.reduce({value}, {axis}, tile_multiply)"
-        return super().reduce(op, value, axis)
+        return super().reduce(op, value, axis, rank)
 
     def scan(self, op: str, value: str) -> str:
         combine = {"*": "tile_multiply", "max": "tile_maximum", "min": "tile_minimum"}.get(op)

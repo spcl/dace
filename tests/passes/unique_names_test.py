@@ -150,3 +150,19 @@ def test_a_second_application_renames_nothing():
     renamed = UniqueNames().apply_pass(sdfg, {})
 
     assert renamed is None
+
+
+def test_renaming_nothing_leaves_tile_expressions_alone():
+    from dace.libraries.tileops import TileIota
+    from dace.transformation.passes.unique_names import rename_strings
+
+    sdfg = dace.SDFG("tile_strings")
+    sdfg.add_array("t", [8], dace.int64, transient=True, storage=dace.StorageType.Register)
+    state = sdfg.add_state()
+    node = TileIota("iota", widths=(8,), expr="i + __l0")
+    state.add_node(node)
+    state.add_edge(node, "_dst", state.add_write("t"), None, dace.Memlet("t[0:8]"))
+
+    rename_strings(sdfg, {})
+
+    assert node.expr == "i + __l0"

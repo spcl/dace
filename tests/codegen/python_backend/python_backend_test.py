@@ -199,3 +199,101 @@ def test_a_gpu_map_without_tile_ops_is_refused():
 
     with python_backend(), pytest.raises(CodegenError, match="holds no tile ops"):
         sdfg.compile()
+
+
+@dace.program
+def scaled_by(x: dace.float64, A: dace.float64[N]):
+    A[:] = A * x
+
+
+def test_positional_arguments_bind_in_the_order_of_the_program_signature():
+    sdfg = scaled_by.to_sdfg()
+    with python_backend():
+        compiled = sdfg.compile()
+    a = np.ones(3)
+
+    compiled(2.0, a, N=3)
+
+    assert np.array_equal(a, [2.0, 2.0, 2.0])
+
+
+def test_a_constant_sizes_a_transient_and_reaches_a_tasklet():
+    sdfg = dace.SDFG("constant_sized")
+    sdfg.add_symbol("C", dace.int64)
+    sdfg.add_constant("C", np.int64(3))
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_transient("tmp", ["C"], dace.float64)
+    state = sdfg.add_state()
+    fill = state.add_tasklet("fill", {}, {"t": dace.float64}, "t = C * 2.0")
+    tmp = state.add_access("tmp")
+    state.add_edge(fill, "t", tmp, None, dace.Memlet("tmp[C - 1]"))
+    copy = state.add_tasklet("copy", {"t": dace.float64}, {"o": dace.float64}, "o = t")
+    state.add_edge(tmp, None, copy, "t", dace.Memlet("tmp[C - 1]"))
+    state.add_edge(copy, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    out = np.zeros(1)
+
+    with python_backend():
+        sdfg(out=out)
+
+    assert out[0] == 6.0
+
+
+def conditional_accumulate_sdfg() -> dace.SDFG:
+    """``if c > 0: A[0] += 5`` through a dynamic write-conflict memlet."""
+    sdfg = dace.SDFG("conditional_accumulate")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("maybe", {"c": dace.float64}, {"o": dace.float64}, "if c > 0:\n    o = 5.0")
+    state.add_edge(state.add_read("C"), None, tasklet, "c", dace.Memlet("C[0]"))
+    state.add_edge(
+        tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]", wcr="lambda a, b: a + b", dynamic=True)
+    )
+    return sdfg
+
+
+@pytest.mark.parametrize("condition, expected", [(-1.0, 1.0), (1.0, 6.0)])
+def test_a_dynamic_accumulation_adds_only_on_the_path_that_writes(condition: float, expected: float):
+    a = np.ones(1)
+
+    with python_backend():
+        conditional_accumulate_sdfg()(A=a, C=np.array([condition]))
+
+    assert a[0] == expected
+
+
+def branch_sized_sdfg() -> dace.SDFG:
+    """``M = N + 1``, then ``tmp[M]`` written and read in either arm of ``if N > 5``."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+    sdfg = dace.SDFG("branch_sized")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_transient("tmp", ["M"], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    branches = ConditionalBlock("branches")
+    sdfg.add_node(branches)
+    sdfg.add_edge(init, branches, dace.InterstateEdge(assignments={"M": "N + 1"}))
+    for condition, value in (("N > 5", 1.0), (None, 2.0)):
+        arm = ControlFlowRegion(f"arm_{int(value)}", sdfg=sdfg)
+        branches.add_branch(None if condition is None else CodeBlock(condition), arm)
+        state = arm.add_state(f"use_{int(value)}", is_start_block=True)
+        fill = state.add_tasklet("fill", {}, {"t": dace.float64}, f"t = {value}")
+        tmp = state.add_access("tmp")
+        state.add_edge(fill, "t", tmp, None, dace.Memlet("tmp[M - 1]"))
+        copy = state.add_tasklet("copy", {"t": dace.float64}, {"o": dace.float64}, "o = t")
+        state.add_edge(tmp, None, copy, "t", dace.Memlet("tmp[M - 1]"))
+        state.add_edge(copy, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("n, expected", [(9, 1.0), (2, 2.0)])
+def test_a_transient_sized_by_an_assigned_symbol_exists_in_every_branch(n: int, expected: float):
+    out = np.zeros(1)
+
+    with python_backend():
+        branch_sized_sdfg()(out=out, N=n)
+
+    assert out[0] == expected

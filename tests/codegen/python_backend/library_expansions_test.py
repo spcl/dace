@@ -274,3 +274,20 @@ def test_a_fill_node_writes_its_constant_everywhere():
         sdfg(B=b)
 
     assert np.array_equal(b, np.full((3, 3), 2.5))
+
+
+@pytest.mark.gpu
+def test_a_gpu_return_value_comes_back_as_a_cupy_array():
+    import cupy
+
+    sdfg = dace.SDFG("gpu_return")
+    sdfg.add_array("__return", [4], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = FillLibraryNode("fill", value=3.0)
+    state.add_node(node)
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, state.add_write("__return"), None, dace.Memlet("__return[0:4]"))
+
+    with python_backend():
+        result = sdfg()
+
+    assert isinstance(result, cupy.ndarray) and np.array_equal(result.get(), np.full(4, 3.0))

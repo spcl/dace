@@ -8,6 +8,13 @@ from typing import Any
 import numpy as np
 
 from dace import SDFG, symbolic
+from dace.codegen.python import CUPY_STORAGES
+
+
+def cupy_module():
+    import cupy
+
+    return cupy
 
 
 class PythonCompiledSDFG:
@@ -26,7 +33,9 @@ class PythonCompiledSDFG:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.function = getattr(module, sdfg.name)
-        self.argnames = [name for name in sdfg.arglist() if not name.startswith("__return")]
+        # The order a positional call binds in, as ``CompiledSDFG`` binds it; an SDFG built by hand has none
+        names = sdfg.arg_names or list(sdfg.arglist())
+        self.argnames = [name for name in names if not name.startswith("__return")]
 
     def return_names(self) -> list[str]:
         if "__return" in self.sdfg.arrays:
@@ -45,7 +54,8 @@ class PythonCompiledSDFG:
             if name not in kwargs:
                 desc = self.sdfg.arrays[name]
                 shape = tuple(int(symbolic.evaluate(s, symbols)) for s in desc.shape)
-                kwargs[name] = np.empty(shape, desc.dtype.as_numpy_dtype())
+                xp = cupy_module() if desc.storage in CUPY_STORAGES else np
+                kwargs[name] = xp.empty(shape, desc.dtype.as_numpy_dtype())
         arglist = self.sdfg.arglist()
         missing = [name for name in arglist if name not in kwargs]
         if missing:

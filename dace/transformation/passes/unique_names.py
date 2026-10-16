@@ -151,6 +151,8 @@ def same_binding(state: SDFGState, node: nodes.NestedSDFG, name: str) -> bool:
 def rename_strings(graph: SDFG | StateSubgraphView, repl: dict[str, str]) -> None:
     """Rename inside the string properties of the tile nodes of ``graph``: ``replace`` renames a string only when it
     is the name itself, and a tile node spells expressions (``lane_bounds``, ``expr_a``) as strings."""
+    if not repl:
+        return
     names = re.compile(rf"\b({'|'.join(map(re.escape, repl))})\b")
     found = graph.all_nodes_recursive() if isinstance(graph, SDFG) else ((n, None) for n in graph.nodes())
     for node, _ in found:

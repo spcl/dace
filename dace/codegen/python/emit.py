@@ -11,6 +11,8 @@ import ast
 import contextlib
 from collections.abc import Iterator
 
+import numpy as np
+
 from dace import SDFG, data, dtypes, subsets, symbolic
 from dace.codegen.exceptions import CodegenError
 from dace.codegen.python import CUPY_STORAGES
@@ -120,6 +122,51 @@ def allocation(desc: data.Data) -> str:
     return f"{function}({xp}.empty({expr(desc.total_size)}, {dtype}), ({shape},), ({strides},))"
 
 
+def ancestors(block: ControlFlowBlock) -> list[ControlFlowBlock]:
+    """``block`` and the blocks around it, innermost first, up to its SDFG."""
+    chain = [block]
+    while not isinstance(chain[-1], SDFG):
+        chain.append(chain[-1].parent_graph)
+    return chain
+
+
+def assigned_in(region: ControlFlowRegion) -> set[str]:
+    """The symbols ``region`` assigns: on its interstate edges and as loop iterators."""
+    names = {str(name) for edge in region.all_interstate_edges() for name in edge.data.assignments}
+    loops = (r for r in [region, *region.all_control_flow_regions()] if isinstance(r, LoopRegion))
+    return names | {loop.loop_variable for loop in loops if loop.loop_variable}
+
+
+def allocation_point(states: list[SDFGState], shape_symbols: set[str]) -> tuple[ControlFlowRegion, ControlFlowBlock]:
+    """The region and the block of it before which a transient used in ``states`` is allocated."""
+    chains = [list(reversed(ancestors(state))) for state in states]
+    depth = 0
+    while all(len(chain) > depth + 1 for chain in chains) and len({id(chain[depth + 1]) for chain in chains}) == 1:
+        depth += 1
+    # The innermost common block; a region the emitter walks block by block is a ControlFlowRegion
+    region = chains[0][depth]
+    while not isinstance(region, ControlFlowRegion) or isinstance(region, ConditionalBlock):
+        depth -= 1
+        region = chains[0][depth]
+    # Out of each loop that does not reshape the transient, so its data outlives the iteration
+    while isinstance(region, LoopRegion) and not (shape_symbols & assigned_in(region)) and depth > 0:
+        depth -= 1
+        region = chains[0][depth]
+        while not isinstance(region, ControlFlowRegion) or isinstance(region, ConditionalBlock):
+            depth -= 1
+            region = chains[0][depth]
+    first = min((chain for chain in chains), key=lambda chain: block_order(region, chain[depth + 1]))
+    return region, first[depth + 1]
+
+
+def block_order(region: ControlFlowRegion, block: ControlFlowBlock) -> int:
+    """The position of ``block`` in the chain of blocks the structured ``region`` runs."""
+    position, current = 0, region.start_block
+    while current is not block:
+        position, current = position + 1, region.out_edges(current)[0].dst
+    return position
+
+
 def kernel_containers(sdfg: SDFG) -> set[str]:
     """The containers of ``sdfg`` that only GPU scopes access: the tile kernels hold them, the host never does."""
     inside, outside = set(), set()
@@ -160,7 +207,7 @@ class ScalarReads(ast.NodeTransformer):
 class Emitter:
     """Writes the lines of the function, one block of the SDFG tree at a time."""
 
-    __slots__ = ("sdfg", "lines", "depth", "allocated", "loops", "view_edges", "kernels")
+    __slots__ = ("sdfg", "lines", "depth", "allocated", "loops", "view_edges", "kernels", "pending")
 
     def __init__(self, sdfg: SDFG):
         self.sdfg = sdfg
@@ -173,6 +220,8 @@ class Emitter:
         self.view_edges: set[MultiConnectorEdge[Memlet]] = set()
         #: The tile kernels the function launches, each the source of one module-level function.
         self.kernels: list[str] = []
+        #: The transients to allocate just before a block of a region (:meth:`plan_allocations`).
+        self.pending: dict[tuple[ControlFlowRegion, ControlFlowBlock], list[str]] = {}
 
     def line(self, text: str) -> None:
         self.lines.append("    " * self.depth + text)
@@ -201,10 +250,33 @@ class Emitter:
             for name, desc in arglist.items():
                 if isinstance(desc, data.Scalar) and name in sdfg.arrays:
                     self.line(f"{name} = np.asarray({name}, np.{desc.dtype.as_numpy_dtype().name}).reshape(1)")
+            self.constants(sdfg)
             self.allocated |= kernel_containers(sdfg)
             self.allocate_ready(sdfg, set(arglist) | set(sdfg.constants))
+            self.plan_allocations(sdfg)
             self.region(sdfg, sdfg)
         return "\n".join(self.lines)
+
+    def constants(self, sdfg: SDFG) -> None:
+        """Bind the constants of ``sdfg``, which neither the caller passes nor a state writes."""
+        for name, value in sdfg.constants.items():
+            if isinstance(value, np.ndarray):
+                self.line(f"{name} = np.asarray({value.tolist()!r}, np.{value.dtype.name})")
+            else:
+                self.line(f"{name} = {value!r}")
+
+    def plan_allocations(self, sdfg: SDFG) -> None:
+        """Place every transient the function entry cannot allocate: ahead of the first block that uses it, in the
+        innermost region holding all its uses, and outside a loop whose iterations keep its shape."""
+        uses: dict[str, list[ControlFlowBlock]] = {}
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                desc = sdfg.arrays[node.data]
+                if desc.transient and not isinstance(desc, data.View) and node.data not in self.allocated:
+                    uses.setdefault(node.data, []).append(state)
+        for name, states in uses.items():
+            region, block = allocation_point(states, {str(s) for s in sdfg.arrays[name].free_symbols})
+            self.pending.setdefault((region, block), []).append(name)
 
     def allocate_ready(self, sdfg: SDFG, defined: set[str]) -> None:
         """Allocate the transients whose shape the ``defined`` names fix already."""
@@ -220,6 +292,9 @@ class Emitter:
     def region(self, sdfg: SDFG, region: ControlFlowRegion) -> None:
         block = region.start_block
         while block is not None:
+            for name in self.pending.pop((region, block), []):
+                if name not in self.allocated:
+                    self.allocate(name, sdfg.arrays[name])
             self.control_block(sdfg, block)
             out_edges = region.out_edges(block)
             if not out_edges:
@@ -358,7 +433,8 @@ class Emitter:
                 "VectorizeMultiDim(device=GPU, tile_group=BLOCK) first"
             )
         dialect = tile_dialect()
-        name = f"kernel_{entry.map.label}"
+        # Labels repeat; the SDFG, state and node ids do not, as the CUDA generator names its kernels
+        name = f"kernel_{entry.map.label}_{sdfg.cfg_id}_{state.block_id}_{state.node_id(entry)}"
         kernel = dialect.emitter_type(sdfg, dialect)
         arrays, symbols = kernel.kernel(sdfg, state, scope, order, entry)
         grid = [f"int_ceil({expr(end - begin + 1)}, {expr(step)})" for begin, end, step in reversed(entry.map.range)]
@@ -387,8 +463,12 @@ class Emitter:
                 self.line(f"{edge.dst_conn} = {self.read(sdfg, state, edge)}")
         writes = [e for e in state.out_edges(node) if e.src_conn in used and e.data.data is not None]
         for edge in writes:
-            whole = edge.data.subset.num_elements() != 1 or edge.data.dynamic
-            if whole and edge.src_conn not in node.in_connectors:
+            if edge.src_conn in node.in_connectors:
+                continue
+            if edge.data.dynamic and edge.data.wcr is not None and edge.data.subset.num_elements() == 1:
+                # A path that does not write must not accumulate: an unwritten connector stays None
+                self.line(f"{edge.src_conn} = None")
+            elif edge.data.subset.num_elements() != 1 or edge.data.dynamic:
                 self.line(f"{edge.src_conn} = {self.read(sdfg, state, edge)}")
         self.statements(body)
         for edge in writes:
@@ -407,9 +487,15 @@ class Emitter:
             return  # the connector is a view of the array, written in place
         target = f"{name}[0]" if isinstance(desc, data.Scalar) else f"{name}[{element(desc, subset)}]"
         value = edge.src_conn
-        if edge.data.wcr is not None:
-            value = f"({edge.data.wcr})({target}, {value})"
-        self.line(f"{target} = {value}")
+        if edge.data.wcr is None:
+            self.line(f"{target} = {value}")
+            return
+        update = f"{target} = ({edge.data.wcr})({target}, {value})"
+        if edge.data.dynamic:
+            with self.block(f"if {value} is not None:"):
+                self.line(update)
+        else:
+            self.line(update)
 
     def access(self, sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> None:
         for edge in state.in_edges(node):
@@ -463,7 +549,9 @@ class Emitter:
             # The connector's descriptor is the outer container's (``NestedSDFG.validate``): an alias
             self.line(f"{conn} = {edge.data.data}")
             self.allocated.add(conn)
+        self.constants(inner)
         self.allocate_ready(inner, set(self.allocated) | set(node.symbol_mapping) | set(inner.constants))
+        self.plan_allocations(inner)
         self.region(inner, inner)
 
 

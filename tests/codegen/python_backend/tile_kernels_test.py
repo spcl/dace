@@ -217,3 +217,28 @@ def test_a_sum_accumulated_by_every_program_adds_atomically(dialect: str):
 
     np.testing.assert_allclose(s, [a.sum()], rtol=1e-12)
     assert_spelled(compiled, "atomic", dialect)
+
+
+@dace.program
+def two_row_kernels(A: dace.float64[L, 64], B: dace.float64[L, 64]):
+    for r in dace.map[0:L]:
+        dace.tile.store(A[r, :], dace.tile.exp(A[r, :]))
+    for r in dace.map[0:L]:
+        dace.tile.store(B[r, :], dace.tile.sqrt(B[r, :]))
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_two_kernels_of_one_label_stay_two_kernels(dialect: str):
+    sdfg = two_row_kernels.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.label = "rows"
+    a, b = np.random.default_rng(4).random((2, 4, 64))
+
+    with tile_backend(dialect):
+        out_a, out_b = a.copy(), b.copy()
+        sdfg(A=out_a, B=out_b, L=4)
+
+    np.testing.assert_allclose(out_a, np.exp(a), rtol=1e-12)
+    np.testing.assert_allclose(out_b, np.sqrt(b), rtol=1e-12)

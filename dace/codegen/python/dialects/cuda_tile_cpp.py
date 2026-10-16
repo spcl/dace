@@ -242,9 +242,15 @@ class CudaTileCpp(Dialect):
     def dot(self, a: str, b: str) -> str:
         return f"ct.matmul({a}, {b})"
 
-    def reduce(self, op: str, value: str, axis: int | None) -> str:
+    def identity(self, op: str) -> str:
+        return {"min": "INFINITY", "max": "-INFINITY"}.get(op, super().identity(op))
+
+    def reduce(self, op: str, value: str, axis: int | None, rank: int) -> str:
         function = {"+": "sum", "*": "prod", "max": "reduce_max", "min": "reduce_min"}[op]
-        return f"ct.{function}[{axis or 0}]({value})"
+        # A full reduction folds the last dim first, so each fold leaves the dims before it in place
+        for dim in [axis] if axis is not None else reversed(range(rank)):
+            value = f"ct.{function}[{dim}]({value})"
+        return value
 
     def scan(self, op: str, value: str) -> str:
         if op not in ("+", "*"):
@@ -294,7 +300,7 @@ def check_tile_toolchain(needed: bool) -> None:
     if not needed:
         return
     architectures = [a for a in Config.get("compiler", "cuda", "cuda_arch").replace(";", ",").split(",") if a.strip()]
-    if any(int(a.strip()[:2]) < 80 for a in architectures):
+    if any(int(re.sub(r"\D", "", a)) < 80 for a in architectures):
         raise CodegenError(f"CUDA Tile C++ needs sm_80 or newer, not compiler.cuda.cuda_arch={architectures}")
     if int(Config.get("compiler", "cpp_standard")) < 20:
         raise CodegenError("CUDA Tile C++ needs compiler.cpp_standard 20 or newer")
