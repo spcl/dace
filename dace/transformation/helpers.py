@@ -730,9 +730,9 @@ def nest_state_subgraph(
             continue
         nsdfg.add_symbol(v, (sdfg.symbols[v] if v in sdfg.symbols else symbols_at_top[v]).dtype)
 
-    # Add constants to nested SDFG
-    for cstname, cstval in sdfg.constants.items():
-        nsdfg.add_constant(cstname, cstval)
+    # Add constants to nested SDFG, declared as here: inlining it back then finds them the same and keeps one copy
+    for cstname, (csttype, cstval) in sdfg.constant_declarations().items():
+        nsdfg.add_constant(cstname, cstval, copy.deepcopy(csttype))
 
     # Create nested state
     nstate = nsdfg.add_state()

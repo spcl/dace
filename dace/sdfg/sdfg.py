@@ -28,6 +28,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 import sympy
 
 import dace
@@ -2445,6 +2446,30 @@ class SDFG(ControlFlowRegion):
     def is_name_free(self, name: str) -> bool:
         """Test if `name` is free, i.e. is not used by anything else."""
         return not self.is_name_used(name)
+
+    def constant_declarations(self) -> dict[str, tuple[dt.Data, Any]]:
+        """The descriptor and value of every constant visible here, its own and its enclosing SDFGs': what
+        ``constants`` casts, the nearest declaration of a name winning."""
+        chain = []
+        sdfg = self
+        while sdfg is not None:
+            chain.append(sdfg)
+            sdfg = sdfg._parent_sdfg
+        result = {}
+        for sdfg in reversed(chain):
+            result.update(sdfg.constants_prop)
+        return result
+
+    def holds_constant(self, name: str, dtype: dt.Data, value: Any) -> bool:
+        """Whether the constant ``name`` visible here has the descriptor ``dtype`` and the value ``value``."""
+        sdfg = self
+        while sdfg is not None and name not in sdfg.constants_prop:
+            sdfg = sdfg._parent_sdfg
+        if sdfg is None:
+            return False
+        own_type, own_value = sdfg.constants_prop[name]
+        own_value, value = np.asarray(own_value), np.asarray(value)
+        return own_type == dtype and own_value.dtype == value.dtype and np.array_equal(own_value, value)
 
     def find_new_constant(self, name: str):
         """
