@@ -355,9 +355,11 @@ static_assert(std::is_same_v<std::common_type_t<dace::float16, dace::float16>, d
 // https://stackoverflow.com/a/39304947
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
-    auto divresult = std::div(numerator, denominator);
-    T corr = (divresult.rem != 0 && ((divresult.rem < 0) != (denominator < 0)));
-    return (T)divresult.quot - corr;
+    // Not std::div: it is host-only, and nvcc silently drops it from device code.
+    const T quotient = numerator / denominator;
+    const T remainder = numerator % denominator;
+    const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+    return quotient - corr;
 }
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
