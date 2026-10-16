@@ -1,9 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``'ai'`` as a reserved library node implementation name."""
 
-import os
-import sys
-
 import numpy as np
 import pytest
 
@@ -11,12 +8,9 @@ import dace
 import dace.libraries.ai as ai
 import dace.library
 from dace import nodes
-from dace.transformation import transformation as xf
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider  # noqa: E402
-
 from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
+from dace.transformation import transformation as xf
+from tests.library.ai.ai_test_utils import stub_provider
 
 
 @dace.library.node

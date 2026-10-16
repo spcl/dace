@@ -11,7 +11,6 @@ this conversation rather than starting a new one.
 import json
 import os
 import shutil
-import sys
 
 import pytest
 
@@ -22,9 +21,7 @@ from dace.libraries.ai import session as ai_session
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider, stub_provider_sequence  # noqa: E402
+from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
 
 GOOD = "_out = 2.0 * _in;"
 BAD = "_out = this_symbol_does_not_exist(_in);"

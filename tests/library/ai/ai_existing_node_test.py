@@ -6,17 +6,12 @@ Live test of the reserved ``'ai'`` implementation on a library node that knows n
 gains ``'ai'`` without being modified, registered, or re-imported.
 """
 
-import os
-import sys
-
 import numpy as np
 import pytest
 
 import dace
 from dace import nodes
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import addlib  # noqa: E402
+from tests.library import addlib
 
 DESCRIPTION_HINT = "Add one to the input value and write it to the output."
 

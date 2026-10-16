@@ -7,20 +7,14 @@ over CPU arrays all need different code, and the difference is not visible from 
 The context handed to the model must make it explicit.
 """
 
-import os
-import sys
-
 import dace
 import dace.libraries.ai as ai
 from dace import dtypes, nodes
+from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
 from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.prompts import build_user_prompt
 from dace.libraries.blas.nodes.gemm import Gemm
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider  # noqa: E402
-
-from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
+from tests.library.ai.ai_test_utils import stub_provider
 
 M = 8
 

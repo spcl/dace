@@ -9,9 +9,7 @@ to no generated tasklet must not land on any of them.
 """
 
 import contextlib
-import os
 import shutil
-import sys
 
 import numpy as np
 import pytest
@@ -23,9 +21,7 @@ from dace.libraries.ai import diagnose
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider  # noqa: E402
+from tests.library.ai.ai_test_utils import stub_provider
 
 GOOD = "_out = 2.0 * _in;"
 #: Passes a standalone probe and fails the real build: the name is simply not declared anywhere.

@@ -8,7 +8,6 @@ same question again costs money for an answer already in hand.
 
 import contextlib
 import os
-import sys
 
 import pytest
 
@@ -19,9 +18,7 @@ from dace.libraries.ai import cache as ai_cache
 from dace.libraries.ai.backend import EnvironmentSpec, TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider  # noqa: E402
+from tests.library.ai.ai_test_utils import stub_provider
 
 CODE = "_out = 2.0 * _in;"
 

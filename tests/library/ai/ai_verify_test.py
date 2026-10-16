@@ -1,9 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the probe compilation and the repair loop around it."""
 
-import os
 import shutil
-import sys
 
 import pytest
 
@@ -15,9 +13,7 @@ from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
 from dace.sdfg import infer_types
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider, stub_provider_sequence  # noqa: E402
+from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
 
 pytestmark = pytest.mark.skipif(
     shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler for the probe"

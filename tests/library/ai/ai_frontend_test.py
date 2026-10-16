@@ -9,21 +9,15 @@ prompt. The tests that compile and run assert that the tasklet ends up in the ri
 a model can write it.
 """
 
-import os
-import sys
-
 import numpy as np
 import pytest
 
 import dace
 from dace import dtypes, nodes
 from dace.frontend.python.common import DaceSyntaxError
-from dace.libraries.ai.nodes import AINode
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import prompt_of, stub_provider  # noqa: E402
-
 from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
+from dace.libraries.ai.nodes import AINode
+from tests.library.ai.ai_test_utils import prompt_of, stub_provider
 
 N = dace.symbol("N")
 M = 20

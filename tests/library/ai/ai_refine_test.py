@@ -8,9 +8,7 @@ when it is most often wanted.
 """
 
 import contextlib
-import os
 import shutil
-import sys
 
 import numpy as np
 import pytest
@@ -22,9 +20,7 @@ from dace.libraries.ai import iterate
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode, AITasklet
-
-sys.path.insert(0, os.path.dirname(__file__))
-from ai_test_utils import stub_provider  # noqa: E402
+from tests.library.ai.ai_test_utils import stub_provider
 
 V1 = "_out = 2.0 * _in;"
 V2 = "_out = _in + _in;"
