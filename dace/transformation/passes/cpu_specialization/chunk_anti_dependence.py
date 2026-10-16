@@ -39,8 +39,9 @@ snapshot form.
 A read-ahead offset ``D >= 1`` generalizes this: the last ``D`` iterations of a chunk read
 the first ``D`` cells of the next one, so the seam holds a ROW of ``D`` cells per chunk,
 gathered by one parallel map, and the chunk size is at least ``D`` so a full chunk's row
-never reaches past its neighbour. Restricted to a constant ``D`` on a 1-D array under unit
-stride. Pure data movement either way -- no arithmetic is reassociated, so the result is
+never reaches past its neighbour. ``D`` may be a symbol: ``BreakAntiDependence`` snapshots a
+symbolic read-ahead only behind its ``D >= 0`` entry trap, and ``D = 0`` leaves every seam row
+empty. Restricted to a 1-D array under unit stride. Pure data movement either way -- no arithmetic is reassociated, so the result is
 bit-identical.
 """
 
@@ -139,24 +140,50 @@ class ChunkAntiDependence(ppl.Pass):
     def depends_on(self):
         return set()
 
+    def _copy_before(self, state: SDFGState, snap: str) -> tuple | None:
+        """``(state, edge)`` of the snapshot copy in the one state before ``state``, else None.
+
+        A symbolic read-ahead snapshot shares its state with the ``D >= 0`` trap of ``BreakAntiDependence``, which
+        keeps state fusion from moving the copy next to the map.
+        """
+        parent = state.parent_graph
+        preds = parent.in_edges(state)
+        if len(preds) != 1 or not preds[0].data.is_unconditional() or preds[0].data.assignments:
+            return None
+        pred = preds[0].src
+        if not isinstance(pred, SDFGState):
+            return None
+        writes = [n for n in pred.data_nodes() if n.data == snap]
+        if len(writes) != 1 or pred.out_degree(writes[0]) != 0 or pred.in_degree(writes[0]) != 1:
+            return None
+        return pred, pred.in_edges(writes[0])[0]
+
+    def _snapshot_copy(self, state: SDFGState, snap_node: nodes.AccessNode) -> tuple | None:
+        """``(state, edge)`` of the copy that fills ``snap_node``: in its own state, else in the one before."""
+        in_edges = state.in_edges(snap_node)
+        if not in_edges:
+            return self._copy_before(state, snap_node.data)
+        return (state, in_edges[0]) if len(in_edges) == 1 else None
+
     def _match(self, state: SDFGState, sdfg: SDFG) -> tuple | None:
-        """``(snap_node, arr, map_entry, lo, hi)`` for the canonical snapshot pattern, else None."""
+        """``(snap_node, arr, map_entry, lo, hi, offset, copy_state, copy_edge)`` for the canonical snapshot pattern."""
         from dace.sdfg.scope import is_devicelevel_gpu
 
         for snap_node in state.data_nodes():
             desc = sdfg.arrays[snap_node.data]
             if not (desc.transient and isinstance(desc, data.Array) and len(desc.shape) == 1):
                 continue
-            in_edges = state.in_edges(snap_node)
+            copy_at = self._snapshot_copy(state, snap_node)
             # An EMPTY out-edge is an ORDERING edge, not a reader: it names no data at all, so it
             # cannot be the one thing this guard is looking for -- a consumer that would still need
             # the whole window the rewrite stops copying. Counting one as a reader is what left
             # s1244 (whose snapshot carries two, a_split_snap -> b and -> c) on the full-length copy.
             out_edges = [e for e in state.out_edges(snap_node) if e.data is not None and not e.data.is_empty()]
-            if len(in_edges) != 1 or not out_edges:
+            if copy_at is None or not out_edges:
                 continue
-            src = in_edges[0].src
-            if not isinstance(src, nodes.AccessNode) or in_edges[0].src_conn is not None:
+            copy_state, copy_edge = copy_at
+            src = copy_edge.src
+            if not isinstance(src, nodes.AccessNode) or copy_edge.src_conn is not None:
                 continue
             arr = src.data
             if len(sdfg.arrays[arr].shape) != 1:
@@ -166,7 +193,7 @@ class ChunkAntiDependence(ppl.Pass):
             others = [
                 n
                 for n, _ in sdfg.all_nodes_recursive()
-                if isinstance(n, nodes.AccessNode) and n.data == snap_node.data and n is not snap_node
+                if isinstance(n, nodes.AccessNode) and n.data == snap_node.data and n not in (snap_node, copy_edge.dst)
             ]
             if others:
                 continue
@@ -185,16 +212,17 @@ class ChunkAntiDependence(ppl.Pass):
             offset = self._read_ahead_offset(state, me, snap_node.data, arr)
             if offset is None:
                 continue
-            return snap_node, arr, me, lo, hi, offset
+            return snap_node, arr, me, lo, hi, offset, copy_state, copy_edge
         return None
 
-    def _read_ahead_offset(self, state: SDFGState, me: nodes.MapEntry, snap: str, arr: str) -> int | None:
-        """The one constant ``D >= 1`` every snapshot read is ``[i + D]`` at, every live ``arr`` access being ``[i]``.
+    def _read_ahead_offset(self, state: SDFGState, me: nodes.MapEntry, snap: str, arr: str):
+        """The one ``D`` every snapshot read is ``[i + D]`` at, every live ``arr`` access being ``[i]``.
 
-        A live read at a nonzero offset would cross a chunk boundary without a seam behind it.
+        ``D`` is a constant ``>= 1`` or an iterator-free expression nonnegative under the canonical symbol
+        assumption. A live read at a nonzero offset would cross a chunk boundary without a seam behind it.
         """
         param = me.map.params[0]
-        offsets: set[int] = set()
+        offsets: set = set()
         for e in state.edges():
             if e.data is None or e.data.is_empty() or e.data.data not in (snap, arr):
                 continue
@@ -211,14 +239,22 @@ class ChunkAntiDependence(ppl.Pass):
             if param in {str(s) for s in as_basic(off).free_symbols}:
                 continue  # not an affine point access in the iterator: a scope range
             if e.data.data == snap:
-                if not (as_basic(off).is_Integer and int(off) >= 1):
+                off = self._seam_offset(off)
+                if off is None:
                     return None
-                offsets.add(int(off))
+                offsets.add(off)
             elif off != 0:
                 return None
         return offsets.pop() if len(offsets) == 1 else None
 
-    def _chunk_stride(self, extent, offset: int):
+    @staticmethod
+    def _seam_offset(off):
+        """``off`` as an ``int >= 1``, or as an expression nonnegative under the canonical symbol assumption, else None."""
+        if as_basic(off).is_Integer:
+            return int(off) if int(off) >= 1 else None
+        return off if symbolic.provably_nonnegative(off, symbolic.contract_facts(off)) else None
+
+    def _chunk_stride(self, extent, offset):
         """The per-chunk iteration count, so the chunk COUNT lands on the thread count.
 
         The seam holds one slot per chunk, so whichever of (size, count) is fixed decides how much
@@ -237,7 +273,9 @@ class ChunkAntiDependence(ppl.Pass):
         threads = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
         per_thread = symbolic.int_ceil(symbolic.pystr_to_symbolic(str(extent)), threads)
         return (
-            per_thread if offset == 1 else symbolic.pystr_to_symbolic(f"Max({symbolic.symstr(per_thread)}, {offset})")
+            per_thread
+            if offset == 1
+            else symbolic.pystr_to_symbolic(f"Max({symbolic.symstr(per_thread)}, {symbolic.symstr(offset)})")
         )
 
     def _redirect_to_seam(
@@ -313,8 +351,38 @@ class ChunkAntiDependence(ppl.Pass):
         to_loop.map_entry = me
         to_loop.apply(state, sdfg)
 
+    @staticmethod
+    def _drop_copy(copy_state: SDFGState, copy_edge, snap_node: nodes.AccessNode) -> None:
+        """Remove the snapshot copy, its source if nothing else uses it, and its target if it is not ``snap_node``."""
+        src, written = copy_edge.src, copy_edge.dst
+        copy_state.remove_edge(copy_edge)
+        if copy_state.degree(src) == 0:
+            copy_state.remove_node(src)
+        if written is not snap_node:
+            copy_state.remove_node(written)
+
+    @staticmethod
+    def _copy_trailing_row(seam: SDFGState, arr: str, buf: str, hi, offset, last_row) -> None:
+        """Copy the ``offset`` cells after ``hi``, the read no chunk boundary lands on, into seam row ``last_row``."""
+        if isinstance(offset, int):
+            row = [(last_row, last_row, 1)] + ([(0, offset - 1, 1)] if offset != 1 else [])
+            trailing = Memlet(
+                data=arr, subset=subsets.Range([(hi + 1, hi + offset, 1)]), other_subset=subsets.Range(row)
+            )
+            seam.add_nedge(seam.add_read(arr), seam.add_write(buf), trailing)
+            return
+        # A symbolic row may be empty at run time, which a copy range cannot spell; a map runs zero times.
+        seam.add_mapped_tasklet(
+            f"{arr}_antidep_trailing",
+            {"_seam_m": f"0:{symbolic.symstr(offset)}"},
+            {"_in": Memlet(f"{arr}[{symbolic.symstr(hi + 1)} + _seam_m]")},
+            "_out = _in",
+            {"_out": Memlet(f"{buf}[{symbolic.symstr(last_row)}, _seam_m]")},
+            external_edges=True,
+        )
+
     def _rewrite(self, state: SDFGState, sdfg: SDFG, match: tuple) -> None:
-        snap_node, arr, me, lo, hi, offset = match
+        snap_node, arr, me, lo, hi, offset, copy_state, copy_edge = match
         snap = snap_node.data
         parent = state.parent_graph
         chunk = self._chunk_stride(_diff(hi, lo + offset - 1), offset)
@@ -324,7 +392,7 @@ class ChunkAntiDependence(ppl.Pass):
         # (both print as ``int_ceil`` in C++, so this costs nothing downstream).
         gather = subsets.Range([(lo + offset, hi, chunk)])
         nchunks = gather.num_elements()
-        if offset > 1:
+        if offset != 1:
             # The chunk size is a ``Max`` here, and sympy's ``ceiling`` over it reaches C++ as an integer division that
             # rounds down; ``int_ceil`` is the count the tiled chunk map runs.
             nchunks = symbolic.int_ceil(as_expr(_diff(hi, lo + offset - 1)), chunk)
@@ -336,11 +404,7 @@ class ChunkAntiDependence(ppl.Pass):
         threads = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
 
         # Drop the whole-window snapshot copy; the seam state replaces it.
-        copy_edge = state.in_edges(snap_node)[0]
-        src = copy_edge.src
-        state.remove_edge(copy_edge)
-        if state.degree(src) == 0:
-            state.remove_node(src)
+        self._drop_copy(copy_state, copy_edge, snap_node)
 
         # Clone the map BEFORE redirecting it, so the prologue and the seam iterations keep
         # reading the snapshot while the chunk body moves to the live array.
@@ -358,7 +422,7 @@ class ChunkAntiDependence(ppl.Pass):
         # seam is a couple of dozen elements, so allocating it per call costs nothing.
         buf, desc = sdfg.add_transient(
             f"{arr}_antidep_seam",
-            [as_expr(threads) + 1] + ([offset] if offset > 1 else []),
+            [as_expr(threads) + 1] + ([offset] if offset != 1 else []),
             sdfg.arrays[snap].dtype,
             storage=sdfg.arrays[snap].storage,
             lifetime=dtypes.AllocationLifetime.State,
@@ -374,7 +438,7 @@ class ChunkAntiDependence(ppl.Pass):
         else:
             seam.add_mapped_tasklet(
                 f"{arr}_antidep_gather",
-                {"_seam_j": f"0:{symbolic.symstr(nchunks)}", "_seam_m": f"0:{offset}"},
+                {"_seam_j": f"0:{symbolic.symstr(nchunks)}", "_seam_m": f"0:{symbolic.symstr(offset)}"},
                 {
                     "_in": Memlet(
                         f"{arr}[{symbolic.symstr(lo + offset)} + _seam_j * ({symbolic.symstr(chunk)}) + _seam_m]"
@@ -384,12 +448,7 @@ class ChunkAntiDependence(ppl.Pass):
                 {"_out": Memlet(f"{buf}[_seam_j, _seam_m]")},
                 external_edges=True,
             )
-        trailing = Memlet(
-            data=arr,
-            subset=subsets.Range([(hi + 1, hi + offset, 1)]),
-            other_subset=subsets.Range(row(nchunks)),
-        )
-        seam.add_nedge(seam.add_read(arr), seam.add_write(buf), trailing)
+        self._copy_trailing_row(seam, arr, buf, hi, offset, nchunks)
         every_row = subsets.Range([(0, nchunks, 1)] + row(0)[1:])
 
         # Prologue: the one iteration whose read-ahead has no chunk in front of it, so it
