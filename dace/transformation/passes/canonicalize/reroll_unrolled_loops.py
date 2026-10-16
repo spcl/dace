@@ -282,6 +282,9 @@ class RerollUnrolledLoops(ppl.Pass):
                     step, undo = unrolled_step(cfg)
                     if step is None or step < 2:
                         continue
+                    # The step rewrite rebuilds the bound from the start and the end; a loop without both is left.
+                    if loop_analysis.get_loop_end(cfg) is None or loop_analysis.get_init_assignment(cfg) is None:
+                        continue
                     if (
                         self._try_reroll(cfg, step)
                         or self._try_reroll_chain(cfg, step)
