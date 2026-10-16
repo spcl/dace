@@ -3164,6 +3164,18 @@ class SymbolResolver:
             return
         self._per_state.pop(sdfg, None)
 
+    def forget_within(self, sdfg: "SDFG") -> None:
+        """Drops what was resolved inside ``sdfg`` and every SDFG nested in it, after a change to ``sdfg``'s graph.
+        What an enclosing or unrelated SDFG resolved reads neither, and is kept."""
+        within = set(sdfg.all_sdfgs_recursive())
+        self._facts = {key: facts for key, facts in self._facts.items() if key[0].sdfg not in within}
+        self._region_updates = {
+            key: updates for key, updates in self._region_updates.items() if key[0].sdfg not in within
+        }
+        for nested in within:
+            self._per_sdfg.pop(nested, None)
+            self._per_state.pop(nested, None)
+
 
 @make_properties
 class ContinueBlock(ControlFlowBlock):

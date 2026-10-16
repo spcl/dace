@@ -374,7 +374,7 @@ class ParallelizeLoops(ppl.Pass):
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
         xform = LoopToMap()
         # The facts every probe derives for its loop, and for each scope and SDFG enclosing it, are shared by the
-        # probes until the next lift, which changes them for the lifted SDFG and every SDFG nested in it.
+        # probes. A lift changes them for the lifted SDFG and every SDFG nested in it, and only there.
         xform.symbol_resolver = SymbolResolver()
         # Kept across sweeps and patched after each lift, like the contexts: rebuilding either walks the
         # whole SDFG, once per lift.
@@ -407,7 +407,7 @@ class ParallelizeLoops(ppl.Pass):
                     continue
                 applied += 1
                 lifted_one = True
-                xform.symbol_resolver = SymbolResolver()
+                xform.symbol_resolver.forget_within(sd)
                 site = sites[0]
                 added = lifted_blocks(site, loop, graph)
                 if ctx.post_lift_free_symbols is None:

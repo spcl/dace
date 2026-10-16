@@ -693,17 +693,21 @@ def test_a_sweep_derives_an_sdfgs_facts_once_per_lift_in_it(monkeypatch) -> None
 
 def test_the_probes_of_a_sweep_derive_each_scopes_facts_once_per_lift(monkeypatch) -> None:
     """Every probe derived the facts of its loop's scope and of each scope and SDFG enclosing it afresh: one Facts
-    construction per nesting level per probe, the bulk of the parallelize stage on warpx_esirkepov_deposition."""
+    construction per nesting level per probe, the bulk of the parallelize stage on warpx_esirkepov_deposition. A
+    lift re-derives them only inside the SDFG it lands in."""
     from dace.sdfg.state import SymbolResolver
 
     sdfg = rows_with_a_scatter_then_four_independent.to_sdfg(simplify=True)
     derived: Counter = Counter()
+    outside: Counter = Counter()
     probing = [False]
     original_derive, original_probe = SymbolResolver.derive_facts, LoopToMap.can_be_applied
 
     def derive(self: SymbolResolver, block: Any, entry: Any) -> dace.symbolic.Facts:
         if probing[0]:
             derived[(id(block), id(entry))] += 1
+            if block.sdfg is sdfg:
+                outside[(id(block), id(entry))] += 1
         return original_derive(self, block, entry)
 
     def probe(self: LoopToMap, graph: ControlFlowRegion, expr_index: int, sd: dace.SDFG, permissive=False) -> bool:
@@ -718,6 +722,29 @@ def test_the_probes_of_a_sweep_derive_each_scopes_facts_once_per_lift(monkeypatc
     lifted = ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     assert lifted == 5 and len(candidate_loops(sdfg)) == 1, "the inner scatter must stay a loop, every other lift"
     assert max(derived.values()) <= lifted + 1, f"a scope's facts were derived {max(derived.values())} times"
+    # The four inner lifts each change only the nested SDFG they land in, never the root's scopes
+    assert outside and max(outside.values()) <= 2, f"a root scope's facts were derived {max(outside.values())} times"
+
+
+@pytest.mark.parametrize("program", [rows_with_a_scatter_then_four_independent, many_sibling_sweeps])
+def test_every_shared_scope_fact_of_a_sweep_is_the_derived_one(program, monkeypatch) -> None:
+    """A lift keeps what the shared resolver derived outside the lifted SDFG; kept stale, it flips a verdict."""
+    from dace.sdfg.state import SymbolResolver
+
+    sdfg = program.to_sdfg(simplify=True)
+    checked = [0]
+    original = SymbolResolver.facts_in_scope
+
+    def checked_facts(self: SymbolResolver, block: Any, entry: Any) -> dace.symbolic.Facts:
+        facts = original(self, block, entry)
+        if self._facts:
+            assert facts == original(SymbolResolver(), block, entry), f"stale facts at {block}"
+            checked[0] += 1
+        return facts
+
+    monkeypatch.setattr(SymbolResolver, "facts_in_scope", checked_facts)
+    assert ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    assert checked[0] > 10, "no shared facts were read, so nothing was exercised"
 
 
 def test_every_memoized_fact_of_a_sweep_is_the_derived_one(monkeypatch) -> None:
@@ -1149,6 +1176,10 @@ if __name__ == "__main__":
         test_a_sweep_derives_an_sdfgs_facts_once_per_lift_in_it(mp)
     with pytest.MonkeyPatch.context() as mp:
         test_the_probes_of_a_sweep_derive_each_scopes_facts_once_per_lift(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_every_shared_scope_fact_of_a_sweep_is_the_derived_one(rows_with_a_scatter_then_four_independent, mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_every_shared_scope_fact_of_a_sweep_is_the_derived_one(many_sibling_sweeps, mp)
     with pytest.MonkeyPatch.context() as mp:
         test_every_memoized_fact_of_a_sweep_is_the_derived_one(mp)
     test_the_use_index_decides_as_the_walk_does(False)
