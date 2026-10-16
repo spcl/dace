@@ -155,4 +155,5 @@ def replace(parent: ControlFlowRegion, loop: LoopRegion, array: str, expand: boo
     if InlineMultistateSDFG.can_be_applied_to(sdfg, nested_sdfg=nested):
         InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested, verify=False, save=False)
 
+
 __all__ = ["LoopToGetrfNoPivot", "match_getrf_nopivot"]
