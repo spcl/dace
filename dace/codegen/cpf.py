@@ -52,6 +52,7 @@ from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -63,7 +64,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
-from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
+from dace.transformation.passes.canonicalize.finalize import blas_addresses, explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
@@ -426,7 +427,11 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
         # Its tile functions are inline definitions of the unit, as :func:`target_tile_functions` chose them.
         return (node.implementation,)
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
-    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES
+    # A GEMM whose operands no leading dimension names (a view strided on both matrix axes) is one finalize already
+    # gave the loop expansion; a vendor call in front of it would raise ``sAM or sAK should be 1`` on expansion.
+    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES and not (
+        isinstance(node, Gemm) and not blas_addresses(node, state)
+    )
     if cpf_lowering.device() and on_device_at_host_level(node, state):
         vendor = VENDOR_IMPLEMENTATIONS_DEVICE[cpf_lowering.active_dialect()] if vendored else ()
         preferred = vendor + RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred
