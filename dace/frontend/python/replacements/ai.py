@@ -39,20 +39,6 @@ from dace.frontend.python.replacements.utils import ProgramVisitor, Shape
 from dace.sdfg import nodes
 
 
-def _is_container(sdfg: SDFG, value: Any) -> bool:
-    """
-    Tests whether an argument of the call refers to a data container.
-
-    The Python frontend passes a data container to a replacement as its name, so a string that
-    names one is a container rather than the text it looks like.
-
-    :param sdfg: The SDFG being built.
-    :param value: The argument, as parsed by the frontend.
-    :return: True if the argument names a data container of the SDFG.
-    """
-    return type(value) is str and value in sdfg.arrays
-
-
 def _description_of(pv: ProgramVisitor, sdfg: SDFG, description: Any) -> str:
     """
     Returns the natural-language description given at the call site.
@@ -67,7 +53,8 @@ def _description_of(pv: ProgramVisitor, sdfg: SDFG, description: Any) -> str:
     :return: The description as a string.
     :raises DaceSyntaxError: If the description is not a string literal, or is empty.
     """
-    if _is_container(sdfg, description):
+    # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
+    if type(description) is str and description in sdfg.arrays:
         given = f'the data container "{description}"'
     elif isinstance(description, (StringLiteral, str)):
         given = None
@@ -101,7 +88,8 @@ def _container_of(pv: ProgramVisitor, sdfg: SDFG, argument: Any, described: str)
     :return: The name of the data container.
     :raises DaceSyntaxError: If the argument is not a data container.
     """
-    if _is_container(sdfg, argument):
+    # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
+    if type(argument) is str and argument in sdfg.arrays:
         return argument
 
     if isinstance(argument, (Number, StringLiteral)) or symbolic.issymbolic(argument):
@@ -296,7 +284,8 @@ def ai_node(
 
     # "name", like the other keyword arguments above, configures the node rather than naming an
     # input connector, so passing a container to it is a mistake worth catching here
-    if name is not None and (_is_container(sdfg, name) or not isinstance(name, (StringLiteral, str))):
+    # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
+    if name is not None and ((type(name) is str and name in sdfg.arrays) or not isinstance(name, (StringLiteral, str))):
         raise DaceSyntaxError(
             pv,
             None,
