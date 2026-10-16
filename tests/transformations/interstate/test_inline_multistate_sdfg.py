@@ -305,7 +305,9 @@ def outer_names_by_walks(sdfg: SDFG):
     assignments = set()
     for edge in sdfg.all_interstate_edges():
         assignments |= edge.data.assignments.keys()
-    assignments |= {b.loop_variable for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion)}
+    assignments |= {
+        b.loop_variable for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion) and b.loop_variable
+    }
     labels = {b.label for b in sdfg.all_control_flow_blocks(recursive=True)}
     return symbols, assignments, labels
 
@@ -422,6 +424,52 @@ def test_inline_keeps_a_constant_mapped_symbol_the_nested_loop_reassigns():
     assert np.array_equal(A, np.arange(10, dtype=np.int32))
 
 
+def _while_loop(label: str, counter: str, bound: str) -> LoopRegion:
+    """``while counter < bound: counter = counter + 1`` -- a LoopRegion with no loop variable."""
+    loop = LoopRegion(label, f"{counter} < {bound}")
+    first = loop.add_state(f"{label}_body", is_start_block=True)
+    last = loop.add_state(f"{label}_latch")
+    loop.add_edge(first, last, dace.InterstateEdge(assignments={counter: f"{counter} + 1"}))
+    return loop
+
+
+def test_inline_nested_while_loop_into_sdfg_with_a_while_loop():
+    """A while loop is a ``LoopRegion`` whose ``loop_variable`` is ``""``, not ``None``. Counting that empty name
+    as an assigned symbol on both sides made it a collision to rename, and the rename of ``""`` failed to parse
+    (the ``spgemm_hash`` kernel: a probing ``while`` in the kernel and in an inlined helper)."""
+    sdfg = SDFG("while_outer")
+    sdfg.add_array("A", [1], dtypes.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    outer_loop = _while_loop("outer_while", "p", "3")
+    sdfg.add_node(outer_loop)
+    sdfg.add_edge(entry, outer_loop, dace.InterstateEdge(assignments={"p": "0"}))
+    call = sdfg.add_state("call")
+    sdfg.add_edge(outer_loop, call, dace.InterstateEdge())
+
+    inner = SDFG("while_inner")
+    inner.add_array("B", [1], dtypes.int64)
+    inner_entry = inner.add_state("inner_entry", is_start_block=True)
+    inner_loop = _while_loop("inner_while", "q", "5")
+    inner.add_node(inner_loop)
+    inner.add_edge(inner_entry, inner_loop, dace.InterstateEdge(assignments={"q": "0"}))
+    store = inner.add_state("store")
+    inner.add_edge(inner_loop, store, dace.InterstateEdge())
+    tasklet = store.add_tasklet("store", {}, {"__out"}, "__out = q")
+    store.add_edge(tasklet, "__out", store.add_write("B"), None, Memlet("B[0]"))
+
+    node = call.add_nested_sdfg(inner, {}, {"B"})
+    call.add_edge(node, "B", call.add_write("A"), None, Memlet("A[0]"))
+    sdfg.validate()
+    assert "" in {b.loop_variable for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion)}
+
+    _apply_inline(sdfg)
+    assert not any(isinstance(n, nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
+    assert "" not in outer_names(sdfg)[1]
+    A = np.zeros(1, dtype=np.int64)
+    sdfg(A=A)
+    assert A[0] == 5
+
+
 if __name__ == "__main__":
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
@@ -433,4 +481,5 @@ if __name__ == "__main__":
     test_outer_names_of_a_nested_sdfg_skip_a_sibling()
     test_outer_names_stay_exact_across_lowered_maps()
     test_inline_keeps_a_constant_mapped_symbol_the_nested_loop_reassigns()
+    test_inline_nested_while_loop_into_sdfg_with_a_while_loop()
     print("all ok")
