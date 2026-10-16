@@ -17,9 +17,8 @@ import pytest
 import dace
 from dace import dtypes
 from dace.codegen.common import get_gpu_backend
-from dace.libraries.fft.environments.fftw3 import FFTW3
-from dace.libraries.fft.nodes import FFT, IFFT
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.fft.nodes import FFT, IFFT
 from dace.libraries.fft.nodes.fft import GpuFftLayout, Transform, fftw3_call, gpu_fft_layout
 
 N = dace.symbol("N")
@@ -355,8 +354,6 @@ def test_gpu_fft_over_an_empty_batch_is_a_no_op():
         np.testing.assert_allclose(y, np.fft.fftn(x, axes=(0, 1, 2)), rtol=1e-12, atol=1e-10)
 
 
-
-
 @pytest.mark.gpu
 @pytest.mark.parametrize("shape", [(32, 48), (8, 12, 16)])
 def test_gpu_fftn_over_every_axis(shape):
@@ -390,8 +387,9 @@ def test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension():
 
 
 @pytest.mark.fftw
-@pytest.mark.parametrize("shape,axes", [((3, 4, 5, 2), (1, 2, 3)), ((4, 5, 6), (0, 2)), ((4, 5, 6), (-1, -3)),
-                                        ((3, 4, 5, 2), (0, 1, 2, 3))])
+@pytest.mark.parametrize(
+    "shape,axes", [((3, 4, 5, 2), (1, 2, 3)), ((4, 5, 6), (0, 2)), ((4, 5, 6), (-1, -3)), ((3, 4, 5, 2), (0, 1, 2, 3))]
+)
 @pytest.mark.parametrize("dtype,dace_type", [(np.complex128, dace.complex128), (np.complex64, dace.complex64)])
 def test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan(shape, axes, dtype, dace_type):
     """Any axis set is one ``fftw_plan_guru64_dft``, which steps each transformed and batch axis by the strides."""
@@ -470,7 +468,7 @@ def test_fftw3_reuses_its_plan_across_calls_and_replans_for_new_extents():
 
     compiled = compile_with(transform_reuses_its_plan, "FFTW3").compile()
     for length in (64, 64, 48):
-        x = rng_complex((length, ))
+        x = rng_complex((length,))
         np.testing.assert_allclose(compiled(x=x.copy(), N=length), np.fft.fft(x), rtol=1e-12, atol=1e-10)
 
 
@@ -480,7 +478,9 @@ def expansion_tasklets(program, implementation: str) -> list[str]:
     sdfg.expand_library_nodes(recursive=False)
     nested = next(node.sdfg for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
     return [
-        node.label for state in nested.bfs_nodes(nested.start_block) for node in state.nodes()
+        node.label
+        for state in nested.bfs_nodes(nested.start_block)
+        for node in state.nodes()
         if isinstance(node, dace.nodes.Tasklet)
     ]
 

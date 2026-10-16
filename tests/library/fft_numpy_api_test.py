@@ -80,30 +80,34 @@ def irfft2_over_leading_axes(x: dace.complex128[6, 5, 3]):
 
 def check_real_family(implementation: str, gpu: bool = False):
     x, z = real_array((5, 12)), complex_array((5, 7))
-    np.testing.assert_allclose(run(rfft_of_rows, implementation, gpu, x=x.copy(), M=5, N=12),
-                               np.fft.rfft(x),
-                               rtol=1e-12,
-                               atol=1e-10)
-    np.testing.assert_allclose(run(irfft_of_rows, implementation, gpu, x=z.copy(), M=5, N=7),
-                               np.fft.irfft(z),
-                               rtol=1e-12,
-                               atol=1e-12)
-    np.testing.assert_allclose(run(irfft_to_an_odd_length, implementation, gpu, x=z.copy(), M=5, N=7),
-                               np.fft.irfft(z, n=9, axis=1),
-                               rtol=1e-12,
-                               atol=1e-12)
+    np.testing.assert_allclose(
+        run(rfft_of_rows, implementation, gpu, x=x.copy(), M=5, N=12), np.fft.rfft(x), rtol=1e-12, atol=1e-10
+    )
+    np.testing.assert_allclose(
+        run(irfft_of_rows, implementation, gpu, x=z.copy(), M=5, N=7), np.fft.irfft(z), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        run(irfft_to_an_odd_length, implementation, gpu, x=z.copy(), M=5, N=7),
+        np.fft.irfft(z, n=9, axis=1),
+        rtol=1e-12,
+        atol=1e-12,
+    )
     grid = real_array((4, 6, 8))
     np.testing.assert_allclose(run(rfftn_and_back, implementation, gpu, x=grid.copy()), grid, rtol=1e-12, atol=1e-12)
     volume = real_array((3, 6, 10))
-    np.testing.assert_allclose(run(rfft2_of_the_last_axes, implementation, gpu, x=volume.copy()),
-                               np.fft.rfft2(volume, norm="ortho"),
-                               rtol=1e-12,
-                               atol=1e-10)
+    np.testing.assert_allclose(
+        run(rfft2_of_the_last_axes, implementation, gpu, x=volume.copy()),
+        np.fft.rfft2(volume, norm="ortho"),
+        rtol=1e-12,
+        atol=1e-10,
+    )
     spectrum = complex_array((6, 5, 3))
-    np.testing.assert_allclose(run(irfft2_over_leading_axes, implementation, gpu, x=spectrum.copy()),
-                               np.fft.irfft2(spectrum, axes=(0, 1)),
-                               rtol=1e-12,
-                               atol=1e-12)
+    np.testing.assert_allclose(
+        run(irfft2_over_leading_axes, implementation, gpu, x=spectrum.copy()),
+        np.fft.irfft2(spectrum, axes=(0, 1)),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 @pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
@@ -160,23 +164,28 @@ def padded_real_transform(x: dace.float64[6, 8]):
 @pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_n_and_s_crop_or_zero_pad_the_input(implementation):
     x = complex_array((6, 8))
-    np.testing.assert_allclose(run(padded_along_the_first_axis, implementation, x=x.copy()),
-                               np.fft.fft(x, n=11, axis=0),
-                               rtol=1e-12,
-                               atol=1e-10)
-    np.testing.assert_allclose(run(cropped_inverse, implementation, x=x.copy()),
-                               np.fft.ifft(x, n=5),
-                               rtol=1e-12,
-                               atol=1e-12)
-    np.testing.assert_allclose(run(padded_and_cropped_2d, implementation, x=x.copy()),
-                               np.fft.fft2(x, s=(4, 9), norm="ortho"),
-                               rtol=1e-12,
-                               atol=1e-10)
+    np.testing.assert_allclose(
+        run(padded_along_the_first_axis, implementation, x=x.copy()),
+        np.fft.fft(x, n=11, axis=0),
+        rtol=1e-12,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        run(cropped_inverse, implementation, x=x.copy()), np.fft.ifft(x, n=5), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        run(padded_and_cropped_2d, implementation, x=x.copy()),
+        np.fft.fft2(x, s=(4, 9), norm="ortho"),
+        rtol=1e-12,
+        atol=1e-10,
+    )
     r = real_array((6, 8))
-    np.testing.assert_allclose(run(padded_real_transform, implementation, x=r.copy()),
-                               np.fft.rfftn(r, s=(7, 10), axes=(0, 1)),
-                               rtol=1e-12,
-                               atol=1e-10)
+    np.testing.assert_allclose(
+        run(padded_real_transform, implementation, x=r.copy()),
+        np.fft.rfftn(r, s=(7, 10), axes=(0, 1)),
+        rtol=1e-12,
+        atol=1e-10,
+    )
 
 
 @dace.program
@@ -193,15 +202,19 @@ def real_low_pass(x: dace.float64[16, 12], mask: dace.float64[16, 7]):
 def test_a_filter_between_a_transform_and_its_inverse(implementation):
     """The FFT -> elementwise filter -> IFFT chain: the filter is an ordinary map between two library nodes."""
     x, mask = complex_array((16, 12)), (real_array((16, 12)) > 0).astype(np.float64)
-    np.testing.assert_allclose(run(low_pass, implementation, x=x.copy(), mask=mask),
-                               np.fft.ifftn(np.fft.fftn(x) * mask),
-                               rtol=1e-12,
-                               atol=1e-12)
+    np.testing.assert_allclose(
+        run(low_pass, implementation, x=x.copy(), mask=mask),
+        np.fft.ifftn(np.fft.fftn(x) * mask),
+        rtol=1e-12,
+        atol=1e-12,
+    )
     r, half_mask = real_array((16, 12)), (real_array((16, 7)) > 0).astype(np.float64)
-    np.testing.assert_allclose(run(real_low_pass, implementation, x=r.copy(), mask=half_mask),
-                               np.fft.irfftn(np.fft.rfftn(r) * half_mask, s=(16, 12), axes=(0, 1)),
-                               rtol=1e-12,
-                               atol=1e-12)
+    np.testing.assert_allclose(
+        run(real_low_pass, implementation, x=r.copy(), mask=half_mask),
+        np.fft.irfftn(np.fft.rfftn(r) * half_mask, s=(16, 12), axes=(0, 1)),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 @dace.program
