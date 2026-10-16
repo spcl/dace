@@ -296,12 +296,9 @@ def lower_implicit_copies(sdfg: SDFG) -> None:
     # is untouched.
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     # A masked tile copy is a copy too, but a CUDA Tile C++ kernel writes its own (``compiler.cuda.tile_backend``)
-    kept = set()
-    if config.Config.get("compiler", "cuda", "tile_backend") == "cuda_tile":
-        from dace.codegen.python.dialects.cuda_tile_cpp import tile_kernel_nodes
+    from dace.codegen.python.dialects.cuda_tile_cpp import expand_outside_tile_kernels
 
-        kept = tile_kernel_nodes(sdfg)
-    sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode) and n not in kept)
+    expand_outside_tile_kernels(sdfg, predicate=lambda n: isinstance(n, CopyLibraryNode))
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
@@ -423,15 +420,19 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     # Recursively expand library nodes that have not yet been expanded. An expansion builds its bounds from
     # strings, so the result is rebuilt at the dtypes the SDFG declares before the passes below read it.
-    # A CUDA Tile C++ kernel writes its tile nodes itself, so they stay nodes (``compiler.cuda.tile_backend``)
-    kept = set()
-    if config.Config.get("compiler", "cuda", "tile_backend") == "cuda_tile":
-        from dace.codegen.python.dialects.cuda_tile_cpp import check_tile_toolchain, pin_tile_blocks, tile_kernel_nodes
+    # A CUDA Tile C++ kernel launches one tile thread, which runs the whole tile, and writes its tile nodes itself
+    # (``compiler.cuda.tile_backend``)
+    from dace.codegen.python.dialects.cuda_tile_cpp import (
+        check_tile_toolchain,
+        expand_outside_tile_kernels,
+        tile_kernels,
+    )
 
-        kept = tile_kernel_nodes(sdfg)
-        check_tile_toolchain(bool(kept))
-        pin_tile_blocks(sdfg)
-    sdfg.expand_library_nodes(predicate=(lambda node: node not in kept) if kept else None)
+    kernels = tile_kernels(sdfg)
+    check_tile_toolchain(bool(kernels))
+    for tile_kernel, _ in kernels:
+        tile_kernel.map.gpu_block_size = [1, 1, 1]
+    expand_outside_tile_kernels(sdfg)
     equalize(sdfg)
 
     # Decide which maps may carry an OpenMP simd clause; the CPU target only renders it.

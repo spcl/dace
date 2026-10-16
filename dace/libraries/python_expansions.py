@@ -44,11 +44,6 @@ REDUCTIONS = {
 }
 
 
-def input_name(node: nodes.LibraryNode, conn: str) -> str:
-    """The tasklet connector of the input ``conn``: a tasklet cannot read and write one connector name."""
-    return f"{conn}_in" if conn in node.out_connectors else conn
-
-
 class Operands:
     """The operands of a library node as the expressions its Python tasklet reads and writes."""
 
@@ -80,7 +75,7 @@ class Operands:
 
     def __getitem__(self, conn: str) -> str:
         """The input ``conn`` as the tasklet reads it."""
-        return self.squeezed(input_name(self.node, conn), self.inputs[conn])
+        return self.squeezed(self.inputs[conn].dst_conn, self.inputs[conn])
 
     def coefficient(self, value, conn: str | None = None) -> str:
         """A ``value`` property, times the runtime scalar of ``conn`` when it is connected."""
@@ -103,22 +98,18 @@ def register(node_type: type, body: Callable[[Operands], str], operands_type: ty
 
     def expansion(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> nodes.Tasklet:
         operands = operands_type(node, state, sdfg)
+        # A tasklet cannot read and write one connector name, so the read edge of an in-out connector is renamed in
+        # place before the edges move over to the tasklet; ``operands`` keeps it under the node's connector name
+        for edge in state.in_edges(node):
+            if edge.dst_conn in node.out_connectors:
+                edge.dst_conn = f"{edge.dst_conn}_in"
+        inputs = {f"{conn}_in" if conn in node.out_connectors else conn: None for conn in node.in_connectors}
         return nodes.Tasklet(
-            node.label,
-            {input_name(node, conn): None for conn in node.in_connectors},
-            dict.fromkeys(node.out_connectors),
-            body(operands),
-            language=dtypes.Language.Python,
+            node.label, inputs, dict.fromkeys(node.out_connectors), body(operands), language=dtypes.Language.Python
         )
 
-    def postprocessing(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet) -> None:
-        # The edges moved over by connector name; an input renamed by ``input_name`` follows here
-        for edge in state.in_edges(tasklet):
-            if edge.dst_conn in tasklet.out_connectors:
-                edge.dst_conn = f"{edge.dst_conn}_in"
-
     name = f"Expand{node_type.__name__}{IMPLEMENTATION}"
-    members = {"environments": [], "expansion": staticmethod(expansion), "postprocessing": staticmethod(postprocessing)}
+    members = {"environments": [], "expansion": staticmethod(expansion)}
     library.register_expansion(node_type, IMPLEMENTATION)(type(name, (ExpandTransformation,), members))
 
 
