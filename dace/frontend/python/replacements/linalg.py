@@ -6,7 +6,7 @@ Contains linear algebra function and operator replacements.
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
-from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar
+from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, step_state
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
@@ -516,7 +516,9 @@ def outer(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str
 
     flat_a = flat(pv, sdfg, state, op_a)
     flat_b = flat(pv, sdfg, state, op_b)
-    return implement_ufunc_outer(pv, ast.Call(), sdfg, state, "multiply", [flat_a, flat_b], {})[0]
+    # A strided operand is flattened by a copy map; the product reads that copy, so it goes in the next state.
+    product_state = step_state(pv, state)
+    return implement_ufunc_outer(pv, ast.Call(), sdfg, product_state, "multiply", [flat_a, flat_b], {})[0]
 
 
 @oprepo.replaces("numpy.inner")
