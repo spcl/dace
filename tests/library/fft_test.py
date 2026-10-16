@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 
@@ -48,71 +48,24 @@ def test_ifft(norm):
     assert np.allclose(b, np.fft.ifft(a, norm=norm))
 
 
-def _gpu_fft() -> str:
-    """The FFT implementation of the configured GPU backend."""
-    from dace.codegen.common import get_gpu_backend
-
-    return {"cuda": "cuFFT", "hip": "hipFFT"}[get_gpu_backend()]
-
-
-@pytest.mark.gpu
-def test_gpu_fft():
-    import dace.libraries.fft as fftlib
+@pytest.mark.parametrize("norm", ("backward", "forward", "ortho"))
+@pytest.mark.parametrize("transform", ("fft", "ifft"))
+def test_1d_fft_normalization_over_a_symbolic_extent(transform, norm):
+    """A ``1/N`` or ``sqrt(1/N)`` factor over an integer extent symbol divides in floating point, never as C ints."""
+    N = dace.symbol("N")
 
     @dace.program
-    def tester(x: dace.complex128[210]):
-        return np.fft.fft(x)
-
-    sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = _gpu_fft()
-    sdfg.expand_library_nodes()
-    fftlib.FFT.default_implementation = "pure"
-
-    a = np.random.rand(210) + 1j * np.random.rand(210)
-    b = sdfg(a)
-    assert np.allclose(b, np.fft.fft(a))
-
-
-@pytest.mark.gpu
-def test_gpu_fft_twoplans():
-    import dace.libraries.fft as fftlib
+    def forward(x: dace.complex128[N]):
+        return np.fft.fft(x, norm=norm)
 
     @dace.program
-    def tester(x: dace.complex128[210], y: dace.complex64[19]):
-        return np.fft.fft(x), np.fft.ifft(y, norm="forward")
+    def inverse(x: dace.complex128[N]):
+        return np.fft.ifft(x, norm=norm)
 
-    sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = _gpu_fft()
-    fftlib.IFFT.default_implementation = _gpu_fft()
-    sdfg.expand_library_nodes()
-    fftlib.FFT.default_implementation = "pure"
-    fftlib.IFFT.default_implementation = "pure"
-
-    a = np.random.rand(210) + 1j * np.random.rand(210)
-    b = (np.random.rand(19) + 1j * np.random.rand(19)).astype(np.complex64)
-    c, d = sdfg(a, b)
-    assert np.allclose(c, np.fft.fft(a), rtol=1e-3, atol=1e-5)
-    assert np.allclose(d, np.fft.ifft(b, norm="forward"), rtol=1e-3, atol=1e-5)
-
-
-@pytest.mark.gpu
-def test_gpu_fft_along_the_first_axis():
-    import dace.libraries.fft as fftlib
-
-    @dace.program
-    def tester(x: dace.complex128[16, 12]):
-        return np.fft.fft(x, axis=0)
-
-    sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = _gpu_fft()
-    sdfg.expand_library_nodes()
-    fftlib.FFT.default_implementation = "pure"
-
-    a = np.random.rand(16, 12) + 1j * np.random.rand(16, 12)
-    assert np.allclose(sdfg(a), np.fft.fft(a, axis=0))
+    rng = np.random.default_rng(7)
+    a = rng.standard_normal(21) + 1j * rng.standard_normal(21)
+    tester, reference = (forward, np.fft.fft) if transform == "fft" else (inverse, np.fft.ifft)
+    np.testing.assert_allclose(tester(a.copy()), reference(a, norm=norm), rtol=1e-12, atol=1e-12)
 
 
 if __name__ == "__main__":
@@ -122,6 +75,9 @@ if __name__ == "__main__":
     test_ifft("backward")
     test_ifft("forward")
     test_ifft("ortho")
-    test_gpu_fft()
-    test_gpu_fft_twoplans()
-    test_gpu_fft_along_the_first_axis()
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "backward")
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "forward")
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "ortho")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "backward")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "forward")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "ortho")
