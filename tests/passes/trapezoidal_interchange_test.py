@@ -14,10 +14,13 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_interchange import MapInterchange
 from dace.transformation.passes.canonicalize import pipeline as canon
+from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 from dace.transformation.passes.minimize_stride_permutation import UndecidableStride, stride_difference_sign
 
 N = dace.symbol("N", dtype=dace.int64)
 V = dace.symbol("V", dtype=dace.int64)
+V_POSITIVE = dace.symbol("V_POSITIVE", dtype=dace.int64, positive=True)
+V_NEGATIVE = dace.symbol("V_NEGATIVE", dtype=dace.int64, negative=True)
 
 
 def nest(sdfg: dace.SDFG):
@@ -98,6 +101,35 @@ def test_a_plain_swap_still_refuses_a_trapezoid():
     )
 
 
+def test_a_slope_positive_by_the_sdfg_facts_records_no_runtime_assumption():
+    @dace.program
+    def trapez_positive_slope_by_facts(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+        for j in dace.map[0:N]:
+            for i in dace.map[V_POSITIVE * j : N]:
+                aa[i, j] = bb[i, j] + 1.0
+
+    sdfg = trapez_positive_slope_by_facts.to_sdfg(simplify=True)
+    outer, inner = nest(sdfg)
+    options = {"transform_bounds": True}
+    MapInterchange.apply_to(sdfg, options=options, outer_map_entry=outer, inner_map_entry=inner)
+    assert tracked_assumptions(sdfg) == []
+
+
+def test_a_slope_negative_by_the_sdfg_facts_is_refused():
+    """A negative slope inverts to another bound shape; the sign is a registry fact, not a SymPy assumption."""
+
+    @dace.program
+    def trapez_negative_slope_by_facts(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+        for j in dace.map[0:N]:
+            for i in dace.map[V_NEGATIVE * j + N - 1 : N]:
+                aa[i, j] = bb[i, j] + 1.0
+
+    sdfg = trapez_negative_slope_by_facts.to_sdfg(simplify=True)
+    outer, inner = nest(sdfg)
+    options = {"transform_bounds": True}
+    assert not MapInterchange.can_be_applied_to(sdfg, options=options, outer_map_entry=outer, inner_map_entry=inner)
+
+
 def test_stride_comparison_uses_the_shape_contract():
     """An extent is at least one, so a symbolic stride is not an undecidable one."""
     assert stride_difference_sign("1", "N") == -1
@@ -112,4 +144,6 @@ if __name__ == "__main__":
     test_the_contiguous_parameter_ends_up_innermost()
     test_the_iteration_set_is_preserved(33, 4)
     test_a_plain_swap_still_refuses_a_trapezoid()
+    test_a_slope_positive_by_the_sdfg_facts_records_no_runtime_assumption()
+    test_a_slope_negative_by_the_sdfg_facts_is_refused()
     test_stride_comparison_uses_the_shape_contract()

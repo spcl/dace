@@ -12,6 +12,7 @@ from dace.frontend.python import astutils
 from dace.ordered import OrderedSet
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import transformation
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
@@ -1359,7 +1360,11 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # passes -- so its symbols need not be the subset's own instances of the same names.
         written, volume = symbolic.equalize_symbols_across(edge.data.subset.num_elements(), edge.data.volume)
         diff = symbolic.simplify(written - volume)
-        within_volume = (diff <= 0) == True  # noqa: E712 -- sympy Relational, not a bool
+        if diff.is_number:
+            within_volume = bool(diff <= 0)
+        else:
+            within = symbolic.Relation(symbolic.RelationKind.LE, written, volume)
+            within_volume = symbolic.ask(within, SymbolResolver().facts_at(graph, edge.src)) is symbolic.Truth.TRUE
         if not within_volume or edge.data.dynamic is True:
             return False
 

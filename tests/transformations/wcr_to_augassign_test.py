@@ -662,6 +662,31 @@ def test_a_wcr_into_a_view_reads_back_through_a_bound_view():
     assert np.array_equal(y, np.arange(8.0) + 5.0 * np.eye(8)[3]), y
 
 
+def test_a_symbolic_volume_bounding_the_write_by_the_sdfg_facts_reverts():
+    """``K <= M`` is a registry relation: the WCR writes no more elements than its volume."""
+    sdfg = dace.SDFG("wcr_volume_bounded_by_facts")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", ["M"], dace.float64)
+    sdfg.add_array("B", ["M"], dace.float64)
+    k, m = (dace.symbolic.pystr_to_symbolic(name) for name in ("K", "M"))
+    sdfg.add_symbol_relation(dace.symbolic.Relation(dace.symbolic.RelationKind.LE, k, m))
+    state = sdfg.add_state(is_start_block=True)
+    memlet = dace.Memlet(data="A", subset="0:K", other_subset="0:K", wcr="lambda x, y: x + y", volume="M")
+    state.add_edge(state.add_read("B"), None, state.add_write("A"), None, memlet)
+
+    assert sdfg.apply_transformations(WCRToAugAssign) == 1
+    assert not any(e.data.wcr for st in sdfg.states() for e in st.edges())
+
+    rng = np.random.default_rng(0)
+    a0, b = rng.random(8), rng.random(8)
+    a = a0.copy()
+    sdfg(A=a, B=b, K=5, M=8)
+    expected = a0.copy()
+    expected[:5] += b[:5]
+    assert np.allclose(a, expected)
+
+
 if __name__ == "__main__":
     test_tasklet()
     test_mapped_tasklet()
@@ -680,3 +705,4 @@ if __name__ == "__main__":
     test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts()
     test_a_read_back_enters_through_the_outer_map_the_output_sits_in()
     test_a_wcr_into_a_view_reads_back_through_a_bound_view()
+    test_a_symbolic_volume_bounding_the_write_by_the_sdfg_facts_reverts()
