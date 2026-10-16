@@ -79,7 +79,7 @@ def test_orchestrator_rejects_avx512_innermost_not_8_aligned():
 def test_orchestrator_rejects_a_target_isa_that_is_not_an_isa_member():
     """``VectorizeConfig`` takes knob enum members only; a string, even a member's name, is refused."""
     with pytest.raises(TypeError, match="target_isa must be a ISA member"):
-        VectorizeConfig(widths=(8,), target_isa=ISA.AVX512)
+        VectorizeConfig(widths=(8,), target_isa="AVX512")
 
 
 def test_orchestrator_k1_axpy_runs_and_validates():

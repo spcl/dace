@@ -27,8 +27,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")
 P = dace.symbol("P")
@@ -49,14 +50,15 @@ def _outer_2d_slice(M: dace.float64[N, N], out: dace.float64[N, N]):
 def _vectorized(program, widths, isa):
     """Canonicalize + vectorize a copy of ``program`` and return the compiled SDFG."""
     from dace.transformation.passes.canonicalize import canonicalize
+
     sdfg = program.to_sdfg(simplify=False)
     canonicalize(sdfg)
     VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=isa)).apply_pass(sdfg, {})
     return sdfg.compile()
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", "AUTO"])
-@pytest.mark.parametrize("widths", [(8, ), (8, 8), (4, 4)])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, ISA.AUTO], ids=["SCALAR", "AUTO"])
+@pytest.mark.parametrize("widths", [(8,), (8, 8), (4, 4)])
 @pytest.mark.parametrize("n", [8, 12, 17])
 def test_add_outer_two_vectors(widths, isa, n):
     """``out[i, j] = a[i] + b[j]`` matches NumPy. K=1 (SCALAR/AUTO intrinsic)
@@ -71,8 +73,8 @@ def test_add_outer_two_vectors(widths, isa, n):
     np.testing.assert_allclose(got, expected, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", "AUTO"])
-@pytest.mark.parametrize("widths", [(8, ), (8, 8), (4, 4)])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, ISA.AUTO], ids=["SCALAR", "AUTO"])
+@pytest.mark.parametrize("widths", [(8,), (8, 8), (4, 4)])
 @pytest.mark.parametrize("n", [8, 12, 17])
 def test_outer_product_of_matrix_slices(widths, isa, n):
     """``out[i, j] = M[i, P] + M[P, j]`` (column + row of one matrix) matches
@@ -88,7 +90,7 @@ def test_outer_product_of_matrix_slices(widths, isa, n):
 
 if __name__ == "__main__":
     for _n in (8, 12, 17):
-        for _w in ((8, ), (8, 8), (4, 4)):
-            test_add_outer_two_vectors(_w, "SCALAR", _n)
-            test_outer_product_of_matrix_slices(_w, "SCALAR", _n)
+        for _w in ((8,), (8, 8), (4, 4)):
+            test_add_outer_two_vectors(_w, ISA.SCALAR, _n)
+            test_outer_product_of_matrix_slices(_w, ISA.SCALAR, _n)
     print("ok")
