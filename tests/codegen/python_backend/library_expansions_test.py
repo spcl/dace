@@ -15,9 +15,12 @@ from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.ger import Ger
 from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.libraries.standard.nodes.find_first import FindFirst
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.libraries.standard.nodes.scan import Scan, ScanOp
 
 N = dace.symbol("N")
 
@@ -378,3 +381,170 @@ def test_a_reduction_without_identity_into_one_element_folds_in_what_it_holds():
         sdfg(A=a, m=below)
 
     assert above[0] == a.max() + 1.0 and below[0] == a.max()
+
+
+def wired_sdfg(
+    node: dace.nodes.LibraryNode,
+    arrays: dict[str, tuple[list, dace.typeclass]],
+    reads: dict[str, str],
+    writes: dict[str, str],
+    storage: dace.StorageType = dace.StorageType.Default,
+) -> dace.SDFG:
+    """``node`` alone in a state: ``reads`` / ``writes`` map a connector to its memlet over ``arrays``.
+
+    A one-element array stays on the host, where the library nodes leave their answers."""
+    sdfg = dace.SDFG(f"wired_{node.label}_{storage.name}")
+    for name, (shape, dtype) in arrays.items():
+        sdfg.add_array(name, shape, dtype, storage=storage if shape != [1] else dace.StorageType.Default)
+    state = sdfg.add_state()
+    state.add_node(node)
+    for conn, memlet in reads.items():
+        state.add_edge(state.add_read(memlet.split("[")[0]), None, node, conn, dace.Memlet(memlet))
+    for conn, memlet in writes.items():
+        state.add_edge(node, conn, state.add_write(memlet.split("[")[0]), None, dace.Memlet(memlet))
+    return sdfg
+
+
+def sequential_scan(values: np.ndarray, step, seed) -> np.ndarray:
+    out, acc = np.empty_like(values), seed
+    for k, value in enumerate(values):
+        acc = value if acc is None else step(acc, value)
+        out[k] = acc
+    return out
+
+
+SCAN_CASES = {
+    "sum": (ScanOp.SUM, lambda acc, x: acc + x),
+    "product": (ScanOp.PRODUCT, lambda acc, x: acc * x),
+    "min": (ScanOp.MIN, min),
+    "max": (ScanOp.MAX, max),
+}
+
+
+@pytest.mark.parametrize("name", SCAN_CASES)
+def test_an_inclusive_scan_matches_the_sequential_loop(name: str):
+    op, step = SCAN_CASES[name]
+    node = Scan("scan", op=op)
+    sdfg = wired_sdfg(
+        node, {"x": ([13], dace.float64), "y": ([13], dace.float64)}, {"_scan_in": "x[0:13]"}, {"_scan_out": "y[0:13]"}
+    )
+    x, y = np.random.default_rng(3).random(13) + 0.5, np.zeros(13)
+
+    with python_backend():
+        sdfg(x=x, y=y)
+
+    assert np.allclose(y, sequential_scan(x, step, None))
+
+
+def test_an_exclusive_sum_scan_starts_from_zero():
+    node = Scan("scan", op=ScanOp.SUM, exclusive=True)
+    sdfg = wired_sdfg(
+        node, {"x": ([5], dace.float64), "y": ([5], dace.float64)}, {"_scan_in": "x[0:5]"}, {"_scan_out": "y[0:5]"}
+    )
+    y = np.zeros(5)
+
+    with python_backend():
+        sdfg(x=np.arange(1.0, 6.0), y=y)
+
+    assert y.tolist() == [0.0, 1.0, 3.0, 6.0, 10.0]
+
+
+def affine_scan_sdfg(storage: dace.StorageType) -> dace.SDFG:
+    """``y[k] = c[k] * y[k-1] + d[k]`` from ``y[-1] = s[0]``."""
+    node = Scan("scan", op=ScanOp.AFFINE)
+    node.add_in_connector("_scan_init")
+    arrays = {"c": ([37], dace.float64), "d": ([37], dace.float64), "y": ([37], dace.float64), "s": ([1], dace.float64)}
+    reads = {"_scan_in": "d[0:37]", "_scan_coef": "c[0:37]", "_scan_init": "s[0]"}
+    return wired_sdfg(node, arrays, reads, {"_scan_out": "y[0:37]"}, storage)
+
+
+def affine_reference(c: np.ndarray, d: np.ndarray, seed: float) -> np.ndarray:
+    return sequential_scan(np.arange(c.size, dtype=np.float64), lambda acc, k: c[int(k)] * acc + d[int(k)], seed)
+
+
+def test_an_affine_scan_carries_its_seed_through_every_coefficient():
+    rng = np.random.default_rng(4)
+    c, d, y = rng.random(37) + 0.5, rng.random(37), np.zeros(37)
+
+    with python_backend():
+        affine_scan_sdfg(dace.StorageType.Default)(c=c, d=d, y=y, s=np.array([2.0]))
+
+    assert np.allclose(y, affine_reference(c, d, 2.0))
+
+
+@pytest.mark.gpu
+def test_an_affine_scan_of_gpu_arrays_runs_in_cupy():
+    import cupy
+
+    rng = np.random.default_rng(4)
+    c, d, y = rng.random(37) + 0.5, rng.random(37), cupy.zeros(37)
+
+    with python_backend():
+        affine_scan_sdfg(dace.StorageType.GPU_Global)(c=cupy.asarray(c), d=cupy.asarray(d), y=y, s=np.array([2.0]))
+
+    assert np.allclose(y.get(), affine_reference(c, d, 2.0))
+
+
+def argmax_sdfg(storage: dace.StorageType, transform: str = "") -> dace.SDFG:
+    arrays = {"a": ([9], dace.float64), "v": ([1], dace.float64), "i": ([1], dace.int64)}
+    return wired_sdfg(
+        ArgReduce("argmax", op="max", transform=transform),
+        arrays,
+        {"_in": "a[0:9]"},
+        {"_out_val": "v[0]", "_out_idx": "i[0]"},
+        storage,
+    )
+
+
+def test_an_argmax_returns_the_first_of_tied_extremes_and_its_value():
+    v, i = np.zeros(1), np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        argmax_sdfg(dace.StorageType.Default, transform="abs")(a=np.array([1.0, -7, 3, 7, -7, 0, 2, 1, 5]), v=v, i=i)
+
+    assert (v[0], i[0]) == (7.0, 1)
+
+
+@pytest.mark.gpu
+def test_an_argmax_of_a_gpu_array_leaves_its_answers_on_the_host():
+    import cupy
+
+    v, i = np.zeros(1), np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        argmax_sdfg(dace.StorageType.GPU_Global)(a=cupy.array([1.0, 9, 3, 9, 0, 0, 2, 1, 5]), v=v, i=i)
+
+    assert (v[0], i[0]) == (9.0, 1)
+
+
+def find_first_sdfg(storage: dace.StorageType) -> dace.SDFG:
+    search = FindFirst("first", predicate="_a[__i] > 0.5 and not _a[__i] > 2.0", begin=2, end=9)
+    search.add_in_connector("_a")
+    arrays = {"a": ([9], dace.float64), "i": ([1], dace.int64)}
+    return wired_sdfg(search, arrays, {"_a": "a[0:9]"}, {"_out_idx": "i[0]"}, storage)
+
+
+@pytest.mark.parametrize(
+    "values, expected",
+    [([1.0, 1, 0, 3, 0, 1, 1, 0, 0], 5), ([1.0, 1, 0, 0, 0, 0, 0, 0, 3], 9)],
+    ids=["hit", "no_hit"],
+)
+def test_a_search_returns_the_first_index_in_range_where_the_predicate_holds(values: list[float], expected: int):
+    i = np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        find_first_sdfg(dace.StorageType.Default)(a=np.array(values), i=i)
+
+    assert i[0] == expected
+
+
+@pytest.mark.gpu
+def test_a_search_over_a_gpu_array_leaves_its_answer_on_the_host():
+    import cupy
+
+    i = np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        find_first_sdfg(dace.StorageType.GPU_Global)(a=cupy.array([1.0, 1, 0, 3, 0, 1, 1, 0, 0]), i=i)
+
+    assert i[0] == 5

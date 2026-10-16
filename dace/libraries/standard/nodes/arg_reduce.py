@@ -344,6 +344,86 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 
 
 @library.expansion
+class ExpandArgReduceCUDABlock(ExpandTransformation):
+    """In-kernel lowering: one thread block scans the slice, then ``gpucub::BlockReduce`` folds the pairs.
+
+    Each lane keeps the first extreme of its block-strided elements; the pair fold breaks ties toward the
+    lower index (``dace::arg_max_combine``), so the answer is the sequential one. A lane past the end holds
+    index ``-1`` and loses every fold. Every lane receives both answers.
+    """
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
+        from dace.libraries.standard.block_reduce import (
+            BLOCK_COLLECTIVE_THREADS as BLOCK_LANES,
+        )
+        from dace.libraries.standard.block_reduce import (
+            add_block_lane_map,
+            block_allreduce_code,
+        )
+
+        if not ExpandArgReduceCUDABlock.environments:
+            from dace.libraries.sort.environments.cub import BlockCollectives
+
+            ExpandArgReduceCUDABlock.environments = [BlockCollectives]
+        node.validate(parent_sdfg, parent_state)
+        edges = {e.dst_conn: e for e in parent_state.in_edges(node)}
+        edges.update({e.src_conn: e for e in parent_state.out_edges(node)})
+        nsdfg = dace.SDFG(f"{node.label}_block")
+        for conn, edge in edges.items():
+            operand_array(nsdfg, conn, edge, parent_sdfg)
+        if "_out_val" not in edges:
+            node.remove_out_connector("_out_val")
+        in_desc = nsdfg.arrays["_in"]
+        if len(in_desc.shape) != 1:
+            raise NotImplementedError(f"ArgReduce(CUDA (block)): {node.label} reads a {len(in_desc.shape)}-D slice")
+        vt, it = in_desc.dtype.ctype, nsdfg.arrays["_out_idx"].dtype.ctype
+        pair = f"dace::arg_pair<{vt}, {it}>"
+        fn = _transform_spelling(node.transform, in_desc.dtype)
+        element = f"__arin[__ari * ({symbolic.symstr(in_desc.strides[0])})]"
+        idstr = global_code_id(parent_sdfg, parent_state, node)
+        fold = (
+            f"[] (const {pair} &__arl, const {pair} &__arr) {{ return __arl.__ar_i < 0 ? __arr : "
+            f"(__arr.__ar_i < 0 ? __arl : dace::arg_{node.op}_combine(__arl, __arr)); }}"
+        )
+        code = (
+            f"{pair} __ar_best = {{{vt}(), ({it})-1}};\n"
+            f"for (long long __ari = threadIdx.x; __ari < (long long)({symbolic.symstr(_count(edges['_in']))}); "
+            f"__ari += {BLOCK_LANES}) {{\n"
+            f"    const {vt} __arx = {element if fn is None else f'{fn}({element})'};\n"
+            f"    if (__ar_best.__ar_i < 0) __ar_best = {{__arx, ({it})__ari}};\n"
+            f"    else __ar_best = dace::arg_{node.op}_step(__ar_best, __arx, ({it})__ari);\n"
+            f"}}\n"
+            + block_allreduce_code(idstr, pair, BLOCK_LANES, "__ar_best", fold, "__ar_best")
+            + "\n"
+            + ("__arout_val[0] = __ar_best.__ar_v;\n" if "_out_val" in edges else "")
+            + "__arout_idx[0] = __ar_best.__ar_i;"
+        )
+        outputs = [conn for conn in ("_out_val", "_out_idx") if conn in edges]
+        nstate = nsdfg.add_state(f"{node.label}_block_state")
+        tasklet = nstate.add_tasklet(
+            f"{node.label}_block_argreduce",
+            {"__arin": dace.pointer(in_desc.dtype)},
+            {f"__arout{conn[4:]}": dace.pointer(nsdfg.arrays[conn].dtype) for conn in outputs},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
+        entry, exit_node = add_block_lane_map(nstate, f"{node.label}_block_lanes", BLOCK_LANES)
+        # Every lane sees the whole slice: the map supplies threads, it does not partition the data.
+        nstate.add_memlet_path(
+            nstate.add_read("_in"), entry, tasklet, dst_conn="__arin", memlet=Memlet.from_array("_in", in_desc)
+        )
+        for conn in outputs:
+            nstate.add_memlet_path(
+                tasklet, exit_node, nstate.add_write(conn), src_conn=f"__arout{conn[4:]}", memlet=Memlet(f"{conn}[0]")
+            )
+        return nsdfg
+
+
+@library.expansion
 class ExpandArgReduceAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
@@ -368,6 +448,7 @@ class ArgReduce(nodes.LibraryNode):
         "pure": ExpandArgReducePure,
         "CPU": ExpandArgReduceCPU,
         "CUDA": ExpandArgReduceCUDA,
+        "CUDA (block)": ExpandArgReduceCUDABlock,
     }
     default_implementation = "Auto"
 

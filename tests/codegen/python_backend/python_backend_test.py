@@ -172,6 +172,29 @@ def test_a_nested_sdfg_binds_its_row_in_place():
     assert "row = A" in function_source(nested_sdfg())
 
 
+def one_tasklet_sdfg(code: str) -> dace.SDFG:
+    """``b[0] = f(a[0])``, always under one name, so every rebuild rewrites the same module file."""
+    sdfg = dace.SDFG("rebuilt_under_one_name")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("f", {"x"}, {"y"}, code)
+    state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[0]"))
+    state.add_edge(tasklet, "y", state.add_write("b"), None, dace.Memlet("b[0]"))
+    return sdfg
+
+
+def test_a_rebuild_of_equal_size_runs_the_new_code():
+    """Bytecode is cached by mtime and size; ``x + 1`` and ``x - 1`` rewritten in one tick have both equal."""
+    a, plus, minus = np.array([5.0]), np.zeros(1), np.zeros(1)
+
+    with python_backend():
+        one_tasklet_sdfg("y = x + 1")(a=a, b=plus)
+        one_tasklet_sdfg("y = x - 1")(a=a, b=minus)
+
+    assert (plus[0], minus[0]) == (6.0, 4.0)
+
+
 def test_a_cpp_tasklet_is_refused():
     sdfg = dace.SDFG("cpp_tasklet")
     sdfg.add_array("A", [1], dace.float64)

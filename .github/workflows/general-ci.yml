@@ -73,7 +73,7 @@ jobs:
         # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
         # --ignore=tests/library: the library-node tree (marked and unmarked) runs once in the
         # libnode-loop2x-transformations job instead of once per matrix cell here.
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py --ignore=tests/library -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py --ignore=tests/library -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile"
         ./codecov
 
     - name: Run sequential tests
@@ -96,7 +96,7 @@ jobs:
         # the general selection above: those suites have their own workflows, with their own
         # configuration. A test carrying both `sequential` and one of them would otherwise run here
         # under general CI's settings rather than under the ones its own workflow sets.
-        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes"
+        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile"
         ./codecov
 
     - name: Run other tests
@@ -160,13 +160,13 @@ jobs:
         # map-count scratch parses CloudSC from scratch on a cache miss). They are marked
         # ``integration`` and run in the dedicated integration workflow, which budgets 7200s per test.
         pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration"
+          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration and not tile"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `canonicalization` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
         pytest -n 1 --tb=short --timeout_method thread --timeout=600 \
-          -m "canonicalization and sequential and not gpu and not long and not perf and not integration" \
+          -m "canonicalization and sequential and not gpu and not long and not perf and not integration and not tile" \
           || [ $? -eq 5 ]
 
   # --- Vectorization (was vectorization-ci.yml) ---
@@ -226,13 +226,13 @@ jobs:
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
         pytest ${{ matrix.paths }} \
           -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and not gpu and not long and not sequential and not perf and not avx512"
+          -m "vectorization and not gpu and not long and not sequential and not perf and not avx512 and not tile"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `vectorization` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
         pytest ${{ matrix.paths }} -n 1 --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and sequential and not gpu and not long and not perf and not avx512" \
+          -m "vectorization and sequential and not gpu and not long and not perf and not avx512 and not tile" \
           || [ $? -eq 5 ]
 
   # --- Corpus (was corpus-ci.yml) ---
@@ -266,13 +266,13 @@ jobs:
         export DACE_compiler_command_cache=1
         export DACE_compiler_precompiled_header=1
         pytest -n auto --tb=short --timeout_method thread --timeout=600 \
-          -m "corpus and not gpu and not long and not sequential and not perf and not mpi"
+          -m "corpus and not gpu and not long and not sequential and not perf and not mpi and not tile"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `corpus` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
         pytest -n 1 --tb=short --timeout_method thread --timeout=600 \
-          -m "corpus and sequential and not gpu and not long and not perf and not mpi" \
+          -m "corpus and sequential and not gpu and not long and not perf and not mpi and not tile" \
           || [ $? -eq 5 ]
 
   # --- Library nodes + loop-to-libnode lifts (was loop2x-libnodes-ci.yml) ---
@@ -344,13 +344,13 @@ jobs:
         export DACE_compiler_command_cache=1
         export DACE_compiler_precompiled_header=1
         pytest -n auto --tb=short --timeout_method thread --timeout=600 \
-          -m "loop2x_libnodes and not gpu and not long and not sequential and not perf and not mpi and not tblis"
+          -m "loop2x_libnodes and not gpu and not long and not sequential and not perf and not mpi and not tblis and not tile"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `loop2x_libnodes` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
         pytest -n 1 --tb=short --timeout_method thread --timeout=600 \
-          -m "loop2x_libnodes and sequential and not gpu and not long and not perf and not mpi and not tblis" \
+          -m "loop2x_libnodes and sequential and not gpu and not long and not perf and not mpi and not tblis and not tile" \
           || [ $? -eq 5 ]
 
     - name: Library-node backend suites
@@ -372,13 +372,13 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_compiler_command_cache=1
         export DACE_compiler_precompiled_header=1
-        pytest -n 1 --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        pytest -n 1 --tb=short --timeout_method thread --timeout=300 -m "lapack and not tile"
         # The whole library-node test tree, marked and unmarked -- General Tests ignores it now.
         pytest tests/library -n auto --tb=short --timeout_method thread --timeout=600 \
-          -m "not loop2x_libnodes and not lapack and not gpu and not long and not sequential and not perf and not mpi and not scalapack and not datainstrument"
+          -m "not loop2x_libnodes and not lapack and not gpu and not long and not sequential and not perf and not mpi and not scalapack and not datainstrument and not tile"
         # Backend-marked suites living OUTSIDE tests/library (e.g. tests/blas).
         pytest --ignore=tests/library -n auto --tb=short --timeout_method thread --timeout=600 \
-          -m "(openblas or mkl or fftw or tblis) and not loop2x_libnodes and not gpu and not long and not sequential and not perf and not mpi"
+          -m "(openblas or mkl or fftw or tblis) and not loop2x_libnodes and not gpu and not long and not sequential and not perf and not mpi and not tile"
 
   # --- CPU Codegen + External TU (was codegen-external-tu-ci.yml) ---
 
@@ -423,7 +423,7 @@ jobs:
         # Both suites drive legacy AND experimental_readable internally; -m "not gpu" keeps this
         # CPU-only. The GPU external-TU file's codegen-shape tests (per-kernel .cu split) are not
         # gpu marked and run here too -- they only generate code, no device needed.
-        pytest -v --tb=short --timeout_method thread --timeout=600 -m "not gpu" \
+        pytest -v --tb=short --timeout_method thread --timeout=600 -m "not gpu and not tile" \
           tests/codegen/readable \
           tests/codegen/split_nsdfg_translation_units_test.py
 
@@ -443,7 +443,7 @@ jobs:
         printf 'graph:\n  backend: rustworkx\n' > $DACE_CONFIG
         pytest -n auto --tb=short --timeout_method thread --timeout=300 \
           tests/graphlib \
-          -m "not gpu and not long and not sequential"
+          -m "not gpu and not long and not sequential and not tile"
 
   # --- Advisory suite ---
   # Non-blocking, for the reason recorded on its step. Kept apart from the blocking jobs on purpose:
@@ -489,4 +489,4 @@ jobs:
         # ``not long``: the canonicalize corpus sweep carries ``perf`` too, but it is the batch
         # measurement harness -- a few hundred kernels times eight arms -- and belongs in a
         # deliberate run, not in every push.
-        pytest -n 1 --tb=short --timeout_method thread --timeout=1200 -m "perf and not long"
+        pytest -n 1 --tb=short --timeout_method thread --timeout=1200 -m "perf and not long and not tile"

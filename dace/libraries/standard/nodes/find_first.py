@@ -24,6 +24,7 @@ search neither perturbs nor is perturbed by the tiling of the Maps around it.
 """
 
 import ast
+import copy
 
 import dace
 from dace import library, properties, symbolic
@@ -332,6 +333,89 @@ class ExpandFindFirstCUDA(ExpandTransformation):
         )
 
 
+@library.expansion
+class ExpandFindFirstCUDABlock(ExpandTransformation):
+    """In-kernel lowering: one thread block tests ``BLOCK`` indices per step and stops at the first step with a hit.
+
+    ``__syncthreads_or`` makes the stop uniform, so every lane reaches the ``gpucub::BlockReduce`` min that picks
+    the lowest firing index of that step. The range past it is never read.
+    """
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
+        from dace.codegen.targets.cpp import sym2cpp
+        from dace.libraries.standard.block_reduce import (
+            BLOCK_COLLECTIVE_THREADS,
+            add_block_lane_map,
+            block_allreduce_code,
+            block_redop,
+        )
+
+        if not ExpandFindFirstCUDABlock.environments:
+            from dace.libraries.sort.environments.cub import BlockCollectives
+
+            ExpandFindFirstCUDABlock.environments = [BlockCollectives]
+        node.validate(sdfg, state)
+        lanes = BLOCK_COLLECTIVE_THREADS
+        begin, end = sym2cpp(node.begin), sym2cpp(node.end)
+        idstr = global_code_id(sdfg, state, node)
+        minimum = block_redop(dace.dtypes.ReductionType.Min, "long long")
+        connectors = find_first_connectors(node, state, sdfg)
+        # The tasklet's connectors cannot take the inner containers' names, which the predicate spells.
+        bindings = "".join(f"const auto {conn} = __ffc{conn};\n" for conn in connectors)
+        code = (
+            bindings + f"long long __ff_hit = ({end});\n"
+            f"for (long long __ff_base = ({begin}); __ff_base < ({end}); __ff_base += {lanes}) {{\n"
+            f"    const long long {INDEX_NAME} = __ff_base + threadIdx.x;\n"
+            f"    const int __ff_found = {INDEX_NAME} < ({end}) && {cpp_predicate(node, state, sdfg)};\n"
+            f"    if (__syncthreads_or(__ff_found)) {{\n"
+            f"        __ff_hit = __ff_found ? {INDEX_NAME} : ({end});\n"
+            f"        break;\n"
+            f"    }}\n"
+            f"}}\n"
+            + block_allreduce_code(idstr, "long long", lanes, "__ff_hit", minimum, "__ff_hit")
+            + "\n__ff_out[0] = __ff_hit;"
+        )
+        nsdfg = dace.SDFG(f"{node.label}_block")
+        nstate = nsdfg.add_state(f"{node.label}_block_state")
+        out_edge = next(e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+        answer = operand_array(nsdfg, OUTPUT_CONNECTOR_NAME, out_edge, sdfg)
+        tasklet = nstate.add_tasklet(
+            f"{node.label}_block_find_first",
+            {f"__ffc{conn}": ctype for conn, ctype in connectors.items()},
+            {"__ff_out": dace.pointer(answer.dtype)},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
+        entry, exit_node = add_block_lane_map(nstate, f"{node.label}_block_lanes", lanes)
+        for edge in state.in_edges(node):
+            if edge.dst_conn is None:
+                continue
+            desc = sdfg.arrays[required(edge.data.data)]
+            # Whole containers at their own strides: the predicate is linearized by the outer strides.
+            inner = copy.deepcopy(desc)
+            inner.transient = False
+            nsdfg.add_datadesc(edge.dst_conn, inner)
+            nstate.add_memlet_path(
+                nstate.add_read(edge.dst_conn),
+                entry,
+                tasklet,
+                dst_conn=f"__ffc{edge.dst_conn}",
+                memlet=Memlet.from_array(edge.dst_conn, inner),
+            )
+        nstate.add_memlet_path(
+            tasklet,
+            exit_node,
+            nstate.add_write(OUTPUT_CONNECTOR_NAME),
+            src_conn="__ff_out",
+            memlet=Memlet(f"{OUTPUT_CONNECTOR_NAME}[0]"),
+        )
+        return nsdfg
+
+
 @library.node
 class FindFirst(nodes.LibraryNode):
     """Smallest ``i`` in ``[begin, end)`` with ``predicate`` true, or ``begin >= end``'s ``end``.
@@ -344,6 +428,7 @@ class FindFirst(nodes.LibraryNode):
         "Auto": ExpandFindFirstAuto,
         "CPU": ExpandFindFirstCPU,
         "CUDA": ExpandFindFirstCUDA,
+        "CUDA (block)": ExpandFindFirstCUDABlock,
         "pure": ExpandFindFirstPure,
     }
     default_implementation = "Auto"

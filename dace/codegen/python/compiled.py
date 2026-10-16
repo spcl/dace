@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Load and call the module the Python backend writes."""
 
-import importlib.util
 import pathlib
+import types
 from typing import Any
 
 import numpy as np
@@ -29,9 +29,11 @@ class PythonCompiledSDFG:
     def __init__(self, sdfg: SDFG, path: pathlib.Path):
         self.sdfg = sdfg
         self.path = pathlib.Path(path)
-        spec = importlib.util.spec_from_file_location(f"dace_python_{sdfg.name}", self.path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = types.ModuleType(f"dace_python_{sdfg.name}")
+        module.__file__ = str(self.path)
+        # From the text, not ``__pycache__``: bytecode is keyed by mtime and size, so a same-size rewrite within one
+        # timestamp tick would run the previous module
+        exec(compile(self.path.read_text(), str(self.path), "exec"), module.__dict__)
         self.function = getattr(module, sdfg.name)
         # The order a positional call binds in, as ``CompiledSDFG`` binds it; an SDFG built by hand has none
         names = sdfg.arg_names or list(sdfg.arglist())

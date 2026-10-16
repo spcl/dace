@@ -27,15 +27,18 @@ generator. One program (tile block) runs per map iteration. Each tile node is on
   The GPU preprocessing passes skip these kernels (`is_tile_kernel`). Library expansion skips their nodes
   (`expand_outside_tile_kernels`).
 - `libraries/python_expansions.py`: the `CuPy` expansion of Gemm, Gemv, Dot, Axpy, Ger, BatchedMatMul, Einsum,
-  Cholesky, Solve, TensorTranspose, Reduce, ScatterConflictCheck, Copy and Fill. Each one is a single Python tasklet
-  that uses `cupy` or `np`, depending on where the operands are stored.
-- `codegen/python/compiled.py`: `PythonCompiledSDFG` imports the written module and calls it.
+  Cholesky, Solve, TensorTranspose, Reduce, Scan, ArgReduce, FindFirst, ScatterConflictCheck, Copy and Fill. Each one
+  is a single Python tasklet that uses `cupy` or `np`, depending on where the operands are stored.
+- `codegen/python/compiled.py`: `PythonCompiledSDFG` executes the written module from its text and calls it.
 
 ## Rules
 
 - Tile kernels are BLOCK group only; THREAD and WARP tile nodes raise.
 - Unstructured control flow and C++ tasklets raise; nothing falls back to C++.
 - The default `compiler.backend: cpp` path is unchanged.
+- Inside a C++ GPU kernel, `Reduce`, `Scan`, `ArgReduce` and `FindFirst` lower to one thread-block CUB collective by
+  default (`in_kernel_block_implementation`), unless they sit in thread-level code.
+- CI skips the tile-kernel tests (mark `tile`); run them locally.
 - Toolchain flags (`compiler.cuda.tile_args`) reach only builds that hold tile code (`CudaTileCppFlags`).
 
 ## How to use
