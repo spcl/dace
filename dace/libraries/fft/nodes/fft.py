@@ -117,9 +117,6 @@ COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 #: The most axes one cuFFT / hipFFT plan transforms.
 MAX_GPU_FFT_RANK = 3
 
-#: Suffix of each plan's state fields, unique across every program in the process.
-PLAN_IDS = itertools.count()
-
 
 class Transform(NamedTuple):
     """One vendor call: ``out`` is the transform of ``src`` over ``axes``."""
@@ -275,31 +272,14 @@ def dense_block_order(
     return None
 
 
-def plan_cache(prefix: str, handle: str, key_length: int, destroy: str) -> tuple[str, list[str], str, str]:
-    """State fields, init and exit code of one cached plan, and the C++ that compares ``__key`` against it."""
-    plan = f"{prefix}_plan_{next(PLAN_IDS)}"
-    fields = [f"{handle} {plan};", f"long long {plan}_key[{key_length}];", f"bool {plan}_made;"]
-    return plan, fields, f"__state->{plan}_made = false;", f"if (__state->{plan}_made) {destroy}(__state->{plan});"
-
-
-def key_matches(plan: str, key_length: int) -> str:
-    return (
-        f"bool __same = __state->{plan}_made;\n"
-        f"for (int __k = 0; __same && __k < {key_length}; ++__k)\n"
-        f"    __same = __state->{plan}_key[__k] == __key[__k];"
-    )
-
-
 def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
     """One ``fftw_plan_guru64_dft`` (``_r2c``, ``_c2r``) over the transformed axes, every other axis a ``howmany``
-    batch dimension, planned once and kept in the SDFG state.
+    batch dimension, planned once and kept in the library's plan cache.
 
     Both dimension lists step by the descriptors' own strides, so any rank, any axis set and any strided view is
-    one plan, and one buffer on both connectors is FFTW's in-place transform. The plan is replanned when its key
-    changes: the extents and strides, whether the transform is in place, the planner's thread count and the
-    arrays' alignment, the conditions under which FFTW's new-array execute may reuse a plan. FFTW's planner is
-    not thread-safe, so planning is serialized; execution is not. Inside a parallel region a plan that does not
-    match the cached one is planned for that call only, since another thread may be executing the cached one.
+    one plan, and one buffer on both connectors is FFTW's in-place transform. A plan is keyed by the transform
+    kind, the extents and strides, whether the transform is in place, the planner's thread count and the arrays'
+    alignment, the conditions under which FFTW's new-array execute may reuse a plan.
     """
     from dace.codegen.targets import cpp  # avoid import loop
     from dace.libraries.fft.environments import fftw3
@@ -346,8 +326,6 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
         if looped
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
-    key = [value for entry in dims + howmany for value in entry]
-    key_length = len(key) + 4
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
     threaded = fftw3.threaded()
     # A threaded FFTW plans for the team the program runs (pocketfft's ``workers``); inside a parallel region, one.
@@ -358,52 +336,28 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
         else ""
     )
     threads = "omp_in_parallel() ? 1 : omp_get_max_threads()" if threaded else "1"
-    plan, fields, init, exit_code = plan_cache(prefix, f"{prefix}_plan", key_length, f"{prefix}_destroy_plan")
+    # The cache is shared by every transform of this precision, so the key names the transform kind too.
+    kind_key = (
+        f"{['dft', 'dft_r2c', 'dft_c2r'].index(kind)}, {int(transform.inverse)}, {int(bool(looped))}, {len(dims)}"
+    )
+    key = ", ".join([kind_key] + [value for entry in dims + howmany for value in entry])
     code = f"""
     {iodims("__dims", dims)}
     {iodims("__howmany", howmany)}
     const int __threads = {threads};
-    const long long __key[{key_length}] = {{{", ".join(key)}, (long long)((const void *)__in == (const void *)__out),
-                                          (long long)__threads, {alignment}}};
-    {prefix}_plan __plan = nullptr;
-    bool __local = false;
-    #pragma omp critical(dace_fftw_planner)
-    {{
-        {key_matches(plan, key_length)}
-        if (__same) {{
-            __plan = __state->{plan};
-        }} else {{
+    {prefix}_plan __plan = dace::fft::Plans<{prefix}_plan>({prefix}_destroy_plan).Get(
+        {{{key}, (long long)((const void *)__in == (const void *)__out), (long long)__threads, {alignment}}}, [&] {{
             {team}
-            __plan = {prefix}_plan_guru64_{kind}({len(dims)}, __dims, {len(howmany)}, {"__howmany" if howmany else "NULL"},
-                                              ({in_t} *)__in, ({out_t} *)__out, {sign}{flags});
-            __local = omp_in_parallel();
-            if (__plan && !__local) {{
-                if (__state->{plan}_made)
-                    {prefix}_destroy_plan(__state->{plan});
-                __state->{plan} = __plan;
-                for (int __k = 0; __k < {key_length}; ++__k)
-                    __state->{plan}_key[__k] = __key[__k];
-                __state->{plan}_made = true;
-            }}
-        }}
-    }}
-    if (!__plan)
-        throw std::runtime_error("FFTW returned no plan for this transform layout");
+            {prefix}_plan __made = {prefix}_plan_guru64_{kind}({len(dims)}, __dims, {len(howmany)},
+                {"__howmany" if howmany else "NULL"}, ({in_t} *)__in, ({out_t} *)__out, {sign}{flags});
+            if (!__made)
+                throw std::runtime_error("FFTW returned no plan for this transform layout");
+            return __made;
+        }});
     {loop_open}{prefix}_execute_{kind}(__plan, ({in_t} *)__in{in_offset}, ({out_t} *)__out{out_offset});
-    if (__local) {{
-        #pragma omp critical(dace_fftw_planner)
-        {prefix}_destroy_plan(__plan);
-    }}
     """
     return nodes.Tasklet(
-        f"fftw3_{'i' if transform.inverse else ''}fft",
-        {"__in"},
-        {"__out"},
-        code,
-        language=dtypes.Language.CPP,
-        state_fields=fields,
-        code_init=init,
-        code_exit=exit_code,
+        f"fftw3_{'i' if transform.inverse else ''}fft", {"__in"}, {"__out"}, code, language=dtypes.Language.CPP
     )
 
 
@@ -466,10 +420,9 @@ def gpu_fft_layout(transform: Transform) -> GpuFftLayout | None:
 
 
 def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
-    """The cuFFT / hipFFT call in ``dialect``'s spelling: a cached ``MakePlanMany64`` plan run on the SDFG's stream.
-
-    The plan lives in the SDFG state and is rebuilt only when its layout changes between calls, so a
-    transform inside a loop plans once. One buffer on both connectors is the vendor's in-place transform.
+    """The cuFFT / hipFFT call in ``dialect``'s spelling: a ``MakePlanMany64`` plan from the library's plan cache,
+    run on the SDFG's stream, so a transform inside a loop plans once. One buffer on both connectors is the vendor's
+    in-place transform.
     """
 
     def call(transform: Transform) -> nodes.Tasklet | None:
@@ -506,9 +459,8 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
             else f"{letter}2{letter}"
         )
         direction = dialect.inverse if transform.inverse else f"{dialect.enum}FORWARD"
-        plan, fields, init, exit_code = plan_cache(
-            dialect.api, f"{dialect.api}Handle", len(key), f"{dialect.api}Destroy"
-        )
+        # The cache is shared by every transform, so the key ends with the transform type.
+        key += [str(int(transform.real_input) + 2 * int(transform.real_output)), str(int(transform.double))]
         check = (
             f"auto __check = [](const char *what, {dialect.api}Result result) {{ "
             f'if (result != {dialect.enum}SUCCESS) throw std::runtime_error(std::string("{dialect.name} ") + '
@@ -523,20 +475,18 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
         for (int __k = 0; __k < {rank}; ++__k)
             __empty = __empty || __key[__k] == 0;
         if (!__empty) {{
-        {key_matches(plan, len(key))}
-        if (!__same) {{
-            if (__state->{plan}_made)
-                __check("{dialect.api}Destroy", {dialect.api}Destroy(__state->{plan}));
-            __check("{dialect.api}Create", {dialect.api}Create(&__state->{plan}));
+        {dialect.api}Handle __plan = dace::fft::Plans<{dialect.api}Handle>([]({dialect.api}Handle plan) {{
+            {dialect.api}Destroy(plan);
+        }}).Get({{std::begin(__key), std::end(__key)}}, [&] {{
+            {dialect.api}Handle __made;
+            __check("{dialect.api}Create", {dialect.api}Create(&__made));
             size_t __work_size = 0;
-            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__state->{plan}, {rank}, {lengths},
+            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__made, {rank}, {lengths},
                 {in_layout}, {out_layout}, {dialect.enum}{kind}, {batch}, &__work_size));
-            for (int __k = 0; __k < {len(key)}; ++__k)
-                __state->{plan}_key[__k] = __key[__k];
-            __state->{plan}_made = true;
-        }}
-        __check("{dialect.api}SetStream", {dialect.api}SetStream(__state->{plan}, __dace_current_stream));
-        __check("{dialect.api}XtExec", {dialect.api}XtExec(__state->{plan}, (void *)__in, (void *)__out, {direction}));
+            return __made;
+        }});
+        __check("{dialect.api}SetStream", {dialect.api}SetStream(__plan, __dace_current_stream));
+        __check("{dialect.api}XtExec", {dialect.api}XtExec(__plan, (void *)__in, (void *)__out, {direction}));
         }}
         """
         return nodes.Tasklet(
@@ -545,9 +495,6 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
             {"__out"},
             code,
             language=dtypes.Language.CPP,
-            state_fields=fields,
-            code_init=init,
-            code_exit=exit_code,
         )
 
     return call
@@ -556,7 +503,7 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
 class ExpandFFTW3(xf.ExpandTransformation):
     """CPU FFTW3 backend: any rank, axes, strides, real or complex input, any ``norm``."""
 
-    environments = [env.FFTW3]
+    environments = [env.FFTW3, env.FFTPlans]
 
     @staticmethod
     def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
@@ -586,32 +533,32 @@ class ExpandGPUFFT(xf.ExpandTransformation):
 
 @library.register_expansion(FFT, "cuFFT")
 class cuFFTFFTExpansion(ExpandGPUFFT):
-    environments = [env.cuFFT]
+    environments = [env.cuFFT, env.FFTPlans]
     dialect = CUFFT
 
 
 @library.register_expansion(IFFT, "cuFFT")
 class cuFFTIFFTExpansion(ExpandGPUFFT):
-    environments = [env.cuFFT]
+    environments = [env.cuFFT, env.FFTPlans]
     dialect = CUFFT
 
 
 @library.register_expansion(FFT, "hipFFT")
 class hipFFTFFTExpansion(ExpandGPUFFT):
-    environments = [env.hipFFT]
+    environments = [env.hipFFT, env.FFTPlans]
     dialect = HIPFFT
 
 
 @library.register_expansion(IFFT, "hipFFT")
 class hipFFTIFFTExpansion(ExpandGPUFFT):
-    environments = [env.hipFFT]
+    environments = [env.hipFFT, env.FFTPlans]
     dialect = HIPFFT
 
 
 class ExpandMKL(ExpandFFTW3):
     """MKL backend: MKL exposes the FFTW3 C ABI, so the code is the FFTW3 expansion's, linked against MKL."""
 
-    environments = [IntelMKL]
+    environments = [IntelMKL, env.FFTPlans]
 
 
 @library.register_expansion(FFT, "MKL")
