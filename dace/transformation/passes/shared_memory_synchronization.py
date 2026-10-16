@@ -9,7 +9,7 @@ from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_map_entry
-from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node, Tasklet
 from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, transformation
@@ -25,10 +25,26 @@ def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
     )
 
 
+#: The code of a barrier tasklet.
+BARRIER = "__syncthreads();"
+
+
+def is_barrier(node: Node) -> bool:
+    """Whether ``node`` is a ``__syncthreads()`` tasklet."""
+    return isinstance(node, Tasklet) and node.language == dtypes.Language.CPP and node.code.as_string.strip() == BARRIER
+
+
+def followed_by_barrier(node: Node, state: SDFGState) -> bool:
+    """Whether a ``__syncthreads()`` tasklet directly follows ``node`` (a staging pass placed one barrier for
+    several shared-memory writes)."""
+    return any(is_barrier(succ) for succ in state.successors(node))
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
-    """Insert ``__syncthreads()`` tasklets after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory.
+    """Insert ``__syncthreads()`` tasklets after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory
+    that no barrier tasklet already follows.
 
     Barriers stay outside thread-block maps, where thread divergence would deadlock them. So a shared-memory write in
     a sequential map or loop nested in a thread-block map only warns, a write-then-read inside one thread-block map
@@ -51,7 +67,7 @@ class DefaultSharedMemorySync(ppl.Pass):
 
     def is_collaborative_smem_write(self, node: AccessNode, state: SDFGState) -> bool:
         """Whether ``node`` is shared memory written in a kernel but outside any thread-block map."""
-        if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
+        if node.desc(state).storage != dtypes.StorageType.GPU_Shared or followed_by_barrier(node, state):
             return False
         # The barriers of a tile node's threads are placed by InsertTileSync
         if all(
@@ -76,7 +92,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         for map_exit, state in tb_map_exits.items():
             map_entry = state.entry_node(map_exit)
             writes_to_smem, race_cond_danger, has_tb_parent = self.tb_exits_analysis(map_entry, map_exit, state)
-            if has_tb_parent or not writes_to_smem:
+            if has_tb_parent or not writes_to_smem or followed_by_barrier(map_exit, state):
                 continue
             if race_cond_danger:
                 warnings.warn(

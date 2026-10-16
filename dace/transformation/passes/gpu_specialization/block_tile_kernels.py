@@ -36,7 +36,7 @@ from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SymbolResolver
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
@@ -70,12 +70,17 @@ def is_kernel(state: SDFGState, entry: nodes.MapEntry) -> bool:
 
 def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> list[tuple[SDFGState, nodes.MapEntry]]:
     """The inner maps to stride across the lanes: the immediate ones that are not provably narrower than
-    the block. A map is parallel by definition; the ``Sequential`` schedule inference gives a map
-    nested in a kernel only says one thread would walk it."""
+    the block and do not span ``SMALL`` axes only (``nblks``: the offload put them in the kernel to run
+    sequentially, and a handful of iterations would leave all but a handful of lanes idle). A map is
+    parallel by definition; the ``Sequential`` schedule inference gives a map nested in a kernel only
+    says one thread would walk it."""
+    resolver = SymbolResolver()
     return [
         (inner_state, inner)
         for inner_state, inner in xfh.get_internal_scopes(state, kernel, immediate=True)
-        if isinstance(inner, nodes.MapEntry) and (inner.map.range.size()[-1] < BLOCK_COLLECTIVE_THREADS) != True
+        if isinstance(inner, nodes.MapEntry)
+        and (inner.map.range.size()[-1] < BLOCK_COLLECTIVE_THREADS) != True
+        and not all(xfh.small_map_axes(inner_state, inner, resolver))
     ]
 
 
