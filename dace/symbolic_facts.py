@@ -646,9 +646,8 @@ def prove(query: Relation, facts: Facts) -> Truth:
             # for every integer in place of each division holds for the division too, so ask that instead.
             generalized = generalized_divisions(expr)
             if generalized is not expr:
-                answer = by_cases(
-                    generalized, query.kind, sorted(generalized.atoms(sympy.Min, sympy.Max), key=str)[0], facts
-                )
+                # The extremum may have sat inside a division and left with it.
+                answer = prove(Relation(query.kind, sympy.Integer(0), generalized), facts)
         return answer
     divisions: dict[sympy.Symbol, Division] = {}
     difference = lowered(expr, facts.integers, facts.substitution, divisions)
