@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.transformation.interstate import StateFusionExtended
 
@@ -127,6 +129,32 @@ def test_extended_fusion_refuses_unsafe_write_after_read():
     assert sdfg.number_of_nodes() == 2, "the two states must remain separate"
 
 
+def test_extended_fusion_orders_a_reused_transient():
+    """Both states write then read ``tmp``; the second write must wait for the first state's read."""
+    sdfg = SDFG("state_fusion_reused_transient")
+    sdfg.add_array("A", [4], dtypes.float64)
+    sdfg.add_array("B", [4], dtypes.float64)
+    sdfg.add_scalar("tmp", dtypes.float64, transient=True)
+
+    s1 = sdfg.add_state("c0", is_start_block=True)
+    s2 = sdfg.add_state_after(s1, "c1")
+    for st, idx in ((s1, 0), (s2, 1)):
+        tmp = st.add_access("tmp")
+        load = st.add_tasklet(f"load{idx}", {"_i"}, {"_o"}, "_o = _i * 2.0")
+        store = st.add_tasklet(f"store{idx}", {"_i"}, {"_o"}, "_o = _i")
+        st.add_edge(st.add_read("A"), None, load, "_i", Memlet(f"A[{idx}]"))
+        st.add_edge(load, "_o", tmp, None, Memlet("tmp[0]"))
+        st.add_edge(tmp, None, store, "_i", Memlet("tmp[0]"))
+        st.add_edge(store, "_o", st.add_write("B"), None, Memlet(f"B[{idx}]"))
+
+    assert sdfg.apply_transformations_repeated(StateFusionExtended) == 1
+    A = np.array([10.0, 20.0, 30.0, 40.0])
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert B[0] == 20.0 and B[1] == 40.0
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
+    test_extended_fusion_orders_a_reused_transient()

@@ -597,8 +597,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
                         if (paths != None and len(paths) > 0) or len(direct_edges) > 0:
                             for j in conn[0]:
-                                if j in first_output:
-                                    first_state.add_nedge(j, i, memlet.Memlet())
+                                # Order after the sinks downstream of the write too, so its readers finish first
+                                for k in [j, *sdutil.find_downstream_nodes(j, first_state)]:
+                                    if k in first_output:
+                                        first_state.add_nedge(k, i, memlet.Memlet())
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
