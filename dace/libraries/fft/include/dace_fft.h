@@ -3,6 +3,7 @@
 
 #include <map>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace dace {
@@ -26,14 +27,14 @@ class PlanCache {
   PlanCache& operator=(PlanCache const&) = delete;
 
   ~PlanCache() {
-    for (auto& entry : plans_) destroy_(entry.second);
+    for (std::pair<const std::vector<long long>, Plan>& entry : plans_) destroy_(entry.second);
   }
 
   // The plan for `key`, made by `make()` on first use.
   template <typename Make>
   Plan Get(std::vector<long long> const& key, Make make) {
     std::lock_guard<std::mutex> lock(PlannerMutex());
-    auto found = plans_.find(key);
+    typename std::map<std::vector<long long>, Plan>::iterator found = plans_.find(key);
     if (found != plans_.end()) return found->second;
     Plan plan = make();
     plans_.emplace(key, plan);
