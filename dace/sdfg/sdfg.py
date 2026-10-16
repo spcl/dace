@@ -3,7 +3,6 @@ import ast
 import collections
 import copy
 import ctypes
-import functools
 import gzip
 import json
 import os
@@ -41,7 +40,7 @@ from dace.properties import (
     make_properties,
 )
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import SubgraphView, frozen_node_ids, generate_element_id
+from dace.sdfg.graph import SubgraphView, generate_element_id
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.type_inference import infer_expr_type
@@ -308,12 +307,6 @@ class LogicalGroup:
         return ret
 
 
-@functools.lru_cache(maxsize=16384, typed=True)
-def assignment_rhs_symbol_names(rhs: str) -> frozenset[str]:
-    """Names read by one interstate-edge assignment RHS; a pure function of the text, so memoized."""
-    return frozenset(str(s) for s in dace.symbolic.symbols_in_ast(ast.parse(rhs)))
-
-
 @make_properties
 class InterstateEdge:
     """An SDFG state machine edge. These edges can contain a condition
@@ -435,7 +428,7 @@ class InterstateEdge:
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= assignment_rhs_symbol_names(rhs)
+            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
@@ -883,7 +876,7 @@ class SDFG(ControlFlowRegion):
         # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
         # Each nested SDFG re-pushes its own symbols, and the previous authority is
         # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
+        with symbolic.serialization_symbol_dtypes(self.symbols):
             tmp = super().to_json()
         if is_root:
             tmp["source_files"] = source_files
@@ -3318,17 +3311,6 @@ class SDFG(ControlFlowRegion):
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
         """
-
-        from dace.sdfg.state import EXPANSION_DEFINED_SYMBOLS
-
-        token = EXPANSION_DEFINED_SYMBOLS.set({}) if EXPANSION_DEFINED_SYMBOLS.get() is None else None
-        try:
-            self._expand_library_nodes(recursive)
-        finally:
-            if token is not None:
-                EXPANSION_DEFINED_SYMBOLS.reset(token)
-
-    def _expand_library_nodes(self, recursive: bool) -> None:
         states = list(self.states())
         while len(states) > 0:
             state = states.pop()
