@@ -127,6 +127,25 @@ def test_no_post_value_without_a_read_after_the_loop():
         assert post_value_states(sdfg) == []
 
 
+def test_a_sibling_loop_reading_its_own_iterator_is_not_a_read_after():
+    sdfg = dace.SDFG("sibling_same_name")
+    sdfg.add_array("out", [10], dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    previous = None
+    for index in range(2):
+        loop = LoopRegion(f"l{index}", "i < 10", "i", "i = 0", "i = i + 1")
+        sdfg.add_node(loop, is_start_block=previous is None)
+        body = loop.add_state("body", is_start_block=True)
+        t = body.add_tasklet("w", set(), {"_o"}, "_o = i")
+        body.add_edge(t, "_o", body.add_access("out"), None, dace.Memlet("out[i]"))
+        if previous is not None:
+            sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        previous = loop
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    sdfg.validate()
+    assert post_value_states(sdfg) == []
+
+
 @dace.program
 def nested_loops(A: dace.float64[8, 8]):
     for i in range(8):
@@ -414,6 +433,7 @@ if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
     test_no_post_value_without_a_read_after_the_loop()
+    test_a_sibling_loop_reading_its_own_iterator_is_not_a_read_after()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
     test_no_postamble_drops_dead_symbol_declaration()
