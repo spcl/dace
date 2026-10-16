@@ -61,6 +61,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.loop_specialization import label_arms
 from dace.transformation.passes.scatter_conflict_guard import (
     ScatterIndexSlice,
     build_guard_states,
@@ -1473,6 +1474,8 @@ def _wrap_loop_in_dispatcher(
         # The clone brought its own nested sdfgs along.
         root.reset_cfg_list()
     ParallelizeLoops(propagate=False).parallelize_loop(root, loop, proven=True)  # ScatterToGuardedMaps propagates once
+    # The parallel arm is the else branch, so it runs under the negated guard.
+    label_arms(par_branch, seq_branch, f"not ({condition_expr})")
 
 
 __all__ = [

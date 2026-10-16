@@ -17,8 +17,39 @@ import copy
 from collections.abc import Callable
 
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+
+#: The class line of a parallel arm: the guard is the evidence the iterations are independent.
+GUARDED = (
+    "parallel -- under guard: {guard}\n"
+    "settled: proven parallel whenever the guard holds; the guard is checked at entry and the sequential arm runs "
+    "otherwise"
+)
+#: The class line of the sequential arm a guard falls back to.
+GUARD_FALLBACK = (
+    "sequential -- fallback arm, runs when not ({guard})\n"
+    "settled: kept in order on purpose; the parallel arm covers every value the guard admits"
+)
+
+
+def label_arm(node, kind: str) -> None:
+    """Put ``kind`` first in ``node``'s hint, keeping a note a pass left below it."""
+    hint = (node.specialization_hint or "").strip()
+    node.specialization_hint = f"{kind}\n{hint}" if hint else kind
+
+
+def label_arms(par_region: ControlFlowRegion, seq_region: ControlFlowRegion, guard: str) -> None:
+    """Name ``guard``, the condition the parallel arm runs under, on that arm's outermost maps and on the pinned
+    loops of the sequential arm."""
+    for block in par_region.all_control_flow_blocks():
+        if isinstance(block, SDFGState):
+            for node in block.nodes():
+                if isinstance(node, nodes.MapEntry) and block.entry_node(node) is None:
+                    label_arm(node, GUARDED.format(guard=guard))
+    for region in seq_region.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.pinned_sequential:
+            label_arm(region, GUARD_FALLBACK.format(guard=guard))
 
 
 def _owner_sdfg(loop: LoopRegion) -> SDFG:
@@ -97,7 +128,8 @@ def specialize_loop_under_condition(
         parent.start_block = parent.node_id(conditional)
 
     parallelize(par_loop, par_region, owner_sdfg)
+    label_arms(par_region, seq_region, condition.as_string.strip())
     return conditional
 
 
-__all__ = ["specialize_loop_under_condition"]
+__all__ = ["GUARDED", "GUARD_FALLBACK", "label_arms", "specialize_loop_under_condition"]

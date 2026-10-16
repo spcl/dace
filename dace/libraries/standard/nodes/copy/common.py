@@ -472,7 +472,10 @@ def _build_shmem_collective_copy_code(
     (``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``), which split the elements across the
     thread block -- the same call plain copy-edge codegen emits. Every other shape up to rank 3
     (after collapsing singleton dimensions) uses ``dace::BlockCollective3D``, which hands each
-    wavefront one contiguous run of the fastest-varying axis. Nothing here emits ``dace::CopyND``:
+    wavefront one contiguous run of the fastest-varying axis; a higher rank loops over its outer axes
+    around rank-3 collectives, and a node with ``aligned_words`` whose rows are contiguous on both
+    sides uses ``dace::BlockCollective3DVec`` (aligned 16-byte words on the global side). Nothing here
+    emits ``dace::CopyND``:
     a per-thread loop nest makes every thread of the block copy the whole region, measured at
     50-142 GB/s against 780-3010 GB/s for the collective on MI300A.
 
@@ -484,7 +487,7 @@ def _build_shmem_collective_copy_code(
     :param out_subset: destination memlet subset.
     :returns: the tasklet body.
     :raises ValueError: the copy is not expressible as a block-collective transfer (see the
-        individual messages: no enclosing kernel, rank mismatch, mismatched extents, rank > 3).
+        individual messages: no enclosing kernel, rank mismatch, mismatched extents).
     """
     copy_shape, src_strides = collapse_shape_and_strides(in_subset, inp.strides)
     dst_shape, dst_strides = collapse_shape_and_strides(out_subset, out.strides)
@@ -494,7 +497,8 @@ def _build_shmem_collective_copy_code(
     out_conn = OUTPUT_CONNECTOR_NAME
     block_dims = _collective_block_dims(parent_state, node)
     if (
-        ndims == 1
+        not node.aligned_words
+        and ndims == 1
         and block_dims is not None
         and not any(symbolic.issymbolic(s) for s in (copy_shape[0], src_strides[0], dst_strides[0]))
     ):
@@ -532,14 +536,6 @@ def _build_shmem_collective_copy_code(
             f"{tuple(copy_shape)} vs dst {tuple(dst_shape)}. Per-dim permutations are transposes, "
             f"not copies -- use a Transpose libnode."
         )
-    if ndims > 3:
-        raise ValueError(
-            f"SharedMemoryCollective for '{node.label}' got a rank-{ndims} region "
-            f"{tuple(copy_shape)} after collapsing singleton dimensions; dace::BlockCollective3D "
-            f"covers up to rank 3. Split the copy, or make the inner dimensions contiguous so "
-            f"they collapse."
-        )
-
     # A single element collapses to rank 0; the collective still has to move it, so give it the
     # degenerate 1x1x1 region rather than an empty loop nest.
     if ndims == 0:
@@ -554,20 +550,48 @@ def _build_shmem_collective_copy_code(
     dst_ord = [dst_strides[d] for d in order]
 
     # Pad up to the rank-3 signature; a missing outer axis is one iteration at stride 0.
-    pad = 3 - ndims
+    pad = max(3 - ndims, 0)
     shape = [1] * pad + shape
     src_ord = [0] * pad + src_ord
     dst_ord = [0] * pad + dst_ord
 
+    # A region of rank above 3 is a loop nest over its outer axes, each iteration one rank-3 collective. Every thread
+    # runs the same trip counts, so the collectives stay block-uniform; one barrier follows the whole nest.
+    outer = len(shape) - 3
+    loop_vars = [f"__cpy_o{d}" for d in range(outer)]
+    src_off = " + ".join([in_conn] + [f"{v} * ({sym2cpp(s)})" for v, s in zip(loop_vars, src_ord)])
+    dst_off = " + ".join([out_conn] + [f"{v} * ({sym2cpp(s)})" for v, s in zip(loop_vars, dst_ord)])
+    shape, src_ord, dst_ord = shape[outer:], src_ord[outer:], dst_ord[outer:]
+
     bdims = ", ".join(sym2cpp(b) for b in block_dims)
     # ``sync`` is per node: a staging pass chains several copies and leaves the barrier to the last.
-    is_async = "false" if node.sync else "true"
-    call_args = (
-        [in_conn]
-        + [sym2cpp(v) for v in src_ord]
-        + [out_conn]
-        + [sym2cpp(v) for v in dst_ord]
-        + [sym2cpp(v) for v in shape]
+    is_async = "false" if node.sync and outer == 0 else "true"
+    if node.aligned_words and symbolic.equal(src_ord[-1], 1) is True and symbolic.equal(dst_ord[-1], 1) is True:
+        direction = "Store" if inp.storage == dtypes.StorageType.GPU_Shared else "Load"
+        call_args = (
+            [src_off]
+            + [sym2cpp(v) for v in src_ord[:2]]
+            + [dst_off]
+            + [sym2cpp(v) for v in dst_ord[:2]]
+            + [sym2cpp(v) for v in shape]
+        )
+        call = (
+            f"dace::BlockCollective3DVec<{inp.dtype.ctype}, {bdims}, {is_async}>::{direction}({', '.join(call_args)});"
+        )
+    else:
+        call_args = (
+            [src_off]
+            + [sym2cpp(v) for v in src_ord]
+            + [dst_off]
+            + [sym2cpp(v) for v in dst_ord]
+            + [sym2cpp(v) for v in shape]
+        )
+        call = f"dace::BlockCollective3D<{inp.dtype.ctype}, {bdims}, {is_async}>::Copy({', '.join(call_args)});"
+    if outer == 0:
+        return call
+    loops = "".join(
+        f"for (int64_t {v} = 0; {v} < {sym2cpp(n)}; ++{v}) "
+        for v, n in zip(loop_vars, [copy_shape[d] for d in order][:outer])
     )
-    args = ", ".join(call_args)
-    return f"dace::BlockCollective3D<{inp.dtype.ctype}, {bdims}, {is_async}>::Copy({args});"
+    barrier = "\n__syncthreads();" if node.sync else ""
+    return f"{loops}{{\n{call}\n}}{barrier}"

@@ -9,9 +9,12 @@ import pytest
 
 import dace
 from dace.libraries.blas.nodes.axpy import Axpy
+from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.einsum import Einsum
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.ger import Ger
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 
@@ -291,3 +294,70 @@ def test_a_gpu_return_value_comes_back_as_a_cupy_array():
         result = sdfg()
 
     assert isinstance(result, cupy.ndarray) and np.array_equal(result.get(), np.full(4, 3.0))
+
+
+@pytest.mark.gpu
+def test_a_dot_product_of_gpu_vectors_lands_in_a_one_element_gpu_array():
+    import cupy
+
+    sdfg = dace.SDFG("gpu_dot")
+    for name, size in (("x", 8), ("y", 8), ("r", 1)):
+        sdfg.add_array(name, [size], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Dot("dot", n=8)
+    state.add_node(node)
+    for name, conn in (("x", "_x"), ("y", "_y")):
+        state.add_edge(state.add_read(name), None, node, conn, dace.Memlet.from_array(name, sdfg.arrays[name]))
+    state.add_edge(node, "_result", state.add_write("r"), None, dace.Memlet("r[0]"))
+    x, y, r = rng_matrix(8), rng_matrix(8)[::-1].copy(), cupy.zeros(1)
+
+    with python_backend():
+        sdfg(x=cupy.asarray(x), y=cupy.asarray(y), r=r)
+
+    assert np.isclose(r.get()[0], np.dot(x, y))
+
+
+def test_a_tensor_transpose_permutes_and_scales_like_numpy():
+    node = TensorTranspose("transpose", axes=[2, 0, 1], alpha=2.0)
+    sdfg = single_node_sdfg(node, {"_inp_tensor": ("A", [2, 3, 4])}, {"_out_tensor": ("B", [4, 2, 3])})
+    a, b = rng_matrix(2, 3, 4), np.zeros((4, 2, 3))
+
+    with python_backend():
+        sdfg(A=a, B=b)
+
+    assert np.array_equal(b, 2 * np.transpose(a, (2, 0, 1)))
+
+
+def conflict_check_sdfg(storage: dace.StorageType) -> dace.SDFG:
+    """``flag[0]`` is 1 when ``idx`` repeats a value; ``idx`` lives in ``storage``, the flag on the host."""
+    sdfg = dace.SDFG(f"conflict_check_{storage.name}")
+    sdfg.add_array("idx", [6], dace.int64, storage=storage)
+    sdfg.add_array("flag", [1], dace.int64)
+    state = sdfg.add_state()
+    node = ScatterConflictCheck("check")
+    state.add_node(node)
+    state.add_edge(state.add_read("idx"), None, node, node.INPUT_CONNECTOR_NAME, dace.Memlet("idx[0:6]"))
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, state.add_write("flag"), None, dace.Memlet("flag[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("indices, expected", [([3, 1, 4, 0, 5, 2], 0), ([3, 1, 4, 1, 5, 2], 1)])
+def test_a_conflict_check_flags_exactly_the_index_arrays_that_repeat_a_value(indices: list[int], expected: int):
+    flag = np.full(1, -1, dtype=np.int64)
+
+    with python_backend():
+        conflict_check_sdfg(dace.StorageType.Default)(idx=np.array(indices, dtype=np.int64), flag=flag)
+
+    assert flag[0] == expected
+
+
+@pytest.mark.gpu
+def test_a_conflict_check_of_gpu_indices_leaves_its_flag_on_the_host():
+    import cupy
+
+    flag = np.full(1, -1, dtype=np.int64)
+
+    with python_backend():
+        conflict_check_sdfg(dace.StorageType.GPU_Global)(idx=cupy.array([0, 2, 2, 3, 4, 5]), flag=flag)
+
+    assert flag[0] == 1

@@ -42,9 +42,19 @@ class CopyLibraryNode(nodes.LibraryNode):
         "all but the last so the chain costs one barrier.",
     )
 
-    def __init__(self, name, *args, sync=True, **kwargs):
+    aligned_words = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="SharedMemoryCollective only: when the rows of the region are contiguous on both sides, move "
+        "the global side in aligned 16-byte words (two doubles, four floats, eight halves), peeling the "
+        "unaligned head and tail of each row (dace::BlockCollective3DVec).",
+    )
+
+    def __init__(self, name, *args, sync=True, aligned_words=False, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.sync = sync
+        self.aligned_words = aligned_words
 
     def src_storage(self, state) -> dtypes.StorageType:
         """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.

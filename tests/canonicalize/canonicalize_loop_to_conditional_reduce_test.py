@@ -247,19 +247,44 @@ def test_refuses_an_addend_the_guard_keeps_in_bounds():
 
 
 def test_refuses_an_integer_modulo_the_guard_keeps_off_zero():
-    """``n[i] % d[i]`` divides by zero where the guard fails; lifting would evaluate it there."""
+    """C's ``fmod(n[i], d[i])`` on integers divides by zero where the guard fails; lifting would evaluate it there."""
 
     @dace.program
     def kernel_guarded_integer_modulo(n: dace.int64[N], d: dace.int64[N], out: dace.float64[1]):
         s = 0.0
         for i in range(N):
             if d[i] > 0:
-                s = s + (n[i] % d[i]) * 1.0
+                s = s + np.fmod(n[i], d[i]) * 1.0
         out[0] = s
 
     sdfg = kernel_guarded_integer_modulo.to_sdfg(simplify=True)
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
     assert _has_conditional_block(sdfg)
+
+    n = np.arange(1, 9, dtype=np.int64)
+    d = np.array([3, 0, 2, 0, 3, 0, 4, 0], dtype=np.int64)
+    out = np.zeros(1)
+    sdfg(n=n, d=d, out=out, N=8)
+    assert out[0] == float(sum(x % y for x, y in zip(n, d) if y > 0))
+
+
+def test_a_python_integer_modulo_keeps_the_symbols_its_reads_are_promoted_to():
+    """Python's ``n[i] % d[i]`` is ``PyMod``, which does not trap; simplify promotes the integer reads to symbols the
+    loop body assigns on interstate edges (``d_index_0 = d[i]``). Rebuilding the body without those edges left them
+    free, so such a loop is refused."""
+
+    @dace.program
+    def kernel_guarded_python_modulo(n: dace.int64[N], d: dace.int64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if d[i] > 0:
+                s = s + (n[i] % d[i]) * 1.0
+        out[0] = s
+
+    sdfg = kernel_guarded_python_modulo.to_sdfg(simplify=True)
+    free_before = set(sdfg.free_symbols)
+    LoopToConditionalReduce().apply_pass(sdfg, {})
+    assert set(sdfg.free_symbols) <= free_before
 
     n = np.arange(1, 9, dtype=np.int64)
     d = np.array([3, 0, 2, 0, 3, 0, 4, 0], dtype=np.int64)

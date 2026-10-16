@@ -168,6 +168,10 @@ class LoopToConditionalReduce(ppl.Pass):
                 m = self._match(region, sd)
                 if m is None or not self.hoist_is_trap_free(region, m.true_state, sd):
                     continue
+                # The rewrite strips the body's interstate assignments, so the hoisted state must not read one
+                assigned = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
+                if assigned & m.true_state.free_symbols:
+                    continue
                 if self._rewrite(m, sd):
                     rewritten += 1
         return rewritten or None
@@ -365,6 +369,15 @@ class LoopToConditionalReduce(ppl.Pass):
             if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Div, ast.FloorDiv, ast.Mod)):
                 if not self.divisor_is_safe(expr.right, floating):
                     return False
+            # C's modulo spelled as a call traps on an integer zero like ``%``; the floored helpers return 0 there
+            if (
+                isinstance(expr, ast.Call)
+                and isinstance(expr.func, ast.Name)
+                and expr.func.id in ("CMod", "FtnMod", "c_mod", "ftn_mod")
+                and len(expr.args) == 2
+                and not self.divisor_is_safe(expr.args[1], floating)
+            ):
+                return False
         return True
 
     def divisor_is_safe(self, divisor: ast.expr, floating: set[str]) -> bool:

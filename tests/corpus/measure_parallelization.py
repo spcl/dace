@@ -63,6 +63,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.cpu_specialization import cpu_specialize
+from dace.transformation.passes.parallelization_prep import DEFAULT_PEEL_LIMIT
 from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
@@ -76,7 +77,7 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 # consumer, which aborts the whole run; only the hpcagent sweep needs it, so it imports locally.
 
 #: The correct CPU canonicalize parameters (the numerical gate's ``_CPU`` set).
-#: ``peel_limit`` is overridable for the peel study; the rest are the CPU defaults.
+#: ``peel_limit`` is overridable for the peel study (default: the config value); the rest are the CPU defaults.
 
 # Every corpus compares through ``polybench.outputs_match``, whose tolerance is DTYPE-AWARE:
 # integers and bools exactly, fp32 with an fp32-appropriate tolerance, fp64 tightly. A single
@@ -85,7 +86,7 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 # argmax and early-exit kernels exist to test index capture, and their index went unchecked.
 
 
-def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) -> dict:
+def cpu_params(peel_limit: int = DEFAULT_PEEL_LIMIT, reconstruct_wavefront_nest: bool = False) -> dict:
     return dict(
         target="cpu",
         peel_limit=peel_limit,
@@ -400,7 +401,7 @@ def apply_config(sdfg, config: str, params: dict):
 
 def sweep(
     corpus: str,
-    peel_limit: int = 4,
+    peel_limit: int = DEFAULT_PEEL_LIMIT,
     check: bool = False,
     verbose: bool = True,
     config: str = "canon",
@@ -603,7 +604,12 @@ def summarize(res: dict) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("corpus", nargs="?", choices=list(CORPORA) + ["all"], default="all")
-    ap.add_argument("--peel", type=int, default=4, help="peel_limit (default 4; 0 disables peeling)")
+    ap.add_argument(
+        "--peel",
+        type=int,
+        default=DEFAULT_PEEL_LIMIT,
+        help="peel_limit (default: the config value; 0 disables peeling)",
+    )
     ap.add_argument("--check", action="store_true", help="also compile+run and assert value-preserving")
     ap.add_argument(
         "--config",

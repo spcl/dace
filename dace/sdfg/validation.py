@@ -283,6 +283,8 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
         # SDFG-level checks
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
+        if sdfg.instrument == dtypes.InstrumentationType.GPU_Events:
+            raise InvalidSDFGError(GPU_EVENTS_KERNELS_ONLY, sdfg, None)
 
         for cfg in sdfg.all_control_flow_regions():
             if isinstance(cfg, ConditionalBlock):
@@ -607,6 +609,27 @@ def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
             )
 
 
+#: Why ``GPU_Events`` instrumentation anywhere but on a kernel is invalid.
+GPU_EVENTS_KERNELS_ONLY = (
+    "GPU_Events instrumentation times kernels only: set it on a GPU_Device map entry, never on an SDFG, a state or "
+    "another node (code generation reorganizes those, so their events would time nothing)."
+)
+
+
+def gpu_events_off_kernel(node: Any) -> bool:
+    """Whether ``node`` carries ``GPU_Events`` instrumentation without being a kernel (``GPU_Device`` map) entry."""
+    from dace.sdfg import nodes as nd
+
+    if isinstance(node, (nd.MapEntry, nd.MapExit)):
+        return (
+            node.map.instrument == dtypes.InstrumentationType.GPU_Events
+            and node.map.schedule != dtypes.ScheduleType.GPU_Device
+        )
+    if isinstance(node, (nd.ConsumeEntry, nd.ConsumeExit)):
+        return node.consume.instrument == dtypes.InstrumentationType.GPU_Events
+    return getattr(node, "instrument", None) == dtypes.InstrumentationType.GPU_Events
+
+
 def validate_state(
     state: "dace.sdfg.SDFGState",
     state_id: int = None,
@@ -658,6 +681,9 @@ def validate_state(
     if state.sdfg != sdfg:
         raise InvalidSDFGError("State does not point to the correct parent", state.parent_graph, state_id)
 
+    if state.instrument == dtypes.InstrumentationType.GPU_Events:
+        raise InvalidSDFGError(GPU_EVENTS_KERNELS_ONLY, state.parent_graph, state_id)
+
     # Unreachable
     ########################################
     if sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0:
@@ -679,6 +705,9 @@ def validate_state(
                 nid,
             )
         references.add(id(node))
+
+        if gpu_events_off_kernel(node):
+            raise InvalidSDFGNodeError(GPU_EVENTS_KERNELS_ONLY, state.parent_graph, state_id, nid)
 
         # Node validation
         try:

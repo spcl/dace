@@ -4499,7 +4499,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return cpf_lowering.c_helper_call(
                 "c_mod", tuple(self._print(a) for a in expr.args), self.c_argument_types(expr.args)
             )
-        if all(arg.is_integer for arg in expr.args):
+        # On integers C's ``%`` is ``c_mod``; the facts can prove that where the operands carry no SymPy assumptions
+        if all(arg.is_integer for arg in expr.args) or nonnegative_integers(*expr.args):
             return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
         return self._print_binary_call("c_mod", expr)
 

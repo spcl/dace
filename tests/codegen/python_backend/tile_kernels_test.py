@@ -17,6 +17,7 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 pytestmark = [
     pytest.mark.gpu,
+    pytest.mark.tile,
     # Triton's own code generator builds an ast.AnnAssign Python 3.14 deprecates; not this backend's code
     pytest.mark.filterwarnings("ignore:AnnAssign.__init__ missing:DeprecationWarning"),
     # TileLang's own script builder calls typing._eval_type the way Python 3.14 deprecates

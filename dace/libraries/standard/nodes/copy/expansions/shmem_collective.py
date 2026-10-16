@@ -26,8 +26,10 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
     shape up to rank 3 (after singleton dimensions collapse) uses ``dace::BlockCollective3D``, which
     gives each wavefront a contiguous run of the fastest-varying axis. The node's ``sync`` property
     (default True) decides whether that call ends in ``__syncthreads()``, so a staging pass can chain
-    several copies and pay for one barrier. Shapes outside that are refused, never lowered to
-    ``dace::CopyND``: a per-thread loop nest has every thread copy the whole region.
+    several copies and pay for one barrier. A region of rank above 3 is a loop nest of rank-3
+    collectives over its outer axes, and ``aligned_words`` moves contiguous rows in aligned 16-byte
+    words (``dace::BlockCollective3DVec``). Nothing is lowered to ``dace::CopyND``: a per-thread loop
+    nest has every thread copy the whole region.
 
     Caller must place this outside any enclosing ``GPU_ThreadBlock`` map -- this expansion *is*
     the thread-block-level operation. Shared <-> Register goes through ``MappedTasklet`` instead

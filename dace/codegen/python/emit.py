@@ -55,6 +55,17 @@ def ipow(a, b):
     return a**b
 
 
+def py_mod(a, b):
+    return a % b
+
+
+def c_mod(a, b):
+    return np.fmod(a, b)
+
+
+CMod = c_mod
+
+
 Min, Max, Abs = min, max, abs
 
 
@@ -380,30 +391,34 @@ class Emitter:
         self.scope(sdfg, state, scope, order, None)
 
     def scope(self, sdfg: SDFG, state: SDFGState, scope: dict, order: list, entry: nodes.EntryNode | None) -> None:
-        views = [n for n in order if scope[n] is entry and is_view(sdfg, n)]
+        self.bind_views(sdfg, state, [n for n in order if scope[n] is entry and is_view(sdfg, n)])
+        for node in order:
+            if scope[node] is entry:
+                self.dispatch(sdfg, state, scope, order, node)
+
+    def bind_views(self, sdfg: SDFG, state: SDFGState, views: list[nodes.AccessNode]) -> None:
+        """Bind ``views``, a view of a view after the view it reads through."""
         while views:
-            # A view of a view binds after the view it reads through
             ready = [view for view in views if self.viewed(state, view) not in {v.data for v in views}]
             if not ready:
                 raise CodegenError(f"Python backend: the views {[v.data for v in views]} view each other")
             for view in ready:
                 self.view(sdfg, state, view)
             views = [view for view in views if view not in ready]
-        for node in order:
-            if scope[node] is not entry:
-                continue
-            if isinstance(node, nodes.MapEntry):
-                self.map(sdfg, state, scope, order, node)
-            elif isinstance(node, nodes.Tasklet):
-                self.tasklet(sdfg, state, node)
-            elif isinstance(node, nodes.AccessNode):
-                self.access(sdfg, state, node)
-            elif isinstance(node, nodes.NestedSDFG):
-                self.nested(sdfg, state, node)
-            elif isinstance(node, nodes.LibraryNode):
-                self.library(sdfg, state, node)
-            else:
-                raise CodegenError(f"Python backend: no Python form for {type(node).__name__} {node.label!r}")
+
+    def dispatch(self, sdfg: SDFG, state: SDFGState, scope: dict, order: list, node: nodes.Node) -> None:
+        if isinstance(node, nodes.MapEntry):
+            self.map(sdfg, state, scope, order, node)
+        elif isinstance(node, nodes.Tasklet):
+            self.tasklet(sdfg, state, node)
+        elif isinstance(node, nodes.AccessNode):
+            self.access(sdfg, state, node)
+        elif isinstance(node, nodes.NestedSDFG):
+            self.nested(sdfg, state, node)
+        elif isinstance(node, nodes.LibraryNode):
+            self.library(sdfg, state, node)
+        else:
+            raise CodegenError(f"Python backend: no Python form for {type(node).__name__} {node.label!r}")
 
     def library(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> None:
         raise CodegenError(f"Python backend: library node {node.label!r} outside a tile kernel was not expanded")
