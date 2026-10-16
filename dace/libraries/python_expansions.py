@@ -8,6 +8,7 @@ copies its result into that view, and an operand of one element as its value. A 
 away, as the einsum expansion squeezes it.
 """
 
+import ast
 from collections.abc import Callable
 
 from dace import dtypes, library, symbolic
@@ -24,8 +25,11 @@ from dace.libraries.linalg.nodes.cholesky import Cholesky
 from dace.libraries.linalg.nodes.solve import Solve
 from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+from dace.libraries.standard.nodes import scan as scan_node
+from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.libraries.standard.nodes.find_first import INDEX_NAME, FindFirst
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -235,8 +239,101 @@ def scatter_conflict_check(o: Operands) -> str:
     return f"{ScatterConflictCheck.OUTPUT_CONNECTOR_NAME} = int({o.xp}.unique({indices}).size != {indices}.size)"
 
 
+#: The array function of each scan op that has one; the others fold by doubling.
+CUMULATIVE = {scan_node.ScanOp.SUM: "cumsum", scan_node.ScanOp.PRODUCT: "cumprod"}
+#: Each scalar scan op as the elementwise function folding two arrays.
+SCAN_FOLDS = {
+    scan_node.ScanOp.SUM: "{xp}.add",
+    scan_node.ScanOp.PRODUCT: "{xp}.multiply",
+    scan_node.ScanOp.MIN: "{xp}.minimum",
+    scan_node.ScanOp.MAX: "{xp}.maximum",
+}
+SCAN_IDENTITIES = {scan_node.ScanOp.SUM: "0", scan_node.ScanOp.PRODUCT: "1"}
+
+
+def doubling(update: str) -> str:
+    """A prefix fold in log2(n) whole-array steps (Hillis-Steele), ``update`` run at each shift ``__ss``."""
+    return f"__ss = 1\nwhile __ss < __sy.shape[0]:\n    {update}\n    __ss *= 2\n"
+
+
+def scan_seed(node: scan_node.Scan) -> str | None:
+    """The value the scan starts from, as :func:`~dace.libraries.standard.nodes.scan.chain_seed` picks it."""
+    if scan_node.INIT_CONNECTOR_NAME in node.in_connectors and not node.exclusive:
+        return scan_node.INIT_CONNECTOR_NAME
+    if node.identity is not None:
+        return str(node.identity)
+    return SCAN_IDENTITIES.get(node.op, "0" if node.op is scan_node.ScanOp.AFFINE else None)
+
+
+def scan(o: Operands) -> str:
+    node, xp = o.node, o.xp
+    if node.chains != 1 or not symbolic.equal_valued(1, node.stride) or not symbolic.equal_valued(1, node.segments):
+        raise NotImplementedError(f"{node.label}: the CuPy scan takes one unit-stride chain over one segment")
+    seed = scan_seed(node)
+    code = f"__sy = {xp}.array({o[scan_node.INPUT_CONNECTOR_NAME]})\n"
+    if node.op is scan_node.ScanOp.AFFINE:
+        if node.exclusive:
+            raise NotImplementedError(f"{node.label}: an exclusive affine scan has no CuPy form")
+        # The doubling composes the affine maps ``x -> a*x + b``; the seed enters through the composed slope
+        code += f"__sa = {xp}.array({o[scan_node.COEF_CONNECTOR_NAME]})\n"
+        code += doubling(
+            "__sy[__ss:] = __sa[__ss:] * __sy[:-__ss] + __sy[__ss:]\n    __sa[__ss:] = __sa[__ss:] * __sa[:-__ss]"
+        )
+        code += f"__sy = __sy + __sa * ({seed})\n"
+    else:
+        fold = SCAN_FOLDS[node.op].format(xp=xp)
+        if node.op in CUMULATIVE:
+            code += f"__sy = {xp}.{CUMULATIVE[node.op]}(__sy)\n"
+        else:
+            code += doubling(f"__sy[__ss:] = {fold}(__sy[__ss:], __sy[:-__ss])")
+        if seed is not None:
+            code += f"__sy = {fold}({seed}, __sy)\n"
+        if node.exclusive:
+            if seed is None:
+                raise ValueError(f"{node.label}: an exclusive {node.op.value} scan needs an identity")
+            code += f"__sy = {xp}.concatenate(({xp}.full(1, {seed}, __sy.dtype), __sy))[:__sy.shape[0]]\n"
+    return code + o.store(scan_node.OUTPUT_CONNECTOR_NAME, "__sy")
+
+
+def arg_reduce(o: Operands) -> str:
+    # Both answers are host values whatever side the operand lives on; argmax keeps the first extreme
+    node = o.node
+    values = o["_in"] if not node.transform else f"{node.transform}({o['_in']})"
+    code = f"__arv = {values}\n_out_idx = int({o.xp}.arg{node.op}(__arv))\n"
+    return code + ("_out_val = __arv[_out_idx].item()" if "_out_val" in o.outputs else "")
+
+
+class Elementwise(ast.NodeTransformer):
+    """Rewrites ``and`` / ``or`` / ``not`` into the elementwise ``&`` / ``|`` / ``~`` of a whole-range mask."""
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> ast.expr:
+        self.generic_visit(node)
+        op = ast.BitAnd() if isinstance(node.op, ast.And) else ast.BitOr()
+        result = node.values[0]
+        for value in node.values[1:]:
+            result = ast.BinOp(result, op, value)
+        return result
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.expr:
+        self.generic_visit(node)
+        return ast.UnaryOp(ast.Invert(), node.operand) if isinstance(node.op, ast.Not) else node
+
+
+def find_first(o: Operands) -> str:
+    # The predicate is tested over the whole range at once; the answer is a host value
+    node, xp = o.node, o.xp
+    begin, end = (symbolic.symstr(bound, cpp_mode=False) for bound in (node.begin, node.end))
+    predicate = ast.unparse(Elementwise().visit(ast.parse(node.predicate, mode="eval")))
+    return (
+        f"{INDEX_NAME} = {xp}.arange({begin}, max({begin}, {end}), dtype={xp}.int64)\n"
+        f"__ffm = {xp}.broadcast_to({xp}.asarray({predicate}), {INDEX_NAME}.shape)\n"
+        f"_out_idx = int({INDEX_NAME}[{xp}.argmax(__ffm)]) if bool(__ffm.any()) else ({end})"
+    )
+
+
 class CrossDeviceOperands(Operands):
-    """A copy, or a check whose flag stays on the host, may read on one side and write on the other."""
+    """A copy, a node whose answers stay on the host, or a scan seeded from a host scalar may read on one side and
+    write on the other."""
 
     def module(self, edges: list[MultiConnectorEdge[Memlet]]) -> str:
         return "cupy" if any(self.on_gpu(edge) for edge in edges) else "np"
@@ -259,3 +356,6 @@ for node_type, body in (
     register(node_type, body, Operands)
 register(CopyLibraryNode, copy, CrossDeviceOperands)
 register(ScatterConflictCheck, scatter_conflict_check, CrossDeviceOperands)
+register(scan_node.Scan, scan, CrossDeviceOperands)
+register(ArgReduce, arg_reduce, CrossDeviceOperands)
+register(FindFirst, find_first, CrossDeviceOperands)

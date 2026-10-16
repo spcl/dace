@@ -136,14 +136,20 @@ def auto_dispatch(
 
 
 def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
-    """The lowering an ``'Auto'`` node takes from its schedule: ``CUDA`` on a GPU schedule, ``pure`` when
-    ``Sequential`` or not yet inferred (``Default``: a caller expanding a graph it still transforms), ``CPU``
-    otherwise. A node without the picked lowering takes ``pure``, else ``CPU``.
+    """The lowering an ``'Auto'`` node takes from its schedule: a thread-block collective inside a GPU kernel,
+    ``CUDA`` on a GPU schedule, ``pure`` when ``Sequential`` or not yet inferred (``Default``: a caller expanding
+    a graph it still transforms), ``CPU`` otherwise. A node without the picked lowering takes ``pure``, else
+    ``CPU``.
 
     :param node: the library node being expanded.
     :param parent_state: state containing ``node``.
     :returns: a key of the node's ``implementations``.
     """
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+
+    block = in_kernel_block_implementation(node, parent_state)
+    if block is not None:
+        return block
     if node.schedule in dtypes.ALL_GPU_SCHEDULES:
         name = "CUDA"
     elif node.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default):
