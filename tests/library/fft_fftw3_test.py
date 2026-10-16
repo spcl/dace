@@ -61,12 +61,13 @@ def test_a_threaded_companion_library_is_linked_ahead_of_its_base(tmp_path):
 def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     from dace import data
     from dace.libraries.fft.environments import fftw3
-    from dace.libraries.fft.nodes.fft import fftw3_call
+    from dace.libraries.fft.nodes.fft import Transform, fftw3_call
 
     monkeypatch.setattr(fftw3, "threaded", lambda: threaded)
     desc = data.Array(dace.complex128, [64])
-    code = fftw3_call(desc, desc, [0], is_inverse=False).code.as_string
-    assert ("fftw_plan_with_nthreads(omp_in_parallel() ? 1 : omp_get_max_threads())" in code) == threaded
+    code = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
+    assert ("fftw_plan_with_nthreads(__threads)" in code) == threaded
+    assert ("__threads = omp_in_parallel() ? 1 : omp_get_max_threads()" in code) == threaded
 
 
 if __name__ == "__main__":

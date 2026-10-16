@@ -139,7 +139,7 @@ class FFTW3:
 
     # Header forwarded into the codegen unit; complex types come from
     # ``<complex.h>`` and FFTW's own ``fftw_complex`` typedef.
-    headers = ["fftw3.h"]
+    headers = ["fftw3.h", "omp.h"]
     state_fields: list[str] = []
     init_code = ""
     finalize_code = ""

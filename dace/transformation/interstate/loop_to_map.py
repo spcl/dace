@@ -1359,6 +1359,16 @@ def symbols_assigned_before_use(
     return symbols_that_may_be_used
 
 
+def spans_small_symbols(loop: LoopRegion, facts: symbolic.Facts | None = None) -> bool:
+    """Whether ``loop``'s iteration range spans ``SMALL`` symbols only (``range(nblks)``), at the facts inside it."""
+    start, end = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+    if start is None or end is None:
+        return False
+    if facts is None:
+        facts = SymbolResolver().facts_at(loop)
+    return symbolic.is_small(end - start, facts)
+
+
 def step_direction(step: Any, facts: symbolic.Facts) -> int | None:
     """``1`` for a loop whose step is provably ``>= 0``, ``-1`` for one provably ``<= 0``, else None. A zero step
     never terminates (and Python's ``range`` refuses it), so the sign alone orients the loop."""
@@ -1444,8 +1454,8 @@ class LoopToMap(xf.MultiStateTransformation):
             return refuse(f"loop bounds are not integer types - result_type={t}")
 
         facts = self.probe_resolver().facts_at(self.loop)
-        if self.keep_small_loops_sequential and symbolic.is_small(end - start, facts):
-            return False
+        if self.keep_small_loops_sequential and spans_small_symbols(self.loop, facts):
+            return refuse(f"loop range {start}..{end} spans SMALL symbols only")
 
         # A map runs its range upwards: a loop is mapped only when the direction of its step is known
         if step_direction(step, facts) is None:

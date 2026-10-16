@@ -18,7 +18,7 @@ from dace import dtypes
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.fft.environments.fftw3 import FFTW3
 from dace.libraries.fft.nodes import FFT, IFFT
-from dace.libraries.fft.nodes.fft import gpu_fft_layout
+from dace.libraries.fft.nodes.fft import Transform, gpu_fft_layout
 from dace.transformation.auto.auto_optimize import find_fast_library
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
 
@@ -277,6 +277,15 @@ BATCH_INNERMOST = [3, 12, 60, 1]
 C_ORDER = [90, 18, 3, 1]
 
 
+def plan(src, out):
+    """The forward ``fftn`` plan over axes (0, 1, 2) as (lengths, in stride, in distance, out stride, out distance,
+    batch), or ``None``."""
+    layout = gpu_fft_layout(Transform(src, out, [0, 1, 2], inverse=False, half_spectrum=False))
+    if layout is None:
+        return None
+    return (layout.lengths, layout.in_stride, layout.in_distance, layout.out_stride, layout.out_distance, layout.batch)
+
+
 def test_a_gpu_fft_plans_each_side_s_own_dense_block():
     """One plan reads and writes every layout whose transformed axes form one dense block.
 
@@ -286,12 +295,12 @@ def test_a_gpu_fft_plans_each_side_s_own_dense_block():
     """
     shape = [4, 5, 6, 3]
     fortran, innermost = strided_array(shape, FORTRAN), strided_array(shape, BATCH_INNERMOST)
-    assert gpu_fft_layout(fortran, fortran, [0, 1, 2]) == ([6, 5, 4], 1, 120, 1, 120, 3)
-    assert gpu_fft_layout(innermost, fortran, [0, 1, 2]) == ([6, 5, 4], 3, 1, 1, 120, 3)
+    assert plan(fortran, fortran) == ([6, 5, 4], 1, 120, 1, 120, 3)
+    assert plan(innermost, fortran) == ([6, 5, 4], 3, 1, 1, 120, 3)
     c_order = strided_array(shape, C_ORDER)
-    assert gpu_fft_layout(c_order, c_order, [0, 1, 2]) == ([4, 5, 6], 3, 1, 3, 1, 3)
+    assert plan(c_order, c_order) == ([4, 5, 6], 3, 1, 3, 1, 3)
     # The two sides order the transformed axes oppositely: no shared plan, so the source is staged.
-    assert gpu_fft_layout(fortran, c_order, [0, 1, 2]) is None
+    assert plan(fortran, c_order) is None
 
 
 def test_a_gpu_fft_plans_a_stride_canonicalization_spelled_as_an_integer_power():
@@ -300,7 +309,7 @@ def test_a_gpu_fft_plans_a_stride_canonicalization_spelled_as_an_integer_power()
     read as padded, its ``fftn`` fell back to the separable DFT, and that failed validation."""
     n = dace.symbol("N")
     grid = strided_array([n, n, n], [dace.symbolic.ipow(n, 2), n, 1])
-    extents, istride, idist, ostride, odist, batch = gpu_fft_layout(grid, grid, [0, 1, 2])
+    extents, istride, idist, ostride, odist, batch = plan(grid, grid)
     assert (extents, istride, ostride, batch) == ([n, n, n], 1, 1, 1)
     assert dace.symbolic.simplify(idist - n**3) == 0 and dace.symbolic.simplify(odist - n**3) == 0
 
