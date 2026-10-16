@@ -39,6 +39,10 @@ value-preserving when:
   reduction accumulator) is fine -- it never indexes the outer iterator.
 * A pre/post block whose feeding interstate-edge assignment LHS is reassigned by the inner
   body is refused (its value at the boundary iteration would be ambiguous).
+* A nest whose inner loop carries a container the pre/post statements write -- the
+  ``acc = 0; for j: acc += a[i, j]; c[i] = acc`` reduction -- is refused: ``LoopToReduce`` lifts
+  it as it stands and the outer axis then parallelizes, while the sifted form keeps the
+  accumulator, which ``LoopToMap`` cannot privatize, and leaves both loops sequential.
 
 The construction mirrors ``MoveIfIntoLoop``: each statement group is deep-copied into a
 single-branch (no-else) :class:`ConditionalBlock` placed as the first (pre) / last (post)
@@ -159,6 +163,19 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: list[SDFG
     return True
 
 
+def _carries_statement_data(inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
+    """Whether ``inner``'s body both reads and writes a container a ``pre`` / ``post`` statement writes."""
+    stmt_written = {n.data for st in pre + post for n in st.data_nodes() if st.in_degree(n) > 0}
+    read, written = set(), set()
+    for st in inner.states():
+        for n in st.data_nodes():
+            if n.data in stmt_written:
+                (written if st.in_degree(n) > 0 else read).add(n.data)
+                if st.out_degree(n) > 0:
+                    read.add(n.data)
+    return bool(read & written)
+
+
 def _body_written_names(inner: LoopRegion) -> dict[str, None]:
     """Symbols (interstate-edge LHS) and data containers written inside ``inner``'s body."""
     names: dict[str, None] = {}
@@ -204,6 +221,8 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             continue  # need a unique tail to append the post-guard after
         if not _outer_axis_independent(outer, inner, pre, post):  # S7
             continue
+        if _carries_statement_data(inner, pre, post):
+            continue  # a reduction: lifted as it stands, see the module docstring
         # Refuse a sifted interstate assignment whose LHS the body reassigns.
         sifted_lhs: dict[str, None] = {}
         edge_of = {(e.src, e.dst): e for e in outer.edges()}

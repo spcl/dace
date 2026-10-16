@@ -90,6 +90,28 @@ def _pre_and_post(a: dace.float64[N, 5], c: dace.float64[N]):
 
 
 @dace.program
+def _pre_and_post_shared(a: dace.float64[N, 5], b: dace.float64[N, 5], c: dace.float64[N]):
+    # A per-row scalar the inner loop only reads: nothing is carried across ``j``, so the sift applies.
+    for i in range(N):
+        t = a[i, 0] * 2.0
+        for j in range(5):
+            b[i, j] = a[i, j] + t
+        c[i] = b[i, 4] + t
+
+
+LEN = dace.symbol("LEN", dtype=dace.int64, positive=True)
+
+
+@dace.program
+def _row_sums(a: dace.float64[LEN, LEN], out: dace.float64[LEN]):
+    for i in range(LEN):
+        s = 0.0
+        for j in range(LEN):
+            s = s + a[i, j]
+        out[i] = s
+
+
+@dace.program
 def _maybe_empty(a: dace.float64[N, M], c: dace.float64[N]):
     # M is a free symbol: range(M) is NOT provably non-empty, so the pass must refuse (S1).
     for i in range(N):
@@ -206,13 +228,15 @@ def test_post_only_sift():
 
 
 def test_pre_and_post_sift():
-    """``for i: { acc=0; for j: acc+=a; c[i]=acc }`` -> two guards: ``j == 0`` first (reset) and
-    ``j == 4`` last (store); bit-exact reduction."""
+    """``for i: { t=2*a[i,0]; for j: b[i,j]=a[i,j]+t; c[i]=b[i,4]+t }`` -> two guards: ``j == 0``
+    first (the pre) and ``j == 4`` last (the post)."""
     rng = np.random.default_rng(42)
     n = 8
     a = rng.random((n, 5))
+    ref_b, ref_c = np.zeros((n, 5)), np.zeros(n)
+    _pre_and_post_shared.to_sdfg(simplify=True)(a=a.copy(), b=ref_b, c=ref_c, N=n)
 
-    sdfg = _pre_and_post.to_sdfg(simplify=True)
+    sdfg = _pre_and_post_shared.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
     sdfg.validate()
 
@@ -222,19 +246,28 @@ def test_pre_and_post_sift():
     assert len(sinks) == 1 and isinstance(sinks[0], ConditionalBlock) and _cond_string(sinks[0]) == "(j == 4)"
     assert len(_conds(sdfg)) == 2
 
-    out = np.zeros(n)
-    sdfg(a=a.copy(), c=out, N=n)
-    # Oracle: a per-row sequential reduction (numpy ground truth). The sifted inner loop cannot
-    # vectorize (the j==0 / j==4 guards break the reduction), so its scalar accumulation is
-    # bit-exact with this order. A deep copy of the pre-sift SDFG is NOT a valid oracle here: the
-    # C compiler auto-vectorizes its clean reduction loop, reassociating the sum by ~1 ULP.
-    exp = np.zeros(n)
-    for i in range(n):
-        acc = 0.0
-        for j in range(5):
-            acc += a[i, j]
-        exp[i] = acc
-    assert np.array_equal(out, exp)
+    out_b, out_c = np.zeros((n, 5)), np.zeros(n)
+    sdfg(a=a.copy(), b=out_b, c=out_c, N=n)
+    assert np.array_equal(out_b, ref_b) and np.array_equal(out_c, ref_c)
+
+
+def test_refuses_a_reduction_the_inner_loop_carries():
+    """``for i: { acc=0; for j: acc+=a[i,j]; c[i]=acc }`` stays as it is: ``LoopToReduce`` lifts it,
+    while the sifted form keeps an accumulator ``LoopToMap`` cannot privatize."""
+    sdfg = _pre_and_post.to_sdfg(simplify=True)
+    assert sift_imperfect_nests(sdfg) == 0
+
+
+def test_row_sums_parallelize_on_gpu():
+    """With a positive bound the inner loop is provably non-empty, which let the sift bury the row
+    reduction and leave both loops sequential on the GPU: the outer axis must become a map."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = _row_sums.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu", validate_all=False)
+    maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert [str(m.range) for m in maps] == ["0:LEN"]
+    assert not _loops(sdfg)
 
 
 def test_interstate_assignment_sifts_with_statement():
@@ -288,19 +321,19 @@ def test_cpu_target_noop():
     rng = np.random.default_rng(42)
     n = 6
     a = rng.random((n, 5))
-    base = _pre_and_post.to_sdfg(simplify=True)
-    ref = np.zeros(n)
-    copy.deepcopy(base)(a=a.copy(), c=ref, N=n)
+    base = _pre_and_post_shared.to_sdfg(simplify=True)
+    ref_b, ref = np.zeros((n, 5)), np.zeros(n)
+    copy.deepcopy(base)(a=a.copy(), b=ref_b, c=ref, N=n)
 
-    sdfg = _pre_and_post.to_sdfg(simplify=True)
+    sdfg = _pre_and_post_shared.to_sdfg(simplify=True)
     conds_before = len(_conds(sdfg))
     PerfectLoopNesting(target="cpu").apply_pass(sdfg, {})
     sdfg.validate()
     assert len(_conds(sdfg)) == conds_before  # no boundary guard was introduced
 
-    out = np.zeros(n)
-    sdfg(a=a.copy(), c=out, N=n)
-    assert np.array_equal(out, ref)
+    out_b, out = np.zeros((n, 5)), np.zeros(n)
+    sdfg(a=a.copy(), b=out_b, c=out, N=n)
+    assert np.array_equal(out_b, ref_b) and np.array_equal(out, ref)
 
 
 def test_refuses_outer_axis_carry():
@@ -356,7 +389,7 @@ def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
     """``PerfectLoopNesting`` owns this capability: ``target='gpu'`` performs the sink,
     ``target='cpu'`` does not.
 
-    Pinned on ``_pre_and_post``, whose ``acc`` is a scalar the inner loop carries, so distribution
+    Pinned on ``_pre_and_post_shared``, whose ``t`` is a scalar the inner loop reads, so distribution
     is refused and the sink is the ONLY route to a perfect nest -- which is what isolates the
     capability being tested. (``_pre_only`` no longer serves: its pre statement writes ``s[i]`` and
     the inner body reads exactly ``s[i]``, both pinned to the parent index, so the distribution
@@ -367,19 +400,19 @@ def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
     rng = np.random.default_rng(42)
     n = 6
     a = rng.random((n, 5))
-    ref = np.zeros(n)
-    _pre_and_post.to_sdfg(simplify=True)(a=a.copy(), c=ref, N=n)
+    ref_b, ref = np.zeros((n, 5)), np.zeros(n)
+    _pre_and_post_shared.to_sdfg(simplify=True)(a=a.copy(), b=ref_b, c=ref, N=n)
 
-    gpu = _pre_and_post.to_sdfg(simplify=True)
+    gpu = _pre_and_post_shared.to_sdfg(simplify=True)
     guards_before = len(_conds(gpu))
     assert PerfectLoopNesting(target="gpu").apply_pass(gpu, {})
     gpu.validate()
     assert len(_conds(gpu)) == guards_before + 2, "the pre and the post each get a boundary guard"
-    out = np.zeros(n)
-    gpu(a=a.copy(), c=out, N=n)
-    assert np.allclose(out, ref)
+    out_b, out = np.zeros((n, 5)), np.zeros(n)
+    gpu(a=a.copy(), b=out_b, c=out, N=n)
+    assert np.allclose(out_b, ref_b) and np.allclose(out, ref)
 
-    cpu = _pre_and_post.to_sdfg(simplify=True)
+    cpu = _pre_and_post_shared.to_sdfg(simplify=True)
     PerfectLoopNesting(target="cpu").apply_pass(cpu, {})
     cpu.validate()
     assert len(_conds(cpu)) == guards_before
@@ -418,7 +451,7 @@ def test_sift_is_idempotent():
 
 def test_sifting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """A sift deep-copies statements into guards inside the inner loop; ``add_node`` lists every copy."""
-    sdfg = _pre_and_post.to_sdfg(simplify=True)
+    sdfg = _pre_and_post_shared.to_sdfg(simplify=True)
     resets = spy_on_resets(monkeypatch)
     assert sift_imperfect_nests(sdfg) == 1
     monkeypatch.undo()
