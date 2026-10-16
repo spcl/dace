@@ -261,6 +261,8 @@ class KernelEmitter(Emitter):
         return element_at(desc, [expr(begin) for begin, _, _ in subset.ndrange()])
 
     def body(self, sdfg, node) -> str:
+        if node.language is not dtypes.Language.Python:
+            raise CodegenError(f"Python backend: tasklet {node.label!r} is {node.language.name}, not Python")
         # An inlined connector reads its array in the body, which the kernel spells as the dialect does
         tree = KernelAccesses(sdfg, self.dialect).visit(ast.parse(node.code.as_string))
         return ast.unparse(ast.fix_missing_locations(tree))

@@ -297,3 +297,30 @@ def test_a_transient_sized_by_an_assigned_symbol_exists_in_every_branch(n: int, 
         branch_sized_sdfg()(out=out, N=n)
 
     assert out[0] == expected
+
+
+def modulo_family_sdfg() -> dace.SDFG:
+    """The three modulo spellings an interstate assignment can carry, applied to a negative dividend."""
+    sdfg = dace.SDFG("modulo_family")
+    sdfg.add_array("out", [3], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    first, second = sdfg.add_state(), sdfg.add_state()
+    sdfg.add_edge(
+        first,
+        second,
+        dace.InterstateEdge(assignments={"k": "py_mod(n - 7, 5)", "j": "c_mod(n - 7, 5)", "m": "CMod(n - 7, 5)"}),
+    )
+    tasklet = second.add_tasklet("t", {}, {"a": dace.int64, "b": dace.int64, "c": dace.int64}, "a = k\nb = j\nc = m")
+    out = second.add_write("out")
+    for index, conn in enumerate("abc"):
+        second.add_edge(tasklet, conn, out, None, dace.Memlet(f"out[{index}]"))
+    return sdfg
+
+
+def test_python_modulo_floors_and_c_modulo_truncates_a_negative_dividend():
+    out = np.zeros(3, dtype=np.int64)
+
+    with python_backend():
+        modulo_family_sdfg()(out=out, n=3)
+
+    assert out.tolist() == [1, -4, -4]

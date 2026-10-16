@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.exceptions import CodegenError
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -152,3 +153,22 @@ def test_a_build_without_tile_kernels_takes_no_tile_flags():
 
     assert np.array_equal(x.get(), 2 * np.arange(8.0))
     assert "__tile_global__" not in device_source(sdfg) and not builds_with_tile_flags(sdfg)
+
+
+def test_a_cpp_tasklet_in_a_tile_kernel_is_refused():
+    sdfg = scale_add.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.simplify()
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,))).apply_pass(sdfg, {})
+    entry, state = next(
+        (n, s)
+        for n, s in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device
+    )
+    tasklet = state.add_tasklet("cpp_lanes", {}, {}, "constexpr int lanes = 4;", language=dace.Language.CPP)
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    state.add_nedge(tasklet, state.exit_node(entry), dace.Memlet())
+
+    with cuda_tile_backend(), pytest.raises(CodegenError, match="tasklet 'cpp_lanes' is CPP"):
+        sdfg.generate_code()

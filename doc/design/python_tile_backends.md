@@ -27,8 +27,8 @@ generator. One program (tile block) runs per map iteration. Each tile node is on
   The GPU preprocessing passes skip these kernels (`is_tile_kernel`). Library expansion skips their nodes
   (`expand_outside_tile_kernels`).
 - `libraries/python_expansions.py`: the `CuPy` expansion of Gemm, Gemv, Dot, Axpy, Ger, BatchedMatMul, Einsum,
-  Cholesky, Solve, Reduce, Copy and Fill. Each one is a single Python tasklet that uses `cupy` or `np`, depending on
-  where the operands are stored.
+  Cholesky, Solve, TensorTranspose, Reduce, ScatterConflictCheck, Copy and Fill. Each one is a single Python tasklet
+  that uses `cupy` or `np`, depending on where the operands are stored.
 - `codegen/python/compiled.py`: `PythonCompiledSDFG` imports the written module and calls it.
 
 ## Rules

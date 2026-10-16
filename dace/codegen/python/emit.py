@@ -55,6 +55,17 @@ def ipow(a, b):
     return a**b
 
 
+def py_mod(a, b):
+    return a % b
+
+
+def c_mod(a, b):
+    return np.fmod(a, b)
+
+
+CMod = c_mod
+
+
 Min, Max, Abs = min, max, abs
 
 

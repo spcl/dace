@@ -22,6 +22,8 @@ from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.blas.nodes.ger import Ger
 from dace.libraries.linalg.nodes.cholesky import Cholesky
 from dace.libraries.linalg.nodes.solve import Solve
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
@@ -65,6 +67,12 @@ class Operands:
             raise ValueError(f"{self.node.label}: operands on both the host and the GPU; copy them to one side first")
         return "cupy" if True in sides else "np"
 
+    def connector_type(self, edge: MultiConnectorEdge[Memlet] | None) -> dtypes.pointer | None:
+        """A pointer for one GPU element: the CuPy call takes it on the device, the host never dereferences it."""
+        if edge is None or edge.data.subset.num_elements() != 1 or not self.on_gpu(edge):
+            return None
+        return dtypes.pointer(self.sdfg.arrays[edge.data.data].dtype)
+
     def squeezed(self, name: str, edge: MultiConnectorEdge[Memlet]) -> str:
         """The tasklet connector ``name`` with the extent-1 dims of its subset squeezed away."""
         subset = edge.data.subset
@@ -103,10 +111,12 @@ def register(node_type: type, body: Callable[[Operands], str], operands_type: ty
         for edge in state.in_edges(node):
             if edge.dst_conn in node.out_connectors:
                 edge.dst_conn = f"{edge.dst_conn}_in"
-        inputs = {f"{conn}_in" if conn in node.out_connectors else conn: None for conn in node.in_connectors}
-        return nodes.Tasklet(
-            node.label, inputs, dict.fromkeys(node.out_connectors), body(operands), language=dtypes.Language.Python
-        )
+        inputs = {
+            f"{conn}_in" if conn in node.out_connectors else conn: operands.connector_type(operands.inputs.get(conn))
+            for conn in node.in_connectors
+        }
+        outputs = {conn: operands.connector_type(operands.outputs.get(conn)) for conn in node.out_connectors}
+        return nodes.Tasklet(node.label, inputs, outputs, body(operands), language=dtypes.Language.Python)
 
     name = f"Expand{node_type.__name__}{IMPLEMENTATION}"
     members = {"environments": [], "expansion": staticmethod(expansion)}
@@ -214,8 +224,22 @@ def fill(o: Operands) -> str:
     return f"{out} = {value}" if o.single(out) else f'{o.xp}.copyto({out}, {value}, casting="unsafe")'
 
 
-class CopyOperands(Operands):
-    """A copy may read on one side and write on the other."""
+def tensor_transpose(o: Operands) -> str:
+    node = o.node
+    value = f"{o.coefficient(node.alpha)} * {o.xp}.transpose({o['_inp_tensor']}, {tuple(node.axes)})"
+    if symbolic.symstr(node.beta, cpp_mode=False) not in ("0", "0.0"):
+        value += f" + {o.coefficient(node.beta)} * {o.squeezed('_out_tensor', o.outputs['_out_tensor'])}"
+    return o.store("_out_tensor", value)
+
+
+def scatter_conflict_check(o: Operands) -> str:
+    # The flag is a host value whatever side the indices live on
+    indices = o[ScatterConflictCheck.INPUT_CONNECTOR_NAME]
+    return f"{ScatterConflictCheck.OUTPUT_CONNECTOR_NAME} = int({o.xp}.unique({indices}).size != {indices}.size)"
+
+
+class CrossDeviceOperands(Operands):
+    """A copy, or a check whose flag stays on the host, may read on one side and write on the other."""
 
     def module(self, edges: list[MultiConnectorEdge[Memlet]]) -> str:
         return "cupy" if any(self.on_gpu(edge) for edge in edges) else "np"
@@ -233,6 +257,8 @@ for node_type, body in (
     (Solve, solve),
     (Reduce, reduce),
     (FillLibraryNode, fill),
+    (TensorTranspose, tensor_transpose),
 ):
     register(node_type, body, Operands)
-register(CopyLibraryNode, copy, CopyOperands)
+register(CopyLibraryNode, copy, CrossDeviceOperands)
+register(ScatterConflictCheck, scatter_conflict_check, CrossDeviceOperands)
