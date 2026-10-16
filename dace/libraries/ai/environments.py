@@ -117,11 +117,13 @@ def _import_module(path: str):
     return module
 
 
-def materialize(spec: EnvironmentSpec) -> type:
+def materialize(spec: EnvironmentSpec, replaceable: frozenset[str] = frozenset()) -> type:
     """
     Writes an environment specification to disk and registers it with DaCe.
 
     :param spec: The environment requested by the model.
+    :param replaceable: Names of environments written by earlier attempts of the same expansion,
+                        which a repair may redefine.
     :return: The registered environment class.
     :raises EnvironmentConflict: If the name is invalid or already defined differently.
     :raises AIExpansionError: If the environment cannot be imported.
@@ -132,15 +134,16 @@ def materialize(spec: EnvironmentSpec) -> type:
 
     # Lower case, so that names differing in case also conflict on case-insensitive file systems
     path = os.path.join(directory, f"{MODULE_PREFIX}{classname.lower()}.py")
+    existing = None
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fp:
             existing = fp.read()
-        if existing != source:
+        if existing != source and classname not in replaceable:
             raise EnvironmentConflict(
                 f'An environment named "{spec.name}" already exists with a different definition ({path}). '
                 "Reuse it through use_environments if it fits, or give the new environment a different name."
             )
-    else:
+    if existing != source:
         with open(path, "w", encoding="utf-8") as fp:
             fp.write(source)
 
@@ -156,14 +159,15 @@ def materialize(spec: EnvironmentSpec) -> type:
     return env
 
 
-def materialize_all(specs: list[EnvironmentSpec]) -> list[type]:
+def materialize_all(specs: list[EnvironmentSpec], replaceable: frozenset[str] = frozenset()) -> list[type]:
     """
     Materializes every environment requested for one expansion.
 
     :param specs: The environments requested by the model.
+    :param replaceable: See :func:`materialize`.
     :return: The registered environment classes, in the same order.
     """
-    return [materialize(spec) for spec in specs]
+    return [materialize(spec, replaceable) for spec in specs]
 
 
 def resolve_installed(paths: list[str]) -> list[type]:
@@ -210,15 +214,16 @@ def _deduplicate(environments: list[type]) -> list[type]:
     return distinct
 
 
-def collect(spec) -> list[type]:
+def collect(spec, replaceable: frozenset[str] = frozenset()) -> list[type]:
     """
     Resolves every environment one generated tasklet needs.
 
     :param spec: The specification returned by the model.
+    :param replaceable: See :func:`materialize`.
     :return: The environment classes to attach to the expansion, reused ones first.
     :raises EnvironmentConflict: If an environment request has to be fixed by the model.
     """
-    return _deduplicate(resolve_installed(spec.use_environments) + materialize_all(spec.environments))
+    return _deduplicate(resolve_installed(spec.use_environments) + materialize_all(spec.environments, replaceable))
 
 
 def load_generated_environments(directory: str | None = None) -> list[type]:

@@ -142,6 +142,33 @@ def test_a_conflicting_environment_is_sent_back_to_the_model(tmp_path):
     assert any(path.endswith(".TestFFT") for path in tasklet.environments)
 
 
+def test_a_repair_can_redefine_its_own_environment(tmp_path):
+    sdfg = dace.SDFG("ai_env_repair")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    node = AINode("needs_a_library", "Copy the value.", inputs={"_in"}, outputs={"_out"})
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_in", dace.Memlet("A[0]"))
+    state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0]"))
+
+    broken = EnvironmentSpec(name="RepairedLib", headers=["no_such_header_anywhere.h"])
+    fixed = EnvironmentSpec(name="RepairedLib", headers=["cmath"])
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
+        with stub_provider_sequence(
+            [
+                TaskletSpec(code="_out = _in;", environments=[broken]),
+                TaskletSpec(code="_out = _in;", environments=[fixed]),
+            ]
+        ) as provider:
+            node.expand(state, "ai")
+
+    assert len(provider.calls) == 2
+    assert "does not compile" in provider.calls[1][-1]["content"]
+    module = tmp_path / "ai-environments" / "dace_ai_env_repairedlib.py"
+    assert "'cmath'" in module.read_text()
+
+
 def test_environment_dir_is_not_created_by_reading(tmp_path):
     target = tmp_path / "does_not_exist_yet"
     with dace.config.set_temporary("default_build_folder", value=str(target)):

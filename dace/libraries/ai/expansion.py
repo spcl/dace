@@ -96,6 +96,7 @@ class ExpandAI(ExpandTransformation):
 
         spec = None
         environments: list[Any] = []
+        written: frozenset[str] = frozenset()  # Environments this expansion created, which repairs may redefine
         try:
             for attempt in range(attempts):
                 entry = record.begin_attempt(attempt + 1, prompt)
@@ -126,7 +127,8 @@ class ExpandAI(ExpandTransformation):
                 record.record_answer(entry, spec, cached=cached)
                 detail("answer", spec.raw_response or spec.model_dump_json(indent=1))
                 try:
-                    environments = ai_environments.collect(spec)
+                    environments = ai_environments.collect(spec, written)
+                    written |= {env.name for env in spec.environments}
                 except ai_environments.EnvironmentConflict as e:
                     status(f"{described}: {e}")
                     problem = str(e)
