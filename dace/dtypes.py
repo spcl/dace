@@ -95,19 +95,43 @@ class ScheduleType(ExtensibleAttributeEnum):
     GPU_Device = auto()  #: Kernel
     GPU_ThreadBlock = auto()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
-    GPU_Persistent = auto()
+    GPU_Persistent = auto()  #: Kernel whose thread blocks stay resident and loop over the work
 
     Snitch = auto()
     Snitch_Multicore = auto()
 
+    # GPU schedules without code generation yet: a map using one fails in the GPU code generator, and schedule
+    # inference never picks one
+    GPU_Chiplet = auto()  #: The thread blocks of one chiplet (AMD XCD), explicit rather than a swizzle of the grid
+    GPU_ThreadBlockCluster = auto()  #: Thread-block cluster (NVIDIA Hopper and later)
+    GPU_Warp = auto()  #: Warp-level code
 
-# A subset of GPU schedule types
-GPU_SCHEDULES = [
+
+# Schedules that launch a kernel
+GPU_KERNEL_SCHEDULES = [
     ScheduleType.GPU_Device,
-    ScheduleType.GPU_ThreadBlock,
-    ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
 ]
+
+# Schedules that distribute work over the threads of a running kernel, coarsest first
+GPU_THREAD_SCHEDULES = [
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Warp,
+]
+
+# GPU schedules the code generator does not implement yet
+GPU_SCHEDULES_WITHOUT_CODEGEN = [
+    ScheduleType.GPU_Chiplet,
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_Warp,
+]
+
+
+# Every GPU schedule: the kernel schedules, the chiplet level between a kernel and its thread blocks, and the thread
+# schedules
+GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
 
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
@@ -206,8 +230,11 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
+    ScheduleType.GPU_Chiplet: StorageType.GPU_Global,
+    ScheduleType.GPU_ThreadBlockCluster: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
+    ScheduleType.GPU_Warp: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
 }
@@ -224,6 +251,9 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Chiplet: ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlockCluster: ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
@@ -1609,12 +1639,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
     if storage == StorageType.Register:
         return True
 
-    if schedule in [
-        ScheduleType.GPU_Device,
-        ScheduleType.GPU_Persistent,
-        ScheduleType.GPU_ThreadBlock,
-        ScheduleType.GPU_ThreadBlock_Dynamic,
-    ]:
+    if schedule in GPU_SCHEDULES:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
@@ -1658,11 +1683,10 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
-        return schedule in [
-            ScheduleType.GPU_Device,
+        return schedule in GPU_KERNEL_SCHEDULES + [
+            ScheduleType.GPU_ThreadBlockCluster,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent,
         ]
 
     # The rest (Registers) can be allocated everywhere

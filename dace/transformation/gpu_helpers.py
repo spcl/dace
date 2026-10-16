@@ -20,7 +20,7 @@ def gpu_kernels(sdfg: SDFG) -> list[tuple[SDFG, SDFGState, nodes.MapEntry]]:
     for node, state in sdfg.all_nodes_recursive():
         if (
             isinstance(node, nodes.MapEntry)
-            and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
+            and node.map.schedule in dtypes.GPU_KERNEL_SCHEDULES
             and not is_devicelevel_gpu(state.sdfg, state, node)
         ):
             result.append((state.sdfg, state, node))
