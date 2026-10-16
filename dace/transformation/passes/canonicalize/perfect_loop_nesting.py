@@ -95,7 +95,8 @@ from typing import Any
 
 from dace import SDFG, properties
 from dace.config import Config
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg import nodes
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -304,11 +305,26 @@ def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | No
     applied = expand_iteration_private(sdfg, loop, shared)
     if applied is None:
         return None
-    groups = _forward_flow_groups(loop)
-    if groups is None:
+    groups = _forward_flow_groups(loop, allow_assignments=True)
+    # The expansion is for a producer with work (CSR's row sum) to run ahead of its consumer. A producer of no loop or
+    # map is a sliver (symm's per-row ``alpha[0]`` load): splitting it off gains no parallel work, costs an expanded
+    # array and a pass over it, and breaks the nest a later lift matches
+    if groups is None or not any(holds_iteration(block) for block in groups[0]):
         for record in applied:
             record.undo()
+        return None
     return groups
+
+
+def holds_iteration(block: ControlFlowBlock) -> bool:
+    """Whether ``block`` is or holds a loop or a map."""
+    if isinstance(block, SDFGState):
+        return any(isinstance(node, nodes.MapEntry) for node in block.nodes())
+    if not isinstance(block, AbstractControlFlowRegion):
+        return False
+    if any(isinstance(region, LoopRegion) for region in block.all_control_flow_regions()):
+        return True
+    return any(isinstance(node, nodes.MapEntry) for state in block.states() for node in state.nodes())
 
 
 @properties.make_properties

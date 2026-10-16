@@ -41,7 +41,10 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     declare_nonnegative_symbols,
     set_symbol_nonnegative_assumptions,
 )
-from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (
+    CascadeInterstateEdgeAssignmentsUp,
+    HoistAssignmentsToLoopBodyHead,
+)
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
@@ -987,6 +990,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     s: Stages = [(label, NormalizeWCRSource()), (label, RevertNonReductionWCR())]
     s += [
         (label, CascadeInterstateEdgeAssignmentsUp()),
+        # A per-iteration assignment between two body states keeps them, and the maps in them, apart
+        (label, HoistAssignmentsToLoopBodyHead()),
         (label, EmptyStateElimination()),
         (label, PatternApplyOnceEverywhere([TrivialMapElimination()])),
         (label, EmptyLoopElimination()),

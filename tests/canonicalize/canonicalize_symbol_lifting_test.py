@@ -435,15 +435,9 @@ def test_guarded_promoted_bound_value_preserving(cv):
     sdfg = guarded_promoted_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    # The guard bounds no loop and indexes no array, so it is a scalar, written ONCE at SDFG scope -- not per
-    # iteration inside the loop ``MoveIfIntoLoop`` leaves behind.
-    assert "c_index" not in sdfg.symbols and isinstance(sdfg.arrays["c_index"], dace.data.Scalar)
-    writes = [
-        st
-        for n, st in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.AccessNode) and n.data == "c_index" and st.in_degree(n) > 0
-    ]
-    assert len(writes) == 1 and writes[0].parent_graph is sdfg, f"the guard is not written once at SDFG scope: {writes}"
+    # The guard is assigned once, outside any loop, and no iteration carries it, so it stays a symbol (no tasklet
+    # loads it) -- not a per-iteration value inside the loop ``MoveIfIntoLoop`` leaves behind.
+    assert "c_index" in sdfg.symbols and "c_index" not in sdfg.arrays
     assert (_nmaps(sdfg), _nloops(sdfg)) == (1, 0), f"expected one map, got {_nmaps(sdfg)}/{_nloops(sdfg)}"
 
     out = np.zeros(n)

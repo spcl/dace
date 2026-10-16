@@ -551,6 +551,44 @@ def _cascade_once(sdfg: SDFG) -> int:
     return moved
 
 
+def _hoist_to_body_head(sdfg: SDFG) -> int:
+    """Move ``key = rhs`` off the edge leaving a loop body's first state onto the body's entry, when that state neither
+    reads ``key`` nor writes anything ``rhs`` reads. The value is the same, and the two states the assignment kept
+    apart can fuse (CloudSC's per-iteration ``iphase_index = iphase[jm]`` between two ``JL`` maps).
+
+    :returns: The number of assignments moved.
+    """
+    moved = 0
+    for loop in list(sdfg.all_control_flow_regions(recursive=True)):
+        if not isinstance(loop, LoopRegion):
+            continue
+        first = loop.start_block
+        if not isinstance(first, SDFGState) or loop.in_degree(first) != 0 or loop.out_degree(first) != 1:
+            continue
+        edge = loop.out_edges(first)[0]
+        if not edge.data.assignments or not edge.data.is_unconditional():
+            continue
+        reads = _block_reads_symbols(first)
+        if reads is None:
+            continue
+        written = _block_writes(first)[1]
+        for key, rhs in list(edge.data.assignments.items()):
+            rhs_names = names_read_by(str(rhs))
+            others = [str(v) for k, v in edge.data.assignments.items() if k != key]
+            if (
+                key in reads
+                or key in rhs_names
+                or any(name in written or name in edge.data.assignments for name in rhs_names)
+                or any(key in names_read_by(other) for other in others)
+            ):
+                continue
+            del edge.data.assignments[key]
+            _place_assignment_at(loop, first, key, rhs)
+            first = loop.start_block if loop.start_block is first else first
+            moved += 1
+    return moved
+
+
 @transformation.explicit_cf_compatible
 class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
     """Cascade invariant interstate-edge symbol assignments past every
@@ -583,3 +621,24 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
                 break
             total += n
         return total or None
+
+
+@transformation.explicit_cf_compatible
+class HoistAssignmentsToLoopBodyHead(ppl.Pass):
+    """Move a loop body's per-iteration interstate assignment above the body's first state when that state neither
+    reads its symbol nor writes its inputs, so the states it separated can fuse (see :func:`_hoist_to_body_head`)."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.InterstateEdges | ppl.Modifies.CFG
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
+        """:returns: The number of assignments moved, or ``None`` if none."""
+        return _hoist_to_body_head(sdfg) or None
