@@ -24,6 +24,11 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.10','3.14']
+        # Each leg also pins the Python interface: 0 forces ctypes, 1 and
+        # autoopt run the default auto selection (forcing nanobind would fail
+        # every test outside the nanobind scope; nanobind-specific tests pin
+        # their interface themselves). Leg 1 additionally pins the production
+        # build-folder mode.
         simplify: [0,1,autoopt]
 
     steps:
@@ -57,11 +62,17 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_compiler_interface=auto
             export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
+        elif [ "${{ matrix.simplify }}" = "1" ]; then
+            export DACE_compiler_interface=auto
+            export DACE_compiler_build_folder_mode="production"
+            export DACE_optimizer_automatic_simplification=1
         else
-            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+            export DACE_compiler_interface=ctypes
+            export DACE_optimizer_automatic_simplification=0
         fi
         uv run  --group testing pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
@@ -73,11 +84,17 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_compiler_interface=auto
             export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
+        elif [ "${{ matrix.simplify }}" = "1" ]; then
+            export DACE_compiler_interface=auto
+            export DACE_compiler_build_folder_mode="production"
+            export DACE_optimizer_automatic_simplification=1
         else
-            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+            export DACE_compiler_interface=ctypes
+            export DACE_optimizer_automatic_simplification=0
         fi
         uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
         ./codecov
@@ -89,11 +106,17 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_compiler_interface=auto
             export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
+        elif [ "${{ matrix.simplify }}" = "1" ]; then
+            export DACE_compiler_interface=auto
+            export DACE_compiler_build_folder_mode="production"
+            export DACE_optimizer_automatic_simplification=1
         else
-            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+            export DACE_compiler_interface=ctypes
+            export DACE_optimizer_automatic_simplification=0
         fi
         uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
@@ -104,6 +127,16 @@ jobs:
         export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_compiler_interface=auto
+        elif [ "${{ matrix.simplify }}" = "1" ]; then
+            export DACE_compiler_interface=auto
+            export DACE_compiler_build_folder_mode="production"
+        else
+            export DACE_compiler_interface=ctypes
+        fi
+        # The `autoopt` leg has always passed its literal value through to the
+        # simplification flag; correcting that would change what this leg tests.
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="uv run --group testing coverage run --source=dace --parallel-mode"
         ./tests/polybench_test.sh

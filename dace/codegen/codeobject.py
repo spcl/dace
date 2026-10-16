@@ -3,7 +3,7 @@ import re
 
 import dace
 from dace import sourcemap
-from dace.properties import DictProperty, Property, SetProperty, make_properties
+from dace.properties import DictProperty, ListProperty, Property, SetProperty, make_properties
 
 
 @make_properties
@@ -31,6 +31,12 @@ class CodeObject:
         desc="Environments required by CMake to build and run this code node.",
         default=set(),
     )
+    statestruct = ListProperty(
+        element_type=str,
+        category="Code Generation",
+        desc="The state-struct field declarations. Populated by the code generator on the "
+        "frame code object (title 'Frame'); empty on every other code object.",
+    )
 
     def __init__(
         self,
@@ -56,6 +62,7 @@ class CodeObject:
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
         self.environments = environments or set()
+        self.statestruct = []
 
         # NOTE: In an earlier version, the source maps were generated here. However,
         #   this had the side effect that the build folder was generated containing
