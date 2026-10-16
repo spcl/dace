@@ -19,8 +19,10 @@ from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
 
 def liftable(loop: LoopRegion, permissive: bool) -> bool:
-    """Whether LoopToMap accepts ``loop`` as the graph stands."""
+    """Whether LoopToMap accepts ``loop`` as the graph stands, its scale aside: a loop over SMALL symbols stays
+    sequential for its size, not for a recurrence, so it is no wavefront half."""
     probe = LoopToMap()
+    probe.keep_small_loops_sequential = False
     probe.setup_match(loop.sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
     return probe.can_be_applied(loop.parent_graph, 0, loop.sdfg, permissive=permissive)
 

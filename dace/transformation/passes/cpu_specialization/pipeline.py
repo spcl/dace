@@ -31,16 +31,20 @@ Order within the stage, and why:
    that intermediate provably does not fit in the host's last-level cache. The CPU keeps a
    cache-resident intermediate materialized (reading it back beats recomputing it) and pays ALU only
    for the ones that would cost a full DRAM round-trip.
-4. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes.SequentializeReductionAxes`
+4. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` -- a
+   parallel map never shares out a ``SMALL`` axis (``nblks``): those run in an inner sequential map under the other
+   axes, and a map over ``SMALL`` axes only is collapsed with the map over larger ones it holds. Before the reduction
+   split and the cost model, which then rule on the map that is actually shared out.
+5. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes.SequentializeReductionAxes`
    -- a parallel map that reduces over some of its axes shares out the others and walks the reduced
    ones in an inner sequential map, so its writes need no atomic. Before the cost model, which then
    rules on the split shape.
-5. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes.SequentializeUnprofitableParallelScopes`
+6. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes.SequentializeUnprofitableParallelScopes`
    -- the fork/join cost model itself.
-6. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
-   -- gives the transfers step 5 just sequentialized their single ``memcpy`` / ``memset`` back, so
+7. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
+   -- gives the transfers step 6 just sequentialized their single ``memcpy`` / ``memset`` back, so
    the parallel-by-default copy expansion costs nothing when the cost model refuses it.
-7. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
+8. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
 
 The two terminal hygiene passes run again at the end because this stage builds states and indices
@@ -62,6 +66,7 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
     RecomputeOversizedIntermediates,
 )
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
     SequentializeUnprofitableParallelScopes,
 )
@@ -95,6 +100,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     if break_anti_dependence:
         ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeOversizedIntermediates().apply_pass(sdfg, {})
+    SequentializeSmallAxes().apply_pass(sdfg, {})
     SequentializeReductionAxes().apply_pass(sdfg, {})
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     # After the schedules are final: only a body that stays a parallel map is if-converted.
