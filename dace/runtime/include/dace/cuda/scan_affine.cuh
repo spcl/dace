@@ -12,6 +12,7 @@
 #include "gpucub.cuh"      // ::gpucub -- cub on CUDA, hipCUB on HIP
 
 #include "../cub_scratch.cuh"
+#include "scan.cuh"  // the running-prefix carry the block form shares with the scalar ops
 
 namespace dace {
 namespace cuda_scan {
@@ -59,6 +60,28 @@ __global__ void affine_pack_kernel(const C* __restrict__ c, const D* __restrict_
   } else {
     m[slot] = affine_map<E>{ck, dk};
   }
+}
+
+/// Block-wide ``out[g] = c[g]*out[g-1] + d[g]`` over ``m`` elements from ``out[-1] = seed``, ``c``, ``d`` and
+/// ``out`` read or written ``sc``, ``sd`` and ``so`` apart. The carry enters as the constant map ``x -> seed``,
+/// so every composed prefix is constant and its ``b`` IS the value; a lane past the end is the identity map.
+/// Every thread of the block must call it; it returns after ``__syncthreads()``.
+template <typename E, int BLOCK>
+__device__ void block_affine_scan(const E* c, long sc, const E* d, long sd, E* out, long so, long m, E seed) {
+  typedef affine_map<E> M;
+  typedef gpucub::BlockScan<M, BLOCK> BlockScanT;
+  __shared__ typename BlockScanT::TempStorage storage;
+  affine_compose<E> op;
+  ScanRunningPrefix<M, affine_compose<E>> carry(M{static_cast<E>(0), seed}, op);
+
+  for (long base = 0; base < m; base += BLOCK) {
+    const long g = base + (long)threadIdx.x;
+    M value = (g < m) ? M{c[g * sc], d[g * sd]} : M{static_cast<E>(1), static_cast<E>(0)};
+    BlockScanT(storage).InclusiveScan(value, value, op, carry);
+    if (g < m) out[g * so] = value.b;
+    __syncthreads();  // before the next iteration reuses ``storage``
+  }
+  __syncthreads();  // the postcondition holds for an empty range too
 }
 
 /// Every composed prefix is constant (``a == 0``), so ``b`` IS the recurrence's value.

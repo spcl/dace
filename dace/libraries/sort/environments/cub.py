@@ -144,7 +144,7 @@ class BlockCollectives:
 
     #: CUDA unit only, for the same reason ScanScratch gives: the header includes ``cub/cub.cuh``,
     #: which the host compiler cannot parse.
-    headers = {"frame": [], "cuda": ["dace/cuda/scan.cuh"]}
+    headers = {"frame": [], "cuda": ["dace/cuda/scan.cuh", "dace/cuda/scan_affine.cuh"]}
     state_fields: list[str] = []
     init_code = ""
     finalize_code = ""

@@ -153,7 +153,7 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
         and block_strided_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None
     ):
         return None
-    if isinstance(node, Scan) and block_refusal(node) is not None:
+    if isinstance(node, Scan) and block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None:
         return None
     return block
 

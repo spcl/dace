@@ -75,23 +75,27 @@ struct ScanMax {
   __device__ __forceinline__ T operator()(const T& a, const T& b) const { return a > b ? a : b; }
 };
 
-//: Block-wide collective scan of ``m`` elements spaced ``s`` apart, entered with ``seed`` folded in
-//: front of the first element (``identity`` enters with nothing). Every thread of the block must call
-//: it; it returns after ``__syncthreads()``.
-template <typename T, typename Op, int BLOCK>
-__device__ void block_inclusive_scan_strided(const T* __restrict__ in, T* __restrict__ out, long m, long s, Op op,
-                                             T identity, T seed) {
+//: Block-wide collective scan of ``m`` elements, read ``si`` and written ``so`` apart, the carry entering at
+//: ``seed``: inclusive ``out[g] = seed op in[0] op ... op in[g]``, exclusive (``EXCLUSIVE``) ``out[g] = seed op
+//: in[0] op ... op in[g-1]``. A lane past the end feeds only later lanes and the final chunk's total, which
+//: no output reads, so it reads ``seed`` and no operator needs an identity. Every thread of the block must
+//: call it; it returns after ``__syncthreads()``.
+template <typename T, typename Op, int BLOCK, bool EXCLUSIVE = false>
+__device__ void block_scan(const T* in, long si, T* out, long so, long m, Op op, T seed) {
   typedef gpucub::BlockScan<T, BLOCK> BlockScanT;
   __shared__ typename BlockScanT::TempStorage storage;
   ScanRunningPrefix<T, Op> carry(seed, op);
 
   for (long base = 0; base < m; base += BLOCK) {
     const long g = base + (long)threadIdx.x;
-    // Past the end reads the identity, so a short final chunk needs no special case. Every
-    // thread must still reach the scan below: it carries a barrier.
-    T value = (g < m) ? in[g * s] : identity;
-    BlockScanT(storage).InclusiveScan(value, value, op, carry);
-    if (g < m) out[g * s] = value;
+    // Every thread must reach the scan below, in range or not: it carries a barrier.
+    T value = (g < m) ? in[g * si] : seed;
+    if constexpr (EXCLUSIVE) {
+      BlockScanT(storage).ExclusiveScan(value, value, op, carry);
+    } else {
+      BlockScanT(storage).InclusiveScan(value, value, op, carry);
+    }
+    if (g < m) out[g * so] = value;
     __syncthreads();  // before the next iteration reuses ``storage``
   }
   // An empty range runs the loop zero times and so reaches no barrier. The caller is entitled to
@@ -99,10 +103,18 @@ __device__ void block_inclusive_scan_strided(const T* __restrict__ in, T* __rest
   __syncthreads();
 }
 
+//: The inclusive :func:`block_scan` of ``m`` elements spaced ``s`` apart, entered with ``seed`` (``identity``
+//: when not given; the padding no longer reads it).
+template <typename T, typename Op, int BLOCK>
+__device__ void block_inclusive_scan_strided(const T* __restrict__ in, T* __restrict__ out, long m, long s, Op op,
+                                             T identity, T seed) {
+  block_scan<T, Op, BLOCK>(in, s, out, s, m, op, seed);
+}
+
 template <typename T, typename Op, int BLOCK>
 __device__ void block_inclusive_scan_strided(const T* __restrict__ in, T* __restrict__ out, long m, long s, Op op,
                                              T identity) {
-  block_inclusive_scan_strided<T, Op, BLOCK>(in, out, m, s, op, identity, identity);
+  block_scan<T, Op, BLOCK>(in, s, out, s, m, op, identity);
 }
 
 //: ``count`` independent scans over one buffer of ``n`` elements: scan ``k`` reads
