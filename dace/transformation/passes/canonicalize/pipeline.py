@@ -126,7 +126,12 @@ from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
-from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, BestEffortLoopPeeling, ShortLoopUnroll
+from dace.transformation.passes.parallelization_prep import (
+    DEFAULT_PEEL_LIMIT,
+    DEFAULT_UNROLL_LIMIT,
+    BestEffortLoopPeeling,
+    ShortLoopUnroll,
+)
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.pattern_matching import (
@@ -550,7 +555,6 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 #
 # ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
 #   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win).
-# ``peel_limit``: 4 lifts every peelable TSVC boundary-conflict kernel; higher adds cost only.
 # ``break_anti_dependence``: snapshot-rename read-ahead anti-deps. On ``A[i] = A[i+1] + B[i]``
 #   CPU off wins 1.16x, GPU on wins 82.6x. ON for both: the CPU loss is
 #   the trivial-kernel worst case.
@@ -563,7 +567,6 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 #   folded it and lost TSVC s172's map); see the AB note at its wiring below.
 CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
-    "peel_limit": 4,
     "break_anti_dependence": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": True,
@@ -572,7 +575,6 @@ CPU_DEFAULTS: dict[str, Any] = {
 }
 GPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": False,
-    "peel_limit": 4,
     "break_anti_dependence": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": False,
@@ -1037,7 +1039,7 @@ def finish() -> Stages:
 
 def build_stages(
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-    peel_limit: int = 4,
+    peel_limit: int = DEFAULT_PEEL_LIMIT,
     break_anti_dependence: bool = True,
     interchange_carry_with_map: bool = True,
     scatter_to_guarded_maps: bool = True,
@@ -1186,8 +1188,8 @@ class CanonicalizationPipeline(ppl.Pass):
                          WHICH stage broke it.
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
                          iterations (0 disables).
-    :param peel_limit: Best-effort loop peeling before parallelize (0 disables;
-                       off by default -- the per-loop search is expensive).
+    :param peel_limit: Best-effort loop peeling before parallelize (0 disables); defaults to
+                       ``optimizer.canonicalization.peel_limit``.
     :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
                                   loops before parallelize (off by default).
     :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the fission stage. ON by
@@ -1253,7 +1255,7 @@ class CanonicalizationPipeline(ppl.Pass):
         dtype=int, default=DEFAULT_UNROLL_LIMIT, desc="Unroll constant-trip loops <= this many iterations (0 disables)."
     )
     peel_limit = properties.Property(
-        dtype=int, default=4, desc="Best-effort loop peeling before parallelize (0 disables)."
+        dtype=int, default=DEFAULT_PEEL_LIMIT, desc="Best-effort loop peeling before parallelize (0 disables)."
     )
     break_anti_dependence = properties.Property(
         dtype=bool, default=True, desc="Snapshot-rename read-ahead anti-dependence loops before parallelize."
@@ -1361,7 +1363,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self.unroll_limit = unroll_limit
         self.target = target
         # Per-target knobs: ``None`` -> preset; explicit value overrides preset.
-        self.peel_limit = _resolve_target_default(target, "peel_limit", peel_limit, fallback=4)
+        self.peel_limit = DEFAULT_PEEL_LIMIT if peel_limit is None else peel_limit
         self.break_anti_dependence = _resolve_target_default(
             target, "break_anti_dependence", break_anti_dependence, fallback=True
         )
@@ -1545,7 +1547,7 @@ def canonicalize(
                          WHICH stage broke it.
     :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize; ``None``
-                       (default) -> per-target preset (CPU=4, GPU=4).
+                       (default) -> ``optimizer.canonicalization.peel_limit``.
     :param break_anti_dependence: Snapshot-rename read-ahead anti-dependence
                                   loops (TSVC s121 shape:
                                   ``a[i] = a[i+1] + b[i]``); ``None``

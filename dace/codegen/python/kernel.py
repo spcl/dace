@@ -45,6 +45,9 @@ LANE = re.compile(r"__l(\d+)")
 CPP_CAST = re.compile(r"\b(?:double|float|bool|char|short|int|long|unsigned|u?int(?:8|16|32|64)_t|dace::\w+)\s*\(")
 #: What a masked lane of a reduction contributes.
 IDENTITIES = {"+": "0", "*": "1", "min": "float('inf')", "max": "float('-inf')"}
+#: The dialect function of each reduction and inclusive scan over a tile.
+REDUCTIONS = {"+": "sum", "*": "prod", "min": "min", "max": "max"}
+SCANS = {"+": "cumsum", "*": "cumprod"}
 
 
 class Element(NamedTuple):
@@ -125,13 +128,13 @@ class Dialect:
 
     def reduce(self, op: str, value: str, axis: int | None, rank: int) -> str:
         """``value``, a tile of ``rank`` dims, reduced with ``op`` along ``axis``, or fully."""
-        return f"{self[ops.PY_REDUCE_OPS[op]]}({value}{'' if axis is None else f', {axis}'})"
+        return f"{self[REDUCTIONS[op]]}({value}{'' if axis is None else f', {axis}'})"
 
     def scan(self, op: str, value: str) -> str:
         """The inclusive scan of the one-dim tile ``value`` with ``op``."""
-        if op not in ops.PY_SCAN_OPS:
+        if op not in SCANS:
             raise CodegenError(f"Python backend: no tile scan combines with {op!r}")
-        return f"{self[ops.PY_SCAN_OPS[op]]}({value}, 0)"
+        return f"{self[SCANS[op]]}({value}, 0)"
 
     def atomic_add(self, base: str, at: "Element", value: str, mask: str | None) -> str:
         """Add ``value`` to the elements ``at`` addresses, atomically against the other programs."""
@@ -258,6 +261,8 @@ class KernelEmitter(Emitter):
         return element_at(desc, [expr(begin) for begin, _, _ in subset.ndrange()])
 
     def body(self, sdfg, node) -> str:
+        if node.language is not dtypes.Language.Python:
+            raise CodegenError(f"Python backend: tasklet {node.label!r} is {node.language.name}, not Python")
         # An inlined connector reads its array in the body, which the kernel spells as the dialect does
         tree = KernelAccesses(sdfg, self.dialect).visit(ast.parse(node.code.as_string))
         return ast.unparse(ast.fix_missing_locations(tree))
@@ -398,13 +403,13 @@ class TileStatement:
         node = self.node
         values = {o.conn: self.operand(o.conn, o.kind, o.expr) for o in node.operands()}
         if isinstance(node, TileBinop):
-            value, out = ops.PY_BINARY_OPS[node.op].format(a=values["_a"], b=values["_b"], f=self.dialect), "_c"
+            value, out = ops.BINARY_OPS[node.op].python.format(a=values["_a"], b=values["_b"], f=self.dialect), "_c"
         elif isinstance(node, TileUnop):
             out = "_c"
             value = (
                 values["_a"]
                 if node.op in ops.CAST_OPS
-                else ops.PY_UNARY_OPS[node.op].format(a=values["_a"], f=self.dialect)
+                else ops.UNARY_OPS[node.op].python.format(a=values["_a"], f=self.dialect)
             )
         elif isinstance(node, TileFMA):
             value, out = f"{self.dialect['fma']}({values['_a']}, {values['_b']}, {values['_c']})", "_o"
@@ -465,7 +470,7 @@ class TileStatement:
 
     def reduce(self) -> str:
         node = self.node
-        if node.op not in ops.PY_REDUCE_OPS:
+        if node.op not in REDUCTIONS:
             raise CodegenError(f"Python backend: no tile reduction combines with {node.op!r}")
         source = self.masked(self.input("_src"), self.dialect.identity(node.op))
         return self.dialect.reduce(node.op, source, node.axis, len(node.widths))

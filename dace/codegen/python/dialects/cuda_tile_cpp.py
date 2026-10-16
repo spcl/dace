@@ -11,7 +11,7 @@ immutable values, as in Triton, and a pointer plus an offset tile is the tile of
 import ast
 import contextlib
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import dace.library
 from dace import SDFG, dtypes
@@ -21,7 +21,7 @@ from dace.codegen.python.kernel import Dialect, Element, KernelEmitter, holds_ti
 from dace.config import Config
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.tileops.nodes.tile_op import TileOp
-from dace.sdfg import nodes
+from dace.sdfg import SDFGState, nodes
 
 #: A name the dialect spells with template arguments in brackets, ``ct.sum[0]``.
 TEMPLATED = re.compile(r"\b(?:(?:ct|dace_tile)(?:\.\w+)+|static_cast)\[")
@@ -275,24 +275,35 @@ def is_tile_kernel(state, entry: nodes.MapEntry) -> bool:
     )
 
 
-def pin_tile_blocks(sdfg: SDFG) -> None:
-    """Give every tile kernel its launch block: one tile thread, which runs the whole tile."""
-    for node, state in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.MapEntry) and is_tile_kernel(state, node):
-            node.map.gpu_block_size = [1, 1, 1]
+def tile_kernels(sdfg: SDFG) -> list[tuple[nodes.MapEntry, SDFGState]]:
+    """The maps of ``sdfg`` the CUDA generator writes as CUDA Tile C++ kernels (:func:`is_tile_kernel`)."""
+    if Config.get("compiler", "cuda", "tile_backend") != "cuda_tile":
+        return []
+    return [
+        (node, state)
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry) and is_tile_kernel(state, node)
+    ]
 
 
 def tile_kernel_nodes(sdfg: SDFG) -> set[nodes.LibraryNode]:
     """The library nodes a CUDA Tile C++ kernel writes itself, which stay unexpanded: the tile nodes and the copies of
     a ``GPU_Device`` map over BLOCK tiles."""
-    found: set[TileOp] = set()
-    for node, state in sdfg.all_nodes_recursive():
-        if not (isinstance(node, nodes.MapEntry) and is_tile_kernel(state, node)):
-            continue
-        for inner in state.scope_subgraph(node).nodes():
+    found: set[nodes.LibraryNode] = set()
+    for entry, state in tile_kernels(sdfg):
+        for inner in state.scope_subgraph(entry).nodes():
             nested = inner.sdfg.all_nodes_recursive() if isinstance(inner, nodes.NestedSDFG) else [(inner, state)]
             found |= {n for n, _ in nested if isinstance(n, (TileOp, CopyLibraryNode))}
     return found
+
+
+def expand_outside_tile_kernels(sdfg: SDFG, predicate: Callable[[nodes.LibraryNode], bool] | None = None) -> None:
+    """Expand the library nodes ``predicate`` selects, all by default, except the nodes of :func:`tile_kernel_nodes`."""
+    kept = tile_kernel_nodes(sdfg)
+    if kept:
+        selected = predicate or (lambda node: True)
+        predicate = lambda node: node not in kept and selected(node)  # noqa: E731
+    sdfg.expand_library_nodes(predicate=predicate)
 
 
 def check_tile_toolchain(needed: bool) -> None:

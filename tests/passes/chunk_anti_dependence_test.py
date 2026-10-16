@@ -44,6 +44,15 @@ def _shift_three(a: dace.float64[N], b: dace.float64[N]):
         a[i] = a[i + 3] + b[i]
 
 
+K = dace.symbol("K")
+
+
+@dace.program
+def _shift_sym(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N - K):
+        a[i] = a[i + K] + b[i]
+
+
 @dace.program
 def _shift_fixed(a: dace.float64[FIXED], b: dace.float64[FIXED]):
     for i in range(FIXED - 1):
@@ -311,6 +320,28 @@ def test_a_wider_read_ahead_offset_chunks_with_a_row_of_seam_cells(prog, offset)
         assert np.array_equal(got, want), n
 
 
+def test_a_symbolic_read_ahead_chunks_with_a_symbolic_row_of_seam_cells():
+    """``a[i] = a[i+K]`` with ``K`` a symbol: the seam row is ``K`` cells wide and ``K = 0`` (no dependence) leaves it
+    empty. Sizes include ``K`` above the chunk size, a last chunk shorter than ``K``, and ``N <= K``."""
+    sdfg = _canonical(_shift_sym)
+    assert _snapshot_copies(sdfg), "the canonical snapshot form is the precondition"
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not _snapshot_copies(sdfg)
+    assert [str(s) for s in _seam_buffer(sdfg).shape[1:]] == ["K"]
+
+    rng = np.random.default_rng(5)
+    for n, k in ((40, 0), (40, 1), (40, 3), (7, 5), (1001, 2), (1001, 300), (5, 5), (3, 9)):
+        a, b = rng.standard_normal(n), rng.standard_normal(n)
+        want = a.copy()
+        for i in range(n - k):
+            want[i] = want[i + k] + b[i]
+        got = a.copy()
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
+            sdfg(a=got, b=b.copy(), N=n, K=k)
+        assert np.array_equal(got, want), (n, k)
+
+
 def test_chunk_rewrite_is_idempotent():
     """After the rewrite no state holds a snapshot copy feeding a map, so nothing matches again."""
     sdfg = _canonical(_shift)
@@ -335,7 +366,8 @@ if __name__ == "__main__":
     test_chunk_rewrite_is_idempotent()
 
 
-def test_the_full_pipeline_reaches_the_seam_rewrite():
+@pytest.mark.parametrize("prog,offset", [(_shift, 1), (_shift_two, 2), (_shift_sym, 3)])
+def test_the_full_pipeline_reaches_the_seam_rewrite(prog, offset):
     """Band placement is the point, so match through the real pipeline, not a hand-built graph.
 
     The pass used to run right after ``post_l2m`` on the argument that that band is the first to
@@ -344,12 +376,13 @@ def test_the_full_pipeline_reaches_the_seam_rewrite():
     follow are what put the copy and its consumer map in one state with the read spelled as a
     point, so the pass belongs in the CPU specialization stage, which runs after that whole
     pipeline. Asserting on the seam buffer here makes a future move that re-breaks the match fail
-    loudly instead of quietly costing the traffic back.
+    loudly instead of quietly costing the traffic back. A wider and a symbolic read-ahead go through too: the chunk
+    count of a ``D >= 2`` chunk is a division over a ``Max``, which the fork/join test after it has to reason about.
     """
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.cpu_specialization import cpu_specialize
 
-    sdfg = canonicalize(_shift.to_sdfg(simplify=True), validate=True, validate_all=False, target="cpu")
+    sdfg = canonicalize(prog.to_sdfg(simplify=True), validate=True, validate_all=False, target="cpu")
     cpu_specialize(sdfg)
     assert [n for n in sdfg.arrays if n.endswith("_antidep_seam")], "ChunkAntiDependence did not fire"
     assert not _snapshot_copies(sdfg), "the whole-window snapshot copy survived the rewrite"
@@ -358,6 +391,9 @@ def test_the_full_pipeline_reaches_the_seam_rewrite():
     rng = np.random.default_rng(17)
     a = rng.random(n)
     b = rng.random(n)
+    want = a.copy()
+    for i in range(n - offset):
+        want[i] = want[i + offset] + b[i]
     got = a.copy()
-    sdfg(a=got, b=b, N=n)
-    assert np.array_equal(got, _ref_shift(a, b))
+    sdfg(a=got, b=b, N=n, **({"K": offset} if prog is _shift_sym else {}))
+    assert np.array_equal(got, want)

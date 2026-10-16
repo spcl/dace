@@ -45,12 +45,11 @@ class ExpandLibraryNodes(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> bool | None:
-        from dace.codegen.python.dialects.cuda_tile_cpp import tile_kernel_nodes
+        from dace.codegen.python.dialects.cuda_tile_cpp import expand_outside_tile_kernels
         from dace.sdfg import infer_types
 
         # A CUDA Tile C++ kernel writes its tile nodes itself
-        kept = tile_kernel_nodes(sdfg)
-        sdfg.expand_library_nodes(recursive=True, predicate=(lambda node: node not in kept) if kept else None)
+        expand_outside_tile_kernels(sdfg)
         # Expansions spawn nested SDFGs with ``Default``-scheduled maps, which codegen rejects.
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         return True
