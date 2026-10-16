@@ -2117,7 +2117,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     self._in_device_code = False
 
                     self._dispatcher.defined_vars.add(
-                        inner_ptrname, defined_type, f"const {ctype}", allow_shadowing=True
+                        inner_ptrname, defined_type, cpp.const_qualify(ctype, data_desc.dtype), allow_shadowing=True
                     )
 
                     # Rename argument in kernel prototype as necessary
@@ -2142,7 +2142,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             prototype_kernel_args[aname] = arg
 
         kernel_args_typed = [
-            ("const " if k in const_params else "") + v.as_arg(name=k) for k, v in prototype_kernel_args.items()
+            self._const_kernel_arg(k, v) if k in const_params else v.as_arg(name=k)
+            for k, v in prototype_kernel_args.items()
         ]
 
         kernel_stream = CodeIOStream()
@@ -3551,6 +3552,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             return  # skip
 
         self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    @staticmethod
+    def _const_kernel_arg(name: str, desc: dt.Data) -> str:
+        """
+        Returns the declaration of a kernel parameter that the kernel does not write. A scalar that is itself a
+        pointer is a constant pointer, rather than a pointer to constant data (see ``cpp.const_qualify``).
+        """
+        if isinstance(desc, dt.Scalar) and desc.storage != dtypes.StorageType.GPU_Global:
+            return cpp.const_qualify(desc.dtype.ctype, desc.dtype) + f" {name}"
+        return "const " + desc.as_arg(name=name)
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         return "DACE_DFI " + self._cpu_codegen.generate_nsdfg_header(

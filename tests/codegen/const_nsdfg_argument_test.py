@@ -2,12 +2,17 @@
 """Const-qualifier detection for nested-SDFG (emitted function) parameters.
 
 A nested SDFG's parameters must be ``const``-qualified exactly when the connector is read-only --
-for array references as well as scalars. Codegen only; nothing is compiled or run.
+for array references as well as scalars. Codegen only, except for the pointer-typed scalars, whose
+qualification is checked by compiling and running programs.
 """
 
 import re
 
+import numpy as np
+import pytest
+
 import dace
+from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import CPUCodeGen
 
 
@@ -118,8 +123,84 @@ def test_mutated_descriptors_follows_view_direction():
     assert "a" in CPUCodeGen._mutated_descriptors(_inner_with_view("wov", write_through_view=True))
 
 
+def test_const_qualify_pointer_data():
+    """
+    Constant pointer-typed data is a constant pointer, not a pointer to constant data.
+    """
+    pointer = dace.pointer(dace.float64)
+    assert cpp.const_qualify("double", dace.float64) == "const double"
+    assert cpp.const_qualify("double*", dace.float64) == "const double*"
+    assert cpp.const_qualify("double*", pointer) == "double* const"
+    assert cpp.const_qualify("double**", pointer) == "double* const*"
+    assert cpp.const_qualify("double* const*", pointer) == "double* const*"
+
+
+def _pointer_program(gpu: bool) -> dace.SDFG:
+    """
+    A tasklet outputs a pointer to a table, which a nested SDFG in a map (a GPU kernel) reads through.
+    """
+    n = 16
+    storage = dace.StorageType.GPU_Global if gpu else dace.StorageType.Default
+    sdfg = dace.SDFG("pointer_scalar_" + ("gpu" if gpu else "cpu"))
+    sdfg.add_array("y", [n], dace.float64, storage)
+    sdfg.add_scalar("table", dace.pointer(dace.float64), transient=True)
+    state = sdfg.add_state()
+    if gpu:
+        code = (
+            f"static double* values = nullptr;\n"
+            f"if (!values) {{\n"
+            f"    double host[{n}];\n"
+            f"    for (int i = 0; i < {n}; ++i) host[i] = i;\n"
+            f"    cudaMalloc(&values, sizeof(host));\n"
+            f"    cudaMemcpy(values, host, sizeof(host), cudaMemcpyHostToDevice);\n"
+            f"}}\n"
+            f"_table = values;"
+        )
+    else:
+        code = f"static double values[{n}];\nfor (int i = 0; i < {n}; ++i) values[i] = i;\n_table = values;"
+    tasklet = state.add_tasklet("table", {}, {"_table": dace.pointer(dace.float64)}, code, language=dace.Language.CPP)
+    table = state.add_access("table")
+    state.add_edge(tasklet, "_table", table, None, dace.Memlet("table[0]"))
+
+    inner = dace.SDFG("read_table")
+    inner.add_scalar("w", dace.pointer(dace.float64))
+    inner.add_array("out", [n], dace.float64, storage)
+    inner.add_symbol("i", dace.int64)
+    inner_state = inner.add_state()
+    read = inner_state.add_tasklet(
+        "read", {"_w": dace.pointer(dace.float64)}, {"_y"}, "_y = 2 * _w[i];", language=dace.Language.CPP
+    )
+    inner_state.add_edge(inner_state.add_read("w"), None, read, "_w", dace.Memlet("w[0]"))
+    inner_state.add_edge(read, "_y", inner_state.add_write("out"), None, dace.Memlet("out[i]"))
+
+    schedule = dace.ScheduleType.GPU_Device if gpu else dace.ScheduleType.Default
+    entry, exit_ = state.add_map("m", {"i": f"0:{n}"}, schedule)
+    nsdfg = state.add_nested_sdfg(inner, {"w"}, {"out"}, {"i": "i"})
+    state.add_memlet_path(table, entry, nsdfg, dst_conn="w", memlet=dace.Memlet("table[0]"))
+    state.add_memlet_path(nsdfg, exit_, state.add_write("y"), src_conn="out", memlet=dace.Memlet("y[i]"))
+    return sdfg
+
+
+def test_pointer_scalar_into_nested_sdfg():
+    y = np.zeros(16)
+    _pointer_program(False)(y=y)
+    assert np.allclose(y, 2 * np.arange(16))
+
+
+@pytest.mark.gpu
+def test_pointer_scalar_into_gpu_kernel():
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    y = cp.zeros(16)
+    _pointer_program(True)(y=y)
+    assert np.allclose(y.get(), 2 * np.arange(16))
+
+
 if __name__ == "__main__":
     test_readonly_input_is_const_and_written_output_is_not()
     test_inout_array_is_not_const()
     test_a_read_view_of_a_const_input_is_emitted_const()
     test_mutated_descriptors_follows_view_direction()
+    test_const_qualify_pointer_data()
+    test_pointer_scalar_into_nested_sdfg()
+    test_pointer_scalar_into_gpu_kernel()

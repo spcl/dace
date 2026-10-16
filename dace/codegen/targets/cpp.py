@@ -232,6 +232,23 @@ def memlet_copy_to_absolute_strides(
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
+def const_qualify(expr: str, dtype: dtypes.typeclass) -> str:
+    """
+    Qualifies the C++ type of data (or of a pointer to it) as constant, unless it already is. If the data is itself
+    a pointer, the pointer becomes constant rather than the data it points to (e.g., ``T* const*``, not
+    ``const T**``, which a ``T**`` does not convert to).
+
+    :param expr: The C++ type of the data, or of a pointer to it.
+    :param dtype: The type of the data.
+    :return: The constant type.
+    """
+    if expr.startswith("const ") or " const" in expr:
+        return expr
+    if isinstance(dtype, dtypes.pointer) and expr.startswith(dtype.ctype):
+        return dtype.ctype + " const" + expr[len(dtype.ctype) :]
+    return "const " + expr
+
+
 def is_cuda_codegen_in_device(framecode) -> bool:
     """
     Check the state of the CUDA code generator, whether it is inside device code.
@@ -345,11 +362,7 @@ def emit_memlet_reference(
     datadef = ptrname
 
     def make_const(expr: str) -> str:
-        # check whether const has already been added before
-        if not expr.startswith("const "):
-            return "const " + expr
-        else:
-            return expr
+        return const_qualify(expr, desc.dtype)
 
     if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
