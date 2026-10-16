@@ -811,6 +811,57 @@ def test_fft_shape_gpu():
     _check_shaped_fft(x, z, {name: value.get() for name, value in results.items()})
 
 
+def _windowed_filter_program(G=dace.StorageType.Default):
+    """
+    A filter of zero-padded rows: FFT of length 128 of rows of 100 elements, multiplication, inverse FFT, and the real
+    part of a window of the result.
+    """
+    B, L, N, S = 12, 100, 128, 5
+
+    @dace.program
+    def tester(x: dace.float32[B, L] @ G, w: dace.complex64[N] @ G, y: dace.float32[B, L] @ G):
+        X = np.fft.fft(x, n=N)
+        Y = np.empty_like(X)
+        for b, f in dace.map[0:B, 0:N]:
+            Y[b, f] = X[b, f] * w[f]
+        yp = np.fft.ifft(Y)
+        for b, j in dace.map[0:B, 0:L]:
+            y[b, j] = yp[b, j + S].real
+
+    rng = np.random.default_rng(4)
+    x, w = rng.random((B, L)).astype(np.float32), _random_complex(N, np.complex64)
+    expected = np.fft.ifft(np.fft.fft(x, n=N) * w)[:, S : S + L].real
+    return tester, x, w, expected
+
+
+def test_block_local_fusion_window():
+    """
+    The fusion of a zero-padded FFT, a map, the inverse FFT, and a map that reads a window of its result into one map,
+    whose iterations pad each row in their buffers (split into padded rows) and write only the window.
+    """
+    tester, x, w, expected = _windowed_filter_program()
+    sdfg = tester.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 1
+    assert not {"X", "Y", "yp"} & set(sdfg.arrays)
+    y = np.zeros_like(x)
+    sdfg(x=x, w=w, y=y)
+    assert np.allclose(y, expected, rtol=1e-4, atol=1e-5)
+
+
+@pytest.mark.gpu
+def test_block_local_fusion_window_gpu():
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    tester, x, w, expected = _windowed_filter_program(dace.StorageType.GPU_Global)
+    sdfg = tester.to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    assert not {"X", "Y", "yp"} & set(sdfg.arrays)
+    y = cp.zeros(x.shape, np.float32)
+    sdfg(x=cp.asarray(x), w=cp.asarray(w), y=y)
+    assert np.allclose(y.get(), expected, rtol=1e-4, atol=1e-5)
+
+
 def _real_step_count(sdfg: dace.SDFG) -> int:
     """
     Counts the steps that separate or combine the halves of a real transform of half length (see ``stockham_real``).
@@ -920,6 +971,8 @@ if __name__ == "__main__":
     test_real_fft_gpu()
     test_fft_shape()
     test_fft_shape_gpu()
+    test_block_local_fusion_window()
+    test_block_local_fusion_window_gpu()
     test_ifft("backward")
     test_ifft("forward")
     test_ifft("ortho")

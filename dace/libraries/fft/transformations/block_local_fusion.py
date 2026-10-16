@@ -16,6 +16,20 @@ from dace.transformation import transformation
 
 
 @dataclasses.dataclass
+class _Crop:
+    """
+    A map that reads the result of the inverse FFT (e.g., cropping a window of it) and is fused into the kernel.
+    """
+
+    map_entry: nodes.MapEntry
+    map_exit: nodes.MapExit
+    #: The map parameter that indexes each dimension of the result.
+    params: list[str]
+    #: The array that the map writes.
+    output: nodes.AccessNode
+
+
+@dataclasses.dataclass
 class _Match:
     """
     The nodes of a matched ``source -> FFT -> spectrum -> map -> filtered -> IFFT -> result`` pattern.
@@ -32,6 +46,11 @@ class _Match:
     #: On the CPU, the number of adjacent transforms that an iteration computes (see ``stockham.local_lanes``), or
     #: None on the GPU.
     lanes: int | None
+    #: Whether the source is shorter than the transforms along the axes, i.e., zero-padded (see
+    #: ``stockham.padded_dims``).
+    padded: bool
+    #: The map that reads the result, if it is fused too.
+    crop: _Crop | None
 
 
 @properties.make_properties
@@ -49,6 +68,12 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
     over the same axes of arrays in GPU global (or host) memory, and a transform must fit into the shared memory of a
     thread block (see ``stockham.fits_block_local``), or into the stack buffers of a CPU map iteration (see
     ``stockham.local_lanes``).
+
+    The input of the FFT may be zero-padded (e.g., ``np.fft.fft2(x, s=...)``), and a map that reads the result of the
+    inverse FFT at the index of its transform, shifted by constants along the transformed axes (e.g., the window of a
+    convolution, ``y[i, j] = result[i + 3, j + 3].real``), is fused too if the result is only read by it. The kernel
+    then reads the unpadded input and writes the output of that map, so that neither the padded input nor the whole
+    result is in global memory.
     """
 
     forward = transformation.PatternNode(fft_nodes.FFT)
@@ -96,21 +121,25 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         if not _is_local_transient(sdfg, state, spectrum) or not _is_local_transient(sdfg, state, filtered):
             return None
 
-        # Same shape, complex type, and transformed axes; the input may also be real
+        # Same shape, complex type, and transformed axes; the input may also be real, and zero-padded
         descs = [sdfg.arrays[node.data] for node in (source, spectrum, filtered, result)]
         if any(not isinstance(desc, data.Array) for desc in descs):
             return None
         storages = (dtypes.StorageType.GPU_Global,) if gpu else stockham.HOST_STORAGES
         if any(desc.storage not in storages for desc in (descs[0], descs[3])):
             return None
-        shape = tuple(descs[0].shape)
-        if any(tuple(desc.shape) != shape for desc in descs[1:]):
+        shape = tuple(descs[1].shape)
+        if any(tuple(desc.shape) != shape for desc in descs[2:]):
             return None
         dtype = descs[1].dtype
         if dtype not in (dtypes.complex64, dtypes.complex128) or any(desc.dtype != dtype for desc in descs[2:]):
             return None
         axes = fft_nodes.transformed_axes(forward, len(shape))
         if fft_nodes.transformed_axes(inverse, len(shape)) != axes:
+            return None
+        try:
+            padded = bool(stockham.padded_dims(descs[0].shape, shape, axes, sdfg.constants))
+        except ValueError:
             return None
         lanes = None
         if gpu and not stockham.fits_block_local(shape, axes, dtype, sdfg.constants):
@@ -152,13 +181,106 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             if (lanes or 1) > 1 or not _restate_nested(node, conn, edge.data.subset, batch_dims, None):
                 return None
 
-        return _Match(source, filtered, inverse, result, map_exit, axes, params, lanes)
+        crop = self._crop(state, sdfg, result, shape, axes, gpu, source.data)
+        return _Match(source, filtered, inverse, result, map_exit, axes, params, lanes, padded, crop)
+
+    def _crop(
+        self,
+        state: SDFGState,
+        sdfg: SDFG,
+        result: nodes.AccessNode,
+        shape: tuple,
+        axes: list[int],
+        gpu: bool,
+        source: str,
+    ) -> _Crop | None:
+        """
+        Returns the map that reads the result of the inverse FFT if it can be fused too (see the class documentation):
+        the result is only read by the map, at the map parameters in the dimensions that are not transformed (whose
+        ranges are the whole dimensions), and at a map parameter plus a constant, within the result, along each
+        transformed axis. The map writes one array.
+        """
+        if not _is_local_transient(sdfg, state, result) or state.out_degree(result) != 1:
+            return None
+        map_entry = state.out_edges(result)[0].dst
+        if not isinstance(map_entry, nodes.MapEntry) or state.entry_node(map_entry) is not None:
+            return None
+        schedules = (
+            (dtypes.ScheduleType.GPU_Device,)
+            if gpu
+            else (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore)
+        )
+        if map_entry.map.schedule not in schedules:
+            return None
+        map_exit = state.exit_node(map_entry)
+        if state.out_degree(map_exit) != 1:
+            return None
+        output = state.out_edges(map_exit)[0].dst
+        if (
+            not isinstance(output, nodes.AccessNode)
+            or output.data in (result.data, source)
+            or state.in_degree(output) != 1
+        ):
+            return None
+        if not isinstance(sdfg.arrays[output.data], data.Array):
+            return None
+        for edge in state.in_edges(map_entry):
+            if edge.data.is_empty():
+                continue
+            if not edge.dst_conn or not edge.dst_conn.startswith("IN_") or not isinstance(edge.src, nodes.AccessNode):
+                return None
+            if edge.data.data == output.data or (edge.src is not result and edge.data.data == result.data):
+                return None
+
+        scope = state.scope_subgraph(map_entry, include_entry=False, include_exit=False)
+        for node in scope.nodes():
+            if isinstance(node, nodes.LibraryNode):
+                return None
+            if isinstance(node, nodes.AccessNode) and node.data in (result.data, output.data):
+                return None
+            if isinstance(node, nodes.MapEntry) and node.map.schedule not in (
+                dtypes.ScheduleType.Default,
+                dtypes.ScheduleType.Sequential,
+            ):
+                return None
+        scope_edges = state.scope_subgraph(map_entry).edges()
+        if _nested_connections(scope_edges, (result.data,)):
+            return None
+
+        # The map parameter of each dimension of the result, the same in all reads
+        map_params = [symbolic.pystr_to_symbolic(param) for param in map_entry.map.params]
+        params = [None] * len(shape)
+        for edge in scope_edges:
+            if edge.data.data != result.data or edge.src is result:
+                continue
+            if edge.data.subset.num_elements() != 1:
+                return None
+            for dim, (begin, _, _) in enumerate(edge.data.subset.ndrange()):
+                used = [param for param in map_params if param in begin.free_symbols]
+                if len(used) != 1 or (params[dim] is not None and params[dim] != str(used[0])):
+                    return None
+                param = used[0]
+                offset = symbolic.simplify(begin - param)
+                if offset.free_symbols or (dim not in axes and offset != 0):
+                    return None
+                first, last, step = map_entry.map.range[map_entry.map.params.index(str(param))]
+                if step != 1:
+                    return None
+                if dim in axes and ((first + offset < 0) == True or (last + offset >= shape[dim]) == True):
+                    return None
+                if dim not in axes and (first != 0 or symbolic.simplify(last + 1 - shape[dim]) != 0):
+                    return None
+                params[dim] = str(param)
+        if any(param is None for param in params) or sorted(params) != sorted(map_entry.map.params):
+            return None
+        return _Crop(map_entry, map_exit, params, output)
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.NestedSDFG:
         match = self._match(state, sdfg)
         forward, spectrum, map_entry = self.forward, self.spectrum, self.map_entry
-        source, result = match.source, match.result
-        shape = tuple(sdfg.arrays[source.data].shape)
+        source, result, crop = match.source, match.result, match.crop
+        output = crop.output if crop is not None else result
+        shape = tuple(sdfg.arrays[spectrum.data].shape)
         dtype = sdfg.arrays[spectrum.data].dtype
         axes = match.axes
         gpu = match.lanes is None
@@ -176,11 +298,13 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
 
         # The nested SDFG of one thread block: one state per stage and one for the map
         other_inputs = {}
-        for edge in state.in_edges(map_entry):
-            if not edge.data.is_empty() and edge.src is not spectrum:
-                other_inputs.setdefault(edge.data.data, edge.src)
+        map_entries = [map_entry] + ([crop.map_entry] if crop is not None else [])
+        for entry in map_entries:
+            for edge in state.in_edges(entry):
+                if not edge.data.is_empty() and edge.src is not spectrum and edge.src is not result:
+                    other_inputs.setdefault(edge.data.data, edge.src)
         table_nodes = list(forward_tables.values()) + list(inverse_tables.values())
-        outer_names = {source.data, result.data, *other_inputs, *(node.data for node in table_nodes)}
+        outer_names = {source.data, output.data, *other_inputs, *(node.data for node in table_nodes)}
         block, batch_symbols, batch_index, buffers = stockham.block_local_sdfg(
             "fft_block_local",
             {name: sdfg.arrays[name] for name in outer_names},
@@ -198,19 +322,61 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             factor = None if libnode.factor == 1 else libnode.factor
             return [(stage, sign, names, factor if s == len(stages) - 1 else None) for s, stage in enumerate(stages)]
 
+        # Steps: zero-padding the input into a buffer, the stages of the FFT, the map, the stages of the inverse FFT,
+        # and the map that reads its result
         steps = stage_steps(-1, forward, forward_tables) + [None] + stage_steps(1, match.inverse, inverse_tables)
+        first = 1 if match.padded else 0
+        steps = [None] * first + steps + ([None] if crop is not None else [])
         block_states = stockham.add_block_local_steps(
-            block, steps, source.data, result.data, buffers, block_shape, batch_index, threads, padding
+            block, steps, source.data, output.data, buffers, block_shape, batch_index, threads, padding
         )
-        comp_state, comp_src, comp_dst = block_states[len(stages)]
+        if match.padded:
+            pad_state, pad_src, pad_dst = block_states[0]
+            source_shape = sdfg.arrays[source.data].shape
+            stockham.add_padding_step(
+                pad_state, pad_src, pad_dst, block_shape, batch_index, source_shape, padding, threads
+            )
+        comp_state, comp_src, comp_dst = block_states[first + len(stages)]
 
-        dependencies = [edge.src for edge in state.in_edges(map_entry) if edge.data.is_empty()]
-        self._move_map(sdfg, state, comp_state, match, comp_src, comp_dst, block_shape, batch_symbols, threads, padding)
+        dependencies = [edge.src for entry in map_entries for edge in state.in_edges(entry) if edge.data.is_empty()]
+        buffer_names = {spectrum.data: comp_src, match.filtered.data: comp_dst}
+        self._move_map(
+            sdfg,
+            state,
+            comp_state,
+            map_entry,
+            match.map_exit,
+            match.params,
+            buffer_names,
+            match.axes,
+            block_shape,
+            batch_symbols,
+            threads,
+            padding,
+        )
+        if crop is not None:
+            crop_state, crop_src, _ = block_states[-1]
+            self._move_map(
+                sdfg,
+                state,
+                crop_state,
+                crop.map_entry,
+                crop.map_exit,
+                crop.params,
+                {result.data: crop_src},
+                match.axes,
+                block_shape,
+                batch_symbols,
+                threads,
+                padding,
+            )
 
         # Remove the transforms and their intermediate arrays
-        state.remove_nodes_from([forward, spectrum, match.filtered, match.inverse])
-        for name in (spectrum.data, match.filtered.data):
-            sdfg.remove_data(name, validate=False)
+        removed = [forward, spectrum, match.filtered, match.inverse] + ([result] if crop is not None else [])
+        state.remove_nodes_from(removed)
+        for node in removed[1:]:
+            if isinstance(node, nodes.AccessNode):
+                sdfg.remove_data(node.data, validate=False)
 
         # The kernel: one thread block (or CPU map iteration) per transform
         input_nodes = {source.data: source, **other_inputs, **{node.data: node for node in table_nodes}}
@@ -218,7 +384,7 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             state,
             block,
             input_nodes,
-            result,
+            output,
             shape,
             batch_symbols,
             dtypes.ScheduleType.GPU_Device if gpu else dtypes.ScheduleType.Default,
@@ -247,40 +413,46 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         sdfg: SDFG,
         state: SDFGState,
         comp_state: SDFGState,
-        match: _Match,
-        src: str,
-        dst: str,
+        map_entry: nodes.MapEntry,
+        map_exit: nodes.MapExit,
+        params: list[str],
+        buffer_names: dict[str, str],
+        axes: list[int],
         block_shape: list[int],
         batch_symbols: dict[int, str],
         threads: int | None,
         padding: int,
     ) -> None:
         """
-        Moves the map from the parent state into the state of the nested SDFG that computes it, reading the spectrum
-        from buffer ``src`` and writing to ``dst``. On the GPU, the threads of the block stride over the transformed
-        elements, and each iteration runs the original map for a single point. On the CPU, the map runs sequentially
-        over the transforms of the iteration.
+        Moves a map from the parent state into the state of the nested SDFG that computes it, accessing the given
+        arrays of the parent in buffers instead (e.g., reading the spectrum from one buffer and writing to another).
+        On the GPU, the threads of the block stride over the iterations of the transformed dimensions, and each
+        iteration runs the original map for a single point. On the CPU, the map runs sequentially over the transforms
+        of the iteration.
+
+        :param params: The map parameter that indexes each dimension of the arrays.
+        :param buffer_names: The buffer of each array of the parent that the map accesses in a buffer.
+        :param axes: The transformed axes.
         """
-        map_entry, map_exit = self.map_entry, match.map_exit
-        spectrum, filtered = self.spectrum.data, match.filtered.data
         scope = state.scope_subgraph(map_entry)
         scope_nodes = list(scope.nodes())
         scope_edges = list(scope.edges())
         in_edges = list(state.in_edges(map_entry))
-        out_conn = state.out_edges(map_exit)[0].src_conn
+        out_edge = state.out_edges(map_exit)[0]
+        out_conn, out_data = out_edge.src_conn, out_edge.data.data
         state.remove_nodes_from(scope_nodes)
 
         batch_dims = set(batch_symbols)
 
         def localize(memlet: Memlet) -> Memlet:
             """
-            Restates an access to the spectrum or the output on its buffer: relative to the first transform of the
-            block in the dimensions that are not transformed, and split into padded rows along the axis.
+            Restates an access to an array that is in a buffer: relative to the first transform of the block in the
+            dimensions that are not transformed, and split into padded rows along the axis.
             """
             memlet = copy.deepcopy(memlet)
-            if memlet.data not in (spectrum, filtered):
+            if memlet.data not in buffer_names:
                 return memlet
-            memlet.data = src if memlet.data == spectrum else dst
+            memlet.data = buffer_names[memlet.data]
             ranges = []
             for dim, (begin, end, step) in enumerate(memlet.subset.ndrange()):
                 if dim in batch_dims and block_shape[dim] == 1:
@@ -288,7 +460,7 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
                 elif dim in batch_dims:
                     first = symbolic.pystr_to_symbolic(batch_symbols[dim])
                     ranges.append((begin - first, end - first, step))
-                elif padding and dim in match.axes:
+                elif padding and dim in axes:
                     row, column = symbolic.int_floor(begin, padding), begin % padding
                     ranges += [(row, row, 1), (column, column, 1)]
                 else:
@@ -307,32 +479,39 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             block.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
             if not any(node.data == name for other in sdfg.states() for node in other.data_nodes()):
                 sdfg.remove_data(name, validate=False)
-        for edge, node, conn in _nested_connections(scope_edges, (spectrum, filtered)):
-            buffer = src if edge.data.data == spectrum else dst
-            _restate_nested(node, conn, edge.data.subset, batch_dims, block.arrays[buffer])
+        for edge, node, conn in _nested_connections(scope_edges, tuple(buffer_names)):
+            _restate_nested(node, conn, edge.data.subset, batch_dims, block.arrays[buffer_names[edge.data.data]])
         for edge in scope_edges:
             comp_state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, localize(edge.data))
 
-        param_dim = {param: dim for dim, param in enumerate(match.params)}
+        # Parameters of the dimensions that are not transformed iterate over the transforms of the block; the others
+        # keep their ranges
+        param_dim = {param: dim for dim, param in enumerate(params)}
+        original = dict(zip(map_entry.map.params, map_entry.map.range))
         ranges = []
         if threads is None:
-            # The map iterates over the transforms of the iteration
             for param in map_entry.map.params:
                 dim = param_dim[param]
                 if dim in batch_symbols:
                     first = symbolic.pystr_to_symbolic(batch_symbols[dim])
                     ranges.append((first, first + block_shape[dim] - 1, 1))
                 else:
-                    ranges.append((0, block_shape[dim] - 1, 1))
+                    ranges.append(original[param])
+            work = 1
         else:
-            # Each iteration of the map computes one point: its batch index is the block's, and its transformed index
-            # is delinearized from the iteration of the thread-block loop
-            loop_dims = [dim for dim in range(len(block_shape)) if block_shape[dim] > 1]
-            loop_index = dict(zip(loop_dims, stockham.delinearize("__u", [block_shape[dim] for dim in loop_dims])))
+            # Each iteration of the map computes one point: its batch index is the block's, and its index in the
+            # transformed dimensions is delinearized from the iteration of the thread-block loop
+            loop_params = [param for param in map_entry.map.params if param_dim[param] not in batch_symbols]
+            extents = [original[param][1] - original[param][0] + 1 for param in loop_params]
+            loop_index = dict(zip(loop_params, stockham.delinearize("__u", extents)))
             for param in map_entry.map.params:
                 dim = param_dim[param]
-                index = symbolic.pystr_to_symbolic(batch_symbols.get(dim) or loop_index.get(dim, "0"))
+                if dim in batch_symbols:
+                    index = symbolic.pystr_to_symbolic(batch_symbols[dim])
+                else:
+                    index = original[param][0] + symbolic.pystr_to_symbolic(loop_index[param])
                 ranges.append((index, index, 1))
+            work = math.prod(extents)
         map_entry.map.range = subsets.Range(ranges)
         map_entry.map.schedule = dtypes.ScheduleType.Sequential
         map_entry.map.collapse = 1
@@ -341,14 +520,14 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         scopes, exits = [map_entry], []
         if threads is not None:
             tb_entry, tb_exit, seq_entry, seq_exit = stockham.block_local_loop(
-                comp_state, "fft_block_map", math.prod(block_shape), threads
+                comp_state, f"fft_block_map_{comp_state.label}", work, threads
             )
             scopes, exits = [tb_entry, seq_entry, map_entry], [seq_exit, tb_exit]
         reads = {}
         for edge in in_edges:
             if edge.data.is_empty():
                 continue
-            name = src if edge.data.data == spectrum else edge.data.data
+            name = buffer_names.get(edge.data.data, edge.data.data)
             if name not in reads:
                 reads[name] = comp_state.add_read(name)
             desc = comp_state.sdfg.arrays[name]
@@ -359,12 +538,13 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
                 memlet=Memlet.from_array(name, desc),
                 propagate=False,
             )
+        out_name = buffer_names.get(out_data, out_data)
         comp_state.add_memlet_path(
             map_exit,
             *exits,
-            comp_state.add_write(dst),
+            comp_state.add_write(out_name),
             src_conn=out_conn,
-            memlet=Memlet.from_array(dst, comp_state.sdfg.arrays[dst]),
+            memlet=Memlet.from_array(out_name, comp_state.sdfg.arrays[out_name]),
             propagate=False,
         )
 

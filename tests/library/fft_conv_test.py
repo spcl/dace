@@ -4,10 +4,12 @@ FFT-based 7x7 convolutions of CNNs (like cuDNN's FFT algorithms) with the native
 
 Both convolutions compute the cross-correlation of a CNN layer with "same" zero padding. The input is zero-padded to
 a ``P x Q`` grid, with ``P >= H + 3`` and ``Q >= W + 3``, and filter tap ``(u, v)`` is placed at ``(6 - u, 6 - v)``,
-so that the circular convolution of the padded input and filter is the CNN output shifted by 3 in both dimensions.
+so that the circular convolution of the padded input and filter is the CNN output shifted by 3 in both dimensions:
+the output is the window ``[3, H + 3) x [3, W + 3)`` of the inverse transform.
 
 The depthwise convolution (one filter per channel, e.g., in ConvNeXt blocks) multiplies each transform by the spectrum
-of its channel's filter, which ``BlockLocalFFTFusion`` fuses with the FFT and the inverse FFT. The full convolution
+of its channel's filter, which ``BlockLocalFFTFusion`` fuses with the zero-padded FFT (``fft2(x, s=...)``), the
+inverse FFT and the window. The full convolution
 sums the products of the spectra over the input channels for each output channel, which mixes transforms and is not
 fused.
 """
@@ -46,21 +48,18 @@ def _depthwise_program(storage: dace.StorageType):
     def depthwise_conv(
         x: dace.float32[N, C, H, W] @ storage, w: dace.float32[C, R, R] @ storage, y: dace.float32[N, C, H, W] @ storage
     ):
-        # Zero-padded input and filters
-        xp = np.zeros((N, C, P, Q), dtype=np.float32)
-        xp[:, :, :H, :W] = x
-        wp = np.zeros((C, P, Q), dtype=np.float32)
+        # Spectra of the flipped filters, zero-padded to the grid
+        wflip = np.ndarray((C, R, R), dtype=np.float32)
         for c, u, v in dace.map[0:C, 0:R, 0:R]:
-            wp[c, R - 1 - u, R - 1 - v] = w[c, u, v]
-        wf = np.fft.fft2(wp)
+            wflip[c, R - 1 - u, R - 1 - v] = w[c, u, v]
+        wf = np.fft.fft2(wflip, s=(P, Q))
 
-        # FFT -> multiplication by the spectrum of the channel's filter -> inverse FFT
-        X = np.fft.fft2(xp)
+        # Zero-padded FFT -> multiplication by the spectrum of the channel's filter -> inverse FFT -> window
+        X = np.fft.fft2(x, s=(P, Q))
         Y = np.empty_like(X)
         for n, c, i, j in dace.map[0:N, 0:C, 0:P, 0:Q]:
             Y[n, c, i, j] = X[n, c, i, j] * wf[c, i, j]
         yp = np.fft.ifft2(Y)
-
         for n, c, i, j in dace.map[0:N, 0:C, 0:H, 0:W]:
             y[n, c, i, j] = yp[n, c, i + 3, j + 3].real
 
@@ -120,14 +119,23 @@ def _run_full(sdfg: dace.SDFG, module=np) -> None:
     assert np.allclose(result, _reference(x, w, False), rtol=1e-4, atol=1e-3)
 
 
+def _fuse_depthwise(sdfg: dace.SDFG) -> None:
+    """
+    Fuses the zero-padded FFT, the multiplication, the inverse FFT and the window into one kernel, so that neither
+    the padded input, the spectra nor the whole result of the inverse FFT are arrays of the program.
+    """
+    sdfg.simplify()
+    assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 1
+    assert not {"X", "Y", "yp"} & set(sdfg.arrays)
+
+
 def test_depthwise_conv_fused():
     """
     The depthwise convolution with the FFT, the multiplication and the inverse FFT fused into one map, in which each
     iteration transforms one channel of one image in buffers on the stack.
     """
     sdfg = _depthwise_program(dace.StorageType.Default).to_sdfg()
-    sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 1
+    _fuse_depthwise(sdfg)
     _run_depthwise(sdfg)
 
 
@@ -145,8 +153,7 @@ def test_depthwise_conv_fused_gpu():
 
     sdfg = _depthwise_program(dace.StorageType.GPU_Global).to_sdfg()
     sdfg.apply_gpu_transformations()
-    sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 1
+    _fuse_depthwise(sdfg)
     _run_depthwise(sdfg, cp)
 
 
