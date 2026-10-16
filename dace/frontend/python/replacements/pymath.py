@@ -78,8 +78,10 @@ def _conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces("dace.real")
 @oprepo.replaces("numpy.real")
 def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
+    # The parts of complex numbers are attributes (member functions in C++); a real number is its own real part
     inptype = sdfg.arrays[input].dtype
-    return simple_call(pv, sdfg, state, input, "real", complex_to_scalar(inptype))
+    expr = "{}.real" if inptype.is_complex() else "{}"
+    return simple_call(pv, sdfg, state, input, "real", complex_to_scalar(inptype), expr)
 
 
 @oprepo.replaces("imag")
@@ -87,7 +89,8 @@ def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces("numpy.imag")
 def _imag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return simple_call(pv, sdfg, state, input, "imag", complex_to_scalar(inptype))
+    expr = "{}.imag" if inptype.is_complex() else f"dace.{inptype.to_string()}(0)"
+    return simple_call(pv, sdfg, state, input, "imag", complex_to_scalar(inptype), expr)
 
 
 @oprepo.replaces_attribute("Array", "real")

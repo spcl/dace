@@ -95,6 +95,30 @@ def test_attribute_function():
     assert np.allclose(a, np.arange(10).reshape(10, 1))
 
 
+def test_real_and_imaginary_parts():
+    """
+    The real and imaginary parts of complex arrays, and of real arrays (the array and zero), as attributes and
+    functions.
+    """
+
+    @dace.program
+    def tester(z: dace.complex64[10], x: dace.float64[10], out: dace.float64[4, 10], outz: dace.float32[2, 10]):
+        outz[0] = z.real
+        outz[1] = np.imag(z)
+        out[0] = np.real(x)
+        out[1] = x.imag
+        out[2] = np.real(z * z)
+        out[3] = (z * z).imag
+
+    z = (np.random.rand(10) + 1j * np.random.rand(10)).astype(np.complex64)
+    x = np.random.rand(10)
+    out = np.random.rand(4, 10)
+    outz = np.random.rand(2, 10).astype(np.float32)
+    tester(z=z, x=x, out=out, outz=outz)
+    assert np.allclose(outz, [z.real, z.imag])
+    assert np.allclose(out, [x, np.zeros(10), (z * z).real, (z * z).imag], rtol=1e-5, atol=1e-6)
+
+
 if __name__ == "__main__":
     test_attribute_in_ranged_loop()
     test_attribute_in_ranged_loop_symbolic()
@@ -102,3 +126,4 @@ if __name__ == "__main__":
     test_nested_attribute()
     test_attribute_of_expr()
     test_attribute_function()
+    test_real_and_imaginary_parts()

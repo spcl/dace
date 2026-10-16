@@ -34,9 +34,21 @@ UfuncOutput = str | None
 
 
 def simple_call(
-    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: dtypes.typeclass = None
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    inpname: str,
+    func: str,
+    restype: dtypes.typeclass = None,
+    expr: str | None = None,
 ):
-    """Implements a simple call of the form `out = func(inp)`."""
+    """
+    Implements a simple call of the form `out = func(inp)`.
+
+    :param expr: The Python expression of the result, with ``{}`` for the input, if not ``func({})``.
+    """
+    if expr is None:
+        expr = func + "({})"
     create_input = True
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
         inpname = inpname[0]
@@ -69,7 +81,7 @@ def simple_call(
 
         out = state.add_write(outname)
         tasklet = state.add_tasklet(
-            func, {"__inp"} if create_input else {}, {"__out"}, f"__out = {func}({inconn_name})"
+            func, {"__inp"} if create_input else {}, {"__out"}, "__out = " + expr.format(inconn_name)
         )
         if create_input:
             state.add_edge(inp, None, tasklet, "__inp", Memlet.from_array(inpname, inparr))
@@ -79,7 +91,7 @@ def simple_call(
             name=func,
             map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(inparr.shape)},
             inputs={"__inp": Memlet.simple(inpname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
-            code=f"__out = {func}(__inp)",
+            code="__out = " + expr.format("__inp"),
             outputs={"__out": Memlet.simple(outname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
             external_edges=True,
         )
