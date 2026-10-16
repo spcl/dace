@@ -70,38 +70,40 @@ def test_nested_sdfg_symbol_mapping():
 
 
 @dace.program
-def loop_var_used_after(A: dace.float64[10], B: dace.float64[10]):
+def loop_var_unread_after(A: dace.float64[10], B: dace.float64[10]):
     for i in range(10):
         A[i] = 2.0 * B[i]
 
 
+def loop_then_read(read_after: bool) -> dace.SDFG:
+    """``for i in range(10)``, then a state that writes ``i`` (or a constant) to ``out[0]``."""
+    sdfg = dace.SDFG(f"loop_then_read_{int(read_after)}")
+    sdfg.add_array("out", [1], dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    loop = LoopRegion("loop", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge())
+    t = after.add_tasklet("read", set(), {"_o"}, "_o = i" if read_after else "_o = 0")
+    after.add_edge(t, "_o", after.add_access("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+def post_value_states(sdfg: dace.SDFG) -> list:
+    return [s for s in sdfg.states() if "loop_iter_post_value" in s.label]
+
+
 def test_loop_var_reconstruction():
-    """
-    With ``assign_loop_iterator_post_value=True``, the pass must stage
-    a postfix-assignment state that sets the original loop variable to
-    its iterator-after-loop value (``init + diff - (diff mod step)``)
-    so downstream reads see the same value gfortran / ifort / flang
-    leave the iterator at after a counted DO exit.
-    """
-
-    sdfg = loop_var_used_after.to_sdfg(simplify=False)
-
-    pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
-    pass_.apply_pass(sdfg, None)
+    """A read of the iterator after the loop sees its exit value, one step past the last iteration (Fortran ``DO``)."""
+    sdfg = loop_then_read(read_after=True)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
+    assert len(post_value_states(sdfg)) == 1
 
-    # Check that a reconstruction state was added
-    reconstruction_states = [s for s in sdfg.states() if hasattr(s, "label") and "loop_iter_post_value" in s.label]
-    assert len(reconstruction_states) == 1, f"Expected 1 reconstruction state, found {len(reconstruction_states)}"
-
-    # Check that assignment is correct
-    loops = [cfg for cfg in sdfg.all_control_flow_regions() if isinstance(cfg, LoopRegion)]
-    assert len(loops) == 1
-    loop = loops[0]
-
+    loop = next(cfg for cfg in sdfg.all_control_flow_regions() if isinstance(cfg, LoopRegion))
     out_edges = loop.parent_graph.out_edges(loop)
     assert len(out_edges) == 1
-
     assignments = out_edges[0].data.assignments
     assert "i" in assignments, f"Expected assignment to 'i', got {assignments}"
 
@@ -113,11 +115,16 @@ def test_loop_var_reconstruction():
     expected_post = init + (loop_end - init + stride) - sp.Mod(loop_end - init + stride, stride)
     assert str(assignments["i"]) == f"({expected_post})", f"Expected post-value {expected_post}, got {assignments['i']}"
 
-    A = np.zeros(10)
-    B = np.random.rand(10)
-    csdfg = sdfg.compile()
-    csdfg(A=A, B=B)
-    assert np.allclose(A, 2.0 * B)
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(out=out)
+    assert out[0] == 10
+
+
+def test_no_post_value_without_a_read_after_the_loop():
+    for sdfg in (loop_then_read(read_after=False), loop_var_unread_after.to_sdfg(simplify=False)):
+        UniqueLoopIterators().apply_pass(sdfg, None)
+        sdfg.validate()
+        assert post_value_states(sdfg) == []
 
 
 @dace.program
@@ -152,6 +159,9 @@ def test_loop_bound_with_indirect_array():
     )
     outer.add_node(inner)
     outer.add_edge(body, inner, dace.InterstateEdge())
+    # Reads ``j`` after the inner loop, so the loop needs its exit value
+    sdfg.add_symbol("last_j", dace.int64)
+    outer.add_edge(inner, outer.add_state("after_inner"), dace.InterstateEdge(assignments={"last_j": "j"}))
 
     inner_body = inner.add_state("inner_body", is_start_block=True)
     rd = inner_body.add_access("values")
@@ -162,7 +172,7 @@ def test_loop_bound_with_indirect_array():
     wr2 = inner_body.add_access("acc")
     inner_body.add_edge(t, "_o", wr2, None, dace.Memlet("acc[i]"))
 
-    pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
+    pass_ = UniqueLoopIterators()
     pass_.apply_pass(sdfg, None)
     sdfg.validate()
 
@@ -181,8 +191,7 @@ def test_loop_bound_with_indirect_array():
 def test_while_loop_no_induction_var():
     """A LoopRegion that wasn't synthesised from a counted ``for`` (no
     ``loop_variable``) has nothing to rename.  The pass must skip it
-    cleanly even with the postfix-assignment option on (there's no
-    induction variable to leave a post-value for)."""
+    cleanly (there's no induction variable to leave a post-value for)."""
 
     sdfg = dace.SDFG("whileloop")
     sdfg.add_symbol("flag", dace.int64)
@@ -195,7 +204,7 @@ def test_while_loop_no_induction_var():
     a = inner.add_access("out")
     inner.add_edge(t, "_o", a, None, dace.Memlet("out[0]"))
 
-    pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
+    pass_ = UniqueLoopIterators()
     pass_.apply_pass(sdfg, None)
 
     recon = [s for s in sdfg.states() if hasattr(s, "label") and "loop_iter_post_value" in s.label]
@@ -203,7 +212,7 @@ def test_while_loop_no_induction_var():
 
 
 def test_no_postamble_drops_dead_symbol_declaration():
-    """With ``assign_loop_iterator_post_value=False`` the renamed iterator
+    """Nothing reads ``i`` after the loops, so the renamed iterator
     has no surviving reader, so the stale ``sdfg.symbols[old_name]``
     declaration left by the frontend must be removed -- otherwise it leaks
     as a phantom free symbol on the enclosing NestedSDFG boundary
@@ -223,7 +232,7 @@ def test_no_postamble_drops_dead_symbol_declaration():
     # renaming must not introduce one either.
     body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
 
-    p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    p = UniqueLoopIterators()
     p.apply_pass(sdfg, {})
 
     # Every LoopRegion now has a unique ``_loop_it_<N>`` variable.
@@ -321,11 +330,9 @@ def descending_loop(A: dace.float64[10], B: dace.float64[10]):
 
 
 def test_negative_step_loop_value_preserving():
-    """A counted DO with a negative step (``range(9, -1, -1)``) is renamed
-    like any other; the post-value epilogue uses the descending exit value and
-    the program stays value-preserving."""
+    """A loop with a negative step (``range(9, -1, -1)``) is renamed like any other and stays value-preserving."""
     sdfg = descending_loop.to_sdfg(simplify=False)
-    UniqueLoopIterators().apply_pass(sdfg, None)  # default: post-value ON
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
     loopvars = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
@@ -369,7 +376,7 @@ def test_seeds_counter_past_existing_map_params():
     fa = fs.add_access("out")
     fs.add_edge(ft, "_o", fa, None, dace.Memlet("out[i]"))
 
-    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
 
     loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
@@ -391,7 +398,7 @@ def test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator():
     loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert [loop.loop_variable for loop in loops] == ["i", "i"]
 
-    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
     assert len({loop.loop_variable for loop in loops}) == 2
 
@@ -403,6 +410,7 @@ def test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator():
 if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
+    test_no_post_value_without_a_read_after_the_loop()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
     test_no_postamble_drops_dead_symbol_declaration()
