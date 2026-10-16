@@ -3467,6 +3467,9 @@ def fftw3_link(code: str) -> tuple[str, ...]:
     )
 
 
+#: The FFT expansions' plan cache (``dace::fft::Plans``); a C unit plans per call instead (``fftw3_call``).
+FFT_PLANS_WRAPPER = "libraries/fft/include/dace_fft.h"
+
 #: DaCe environment name -> how a standalone unit calls that library. One family per architecture: OpenBLAS (CBLAS
 #: and LAPACKE) and FFTW3 on the host, the toolkit's own libraries on CUDA and ROCm.
 VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
@@ -3474,12 +3477,19 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
         ("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION, families=("blas", "lapack")
     ),
     # The expansion refuses an unplannable layout by throwing.
-    "FFTW3": VendorLibrary(("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",), families=("fftw",)),
+    "FFTW3": VendorLibrary(
+        ("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",), wrapper=FFT_PLANS_WRAPPER, families=("fftw",)
+    ),
     "cuBLAS": VendorLibrary((), ("-lcublas",), wrapper="libraries/blas/include/dace_cublas.h", families=("cublas",)),
     "cuSolverDn": VendorLibrary(
         (), ("-lcusolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h", families=("cusolver",)
     ),
-    "cuFFT": VendorLibrary(("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"), ("-lcufft",), families=("cufft",)),
+    "cuFFT": VendorLibrary(
+        ("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"),
+        ("-lcufft",),
+        wrapper=FFT_PLANS_WRAPPER,
+        families=("cufft",),
+    ),
     "rocBLAS": VendorLibrary(
         (), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h", families=("rocblas",)
     ),
@@ -3490,7 +3500,10 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
         families=("rocsolver",),
     ),
     "hipFFT": VendorLibrary(
-        ("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"), ("-lhipfft",), families=("hipfft",)
+        ("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"),
+        ("-lhipfft",),
+        wrapper=FFT_PLANS_WRAPPER,
+        families=("hipfft",),
     ),
 }
 
@@ -3498,11 +3511,11 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
 VENDOR_NAMESPACE = "cpf_vendor"
 
 #: A qualified name into one of the wrappers' namespaces, as an expansion or a state field spells it.
-VENDOR_QUALIFIED: "re.Pattern" = re.compile(r"(?<![\w:])(?:::)?dace::(blas|lapack)::")
+VENDOR_QUALIFIED: "re.Pattern" = re.compile(r"(?<![\w:])(?:::)?dace::(blas|lapack|fft)::")
 
 
 def respell_vendor_namespaces(code: str) -> str:
-    """``dace::blas::`` / ``dace::lapack::`` as the inlined wrappers spell them (:data:`VENDOR_NAMESPACE`)."""
+    """``dace::blas::`` / ``dace::lapack::`` / ``dace::fft::`` as the inlined wrappers spell them (:data:`VENDOR_NAMESPACE`)."""
     return VENDOR_QUALIFIED.sub(lambda match: f"{VENDOR_NAMESPACE}::{match.group(1)}::", code)
 
 

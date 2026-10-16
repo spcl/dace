@@ -10,7 +10,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes, library, nodes, properties, symbolic
+from dace import SDFG, Memlet, SDFGState, cpf_lowering, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries.blas.environments.intel_mkl import IntelMKL
@@ -342,6 +342,28 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
         f"{['dft', 'dft_r2c', 'dft_c2r'].index(kind)}, {int(transform.inverse)}, {int(bool(looped))}, {len(dims)}"
     )
     key = ", ".join([kind_key] + [value for entry in dims + howmany for value in entry])
+    plan = (
+        f"{prefix}_plan_guru64_{kind}({len(dims)}, __dims, {len(howmany)}, {'__howmany' if howmany else 'NULL'}, "
+        f"({in_t} *)__in, ({out_t} *)__out, {sign}{flags})"
+    )
+    execute = f"{loop_open}{prefix}_execute_{kind}(__plan, ({in_t} *)__in{in_offset}, ({out_t} *)__out{out_offset});"
+    if cpf_lowering.standalone_c():
+        # C has no templated plan cache: plan, run and destroy per call, the planner serialized.
+        code = f"""
+    {iodims("__dims", dims)}
+    {iodims("__howmany", howmany)}
+    {prefix}_plan __plan;
+    #pragma omp critical(dace_fftw_planner)
+    __plan = {plan};
+    if (!__plan)
+        throw std::runtime_error("FFTW returned no plan for this transform layout");
+    {execute}
+    #pragma omp critical(dace_fftw_planner)
+    {prefix}_destroy_plan(__plan);
+    """
+        return nodes.Tasklet(
+            f"fftw3_{'i' if transform.inverse else ''}fft", {"__in"}, {"__out"}, code, language=dtypes.Language.CPP
+        )
     code = f"""
     {iodims("__dims", dims)}
     {iodims("__howmany", howmany)}
@@ -349,13 +371,12 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
     {prefix}_plan __plan = dace::fft::Plans<{prefix}_plan>({prefix}_destroy_plan).Get(
         {{{key}, (long long)((const void *)__in == (const void *)__out), (long long)__threads, {alignment}}}, [&] {{
             {team}
-            {prefix}_plan __made = {prefix}_plan_guru64_{kind}({len(dims)}, __dims, {len(howmany)},
-                {"__howmany" if howmany else "NULL"}, ({in_t} *)__in, ({out_t} *)__out, {sign}{flags});
+            {prefix}_plan __made = {plan};
             if (!__made)
                 throw std::runtime_error("FFTW returned no plan for this transform layout");
             return __made;
         }});
-    {loop_open}{prefix}_execute_{kind}(__plan, ({in_t} *)__in{in_offset}, ({out_t} *)__out{out_offset});
+    {execute}
     """
     return nodes.Tasklet(
         f"fftw3_{'i' if transform.inverse else ''}fft", {"__in"}, {"__out"}, code, language=dtypes.Language.CPP
@@ -463,7 +484,7 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
         # The cache is shared by every transform, so the key ends with the transform type.
         key += [str(int(transform.real_input) + 2 * int(transform.real_output)), str(int(transform.double))]
         check = (
-            f"auto __check = [](const char *what, {dialect.api}Result result) {{ "
+            f"void (*__check)(const char *, {dialect.api}Result) = [](const char *what, {dialect.api}Result result) {{ "
             f'if (result != {dialect.enum}SUCCESS) throw std::runtime_error(std::string("{dialect.name} ") + '
             f'what + " failed with status " + std::to_string((int)result)); }};'
         )
