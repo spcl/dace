@@ -309,6 +309,34 @@ def test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementat
         assert cpf.renderable_implementations(node, state)[0] != "CUDA"
 
 
+def test_a_scan_inside_a_kernel_renders_as_device_code():
+    """Inside a kernel the host lowerings :data:`~dace.codegen.cpf.RENDERABLE_BY_NODE` prefers are not
+    available: ``Scan``'s ``CPU`` lowering calls ``scan_incl_product``, an OpenMP host helper, and the
+    device unit failed to compile ("call to __host__ function from __global__ function",
+    cp2k_grid_integrate's per-thread ``cumprod``). A loop expansion is device code."""
+    sdfg = dace.SDFG("cpf_hip_scan_in_kernel")
+    sdfg.add_array("a", [N, 16], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("b", [N, 16], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Scan("scan", op=ScanOp.PRODUCT)
+    entry, exit_node = state.add_map("rows", {"i": "0:N"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
+    state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="_scan_in", memlet=dace.Memlet("a[i, 0:16]"))
+    state.add_memlet_path(node, exit_node, state.add_write("b"), src_conn="_scan_out", memlet=dace.Memlet("b[i, 0:16]"))
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
+        assert "CPU" not in cpf.renderable_implementations(node, state)
+    rendering = cpf.render(sdfg, language="hip")
+    assert "scan_incl_" not in rendering.device_code, "no host scan helper may reach the device unit"
+    # The loops' accumulator is one thread's register, not host memory allocated outside the kernel.
+    node.schedule = dace.dtypes.ScheduleType.Sequential
+    with (
+        cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP),
+        cpf.device_backend(cpf_lowering.Dialect.STANDALONE_HIP),
+    ):
+        cpf.force_renderable_expansions(sdfg, {})
+    accumulators = [desc for sd in sdfg.all_sdfgs_recursive() for name, desc in sd.arrays.items() if name == "acc_0"]
+    assert accumulators and all(desc.storage == dace.dtypes.StorageType.Register for desc in accumulators)
+
+
 def test_a_device_scan_renders_the_device_scan_and_its_scratch():
     """The scan's device expansion issues ``gpucub::DeviceScan`` over a workspace it takes from the
     CUB scratch pool -- and the pool is normally an ENVIRONMENT, allocated by the init entry point
@@ -589,6 +617,7 @@ if __name__ == "__main__":
     test_a_host_level_reduce_over_device_memory_expands_into_a_kernel()
     test_the_schedule_correction_is_confined_to_host_level_device_memory()
     test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementation()
+    test_a_scan_inside_a_kernel_renders_as_device_code()
     test_a_device_scan_renders_the_device_scan_and_its_scratch()
     test_a_device_resident_scan_seed_is_read_where_it_lives()
     test_a_device_scan_seed_is_read_at_its_type_inside_the_kernel()

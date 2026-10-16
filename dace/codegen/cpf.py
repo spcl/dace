@@ -437,6 +437,12 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
     if isinstance(node, TileOp) and node.implementation in tile_functions.ISAS:
         # Its tile functions are inline definitions of the unit, as :func:`target_tile_functions` chose them.
         return (node.implementation,)
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        # Inside a kernel: the tabled lowerings are host runtime (OpenMP reductions and scans, the
+        # cancelling search, ``std::sort``) and a vendor call is host code, so a ``__global__`` function
+        # cannot call any of them (cp2k_grid_integrate's per-thread ``Scan`` reached ``scan_incl_product``).
+        # Every tabled node has a loop expansion among the global ones, and loops are device code.
+        return RENDERABLE_IMPLEMENTATIONS
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
     vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES
     if cpf_lowering.device() and on_device_at_host_level(node, state):
