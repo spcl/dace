@@ -129,7 +129,7 @@ def test_node_response_replaces_the_node(prompt_dir):
 def test_invalid_response_is_reported(prompt_dir):
     sdfg, state, double, _, _ = _two_node_sdfg()
 
-    with pytest.raises(AIExpansionError, match="not valid JSON"):
+    with pytest.raises(AIExpansionError, match="does not match the response schema"):
         double.read_prompt_response(state, "Sure! ```json {} ```")
     assert double in state.nodes()
 

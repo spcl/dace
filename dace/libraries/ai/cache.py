@@ -17,7 +17,6 @@ SDFG reproducible, while this is what keeps a *re-expansion* from paying twice.
 Controlled by ``ai.cache`` and located by ``ai.cache_dir``.
 """
 
-import dataclasses
 import datetime
 import hashlib
 import json
@@ -69,14 +68,7 @@ def key(system: str, messages: list[dict[str, str]], salt: str = "") -> str:
     :return: A hexadecimal key.
     """
     material = json.dumps(
-        {
-            "provider": Config.get("ai", "provider"),
-            "model": Config.get("ai", "model"),
-            "effort": Config.get("ai", "effort"),
-            "system": system,
-            "messages": messages,
-            "salt": salt,
-        },
+        {**backend.request_settings(), "system": system, "messages": messages, "salt": salt},
         sort_keys=True,
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
@@ -104,7 +96,7 @@ def lookup(cache_key: str) -> backend.TaskletSpec | None:
     try:
         with open(_path(cache_key), encoding="utf-8") as fp:
             entry = json.load(fp)
-        return backend.spec_from_dict(entry["answer"], raw=entry.get("raw", ""))
+        return backend.parse_response(entry["raw"], "a cached answer")
     except FileNotFoundError:
         return None
     except Exception as e:
@@ -127,14 +119,11 @@ def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: list
     if not enabled():
         return
     entry = {
-        "provider": Config.get("ai", "provider"),
-        "model": Config.get("ai", "model"),
-        "effort": Config.get("ai", "effort"),
+        **backend.request_settings(),
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "system": system,
         "messages": messages,
-        "raw": spec.raw_response,
-        "answer": dataclasses.asdict(spec),
+        "raw": spec.raw_response or spec.model_dump_json(indent=1),
     }
     try:
         cache_dir(create=True)

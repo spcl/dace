@@ -59,7 +59,7 @@ def _sdfg_and_node(name: str = "double"):
 
 
 def test_an_identical_prompt_is_not_asked_twice(tmp_path):
-    spec = TaskletSpec(code=CODE, notes="why", raw_response='{"code": "as it arrived"}')
+    spec = TaskletSpec(code=CODE, notes="why")
 
     with caching(tmp_path):
         _, first_state, first_node = _sdfg_and_node()
@@ -88,7 +88,6 @@ def test_a_cached_answer_round_trips_every_field(tmp_path):
         use_environments=["dace.libraries.blas.environments.openblas.OpenBLAS"],
         environments=[EnvironmentSpec(name="FFTW", headers=["fftw3.h"])],
         notes="why",
-        raw_response='{"code": "as it arrived"}',
     )
 
     with caching(tmp_path):
@@ -96,7 +95,7 @@ def test_a_cached_answer_round_trips_every_field(tmp_path):
         ai_cache.store(key, spec, "system", [{"role": "user", "content": "prompt"}])
         restored = ai_cache.lookup(key)
 
-    assert restored == spec
+    assert restored.model_dump() == spec.model_dump()
 
 
 def test_the_key_covers_the_model_and_the_prompt(tmp_path):

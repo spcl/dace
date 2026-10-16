@@ -650,6 +650,15 @@ required:
                     OPENAI_API_KEY). If the variable is unset, the provider's own credential chain
                     is used instead.
 
+            base_url:
+                type: str
+                default: ''
+                title: API base URL
+                description: >
+                    Endpoint of the provider's API, e.g. a proxy, gateway, or self-hosted server
+                    with a compatible API. When empty, the SDK default (or its environment
+                    variable, such as ANTHROPIC_BASE_URL or OPENAI_BASE_URL) is used.
+
             model:
                 type: str
                 default: 'claude-opus-5'

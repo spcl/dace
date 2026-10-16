@@ -1,180 +1,177 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Provider-independent interface between the AI library node expansion and a language model.
+"""Provider-independent interface to the language model: the response model, its parser, and provider selection."""
 
-The expansion never imports a vendor SDK directly. It asks :func:`get_provider` for an
-:class:`LLMProvider`, hands it a system prompt and a conversation, and receives a
-:class:`TaskletSpec` back. Each provider imports its own SDK lazily, so ``dace`` remains importable
--- and every other library node keeps working -- on a machine where no provider SDK is installed.
-"""
-
+import hashlib
+import json
 import os
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+import pydantic
 
 from dace.config import Config
 from dace.libraries.ai.exceptions import AIExpansionError
 
-#: Environment variable names used when ``ai.api_key_envvar`` is left at its schema default.
+#: Environment variable names used when ``ai.api_key_envvar`` is empty.
 DEFAULT_KEY_ENVVARS = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 
-#: Providers accepted by ``ai.provider``. ``manual`` needs neither a key nor an SDK.
+#: Providers accepted by ``ai.provider``.
 SUPPORTED_PROVIDERS = ("anthropic", "openai", "manual")
 
 
-@dataclass
-class EnvironmentSpec:
-    """
-    A DaCe library environment requested by the model.
+class CMakeVariable(pydantic.BaseModel):
+    """A CMake variable set by an environment."""
 
-    The fields mirror those required by :func:`dace.library.environment`; see
-    :mod:`dace.libraries.ai.environments` for how one is turned into a real environment class.
-    """
+    model_config = pydantic.ConfigDict(extra="forbid")
 
     name: str
-    headers: list[str] = field(default_factory=list)
-    cmake_packages: list[str] = field(default_factory=list)
-    cmake_libraries: list[str] = field(default_factory=list)
-    cmake_includes: list[str] = field(default_factory=list)
-    cmake_compile_flags: list[str] = field(default_factory=list)
-    cmake_link_flags: list[str] = field(default_factory=list)
-    cmake_variables: dict[str, str] = field(default_factory=dict)
+    value: str
+
+
+class EnvironmentSpec(pydantic.BaseModel):
+    """A DaCe library environment requested by the model (see ``dace.library.environment``)."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    name: str = pydantic.Field(description='A short identifier for the environment, e.g. "FFTW".')
+    headers: list[str] = []
+    cmake_packages: list[str] = []
+    cmake_libraries: list[str] = []
+    cmake_includes: list[str] = []
+    cmake_compile_flags: list[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_variables: list[CMakeVariable] = []
     cmake_minimum_version: str | None = None
-    state_fields: list[str] = field(default_factory=list)
+    state_fields: list[str] = []
     init_code: str = ""
     finalize_code: str = ""
 
 
-@dataclass
-class TaskletSpec:
-    """A tasklet as described by the model, before it is turned into a :class:`~dace.sdfg.nodes.Tasklet`."""
+class TaskletSpec(pydantic.BaseModel):
+    """A tasklet as described by the model."""
 
-    code: str
-    language: str = "CPP"
-    code_global: str = ""
-    code_init: str = ""
-    code_exit: str = ""
-    state_fields: list[str] = field(default_factory=list)
-    side_effects: bool = False
-    ignored_symbols: list[str] = field(default_factory=list)
-    use_environments: list[str] = field(default_factory=list)
-    environments: list[EnvironmentSpec] = field(default_factory=list)
-    notes: str = ""
+    model_config = pydantic.ConfigDict(extra="forbid")
 
-    #: The provider's answer exactly as it arrived, kept for the transcript. A response that parses
-    #: into something unexpected can only be explained from the text that produced it.
-    raw_response: str = ""
+    notes: str = pydantic.Field("", description="Why the code is written this way, and any assumption it relies on.")
+    language: Literal["CPP", "Python"] = pydantic.Field(
+        "CPP",
+        description=(
+            "Language of the tasklet body. Use CPP: the whole contract above -- code_global, "
+            'include placement, state_fields, the ban on "return" -- describes a C++ tasklet, and '
+            "anything but a bare Python assignment expression needs it. Choose Python only for a "
+            "body that is a single assignment of a Python expression and needs none of those."
+        ),
+    )
+    code: str = pydantic.Field(description="The tasklet body. Never empty.")
+    code_global: str = pydantic.Field(
+        "", description="File-scope code: includes, helper functions, type definitions. May be empty."
+    )
+    code_init: str = pydantic.Field(
+        "", description="Host code run once at program initialization. __state is in scope. May be empty."
+    )
+    code_exit: str = pydantic.Field(
+        "", description="Host code run once at program finalization. __state is in scope. May be empty."
+    )
+    state_fields: list[str] = pydantic.Field(
+        [], description='Raw C++ member declarations added to the program state struct, e.g. "fftw_plan p0;".'
+    )
+    side_effects: bool = pydantic.Field(
+        False, description="True if the code performs I/O or mutates global state and must not be eliminated."
+    )
+    ignored_symbols: list[str] = pydantic.Field(
+        [], description="Identifiers in the code that coincide with SDFG symbol names but are local to the code."
+    )
+    use_environments: list[str] = pydantic.Field(
+        [],
+        description=(
+            "Environments that already exist on this machine, by the exact class path listed in the "
+            'context, e.g. "dace.libraries.blas.environments.openblas.OpenBLAS". Prefer this over '
+            'describing the same library again in "environments".'
+        ),
+    )
+    environments: list[EnvironmentSpec] = pydantic.Field(
+        [],
+        description=(
+            "External libraries the code needs and that are NOT already listed in the context. Empty "
+            "unless a new dependency is truly required."
+        ),
+    )
+
+    #: The provider's answer as it arrived, for the session record.
+    _raw: str = pydantic.PrivateAttr("")
+
+    @pydantic.field_validator("code")
+    @classmethod
+    def _code_not_empty(cls, code: str) -> str:
+        # An empty body would also drop the global code and state fields from the generated program
+        if not code.strip():
+            raise ValueError("the tasklet body is empty")
+        return code
+
+    @property
+    def raw_response(self) -> str:
+        """The text this specification was parsed from, or an empty string if it was built directly."""
+        return self._raw
 
 
-#: JSON schema describing :class:`TaskletSpec`, used for structured model output.
-RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "notes",
-        "language",
-        "code",
-        "code_global",
-        "code_init",
-        "code_exit",
-        "state_fields",
-        "side_effects",
-        "ignored_symbols",
-        "use_environments",
-        "environments",
-    ],
-    "properties": {
-        "notes": {
-            "type": "string",
-            "description": "Why the code is written this way, and any assumption it relies on.",
-        },
-        "language": {
-            "type": "string",
-            "enum": ["CPP", "Python"],
-            "description": (
-                "Language of the tasklet body. Use CPP: the whole contract above -- code_global, "
-                'include placement, state_fields, the ban on "return" -- describes a C++ tasklet, and '
-                "anything but a bare Python assignment expression needs it. Choose Python only for a "
-                "body that is a single assignment of a Python expression and needs none of those."
-            ),
-        },
-        "code": {"type": "string", "description": "The tasklet body. Never empty."},
-        "code_global": {
-            "type": "string",
-            "description": "File-scope code: includes, helper functions, type definitions. May be empty.",
-        },
-        "code_init": {
-            "type": "string",
-            "description": "Host code run once at program initialization. __state is in scope. May be empty.",
-        },
-        "code_exit": {
-            "type": "string",
-            "description": "Host code run once at program finalization. __state is in scope. May be empty.",
-        },
-        "state_fields": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": 'Raw C++ member declarations added to the program state struct, e.g. "fftw_plan p0;".',
-        },
-        "side_effects": {
-            "type": "boolean",
-            "description": "True if the code performs I/O or mutates global state and must not be eliminated.",
-        },
-        "ignored_symbols": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Identifiers in the code that coincide with SDFG symbol names but are local to the code.",
-        },
-        "use_environments": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                "Environments that already exist on this machine, by the exact class path listed in the "
-                'context, e.g. "dace.libraries.blas.environments.openblas.OpenBLAS". Prefer this over '
-                'describing the same library again in "environments".'
-            ),
-        },
-        "environments": {
-            "type": "array",
-            "description": (
-                "External libraries the code needs and that are NOT already listed in the context. Empty "
-                "unless a new dependency is truly required."
-            ),
-            # Every property is listed in "required": structured output requires an exhaustive
-            # list, and a field that is not needed is returned empty rather than omitted.
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "name",
-                    "headers",
-                    "cmake_packages",
-                    "cmake_libraries",
-                    "cmake_includes",
-                    "cmake_compile_flags",
-                    "cmake_link_flags",
-                    "cmake_minimum_version",
-                    "state_fields",
-                    "init_code",
-                    "finalize_code",
-                ],
-                "properties": {
-                    "name": {"type": "string", "description": 'A short identifier for the environment, e.g. "FFTW".'},
-                    "headers": {"type": "array", "items": {"type": "string"}},
-                    "cmake_packages": {"type": "array", "items": {"type": "string"}},
-                    "cmake_libraries": {"type": "array", "items": {"type": "string"}},
-                    "cmake_includes": {"type": "array", "items": {"type": "string"}},
-                    "cmake_compile_flags": {"type": "array", "items": {"type": "string"}},
-                    "cmake_link_flags": {"type": "array", "items": {"type": "string"}},
-                    "cmake_minimum_version": {"type": ["string", "null"]},
-                    "state_fields": {"type": "array", "items": {"type": "string"}},
-                    "init_code": {"type": "string"},
-                    "finalize_code": {"type": "string"},
-                },
-            },
-        },
-    },
-}
+def _strict(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Rewrites a pydantic JSON schema into the form structured output accepts.
+
+    :param schema: A (sub)schema.
+    :param defs: The ``$defs`` of the root schema, inlined in place of references.
+    :return: The schema with references inlined, every property required, and no defaults or titles.
+    """
+    if "$ref" in schema:
+        return _strict(defs[schema["$ref"].rsplit("/", 1)[-1]], defs)
+    result = {key: value for key, value in schema.items() if key not in ("default", "title", "$defs")}
+    if "properties" in result:
+        result["properties"] = {name: _strict(sub, defs) for name, sub in result["properties"].items()}
+        result["required"] = list(result["properties"])
+        result["additionalProperties"] = False
+    for key in ("items", "anyOf"):
+        if isinstance(result.get(key), dict):
+            result[key] = _strict(result[key], defs)
+        elif isinstance(result.get(key), list):
+            result[key] = [_strict(sub, defs) for sub in result[key]]
+    return result
+
+
+def response_schema() -> dict[str, Any]:
+    """
+    :return: The JSON schema of :class:`TaskletSpec` in strict structured-output form.
+    """
+    schema = TaskletSpec.model_json_schema()
+    return _strict(schema, schema.get("$defs", {}))
+
+
+#: The schema sent to providers and shown to the user by the manual provider.
+RESPONSE_SCHEMA: dict[str, Any] = response_schema()
+
+#: Identifies the schema in cache keys, so that changing the model invalidates cached answers.
+SCHEMA_HASH = hashlib.sha256(json.dumps(RESPONSE_SCHEMA, sort_keys=True).encode()).hexdigest()
+
+
+def parse_response(text: str, described: str = "the node") -> TaskletSpec:
+    """
+    Parses and validates a model answer.
+
+    :param text: The answer, a single JSON object matching :data:`RESPONSE_SCHEMA`.
+    :param described: What the answer is for, used in error messages.
+    :return: The tasklet specification, with ``raw_response`` set to ``text``.
+    :raises AIExpansionError: If the answer is not valid JSON or does not match the schema.
+    """
+    text = text.strip()
+    if not text:
+        raise AIExpansionError(f"The answer for {described} is empty.")
+    try:
+        spec = TaskletSpec.model_validate_json(text)
+    except pydantic.ValidationError as e:
+        raise AIExpansionError(
+            f"The answer for {described} does not match the response schema:\n{e}\n"
+            "It must be a single JSON object matching the schema at the end of the prompt."
+        ) from e
+    spec._raw = text
+    return spec
 
 
 class LLMProvider(Protocol):
@@ -191,71 +188,37 @@ class LLMProvider(Protocol):
         ...
 
 
-def spec_from_dict(payload: dict[str, Any], raw: str = "") -> TaskletSpec:
-    """
-    Converts a decoded JSON response into a :class:`TaskletSpec`.
-
-    :param payload: The decoded response object.
-    :param raw: The provider's answer as text, kept verbatim for the transcript.
-    :return: The corresponding tasklet specification.
-    :raises AIExpansionError: If the response does not contain a tasklet body.
-    """
-    code = (payload.get("code") or "").strip()
-    if not code:
-        raise AIExpansionError(
-            "The model returned an empty tasklet body. An empty body would also "
-            "suppress the generated global code and state fields."
-        )
-
-    environments = [
-        EnvironmentSpec(
-            name=env["name"],
-            headers=list(env.get("headers") or []),
-            cmake_packages=list(env.get("cmake_packages") or []),
-            cmake_libraries=list(env.get("cmake_libraries") or []),
-            cmake_includes=list(env.get("cmake_includes") or []),
-            cmake_compile_flags=list(env.get("cmake_compile_flags") or []),
-            cmake_link_flags=list(env.get("cmake_link_flags") or []),
-            cmake_variables=dict(env.get("cmake_variables") or {}),
-            cmake_minimum_version=env.get("cmake_minimum_version") or None,
-            state_fields=list(env.get("state_fields") or []),
-            init_code=env.get("init_code") or "",
-            finalize_code=env.get("finalize_code") or "",
-        )
-        for env in payload.get("environments") or []
-    ]
-
-    return TaskletSpec(
-        code=code,
-        language=payload.get("language") or "CPP",
-        code_global=payload.get("code_global") or "",
-        code_init=payload.get("code_init") or "",
-        code_exit=payload.get("code_exit") or "",
-        state_fields=list(payload.get("state_fields") or []),
-        side_effects=bool(payload.get("side_effects")),
-        ignored_symbols=list(payload.get("ignored_symbols") or []),
-        use_environments=list(payload.get("use_environments") or []),
-        environments=environments,
-        notes=payload.get("notes") or "",
-        raw_response=raw,
-    )
-
-
 def api_key(provider: str) -> str | None:
     """
     Reads the API key for a provider from the configured environment variable.
 
-    Only the *name* of the variable is configurable -- a key is never stored in the DaCe
-    configuration file.
-
     :param provider: The configured provider name.
-    :return: The key, or ``None`` if the variable is unset or empty (in which case the provider may
-             still authenticate through its own credential chain).
+    :return: The key, or ``None`` if the variable is unset or empty.
     """
     envvar = Config.get("ai", "api_key_envvar") or DEFAULT_KEY_ENVVARS.get(provider, "")
     if not envvar:
         return None
     return os.environ.get(envvar) or None
+
+
+def client_options(provider: str) -> dict[str, Any]:
+    """
+    Returns the constructor arguments shared by the SDK clients.
+
+    Options that are not configured are left out, so that the SDK applies its own defaults and
+    environment variables (e.g. ``ANTHROPIC_BASE_URL``).
+
+    :param provider: The configured provider name.
+    :return: Keyword arguments for the client constructor.
+    """
+    options: dict[str, Any] = {"timeout": float(Config.get("ai", "timeout"))}
+    key = api_key(provider)
+    if key:
+        options["api_key"] = key
+    base_url = Config.get("ai", "base_url")
+    if base_url:
+        options["base_url"] = base_url
+    return options
 
 
 def missing_sdk_error(provider: str, package: str, extra: str, exc: BaseException) -> AIExpansionError:
@@ -266,11 +229,10 @@ def missing_sdk_error(provider: str, package: str, extra: str, exc: BaseExceptio
     :param package: The name of the missing Python package.
     :param extra: The DaCe optional-dependency extra that installs it.
     :param exc: The original :class:`ImportError`.
-    :return: An error with actionable installation instructions.
+    :return: An error with installation instructions.
     """
     error = AIExpansionError(
-        f"The 'ai' library node expansion needs the {package} Python package, which is not "
-        f"installed.\n"
+        f"The '{provider}' provider needs the {package} Python package, which is not installed.\n"
         f"    pip install 'dace[{extra}]'   (in a DaCe checkout: uv sync --extra {extra})\n"
         f"Configured provider: {provider} (change it with DACE_ai_provider)."
     )
@@ -283,13 +245,12 @@ def missing_credentials_error(provider: str, detail: str | None = None) -> AIExp
     Builds the error raised when a provider has no usable credentials.
 
     :param provider: The configured provider name.
-    :param detail: What went wrong, if the provider's SDK reported something specific.
-    :return: An error naming the environment variable that is actually consulted.
+    :param detail: What the provider's SDK reported, if anything.
+    :return: An error naming the environment variable that is consulted.
     """
     envvar = Config.get("ai", "api_key_envvar") or DEFAULT_KEY_ENVVARS.get(provider, "(unset)")
     message = (
-        f"The '{provider}' provider has no usable credentials, so the 'ai' library node implementation "
-        f"cannot generate code.\n"
+        f"The '{provider}' provider has no usable credentials.\n"
         f"    export {envvar}=...   (the variable name comes from DACE_ai_api_key_envvar)"
     )
     if detail:
@@ -297,13 +258,28 @@ def missing_credentials_error(provider: str, detail: str | None = None) -> AIExp
     return AIExpansionError(message)
 
 
+def request_settings() -> dict[str, Any]:
+    """
+    :return: Every setting that changes a provider's answer besides the conversation itself, for cache keys.
+    """
+    return {
+        "provider": Config.get("ai", "provider"),
+        "base_url": Config.get("ai", "base_url"),
+        "model": Config.get("ai", "model"),
+        "effort": Config.get("ai", "effort"),
+        "max_tokens": int(Config.get("ai", "max_tokens")),
+        "schema": SCHEMA_HASH,
+    }
+
+
 def get_provider() -> LLMProvider:
     """
     Instantiates the provider selected by the ``ai.provider`` configuration entry.
 
     :return: A ready-to-use provider.
-    :raises AIExpansionError: If the provider is unknown or its SDK is unavailable.
+    :raises AIExpansionError: If the provider is unknown or cannot be set up.
     """
+    # Providers import their SDKs, which are optional dependencies
     provider = (Config.get("ai", "provider") or "anthropic").strip().lower()
     if provider == "anthropic":
         from dace.libraries.ai.providers.anthropic_provider import AnthropicProvider

@@ -23,7 +23,6 @@ so a guid-keyed session would start empty on every invocation of the user's scri
 Writing is controlled by ``ai.sessions`` and located by ``ai.session_dir``.
 """
 
-import dataclasses
 import datetime
 import json
 import os
@@ -32,6 +31,8 @@ import warnings
 from typing import Any
 
 from dace.config import Config
+from dace.libraries.ai import backend
+from dace.libraries.ai.exceptions import AIExpansionError
 
 #: Name of the machine-readable index in every session directory.
 INDEX_NAME = "session.json"
@@ -232,10 +233,9 @@ class Session:
         :param cached: Whether the answer was reused rather than requested.
         """
         attempt["cached"] = cached
-        attempt["answer"] = dataclasses.asdict(spec)
+        attempt["answer"] = spec.model_dump()
         suffix = f"_{attempt['attempt']}" if attempt["attempt"] > 1 else ""
-        raw = getattr(spec, "raw_response", "")
-        self._write(f"answer{suffix}.json", raw or json.dumps(attempt["answer"], indent=1))
+        self._write(f"answer{suffix}.json", spec.raw_response or spec.model_dump_json(indent=1))
         self.flush()
 
     def record_verification(self, attempt: dict[str, Any], result: Any, source: str, device: bool) -> None:
@@ -287,7 +287,7 @@ class Session:
             self._round["environments"] = list(environments)
         self._round["finished"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
         if spec is not None:
-            self._write("tasklet.json", json.dumps(dataclasses.asdict(spec), indent=1))
+            self._write("tasklet.json", spec.model_dump_json(indent=1))
         self.flush()
 
     def record_node(self, node_json: dict[str, Any]) -> None:
@@ -308,15 +308,13 @@ class Session:
         :param round_number: One-based round number.
         :return: The specification, or ``None`` if that round has none on record.
         """
-        from dace.libraries.ai import backend
-
         if self.directory is None:
             return None
         path = os.path.join(self.directory, f"round_{round_number}", "tasklet.json")
         try:
             with open(path, encoding="utf-8") as fp:
-                return backend.spec_from_dict(json.load(fp))
-        except (OSError, ValueError, KeyError):
+                return backend.parse_response(fp.read(), f"round {round_number}")
+        except (OSError, AIExpansionError):
             return None
 
 

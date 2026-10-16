@@ -173,7 +173,7 @@ def test_refusal_is_reported_clearly(local_api):
 
 def test_non_json_response_is_reported_clearly(local_api):
     with local_api(_message_stream("here is your tasklet, boss")):
-        with pytest.raises(AIExpansionError, match="not valid JSON"):
+        with pytest.raises(AIExpansionError, match="does not match the response schema"):
             AnthropicProvider().generate("SYSTEM", [{"role": "user", "content": "USER"}])
 
 
@@ -187,7 +187,7 @@ def test_missing_credentials_are_detected_before_any_request(monkeypatch):
     message = str(info.value)
     assert "DACE_NO_SUCH_AI_KEY" in message
     # The distinction that actually trips people up
-    assert "Pro" in message and "console.anthropic.com" in message
+    assert "subscription" in message and "console.anthropic.com" in message
 
 
 if __name__ == "__main__":

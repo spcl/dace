@@ -17,6 +17,7 @@ import pytest
 
 import dace
 from dace import nodes
+from dace.libraries.ai import backend
 from dace.libraries.ai import session as ai_session
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
@@ -67,7 +68,7 @@ def _only_session(root):
 
 def test_a_successful_expansion_is_recorded_in_full(tmp_path):
     sdfg, state, node = _sdfg_and_node()
-    spec = TaskletSpec(code=GOOD, notes="because", raw_response='{"code": "verbatim from the model"}')
+    spec = backend.parse_response(json.dumps({"code": GOOD, "notes": "because"}, indent=3))
 
     with dace.config.set_temporary("ai", "sessions", value=True):
         with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):

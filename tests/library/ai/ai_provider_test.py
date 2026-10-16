@@ -3,11 +3,13 @@
 
 import builtins
 import contextlib
+import json
 
 import pytest
 
 import dace
 from dace.libraries.ai import backend
+from dace.libraries.ai import cache as ai_cache
 from dace.libraries.ai.exceptions import AIExpansionError
 
 
@@ -99,22 +101,34 @@ def test_response_schema_is_strict_mode_shaped():
     schema = backend.RESPONSE_SCHEMA
 
     # Structured output requires "additionalProperties: false" and an exhaustive "required" list at
-    # every level; a missing entry is rejected by the provider rather than silently ignored
-    assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == set(schema["properties"])
+    # every level, and no references or defaults
+    def check(sub):
+        if "properties" in sub:
+            assert sub["additionalProperties"] is False
+            assert set(sub["required"]) == set(sub["properties"])
+            for prop in sub["properties"].values():
+                check(prop)
+        if "items" in sub:
+            check(sub["items"])
+        assert "$ref" not in sub and "default" not in sub
 
-    item = schema["properties"]["environments"]["items"]
-    assert item["additionalProperties"] is False
-    assert set(item["required"]) == set(item["properties"])
+    check(schema)
+    environment = schema["properties"]["environments"]["items"]
+    assert "cmake_variables" in environment["properties"]
 
 
 def test_empty_response_is_rejected():
-    with pytest.raises(AIExpansionError, match="empty tasklet body"):
-        backend.spec_from_dict({"code": "   "})
+    with pytest.raises(AIExpansionError, match="tasklet body is empty"):
+        backend.parse_response(json.dumps({"code": "   "}))
+
+
+def test_unknown_field_is_rejected():
+    with pytest.raises(AIExpansionError, match="does not match the response schema"):
+        backend.parse_response(json.dumps({"code": "_out = _in;", "codee": ""}))
 
 
 def test_spec_round_trips_every_field():
-    spec = backend.spec_from_dict(
+    text = json.dumps(
         {
             "code": "_out = _in;",
             "language": "CPP",
@@ -131,11 +145,14 @@ def test_spec_round_trips_every_field():
                     "name": "FFTW",
                     "headers": ["fftw3.h"],
                     "cmake_libraries": ["fftw3"],
+                    "cmake_variables": [{"name": "FFTW_ROOT", "value": "/opt/fftw"}],
                 }
             ],
         }
     )
+    spec = backend.parse_response(text)
 
+    assert spec.raw_response == text
     assert spec.code_global == "#include <cmath>"
     assert spec.state_fields == ["int counter;"]
     assert spec.side_effects is True
@@ -144,12 +161,60 @@ def test_spec_round_trips_every_field():
     assert len(spec.environments) == 1
     assert spec.environments[0].headers == ["fftw3.h"]
     assert spec.environments[0].cmake_packages == []
+    assert spec.environments[0].cmake_variables[0].value == "/opt/fftw"
+    assert backend.parse_response(spec.model_dump_json()).model_dump() == spec.model_dump()
+
+
+def test_client_options_pass_the_base_url(monkeypatch):
+    monkeypatch.setenv("DACE_TEST_AI_KEY", "secret-value")
+    with dace.config.set_temporary("ai", "api_key_envvar", value="DACE_TEST_AI_KEY"):
+        with dace.config.set_temporary("ai", "base_url", value="http://localhost:8080/v1"):
+            options = backend.client_options("openai")
+        assert "base_url" not in backend.client_options("openai")
+
+    assert options["base_url"] == "http://localhost:8080/v1"
+    assert options["api_key"] == "secret-value"
+
+
+def test_cache_key_depends_on_request_settings():
+    messages = [{"role": "user", "content": "prompt"}]
+    base = ai_cache.key("system", messages)
+    with dace.config.set_temporary("ai", "max_tokens", value=123):
+        assert ai_cache.key("system", messages) != base
+    with dace.config.set_temporary("ai", "base_url", value="http://localhost:8080/v1"):
+        assert ai_cache.key("system", messages) != base
+    assert ai_cache.key("system", messages) == base
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_sdk_clients_use_the_base_url(provider, monkeypatch):
+    pytest.importorskip(provider)
+    monkeypatch.setenv("DACE_TEST_AI_KEY", "secret-value")
+    with dace.config.set_temporary("ai", "provider", value=provider):
+        with dace.config.set_temporary("ai", "api_key_envvar", value="DACE_TEST_AI_KEY"):
+            with dace.config.set_temporary("ai", "base_url", value="http://localhost:8080/v1"):
+                client = backend.get_provider()._client
+    assert str(client.base_url).rstrip("/") == "http://localhost:8080/v1"
+
+
+def test_missing_openai_key_is_a_credentials_error(monkeypatch):
+    pytest.importorskip("openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DACE_NO_SUCH_KEY", raising=False)
+    with dace.config.set_temporary("ai", "provider", value="openai"):
+        with dace.config.set_temporary("ai", "api_key_envvar", value="DACE_NO_SUCH_KEY"):
+            with pytest.raises(AIExpansionError, match="no usable credentials"):
+                backend.get_provider()
 
 
 if __name__ == "__main__":
     test_missing_sdk_points_at_the_extra()
-    test_missing_responses_sdk_points_at_its_own_extra()
+    test_missing_openai_sdk_points_at_its_own_extra()
     test_unknown_provider_is_rejected()
+    test_manual_provider_needs_no_sdk_and_no_key()
     test_credential_error_names_the_configured_variable()
+    test_response_schema_is_strict_mode_shaped()
     test_empty_response_is_rejected()
+    test_unknown_field_is_rejected()
     test_spec_round_trips_every_field()
+    test_cache_key_depends_on_request_settings()

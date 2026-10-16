@@ -18,6 +18,11 @@ SDK is imported lazily, so nothing here requires one to be installed until an ex
 runs.
 """
 
+try:
+    import pydantic  # noqa: F401
+except ImportError as e:
+    raise ImportError("The DaCe AI library needs pydantic: pip install 'dace[agent]'") from e
+
 from dace.library import register_library
 from dace.sdfg.nodes import AI_IMPLEMENTATION_NAME
 

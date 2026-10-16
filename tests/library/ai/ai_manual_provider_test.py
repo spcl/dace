@@ -136,7 +136,7 @@ def test_invalid_json_is_reported_clearly(manual, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO("sure, here is a tasklet: _out = _in;"))
     sdfg, state, node = _sdfg_and_node()
 
-    with pytest.raises(AIExpansionError, match="not valid JSON"):
+    with pytest.raises(AIExpansionError, match="does not match the response schema"):
         node.expand(state, "ai")
 
 

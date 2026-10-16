@@ -155,7 +155,7 @@ class ExpandAI(ExpandTransformation):
                     spec = provider.generate(system, messages)
                     ai_cache.store(cache_key, spec, system, messages)
                 record.record_answer(entry, spec, cached=cached)
-                _detail("answer", spec.raw_response or _echo(spec))
+                _detail("answer", spec.raw_response or spec.model_dump_json(indent=1))
                 environments = ai_environments.collect(spec)
                 if not should_verify:
                     _status(f"{described}: verification is off (ai.verify), taking the code as generated")
@@ -187,7 +187,7 @@ class ExpandAI(ExpandTransformation):
                     )
                 _status(f"{described}: asking for a repair (attempt {attempt + 2}/{attempts})")
                 prompt = prompts.build_repair_prompt(result.stderr, result.command)
-                messages.append({"role": "assistant", "content": _echo(spec)})
+                messages.append({"role": "assistant", "content": spec.model_dump_json(indent=1)})
                 messages.append({"role": "user", "content": prompt})
         except Exception as e:
             record.record_outcome("failed", str(e))
@@ -206,7 +206,7 @@ class ExpandAI(ExpandTransformation):
 
         # Persist the conversation *including* this answer, so the next round resumes from a
         # complete exchange rather than from a question with no reply
-        record.conversation = messages + [{"role": "assistant", "content": _echo(spec)}]
+        record.conversation = messages + [{"role": "assistant", "content": spec.model_dump_json(indent=1)}]
         record.flush()
 
         _status(
@@ -305,33 +305,3 @@ def _detail(label: str, body: str | None) -> None:
     print(f"[ai] --- {label} ---", flush=True)
     print(textwrap.indent(body.rstrip("\n"), "    "), flush=True)
     print(f"[ai] --- end {label} ---", flush=True)
-
-
-def _echo(spec: Any) -> str:
-    """
-    Renders a generated specification back into the conversation for a repair round.
-
-    :param spec: The specification the model returned.
-    :return: The text to replay as the assistant's previous turn.
-    """
-    import dataclasses
-    import json
-
-    return json.dumps(
-        {
-            "notes": spec.notes,
-            "language": spec.language,
-            "code": spec.code,
-            "code_global": spec.code_global,
-            "code_init": spec.code_init,
-            "code_exit": spec.code_exit,
-            "state_fields": spec.state_fields,
-            "side_effects": spec.side_effects,
-            "ignored_symbols": spec.ignored_symbols,
-            # Echoed too: the repair instruction asks for the complete object back, and the schema
-            # marks these required, so omitting them would invite an invalid reply
-            "use_environments": spec.use_environments,
-            "environments": [dataclasses.asdict(env) for env in spec.environments],
-        },
-        indent=1,
-    )

@@ -85,7 +85,7 @@ class ManualProvider:
                 "unattended runs."
             )
 
-        return exchange.parse_response(reply, f'{node_type} "{node_name}"')
+        return backend.parse_response(reply, f'{node_type} "{node_name}"')
 
 
 def _describe(messages: list[dict[str, str]]):

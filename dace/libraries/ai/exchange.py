@@ -25,7 +25,6 @@ import warnings
 from dace.config import Config
 from dace.libraries.ai import backend, prompts
 from dace.libraries.ai.context import collect_context
-from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AITasklet
 from dace.sdfg import SDFG, SDFGState, nodes
 
@@ -99,27 +98,6 @@ def read_saved(path: str) -> str:
         return ""
 
 
-def parse_response(response: str, described: str) -> backend.TaskletSpec:
-    """
-    Interprets a response written by a model.
-
-    :param response: The response, which must be a single JSON object matching
-                     :data:`dace.libraries.ai.backend.RESPONSE_SCHEMA`.
-    :param described: The node the response is for, for error messages.
-    :return: The tasklet the response describes.
-    :raises AIExpansionError: If the response is not valid JSON or has no tasklet body.
-    """
-    response = response.strip()
-    try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as e:
-        raise AIExpansionError(
-            f"The response for {described} is not valid JSON: {e}\nIt must be a single JSON "
-            "object matching the schema at the end of the prompt."
-        ) from e
-    return backend.spec_from_dict(payload, raw=response)
-
-
 def _describe(node: nodes.LibraryNode) -> str:
     """
     Names a node in messages.
@@ -155,7 +133,7 @@ def read_prompt_response(node: nodes.LibraryNode, state: SDFGState, response: st
     :return: The tasklet that replaced the node.
     :raises AIExpansionError: If the response cannot be interpreted or does not compile.
     """
-    spec = parse_response(response, _describe(node))
+    spec = backend.parse_response(response, _describe(node))
     before = set(state.nodes())
     node.expand(state, nodes.AI_IMPLEMENTATION_NAME, response=spec)
     return next(n for n in state.nodes() if n not in before and isinstance(n, AITasklet))

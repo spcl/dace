@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""OpenAI backend for AI-generated library node expansions."""
-
-import json
+"""OpenAI Responses API provider."""
 
 from dace.config import Config
 from dace.libraries.ai import backend
@@ -9,26 +7,22 @@ from dace.libraries.ai.exceptions import AIExpansionError
 
 
 class OpenAIProvider:
-    """
-    Generates tasklets through the Responses API of the OpenAI Python SDK (``openai``).
-
-    Selected with ``DACE_ai_provider=openai``. Like the Anthropic provider, the SDK is imported
-    in the constructor so that it is only required when this provider is actually used.
-    """
+    """Generates tasklets through the OpenAI Responses API."""
 
     def __init__(self) -> None:
         try:
-            import openai  # Optional dependency: only needed when the 'ai' expansion is used
+            import openai  # Optional dependency (dace[agent-openai])
         except ImportError as e:
             raise backend.missing_sdk_error("openai", "openai", "agent-openai", e)
 
         self._openai = openai
-        key = backend.api_key("openai")
-        timeout = float(Config.get("ai", "timeout"))
+        options = backend.client_options("openai")
         try:
-            self._client = openai.OpenAI(api_key=key, timeout=timeout) if key else openai.OpenAI(timeout=timeout)
-        except Exception as e:
-            raise backend.missing_credentials_error("openai", str(e)) from e
+            self._client = openai.OpenAI(**options)
+        except openai.OpenAIError as e:
+            if "api_key" not in options:
+                raise backend.missing_credentials_error("openai", str(e)) from e
+            raise AIExpansionError(f"Could not create the OpenAI client: {e}") from e
 
     def generate(self, system: str, messages: list[dict[str, str]]) -> backend.TaskletSpec:
         """
@@ -55,14 +49,9 @@ class OpenAIProvider:
                     },
                 },
             )
+        except self._openai.AuthenticationError as e:
+            raise backend.missing_credentials_error("openai", str(e)) from e
         except self._openai.OpenAIError as e:
             raise AIExpansionError(f"The OpenAI API request failed for model {model}: {e}") from e
 
-        text = getattr(response, "output_text", "") or ""
-        if not text.strip():
-            raise AIExpansionError("The model returned no content.")
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise AIExpansionError(f"The model response was not valid JSON: {e}") from e
-        return backend.spec_from_dict(payload, raw=text)
+        return backend.parse_response(response.output_text)

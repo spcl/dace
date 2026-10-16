@@ -105,7 +105,7 @@ def render_environment(spec: EnvironmentSpec) -> str:
         classname=_sanitize(spec.name),
         cmake_minimum_version=spec.cmake_minimum_version,
         cmake_packages=list(spec.cmake_packages),
-        cmake_variables=dict(spec.cmake_variables),
+        cmake_variables={var.name: var.value for var in spec.cmake_variables},
         cmake_includes=list(spec.cmake_includes),
         cmake_libraries=list(spec.cmake_libraries),
         cmake_compile_flags=list(spec.cmake_compile_flags),
