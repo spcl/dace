@@ -4,7 +4,7 @@
 from typing import TYPE_CHECKING, Any
 
 import dace
-from dace import Memlet, cpf_lowering, dtypes, registry
+from dace import Memlet, cpf_lowering, dtypes, registry, symbolic
 from dace import data as dt
 from dace.codegen import common
 from dace.codegen.codeobject import CodeObject
@@ -45,7 +45,7 @@ from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
-from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
@@ -425,7 +425,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._localcode.write("{", cfg, state_id, scope_entry)
 
         # Skip launches on empty or negative-sized grids that we can't prove non-empty statically.
-        single_dimchecks = [f"(({sym2cpp(gdim)}) <= 0)" for gdim in grid_dims if (gdim > 0) != True]
+        facts = SymbolResolver().facts_at(cfg.state(state_id), scope_entry)
+        single_dimchecks = [
+            f"(({sym2cpp(gdim)}) <= 0)" for gdim in grid_dims if not symbolic.provably_positive(gdim, facts)
+        ]
 
         dimcheck = " || ".join(single_dimchecks)
 

@@ -61,6 +61,7 @@ from dace.symbolic_facts import (  # noqa: F401
     provably_integer,
     provably_le,
     provably_nonnegative,
+    provably_positive,
     relation_names,
 )
 
