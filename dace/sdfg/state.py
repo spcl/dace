@@ -3096,6 +3096,7 @@ class SymbolResolver:
                 for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)
             ]
             scopes.append((map_entry, bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
+        from_ranges: list[symbolic.Relation] = []
         for owner, bound, ranges in scopes:
             # A scope rebinds its names: what held for an outer symbol of the same name no longer does
             relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
@@ -3118,18 +3119,25 @@ class SymbolResolver:
                 low, high = (low, high) if positive else (high, low) if negative else (None, None)
                 # The body of a provably empty range never runs, so its bounds, which contradict, are not facts
                 if low is not None and not (sympy.sympify(high) - sympy.sympify(low)).is_negative:
-                    relations += [
+                    bounds = [
                         symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(low), symbolic.symbol(name)),
                         symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high)),
                     ]
+                    relations += bounds
+                    from_ranges += bounds
             # What the scope declares for its names
             if owner in sdfg.symbol_repo.scopes:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
-        return symbolic.Facts(
-            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
-        )
+        try:
+            return symbolic.Facts(
+                tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
+            )
+        except symbolic.InconsistentAssumptionsError:
+            # A range the facts prove empty: its body never runs, so it is sound to know less there
+            kept = tuple(relation for relation in relations if relation not in from_ranges)
+            return symbolic.Facts(kept, frozenset(integers), frozenset(small), frozenset(parameters), own.assumed)
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
         """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its
