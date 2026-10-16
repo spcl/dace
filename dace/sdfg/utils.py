@@ -2575,9 +2575,12 @@ def get_control_flow_block_dominators(
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
         for k in idom:
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
-                next_dom = idom[k.parent_graph]
-                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
-                    next_dom = idom[next_dom.parent_graph]
+                region = k.parent_graph
+                next_dom = idom[region]
+                # Only a region that opens its parent is its own dominator there; climb past it, never past a block.
+                while next_dom is region and region.parent_graph is not sdfg:
+                    region = region.parent_graph
+                    next_dom = idom[region]
                 idom[k] = next_dom
         changed = True
         while changed:

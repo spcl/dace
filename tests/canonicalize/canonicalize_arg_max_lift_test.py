@@ -155,6 +155,30 @@ def test_lifts_abs_transform_s3113():
     assert np.isclose(out[0], np.max(np.abs(a))), f"got {out[0]}, expected {np.max(np.abs(a))}"
 
 
+def test_lifts_a_seed_bound_through_a_renamed_copy():
+    """TSVC s3113 as the corpus spells it: a dead ``maxv = 0`` renames the live seed, ``maxv := maxv_0``."""
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    @dace.program
+    def s3113_reseeded(a: dace.float64[N], b: dace.float64[2]):
+        maxv = dace.float64(0)
+        maxv = abs(a[0])
+        for i in range(N):
+            av = abs(a[i])
+            if av > maxv:
+                maxv = av
+        b[0] = maxv
+
+    sdfg = s3113_reseeded.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert _num_loops(sdfg) == 0, "the max reduction stays a sequential loop"
+
+    a = np.random.default_rng(3114).standard_normal(20)
+    out = np.zeros(2)
+    sdfg(a=a, b=out, N=a.size)
+    assert out[0] == np.max(np.abs(a))
+
+
 def test_refuses_index_tracking_s315():
     """TSVC s315 in its DATA-carrier form (``x`` / ``index`` as Scalars, the
     shape ``to_sdfg(simplify=True)`` produces): the true-branch writes BOTH the

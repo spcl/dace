@@ -327,10 +327,38 @@ def test_private_accumulator_is_expanded_to_split_a_reduction_from_a_recurrence(
         assert np.allclose(got, want)
 
 
+@dace.program
+def producer_between_coupled_statements(a: dace.float64[M, N], c: dace.float64[M, N]):
+    """``t[i]`` splits off between the two ``c`` statements, which stay together; the ``t`` loop must run first."""
+    t = np.zeros([M, N], dtype=np.float64)
+    for i in range(1, M):
+        for j in range(N):
+            c[i, j] = c[i - 1, j] + 1.0
+        for j in range(N):
+            t[i, j] = a[i, j] * 2.0
+        for j in range(N):
+            c[i, j] = c[i, j] + t[i, j]
+
+
+def test_a_producer_split_from_the_middle_of_a_body_runs_before_its_consumer():
+    sdfg = _to_loops(producer_between_coupled_statements)
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
+
+    rng = np.random.default_rng(5)
+    a = rng.random((7, 5))
+    want = rng.random((7, 5))
+    got = want.copy()
+    for i in range(1, 7):
+        want[i] = want[i - 1] + 1.0 + a[i] * 2.0
+    sdfg(a=a, c=got, M=7, N=5)
+    assert np.allclose(got, want)
+
+
 if __name__ == "__main__":
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()
     test_scalar_carried_recurrence_refuses()
     test_backward_dependence_refuses()
     test_mask_read_through_an_interstate_edge_refuses()
+    test_a_producer_split_from_the_middle_of_a_body_runs_before_its_consumer()
     print("OK")

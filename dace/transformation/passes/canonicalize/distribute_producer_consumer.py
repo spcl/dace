@@ -34,7 +34,10 @@ those needs subset-disjointness reasoning and is out of scope for this pass.
 """
 
 import functools
+from collections.abc import Callable
 from typing import Any
+
+import networkx as nx
 
 from dace import SDFG
 from dace.sdfg import nodes
@@ -140,9 +143,9 @@ def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | Non
     if order is None or len(order) < 2:
         return None
     lv = loop.loop_variable
-    pos = {b: i for i, b in enumerate(order)}
     rw = {b: _rw_subsets(b, lv) for b in order}
     parent = assignment_coupled(loop, order)
+    flows: list[tuple[ControlFlowBlock, ControlFlowBlock]] = []
 
     def find(x: ControlFlowBlock) -> ControlFlowBlock:
         while parent[x] != x:
@@ -168,14 +171,33 @@ def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | Non
                     if not (writes_i[x] and reads_j[x]):
                         merge = True
                         break
+                    flows.append((bi, bj))
             if merge:
                 parent[find(bi)] = find(bj)
 
-    classes: dict = {}
-    for b in order:
-        classes.setdefault(find(b), []).append(b)
-    groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()), key=lambda g: pos[g[0]])
+    groups = flow_ordered_groups(order, find, flows)
     return groups if len(groups) >= 2 else None
+
+
+def flow_ordered_groups(
+    order: list[ControlFlowBlock],
+    find: Callable[[ControlFlowBlock], ControlFlowBlock],
+    flows: list[tuple[ControlFlowBlock, ControlFlowBlock]],
+) -> list[list[ControlFlowBlock]]:
+    """The union-find classes of ``order``, each producer's class before its consumers'.
+
+    A class split from the middle of the body can feed a class that starts before it; classes a flow cycle joins
+    merge into one.
+    """
+    pos = {b: i for i, b in enumerate(order)}
+    graph = nx.DiGraph()
+    graph.add_nodes_from(find(b) for b in order)
+    graph.add_edges_from((find(a), find(b)) for a, b in flows if find(a) is not find(b))
+    condensed = nx.condensation(graph)
+    members: dict[int, list[ControlFlowBlock]] = {c: [] for c in condensed.nodes}
+    for b in order:
+        members[condensed.graph["mapping"][find(b)]].append(b)
+    return [members[c] for c in nx.lexicographical_topological_sort(condensed, key=lambda c: pos[members[c][0]])]
 
 
 @transformation.explicit_cf_compatible

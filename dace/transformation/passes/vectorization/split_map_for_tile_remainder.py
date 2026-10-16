@@ -259,6 +259,10 @@ class SplitMapForTileRemainder(ppl.Pass):
             if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
             return True
+        # A dim provably shorter than its width leaves no interior: the whole map is the remainder.
+        if any(self._trip_class(lb, ub, W) == "below" for (lb, ub, _), W in zip(map_entry.map.range[-K:], widths)):
+            self._mark_tail(map_entry)
+            return True
         for d, W in zip(tiled_dims, widths):
             lb, ub, step = map_entry.map.range[d]
             if self._provably_divisible(lb, ub, W):
@@ -273,24 +277,26 @@ class SplitMapForTileRemainder(ppl.Pass):
             slab = replicate_scope(state.sdfg, state, scope_view)
             slab.entry.map.range[d] = (main_end + 1, ub, step)
             map_entry.map.range[d] = (lb, main_end, step)
-            # ``scalar`` mode: mark slab -> tile prep passes skip it -> stays a
-            # plain step-1 scalar loop with the original body.
-            if self.tail_mode == "scalar" and not slab.entry.map.label.endswith(SCALAR_TAIL_MARKER):
-                slab.entry.map.label = slab.entry.map.label + SCALAR_TAIL_MARKER
-            # ``tile_k1`` mode: mark slab -> treated as tile-main pinned K=1
-            # widths=(1,): step 1, no mask, body lowered to single-lane tile ops.
-            elif self.tail_mode == "tile_k1" and not slab.entry.map.label.endswith(TILE_K1_TAIL_MARKER):
-                slab.entry.map.label = slab.entry.map.label + TILE_K1_TAIL_MARKER
-            # ``masked_branch`` mode: the slab is prepared exactly like a ``masked`` one (no prep
-            # pass knows this suffix); the mark only tells FuseBranchedTailRemainder which interior
-            # it belongs to, so the pair can be folded into one branched kernel.
-            elif self.tail_mode == "masked_branch" and not slab.entry.map.label.endswith(MASKED_TAIL_MARKER):
-                slab.entry.map.label = slab.entry.map.label + MASKED_TAIL_MARKER
+            self._mark_tail(slab.entry)
         # Interior fully tiled on every dim (skipped = divisible, peeled =
         # tightened to multiple of W) -> mark mask-free.
         if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
             map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
         return True
+
+    def _mark_tail(self, entry: MapEntry) -> None:
+        # ``masked`` mode leaves a remainder unmarked: every non-interior map is masked.
+        marker = {
+            # Tile prep passes skip it -> a plain step-1 scalar loop with the original body.
+            "scalar": SCALAR_TAIL_MARKER,
+            # Tile-main pinned K=1 widths=(1,): step 1, no mask, single-lane tile ops.
+            "tile_k1": TILE_K1_TAIL_MARKER,
+            # Prepared like ``masked``; the mark only tells FuseBranchedTailRemainder which interior
+            # it belongs to, so the pair can be folded into one branched kernel.
+            "masked_branch": MASKED_TAIL_MARKER,
+        }.get(self.tail_mode)
+        if marker is not None and not entry.map.label.endswith(marker):
+            entry.map.label = entry.map.label + marker
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Split every eligible innermost K-dim map into interior + remainders.

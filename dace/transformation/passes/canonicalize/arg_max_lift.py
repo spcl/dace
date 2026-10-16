@@ -397,6 +397,22 @@ def strip_identity(expr: ast.AST) -> ast.AST:
     return expr
 
 
+def bound_expression(text: str, bindings: dict[str, str]) -> ast.expr | None:
+    """``text`` parsed, with a bare name replaced by its binding until it is no longer a bound name.
+
+    :returns: ``None`` when a binding does not parse.
+    """
+    seen: set[str] = set()
+    try:
+        tree = ast.parse(text, mode="eval").body
+        while isinstance(tree, ast.Name) and tree.id in bindings and tree.id not in seen:
+            seen.add(tree.id)
+            tree = ast.parse(bindings[tree.id], mode="eval").body
+    except SyntaxError:
+        return None
+    return tree
+
+
 def neutral_extreme(numeric_type: type, op: dtypes.ReductionType) -> int | float:
     """The neutral element of a Max (most negative value) or Min (most positive value) over ``numeric_type``.
 
@@ -1605,10 +1621,8 @@ class ArgMaxLift(ppl.Pass):
         """If ``rhs_str`` is ``[f](array[P])`` -- or ``[f](g)`` where ``g`` is a
         pre-loop symbol bound to ``array[P]`` -- return the index string ``P``;
         else ``None``."""
-        try:
-            tree = ast.parse(rhs_str, mode="eval").body
-        except SyntaxError:
-            return None
+        # A renamed copy (``maxv := maxv_0``, ``maxv_0 := abs(a[0])``) binds the seed one name away.
+        tree = bound_expression(rhs_str, preloop)
         if transform is not None:
             if not (
                 isinstance(tree, ast.Call)
@@ -1621,12 +1635,9 @@ class ArgMaxLift(ppl.Pass):
             tree = tree.args[0]
         elif isinstance(tree, ast.Call):
             return None
-        # Follow one level of gather-symbol indirection (``g`` bound to ``a[P]``).
-        if isinstance(tree, ast.Name) and tree.id in preloop:
-            try:
-                tree = ast.parse(preloop[tree.id], mode="eval").body
-            except SyntaxError:
-                return None
+        # Gather-symbol indirection (``g`` bound to ``a[P]``).
+        if isinstance(tree, ast.Name):
+            tree = bound_expression(tree.id, preloop)
         if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array):
             return None
         idx = tree.slice
