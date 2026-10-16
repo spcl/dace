@@ -535,20 +535,32 @@ def _block_rw(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
     return reads, writes
 
 
-def _linear_blocks(loop: LoopRegion) -> list | None:
+def plain_edge(edge, allow_assignments: bool) -> bool:
+    """An unconditional body edge, assignment-free unless ``allow_assignments``."""
+    if edge.data.assignments and not allow_assignments:
+        return False
+    return edge.data.condition.as_string in ("1", "True", "(1)")
+
+
+def edge_data_by_ends(region) -> dict:
+    """``(src, dst) -> edge data`` for every edge of ``region``."""
+    return {(e.src, e.dst): e.data for e in region.edges()}
+
+
+def _linear_blocks(loop: LoopRegion, allow_assignments: bool = False) -> list | None:
     """Return ``loop``'s body blocks in execution order if it is a simple
-    linear chain of unconditional, assignment-free edges; else ``None``.
+    linear chain of unconditional edges, assignment-free unless ``allow_assignments``; else ``None``.
 
     :param loop: The loop whose body CFG is inspected.
+    :param allow_assignments: Accept edges that assign symbols; the caller keeps each such edge inside one group.
     :returns: The ordered block list, or ``None`` if not a plain chain.
     """
     blocks = list(loop.nodes())
     edges = list(loop.edges())
     if len(edges) != len(blocks) - 1:
         return None
-    for e in edges:
-        if e.data.assignments or e.data.condition.as_string not in ("1", "True", "(1)"):
-            return None
+    if not all(plain_edge(e, allow_assignments) for e in edges):
+        return None
     succ = {e.src: e.dst for e in edges}
     order = [loop.start_block]
     while order[-1] in succ:
@@ -682,7 +694,7 @@ class LoopFission(ppl.Pass):
         in_edges = list(parent.in_edges(loop))
         out_edges = list(parent.out_edges(loop))
         is_start = parent.start_block is loop
-        orig_order = _linear_blocks(loop)
+        orig_order = _linear_blocks(loop, allow_assignments=True)
         keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
 
         clones: list[LoopRegion] = []
@@ -690,14 +702,16 @@ class LoopFission(ppl.Pass):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"
             parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
-            corder = _linear_blocks(clone)
+            corder = _linear_blocks(clone, allow_assignments=True)
             keep = [required(corder)[i] for i in idxs]
+            # An edge between two blocks that stay adjacent keeps its data (a symbol it assigns feeds the next block).
+            kept_edges = edge_data_by_ends(clone)
             for b in [b for b in clone.nodes() if b not in keep]:
                 clone.remove_node(b)
             for e in list(clone.edges()):
                 clone.remove_edge(e)
             for a, b in zip(keep, keep[1:]):
-                clone.add_edge(a, b, InterstateEdge())
+                clone.add_edge(a, b, kept_edges.get((a, b), InterstateEdge()))
             clone.start_block = clone.node_id(keep[0])
             clones.append(clone)
 

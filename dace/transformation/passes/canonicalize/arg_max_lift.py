@@ -694,13 +694,13 @@ class ArgMaxLift(ppl.Pass):
             folds_base = has_transform_and_index or value_only
             if not zero_base and not folds_base:
                 return None
-            # Both base-folding rewrites DROP the pre-loop bind and reconstruct the
+            # Every symbol-carrier rewrite DROPS the pre-loop bind and reconstructs the
             # seed positionally at ``base + coeff*(start-1)`` -- the combined path
             # by starting its slice there (plus an index init of ``start-1``), the
-            # value-only path by extending the emitted slice down to it. Neither is implied by
-            # the match, so verify it; a seed that reads elsewhere would reduce over
-            # a set missing the real seed and holding an element never gathered.
-            if folds_base and not self._verify_affine_seed(
+            # others by extending the emitted slice down to it. None is implied by
+            # the match, so verify it; a seed that reads elsewhere (a constant
+            # ``x = 0.0; j = -1``) would reduce over a set missing the real seed.
+            if not self._verify_affine_seed(
                 loop, sdfg, carrier_name, idx_carrier_name, input_array, gather_base, gather_coeff, start, transform
             ):
                 return None

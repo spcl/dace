@@ -108,6 +108,59 @@ class _Expansion:
             setattr(memlet, attr, old)
 
 
+def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> list[Any] | None:
+    """Give every transient one iteration of ``loop`` defines before reading it its own slot, ``x`` -> ``x[i]``.
+
+    The privatization :class:`BufferExpansion` applies for ``LoopToMap``, offered to loop distribution: a
+    per-iteration accumulator ``s`` shared by a producer and a consumer keeps them in one loop, and ``s[i]``
+    lets the producer run to completion first. A transient scalar is treated as a length-1 array, so the
+    accumulator case is covered. The safety guard is the pass's own (loop-local, defined before read, no
+    view, no library-node operand).
+
+    :param only: The containers that may be expanded, those that couple two body blocks; a temporary used by one
+                 block stays private where it is, so the loops inside that block keep privatizing it.
+    :returns: The undo records (each with ``undo()``), or ``None`` when nothing qualified.
+    """
+    expander = BufferExpansion()
+    ix = expander._loop_index(loop)
+    if ix is None:
+        return None
+    replaced: dict[str, data.Data] = {}
+    for name, desc in list(sdfg.arrays.items()):
+        if name not in only:
+            continue
+        if isinstance(desc, data.Scalar) and desc.transient and desc.lifetime in _REINDEXABLE_LIFETIMES:
+            replaced[name] = desc
+            sdfg.arrays[name] = data.Array(
+                desc.dtype, [1], transient=True, storage=desc.storage, lifetime=desc.lifetime
+            )
+    buffers = [name for name in expander._privatizable_buffers(sdfg, loop) if name in only]
+    for name, desc in replaced.items():
+        if name not in buffers:
+            sdfg.arrays[name] = desc
+    if not buffers:
+        return None
+    index, size = ix
+    order = expander._ambient_order(sdfg)
+    applied: list[Any] = [expander._expand(sdfg, loop, name, index, size, order) for name in buffers]
+    applied += [ScalarRestore(sdfg, name, desc) for name, desc in replaced.items() if name in buffers]
+    return applied
+
+
+class ScalarRestore:
+    """Undo record that puts a scalar descriptor back after its length-1 array stand-in was expanded."""
+
+    __slots__ = ("sdfg", "name", "desc")
+
+    def __init__(self, sdfg: SDFG, name: str, desc: data.Data):
+        self.sdfg = sdfg
+        self.name = name
+        self.desc = desc
+
+    def undo(self):
+        self.sdfg.arrays[self.name] = self.desc
+
+
 @properties.make_properties
 class BufferExpansion(ppl.Pass):
     """Expand loop-local scratch buffers by one loop-indexed dimension to unblock LoopToMap.

@@ -90,6 +90,7 @@ A no-op when the body is a single block, when a body edge carries an assignment
 the loop would increment once per clone), or when the groups do not separate.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from dace import SDFG, properties
@@ -100,7 +101,7 @@ from dace.transformation import transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups, _rw_subsets
 from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
-from dace.transformation.passes.loop_fission import LoopFission
+from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
@@ -233,12 +234,17 @@ def parallel_level_diagnostic(loop: LoopRegion, groups: list[list[ControlFlowBlo
     return fused, sum(int(level_parallel(group, loop_var, arrays)) for group in groups)
 
 
-def distribute_loops(sdfg: SDFG, diagnostics: list[tuple[str, int, int]] | None = None) -> int:
+def distribute_loops(
+    sdfg: SDFG,
+    diagnostics: list[tuple[str, int, int]] | None = None,
+    grouping: Callable[[LoopRegion], list[list[ControlFlowBlock]] | None] = _forward_flow_groups,
+) -> int:
     """Distribute every loop of ``sdfg`` whose body splits into more than one dependence component.
 
     :param sdfg: The SDFG to transform in place.
     :param diagnostics: When given, one ``(label, fused, distributed)`` parallel-level record is
                         appended per split (:func:`parallel_level_diagnostic`).
+    :param grouping: The statement partition of one loop body, ``None`` when it does not split.
     :returns: The number of loops distributed.
     """
     count = 0
@@ -248,7 +254,7 @@ def distribute_loops(sdfg: SDFG, diagnostics: list[tuple[str, int, int]] | None 
         for loop in list(sdfg.all_control_flow_regions(recursive=True)):
             if not isinstance(loop, LoopRegion):
                 continue
-            groups = _forward_flow_groups(loop)
+            groups = grouping(loop)
             if groups is None:
                 continue
             if diagnostics is not None:
@@ -259,6 +265,50 @@ def distribute_loops(sdfg: SDFG, diagnostics: list[tuple[str, int, int]] | None 
             changed = True
             break
     return count
+
+
+def groups_with_expansion(loop: LoopRegion, tried: set[int]) -> list[list[ControlFlowBlock]] | None:
+    """:func:`_forward_flow_groups`, falling back once per loop to :func:`split_after_expansion`.
+
+    :param tried: Ids of the loops already offered the expansion in this run; a refusal does not change on a
+                  second visit, and the probe it costs is ``LoopToMap``'s.
+    """
+    groups = _forward_flow_groups(loop)
+    if groups is not None or id(loop) in tried:
+        return groups
+    tried.add(id(loop))
+    return split_after_expansion(loop)
+
+
+def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
+    """The distribution groups of a sequential ``loop`` after the transients its blocks share get one slot each.
+
+    Only a loop ``LoopToMap`` refuses is tried: a parallel loop privatizes its temporaries in place, and
+    expanding them would only add an array and a second loop. The expansion is undone unless it splits, so a
+    second visit finds the same refusal.
+    """
+    from dace.transformation.passes.buffer_expansion import BufferExpansion, expand_iteration_private
+
+    order = _linear_blocks(loop, allow_assignments=True) if loop.loop_variable else None
+    if order is None or len(order) < 2:
+        return None
+    seen: dict[str, int] = {}
+    for block in order:
+        writes, reads = _rw_subsets(block, loop.loop_variable)
+        for name in dict.fromkeys([*writes, *reads]):
+            seen[name] = seen.get(name, 0) + 1
+    shared = {name for name, count in seen.items() if count > 1}
+    sdfg = loop.sdfg
+    if not shared or BufferExpansion._loop_mappable(sdfg, loop):
+        return None
+    applied = expand_iteration_private(sdfg, loop, shared)
+    if applied is None:
+        return None
+    groups = _forward_flow_groups(loop)
+    if groups is None:
+        for record in applied:
+            record.undo()
+    return groups
 
 
 @properties.make_properties

@@ -270,6 +270,63 @@ def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     sdfg.validate()
 
 
+NNZ = dace.symbol("NNZ")
+K = dace.symbol("K")
+
+
+@dace.program
+def hybrid_csr_recurrence(
+    row_ptr: dace.int64[N + 1], col: dace.int64[NNZ], val: dace.float64[NNZ], x: dace.float64[N], y: dace.float64[N]
+):
+    for i in range(N):
+        s = 0.0
+        for k in range(row_ptr[i], row_ptr[i + 1]):
+            s += val[k] * x[col[k]]
+        if i < K:
+            y[i] = s
+        else:
+            y[i] = s + y[i - 1]
+
+
+def hybrid_reference(row_ptr, col, val, x, y, k):
+    for i in range(x.size):
+        s = 0.0
+        for kk in range(row_ptr[i], row_ptr[i + 1]):
+            s += val[kk] * x[col[kk]]
+        y[i] = s if i < k else s + y[i - 1]
+
+
+def test_private_accumulator_is_expanded_to_split_a_reduction_from_a_recurrence():
+    """The row sum ``s`` couples the CSR reduction to the ``y`` recurrence; ``s[i]`` lets the reduction leave.
+
+    Without the expansion the whole row loop stays sequential behind ``y[i - 1]`` and the reduction runs once
+    per row in order. The row-pointer symbols assigned on the body edge stay with the inner loop they bound."""
+    sdfg = _to_loops(hybrid_csr_recurrence)
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
+
+    full = hybrid_csr_recurrence.to_sdfg(simplify=True)
+    for label, unit in build_stages():
+        unit.apply_pass(full, {})
+    sequential = [
+        r for r in full.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    ]
+    assert len(sequential) == 1, "only the y recurrence stays a loop"
+    assert any(isinstance(n, nodes.MapEntry) and n.map.range.size()[0] == N for n, _ in full.all_nodes_recursive())
+
+    rng = np.random.default_rng(11)
+    for n, k in ((50, 2), (50, 49), (200, 7), (1, 0), (3, 5)):
+        row_ptr = np.concatenate([[0], np.cumsum(rng.integers(0, 6, n))]).astype(np.int64)
+        nnz = max(int(row_ptr[-1]), 1)
+        col = rng.integers(0, n, nnz).astype(np.int64)
+        val = rng.random(nnz)
+        x = rng.random(n)
+        want = np.zeros(n)
+        hybrid_reference(row_ptr, col, val, x, want, k)
+        got = np.zeros(n)
+        full(row_ptr=row_ptr, col=col, val=val, x=x, y=got, N=n, NNZ=nnz, K=k)
+        assert np.allclose(got, want)
+
+
 if __name__ == "__main__":
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()

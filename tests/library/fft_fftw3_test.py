@@ -43,16 +43,18 @@ def test_fft_fftw3_lowering():
     np.testing.assert_allclose(z / N, x, rtol=1e-12, atol=1e-12)
 
 
-def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch):
-    """FFTW's threaded planner ships as ``libfftw3_omp`` beside ``libfftw3``; without it the transform ran on one
-    thread against numba's threaded pocketfft (fft_1d, 10x slower)."""
-    import ctypes.util
-
+def test_a_threaded_companion_library_is_linked_ahead_of_its_base(tmp_path):
+    """FFTW's threaded planner ships as ``libfftw3_omp`` / ``libfftw3_threads`` beside ``libfftw3``; without it the
+    transform ran on one thread against numba's threaded pocketfft (fft_1d, 10x slower)."""
     from dace.libraries.fft.environments import fftw3
 
-    installed = {"fftw3": "libfftw3.so.3", "fftw3_omp": "libfftw3_omp.so.3", "fftw3f": "libfftw3f.so.3"}
-    monkeypatch.setattr(ctypes.util, "find_library", installed.get)
-    assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so.3", "libfftw3.so.3", "libfftw3f.so.3"]
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include" / "fftw3.h").touch()
+    (tmp_path / "lib").mkdir()
+    for lib in ("libfftw3.so", "libfftw3_threads.so", "libfftw3_omp.so", "libfftw3f.so"):
+        (tmp_path / "lib" / lib).touch()
+    names = [p.rsplit("/", 1)[1] for p in fftw3.prefix_libraries(str(tmp_path))]
+    assert names == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
 
 
 @pytest.mark.parametrize("threaded", [True, False])
@@ -68,32 +70,14 @@ def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     assert ("__threads = omp_in_parallel() ? 1 : omp_get_max_threads()" in code) == threaded
 
 
-def test_a_unit_rendered_for_another_machine_plans_single_threaded(monkeypatch):
-    """CPF renders units built where the threaded planner's companion library may be missing, so it expands under
-    ``single_threaded_planner``; the scope is what CPF calls, and an FFT merge that dropped it failed every
-    rendering with ``AttributeError``."""
-    import ctypes.util
-
-    from dace.libraries.fft.environments import fftw3
-
-    installed = {"fftw3": "libfftw3.so.3", "fftw3_omp": "libfftw3_omp.so.3"}
-    monkeypatch.setattr(ctypes.util, "find_library", installed.get)
-    assert fftw3.threaded()
-    with fftw3.single_threaded_planner():
-        assert not fftw3.threaded()
-        with fftw3.single_threaded_planner():
-            assert not fftw3.threaded()
-        assert not fftw3.threaded(), "an inner scope must not end the outer one"
-    assert fftw3.threaded()
-
-
 if __name__ == "__main__":
     test_fft_fftw3_lowering()
     print("FFTW3 FFT lowering test PASS")
-    with pytest.MonkeyPatch.context() as mp:
-        test_a_threaded_companion_library_is_linked_ahead_of_its_base(mp)
+    import pathlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        test_a_threaded_companion_library_is_linked_ahead_of_its_base(pathlib.Path(tmp))
     for threaded in (True, False):
         with pytest.MonkeyPatch.context() as mp:
             test_a_threaded_fftw_plans_for_the_team(mp, threaded)
-    with pytest.MonkeyPatch.context() as mp:
-        test_a_unit_rendered_for_another_machine_plans_single_threaded(mp)

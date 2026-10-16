@@ -844,6 +844,42 @@ def test_a_difference_over_the_mask_point_subset_axis_cancels():
     assert residue == 0
 
 
+N_MIX = dace.symbol("N_MIX", dtype=dace.int64)
+
+
+@dace.program
+def cursor_and_iterator_append(x: dace.float64[N_MIX], b: dace.float64[2 * N_MIX]):
+    j = -1
+    for i in range(N_MIX):
+        if x[i] > 0.0:
+            j = j + 1
+            b[2 * j - i + N_MIX] = x[i]
+
+
+def test_a_write_mixing_cursor_and_iterator_is_not_lifted():
+    """``b[2*j - i]`` is injective under the probe's ``j = i`` model and repeats under the real cursor.
+
+    With ``x = [1, -1, 2, 3, -1, 4]`` iterations 3 and 5 both write ``b[7]``, and the sequential loop
+    keeps the later value."""
+    sdfg = build(cursor_and_iterator_append)
+    assert not lifted(sdfg)
+
+    rng = np.random.default_rng(5)
+    for n in (6, 64, 1024):
+        x = rng.choice([-1.0, 1.0], n) * rng.random(n)
+        if n == 6:
+            x = np.array([1.0, -1.0, 2.0, 3.0, -1.0, 4.0])
+        want = np.zeros(2 * n)
+        j = -1
+        for i in range(n):
+            if x[i] > 0.0:
+                j = j + 1
+                want[2 * j - i + n] = x[i]
+        got = np.zeros(2 * n)
+        sdfg(x=x.copy(), b=got, N_MIX=n)
+        assert np.array_equal(got, want)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

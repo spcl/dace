@@ -407,13 +407,25 @@ def test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan(shape, axes, dtype, da
     np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=axes, norm="forward"), rtol=tolerance, atol=tolerance)
 
 
-def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch):
+def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch, tmp_path):
     """FFTW's OpenMP planner ships as ``libfftw3_omp`` beside ``libfftw3``; without it the transform ran on one thread
     against numba's threaded pocketfft (fft_1d, 10x slower)."""
-    installed = {"fftw3", "fftw3_omp", "fftw3f"}
-    monkeypatch.setattr(fftw3.ctypes.util, "find_library", lambda lib: f"lib{lib}.so" if lib in installed else None)
-    assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-    assert fftw3.threaded()
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include" / "fftw3.h").touch()
+    (tmp_path / "lib").mkdir()
+    for lib in ("libfftw3.so", "libfftw3_omp.so", "libfftw3f.so"):
+        (tmp_path / "lib" / lib).touch()
+    monkeypatch.setenv("FFTW_ROOT", str(tmp_path))
+    fftw3.fftw_install.cache_clear()
+    try:
+        libraries = [p.rsplit("/", 1)[1] for p in fftw3.FFTW3.cmake_libraries()]
+        assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
+        assert fftw3.FFTW3.cmake_includes() == [str(tmp_path / "include")]
+        assert fftw3.threaded()
+        with fftw3.single_threaded_planner():
+            assert not fftw3.threaded()
+    finally:
+        fftw3.fftw_install.cache_clear()
 
 
 @pytest.mark.parametrize("threaded", [True, False])
