@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A GPU map over BLOCK tile nodes runs as a Triton kernel: one program per map iteration, one ``tl`` call per node."""
+"""A GPU map over BLOCK tile nodes runs as a kernel of a tile DSL: one program per map iteration, one DSL call per
+tile node. Every program runs in every dialect; the text each test asserts is the dialect's spelling of the node."""
 
 import contextlib
 from collections.abc import Iterator
@@ -15,27 +16,48 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 pytestmark = [
     pytest.mark.gpu,
-    pytest.mark.triton,
     # Triton's own code generator builds an ast.AnnAssign Python 3.14 deprecates; not this backend's code
     pytest.mark.filterwarnings("ignore:AnnAssign.__init__ missing:DeprecationWarning"),
 ]
+
+DIALECTS = [pytest.param("triton", marks=pytest.mark.triton), pytest.param("cutile", marks=pytest.mark.cutile)]
+
+#: Per test, the text of each dialect's kernel that shows the node lowered as the test names.
+SPELLINGS = {
+    "masked": {
+        "triton": ["tl.program_id(0) * 512", "& _tile_iter_mask"],
+        "cutile": ["ct.bid(0) * 512", "& _tile_iter_mask"],
+    },
+    "gemm": {
+        "triton": ["tl.full([16, 16], (0.0), tl.float32)", "tl.dot(A_tile, B_tile)"],
+        "cutile": ["ct.full((16, 16), (0.0), ct.float32)", "ct.matmul(A_tile, B_tile)"],
+    },
+    "element": {"triton": ["tl.store(S_gpu + r * 1, sum)"], "cutile": ["ct.scatter(S_gpu, (r,), sum)"]},
+    "atomic": {"triton": ["tl.atomic_add(S_gpu + "], "cutile": ["ct.atomic_add(S_gpu, "]},
+}
 
 M, N, K, L = (dace.symbol(name) for name in "MNKL")
 
 
 @contextlib.contextmanager
-def triton_backend() -> Iterator[None]:
+def tile_backend(dialect: str) -> Iterator[None]:
     with (
         dace.config.set_temporary("compiler", "backend", value="python"),
-        dace.config.set_temporary("compiler", "python", "tile_dialect", value="triton"),
+        dace.config.set_temporary("compiler", "python", "tile_dialect", value=dialect),
     ):
         yield
 
 
 def kernel_source(compiled) -> str:
-    """The Triton kernels of a compiled program, without the prelude."""
+    """The kernels and host function of a compiled program, without the prelude."""
     source = compiled.path.read_text()
-    return source[source.index("@triton.jit\ndef kernel_") :]
+    return source[source.index("\ndef kernel_") :]
+
+
+def assert_spelled(compiled, test: str, dialect: str) -> None:
+    source = kernel_source(compiled)
+    for text in SPELLINGS[test][dialect]:
+        assert text in source, f"{dialect} kernel lacks {text!r}"
 
 
 @dace.program
@@ -44,7 +66,8 @@ def scale_add(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
         z[i] = x[i] * 2.0 + y[i]
 
 
-def test_a_vectorized_map_with_a_ragged_tail_runs_as_one_masked_kernel():
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_vectorized_map_with_a_ragged_tail_runs_as_one_masked_kernel(dialect: str):
     import cupy
 
     sdfg = scale_add.to_sdfg(simplify=True)
@@ -54,14 +77,13 @@ def test_a_vectorized_map_with_a_ragged_tail_runs_as_one_masked_kernel():
     VectorizeGPU(VectorizeConfig(widths=(4,))).apply_pass(sdfg, {})
     x, y, z = (cupy.arange(1000, dtype=np.float32), cupy.ones(1000, np.float32), cupy.zeros(1000, np.float32))
 
-    with triton_backend():
+    with tile_backend(dialect):
         compiled = sdfg.compile()
         compiled(x=x, y=y, z=z, N=1000)
 
     assert np.array_equal(z.get(), 2 * np.arange(1000, dtype=np.float32) + 1)
-    source = kernel_source(compiled)
-    assert "tl.program_id(0) * 512" in source and "& _tile_iter_mask" in source
-    assert "[(int_ceil(N, 512),)]" in compiled.path.read_text()
+    assert_spelled(compiled, "masked", dialect)
+    assert "(int_ceil(N, 512),)" in kernel_source(compiled)
 
 
 BM, BN, BK = 16, 16, 16
@@ -77,19 +99,19 @@ def blocked_gemm(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M
         dace.tile.store(C[i : i + BM, j : j + BN], acc)
 
 
-def test_a_blocked_gemm_accumulates_tl_dot_in_a_loop():
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_blocked_gemm_accumulates_a_tile_product_in_a_loop(dialect: str):
     sdfg = blocked_gemm.to_sdfg()
     sdfg.apply_gpu_transformations()
     rng = np.random.default_rng(0)
     a, b, c = rng.random((64, 48), np.float32), rng.random((48, 32), np.float32), np.zeros((64, 32), np.float32)
 
-    with triton_backend():
+    with tile_backend(dialect):
         compiled = sdfg.compile()
         compiled(A=a, B=b, C=c, M=64, N=32, K=48)
 
     np.testing.assert_allclose(c, a @ b, rtol=1e-3, atol=1e-3)
-    source = kernel_source(compiled)
-    assert "tl.full([16, 16], (0.0), tl.float32)" in source and "tl.dot(A_tile, B_tile)" in source
+    assert_spelled(compiled, "gemm", dialect)
 
 
 @dace.program
@@ -100,20 +122,21 @@ def fused_rows(A: dace.float64[L, 64], B: dace.float64[L, 64], D: dace.float64[L
         S[r : r + 1] = dace.tile.sum(row)
 
 
-def test_elementwise_tiles_and_a_row_sum_store_one_element():
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_elementwise_tiles_and_a_row_sum_store_one_element(dialect: str):
     sdfg = fused_rows.to_sdfg()
     sdfg.apply_gpu_transformations()
     rng = np.random.default_rng(1)
     a, b, d, s = rng.random((4, 64)), rng.random((4, 64)), np.zeros((4, 64)), np.zeros(4)
 
-    with triton_backend():
+    with tile_backend(dialect):
         compiled = sdfg.compile()
         compiled(A=a, B=b, D=d, S=s, L=4)
 
     expected = a * b + np.exp(a)
     np.testing.assert_allclose(d, expected, rtol=1e-12)
     np.testing.assert_allclose(s, expected.sum(axis=1), rtol=1e-12)
-    assert "tl.store(S_gpu + (r + 0) * 1, sum)" in kernel_source(compiled)
+    assert_spelled(compiled, "element", dialect)
 
 
 W = 256
@@ -130,13 +153,14 @@ def row_reductions(A: dace.float64[L, W], R: dace.float64[L, 4], C: dace.float64
         dace.tile.store(X[r, :], dace.tile.cummax(A[r, :]))
 
 
-def test_reductions_and_scans_match_numpy():
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_reductions_and_scans_match_numpy(dialect: str):
     sdfg = row_reductions.to_sdfg()
     sdfg.apply_gpu_transformations()
     a = 0.5 + np.random.default_rng(2).random((4, W))
     r, c, x = np.zeros((4, 4)), np.zeros((4, W)), np.zeros((4, W))
 
-    with triton_backend():
+    with tile_backend(dialect):
         sdfg(A=a, R=r, C=c, X=x, L=4)
 
     np.testing.assert_allclose(r[:, 0], a.sum(axis=1), rtol=1e-12)
@@ -153,14 +177,15 @@ def total(A: dace.float64[L], S: dace.float64[1]):
         S[0:1] += dace.tile.sum(A[i : i + 64])
 
 
-def test_a_sum_accumulated_by_every_program_adds_atomically():
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_sum_accumulated_by_every_program_adds_atomically(dialect: str):
     sdfg = total.to_sdfg()
     sdfg.apply_gpu_transformations()
     a, s = np.random.default_rng(3).random(64 * 6), np.zeros(1)
 
-    with triton_backend():
+    with tile_backend(dialect):
         compiled = sdfg.compile()
         compiled(A=a, S=s, L=a.size)
 
     np.testing.assert_allclose(s, [a.sum()], rtol=1e-12)
-    assert "tl.atomic_add(S_gpu + " in kernel_source(compiled)
+    assert_spelled(compiled, "atomic", dialect)

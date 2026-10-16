@@ -455,7 +455,7 @@ class Emitter:
                 self.line(f"{name} = {expr(value)}")
         for edge in (*state.in_edges(node), *state.out_edges(node)):
             conn = edge.dst_conn if edge.dst is node else edge.src_conn
-            if conn is None or edge.data.is_empty() or conn in self.allocated:
+            if conn is None or edge.data.is_empty() or conn in self.allocated or conn == edge.data.data:
                 continue
             # The connector's descriptor is the outer container's (``NestedSDFG.validate``): an alias
             self.line(f"{conn} = {edge.data.data}")

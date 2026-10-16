@@ -10,6 +10,7 @@ only a tile node reads or writes it; a tile node is one statement of the :class:
 import ast
 import re
 import textwrap
+from typing import NamedTuple
 
 from dace import SDFG, data, dtypes, symbolic
 from dace.codegen.exceptions import CodegenError
@@ -45,6 +46,17 @@ CPP_CAST = re.compile(r"\b(?:double|float|bool|char|short|int|long|unsigned|u?in
 IDENTITIES = {"+": "0", "*": "1", "min": "float('inf')", "max": "float('-inf')"}
 
 
+class Element(NamedTuple):
+    """The elements of a global array an access addresses: the index along each of its dims, a lane tensor along
+    the dims a tile spans, and the strides of the array. A DSL that takes pointers flattens them (:meth:`flat`)."""
+
+    indices: list[str]
+    strides: list[str]
+
+    def flat(self) -> str:
+        return " + ".join(f"({index}) * {stride}" for index, stride in zip(self.indices, self.strides))
+
+
 class Dialect:
     """What one tile DSL spells its own way. ``dialect[name]`` is the DSL's function ``name``."""
 
@@ -67,10 +79,10 @@ class Dialect:
         """The index of each lane along ``dim``, broadcast over a tile of ``widths``."""
         raise NotImplementedError
 
-    def load(self, base: str, offsets: str, mask: str | None) -> str:
+    def load(self, base: str, at: "Element", mask: str | None) -> str:
         raise NotImplementedError
 
-    def store(self, base: str, offsets: str, value: str, mask: str | None) -> str:
+    def store(self, base: str, at: "Element", value: str, mask: str | None) -> str:
         raise NotImplementedError
 
     def cast(self, value: str, dtype: dtypes.typeclass) -> str:
@@ -93,8 +105,8 @@ class Dialect:
             raise CodegenError(f"Python backend: no tile scan combines with {op!r}")
         return f"{self[ops.PY_SCAN_OPS[op]]}({value}, 0)"
 
-    def atomic_add(self, base: str, offsets: str, value: str, mask: str | None) -> str:
-        """Add ``value`` to the elements at ``offsets``, atomically against the other programs."""
+    def atomic_add(self, base: str, at: "Element", value: str, mask: str | None) -> str:
+        """Add ``value`` to the elements ``at`` addresses, atomically against the other programs."""
         raise NotImplementedError
 
     def launch(self, kernel: str, grid: list[str], arrays: list[str], symbols: list[str]) -> str:
@@ -188,12 +200,12 @@ class KernelEmitter(Emitter):
         store = self.dialect.atomic_add if accumulates(edge.data) else self.dialect.store
         self.line(store(name, self.element_offset(desc, edge.data.subset), edge.src_conn, None))
 
-    def element_offset(self, desc: data.Data, subset) -> str:
-        """The offset of the one element ``subset`` reads; a kernel moves a global array one element at a time
+    def element_offset(self, desc: data.Data, subset) -> Element:
+        """The one element ``subset`` reads; a kernel moves a global array one element at a time
         outside tile nodes."""
         if subset.num_elements() != 1:
             raise CodegenError("Python backend: outside tile nodes a tile kernel moves one global element at a time")
-        return offset_of(desc, [expr(begin) for begin, _, _ in subset.ndrange()])
+        return element_at(desc, [expr(begin) for begin, _, _ in subset.ndrange()])
 
     def body(self, sdfg, node) -> str:
         # An inlined connector reads its array in the body, which the kernel spells as the dialect does
@@ -223,13 +235,10 @@ def accumulates(memlet) -> bool:
     return True
 
 
-def offset_of(desc: data.Data, indices: list[str]) -> str:
-    """The element offset of ``indices`` into ``desc``."""
-    terms = [
-        f"(({index}) + {expr(offset)}) * {expr(stride)}"
-        for index, offset, stride in zip(indices, desc.offset, desc.strides)
-    ]
-    return " + ".join(terms)
+def element_at(desc: data.Data, indices: list[str]) -> Element:
+    """The element at ``indices`` of ``desc``, with its index offset applied."""
+    shifted = [index if offset == 0 else f"{index} + {expr(offset)}" for index, offset in zip(indices, desc.offset)]
+    return Element(shifted, [expr(stride) for stride in desc.strides])
 
 
 class KernelAccesses(ast.NodeTransformer):
@@ -243,10 +252,10 @@ class KernelAccesses(ast.NodeTransformer):
             return node.value.id, self.sdfg.arrays[node.value.id]
         return None
 
-    def offset(self, node: ast.Subscript, desc: data.Data) -> str:
+    def offset(self, node: ast.Subscript, desc: data.Data) -> Element:
         index = node.slice
         indices = index.elts if isinstance(index, ast.Tuple) else [index]
-        return offset_of(desc, [ast.unparse(self.visit(i)) for i in indices])
+        return element_at(desc, [ast.unparse(self.visit(i)) for i in indices])
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         found = self.container(node)
@@ -366,17 +375,18 @@ class TileStatement:
             terms.append(self.input("_mask"))
         return " & ".join(terms) or None
 
-    def offsets(self, name: str, subset) -> str:
-        """The element offsets of the lanes of a window ``subset`` of the global array ``name``."""
+    def offsets(self, name: str, subset) -> Element:
+        """The elements of the lanes of a window ``subset`` of the global array ``name``: the dims of extent other
+        than 1 are the lanes of the tile, in order."""
         desc = self.sdfg.arrays[name]
-        widths, lane, terms = self.node.widths, 0, []
-        for (begin, end, step), stride, offset in zip(subset.ndrange(), desc.strides, desc.offset):
+        widths, lane, indices = self.node.widths, 0, []
+        for (begin, end, step), offset in zip(subset.ndrange(), desc.offset):
             index = expr(begin + offset)
             if (end - begin + 1) != 1:
-                index = f"({index} + {self.dialect.lane(widths, lane)} * {expr(step)})"
+                index = f"{index} + {self.dialect.lane(widths, lane)}" + ("" if step == 1 else f" * {expr(step)}")
                 lane += 1
-            terms.append(f"{index} * {expr(stride)}")
-        return " + ".join(terms)
+            indices.append(index)
+        return Element(indices, [expr(stride) for stride in desc.strides])
 
     def masked_copy(self) -> None:
         source, target = self.inputs["_cpy_in"], self.outputs["_cpy_out"]

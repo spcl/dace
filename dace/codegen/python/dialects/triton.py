@@ -2,7 +2,7 @@
 """Triton: a kernel takes pointers, a tile is a ``tl.tensor`` over ``tl.arange`` lanes."""
 
 from dace import dtypes
-from dace.codegen.python.kernel import Dialect
+from dace.codegen.python.kernel import Dialect, Element
 
 #: Imported by the generated module: Triton, its math library, the kernel spellings of the SymPy helpers and the
 #: pointer a CuPy array passes as (Triton takes any object with ``data_ptr()`` and a ``dtype``).
@@ -74,12 +74,13 @@ class Triton(Dialect):
             return lanes
         return f"{lanes}[{', '.join(':' if k == dim else 'None' for k in range(len(widths)))}]"
 
-    def load(self, base: str, offsets: str, mask: str | None) -> str:
-        return f"tl.load({base} + {offsets})" if mask is None else f"tl.load({base} + {offsets}, mask={mask}, other=0)"
+    def load(self, base: str, at: Element, mask: str | None) -> str:
+        pointers = f"{base} + {at.flat()}"
+        return f"tl.load({pointers})" if mask is None else f"tl.load({pointers}, mask={mask}, other=0)"
 
-    def store(self, base: str, offsets: str, value: str, mask: str | None) -> str:
+    def store(self, base: str, at: Element, value: str, mask: str | None) -> str:
         masked = "" if mask is None else f", mask={mask}"
-        return f"tl.store({base} + {offsets}, {value}{masked})"
+        return f"tl.store({base} + {at.flat()}, {value}{masked})"
 
     def cast_type(self, dtype: dtypes.typeclass) -> str:
         return f"tl.{ {dtypes.bool_: 'int1'}.get(dtype, dtype.to_string()) }"
@@ -102,9 +103,9 @@ class Triton(Dialect):
         combine = {"*": "tile_multiply", "max": "tile_maximum", "min": "tile_minimum"}.get(op)
         return f"tl.associative_scan({value}, 0, {combine})" if combine else super().scan(op, value)
 
-    def atomic_add(self, base: str, offsets: str, value: str, mask: str | None) -> str:
+    def atomic_add(self, base: str, at: Element, value: str, mask: str | None) -> str:
         masked = "" if mask is None else f", mask={mask}"
-        return f"tl.atomic_add({base} + {offsets}, {value}{masked})"
+        return f"tl.atomic_add({base} + {at.flat()}, {value}{masked})"
 
     def launch(self, kernel: str, grid: list[str], arrays: list[str], symbols: list[str]) -> str:
         args = [f"TritonPointer({name})" for name in arrays] + symbols
