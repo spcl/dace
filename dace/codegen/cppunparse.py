@@ -408,10 +408,13 @@ class CPPUnparser:
         self.write(runtime_call(name, [self.render(node) for node in arguments], types))
 
     def c_float_mod(self, op: ast.operator, left: ast.AST, right: ast.AST) -> bool:
-        """Whether the C dialect prints the C ``left % right`` as ``c_mod``: C has no ``%`` on floating point."""
+        """Whether C's ``left % right`` is printed as ``c_mod``: C has no ``%`` on floating point. Tasklet code does not
+        know its operand types here, so it always calls ``c_mod``, which is ``%`` on integers; a symbolic expression
+        has chosen its operators."""
+        if isinstance(op, ast.Mod) and not self.c_operators:
+            return True
         return (
             isinstance(op, ast.Mod)
-            and self.c_operators
             and cpf_lowering.standalone_c()
             and self.c_type(ast.BinOp(left=left, op=op, right=right)) in cpf_lowering.C_FLOATING_RANKS
         )
@@ -524,9 +527,7 @@ class CPPUnparser:
             types = (self.c_type(node.left), self.c_type(node.right))
             if any(dtype is None for dtype in types):
                 return None
-            return cpf_lowering.c_helper_dispatch(
-                "py_floor" if isinstance(node.op, ast.FloorDiv) else ("c_mod" if self.c_operators else "py_mod"), types
-            )
+            return cpf_lowering.c_helper_dispatch("py_floor" if isinstance(node.op, ast.FloorDiv) else "c_mod", types)
         elif isinstance(node, ast.BinOp) and not isinstance(node.op, ast.MatMult):
             operands = [node.left, node.right]
         elif isinstance(node, ast.IfExp):
@@ -1591,8 +1592,8 @@ class CPPUnparser:
     floored_functions = {ast.Mod: "PyMod", ast.FloorDiv: "PyFloor"}
 
     def _is_floored(self, op: ast.operator) -> bool:
-        """Python's ``%`` and ``//`` floor, except in a symbolic expression, which has chosen its operators."""
-        return isinstance(op, ast.FloorDiv) or (isinstance(op, ast.Mod) and not self.c_operators)
+        """``//`` floors; ``%`` is C's everywhere in an SDFG (Python's is spelled ``PyMod``)."""
+        return isinstance(op, ast.FloorDiv)
 
     def _is_nonnegative_integer(self, node: ast.AST) -> bool:
         """Whether ``node`` is an integer that is provably nonnegative: a literal or a variable of unsigned type."""

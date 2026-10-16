@@ -225,6 +225,12 @@ augassign_ops = {
     "BitAnd": "&",
 }
 
+
+def binop_expr(left: str, op: str, right: str) -> str:
+    """``left <op> right`` as tasklet code; Python's ``%`` is ``PyMod``, since a bare ``%`` in an SDFG is C's."""
+    return f"PyMod({left}, {right})" if op == "%" else f"{left} {op} {right}"
+
+
 # Augmented bitwise operators, by their emitted symbol. The augassign path builds its tasklet code
 # directly instead of going through the operator replacements, so it has to ask for the result type
 # itself to reject the operand combinations numpy rejects.
@@ -3359,7 +3365,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         map_range[adv_param] = adv_range
 
                     if op:
-                        out_memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
+                        out_memlet.wcr = LambdaProperty.from_string(f"lambda x, y: {binop_expr('x', op, 'y')}")
 
                     if boolarr is not None:
                         inp_memlet.dynamic = True
@@ -3382,7 +3388,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet = Memlet(data=target_name, subset=target_subset)
                     memlet.other_subset = op_subset
                     if op:
-                        memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
+                        memlet.wcr = LambdaProperty.from_string(f"lambda x, y: {binop_expr('x', op, 'y')}")
                     if isinstance(self.sdfg.arrays[target_name], data.Reference):
                         e = state.add_edge(op1, None, op2, "set", memlet)
                         # Align memlet to referenced array
@@ -3405,7 +3411,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     map_range[adv_param] = adv_range
 
                 if op:
-                    memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
+                    memlet.wcr = LambdaProperty.from_string(f"lambda x, y: {binop_expr('x', op, 'y')}")
                 if op_name:
                     inp_memlet = {"__inp": Memlet(f"{op_name}[{op_subset}]")}
                     tasklet_code += f"__out{output_suffix} = __inp"
@@ -3459,7 +3465,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_edge(r, None, tasklet, cname, memlet)
 
             if op:
-                out_memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
+                out_memlet.wcr = LambdaProperty.from_string(f"lambda x, y: {binop_expr('x', op, 'y')}")
 
             state.add_edge(tasklet, "__out", op2, None, out_memlet)
 
@@ -3633,7 +3639,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         in1_suffix = ""
 
-                    tasklet_code += f"__out{output_suffix} = __in1{in1_suffix} {op} __in2"
+                    tasklet_code += f"__out{output_suffix} = {binop_expr(f'__in1{in1_suffix}', op, '__in2')}"
                     state.add_mapped_tasklet(
                         state.label,
                         map_range,
@@ -3653,7 +3659,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet = Memlet.simple(wtarget_name, wtarget_subset)
                     memlet.other_subset = op_subset
                     if op is not None:
-                        memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
+                        memlet.wcr = LambdaProperty.from_string(f"lambda x, y: {binop_expr('x', op, 'y')}")
                         memlet.wcr_nonatomic = True
                     state.add_nedge(op1, op2, memlet)
             else:
@@ -3683,10 +3689,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if op_name:
                     inp_memlets = {"__in1": in1_memlet, "__in2": in2_memlet}
-                    tasklet_code += f"__out{output_suffix} = __in1{output_suffix} {op} __in2"
+                    tasklet_code += f"__out{output_suffix} = {binop_expr(f'__in1{output_suffix}', op, '__in2')}"
                 else:
                     inp_memlets = {"__in1": in1_memlet}
-                    tasklet_code += f"__out{output_suffix} = __in1{output_suffix} {op} {operand}"
+                    tasklet_code += f"__out{output_suffix} = {binop_expr(f'__in1{output_suffix}', op, operand)}"
 
                 inp_memlets.update(input_memlets)
 
@@ -3708,7 +3714,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if op_name:
                 op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
                 inp_conns = {"__in1", "__in2"}
-                tasklet_code += f"__out = __in1 {op} __in2"
+                tasklet_code += f"__out = {binop_expr('__in1', op, '__in2')}"
             else:
                 inp_conns = {"__in1"}
                 tasklet_code += f"__out = __in1 {op} {operand}"
@@ -4340,7 +4346,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # indirection edge.
                 with_wcr = False
                 if op and not independent:
-                    memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
+                    memlet.wcr = LambdaProperty.from_string(f"lambda x, y: {binop_expr('x', op, 'y')}")
                     with_wcr = True
                     # WCR not needed in the assignment edge any longer.
                     op = None
@@ -5353,6 +5359,10 @@ class ProgramVisitor(ExtNodeVisitor):
         state.add_edge(tasklet, out_conn, ws, None, Memlet(arr_name))
 
     def visit_Call(self, node: ast.Call, create_callbacks=False):
+        # Python's ``%``, rewritten by ModuloConverter
+        if isinstance(node.func, ast.Name) and node.func.id == "PyMod" and len(node.args) == 2 and not node.keywords:
+            binop = ast.copy_location(ast.BinOp(left=node.args[0], op=ast.Mod(), right=node.args[1]), node)
+            return self._visit_op(binop, node.args[0], node.args[1])
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
