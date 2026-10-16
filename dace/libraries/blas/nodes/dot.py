@@ -39,9 +39,7 @@ class ExpandDotPure(ExpandTransformation):
         sdfg.add_array("_y", [n], dtype_y, strides=[stride_y], storage=desc_y.storage)
         sdfg.add_array("_result", [1], dtype_result, storage=desc_res.storage)
 
-        # Fortran DOT_PRODUCT(a, b) for complex a is SUM(CONJG(a)*b) = BLAS ?dotc; the
-        # default Dot models ?dotu (no conjugation). conj on a real type would promote to
-        # complex, so only apply it for complex operands.
+        # ?dotc conjugates _x; conj of a real operand would promote it to complex
         if node.conjugate and desc_x.dtype.is_complex():
             mul_program = "__out = conj(__x) * __y"
         else:
@@ -50,20 +48,10 @@ class ExpandDotPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if dace.dtypes.can_access(dace.dtypes.ScheduleType.CPU_Multicore, desc_res.storage):
-            # A bare tasklet: a one-iteration map would fork a thread team to write a single scalar
-            init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
-            init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
-        else:
-            # A result in device memory is initialized by a one-iteration map, which is scheduled on the device
-            init_state.add_mapped_tasklet(
-                "_dot_init",
-                {"__i_unused": "0:1"},
-                {},
-                "_out = 0",
-                {"_out": dace.Memlet("_result[0]")},
-                external_edges=True,
-            )
+        # Initialization map
+        init_state.add_mapped_tasklet(
+            "_i_dotnit", {"__i_unused": "0:1"}, {}, "_out = 0", {"_out": dace.Memlet("_result[0]")}, external_edges=True
+        )
 
         # Multiplication map
         state.add_mapped_tasklet(
@@ -89,8 +77,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # A conjugated (?dotc) complex dot is not modelled by this cblas_?dot emission; route it
-        # to the pure conj expansion rather than silently emit an unconjugated ?dotu.
+        # This expansion emits ?dotu only
         if node.conjugate and desc_x.dtype.is_complex():
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
@@ -132,8 +119,7 @@ class ExpandDotCuBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # Conjugated (?dotc) complex dot is not emitted here; use the pure conj expansion
-        # rather than a silently unconjugated cublas ?dotu.
+        # This expansion emits ?dotu only
         if node.conjugate and desc_x.dtype.is_complex():
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 

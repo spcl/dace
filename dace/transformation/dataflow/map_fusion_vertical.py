@@ -838,9 +838,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     # An ordering edge someone routed through a data connector describes no write.
                     if final_producer_edge.data.is_empty():
                         continue
-                    # The leaves of a WRITE tree are oriented `producer -> MapExit`, so the
-                    #  producing node is `.src`; `.dst` is always a scope node (which made this
-                    #  guard dead code and let a rank mismatch assert inside `apply()` instead).
                     final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
@@ -1941,7 +1938,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         If `scope_node` is a `MapEntry` it will operate on the set of incoming edges
         and if it is an `MapExit` on the set of outgoing edges. The function will
         then determine all access nodes that have a connection through these edges
-        to the scope nodes (edges that does not lead to access nodes are ignored).
+        to the scope nodes, edges that does not lead to access nodes or are empty are ignored.
         The function returns a set that contains all access nodes that were found.
         It is important that this set will also contain views.
 
@@ -1958,10 +1955,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         else:
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
+        # An empty Memlet only orders the node against the scope, it accesses nothing
         access_set: set[nodes.AccessNode] = {
-            node
-            for node in map(other_node, (e for e in get_edges(scope_node) if not e.data.is_empty()))
-            if isinstance(node, nodes.AccessNode)
+            other_node(edge)
+            for edge in get_edges(scope_node)
+            if not (edge.data.is_empty() or not isinstance(other_node(edge), nodes.AccessNode))
         }
 
         return access_set
