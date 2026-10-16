@@ -246,8 +246,13 @@ class ExpandGemmPure(ExpandTransformation):
         window_a, strides_a, index_a = _operand_window(edge_a, outer_array_a, shape_a, strides_a)
         window_b, strides_b, index_b = _operand_window(edge_b, outer_array_b, shape_b, strides_b)
         window_c, strides_c, index_c = _operand_window(edge_c, outer_array_c, shape_c, strides_c)
-        _, array_a = sdfg.add_array("_a", window_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
-        _, array_b = sdfg.add_array("_b", window_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        # The operands' own typeclasses: ``add_array`` maps only numpy's scalar types, not ``ml_dtypes``' bfloat16.
+        _, array_a = sdfg.add_array(
+            "_a", window_a, outer_array_a.dtype, strides=strides_a, storage=outer_array_a.storage
+        )
+        _, array_b = sdfg.add_array(
+            "_b", window_b, outer_array_b.dtype, strides=strides_b, storage=outer_array_b.storage
+        )
         _, array_c = sdfg.add_array("_c", window_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         # Runtime coefficients: a wired ``_alpha`` / ``_beta`` scalar connector is added as a [1]
