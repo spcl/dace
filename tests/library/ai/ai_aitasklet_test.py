@@ -9,9 +9,11 @@ quietly fail to do so are specific and worth pinning down.
 """
 
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 
 import numpy as np
@@ -20,6 +22,7 @@ import pytest
 import dace
 from dace import nodes
 from dace.libraries.ai.nodes import AITasklet
+from tests.library.ai.ai_test_utils import offline
 
 needs_compiler = pytest.mark.skipif(
     shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler"
@@ -148,4 +151,9 @@ def test_an_unresolvable_classpath_does_not_crash_the_load():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        test_it_generates_code_and_runs()
+        test_it_round_trips_as_itself(pathlib.Path(tempfile.mkdtemp()))
+        test_a_fresh_process_can_load_it(pathlib.Path(tempfile.mkdtemp()))
+        test_a_plain_tasklet_is_unaffected(pathlib.Path(tempfile.mkdtemp()))
+        test_an_unresolvable_classpath_does_not_crash_the_load()

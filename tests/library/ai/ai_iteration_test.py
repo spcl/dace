@@ -250,4 +250,5 @@ def test_a_performance_complaint_gets_a_vectorized_rewrite():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-m", "ai", "-v"])
+    test_feedback_revises_a_working_tasklet()
+    test_a_performance_complaint_gets_a_vectorized_rewrite()

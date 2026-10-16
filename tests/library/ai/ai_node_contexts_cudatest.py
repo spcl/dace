@@ -7,6 +7,9 @@ This is the end-to-end evidence that the context actually steers the model, rath
 producing one generic implementation regardless of where the node sits.
 """
 
+import pathlib
+import tempfile
+
 import numpy as np
 import pytest
 
@@ -18,7 +21,7 @@ from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.expansion import ExpandAI
 from dace.libraries.ai.nodes import AINode
 from tests.library.ai.ai_node_contexts_test import nested_gpu_scalar_sdfg
-from tests.library.ai.ai_test_utils import stub_provider
+from tests.library.ai.ai_test_utils import offline, stub_provider
 
 M = 32
 
@@ -206,5 +209,9 @@ def test_the_compile_check_builds_device_code(tmp_path):
 
 
 if __name__ == "__main__":
-    test_a_nested_gpu_scalar_expanded_early_runs()
-    pytest.main([__file__, "-m", "ai"])
+    test_host_cpu_context()
+    test_host_slot_over_gpu_arrays()
+    test_device_slot_inside_a_kernel()
+    with offline():
+        test_a_nested_gpu_scalar_expanded_early_runs()
+        test_the_compile_check_builds_device_code(pathlib.Path(tempfile.mkdtemp()))

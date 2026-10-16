@@ -9,7 +9,9 @@ to no generated tasklet must not land on any of them.
 """
 
 import contextlib
+import pathlib
 import shutil
+import tempfile
 
 import numpy as np
 import pytest
@@ -21,7 +23,7 @@ from dace.libraries.ai import diagnose
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-from tests.library.ai.ai_test_utils import stub_provider
+from tests.library.ai.ai_test_utils import offline, stub_provider
 
 GOOD = "_out = 2.0 * _in;"
 #: Fails the build: the name is not declared anywhere.
@@ -232,4 +234,12 @@ def test_the_line_index_covers_the_body_and_the_global(tmp_path):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        for culprit in ["n_A", "n_C"]:
+            test_a_diagnostic_lands_on_the_tasklet_that_caused_it(pathlib.Path(tempfile.mkdtemp()), culprit)
+        test_a_collision_implicates_both_tasklets(pathlib.Path(tempfile.mkdtemp()))
+        test_an_error_outside_generated_code_blames_nobody(pathlib.Path(tempfile.mkdtemp()))
+        test_build_repairs_and_succeeds(pathlib.Path(tempfile.mkdtemp()))
+        test_a_pinned_tasklet_is_left_alone(pathlib.Path(tempfile.mkdtemp()))
+        test_diagnostics_are_parsed_from_both_compiler_dialects()
+        test_the_line_index_covers_the_body_and_the_global(pathlib.Path(tempfile.mkdtemp()))

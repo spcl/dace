@@ -14,7 +14,7 @@ from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.expansion import ExpandAI
 from dace.libraries.ai.nodes import AINode
 from dace.sdfg import infer_types
-from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
+from tests.library.ai.ai_test_utils import offline, stub_provider, stub_provider_sequence
 
 pytestmark = pytest.mark.skipif(
     shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler"
@@ -185,8 +185,9 @@ def test_connector_types_match_codegen(shape):
 
 
 if __name__ == "__main__":
-    test_repair_loop_recovers_from_a_compile_error()
-    test_repair_loop_gives_up_after_the_configured_attempts()
-    test_the_compile_check_can_be_disabled()
-    for shape in sorted(CONNECTOR_SHAPES):
-        test_connector_types_match_codegen(shape)
+    with offline():
+        test_repair_loop_recovers_from_a_compile_error()
+        test_repair_loop_gives_up_after_the_configured_attempts()
+        test_the_compile_check_can_be_disabled()
+        for shape in sorted(CONNECTOR_SHAPES):
+            test_connector_types_match_codegen(shape)

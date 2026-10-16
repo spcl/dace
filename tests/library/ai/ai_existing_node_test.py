@@ -45,4 +45,4 @@ def test_external_library_node_expands_with_ai():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-m", "ai"])
+    test_external_library_node_expands_with_ai()

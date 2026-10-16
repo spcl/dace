@@ -9,6 +9,8 @@ the point of this API.
 import io
 import json
 import os
+import pathlib
+import tempfile
 
 import numpy as np
 import pytest
@@ -19,6 +21,7 @@ from dace.libraries import ai
 from dace.libraries.ai import backend, exchange
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode, AITasklet
+from tests.library.ai.ai_test_utils import offline
 
 
 def _reply(code: str) -> str:
@@ -201,4 +204,5 @@ def test_exchange_paths_are_keyed_by_prompt_content(tmp_path):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        test_exchange_paths_are_keyed_by_prompt_content(pathlib.Path(tempfile.mkdtemp()))

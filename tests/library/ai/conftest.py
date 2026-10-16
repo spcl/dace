@@ -3,7 +3,7 @@
 
 import pytest
 
-import dace
+from tests.library.ai.ai_test_utils import offline
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +16,5 @@ def isolated_build_folder(request, tmp_path):
         yield
         return
 
-    with dace.config.set_temporary("ai", "sessions", value=False):
-        with dace.config.set_temporary("ai", "cache", value=False):
-            with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-                yield
+    with offline(str(tmp_path)):
+        yield

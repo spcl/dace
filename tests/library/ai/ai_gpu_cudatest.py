@@ -66,4 +66,4 @@ def test_gpu_microkernel():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-m", "ai and gpu"])
+    test_gpu_microkernel()

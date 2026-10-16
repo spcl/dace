@@ -17,6 +17,7 @@ from dace.libraries.ai.nodes import AINode
 from dace.libraries.ai.prompts import build_user_prompt
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
+from tests.library.ai.ai_test_utils import offline
 
 DESCRIPTION = "Copy one element, doubling it."
 
@@ -315,13 +316,14 @@ def test_a_view_chain_is_described_by_the_nearest_view():
 
 
 if __name__ == "__main__":
-    test_a_stepped_subset_is_strided_and_not_contiguous()
-    test_a_view_chain_is_described_by_the_nearest_view()
-    test_nesting_walk_crosses_maps_loops_and_nested_sdfgs()
-    test_symbol_remapping_chain_is_recorded()
-    test_device_level_is_detected_through_nested_sdfgs()
-    test_connectors_and_descriptors_are_collected()
-    test_prompt_contains_the_whole_hierarchy()
-    test_default_in_the_slot_requires_inference(dtypes.StorageType.Default, dtypes.ScheduleType.CPU_Multicore)
-    test_default_in_the_slot_requires_inference(dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.Default)
-    test_host_code_cannot_dereference_gpu_memory()
+    with offline():
+        test_a_stepped_subset_is_strided_and_not_contiguous()
+        test_a_view_chain_is_described_by_the_nearest_view()
+        test_nesting_walk_crosses_maps_loops_and_nested_sdfgs()
+        test_symbol_remapping_chain_is_recorded()
+        test_device_level_is_detected_through_nested_sdfgs()
+        test_connectors_and_descriptors_are_collected()
+        test_prompt_contains_the_whole_hierarchy()
+        test_default_in_the_slot_requires_inference(dtypes.StorageType.Default, dtypes.ScheduleType.CPU_Multicore)
+        test_default_in_the_slot_requires_inference(dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.Default)
+        test_host_code_cannot_dereference_gpu_memory()

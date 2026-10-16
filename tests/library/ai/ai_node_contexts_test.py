@@ -17,7 +17,7 @@ from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.nodes import AINode
 from dace.libraries.ai.prompts import build_user_prompt
 from dace.libraries.blas.nodes.gemm import Gemm
-from tests.library.ai.ai_test_utils import stub_provider
+from tests.library.ai.ai_test_utils import offline, stub_provider
 
 M = 8
 
@@ -218,9 +218,10 @@ def test_a_nested_container_takes_the_outer_storage(declared):
 
 
 if __name__ == "__main__":
-    test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.Default)
-    test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.CPU_Heap)
-    test_capabilities_differ_by_context()
-    test_storage_reaches_the_connectors()
-    test_prompts_are_pairwise_distinct()
-    test_each_context_is_generated_independently()
+    with offline():
+        test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.Default)
+        test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.CPU_Heap)
+        test_capabilities_differ_by_context()
+        test_storage_reaches_the_connectors()
+        test_prompts_are_pairwise_distinct()
+        test_each_context_is_generated_independently()

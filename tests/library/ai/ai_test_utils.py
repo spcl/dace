@@ -2,8 +2,10 @@
 """Helpers shared by the tests of the AI library node expansion."""
 
 import contextlib
+import tempfile
 from collections.abc import Callable
 
+import dace
 from dace.libraries.ai import backend
 
 
@@ -87,3 +89,16 @@ def prompt_of(provider: StubProvider) -> str:
     :return: The rendered user prompt.
     """
     return provider.calls[0][0]["content"]
+
+
+@contextlib.contextmanager
+def offline(build_folder: str | None = None):
+    """
+    Runs with sessions and the answer cache off, in a temporary build folder root.
+
+    :param build_folder: The build folder root, or ``None`` for a new temporary directory.
+    """
+    with dace.config.set_temporary("ai", "sessions", value=False):
+        with dace.config.set_temporary("ai", "cache", value=False):
+            with dace.config.set_temporary("default_build_folder", value=build_folder or tempfile.mkdtemp()):
+                yield

@@ -2,6 +2,8 @@
 """Tests for library environments requested by the model and materialized on disk."""
 
 import os
+import pathlib
+import tempfile
 
 import pytest
 
@@ -14,7 +16,7 @@ from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
 from dace.libraries.ai.prompts import build_user_prompt
-from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
+from tests.library.ai.ai_test_utils import offline, stub_provider, stub_provider_sequence
 
 SPEC = EnvironmentSpec(
     name="TestFFT",
@@ -245,5 +247,17 @@ def test_the_prompt_separates_checked_from_unchecked_environments(monkeypatch):
 
 
 if __name__ == "__main__":
-    test_render_produces_every_required_field()
-    pytest.main([__file__])
+    with offline():
+        test_render_produces_every_required_field()
+        test_materialize_writes_and_registers(pathlib.Path(tempfile.mkdtemp()))
+        test_generated_environments_reload(pathlib.Path(tempfile.mkdtemp()))
+        test_broken_module_is_skipped(pathlib.Path(tempfile.mkdtemp()))
+        for name in ["my-env", "my env", "2fft", "class", ""]:
+            test_names_must_be_identifiers(pathlib.Path(tempfile.mkdtemp()), name)
+        test_a_name_cannot_be_redefined(pathlib.Path(tempfile.mkdtemp()))
+        test_a_conflicting_environment_is_sent_back_to_the_model(pathlib.Path(tempfile.mkdtemp()))
+        test_environment_dir_is_not_created_by_reading(pathlib.Path(tempfile.mkdtemp()))
+        test_requested_environment_reaches_the_generated_tasklet(pathlib.Path(tempfile.mkdtemp()))
+        test_an_existing_environment_can_be_named_instead_of_described(pathlib.Path(tempfile.mkdtemp()))
+        test_an_unknown_environment_reference_is_reported()
+        test_reused_environments_reach_the_tasklet(pathlib.Path(tempfile.mkdtemp()))

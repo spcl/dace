@@ -17,7 +17,7 @@ from dace import dtypes, nodes
 from dace.frontend.python.common import DaceSyntaxError
 from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
 from dace.libraries.ai.nodes import AINode
-from tests.library.ai.ai_test_utils import prompt_of, stub_provider
+from tests.library.ai.ai_test_utils import offline, prompt_of, stub_provider
 
 N = dace.symbol("N")
 M = 20
@@ -420,4 +420,33 @@ def test_calling_outside_a_program_explains_itself():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        test_call_becomes_an_ai_node()
+        test_keyword_inputs_name_their_connectors()
+        test_it_can_be_imported_by_name()
+        test_connectors_keep_the_order_of_the_call()
+        test_positional_inputs_are_numbered()
+        test_connectors_read_and_write_the_given_containers()
+        test_output_is_allocated_from_the_first_input()
+        test_output_shape_and_type_can_be_given()
+        test_a_scalar_input_yields_a_scalar_output()
+        test_writing_into_an_existing_container()
+        test_several_outputs_are_numbered()
+        test_nodes_of_one_program_get_distinct_names()
+        test_the_node_can_be_named()
+        test_the_description_reaches_the_model()
+        test_it_compiles_and_runs()
+        test_it_runs_inside_a_map()
+        test_it_runs_writing_into_a_given_container()
+        test_symbols_do_not_have_to_be_passed()
+        test_the_generated_tasklet_is_kept_in_the_sdfg()
+        test_the_schedule_can_be_given()
+        test_a_missing_description_is_rejected()
+        test_a_non_string_description_is_rejected()
+        test_a_symbol_cannot_be_an_input()
+        test_the_output_cannot_be_described_twice()
+        test_the_same_container_cannot_be_written_twice()
+        test_a_container_cannot_name_the_node()
+        test_two_nodes_cannot_share_a_name()
+        test_an_output_cannot_be_inferred_without_inputs()
+        test_calling_outside_a_program_explains_itself()

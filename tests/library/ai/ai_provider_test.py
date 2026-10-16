@@ -11,6 +11,7 @@ import dace
 from dace.libraries.ai import backend
 from dace.libraries.ai import cache as ai_cache
 from dace.libraries.ai.exceptions import AIExpansionError
+from tests.library.ai.ai_test_utils import offline
 
 
 @contextlib.contextmanager
@@ -208,13 +209,14 @@ def test_missing_openai_key_is_a_credentials_error(monkeypatch):
 
 
 if __name__ == "__main__":
-    test_missing_sdk_points_at_the_extra()
-    test_missing_openai_sdk_points_at_its_own_extra()
-    test_unknown_provider_is_rejected()
-    test_manual_provider_needs_no_sdk_and_no_key()
-    test_credential_error_names_the_configured_variable()
-    test_response_schema_is_strict_mode_shaped()
-    test_empty_response_is_rejected()
-    test_unknown_field_is_rejected()
-    test_spec_round_trips_every_field()
-    test_cache_key_depends_on_request_settings()
+    with offline():
+        test_missing_sdk_points_at_the_extra()
+        test_missing_openai_sdk_points_at_its_own_extra()
+        test_unknown_provider_is_rejected()
+        test_manual_provider_needs_no_sdk_and_no_key()
+        test_credential_error_names_the_configured_variable()
+        test_response_schema_is_strict_mode_shaped()
+        test_empty_response_is_rejected()
+        test_unknown_field_is_rejected()
+        test_spec_round_trips_every_field()
+        test_cache_key_depends_on_request_settings()

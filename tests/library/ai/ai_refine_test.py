@@ -8,7 +8,9 @@ when it is most often wanted.
 """
 
 import contextlib
+import pathlib
 import shutil
+import tempfile
 
 import numpy as np
 import pytest
@@ -20,7 +22,7 @@ from dace.libraries.ai import iterate
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode, AITasklet
-from tests.library.ai.ai_test_utils import stub_provider
+from tests.library.ai.ai_test_utils import offline, stub_provider
 
 V1 = "_out = 2.0 * _in;"
 V2 = "_out = _in + _in;"
@@ -327,4 +329,18 @@ def test_provenance_of_a_plain_tasklet_is_absent():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        test_expansion_leaves_a_refinable_slot(pathlib.Path(tempfile.mkdtemp()))
+        test_refine_continues_the_conversation(pathlib.Path(tempfile.mkdtemp()))
+        test_the_refined_tasklet_still_runs(pathlib.Path(tempfile.mkdtemp()))
+        test_refine_works_after_a_save_and_load(pathlib.Path(tempfile.mkdtemp()))
+        test_a_failed_refinement_leaves_the_working_tasklet_alone(pathlib.Path(tempfile.mkdtemp()))
+        test_history_and_rollback(pathlib.Path(tempfile.mkdtemp()))
+        test_rollback_rejects_a_round_with_no_code(pathlib.Path(tempfile.mkdtemp()))
+        test_a_hand_edit_is_carried_into_the_next_round(pathlib.Path(tempfile.mkdtemp()))
+        test_pinning_refuses_regeneration(pathlib.Path(tempfile.mkdtemp()))
+        test_pinning_survives_a_round_trip(pathlib.Path(tempfile.mkdtemp()))
+        test_selecting_among_several_slots(pathlib.Path(tempfile.mkdtemp()))
+        test_refining_a_plain_sdfg_says_so()
+        test_refine_without_feedback_does_not_return_the_cached_answer(pathlib.Path(tempfile.mkdtemp()))
+        test_provenance_of_a_plain_tasklet_is_absent()

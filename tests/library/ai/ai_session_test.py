@@ -10,7 +10,9 @@ resumes this conversation rather than starting a new one.
 import glob
 import json
 import os
+import pathlib
 import shutil
+import tempfile
 
 import pytest
 
@@ -21,7 +23,7 @@ from dace.libraries.ai import session as ai_session
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
+from tests.library.ai.ai_test_utils import offline, stub_provider, stub_provider_sequence
 
 GOOD = "_out = 2.0 * _in;"
 BAD = "_out = this_symbol_does_not_exist(_in);"
@@ -205,4 +207,8 @@ def test_nothing_is_printed_by_default(capsys):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        test_a_successful_expansion_is_recorded_in_full(pathlib.Path(tempfile.mkdtemp()))
+        test_every_repair_attempt_is_recorded(pathlib.Path(tempfile.mkdtemp()))
+        test_a_failed_expansion_keeps_its_session_and_says_where(pathlib.Path(tempfile.mkdtemp()))
+        test_sessions_can_be_turned_off(pathlib.Path(tempfile.mkdtemp()))

@@ -10,6 +10,8 @@ from CI.
 
 import ctypes.util
 import os
+import pathlib
+import tempfile
 
 import numpy as np
 import pytest
@@ -68,4 +70,4 @@ def test_generated_environment_calls_fftw(tmp_path):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-m", "ai"])
+    test_generated_environment_calls_fftw(pathlib.Path(tempfile.mkdtemp()))

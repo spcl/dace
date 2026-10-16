@@ -8,8 +8,8 @@ same question again costs money for an answer already in hand.
 
 import contextlib
 import os
-
-import pytest
+import pathlib
+import tempfile
 
 import dace
 from dace import nodes
@@ -18,7 +18,7 @@ from dace.libraries.ai import cache as ai_cache
 from dace.libraries.ai.backend import EnvironmentSpec, TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
-from tests.library.ai.ai_test_utils import stub_provider
+from tests.library.ai.ai_test_utils import offline, stub_provider
 
 CODE = "_out = 2.0 * _in;"
 
@@ -181,4 +181,11 @@ def test_an_unreadable_entry_is_ignored(tmp_path):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    with offline():
+        test_an_identical_prompt_is_not_asked_twice(pathlib.Path(tempfile.mkdtemp()))
+        test_a_cached_answer_round_trips_every_field(pathlib.Path(tempfile.mkdtemp()))
+        test_the_key_covers_the_model_and_the_prompt(pathlib.Path(tempfile.mkdtemp()))
+        test_a_different_context_is_asked_separately(pathlib.Path(tempfile.mkdtemp()))
+        test_a_cache_hit_needs_no_provider(pathlib.Path(tempfile.mkdtemp()))
+        test_caching_can_be_turned_off(pathlib.Path(tempfile.mkdtemp()))
+        test_an_unreadable_entry_is_ignored(pathlib.Path(tempfile.mkdtemp()))
