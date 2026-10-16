@@ -467,9 +467,22 @@ class OffloadToAccelerator(ppl.Pass):
                     other = edge.dst if edge.src is node else edge.src
                     if self.touches_device_code(scopes, other):
                         device.add(node.data)
+                    elif self.is_container_copy(sdfg, node, other):
+                        continue
                     elif not fallback and not hybrid:
                         host.add(node.data)
         return host, device, written
+
+    @staticmethod
+    def is_container_copy(sdfg: SDFG, node: nodes.AccessNode, other: nodes.Node) -> bool:
+        """Whether the edge between ``node`` and ``other`` copies one container into another: no code runs
+        on either side, so the copy says nothing about where either container belongs (a ``return x``
+        copied into ``__return``). A view is an alias, not a copy, and still counts as a use."""
+        return (
+            isinstance(other, nodes.AccessNode)
+            and not isinstance(sdfg.arrays.get(node.data), data.View)
+            and not isinstance(sdfg.arrays.get(other.data), data.View)
+        )
 
     def stage_on_host(self, sdfg: SDFG, name: str, write_back: bool) -> bool:
         """Give ``name`` a host copy, point every use at it, and copy at the SDFG's boundary.
