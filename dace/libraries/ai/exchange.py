@@ -19,11 +19,9 @@ response saved for one is found by the other.
 import hashlib
 import json
 import os
-import tempfile
 import warnings
 
-from dace.config import Config
-from dace.libraries.ai import backend, prompts
+from dace.libraries.ai import backend, cache, prompts
 from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.nodes import AITasklet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -43,11 +41,11 @@ def prompt_directory(directory: str | None = None) -> str:
     """
     Returns the directory prompts are written to and responses are read from, creating it.
 
-    :param directory: An explicit directory, or ``None`` for ``ai.manual_dir`` (by default a
-                      ``dace_ai_prompts`` directory under the system temporary directory).
+    :param directory: An explicit directory, or ``None`` for ``<build folder root>/ai-prompts``.
     :return: The directory.
     """
-    directory = directory or Config.get("ai", "manual_dir") or os.path.join(tempfile.gettempdir(), "dace_ai_prompts")
+    if directory is None:
+        return cache.storage_dir("prompts", create=True)
     os.makedirs(directory, exist_ok=True)
     return directory
 
@@ -163,7 +161,7 @@ def generate_prompts(sdfg: SDFG, directory: str | None = None) -> list[str]:
     as ``<node name>_<hash>_response.json``, for :func:`read_prompt_responses` to pick up.
 
     :param sdfg: The SDFG, including nested SDFGs.
-    :param directory: Where to write the prompts; ``ai.manual_dir`` if not given.
+    :param directory: Where to write the prompts; ``<build folder root>/ai-prompts`` if not given.
     :return: The paths of the prompt files written.
     """
     directory = prompt_directory(directory)
@@ -186,7 +184,7 @@ def read_prompt_responses(sdfg: SDFG, directory: str | None = None) -> list[AITa
     are left as library nodes, and are listed in a warning.
 
     :param sdfg: The SDFG, including nested SDFGs.
-    :param directory: Where the responses are; ``ai.manual_dir`` if not given.
+    :param directory: Where the responses are; ``<build folder root>/ai-prompts`` if not given.
     :return: The tasklets that replaced the nodes.
     :raises AIExpansionError: If a response cannot be interpreted or does not compile.
     """

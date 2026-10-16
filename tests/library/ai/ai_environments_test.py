@@ -52,10 +52,10 @@ def test_render_produces_every_required_field():
 
 
 def test_materialize_writes_and_registers(tmp_path):
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         env = ai_environments.materialize(SPEC)
 
-        path = tmp_path / "dace_ai_env_testfft.py"
+        path = tmp_path / "ai-environments" / "dace_ai_env_testfft.py"
         assert path.exists(), "the environment was not written to disk"
 
         assert env._dace_library_environment
@@ -68,7 +68,7 @@ def test_materialize_writes_and_registers(tmp_path):
 
 
 def test_generated_environments_reload(tmp_path):
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         ai_environments.materialize(SPEC)
         # Forget the registration, as a fresh interpreter would
         registry = dace.library._DACE_REGISTERED_ENVIRONMENTS
@@ -83,8 +83,9 @@ def test_generated_environments_reload(tmp_path):
 
 
 def test_broken_module_is_skipped(tmp_path):
-    (tmp_path / "dace_ai_env_broken.py").write_text("this is not valid python !!!\n")
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    (tmp_path / "ai-environments").mkdir()
+    (tmp_path / "ai-environments" / "dace_ai_env_broken.py").write_text("this is not valid python !!!\n")
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         # A hand-edited or truncated module must not make importing DaCe fail
         assert ai_environments.load_generated_environments() == []
 
@@ -92,14 +93,14 @@ def test_broken_module_is_skipped(tmp_path):
 @pytest.mark.parametrize("name", ["my-env", "my env", "2fft", "class", ""])
 def test_names_must_be_identifiers(tmp_path, name):
     spec = EnvironmentSpec(name=name, headers=["x.h"])
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         with pytest.raises(ai_environments.EnvironmentConflict, match="not a valid identifier"):
             ai_environments.materialize(spec)
     assert list(tmp_path.iterdir()) == []
 
 
 def test_a_name_cannot_be_redefined(tmp_path):
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         first = ai_environments.materialize(SPEC)
         # The same definition is reused
         assert ai_environments.materialize(SPEC.model_copy()).full_class_path() == first.full_class_path()
@@ -110,7 +111,7 @@ def test_a_name_cannot_be_redefined(tmp_path):
                 ai_environments.materialize(changed)
 
     # The existing definition is left alone
-    assert "'fftw3f'" not in (tmp_path / "dace_ai_env_testfft.py").read_text()
+    assert "'fftw3f'" not in (tmp_path / "ai-environments" / "dace_ai_env_testfft.py").read_text()
 
 
 def test_a_conflicting_environment_is_sent_back_to_the_model(tmp_path):
@@ -125,7 +126,7 @@ def test_a_conflicting_environment_is_sent_back_to_the_model(tmp_path):
 
     bad = TaskletSpec(code="_out = _in;", environments=[SPEC.model_copy(update={"name": "Test-FFT"})])
     good = TaskletSpec(code="_out = _in;", environments=[SPEC])
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         with dace.config.set_temporary("ai", "verify", value=False):
             with stub_provider_sequence([bad, good]) as provider:
                 node.expand(state, "ai")
@@ -139,8 +140,8 @@ def test_a_conflicting_environment_is_sent_back_to_the_model(tmp_path):
 
 def test_environment_dir_is_not_created_by_reading(tmp_path):
     target = tmp_path / "does_not_exist_yet"
-    with dace.config.set_temporary("ai", "environment_dir", value=str(target)):
-        assert ai_environments.environment_dir() == str(target)
+    with dace.config.set_temporary("default_build_folder", value=str(target)):
+        assert ai_environments.environment_dir() == str(target / "ai-environments")
         assert not target.exists(), "reading the environment directory must not create it"
         ai_environments.load_generated_environments()
         assert not target.exists()
@@ -157,7 +158,7 @@ def test_requested_environment_reaches_the_generated_tasklet(tmp_path):
     state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0]"))
 
     spec = TaskletSpec(code="_out = _in;", environments=[SPEC])
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         with dace.config.set_temporary("ai", "verify", value=False):
             with stub_provider(spec):
                 node.expand(state, "ai")
@@ -171,12 +172,12 @@ def test_requested_environment_reaches_the_generated_tasklet(tmp_path):
 
 def test_an_existing_environment_can_be_named_instead_of_described(tmp_path):
     """Reusing an installed environment must not write anything to disk."""
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         env = ai_environments.materialize(SPEC)
     path = env.full_class_path()
 
     other = tmp_path / "nothing_written_here"
-    with dace.config.set_temporary("ai", "environment_dir", value=str(other)):
+    with dace.config.set_temporary("default_build_folder", value=str(other)):
         assert ai_environments.resolve_installed([path]) == [env]
         # Naming the same environment twice attaches it once
         spec = TaskletSpec(code="_out = _in;", use_environments=[path, path])
@@ -193,7 +194,7 @@ def test_an_unknown_environment_reference_is_reported():
 
 
 def test_reused_environments_reach_the_tasklet(tmp_path):
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         env = ai_environments.materialize(SPEC)
 
     sdfg = dace.SDFG("ai_env_reuse")

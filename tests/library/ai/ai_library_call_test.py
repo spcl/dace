@@ -44,12 +44,12 @@ def test_generated_environment_calls_fftw(tmp_path):
     state.add_edge(state.add_read("inp"), None, node, "_inp", dace.Memlet(f"inp[0:{N}]"))
     state.add_edge(node, "_out", state.add_write("out"), None, dace.Memlet(f"out[0:{N}]"))
 
-    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+    with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
         node.expand(state, "ai")
 
         # The model had to request an environment, and it was written where it can be read and
         # re-registered in a later session
-        written = [f for f in os.listdir(tmp_path) if f.startswith(ai_environments.MODULE_PREFIX)]
+        written = [f for f in os.listdir(tmp_path / "ai-environments") if f.startswith(ai_environments.MODULE_PREFIX)]
         assert written, "no environment module was generated for the FFTW dependency"
 
         tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))

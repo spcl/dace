@@ -42,7 +42,7 @@ def sessions_in(tmp_path):
     :param tmp_path: The pytest temporary directory.
     """
     with dace.config.set_temporary("ai", "sessions", value=True):
-        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "verify", value=False):
                 # With debugprint on, DaCe streams the compiler output live and leaves it out of
                 # the exception, so a test that reads diagnostics from the exception has to turn it

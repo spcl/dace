@@ -8,6 +8,7 @@ the probe and then fails the real build, and because the next round of work on t
 this conversation rather than starting a new one.
 """
 
+import glob
 import json
 import os
 import shutil
@@ -51,14 +52,17 @@ def _sdfg_and_node(name: str = "double"):
 
 def _only_session(root):
     """
-    Returns the single session directory written under a root.
+    Returns the single session directory written under a build folder root.
 
-    :param root: The configured session directory.
+    :param root: The build folder root.
     :return: A tuple of (path, decoded session.json).
     """
-    entries = sorted(os.listdir(root))
+    entries = sorted(
+        os.path.dirname(p)
+        for p in glob.glob(os.path.join(root, "ai-sessions", "**", ai_session.INDEX_NAME), recursive=True)
+    )
     assert len(entries) == 1, entries
-    path = os.path.join(root, entries[0])
+    path = entries[0]
     with open(os.path.join(path, ai_session.INDEX_NAME)) as fp:
         return path, json.load(fp)
 
@@ -68,13 +72,13 @@ def test_a_successful_expansion_is_recorded_in_full(tmp_path):
     spec = backend.parse_response(json.dumps({"code": GOOD, "notes": "because"}, indent=3))
 
     with dace.config.set_temporary("ai", "sessions", value=True):
-        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "verify", value=False):
                 with stub_provider(spec) as provider:
                     node.expand(state, "ai")
 
     path, index = _only_session(tmp_path)
-    assert index["id"] == "ai_session.double", "the session id must be derived from the SDFG and node names"
+    assert index["id"] == "ai_session/block/double", "the session id is the node's path in the SDFG"
     assert index["node_type"] == "AINode" and index["node_name"] == "double"
     assert len(index["rounds"]) == 1 and index["rounds"][0]["outcome"] == "expanded"
 
@@ -105,7 +109,7 @@ def test_every_repair_attempt_is_recorded(tmp_path):
     sdfg, state, node = _sdfg_and_node()
 
     with dace.config.set_temporary("ai", "sessions", value=True):
-        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with stub_provider_sequence([TaskletSpec(code=BAD), TaskletSpec(code=GOOD)]):
                 node.expand(state, "ai")
 
@@ -131,7 +135,7 @@ def test_a_failed_expansion_keeps_its_session_and_says_where(tmp_path):
     sdfg, state, node = _sdfg_and_node()
 
     with dace.config.set_temporary("ai", "sessions", value=True):
-        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "max_repair_attempts", value=0):
                 with stub_provider(TaskletSpec(code=BAD)):
                     with pytest.raises(AIExpansionError) as info:
@@ -148,7 +152,7 @@ def test_sessions_can_be_turned_off(tmp_path):
     sdfg, state, node = _sdfg_and_node()
 
     with dace.config.set_temporary("ai", "sessions", value=False):
-        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "verify", value=False):
                 with stub_provider(TaskletSpec(code=GOOD)):
                     node.expand(state, "ai")

@@ -14,7 +14,7 @@ unlikely.
 This is separate from the generated tasklet living in the SDFG: that is what makes one expanded
 SDFG reproducible, while this is what keeps a *re-expansion* from paying twice.
 
-Controlled by ``ai.cache`` and located by ``ai.cache_dir``.
+Controlled by ``ai.cache``; stored in ``<build folder root>/ai-cache``.
 """
 
 import datetime
@@ -25,6 +25,7 @@ import warnings
 
 from dace.config import Config
 from dace.libraries.ai import backend
+from dace.sdfg import sdfg as sdfg_module
 
 
 def enabled() -> bool:
@@ -34,22 +35,28 @@ def enabled() -> bool:
     return Config.get_bool("ai", "cache")
 
 
-def cache_dir(create: bool = False) -> str:
+def storage_dir(kind: str, create: bool = False) -> str:
     """
-    Returns the directory holding cached answers.
+    Returns a directory of the AI library under the DaCe build folder root.
 
+    A hyphen cannot occur in an SDFG name, so these directories cannot clash with a program's build folder.
+
+    :param kind: ``cache``, ``environments``, ``sessions`` or ``prompts``.
     :param create: If True, the directory is created when it does not exist.
-    :return: An absolute path. Defaults to ``~/.dace/ai_cache`` when ``ai.cache_dir`` is empty.
+    :return: ``<build folder root>/ai-<kind>``.
     """
-    configured = Config.get("ai", "cache_dir")
-    path = (
-        os.path.expanduser(os.path.expandvars(configured))
-        if configured
-        else os.path.join(os.path.expanduser("~"), ".dace", "ai_cache")
-    )
+    path = os.path.join(sdfg_module.build_folder_root(), f"ai-{kind}")
     if create:
         os.makedirs(path, exist_ok=True)
     return path
+
+
+def cache_dir(create: bool = False) -> str:
+    """
+    :param create: If True, the directory is created when it does not exist.
+    :return: The directory holding cached answers.
+    """
+    return storage_dir("cache", create)
 
 
 def key(system: str, messages: list[dict[str, str]], salt: str = "") -> str:

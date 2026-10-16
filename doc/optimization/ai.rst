@@ -121,7 +121,7 @@ only when an expansion actually runs, so none of them is a dependency of DaCe it
     DACE_ai_provider=manual python my_program.py
 
 The ``manual`` provider is also the way to *read* a prompt: it writes the full text to
-:envvar:`ai.manual_dir` and waits for the model's JSON reply on standard input, or for it to be
+``<build folder root>/ai-prompts`` and waits for the model's JSON reply on standard input, or for it to be
 saved to the response file it names. A saved reply is reused on later runs, so the same program can
 be re-run, and re-compiled, without being asked again.
 
@@ -226,7 +226,7 @@ or be left out when the SDFG holds exactly one generated tasklet.
 Two things make this work after the fact. The generated tasklet is an
 :class:`~dace.libraries.ai.nodes.ai_tasklet.AITasklet`, which carries the serialized library node
 it replaced, so the node can be put back and expanded again. And the conversation lives in a
-session directory on disk (:envvar:`ai.session_dir`) rather than in the process that started it.
+session directory on disk (``<build folder root>/ai-sessions``) rather than in the process that started it.
 Both survive saving the SDFG and loading it days later, which is when this is most often wanted.
 Refinement is atomic: if the new round fails to generate or to verify, the tasklet that was
 working a moment ago is put back exactly as it was. If you edited the code by hand, the next round
@@ -235,13 +235,13 @@ is told so and revises *your* version rather than silently discarding it.
 Caching and reproducibility
 ---------------------------
 
-Every answer is stored on disk (:envvar:`ai.cache`, :envvar:`ai.cache_dir`), keyed by the provider,
-the model, the effort setting and the entire conversation. Re-expanding an unchanged node is then
+Every answer is stored on disk (:envvar:`ai.cache`, in ``<build folder root>/ai-cache``), keyed
+by the provider, endpoint, model, effort, token limit, response schema and the entire conversation. Re-expanding an unchanged node is then
 free, and two identical questions asked from different SDFGs share one entry. Any change to the
 node, its context or the model changes the key and asks again. Deleting the cache only costs
 requests.
 
-Sessions (:envvar:`ai.sessions`, :envvar:`ai.session_dir`) are the other half: one directory per
+Sessions (:envvar:`ai.sessions`) are the other half: one directory per
 slot, holding the prompts, the answers, the probe source and the compiler diagnostics of every
 round. An expansion is a paid, non-reproducible call whose result is baked into an SDFG, so this
 material is kept by default -- it is what ``history`` and ``rollback`` read, and what explains a
@@ -257,7 +257,7 @@ Calling external libraries
 An answer may ask for a **DaCe environment**: headers, CMake packages and libraries, and the
 initialization and finalization code for a resource whose lifetime spans calls -- an FFTW plan, a
 cuBLAS handle. DaCe renders each request into a real Python module under
-:envvar:`ai.environment_dir` and imports it, so the environment is a plain, readable file that can
+``<build folder root>/ai-environments`` and imports it, so the environment is a plain, readable file that can
 be edited or deleted. The directory is re-imported when :mod:`dace.libraries.ai` is first imported,
 which is how an SDFG expanded last week still resolves the environments its tasklets link against.
 
@@ -271,11 +271,11 @@ All entries live under the ``ai`` category of the configuration, and can be set 
 :class:`dace.config.Config`, or as ``DACE_ai_*`` environment variables (see :ref:`config`):
 
 * Provider and model: :envvar:`ai.provider`, :envvar:`ai.model`, :envvar:`ai.api_key_envvar`,
-  :envvar:`ai.effort`, :envvar:`ai.max_tokens`, :envvar:`ai.timeout`, :envvar:`ai.manual_dir`
+  :envvar:`ai.base_url`, :envvar:`ai.effort`, :envvar:`ai.max_tokens`, :envvar:`ai.timeout`
 * Prompting: :envvar:`ai.extra_instructions`
 * Verification: :envvar:`ai.verify`, :envvar:`ai.max_repair_attempts`
-* Storage: :envvar:`ai.cache`, :envvar:`ai.cache_dir`, :envvar:`ai.sessions`,
-  :envvar:`ai.session_dir`, :envvar:`ai.environment_dir`
+* Storage: :envvar:`ai.cache`, :envvar:`ai.sessions`. Everything is stored in ``ai-*`` directories
+  under the build folder root (:envvar:`default_build_folder`, ``.dacecache`` by default).
 
 A complete example
 ------------------

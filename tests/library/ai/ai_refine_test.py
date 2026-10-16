@@ -40,7 +40,7 @@ def iterating(tmp_path, verify=False):
     :param verify: Whether to run the probe compilation.
     """
     with dace.config.set_temporary("ai", "sessions", value=True):
-        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "verify", value=verify):
                 yield
 
@@ -86,7 +86,7 @@ def test_expansion_leaves_a_refinable_slot(tmp_path):
     slots = ai.sessions(sdfg)
     assert len(slots) == 1
     assert slots[0].name == "double"
-    assert slots[0].session == "ai_refine.double"
+    assert slots[0].session == "ai_refine/block/double"
     assert slots[0].round == 1
     assert not slots[0].pinned and not slots[0].edited
     assert isinstance(slots[0].tasklet, AITasklet)
@@ -297,7 +297,7 @@ def test_refine_without_feedback_does_not_return_the_cached_answer(tmp_path):
     sdfg, state, node = _build()
     with iterating(tmp_path):
         with dace.config.set_temporary("ai", "cache", value=True):
-            with dace.config.set_temporary("ai", "cache_dir", value=str(tmp_path / "cache")):
+            with dace.config.set_temporary("default_build_folder", value=str(tmp_path / "cache")):
                 _expand(sdfg, state, node)
                 with stub_provider(TaskletSpec(code=V2)) as provider:
                     ai.refine(sdfg, "double")

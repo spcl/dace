@@ -33,6 +33,7 @@ import pytest
 import dace
 import dace.libraries.ai as ai
 from dace import dtypes, nodes
+from dace.libraries.ai import cache as ai_cache
 from dace.libraries.ai.nodes import AINode
 from dace.libraries.ai.sysinfo import cpu_has_feature
 
@@ -73,26 +74,16 @@ once at the end. Use FMA instructions. Keep the result numerically equivalent.
 
 
 @pytest.fixture(autouse=True)
-def fresh_session(tmp_path, request):
+def fresh_session(request):
     """
-    Gives each run its own session directory, and says where it is.
+    Turns sessions on. They stay in the build folder root next to the answer cache, so that
+    re-running these tests still costs nothing; the assertions measure the rounds each run adds.
 
-    A session is keyed by SDFG and node name and is *resumed* when it already exists -- which is
-    the point of the feature, and would otherwise leave these tests accumulating rounds in
-    ``~/.dace/ai_sessions`` forever. The assertions do not depend on this: they measure the rounds
-    each run adds, so they hold even when ``DACE_ai_session_dir`` overrides this fixture, which a
-    DaCe environment variable always does (``dace/config.py`` consults the environment first).
-
-    The answer cache is deliberately left alone, so re-running these tests still costs nothing.
-
-    :param tmp_path: The pytest temporary directory.
-    :param request: The test being run, used to name the directory.
+    :param request: The test being run.
     """
-    directory = tmp_path / "sessions"
     with dace.config.set_temporary("ai", "sessions", value=True):
-        with dace.config.set_temporary("ai", "session_dir", value=str(directory)):
-            yield
-    print(f"\n[{request.node.name}] conversation written to {directory}")
+        yield
+    print(f"\n[{request.node.name}] conversation written under {ai_cache.storage_dir('sessions')}")
 
 
 def _square_sdfg() -> dace.SDFG:

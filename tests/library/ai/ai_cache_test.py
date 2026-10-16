@@ -32,7 +32,7 @@ def caching(tmp_path):
     :return: The directory the cache writes to.
     """
     with dace.config.set_temporary("ai", "cache", value=True):
-        with dace.config.set_temporary("ai", "cache_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "verify", value=False):
                 yield tmp_path
 
@@ -128,7 +128,7 @@ def test_a_different_context_is_asked_separately(tmp_path):
                 node.expand(state, "ai")
             assert len(provider.calls) == 1, "a differently shaped node reused another one's answer"
 
-        assert len(os.listdir(tmp_path)) == 2
+        assert len(os.listdir(tmp_path / "ai-cache")) == 2
 
 
 def test_a_cache_hit_needs_no_provider(tmp_path):
@@ -159,7 +159,7 @@ def test_a_cache_hit_needs_no_provider(tmp_path):
 
 def test_caching_can_be_turned_off(tmp_path):
     with dace.config.set_temporary("ai", "cache", value=False):
-        with dace.config.set_temporary("ai", "cache_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "verify", value=False):
                 for _ in range(2):
                     _, state, node = _sdfg_and_node()
@@ -173,7 +173,8 @@ def test_caching_can_be_turned_off(tmp_path):
 def test_an_unreadable_entry_is_ignored(tmp_path):
     with caching(tmp_path):
         key = ai_cache.key("system", [{"role": "user", "content": "prompt"}])
-        (tmp_path / f"{key}.json").write_text("{ this is not json")
+        (tmp_path / "ai-cache").mkdir()
+        (tmp_path / "ai-cache" / f"{key}.json").write_text("{ this is not json")
 
         # A corrupt or hand-edited entry costs a request, never a failed expansion
         assert ai_cache.lookup(key) is None

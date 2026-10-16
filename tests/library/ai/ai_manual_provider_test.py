@@ -42,8 +42,8 @@ def manual(tmp_path, monkeypatch):
     :return: The directory prompts and replies are exchanged through.
     """
     with dace.config.set_temporary("ai", "provider", value="manual"):
-        with dace.config.set_temporary("ai", "manual_dir", value=str(tmp_path)):
-            yield tmp_path
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
+            yield tmp_path / "ai-prompts"
 
 
 def _sdfg_and_node():

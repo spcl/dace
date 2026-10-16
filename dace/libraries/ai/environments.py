@@ -5,7 +5,7 @@ Materialization of DaCe library environments requested by an AI model.
 :func:`dace.library.environment` reads ``inspect.getmodule(env).__file__`` in order to resolve
 relative header and CMake file paths, which rules out classes created on the fly with ``type()``.
 Instead, an :class:`~dace.libraries.ai.backend.EnvironmentSpec` is rendered into a real Python
-module, written to the directory named by ``ai.environment_dir``, and imported. That also means a
+module, written to ``<build folder root>/ai-environments``, and imported. That also means a
 generated environment survives the process that produced it: :func:`load_generated_environments`
 re-imports the directory when :mod:`dace.libraries.ai` is first imported, so an SDFG expanded in an
 earlier session still compiles. The generated modules are plain text and are meant to be read and
@@ -19,6 +19,7 @@ import sys
 import warnings
 
 from dace.config import Config
+from dace.libraries.ai import cache
 from dace.libraries.ai.backend import EnvironmentSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 
@@ -60,22 +61,11 @@ class {classname}:
 
 def environment_dir(create: bool = False) -> str:
     """
-    Returns the directory holding generated environment modules.
-
     :param create: If True, the directory is created when it does not exist. Reading callers
-                   should leave this False so that merely importing DaCe does not create it.
-    :return: An absolute path. Defaults to ``~/.dace/ai_environments`` when
-             ``ai.environment_dir`` is empty.
+                   leave this False, so that importing the library does not create it.
+    :return: The directory holding generated environment modules.
     """
-    configured = Config.get("ai", "environment_dir")
-    path = (
-        os.path.expanduser(os.path.expandvars(configured))
-        if configured
-        else os.path.join(os.path.expanduser("~"), ".dace", "ai_environments")
-    )
-    if create:
-        os.makedirs(path, exist_ok=True)
-    return path
+    return cache.storage_dir("environments", create)
 
 
 class EnvironmentConflict(AIExpansionError):

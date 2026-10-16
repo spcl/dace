@@ -20,18 +20,18 @@ The session id is derived from the SDFG and node names rather than from a ``guid
 to be stable *across program runs*: a guid is freshly generated every time a node is constructed,
 so a guid-keyed session would start empty on every invocation of the user's script.
 
-Writing is controlled by ``ai.sessions`` and located by ``ai.session_dir``.
+Writing is controlled by ``ai.sessions``; sessions are stored in ``<build folder root>/ai-sessions``.
 """
 
 import datetime
 import json
 import os
-import re
+import urllib.parse
 import warnings
 from typing import Any
 
 from dace.config import Config
-from dace.libraries.ai import backend
+from dace.libraries.ai import backend, cache
 from dace.libraries.ai.exceptions import AIExpansionError
 
 #: Name of the machine-readable index in every session directory.
@@ -50,42 +50,29 @@ def enabled() -> bool:
 
 def session_dir(create: bool = False) -> str:
     """
-    Returns the directory holding all sessions.
-
     :param create: If True, the directory is created when it does not exist.
-    :return: An absolute path. Defaults to ``~/.dace/ai_sessions`` when ``ai.session_dir`` is empty.
+    :return: The directory holding all sessions.
     """
-    configured = Config.get("ai", "session_dir")
-    path = (
-        os.path.expanduser(os.path.expandvars(configured))
-        if configured
-        else os.path.join(os.path.expanduser("~"), ".dace", "ai_sessions")
-    )
-    if create:
-        os.makedirs(path, exist_ok=True)
-    return path
+    return cache.storage_dir("sessions", create)
 
 
-def _sanitize(name: str) -> str:
+def make_id(node: Any, state: Any) -> str:
     """
-    Makes a name safe to use as a path component.
+    Builds the session id of a slot: its path from the root SDFG, as
+    ``<root SDFG>/<state>/[<nested SDFG node>/<state>/...]<node>``.
 
-    :param name: The name to clean.
-    :return: The cleaned name, never empty.
+    Names are percent-encoded, so that different names never map to the same path.
+
+    :param node: The library node.
+    :param state: The state containing it.
+    :return: A ``/``-separated relative path.
     """
-    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_.")
-    return cleaned or "unnamed"
-
-
-def make_id(sdfg_name: str, node_name: str) -> str:
-    """
-    Builds the session id for a slot.
-
-    :param sdfg_name: Name of the SDFG holding the node.
-    :param node_name: Name of the library node.
-    :return: A path-safe, human-readable identifier.
-    """
-    return f"{_sanitize(sdfg_name)}.{_sanitize(node_name)}"
+    parts = [state.label, node.label]
+    sdfg = state.sdfg
+    while sdfg.parent_nsdfg_node is not None:
+        parts = [sdfg.parent.label, sdfg.parent_nsdfg_node.label] + parts
+        sdfg = sdfg.parent_sdfg
+    return "/".join(urllib.parse.quote(part, safe="") for part in [sdfg.name] + parts)
 
 
 class Session:
@@ -325,7 +312,7 @@ def load(session_id: str) -> Session | None:
     :param session_id: The slot identifier.
     :return: The session, or ``None`` if it is not on disk.
     """
-    directory = os.path.join(session_dir(), session_id)
+    directory = os.path.join(session_dir(), *session_id.split("/"))
     index_path = os.path.join(directory, INDEX_NAME)
     if not os.path.exists(index_path):
         return None
@@ -357,7 +344,7 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: str | None = None) -> Se
     :return: The session. Writing is skipped, transparently, when ``ai.sessions`` is off or the
              directory cannot be created.
     """
-    session_id = session_id or make_id(getattr(sdfg, "name", "sdfg"), getattr(node, "name", "node"))
+    session_id = session_id or make_id(node, state)
     index = {
         "id": session_id,
         "sdfg": getattr(sdfg, "name", None),
@@ -381,7 +368,7 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: str | None = None) -> Se
 
     try:
         root = session_dir(create=True)
-        directory = os.path.join(root, session_id)
+        directory = os.path.join(root, *session_id.split("/"))
         os.makedirs(directory, exist_ok=True)
     except OSError as e:
         warnings.warn(f"Could not create an AI session directory; continuing without one: {e}")

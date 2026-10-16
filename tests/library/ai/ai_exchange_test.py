@@ -57,8 +57,8 @@ def prompt_dir(tmp_path):
     :return: The directory.
     """
     with dace.config.set_temporary("ai", "provider", value="nonexistent"):
-        with dace.config.set_temporary("ai", "manual_dir", value=str(tmp_path)):
-            yield tmp_path
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
+            yield tmp_path / "ai-prompts"
 
 
 def _two_node_sdfg():

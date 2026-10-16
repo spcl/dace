@@ -7,10 +7,10 @@ and -- where the machine can run the result -- checks it numerically. Together w
 provider this is the loop for evaluating the prompt without an API key::
 
     # Writes the prompt and stops, because there is no answer yet
-    DACE_ai_provider=manual DACE_ai_manual_dir=/tmp/p python -m tests.library.ai.ai_scenarios gemm_cpu
+    DACE_ai_provider=manual python -m tests.library.ai.ai_scenarios gemm_cpu
 
     # ... paste the prompt into a chat, save the reply next to it, then run again
-    DACE_ai_provider=manual DACE_ai_manual_dir=/tmp/p python -m tests.library.ai.ai_scenarios gemm_cpu
+    DACE_ai_provider=manual python -m tests.library.ai.ai_scenarios gemm_cpu
 
 Run without arguments to list the scenarios.
 """
