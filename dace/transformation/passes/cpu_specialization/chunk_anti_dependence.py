@@ -481,9 +481,14 @@ class ChunkAntiDependence(ppl.Pass):
         tail_outer = self._tile(tail, sdfg, tail_entry, chunk)
         t_lo, t_hi, _ = tail_entry.map.range[0]
         chunk_end = _exact(t_hi)
-        # The last ``D`` iterations of the chunk, never before its own start: a short last chunk is all seam.
-        first = symbolic.pystr_to_symbolic(
-            f"Max({symbolic.symstr(as_expr(chunk_end) - offset + 1)}, {symbolic.symstr(_exact(t_lo))})"
+        # The last ``D`` iterations of the chunk, never before its own start: a short last chunk is all seam. A chunk
+        # is never empty, so offset 1 is the single point ``[end, end]`` as written.
+        first = (
+            chunk_end
+            if offset == 1
+            else symbolic.pystr_to_symbolic(
+                f"Max({symbolic.symstr(as_expr(chunk_end) - offset + 1)}, {symbolic.symstr(_exact(t_lo))})"
+            )
         )
         tail_entry.map.range = subsets.Range([(first, chunk_end, 1)])
         # Off the OUTER chunk parameter, whose stride is C, not off the inner index, whose bounds are a Min and a
