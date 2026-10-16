@@ -418,6 +418,34 @@ def test_int64_power_compiles_as_an_integer():
     assert np.allclose(a, 1.0)
 
 
+def test_a_relaxed_power_inside_a_rounding_loses_the_rounding():
+    """The frontend sizes ``arange(R**i)`` as ``ceiling(R**i)``: ``i`` of unknown sign may make the power a fraction.
+    Once ``i >= 0`` relaxes it to an integer ``ipow``, the ceiling is the identity, and left in place it prints as
+    libm ``ceil``, a double loop bound OpenMP rejects (npbench stockham_fft)."""
+    sdfg = dace.SDFG("relaxed_rounding")
+    sdfg.add_symbol("R", dace.int64)
+    sdfg.add_array("A", [64], dace.float64)
+    loop = LoopRegion("loop", "i < 3", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    R, i = symbolic.symbol("R"), symbolic.symbol("i")
+    state.add_mapped_tasklet(
+        "fill",
+        {"j": dace.subsets.Range([(0, sympy.ceiling(R**i) - 1, 1)])},
+        {},
+        "o = 1.0",
+        {"o": dace.Memlet("A[j]")},
+        external_edges=True,
+    )
+
+    RelaxIntegerPowers().apply_pass(sdfg, {})
+
+    (entry,) = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
+    end = entry.map.range[0][1]
+    assert not end.has(sympy.ceiling), end
+    assert "ceil" not in symstr(end, cpp_mode=True)
+
+
 def test_interstate_assignment_keeps_array_access_and_evaluation_order():
     """An interstate assignment reading an array is rewritten only at its ``**``: the array access stays a
     subscript (not a SymPy ``Subscript(...)`` call) and the floating-point operations keep their written order."""
@@ -459,4 +487,5 @@ if __name__ == "__main__":
     test_nested_sdfg_inherits_outer_sign_facts()
     test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descriptor()
     test_int64_power_compiles_as_an_integer()
+    test_a_relaxed_power_inside_a_rounding_loses_the_rounding()
     test_interstate_assignment_keeps_array_access_and_evaluation_order()
