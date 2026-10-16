@@ -6,6 +6,10 @@ import scipy
 
 import dace
 
+# All tests in this file rely on the GPU_ThreadBlock_Dynamic schedule, which is
+# only supported by the legacy CUDA codegen.
+pytestmark = pytest.mark.old_gpu_codegen_only
+
 W = dace.symbol("W")
 H = dace.symbol("H")
 nnz = dace.symbol("nnz")
@@ -29,6 +33,7 @@ def spmv(
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_map():
     height = 1024
     width = 1024
@@ -69,6 +74,7 @@ def test_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_maps():
     """Tests the case of multiple dynamic maps in a row that share dynamic inputs."""
 
@@ -232,6 +238,7 @@ def test_nested_dynamic_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_map_with_step():
 
     M = dace.symbol("M")
@@ -312,6 +319,7 @@ def test_dynamic_map_with_step():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_multidim_map():
 
     @dace.program
@@ -359,6 +367,7 @@ def test_dynamic_nested_map():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses GPU_ThreadBlock_Dynamic schedule (not supported by experimental codegen)
 def test_dynamic_default_schedule():
     N = dace.symbol("N")
 
@@ -379,10 +388,10 @@ def test_dynamic_default_schedule():
 
 
 if __name__ == "__main__":
+    test_dynamic_nested_map()
     test_dynamic_map()
     test_dynamic_maps()
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
     test_dynamic_multidim_map()
-    # test_dynamic_nested_map()
     test_dynamic_default_schedule()

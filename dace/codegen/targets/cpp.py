@@ -234,20 +234,36 @@ def memlet_copy_to_absolute_strides(
 
 def is_cuda_codegen_in_device(framecode) -> bool:
     """
-    Check the state of the CUDA code generator, whether it is inside device code.
+    Check the state of the (Experimental) CUDA code generator, whether it is inside device code.
     """
     from dace.codegen.targets.cuda import CUDACodeGen
+    from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
 
     if framecode is None:
         cuda_codegen_in_device = False
     else:
         for codegen in framecode.targets:
-            if isinstance(codegen, CUDACodeGen):
+            if isinstance(codegen, (CUDACodeGen, ExperimentalCUDACodeGen)):
                 cuda_codegen_in_device = codegen._in_device_code
                 break
         else:
             cuda_codegen_in_device = False
     return cuda_codegen_in_device
+
+
+def allocated_for_another_sdfg(name: str, desc: data.Data, sdfg: SDFG | None, framecode) -> bool:
+    """Whether a transient is allocated by an SDFG other than ``sdfg``, so its name needs the SDFG prefix.
+
+    GPU_Shared and Register data are kernel- resp. thread-scoped, so they cannot collide across nested SDFGs.
+    """
+    return (
+        desc.transient
+        and sdfg is not None
+        and framecode is not None
+        and (sdfg, name) in framecode.where_allocated
+        and framecode.where_allocated[(sdfg, name)] is not sdfg
+        and desc.storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+    )
 
 
 def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: "DaCeCodeGenerator" = None) -> str:
@@ -285,13 +301,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: "DaCeCodeGener
             return f"__state->__{sdfg.cfg_id}_{name}"
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f"__{sdfg.cfg_id}_{name}"
-    elif (
-        desc.transient
-        and sdfg is not None
-        and framecode is not None
-        and (sdfg, name) in framecode.where_allocated
-        and framecode.where_allocated[(sdfg, name)] is not sdfg
-    ):
+    elif allocated_for_another_sdfg(name, desc, sdfg, framecode):
         # Array allocated for another SDFG, use unambiguous name
         return f"__{sdfg.cfg_id}_{name}"
 
@@ -872,6 +882,38 @@ def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     return False
 
 
+def legacy_cuda_codegen(codegen):
+    """The legacy CUDA code generator in use, or ``None`` when the experimental one is."""
+    from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+
+    return next((target for target in codegen._dispatcher.used_targets if isinstance(target, CUDACodeGen)), None)
+
+
+def current_stream_declaration(sdfg: SDFG, state_dfg: SDFGState, node: nodes.Tasklet, legacy_cuda: bool) -> str | None:
+    """The ``__dace_current_stream`` local a host tasklet touching GPU memory declares, if any.
+
+    The experimental codegen carries the stream in a ``gpuStream_t`` in-connector, which the legacy
+    name is bound to; the legacy codegen reads the node's ``_cuda_stream``, or the null stream.
+    """
+    if is_devicelevel_gpu(sdfg, state_dfg, node) or not connected_to_gpu_memory(node, state_dfg, sdfg):
+        return None
+    backend = common.get_gpu_backend()
+    stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t), None)
+    # A whole identifier: ``__dace_current_stream_0``, a per-stream connector name, contains the legacy name.
+    if stream_conn is not None and re.search(r"\b__dace_current_stream\b", node.code.as_string):
+        if stream_conn == "__dace_current_stream":
+            return None
+        return f"{backend}Stream_t __dace_current_stream = {stream_conn};"
+    if hasattr(node, "_cuda_stream"):
+        max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
+        stream = common.gpu_stream_expr(node._cuda_stream) if max_streams >= 0 else "nullptr"
+        return f"{backend}Stream_t __dace_current_stream = {stream};"
+    if legacy_cuda:
+        # Library code (e.g. the cuBLAS environment) names the stream even when none is assigned.
+        return f"{backend}Stream_t __dace_current_stream = nullptr;"
+    return None
+
+
 def unparse_tasklet(
     sdfg, cfg, state_id, dfg, node, function_stream, callsite_stream, locals, ldepth, toplevel_schedule, codegen
 ):
@@ -902,24 +944,9 @@ def unparse_tasklet(
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
-        max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (
-            hasattr(node, "_cuda_stream") or connected_to_gpu_memory(node, state_dfg, sdfg)
-        ):
-            if max_streams >= 0:
-                callsite_stream.write(
-                    f"{common.get_gpu_backend()}Stream_t __dace_current_stream = {common.gpu_stream_expr(node._cuda_stream)};",
-                    cfg,
-                    state_id,
-                    node,
-                )
-            else:
-                callsite_stream.write(
-                    f"{common.get_gpu_backend()}Stream_t __dace_current_stream = nullptr;",
-                    cfg,
-                    state_id,
-                    node,
-                )
+        stream_declaration = current_stream_declaration(sdfg, state_dfg, node, legacy_cuda_codegen(codegen) is not None)
+        if stream_declaration is not None:
+            callsite_stream.write(stream_declaration, cfg, state_id, node)
 
         if node.language != dtypes.Language.CPP and node.language != dtypes.Language.MLIR:
             raise ValueError(f"Only Python, C++ or MLIR code supported in CPU codegen, got: {node.language}")
@@ -962,12 +989,9 @@ def unparse_tasklet(
             callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
-            # Get GPU codegen
-            from dace.codegen.targets import cuda  # Avoid import loop
-
-            try:
-                gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
-            except StopIteration:
+            # ``synchronize_streams`` is a legacy-codegen helper.
+            gpu_codegen = legacy_cuda_codegen(codegen)
+            if gpu_codegen is None:
                 return
             # The tasklet's own code names the stream through the local defined above, so the
             # synchronization it may need must name the same expression.
@@ -1429,6 +1453,10 @@ class StructInitializer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+def owning_state(dfg: SDFGState | StateSubgraphView) -> SDFGState:
+    return dfg if isinstance(dfg, SDFGState) else dfg.graph
+
+
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(
     sdfg: SDFG,
@@ -1438,16 +1466,20 @@ def presynchronize_streams(
     node: nodes.Node,
     callsite_stream: CodeIOStream,
 ):
-    state_dfg: SDFGState = cfg.nodes()[state_id]
+    # With explicit control flow ``cfg.nodes()[state_id]`` may be a nested region, not the state.
+    state_dfg: SDFGState = owning_state(dfg)
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
+    # Resolve (cfg, state_id) onto the region that directly owns the state.
+    enclosing_cfg = state_dfg.parent_graph
+    enclosing_state_id = enclosing_cfg.node_id(state_dfg)
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream"):
             cudastream = common.gpu_stream_expr(e.src._cuda_stream)
             callsite_stream.write(
                 f"DACE_GPU_CHECK({common.get_gpu_backend()}StreamSynchronize({cudastream}));",
-                sdfg,
-                state_id,
+                enclosing_cfg,
+                enclosing_state_id,
                 [e.src, e.dst],
             )
 
