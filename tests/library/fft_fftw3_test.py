@@ -68,6 +68,25 @@ def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     assert ("__threads = omp_in_parallel() ? 1 : omp_get_max_threads()" in code) == threaded
 
 
+def test_a_unit_rendered_for_another_machine_plans_single_threaded(monkeypatch):
+    """CPF renders units built where the threaded planner's companion library may be missing, so it expands under
+    ``single_threaded_planner``; the scope is what CPF calls, and an FFT merge that dropped it failed every
+    rendering with ``AttributeError``."""
+    import ctypes.util
+
+    from dace.libraries.fft.environments import fftw3
+
+    installed = {"fftw3": "libfftw3.so.3", "fftw3_omp": "libfftw3_omp.so.3"}
+    monkeypatch.setattr(ctypes.util, "find_library", installed.get)
+    assert fftw3.threaded()
+    with fftw3.single_threaded_planner():
+        assert not fftw3.threaded()
+        with fftw3.single_threaded_planner():
+            assert not fftw3.threaded()
+        assert not fftw3.threaded(), "an inner scope must not end the outer one"
+    assert fftw3.threaded()
+
+
 if __name__ == "__main__":
     test_fft_fftw3_lowering()
     print("FFTW3 FFT lowering test PASS")
@@ -76,3 +95,5 @@ if __name__ == "__main__":
     for threaded in (True, False):
         with pytest.MonkeyPatch.context() as mp:
             test_a_threaded_fftw_plans_for_the_team(mp, threaded)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_unit_rendered_for_another_machine_plans_single_threaded(mp)
