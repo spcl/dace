@@ -434,6 +434,22 @@ def on_device_at_host_level(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return touches and not libnode_is_device_code(node, state, owner)
 
 
+#: Floating types no vendor library CPF calls takes: BLAS, LAPACK and the FFTs come in single and double
+#: precision, real and complex, and their bfloat16 / half entry points (``rocblas_gemm_ex``) are not what the
+#: expansions call. A node over one of these takes the loops (HB's bf16 ML kernels).
+VENDOR_UNTYPED_FLOATS: frozenset = frozenset(dtypes.FLOAT_TYPES) - {dtypes.float32, dtypes.float64}
+
+
+def narrow_float_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether ``node`` reads or writes a floating type no vendor library takes (:data:`VENDOR_UNTYPED_FLOATS`)."""
+    arrays = state.sdfg.arrays
+    return any(
+        arrays[edge.data.data].dtype in VENDOR_UNTYPED_FLOATS
+        for edge in state.all_edges(node)
+        if edge.data is not None and edge.data.data in arrays
+    )
+
+
 def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tuple[str, ...]:
     """The implementations to try for ``node``, best first.
 
@@ -452,8 +468,10 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
     # A GEMM whose operands no leading dimension names (a view strided on both matrix axes) is one finalize already
     # gave the loop expansion; a vendor call in front of it would raise ``sAM or sAK should be 1`` on expansion.
-    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES and not (
-        isinstance(node, Gemm) and not blas_addresses(node, state)
+    vendored = (
+        type(node).__name__ not in VENDOR_EXCLUDED_NODES
+        and not (isinstance(node, Gemm) and not blas_addresses(node, state))
+        and not narrow_float_operands(node, state)
     )
     if cpf_lowering.device() and on_device_at_host_level(node, state):
         vendor = VENDOR_IMPLEMENTATIONS_DEVICE[cpf_lowering.active_dialect()] if vendored else ()
@@ -751,6 +769,7 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
                                  scope (:func:`refuse_runtime_scopes`), or carries a return container
                                  the entry signature cannot pass back (:func:`refuse_by_value_returns`).
     """
+    cpf_lowering.refuse_unspellable_containers(sdfg)
     device = uses_device_code(sdfg)
     if device:
         raise NotImplementedError(
