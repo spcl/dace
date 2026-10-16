@@ -149,3 +149,90 @@ def test_a_device_element_staged_for_a_host_body_computes_what_numpy_computes():
     out = cupy.zeros(8)
     sdfg(A=A, out=out)
     np.testing.assert_allclose(out.get(), np.full(8, 1.0))
+
+
+def rows_scaled_by_a_device_element() -> dace.SDFG:
+    """A host map over rows around a nested SDFG that reads the scalar connector ``s`` on the host (an interstate
+    assignment) and scales its row in a kernel. ``s`` is bound through the map's entry to ``t[0]``, a transient a
+    kernel before the map fills, so it lives in device memory (cp2k_grid_integrate's ``border_width_index``)."""
+    body = dace.SDFG("scale_row")
+    body.add_scalar("s", dace.float64)
+    body.add_array("out", [4, 8], dace.float64)
+    body.add_symbol("j", dace.int64)
+    body.add_symbol("n", dace.float64)
+    first = body.add_state("first", is_start_block=True)
+    work = body.add_state("work")
+    body.add_edge(first, work, dace.InterstateEdge(assignments={"n": "s"}))
+    work.add_mapped_tasklet(
+        "scale",
+        {"i": "0:8"},
+        {"o_in": dace.Memlet("out[j, i]")},
+        "o = o_in * n",
+        {"o": dace.Memlet("out[j, i]")},
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG("rows_scaled_by_a_device_element")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("out", [4, 8], dace.float64)
+    sdfg.add_array("t", [1], dace.float64, transient=True)
+    init = sdfg.add_state("init")
+    init.add_mapped_tasklet(
+        "total",
+        {"k": "0:4"},
+        {"a": dace.Memlet("A[k]")},
+        "r = a",
+        {"r": dace.Memlet("t[0]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+    )
+    state = sdfg.add_state_after(init, "rows")
+    entry, exit_node = state.add_map("rows", {"j": "0:4"})
+    call = state.add_nested_sdfg(body, {"s": None, "out": None}, {"out": None}, symbol_mapping={"j": "j"})
+    state.add_memlet_path(state.add_read("t"), entry, call, dst_conn="s", memlet=dace.Memlet("t[0]", dynamic=True))
+    state.add_memlet_path(state.add_read("out"), entry, call, dst_conn="out", memlet=dace.Memlet("out[0:4, 0:8]"))
+    state.add_memlet_path(call, exit_node, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:4, 0:8]"))
+    sdfg.validate()
+    for name in ("A", "out"):
+        sdfg.arrays[name].storage = dtypes.StorageType.GPU_Global
+    return sdfg
+
+
+def test_a_device_element_bound_through_a_taskloop_is_staged_once_outside_it():
+    """Staging used to read a fresh access node outside the map with the map's ``OUT_t`` as its connector
+    and drop the map's own edge, leaving ``OUT_t`` dangling ("Dangling out-connector", cp2k_grid_integrate).
+    The element is now copied to the host once, at the access node the binding starts from, and the host
+    copy -- not the device scalar -- enters the host map."""
+    sdfg = rows_scaled_by_a_device_element()
+    ppl.Pipeline([OffloadToAccelerator(taskloop_overrides={"rows": True})]).apply_pass(sdfg, {})
+    sdfg.validate()
+    state = next(state for state in sdfg.states() if state.label == "rows")
+    entry = next(node for node in state.nodes() if isinstance(node, dace.nodes.MapEntry))
+    assert entry.map.schedule == dtypes.ScheduleType.Sequential, "the taskloop stays on the host"
+    call = next(node for node in state.nodes() if isinstance(node, dace.nodes.NestedSDFG))
+    (binding,) = [edge for edge in state.in_edges(call) if edge.dst_conn == "s"]
+    staged = binding.data.data
+    assert sdfg.arrays[staged].storage == dtypes.StorageType.Default, staged
+    (root,) = [edge for edge in state.in_edges(entry) if edge.data.data == staged]
+    assert isinstance(root.src, dace.nodes.AccessNode), "the copy sits outside the map"
+    assert [edge.src.data for edge in state.in_edges(root.src)] == ["t"], "copied from the device element"
+    assert not any(edge.data.data == "t" for edge in state.in_edges(entry)), "no device scalar enters the host map"
+
+
+@pytest.mark.gpu
+def test_a_device_element_bound_through_a_taskloop_computes_what_numpy_computes():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+
+    sdfg = rows_scaled_by_a_device_element()
+    ppl.Pipeline([OffloadToAccelerator(taskloop_overrides={"rows": True})]).apply_pass(sdfg, {})
+    A = cupy.asarray(np.arange(1, 5, dtype=np.float64))
+    out = cupy.ones((4, 8))
+    sdfg(A=A, out=out)
+    np.testing.assert_allclose(out.get(), np.full((4, 8), 10.0))
+
+
+if __name__ == "__main__":
+    test_a_map_around_a_host_issued_library_call_launches_it_from_the_host()
+    test_a_map_around_an_in_kernel_reduce_is_the_kernel()
+    test_a_nested_sdfg_at_the_top_level_is_a_host_level_of_its_own()
+    test_a_device_element_a_body_reads_on_the_host_is_staged_on_the_host()
+    test_a_device_element_bound_through_a_taskloop_is_staged_once_outside_it()

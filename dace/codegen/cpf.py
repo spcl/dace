@@ -291,11 +291,23 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
 #: both correct and the rendering CPF wants -- so ``Reduce`` takes ``pure`` here, ahead of its host
 #: ``CPU`` lowering, its ``GPUAuto`` being a ``dace::`` cub call where its ``pure`` is loops.
 #:
+#: So are the node types whose ``pure`` expansion is maps that do NOT take the node's schedule.
+#: ``StateScan``'s ``pure`` pins every map ``Sequential`` (it is the form for readers of the SDFG), so
+#: at host level over device memory its step runs as host code and its loop headers read the device
+#: tables (crc16's ``data``, dfa's ``__symbols``). Its ``CUDA`` expansion is the same SDFG with the
+#: maps on ``GPU_Device`` -- kernels the device unit holds, no library call -- and it is the
+#: implementation canonicalize already chose for the node.
+#:
 #: The device expansions named here reach the runtime the same way the host ones do, and CPF spells
 #: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
-RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Reduce": ("pure",), "Scan": ("CUDA",)}
+RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {
+    "FindFirst": ("CUDA",),
+    "Reduce": ("pure",),
+    "Scan": ("CUDA",),
+    "StateScan": ("CUDA",),
+}
 
 #: The one vendor library family each architecture renders through, best first. A BLAS, LAPACK, linear-algebra or
 #: FFT node with one of these implementations becomes that library call rather than CPF loops: the libraries ship
@@ -425,6 +437,12 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
     if isinstance(node, TileOp) and node.implementation in tile_functions.ISAS:
         # Its tile functions are inline definitions of the unit, as :func:`target_tile_functions` chose them.
         return (node.implementation,)
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        # Inside a kernel: the tabled lowerings are host runtime (OpenMP reductions and scans, the
+        # cancelling search, ``std::sort``) and a vendor call is host code, so a ``__global__`` function
+        # cannot call any of them (cp2k_grid_integrate's per-thread ``Scan`` reached ``scan_incl_product``).
+        # Every tabled node has a loop expansion among the global ones, and loops are device code.
+        return RENDERABLE_IMPLEMENTATIONS
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
     vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES
     if cpf_lowering.device() and on_device_at_host_level(node, state):
