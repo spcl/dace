@@ -1313,6 +1313,48 @@ def test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, la
     assert np.allclose(got, reference), f"{label}: the (i, j) skew is not value-preserving"
 
 
+NL = dace.symbol("NL")
+NP = dace.symbol("NP")
+nst = dace.symbol("nst")
+
+
+@dace.program
+def scan_with_reseed(a: dace.float64[NL, NP], c: dace.float64[NL, NP], x: dace.float64[NL, NP]):
+    """``scan_levels_k32``: each step sweeps the levels, then reseeds the first 32 from the last 32."""
+    for step in range(nst):
+        for k in range(32, NL):
+            a[k, :] = c[k, :] * a[k - 32, :] + x[k, :]
+        if NL >= 64:
+            a[0:32, :] = a[NL - 32 : NL, :]
+
+
+def test_wavefront_skew_refuses_a_step_loop_whose_body_also_holds_a_conditional_reseed():
+    """The step loop's body is the level loop AND a conditional block that reseeds ``a`` between steps. Only the
+    level loop is a nest; skewing it left the reseed in the new diagonal loop, once per diagonal instead of once
+    per step, and every element came out wrong (``scan_levels_k32``)."""
+    nl, np_, steps = 96, 8, 3
+    rng = np.random.default_rng(32)
+    a0 = rng.random((nl, np_))
+    c = 0.2 + 0.7 * rng.random((nl, np_))
+    x = rng.random((nl, np_))
+    ref = a0.copy()
+    for _ in range(steps):
+        for k in range(32, nl):
+            ref[k, :] = c[k, :] * ref[k - 32, :] + x[k, :]
+        if nl >= 64:
+            ref[0:32, :] = ref[nl - 32 : nl, :]
+
+    sdfg = scan_with_reseed.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, target="cpu")
+    assert not any(
+        isinstance(r, LoopRegion) and r.loop_variable.startswith(SKEW_T_PREFIX)
+        for r in sdfg.all_control_flow_regions(recursive=True)
+    ), "the step loop with a reseed beside its level loop was skewed"
+    got = a0.copy()
+    sdfg(a=got, c=c.copy(), x=x.copy(), NL=nl, NP=np_, nst=steps)
+    assert np.allclose(got, ref)
+
+
 if __name__ == "__main__":
     test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map()
     test_wavefront_skew_value_preserving()
@@ -1341,6 +1383,7 @@ if __name__ == "__main__":
     test_wavefront_skew_symbolic_positive_forward_read_value_preserving()
     test_wavefront_skew_symbolic_backward_read_not_over_refused()
     test_wavefront_skew_non_2d_carried_dependence_value_preserving()
+    test_wavefront_skew_refuses_a_step_loop_whose_body_also_holds_a_conditional_reseed()
     test_wavefront_skew_refuses_nest_threading_a_one_element_accumulator()
     for assignments in ({"y": "a[i - 1, j + 2]"}, {"y": "x", "x": "a[i, j]"}):
         test_wavefront_skew_refuses_nest_carrying_a_value_through_an_interstate_edge(assignments)

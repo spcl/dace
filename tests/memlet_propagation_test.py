@@ -340,6 +340,25 @@ def test_a_strided_range_keeps_the_dtype_of_its_bound_symbols():
     sdfg.validate()
 
 
+def test_undefined_symbol_propagation():
+    """A subset over a symbol undefined outside the scope (e.g. one a nested scope assigns) propagates to the whole
+    array, whether the undefined name is given as a string or as a symbol; a defined one propagates exactly (#2293)."""
+    N = dace.symbol("N")
+    k = dace.symbol("k")
+    array = dace.data.Array(dace.float64, [20])
+    map_range = dace.subsets.Range([(0, N - 1, 1)])
+    facts = dace.symbolic.Facts.none()
+
+    for undefined_variables in ({"k"}, {k}):
+        propagated = propagate_subset(
+            [dace.Memlet("A[i + k]")], array, ["i"], map_range, facts, undefined_variables=undefined_variables
+        )
+        assert propagated == dace.Memlet("A[0:20]", volume=N), propagated
+
+    propagated = propagate_subset([dace.Memlet("A[i + k]")], array, ["i"], map_range, facts)
+    assert propagated == dace.Memlet("A[k:N + k]", volume=N), propagated
+
+
 def test_typed_parameter_symbol():
     """A memlet may spell a map parameter with a symbol of another dtype (e.g., a typed loop variable).
 
@@ -423,6 +442,7 @@ def test_nested_sdfg_connector_offset():
 
 
 if __name__ == "__main__":
+    test_undefined_symbol_propagation()
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()

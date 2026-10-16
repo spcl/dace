@@ -117,10 +117,13 @@ def _array_array_where(
     cond_shape = cond_arr.shape if cond_arr else [1]
 
     # The result has the broadcast shape of all three arguments: a condition wider than both operands widens it
-    full_shape = broadcast_together(broadcast_together(left_shape, right_shape)[0], cond_shape)[0]
-    (out_shape, all_idx_dict, out_idx, left_idx, _) = broadcast_together(left_shape, full_shape)
-    right_idx = broadcast_together(right_shape, full_shape)[3]
-    cond_idx = broadcast_together(cond_shape, full_shape)[3]
+    facts = sdfg.facts()
+    full_shape = broadcast_together(
+        broadcast_together(left_shape, right_shape, facts=facts)[0], cond_shape, facts=facts
+    )[0]
+    (out_shape, all_idx_dict, out_idx, left_idx, _) = broadcast_together(left_shape, full_shape, facts=facts)
+    right_idx = broadcast_together(right_shape, full_shape, facts=facts)[3]
+    cond_idx = broadcast_together(cond_shape, full_shape, facts=facts)[3]
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):

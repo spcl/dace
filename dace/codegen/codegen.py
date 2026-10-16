@@ -295,7 +295,13 @@ def lower_implicit_copies(sdfg: SDFG) -> None:
     # contiguous one is a single memcpy. Host-resident transfers only, so a GPU graph passing through
     # is untouched.
     SpecializeCpuTransfers().apply_pass(sdfg, {})
-    sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode))
+    # A masked tile copy is a copy too, but a CUDA Tile C++ kernel writes its own (``compiler.cuda.tile_backend``)
+    kept = set()
+    if config.Config.get("compiler", "cuda", "tile_backend") == "cuda_tile":
+        from dace.codegen.python.dialects.cuda_tile_cpp import tile_kernel_nodes
+
+        kept = tile_kernel_nodes(sdfg)
+    sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode) and n not in kept)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
@@ -336,6 +342,12 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     if validate:
         sdfg.validate()
+
+    if Config.get("compiler", "backend") == "python":
+        from dace.codegen.python import PythonTarget, emit, prepare
+
+        prepare.prepare(sdfg)
+        return [CodeObject(sdfg.name, emit.generate(sdfg), "py", PythonTarget, "Frame", linkable=False, sdfg=sdfg)]
 
     if Config.get_bool("testing", "serialization"):
         import difflib
@@ -411,7 +423,15 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     # Recursively expand library nodes that have not yet been expanded. An expansion builds its bounds from
     # strings, so the result is rebuilt at the dtypes the SDFG declares before the passes below read it.
-    sdfg.expand_library_nodes()
+    # A CUDA Tile C++ kernel writes its tile nodes itself, so they stay nodes (``compiler.cuda.tile_backend``)
+    kept = set()
+    if config.Config.get("compiler", "cuda", "tile_backend") == "cuda_tile":
+        from dace.codegen.python.dialects.cuda_tile_cpp import check_tile_toolchain, pin_tile_blocks, tile_kernel_nodes
+
+        kept = tile_kernel_nodes(sdfg)
+        check_tile_toolchain(bool(kept))
+        pin_tile_blocks(sdfg)
+    sdfg.expand_library_nodes(predicate=(lambda node: node not in kept) if kept else None)
     equalize(sdfg)
 
     # Decide which maps may carry an OpenMP simd clause; the CPU target only renders it.

@@ -762,6 +762,36 @@ def test_a_container_moved_across_the_boundary_gets_one_connector():
     assert np.allclose(a, (np.arange(8.0) + 1) * 2)
 
 
+def test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped():
+    """``loop_i = base`` sets the counter inside the nest, so the parent passes no ``loop_i`` and the nested SDFG
+    declares none (its loop binds it); the value after the loop still reaches the parent."""
+    sdfg = dace.SDFG("exported_counter")
+    sdfg.add_array("a", [20], dace.float64)
+    sdfg.add_array("b", [1], dace.int64)
+    for name in ("base", "bound", "step"):
+        sdfg.add_symbol(name, dace.int32)
+    loop = LoopRegion("loop", "loop_i <= bound", "loop_i", "loop_i = base", "loop_i = loop_i + step")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("a"), None, dace.Memlet("a[loop_i]"))
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge(assignments={"final": "loop_i"}))
+    tasklet = after.add_tasklet("t", {}, {"o"}, "o = final")
+    after.add_edge(tasklet, "o", after.add_write("b"), None, dace.Memlet("b[0]"))
+
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+
+    nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert "loop_i" not in nsdfg.symbol_mapping
+    assert "loop_i" not in nsdfg.sdfg.symbols
+    assert "loop_i" not in sdfg.symbols
+    a, b = np.zeros(20), np.zeros(1, dtype=np.int64)
+    sdfg(a=a, b=b, base=2, bound=9, step=3)
+    assert np.nonzero(a)[0].tolist() == [2, 5, 8]
+    assert b[0] == 11
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -788,3 +818,4 @@ if __name__ == "__main__":
 
     test_nest_two_loops_with_same_variable()
     test_a_container_moved_across_the_boundary_gets_one_connector()
+    test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped()

@@ -4,6 +4,7 @@ import pytest
 
 import dace
 from dace import symbolic
+from dace.libraries.blas import MatMul
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -591,6 +592,20 @@ def test_einsum_libnode_ordering_edge():
     assert np.allclose(sdfg(A, B), A @ B)
 
 
+def test_contraction_with_summed_indices_in_different_orders_matches_numpy():
+    """``ijk,kj->i`` sums ``jk`` in A but ``kj`` in B: one flattened GEMM K cannot express both orders."""
+
+    @dace.program
+    def einsumtest(A: dace.float64[3, 4, 5], B: dace.float64[5, 4]):
+        return np.einsum("ijk,kj->i", A, B)
+
+    sdfg = einsumtest.to_sdfg()
+    assert not any(isinstance(node, MatMul) for node, _ in sdfg.all_nodes_recursive())
+    rng = np.random.default_rng(7)
+    A, B = rng.random((3, 4, 5)), rng.random((5, 4))
+    assert np.allclose(sdfg(A=A, B=B), np.einsum("ijk,kj->i", A, B))
+
+
 if __name__ == "__main__":
     test_general_einsum()
     test_matmul()
@@ -613,3 +628,4 @@ if __name__ == "__main__":
     test_c_transposed()
     test_einsum_shape_check_equalizes_symbols()
     test_lift_einsum_leaves_a_copy_map_alone()
+    test_contraction_with_summed_indices_in_different_orders_matches_numpy()

@@ -31,7 +31,15 @@ from dace.codegen.cpf import Rendering
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes import FindFirst, Reduce, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
-from tests.codegen.cpf.conftest import assert_standalone_units, device_scan_sdfg, render_gpu, require_gpu_backend
+from dace.libraries.standard.nodes.state_scan import StateScan
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+from tests.codegen.cpf.conftest import (
+    assert_standalone_units,
+    canonical_gpu_sdfg,
+    device_scan_sdfg,
+    render_gpu,
+    require_gpu_backend,
+)
 
 N = dace.symbol("N")
 
@@ -301,6 +309,34 @@ def test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementat
         assert cpf.renderable_implementations(node, state)[0] != "CUDA"
 
 
+def test_a_scan_inside_a_kernel_renders_as_device_code():
+    """Inside a kernel the host lowerings :data:`~dace.codegen.cpf.RENDERABLE_BY_NODE` prefers are not
+    available: ``Scan``'s ``CPU`` lowering calls ``scan_incl_product``, an OpenMP host helper, and the
+    device unit failed to compile ("call to __host__ function from __global__ function",
+    cp2k_grid_integrate's per-thread ``cumprod``). A loop expansion is device code."""
+    sdfg = dace.SDFG("cpf_hip_scan_in_kernel")
+    sdfg.add_array("a", [N, 16], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("b", [N, 16], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Scan("scan", op=ScanOp.PRODUCT)
+    entry, exit_node = state.add_map("rows", {"i": "0:N"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
+    state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="_scan_in", memlet=dace.Memlet("a[i, 0:16]"))
+    state.add_memlet_path(node, exit_node, state.add_write("b"), src_conn="_scan_out", memlet=dace.Memlet("b[i, 0:16]"))
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
+        assert "CPU" not in cpf.renderable_implementations(node, state)
+    rendering = cpf.render(sdfg, language="hip")
+    assert "scan_incl_" not in rendering.device_code, "no host scan helper may reach the device unit"
+    # The loops' accumulator is one thread's register, not host memory allocated outside the kernel.
+    node.schedule = dace.dtypes.ScheduleType.Sequential
+    with (
+        cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP),
+        cpf.device_backend(cpf_lowering.Dialect.STANDALONE_HIP),
+    ):
+        cpf.force_renderable_expansions(sdfg, {})
+    accumulators = [desc for sd in sdfg.all_sdfgs_recursive() for name, desc in sd.arrays.items() if name == "acc_0"]
+    assert accumulators and all(desc.storage == dace.dtypes.StorageType.Register for desc in accumulators)
+
+
 def test_a_device_scan_renders_the_device_scan_and_its_scratch():
     """The scan's device expansion issues ``gpucub::DeviceScan`` over a workspace it takes from the
     CUB scratch pool -- and the pool is normally an ENVIRONMENT, allocated by the init entry point
@@ -365,6 +401,46 @@ def build_units(rendering: Rendering, tmp_path, name: str) -> None:
 def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
     """The functor is what ``gpucub::DeviceScan`` instantiates, so the units have to build and link."""
     build_units(cpf.render(device_scan_sdfg("cpf_hip_product_build", ScanOp.PRODUCT), language="hip"), tmp_path, "unit")
+
+
+NS, NA = dace.symbol("NS", dace.int64), dace.symbol("NA", dace.int64)
+
+
+@dace.program
+def dfa_counts(trans: dace.int64[NS, NA], symbols: dace.int64[N], counts: dace.int64[NS]):
+    state = 0
+    for i in range(N):
+        state = trans[state, symbols[i]]
+        counts[state] += 1
+
+
+@dace.program
+def crc16_register(data: dace.uint8[N], crc: dace.int64[1], polynomial: dace.int64):
+    c = 0xFFFF
+    for b in range(N):
+        cur_byte = 0xFF & data[b]
+        for bit in range(0, 8):
+            if (c & 0x0001) ^ (cur_byte & 0x0001):
+                c = (c >> 1) ^ polynomial
+            else:
+                c = c >> 1
+            cur_byte = cur_byte >> 1
+    crc[0] = (c ^ 0xFFFF) & 0xFFFF
+
+
+@pytest.mark.parametrize(("program", "table"), ((dfa_counts, "symbols"), (crc16_register, "data")))
+def test_a_device_state_scan_runs_its_steps_in_kernels(program, table):
+    """A ``StateScan`` over device memory sits at host level, and its step reads the device table in
+    its loop headers and interstate assignments. Its ``pure`` expansion pins every map ``Sequential``,
+    so re-pointing the node at it made the step host code reading ``GPU_Global`` memory, which
+    validation refused (HB dfa: ``__symbols``; crc16: ``data``). Its ``CUDA`` expansion is the same
+    SDFG with the block maps on the device: no library call, nothing CPF cannot spell."""
+    sdfg = canonical_gpu_sdfg(program, f"cpf_hip_state_scan_{table}")
+    assert any(isinstance(node, StateScan) for node, _ in sdfg.all_nodes_recursive()), "the loop must lift"
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, "gpu", validate=True)
+    rendering = cpf.render(sdfg, language="hip")
+    assert "__global__" in rendering.device_code, "the scan's block maps must be kernels"
 
 
 @dace.program
@@ -541,11 +617,14 @@ if __name__ == "__main__":
     test_a_host_level_reduce_over_device_memory_expands_into_a_kernel()
     test_the_schedule_correction_is_confined_to_host_level_device_memory()
     test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementation()
+    test_a_scan_inside_a_kernel_renders_as_device_code()
     test_a_device_scan_renders_the_device_scan_and_its_scratch()
     test_a_device_resident_scan_seed_is_read_where_it_lives()
     test_a_device_scan_seed_is_read_at_its_type_inside_the_kernel()
     test_a_device_product_scan_multiplies_through_a_typed_functor()
     test_a_device_product_scan_unit_builds_with_hipcc(pathlib.Path(tempfile.mkdtemp()))
+    test_a_device_state_scan_runs_its_steps_in_kernels(dfa_counts, "symbols")
+    test_a_device_state_scan_runs_its_steps_in_kernels(crc16_register, "data")
     test_a_read_only_operand_behind_an_ordering_edge_is_const_in_both_units()
     with pytest.MonkeyPatch.context() as patch:
         test_a_nested_function_passes_the_state_to_its_launchers(patch)

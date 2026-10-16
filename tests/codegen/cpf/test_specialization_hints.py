@@ -535,6 +535,29 @@ def test_a_pinned_independent_loop_does_not_read_as_parallel():
     assert not any(line.startswith("// parallel --") for line in comment_lines(code))
 
 
+def overlapping_writes_sdfg(name: str) -> dace.SDFG:
+    """Writes ``a[5*i]`` and ``a[3*i]``: the test cannot separate the iterations, and no access pattern proves a
+    carried dependence either."""
+
+    @dace.program
+    def two_strides(a: dace.float64[5 * N], b: dace.float64[N]):
+        for i in range(N):
+            a[5 * i] = b[i]
+            a[3 * i] = b[i] + 1.0
+
+    sdfg = two_strides.to_sdfg(simplify=True)
+    sdfg.name = name
+    return sdfg
+
+
+def test_writes_the_test_cannot_separate_are_unsure_not_a_proof():
+    """``LoopToMap`` refuses ``a[5*i]`` against ``a[3*i]`` because they MAY overlap; that is a test that stopped, not a
+    carried dependence it found, so the hint must not call the loop sequential."""
+    rendered = comment_lines(named(overlapping_writes_sdfg("cpf_kind_overlap")))
+    assert [line for line in rendered if line.startswith("// unsure -- ")], rendered
+    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+
+
 if __name__ == "__main__":
     test_the_rendering_states_which_verdicts_are_settled_and_which_are_open()
     test_a_map_hint_is_rendered_one_comment_line_per_line()

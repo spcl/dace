@@ -978,17 +978,27 @@ COMBINE_PY = {
     ScanOp.PRODUCT: "{a} * {x}",
     ScanOp.MIN: "{x} if {x} < {a} else {a}",
     ScanOp.MAX: "{x} if {a} < {x} else {a}",
-    ScanOp.AFFINE: "c * {a} + {x}",
+    ScanOp.AFFINE: "{c} * {a} + {x}",
 }
 #: Loop variables of the ``pure`` scan: the position, and the residue class of a strided scan.
 SCAN_INDEX = "scan_k"
 CLASS_INDEX = "scan_r"
+#: The ``pure`` scan's tasklet connectors: the element, the accumulator, its update, the output and the
+#: affine coefficient. Reserved spellings, because an expansion is inlined into the SDFG around it and a
+#: connector may not share a name with that SDFG's data -- bare ``a`` refused a program with an array ``a``.
+X, ACC, NEXT, Y, COEF = "__scan_x", "__scan_acc", "__scan_next", "__scan_y", "__scan_coef"
 
 
 def accumulator(nsdfg: dace.SDFG, chain: int) -> str:
-    """The chain's accumulator, a transient scalar of the OUTPUT type, which a widening scan reads into."""
+    """The chain's accumulator, a transient scalar of the OUTPUT type, which a widening scan reads into.
+
+    A ``Register`` by what it is: one thread's running value. Left ``Default``, the expansion's inference
+    sees only the node's own ``Sequential`` schedule, not the kernel around it, and made it ``CPU_Heap`` --
+    allocated outside the kernel and undeclared in it (cp2k_grid_integrate's per-thread ``cumprod``)."""
     name = f"acc_{chain}"
-    nsdfg.add_scalar(name, nsdfg.arrays[out_connector(chain)].dtype, transient=True)
+    nsdfg.add_scalar(
+        name, nsdfg.arrays[out_connector(chain)].dtype, transient=True, storage=dtypes.StorageType.Register
+    )
     return name
 
 
@@ -997,21 +1007,21 @@ def seed_state(nsdfg: dace.SDFG, chain: int, acc: str, seed: str, at: str) -> da
     (the chain's input at ``at``)."""
     reads = {}
     if seed == "init":
-        reads["x"] = Memlet(f"{init_connector(chain)}[{at}]")
+        reads[X] = Memlet(f"{init_connector(chain)}[{at}]")
     elif seed == "first":
-        reads["x"] = Memlet(element(nsdfg, in_connector(chain), at))
-    code = "a = x" if reads else f"a = {seed}"
-    return tasklet_state(nsdfg, f"seed_{chain}", code, reads, {"a": Memlet(f"{acc}[0]")})
+        reads[X] = Memlet(element(nsdfg, in_connector(chain), at))
+    code = f"{ACC} = {X}" if reads else f"{ACC} = {seed}"
+    return tasklet_state(nsdfg, f"seed_{chain}", code, reads, {ACC: Memlet(f"{acc}[0]")})
 
 
 def position_loop(nsdfg: dace.SDFG, node: "Scan", chain: int, acc: str, bounds: tuple[str, str, str]) -> LoopRegion:
     """One pass of the recurrence over positions ``range(*bounds)``, writing every prefix to the output."""
-    combined = COMBINE_PY[node.op].format(a="a", x="x")
-    code = f"y = a\nna = {combined}" if node.exclusive else f"na = {combined}\ny = na"
-    reads = {"x": Memlet(element(nsdfg, in_connector(chain), SCAN_INDEX)), "a": Memlet(f"{acc}[0]")}
+    combined = COMBINE_PY[node.op].format(a=ACC, x=X, c=COEF)
+    code = f"{Y} = {ACC}\n{NEXT} = {combined}" if node.exclusive else f"{NEXT} = {combined}\n{Y} = {NEXT}"
+    reads = {X: Memlet(element(nsdfg, in_connector(chain), SCAN_INDEX)), ACC: Memlet(f"{acc}[0]")}
     if node.op is ScanOp.AFFINE:
-        reads["c"] = Memlet(element(nsdfg, coef_connector(chain), SCAN_INDEX))
-    writes = {"na": Memlet(f"{acc}[0]"), "y": Memlet(element(nsdfg, out_connector(chain), SCAN_INDEX))}
+        reads[COEF] = Memlet(element(nsdfg, coef_connector(chain), SCAN_INDEX))
+    writes = {NEXT: Memlet(f"{acc}[0]"), Y: Memlet(element(nsdfg, out_connector(chain), SCAN_INDEX))}
     loop = counted_loop(f"scan_{chain}", SCAN_INDEX, *bounds)
     chain_blocks(loop, [tasklet_state(nsdfg, f"step_{chain}", code, reads, writes)])
     return loop
@@ -1054,9 +1064,9 @@ def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopReg
     first = tasklet_state(
         nsdfg,
         "first",
-        "y = a",
-        {"a": Memlet(f"{acc}[0]")},
-        {"y": Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, CLASS_INDEX))},
+        f"{Y} = {ACC}",
+        {ACC: Memlet(f"{acc}[0]")},
+        {Y: Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, CLASS_INDEX))},
     )
     rest = position_loop(nsdfg, node, 0, acc, (f"{CLASS_INDEX} + {stride}", n, stride))
     chain_blocks(classes, [seed, first, rest])

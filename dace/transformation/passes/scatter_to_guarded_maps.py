@@ -44,7 +44,8 @@ collision the abort fires before any consumer reads the corrupted output.
 
 import ast
 import copy
-from typing import NamedTuple
+from dataclasses import dataclass, field
+from typing import Any, NamedTuple
 
 import dace
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
@@ -55,7 +56,8 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.sdfg import memoize_facts
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -136,7 +138,10 @@ class ScatterToGuardedMaps(ppl.Pass):
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(sdfg)
-        scatter_loops = [loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes)]
+        # The probes only read the graph, so they share its facts and one lift context per SDFG and contract kind
+        with memoize_facts():
+            probes = ContractProbes()
+            scatter_loops = [loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes, probes)]
         kept = set(map(id, scatter_loops))
         sliced_guards = [g for g in sliced_guards if id(g[0]) in kept]
         joint_writes = [w for w in joint_writes if id(w[0]) in kept]
@@ -288,27 +293,48 @@ class ScatterToGuardedMaps(ppl.Pass):
         return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
 
 
-def lifts(loop: LoopRegion, owner: SDFG, contract: frozenset[str] = frozenset()) -> bool:
-    """Whether ``LoopToMap`` lifts ``loop`` with conflicts waived on the ``contract`` arrays only."""
-    from dace.transformation.interstate.loop_to_map import LoopToMap
+@dataclass
+class ContractProbes:
+    """What the ``LoopToMap`` probes of an unchanged graph share: its facts and, per SDFG, a lift context."""
+
+    resolver: SymbolResolver = field(default_factory=SymbolResolver)
+    #: ``(owner, waives a contract)`` -> lift context. Its per-loop facts record the container a probe refused on,
+    #: which a probe waiving the contract must not inherit from one that does not.
+    contexts: dict[tuple[SDFG, bool], Any] = field(default_factory=dict)
+
+
+def lifts(
+    loop: LoopRegion, owner: SDFG, contract: frozenset[str] = frozenset(), probes: ContractProbes | None = None
+) -> bool:
+    """Whether ``LoopToMap`` lifts ``loop`` with conflicts waived on the ``contract`` arrays only.
+
+    :param probes: Analysis shared by the probes of an unchanged graph, filled on first use.
+    """
+    from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context
 
     probe = LoopToMap()
     probe.contract_arrays = contract
+    if probes is not None:
+        key = (owner, bool(contract))
+        if key not in probes.contexts:
+            probes.contexts[key] = build_lift_context(owner)
+        probe.lift_context = probes.contexts[key]
+        probe.symbol_resolver = probes.resolver
     probe.setup_match(owner, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
     return probe.can_be_applied(loop.parent_graph, 0, owner)
 
 
-def needs_contract(root: SDFG, loop: LoopRegion, joint_writes: list) -> bool:
+def needs_contract(root: SDFG, loop: LoopRegion, joint_writes: list, probes: ContractProbes | None = None) -> bool:
     """Whether ``loop`` is parallel exactly under the scatter contract: refused as it stands (a loop already
     parallel needs no runtime check), and lifted once only its scatter targets' conflicts are waived (any other
     carried dependence, such as a compaction counter, keeps it sequential)."""
     owner = _owning_sdfg(root, loop)
-    if lifts(loop, owner):
+    if lifts(loop, owner, probes=probes):
         return False
     targets = {w.target for joint_loop, w in joint_writes if joint_loop is loop}
     for scattered, _window in _scatter_idx_targets_for_loop(loop, owner).values():
         targets |= scattered
-    return lifts(loop, owner, frozenset(targets))
+    return lifts(loop, owner, frozenset(targets), probes)
 
 
 def detect_scatter_idx_arrays(sdfg: SDFG) -> set[str]:

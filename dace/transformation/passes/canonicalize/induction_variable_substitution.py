@@ -63,6 +63,8 @@ import copy
 from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
+import sympy
+
 from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend.python import astutils
@@ -164,21 +166,105 @@ class InductionVariableSubstitution(ppl.Pass):
                 # (4) a symbol defined purely by a loop-var expression -> inline it
                 #     (the derived symbol a primary-IV substitution just freed);
                 # (5) an IV incremented identically in every branch of a body
-                #     conditional -> hoist it out so (3) can then close it (s124).
+                #     conditional -> hoist it out so (3) can then close it (s124);
+                # (6) an unrolled body's counter bumped once per copy (``k = k + 1`` before each
+                #     read) -> one bottom update ``k := k + 4`` that (3) then closes.
                 region = node.parent_graph
-                if (
-                    _try_substitute(region, node, sdfg, sdfg_free_symbols)
-                    or try_substitute_use_site_iv(region, node, sdfg, sdfg_free_symbols)
-                    or _try_substitute_iedge_iv(region, node, sdfg, sdfg_free_symbols)
-                    or _try_substitute_derived_symbol(region, node, sdfg, sdfg_free_symbols)
-                    or _hoist_branch_uniform_iv(region, node, sdfg, sdfg_free_symbols)
-                ):
+                if any(rewrite(region, node, sdfg, sdfg_free_symbols) for rewrite in REWRITES):
                     count += 1
                     progressed = True
                     break  # SDFG mutated -> restart the scan on fresh node list
             if not progressed:
                 break
         return count or None
+
+
+def sink_chained_iv_update(loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Move a counter update that reaches its step through SSA temporaries to the bottom of the body.
+
+    An unrolled body bumps its counter once per copy, and SSA spells the bumps as a chain ending in the
+    counter itself, on the edge into the last copy::
+
+        k_0 := k + 1   ->  a[k_0]   k_1 := k_0 + 1  ->  a[k_1]  ...  k := k_2 + 1  ->  a[k]
+
+    :func:`_try_substitute_iedge_iv` wants ``k := k + c`` with every read on one side; this rewrite runs only when
+    the reads straddle the update. Resolving the chain gives ``k + 4`` (symbol propagation may already have folded it
+    to ``k := k + 1 + 1 + 1 + 1``); the blocks after the update read ``k + 4`` instead, and ``k := k + 4`` moves onto a new edge into an
+    empty bottom block, the frontend's own shape for a counter. The temporaries stay derived from ``k``.
+
+    :returns: ``True`` if the body was rewritten.
+    """
+    from dace.transformation.passes.loop_fission import _linear_blocks
+
+    order = _linear_blocks(loop, allow_assignments=True) if loop.loop_variable else None
+    if order is None:
+        return False
+    chain = [loop.out_edges(block)[0] for block in order[:-1]]
+    writers: dict[str, int] = {}
+    for edge in chain:
+        for name in edge.data.assignments:
+            writers[name] = writers.get(name, 0) + 1
+    for position, edge in enumerate(chain):
+        step = straddled_counter_step(loop, sdfg, chain, position, writers)
+        if step is not None:
+            move_update_to_bottom(loop, order, chain, position, step)
+            return True
+    return False
+
+
+def straddled_counter_step(
+    loop: LoopRegion, sdfg: SDFG, chain: list[Edge[InterstateEdge]], position: int, writers: dict[str, int]
+) -> symbolic.SymbolicType | None:
+    """The constant step of the counter edge ``chain[position]`` updates, if its reads straddle that edge.
+
+    The right-hand side is resolved through the single-assignment symbols the edges before it define.
+    """
+    edge = chain[position]
+    if len(edge.data.assignments) != 1:
+        return None
+    ((name, rhs),) = edge.data.assignments.items()
+    if name not in sdfg.symbols or writers[name] != 1 or _symbol_updated_in_other_loop(sdfg, loop, name):
+        return None
+    resolved = symbolic.pystr_to_symbolic(rhs)
+    if not isinstance(resolved, sympy.Expr):
+        return None  # a comparison or a boolean: a guard, not a counter
+    temps = {
+        symbolic.pystr_to_symbolic(lhs): symbolic.pystr_to_symbolic(value)
+        for earlier in chain[:position]
+        for lhs, value in earlier.data.assignments.items()
+        if writers[lhs] == 1 and lhs in sdfg.symbols
+    }
+    for _depth in range(len(temps)):
+        resolved = resolved.subs(temps)
+    step = symbolic.simplify(resolved - symbolic.pystr_to_symbolic(name))
+    if not as_basic(step).is_number or step == 0 or _consistent_use_side(loop, edge, name) is not None:
+        return None
+    return step
+
+
+def move_update_to_bottom(
+    loop: LoopRegion,
+    order: list[ControlFlowBlock],
+    chain: list[Edge[InterstateEdge]],
+    position: int,
+    step: symbolic.SymbolicType,
+) -> None:
+    """Drop the counter update on ``chain[position]``: later blocks read ``k + step``, a new bottom edge bumps ``k``."""
+    edge = chain[position]
+    (name,) = edge.data.assignments
+    bumped = f"({name} + {symbolic.symstr(step)})"
+    edge.data.assignments = {}
+    for later in chain[position + 1 :]:
+        later.data.replace_dict({name: bumped}, replace_keys=False)
+    for block in order[position + 1 :]:
+        block.replace_dict({name: bumped})
+    bottom = loop.add_state(f"{loop.label}_iv_bottom")
+    loop.add_edge(order[-1], bottom, InterstateEdge(assignments={name: bumped}))
+
+
+def sink_chained_rewrite(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> bool:
+    """:func:`sink_chained_iv_update` in the signature the other rewrites share."""
+    return sink_chained_iv_update(loop, sdfg)
 
 
 def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> bool:
@@ -1850,3 +1936,14 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
             else:
                 break
         return count or None
+
+
+#: The rewrites of one fixpoint round, tried in order; the first that applies restarts the round.
+REWRITES: tuple[Callable[[ControlFlowRegion, LoopRegion, SDFG, set[str]], bool], ...] = (
+    _try_substitute,
+    try_substitute_use_site_iv,
+    _try_substitute_iedge_iv,
+    _try_substitute_derived_symbol,
+    _hoist_branch_uniform_iv,
+    sink_chained_rewrite,
+)

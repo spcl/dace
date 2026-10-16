@@ -521,6 +521,20 @@ def test_synchronize_on_exit_as_strategy_argument():
     assert len(_all_sync_states(sdfg)) == 1, "explicit synchronize_on_exit=True must override config=False"
 
 
+def test_wired_stream_array_validates_without_an_uninitialized_transient_warning():
+    """Codegen creates the ``gpu_streams`` handles, so a kernel reading them is not a use of uninitialized data."""
+
+    @dace.program
+    def scale(x: dace.float64[N]):
+        for i in dace.map[0:N]:
+            x[i] = 2 * x[i]
+
+    sdfg = _build_gpu_sdfg(scale)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_default_strategy_is_auto_single_stream()
     test_pure_cpu_program_no_streams()
@@ -537,3 +551,4 @@ if __name__ == "__main__":
     test_e2e_gpu_kernel_writes_scalar_consumed_by_cpu()
     test_multikernel_stencil_pipeline_one_sync_at_exit()
     test_host_visible_output_always_synced_even_when_opted_out()
+    test_wired_stream_array_validates_without_an_uninitialized_transient_warning()

@@ -44,7 +44,6 @@ from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.loop_to_reduce import loop_to_map_refusal_is_carried
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
 # settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
@@ -301,6 +300,15 @@ def nested_bindings(
     return inner_arrays, inner_mapping
 
 
+def loop_header_names(loop: LoopRegion, mapping: dict[str, sympy.Expr]) -> set[str]:
+    """The names ``loop``'s initialization, condition and update read, in the outer loop's names."""
+    names: set[str] = set()
+    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        for name in code.get_free_symbols():
+            names.update(s.name for s in mapping[name].free_symbols) if name in mapping else names.add(name)
+    return names
+
+
 def walk_body(
     sdfg_or_region: ControlFlowRegion,
     arrays: ArrayBindings,
@@ -311,7 +319,10 @@ def walk_body(
     """Fill ``body`` from everything under ``sdfg_or_region``, through nested SDFGs."""
     for region in sdfg_or_region.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.loop_variable:
-            body.varying.add(region.loop_variable)
+            # An inner loop whose bounds do not move with the outer one ranges over the same values in every outer
+            # iteration, like a map's parameter; one whose bounds do move is a varying name.
+            fixed = loop_variable not in loop_header_names(region, mapping)
+            (body.params if fixed else body.varying).add(region.loop_variable)
     for edge in sdfg_or_region.all_interstate_edges():
         body.varying.update(edge.data.assignments.keys())
     for state in sdfg_or_region.states():
@@ -394,10 +405,21 @@ def loop_hint(loop: LoopRegion) -> str:
     access = proven_carrying_access(loop)
     if access is not None:
         return SEQUENTIAL_PROVEN.format(reason=access, why=proven_why(access))
-    if loop_to_map_refusal_is_carried(reason):
+    if refusal_matches_a_carried_symbol(reason):
         carried = carrying_access(reason)
         return SEQUENTIAL_PROVEN.format(reason=carried, why=proven_why(carried))
     return UNSURE.format(reason=carrying_access(reason))
+
+
+#: Refusals whose pattern IS a carried dependence: a symbol the body updates from itself, or reads before it assigns.
+#: "writes ... may overlap", "read-after-write conflict" and an access off the ``a*i+b`` write pattern only say the
+#: test could not separate the iterations, so they stay unsure.
+CARRIED_SYMBOL_PATTERNS = ("self-recurrent carried symbol", "carried symbol dependency")
+
+
+def refusal_matches_a_carried_symbol(reason: str) -> bool:
+    """Whether a ``LoopToMap`` refusal is a carried-symbol pattern, a proof rather than an unseparated pair."""
+    return any(pattern in reason.lower() for pattern in CARRIED_SYMBOL_PATTERNS)
 
 
 @xf.explicit_cf_compatible

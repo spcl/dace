@@ -248,6 +248,11 @@ def _index_dims(subset, dims, params):
     return out
 
 
+def reads_written_element(read, write) -> bool:
+    """Whether the in-edge ``read`` reads the element the out-edge ``write`` writes: same container, same subset."""
+    return read.data.data == write.data.data and read.data.subset == write.data.subset
+
+
 class AugAssignToWCR(transformation.SingleStateTransformation):
     """
     Convert augmented assignment (``a += b``, ``a = a + b``) into a tasklet + WCR.
@@ -403,7 +408,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     # RMW; treating it as acc would use the DELTA operator (``*``) not the real
                     # accumulation (``+``), corrupting the result. CPP branch enforces this too.
                     acc_edge = inedges[inconns.index(n.id)]
-                    if acc_edge.data.subset == outedge.data.subset:
+                    if reads_written_element(acc_edge, outedge):
                         return True
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
@@ -430,7 +435,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                             continue
 
                 # Same memlet
-                if edge.data.subset != outedge.data.subset:
+                if not reads_written_element(edge, outedge):
                     continue
 
                 return True
@@ -484,7 +489,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     for a in rhs.values
                     if isinstance(a, ast.Name)
                     and a.id in inconns
-                    and inedges[inconns.index(a.id)].data.subset == outedge.data.subset
+                    and reads_written_element(inedges[inconns.index(a.id)], outedge)
                 )
                 inedge = inedges[inconns.index(acc_arg.id)]
                 new_rhs = rhs.values[1] if rhs.values[0] is acc_arg else rhs.values[0]
@@ -497,7 +502,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     for a in rhs.args
                     if isinstance(a, ast.Name)
                     and a.id in inconns
-                    and inedges[inconns.index(a.id)].data.subset == outedge.data.subset
+                    and reads_written_element(inedges[inconns.index(a.id)], outedge)
                 )
                 inedge = inedges[inconns.index(acc_arg.id)]
                 new_rhs = rhs.args[1] if rhs.args[0] is acc_arg else rhs.args[0]
@@ -510,7 +515,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     return (
                         isinstance(operand, ast.Name)
                         and operand.id in inconns
-                        and inedges[inconns.index(operand.id)].data.subset == outedge.data.subset
+                        and reads_written_element(inedges[inconns.index(operand.id)], outedge)
                     )
 
                 if reads_written_slice(rhs.left):
@@ -567,7 +572,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     op = match.group(1)
                     expr = match.group(2)
 
-                if edge.data.subset != outedge.data.subset:
+                if not reads_written_element(edge, outedge):
                     continue
 
                 # Map asymmetric WCRs to symmetric ones if possible

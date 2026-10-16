@@ -21,6 +21,7 @@ from dace.codegen.targets.cuda import (
     kernel_launch_qualifiers,
 )
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
+from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -256,6 +257,52 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
         qualifiers = " ".join(q for q in ("__global__ void", maxnreg, launch_bounds, kernel_name) if q)
         return f"{qualifiers}({', '.join(kernel_args)}) "
+
+
+class TileKernelScopeGenerator(KernelScopeGenerator):
+    """A kernel over BLOCK tile nodes as a CUDA Tile C++ ``__tile_global__`` function, one tile block per map
+    iteration (``compiler.cuda.tile_backend: cuda_tile``). The tile kernel walker of the Python backend writes the
+    body, so the nodes of the kernel are not dispatched."""
+
+    SCOPE_COMMENT = "Tile kernel scope"
+
+    def applicable(self, sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream) -> bool:
+        # Avoid import loop
+        from dace.codegen.python.kernel import holds_tile_ops
+
+        entry = as_map_entry(dfg_scope.source_nodes()[0])
+        return (
+            super().applicable(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            and Config.get("compiler", "cuda", "tile_backend") == "cuda_tile"
+            and holds_tile_ops(sdfg, cfg.state(state_id), entry)
+        )
+
+    def generate(self, sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream):
+        # Avoid import loop
+        from dace.codegen.python.dialects.cuda_tile_cpp import PRELUDE, CppKernelEmitter, CudaTileCpp, CudaTileCppFlags
+        from dace.sdfg.utils import dfs_topological_sort
+
+        spec = self._current_kernel_spec
+        state = cfg.state(state_id)
+        emitter = CppKernelEmitter(sdfg, CudaTileCpp())
+        order = [n for n in dfs_topological_sort(state) if not isinstance(n, nodes.ExitNode)]
+        emitter.kernel(sdfg, state, state.scope_dict(), order, spec.kernel_map_entry)
+        # The build takes the tile flags only now that it holds tile code
+        self._dispatcher.used_environments.add(CudaTileCppFlags.full_class_path())
+        if PRELUDE not in function_stream.getvalue():
+            function_stream.write(PRELUDE, cfg, state_id, spec.kernel_map_entry)
+        callsite_stream.write(f"__tile_global__ void {spec.kernel_name}({', '.join(spec.args_typed)}) {{")
+        callsite_stream.write("    namespace ct = cuda::tiles;")
+        for line in emitter.lines:
+            callsite_stream.write(line)
+        callsite_stream.write("}")
+
+
+def tile_kernel_dimensions(entry: nodes.MapEntry) -> tuple[list, list]:
+    """The grid of a tile kernel, one block per map iteration with the last parameter along x, and its blocks of one
+    tile thread each."""
+    grid = [symbolic.int_ceil(end - begin + 1, step) for begin, end, step in reversed(entry.map.range)]
+    return grid + [1] * (3 - len(grid)), [1, 1, 1]
 
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):

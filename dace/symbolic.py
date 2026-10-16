@@ -1942,14 +1942,14 @@ class __int_floor(int_floor):
 #: Unmangled alias: ``__int_floor`` named inside a class body becomes ``_symbol__int_floor``.
 operator_int_floor = __int_floor
 
-#: Python's modulo, the meaning of ``%``: the quotient is floored, so the result takes the sign of the divisor, which is
-#: SymPy's ``Mod``.
+#: Python's modulo: the quotient is floored, so the result takes the sign of the divisor, which is SymPy's ``Mod``. A
+#: bare ``%`` in an SDFG is C's (:class:`CMod`); the Python frontend spells a program's ``%`` as ``PyMod``.
 PyMod = sympy.Mod
 
 
 class CMod(DaceFunction):
-    """C's modulo, asked for explicitly (Fortran's ``MOD``, ``numpy.fmod``): the quotient is truncated, so the result
-    takes the sign of the dividend (``fmod`` for floating point)."""
+    """C's modulo, the meaning of ``%`` in an SDFG (also Fortran's ``MOD``, ``numpy.fmod``): the quotient is truncated,
+    so the result takes the sign of the dividend (``fmod`` for floating point)."""
 
     @classmethod
     def eval(cls, x, y):
@@ -2942,7 +2942,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.LShift: "__left_shift",
         ast.RShift: "__right_shift",
         ast.FloorDiv: "__int_floor",
-        ast.Mod: "PyMod",
+        ast.Mod: "CMod",
     }
 
     def visit_UnaryOp(self, node):
@@ -3294,7 +3294,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(PyMod, a, b, evaluate=False)
+        return _construct_function_uncached(CMod, a, b)
 
     @staticmethod
     def _unary_minus(a):
@@ -4481,14 +4481,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return self._print(sympy.Function(name)(*expr.args))
 
     def _print_Mod(self, expr):
-        # In Python, ``%`` is floored. In C++ it is C's, which agrees only on nonnegative integers
-        if not self.cpp_mode or nonnegative_integers(*expr.args):
-            return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
-        return self._print_binary_call("py_mod", expr)
+        # Floored. ``%`` is C's, which agrees only on a nonnegative dividend and a positive divisor. Read back, the text
+        # must parse to the same expression, so outside C++ only SymPy's assumptions decide, not the printing facts.
+        dividend, divisor = expr.args
+        if (
+            nonnegative_integers(dividend, divisor)
+            if self.cpp_mode
+            else (dividend.is_integer and divisor.is_integer and dividend.is_nonnegative and divisor.is_positive)
+        ):
+            return "((%s) %% (%s))" % (self._print(dividend), self._print(divisor))
+        return self._print_binary_call("py_mod" if self.cpp_mode else "Mod", expr)
 
     def _print_CMod(self, expr):
         if not self.cpp_mode:
-            return self._print_binary_call("CMod", expr)
+            return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
         # C has no ``%`` on floating point.
         if self.dialect is cpf_lowering.Dialect.STANDALONE_C and self.c_type(expr) in cpf_lowering.C_FLOATING_RANKS:
             return cpf_lowering.c_helper_call(
@@ -5283,9 +5289,13 @@ def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
     return not any(inequal_symbols(a, b) for a, b in zip(shape_a, shape_b))
 
 
-def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
+def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any, facts: Facts | None = None) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
+
+    :param facts: The facts of the scope the expressions belong to. A registry symbol is a bare name, so the
+                  integrality and sign that let ``ceiling((S*hi - S*lo + 1)/S)`` cancel against ``hi - lo + 1``
+                  come from them; without them the comparison knows nothing of either.
     """
     if to_sympy is not None:
         converted_a = to_sympy(a)
@@ -5308,11 +5318,20 @@ def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
         return a != b
     else:
         a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
+        difference = a - b
+        if facts is not None:
+            difference = difference.xreplace(
+                {
+                    free: sympy.Symbol(free.name, **facts.assumptions(free.name))
+                    for free in difference.free_symbols
+                    if isinstance(free, sympy.Symbol) and not isinstance(free, sympy.Dummy)
+                }
+            )
         # NOTE: We simplify in an attempt to remove inconvenient methods, such
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation
         # (https://docs.sympy.org/latest/tutorial/gotchas.html).
-        return (a - b).simplify() != 0
+        return difference.simplify() != 0
 
 
 def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | None:

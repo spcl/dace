@@ -145,8 +145,9 @@ Supported
 6.7 Binary arithmetic operations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Supported. ``%`` and ``//`` on data follow NumPy's ``divmod``: the remainder takes the divisor's
-sign, and an integer divided by zero gives 0 instead of trapping (see :ref:`division-modulo`).
+Supported. Notable differences compared to the expected Python result:
+
+- The modulo operator follows Python's (floored) semantics; it is emitted as ``PyMod`` (see :ref:`division-modulo`)
 
 6.8 Shifting operations
 ^^^^^^^^^^^^^^^^^^^^^^^

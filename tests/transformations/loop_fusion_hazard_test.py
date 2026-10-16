@@ -674,5 +674,71 @@ def test_read_ahead_flow_hazard_across_multi_state_bodies_still_refused():
         assert np.array_equal(got[name], oracle[name]), f"unfused loop-form changed {name}"
 
 
+def build_scatter_then_edge_gather_pair() -> dace.SDFG:
+    """``for i: perm[idx[i]] = i`` then ``for j: row := perm[j]; acc += row; out[j] = acc``.
+
+    The second loop reads ``perm`` only in an interstate-edge assignment (``row := perm[j]``, as the frontend
+    lowers a scalar read that later code branches or indexes on), never through an access node. The scatter
+    may write ``perm[j]`` at any later ``i``, so fusing reads cells not yet written (``spgemm_hash``: the bin
+    scatter fused into the hash phase that reads ``rows_in_bins[r]``)."""
+    sdfg = dace.SDFG("scatter_then_edge_gather")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("idx", [N], dace.int64)
+    sdfg.add_array("perm", [N], dace.int64)
+    sdfg.add_array("out", [N], dace.int64)
+    sdfg.add_array("acc", [1], dace.int64, transient=True)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("row", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    t0 = init.add_tasklet("zero", {}, {"o"}, "o = 0")
+    init.add_edge(t0, "o", init.add_write("acc"), None, dace.Memlet("acc[0]"))
+
+    loop1 = LoopRegion("loop1", "i < N", "i", "i = 0", "i = i + 1")
+    head1 = loop1.add_state("head1", is_start_block=True)
+    body1 = loop1.add_state("body1")
+    loop1.add_edge(head1, body1, dace.InterstateEdge(assignments={"k": "idx[i]"}))
+    t1 = body1.add_tasklet("scatter", {}, {"o"}, "o = i")
+    body1.add_edge(t1, "o", body1.add_write("perm"), None, dace.Memlet("perm[k]"))
+
+    loop2 = LoopRegion("loop2", "j < N", "j", "j = 0", "j = j + 1")
+    head2 = loop2.add_state("head2", is_start_block=True)
+    body2 = loop2.add_state("body2")
+    loop2.add_edge(head2, body2, dace.InterstateEdge(assignments={"row": "perm[j]"}))
+    t2 = body2.add_tasklet("gather", {"a"}, {"o", "s"}, "s = a + row\no = s")
+    body2.add_edge(body2.add_read("acc"), None, t2, "a", dace.Memlet("acc[0]"))
+    body2.add_edge(t2, "s", body2.add_write("acc"), None, dace.Memlet("acc[0]"))
+    body2.add_edge(t2, "o", body2.add_write("out"), None, dace.Memlet("out[j]"))
+
+    sdfg.add_node(loop1)
+    sdfg.add_node(loop2)
+    sdfg.add_edge(init, loop1, dace.InterstateEdge())
+    sdfg.add_edge(loop1, loop2, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_scatter_then_interstate_edge_read_is_not_fused():
+    """A read in an interstate-edge assignment is a read: the scatter's indirect write to ``perm`` and the
+    second loop's ``row := perm[j]`` are a cross-iteration dependence, and fusion must refuse it."""
+    n = 16
+    idx = np.arange(n - 1, -1, -1, dtype=np.int64)
+
+    def run(sdfg):
+        perm = np.zeros(n, dtype=np.int64)
+        out = np.zeros(n, dtype=np.int64)
+        sdfg(idx=idx.copy(), perm=perm, out=out, N=n)
+        return out
+
+    oracle = np.cumsum(np.arange(n - 1, -1, -1, dtype=np.int64))
+    assert np.array_equal(run(build_scatter_then_edge_gather_pair()), oracle)
+
+    sdfg = build_scatter_then_edge_gather_pair()
+    first = next(loop for loop in loop_regions(sdfg) if loop.label == "loop1")
+    second = next(loop for loop in loop_regions(sdfg) if loop.label == "loop2")
+    assert "perm" in LoopFusion._body_accesses(second)[0], "the edge read of perm must be a read of the body"
+    assert not LoopFusion.can_be_applied_to(sdfg, first=first, second=second)
+    assert np.array_equal(run(sdfg), oracle)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
