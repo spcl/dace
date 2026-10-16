@@ -350,7 +350,7 @@ class Emitter:
     def tile_kernel(self, sdfg: SDFG, state: SDFGState, scope: dict, order: list, entry: nodes.MapEntry) -> None:
         """Write the map at ``entry`` as a kernel of the tile dialect and launch it, one program per iteration."""
         # Avoid import loop
-        from dace.codegen.python.kernel import KernelEmitter, holds_tile_ops
+        from dace.codegen.python.kernel import holds_tile_ops
 
         if not holds_tile_ops(sdfg, state, entry):
             raise CodegenError(
@@ -359,11 +359,10 @@ class Emitter:
             )
         dialect = tile_dialect()
         name = f"kernel_{entry.map.label}"
-        kernel = KernelEmitter(sdfg, dialect)
+        kernel = dialect.emitter_type(sdfg, dialect)
         arrays, symbols = kernel.kernel(sdfg, state, scope, order, entry)
-        header = f"def {name}({', '.join(arrays + symbols)}):"
-        self.kernels.append("\n".join([dialect.decorator, header, *kernel.lines]))
         grid = [f"int_ceil({expr(end - begin + 1)}, {expr(step)})" for begin, end, step in reversed(entry.map.range)]
+        self.kernels.append(dialect.define(name, kernel, arrays, symbols, grid))
         self.line(dialect.launch(name, grid, arrays, symbols))
 
     def read(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> str:

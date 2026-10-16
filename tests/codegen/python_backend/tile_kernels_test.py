@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.exceptions import CodegenError
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -18,22 +19,38 @@ pytestmark = [
     pytest.mark.gpu,
     # Triton's own code generator builds an ast.AnnAssign Python 3.14 deprecates; not this backend's code
     pytest.mark.filterwarnings("ignore:AnnAssign.__init__ missing:DeprecationWarning"),
+    # TileLang's own script builder calls typing._eval_type the way Python 3.14 deprecates
+    pytest.mark.filterwarnings("ignore:Failing to pass a value to the 'type_params':DeprecationWarning"),
 ]
 
-DIALECTS = [pytest.param("triton", marks=pytest.mark.triton), pytest.param("cutile", marks=pytest.mark.cutile)]
+DIALECTS = [
+    pytest.param("triton", marks=pytest.mark.triton),
+    pytest.param("cutile", marks=pytest.mark.cutile),
+    pytest.param("tilelang", marks=pytest.mark.tilelang),
+]
 
 #: Per test, the text of each dialect's kernel that shows the node lowered as the test names.
 SPELLINGS = {
     "masked": {
-        "triton": ["tl.program_id(0) * 512", "& _tile_iter_mask"],
-        "cutile": ["ct.bid(0) * 512", "& _tile_iter_mask"],
+        "triton": ["tl.program_id(0) * 512", "& _tile_iter_mask", "(int_ceil(N, 512),)"],
+        "cutile": ["ct.bid(0) * 512", "& _tile_iter_mask", "(int_ceil(N, 512),)"],
+        "tilelang": ["bx * 512", "_tile_iter_mask[lane0]", "T.Kernel(T.ceildiv(N, 512)"],
     },
     "gemm": {
         "triton": ["tl.full([16, 16], (0.0), tl.float32)", "tl.dot(A_tile, B_tile)"],
         "cutile": ["ct.full((16, 16), (0.0), ct.float32)", "ct.matmul(A_tile, B_tile)"],
+        "tilelang": ["A_tile = T.alloc_shared((16, 16,)", "T.gemm(A_tile, B_tile, acc)"],
     },
-    "element": {"triton": ["tl.store(S_gpu + r * 1, sum)"], "cutile": ["ct.scatter(S_gpu, (r,), sum)"]},
-    "atomic": {"triton": ["tl.atomic_add(S_gpu + "], "cutile": ["ct.atomic_add(S_gpu, "]},
+    "element": {
+        "triton": ["tl.store(S_gpu + r * 1, sum)"],
+        "cutile": ["ct.scatter(S_gpu, (r,), sum)"],
+        "tilelang": ["S_gpu[r * 1] = sum"],
+    },
+    "atomic": {
+        "triton": ["tl.atomic_add(S_gpu + "],
+        "cutile": ["ct.atomic_add(S_gpu, "],
+        "tilelang": ["T.atomic_add(S_gpu["],
+    },
 }
 
 M, N, K, L = (dace.symbol(name) for name in "MNKL")
@@ -83,7 +100,6 @@ def test_a_vectorized_map_with_a_ragged_tail_runs_as_one_masked_kernel(dialect: 
 
     assert np.array_equal(z.get(), 2 * np.arange(1000, dtype=np.float32) + 1)
     assert_spelled(compiled, "masked", dialect)
-    assert "(int_ceil(N, 512),)" in kernel_source(compiled)
 
 
 BM, BN, BK = 16, 16, 16
@@ -153,7 +169,19 @@ def row_reductions(A: dace.float64[L, W], R: dace.float64[L, 4], C: dace.float64
         dace.tile.store(X[r, :], dace.tile.cummax(A[r, :]))
 
 
-@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize(
+    "dialect",
+    [
+        *DIALECTS[:2],
+        pytest.param(
+            "tilelang",
+            marks=[
+                pytest.mark.tilelang,
+                pytest.mark.xfail(reason="TileLang has no product reduction", strict=True, raises=CodegenError),
+            ],
+        ),
+    ],
+)
 def test_reductions_and_scans_match_numpy(dialect: str):
     sdfg = row_reductions.to_sdfg()
     sdfg.apply_gpu_transformations()

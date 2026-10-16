@@ -1,0 +1,273 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""TileLang: a kernel holds tiles in buffers and writes them one ``T.Parallel`` lane loop at a time.
+
+Triton and cuTile compute with tile values; TileLang computes with buffers, so a tile node is a lane loop over its
+output (``out[lane0] = a[lane0] + b[lane0]``), a register tile a fragment allocated at the top of the kernel, and a
+register scalar a ``T.alloc_var`` every thread holds. Every thread runs a statement outside a lane loop, so a
+write to global memory outside one runs in ``T.Parallel(1)``, on one thread.
+"""
+
+import ast
+import re
+
+from dace import data, dtypes
+from dace.codegen.exceptions import CodegenError
+from dace.codegen.python.emit import expr
+from dace.codegen.python.kernel import Dialect, Element, KernelEmitter, TileStatement, accumulates, is_register
+from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileMMA, TileReduce, TileScan
+
+IMPORTS = """\
+import torch
+import tilelang
+import tilelang.language as T
+"""
+
+#: The reductions and scans TileLang has; a product has neither, a minimum has no scan.
+REDUCTIONS = {"+": "T.reduce_sum", "max": "T.reduce_max", "min": "T.reduce_min"}
+SCANS = {"+": "T.cumsum", "max": "T.cummax"}
+#: The block ids ``T.Kernel`` binds, by axis.
+BLOCK_IDS = ("bx", "by", "bz")
+SERIAL = re.compile(r"\bin range\(")
+
+
+def dtype_name(dtype: dtypes.typeclass) -> str:
+    return {dtypes.bool_: "bool"}.get(dtype, dtype.to_string())
+
+
+def lanes(widths: list[int]) -> list[str]:
+    return [f"lane{dim}" for dim in range(len(widths))]
+
+
+def lane_loop(widths: list[int]) -> str:
+    return f"for {', '.join(lanes(widths))} in T.Parallel({', '.join(map(str, widths))}):"
+
+
+def one_thread(statement: str) -> str:
+    return f"for lane in T.Parallel(1):\n    {statement}"
+
+
+class TileLangEmitter(KernelEmitter):
+    """Allocates every register container at the top of the kernel, a tile as a buffer and a scalar as a var."""
+
+    __slots__ = ("allocations", "threads", "mma_threads", "shared")
+
+    def __init__(self, sdfg, dialect):
+        super().__init__(sdfg, dialect)
+        self.allocations: list[str] = []
+        self.threads = 128
+        #: The threads of a kernel with an MMA, whose warps must each own whole 16 x 8 pieces of the output.
+        self.mma_threads: int | None = None
+        #: The tiles an MMA reads, which ``T.gemm`` takes from shared memory.
+        self.shared = {
+            edge.data.data
+            for node, state in sdfg.all_nodes_recursive()
+            if isinstance(node, TileMMA)
+            for edge in state.in_edges(node)
+            if edge.dst_conn in ("_a", "_b")
+        }
+
+    def line(self, text: str) -> None:
+        super().line(SERIAL.sub("in T.serial(", text))
+
+    def allocate(self, name: str, desc: data.Data) -> None:
+        super().allocate(name, desc)
+        if desc.total_size == 1:
+            self.allocations.append(f'{name} = T.alloc_var("{dtype_name(desc.dtype)}")')
+            return
+        kind = "shared" if name in self.shared else "fragment"
+        shape = ", ".join(expr(s) for s in desc.shape)
+        self.allocations.append(f'{name} = T.alloc_{kind}(({shape},), "{dtype_name(desc.dtype)}")')
+
+    def copy(self, sdfg, state, edge) -> None:
+        path = state.memlet_path(edge)
+        src, dst = path[0].src.data, path[-1].dst.data
+        super().copy(sdfg, state, edge)  # checks both are registers and writes ``dst = src``
+        if sdfg.arrays[dst].total_size != 1:
+            self.lines[-1] = self.lines[-1].replace(f"{dst} = {src}", f"T.copy({src}, {dst})")
+
+
+class TileLangStatement(TileStatement):
+    """A tile node as lane loops over buffers."""
+
+    def __init__(self, emitter, sdfg, state, node):
+        super().__init__(emitter, sdfg, state, node)
+        emitter.threads = max(emitter.threads, node.group_threads())
+        if isinstance(node, TileMMA):
+            m, _, n = node.widths
+            warps = max(1, min(node.num_warps, (m // 16) * (n // 8)))
+            emitter.mma_threads = min(emitter.mma_threads or 32 * warps, 32 * warps)
+
+    def indexed(self, value: str, widths: list[int]) -> str:
+        """``value`` read at the lanes: a register tile becomes its element at the lane indices."""
+        tiles = {n for n, d in self.sdfg.arrays.items() if is_register(d) and d.total_size != 1}
+
+        class Lanes(ast.NodeTransformer):
+            def visit_Name(self, node: ast.Name) -> ast.AST:
+                if node.id not in tiles:
+                    return node
+                index = ast.parse(", ".join(lanes(widths)), mode="eval").body
+                return ast.Subscript(value=node, slice=index, ctx=node.ctx)
+
+        return ast.unparse(Lanes().visit(ast.parse(value, mode="eval")))
+
+    def assign(self, conn: str, value: str) -> None:
+        name = self.outputs[conn].data.data
+        desc = self.sdfg.arrays[name]
+        widths = list(self.node.widths)
+        cast = self.dialect.cast(self.indexed(value, widths), desc.dtype)
+        if desc.total_size == 1:
+            self.emitter.line(f"{name} = {cast}")
+        else:
+            self.emitter.line(f"{lane_loop(widths)}\n    {name}[{', '.join(lanes(widths))}] = {cast}")
+
+    def emit(self) -> None:
+        node = self.node
+        if isinstance(node, MaskedCopyLibraryNode):
+            self.masked_copy()
+        elif isinstance(node, TileReduce):
+            self.reduction()
+        elif isinstance(node, TileScan):
+            self.prefix()
+        elif isinstance(node, TileMMA):
+            self.gemm()
+        else:
+            super().emit()
+
+    def masked_copy(self) -> None:
+        source, target = self.inputs["_cpy_in"], self.outputs["_cpy_out"]
+        src, dst = source.data.data, target.data.data
+        widths = list(self.node.widths)
+        mask = self.lane_mask()
+        if is_register(self.sdfg.arrays[dst]):
+            if is_register(self.sdfg.arrays[src]):
+                self.assign("_cpy_out", self.masked(src))
+            else:
+                self.assign("_cpy_out", self.dialect.load(src, self.offsets(src, source.data.subset), mask))
+            return
+        subset = target.data.subset if target.data.data == dst else target.data.other_subset
+        address = f"{dst}[{self.offsets(dst, subset).flat()}]"
+        value = self.indexed(src, widths)
+        mask = None if mask is None else self.indexed(mask, widths)
+        write = f"T.atomic_add({address}, {value})" if accumulates(target.data) else f"{address} = {value}"
+        body = write if mask is None else f"if {mask}:\n        {write}"
+        self.emitter.line(f"{lane_loop(widths)}\n    {body}")
+
+    def reduction(self) -> None:
+        node = self.node
+        if node.op not in REDUCTIONS:
+            raise CodegenError(f"Python backend: TileLang has no tile reduction with {node.op!r}")
+        if node.axis is None and len(node.widths) != 1:
+            raise CodegenError(f"Python backend: TileLang reduces {node.label!r} fully only over one dim")
+        source, out = self.input("_src"), self.outputs["_dst"].data.data
+        out_desc = self.sdfg.arrays[out]
+        if node.has_mask:
+            masked = f"{out}_masked"
+            self.emitter.allocate(masked, self.sdfg.arrays[source])
+            self.assign_buffer(masked, self.masked(source, IDENTITY[node.op]))
+            source = masked
+        target = out
+        if out_desc.total_size == 1:
+            target = f"{out}_reduced"
+            self.emitter.allocations.append(f'{target} = T.alloc_fragment((1,), "{dtype_name(out_desc.dtype)}")')
+        self.emitter.line(f"{REDUCTIONS[node.op]}({source}, {target}, dim={node.axis or 0})")
+        if target != out:
+            self.emitter.line(f"{out} = {target}[0]")
+
+    def assign_buffer(self, name: str, value: str) -> None:
+        widths = list(self.node.widths)
+        self.emitter.line(
+            f"{lane_loop(widths)}\n    {name}[{', '.join(lanes(widths))}] = {self.indexed(value, widths)}"
+        )
+
+    def prefix(self) -> None:
+        if self.node.op not in SCANS:
+            raise CodegenError(f"Python backend: TileLang has no tile scan with {self.node.op!r}")
+        self.emitter.line(f"{SCANS[self.node.op]}({self.input('_src')}, {self.outputs['_dst'].data.data}, dim=0)")
+
+    def gemm(self) -> None:
+        node = self.node
+        if str(node.alpha) not in ("1", "1.0"):
+            raise CodegenError(f"Python backend: TileLang multiplies {node.label!r} with alpha 1 only")
+        out = self.outputs["_c"].data.data
+        if "_cin" in self.inputs:
+            if str(node.beta) not in ("1", "1.0"):
+                raise CodegenError(f"Python backend: TileLang accumulates {node.label!r} with beta 1 only")
+            if self.input("_cin") != out:
+                self.emitter.line(f"T.copy({self.input('_cin')}, {out})")
+        else:
+            self.emitter.line(f"T.clear({out})")
+        self.emitter.line(f"T.gemm({self.input('_a')}, {self.input('_b')}, {out})")
+
+
+#: What a masked lane of a reduction contributes.
+IDENTITY = {"+": "0", "max": "-T.infinity('float64')", "min": "T.infinity('float64')"}
+
+
+class TileLang(Dialect):
+    imports = IMPORTS
+    decorator = "@T.prim_func"
+    module = "T"
+    body_depth = 2
+    functions = {
+        "int_floor": "T.floordiv",
+        "int_ceil": "T.ceildiv",
+        "Min": "T.min",
+        "Max": "T.max",
+        "Abs": "T.abs",
+        "ipow": "T.pow",
+        "minimum": "T.min",
+        "maximum": "T.max",
+        "where": "T.if_then_else",
+    }
+
+    @property
+    def emitter_type(self) -> type[KernelEmitter]:
+        return TileLangEmitter
+
+    @property
+    def statement_type(self) -> type[TileStatement]:
+        return TileLangStatement
+
+    def program_id(self, axis: int) -> str:
+        return BLOCK_IDS[axis]
+
+    def lane(self, widths: list[int], dim: int) -> str:
+        return f"lane{dim}"
+
+    def load(self, base: str, at: Element, mask: str | None) -> str:
+        element = f"{base}[{at.flat()}]"
+        return element if mask is None else f"T.if_then_else({mask}, {element}, 0)"
+
+    def store(self, base: str, at: Element, value: str, mask: str | None) -> str:
+        return one_thread(f"{base}[{at.flat()}] = {value}")
+
+    def atomic_add(self, base: str, at: Element, value: str, mask: str | None) -> str:
+        return one_thread(f"T.atomic_add({base}[{at.flat()}], {value})")
+
+    def cast(self, value: str, dtype: dtypes.typeclass) -> str:
+        return f'T.cast({value}, "{dtype_name(dtype)}")'
+
+    def full(self, widths: list[int], value: str, dtype: dtypes.typeclass) -> str:
+        return value  # the lane loop of the statement broadcasts it
+
+    def define(self, name: str, kernel: TileLangEmitter, arrays: list[str], symbols: list[str], grid: list[str]) -> str:
+        sdfg = kernel.sdfg
+        params = [f'{a}: T.Tensor((T.dynamic("{a}_size"),), "{dtype_name(sdfg.arrays[a].dtype)}")' for a in arrays]
+        params += [f"{s}: T.{dtype_name(sdfg.symbols.get(s, dtypes.int64))}" for s in symbols]
+        launch = f"T.Kernel({', '.join(grid)}, threads={kernel.mma_threads or kernel.threads})"
+        lines = [
+            self.decorator,
+            f"def {name}({', '.join(params)}):",
+            f"    with {launch} as ({', '.join(BLOCK_IDS[: len(grid)])},):",
+            *kernel.lines[: len(grid)],
+            *(f"        {line}" for line in kernel.allocations),
+            *kernel.lines[len(grid) :],
+            "",
+            "",
+            f"{name} = tilelang.compile({name})",
+        ]
+        return "\n".join(line.replace("int_ceil(", "T.ceildiv(") for line in lines)
+
+    def launch(self, kernel: str, grid: list[str], arrays: list[str], symbols: list[str]) -> str:
+        args = [f"torch.from_dlpack({a}).view(-1)" for a in arrays] + symbols
+        return f"{kernel}({', '.join(args)})"

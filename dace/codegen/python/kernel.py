@@ -68,6 +68,22 @@ class Dialect:
     module = ""
     #: The functions spelled other than ``<module>.<name>``.
     functions: dict[str, str] = {}
+    #: The indentation of the kernel body: one under the ``def``, more under a launch context.
+    body_depth = 1
+
+    @property
+    def emitter_type(self) -> type["KernelEmitter"]:
+        """The walker of a kernel body; a dialect that holds tiles in buffers walks its own way."""
+        return KernelEmitter
+
+    @property
+    def statement_type(self) -> type["TileStatement"]:
+        """The statement a tile node is; a dialect that holds tiles in buffers writes its own."""
+        return TileStatement
+
+    def define(self, name: str, kernel: "KernelEmitter", arrays: list[str], symbols: list[str], grid: list[str]) -> str:
+        """The source of the kernel function ``name`` around the body ``kernel`` wrote."""
+        return "\n".join([self.decorator, f"def {name}({', '.join(arrays + symbols)}):", *kernel.lines])
 
     def __getitem__(self, name: str) -> str:
         return self.functions.get(name, f"{self.module}.{name}")
@@ -140,7 +156,8 @@ class KernelEmitter(Emitter):
         self.arrays: set[str] = set()
 
     def line(self, text: str) -> None:
-        super().line(HELPER_CALL.sub(lambda m: f"{self.dialect[m.group(1)]}(", text))
+        for part in text.split("\n"):
+            super().line(HELPER_CALL.sub(lambda m: f"{self.dialect[m.group(1)]}(", part))
 
     def code(self, sdfg: SDFG, text: str) -> str:
         return text  # a scalar is a value in a kernel
@@ -157,13 +174,20 @@ class KernelEmitter(Emitter):
         for name in (e.data.data for e in (*state.in_edges(entry), *state.out_edges(state.exit_node(entry)))):
             if name is not None:
                 self.arrays.add(name)
-        self.depth = 1
+        self.depth = self.dialect.body_depth
+        # The registers of the map scope itself; a nested SDFG's states allocate their own
+        for name in sorted({n.data for n in state.scope_subgraph(entry).data_nodes()} - self.allocated):
+            if sdfg.arrays[name].transient:
+                self.allocate(name, sdfg.arrays[name])
         params = list(entry.map.params)
         for axis, (param, (begin, _, step)) in enumerate(zip(reversed(params), reversed(entry.map.range))):
             self.line(f"{param} = {expr(begin)} + {self.dialect.program_id(axis)} * {expr(step)}")
         self.scope(sdfg, state, scope, order, entry)
         tree = ast.parse(textwrap.dedent("\n".join(self.lines)))
-        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        # The grid is the map range, which a dialect may compute in the kernel
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} | {
+            str(s) for s in entry.map.range.free_symbols
+        }
         assigned = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
         symbols = (names & (set(sdfg.symbols) | set(sdfg.arglist()))) - self.arrays - assigned
         return sorted(self.arrays), sorted(symbols)
@@ -178,7 +202,7 @@ class KernelEmitter(Emitter):
     def library(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> None:
         if not isinstance(node, TileOp):
             raise CodegenError(f"Python backend: no tile kernel form for {type(node).__name__} {node.label!r}")
-        TileStatement(self, sdfg, state, node).emit()
+        self.dialect.statement_type(self, sdfg, state, node).emit()
 
     def map(self, sdfg, state, scope, order, entry) -> None:
         if entry.map.schedule in dtypes.GPU_SCHEDULES:
