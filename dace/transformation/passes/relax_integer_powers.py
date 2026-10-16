@@ -91,7 +91,18 @@ class PowerRelaxer:
             self.relaxed += 1
             return cast(sympy.Expr, ipow(base, result if not result.free_symbols else exp))
 
-        return core.replace(sympy.Pow, to_ipow)
+        relaxed = core.replace(sympy.Pow, to_ipow)
+        # Index arithmetic rounds a power whose exponent might be negative (the frontend sizes ``arange(R**i)`` as
+        # ``ceiling(R**i)``). An integer ``ipow`` leaves nothing to round, and a rounding left in place prints as libm
+        # ``ceil``: a double where C needs an integer bound.
+        return relaxed.replace(
+            lambda node: (
+                isinstance(node, (sympy.ceiling, sympy.floor))
+                and node.args[0].has(ipow)
+                and symbolic._integral(node.args[0])
+            ),
+            lambda node: node.args[0],
+        )
 
     def relax_subset(self, sub: subsets.Subset, facts_of: FactsOf) -> None:
         if isinstance(sub, subsets.Range):
