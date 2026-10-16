@@ -1700,5 +1700,35 @@ def test_arg_max_lift_doesnt_lift_break_loop():
     assert res is None
 
 
+def test_index_argmax_refuses_a_constant_seed():
+    """A constant seed is not ``a[start-1]``, and the index rewrite rebuilds the seed from that position.
+
+    On all-negative data the sequential loop never updates the carriers and returns the seed
+    ``(0.0, -1)``; a lift that dropped the seed would return the in-range maximum instead."""
+    from dace.libraries.standard.nodes import ArgReduce
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    @dace.program
+    def index_argmax_constant_seed(a: dace.float64[N], out: dace.float64[1], idx: dace.int64[1]):
+        x = 0.0
+        j = -1
+        for i in range(N):
+            if a[i] > x:
+                x = a[i]
+                j = i
+        out[0] = x
+        idx[0] = j
+
+    sdfg = index_argmax_constant_seed.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert sum(1 for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 0
+
+    a = -np.arange(1.0, 9.0)
+    out = np.zeros(1)
+    idx = np.zeros(1, dtype=np.int64)
+    sdfg(a=a.copy(), out=out, idx=idx, N=a.size)
+    assert out[0] == 0.0 and int(idx[0]) == -1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

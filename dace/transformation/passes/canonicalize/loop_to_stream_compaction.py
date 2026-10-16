@@ -295,6 +295,9 @@ class LoopToStreamCompaction(ppl.Pass):
         if not self.cursor_arrays_are_isolated(loop, cursor_name, sdfg):
             return None  # in-place compaction / the scatter would race its own input
 
+        if self.cursor_writes_move_with_iteration(loop, levels, cursor_name):
+            return None  # e.g. ``b[2*c - i]``: the affine cursor model hides a real collision
+
         if not self.guard_reads_survive_hoisting(loop, levels, sdfg):
             return None  # hoisting the guard reads ahead of the body writes reorders a dependence
 
@@ -534,6 +537,30 @@ class LoopToStreamCompaction(ppl.Pass):
             if name in plain_written:
                 return False  # the gathered source is rewritten inside the loop
         return True
+
+    def cursor_writes_move_with_iteration(self, loop: LoopRegion, levels: tuple[NestLevel, ...], cursor: str) -> bool:
+        """Does a cursor-indexed write also read a symbol that changes from one iteration to the next?
+
+        The probe models the cursor as ``K * (i - start)``. For a write ``a[c + o]`` with ``o`` fixed
+        across iterations that model collides exactly when the real ``c_in + K * rank[i]`` does,
+        since both step by multiples of ``K``. A subset that also moves with the iteration does not
+        keep that property: ``b[2*c - i]`` is injective under the model and repeats under the real
+        cursor. Map parameters vary only within one iteration and stay allowed.
+        """
+        moving = {level.loop.loop_variable for level in levels}
+        for edge in loop.all_interstate_edges():
+            moving.update(edge.data.assignments.keys())
+        moving.discard(cursor)
+        for state in loop.states():
+            for edge in state.edges():
+                if edge.data.is_empty() or edge.data.data is None:
+                    continue
+                if not (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == edge.data.data):
+                    continue
+                names = {str(sym) for sym in required(edge.data.subset).free_symbols}
+                if cursor in names and names & moving:
+                    return True
+        return False
 
     def guard_reads_survive_hoisting(self, loop: LoopRegion, levels: tuple[NestLevel, ...], sdfg: SDFG) -> bool:
         """Phase 1 runs every guard read before every body write; that must not reorder a dependence."""
