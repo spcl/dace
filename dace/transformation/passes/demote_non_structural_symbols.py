@@ -201,7 +201,8 @@ def fuse_into_successor(states: Iterable[SDFGState]) -> None:
     from the store: ``o[b] = o[b] + 1`` became a read state and a write state, and ``AugAssignToWCR``, which matches one
     state, never saw it as an accumulation. A float accumulator is never a symbol and kept its single state.
     """
-    from dace.transformation.interstate import StateFusion
+    # The fusion canonicalization runs everywhere else (``FuseStates``): one canon fuses by one rule.
+    from dace.transformation.interstate import StateFusionExtended
 
     for state in states:
         graph = state.parent_graph
@@ -211,12 +212,12 @@ def fuse_into_successor(states: Iterable[SDFGState]) -> None:
         follower = successors[0].dst
         if not isinstance(follower, SDFGState) or graph.in_degree(follower) != 1:
             continue
-        fusion = StateFusion()
+        fusion = StateFusionExtended()
         fusion.setup_match(
             state.sdfg,
             graph.cfg_id,
             -1,
-            {StateFusion.first_state: state, StateFusion.second_state: follower},
+            {StateFusionExtended.first_state: state, StateFusionExtended.second_state: follower},
             0,
             override=True,
         )
