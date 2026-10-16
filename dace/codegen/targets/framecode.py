@@ -658,9 +658,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
+        code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         # Per SDFG cfg_id, built on first need
         dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
-        code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
