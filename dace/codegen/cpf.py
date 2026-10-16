@@ -160,6 +160,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Gemv": "BLAS gemv: y = alpha * A @ x + beta * y",
     "Ger": "BLAS ger: A = alpha * x @ y^T + A (rank-1 update)",
     "Getrf": "LAPACK getrf: LU factorization with partial pivoting",
+    "GetrfNoPivot": "LU factorization without pivoting, in place: A = L @ U, L unit lower triangular",
     "Getri": "LAPACK getri: matrix inverse from an LU factorization",
     "Getrs": "LAPACK getrs: solve A @ X = B from an LU factorization",
     "IFFT": "inverse discrete Fourier transform",
