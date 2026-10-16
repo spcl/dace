@@ -58,8 +58,14 @@ def test_to_isl_refuses_c_modulo_of_a_possibly_negative_dividend():
 
 
 def test_to_isl_renders_the_floored_modulo_as_isls_mod():
-    """Python's ``N % 8`` floors, as ISL's ``mod`` does."""
-    assert poly.render_affine(p("N % 8"), poly.build_name_map([], ["N"])).endswith("mod 8)")
+    """Python's modulo floors, as ISL's ``mod`` does."""
+    assert poly.render_affine(p("PyMod(N, 8)"), poly.build_name_map([], ["N"])).endswith("mod 8)")
+
+
+def test_to_isl_refuses_cs_modulo_of_unknown_sign():
+    """An SDFG's ``%`` is C's: it truncates, which ISL's ``mod`` matches only for a nonnegative dividend."""
+    with pytest.raises(ValueError):
+        poly.render_affine(p("N % 8"), poly.build_name_map([], ["N"]))
 
 
 def test_to_isl_nonlinear_raises():

@@ -350,7 +350,8 @@ def test_a_kmp_search_whose_step_holds_a_while_loop_becomes_a_map_around_it():
 
     loops = [region for region in sdfg.all_control_flow_regions(recursive=True) if isinstance(region, LoopRegion)]
     assert len(state_scans(sdfg)) == 1
-    assert [loop.loop_variable for loop in loops] == [""]
+    # The step's search loop, counted by WhileToFor, stays one sequential loop inside the scan's step
+    assert len(loops) == 1
     assert all(loop.sdfg is not sdfg for loop in loops)
     np.testing.assert_array_equal(actual, expected)
 

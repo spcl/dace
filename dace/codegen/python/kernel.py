@@ -496,7 +496,10 @@ class TileStatement:
         return Element(indices, [expr(stride) for stride in desc.strides], tile=True)
 
     def masked_copy(self) -> None:
-        source, target = self.inputs["_cpy_in"], self.outputs["_cpy_out"]
+        source, target = (
+            self.inputs[CopyLibraryNode.INPUT_CONNECTOR_NAME],
+            self.outputs[CopyLibraryNode.OUTPUT_CONNECTOR_NAME],
+        )
         src, dst = source.data.data, target.data.data
         src_register, dst_register = is_register(self.sdfg.arrays[src]), is_register(self.sdfg.arrays[dst])
         if src_register and dst_register:
