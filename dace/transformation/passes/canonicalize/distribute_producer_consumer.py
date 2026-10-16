@@ -33,6 +33,7 @@ that write the SAME array at provably-disjoint subsets (e.g. covariance's
 those needs subset-disjointness reasoning and is out of scope for this pass.
 """
 
+import functools
 from typing import Any
 
 from dace import SDFG
@@ -104,6 +105,28 @@ def _rw_subsets(block: ControlFlowBlock, loop_var: str | None) -> tuple[dict[str
     return writes, reads
 
 
+def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[ControlFlowBlock, ControlFlowBlock]:
+    """Union-find parents that already join the blocks a body-edge assignment couples.
+
+    A symbol assigned on a body edge exists only in the clone holding that edge, so the edge's ends and every
+    block reading the symbol stay in one group (CSR ``row_ptr_index := row_ptr[i]`` feeding an inner loop).
+    """
+    parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
+
+    def root(x: ControlFlowBlock) -> ControlFlowBlock:
+        while parent[x] != x:
+            x = parent[x]
+        return x
+
+    for edge in loop.edges():
+        if not edge.data.assignments:
+            continue
+        readers = [b for b in order if set(edge.data.assignments) & {str(sym) for sym in b.free_symbols}]
+        for block in [edge.src, *readers]:
+            parent[root(block)] = root(edge.dst)
+    return parent
+
+
 def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
     """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
 
@@ -113,13 +136,13 @@ def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | Non
     ``tmp[i]``, covariance ``cov[i,j]``) splits. ``None`` if not a linear chain of >= 2 blocks or
     nothing splits.
     """
-    order = _linear_blocks(loop)
+    order = _linear_blocks(loop, allow_assignments=True)
     if order is None or len(order) < 2:
         return None
     lv = loop.loop_variable
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _rw_subsets(b, lv) for b in order}
-    parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
+    parent = assignment_coupled(loop, order)
 
     def find(x: ControlFlowBlock) -> ControlFlowBlock:
         while parent[x] != x:
@@ -179,9 +202,9 @@ class DistributeProducerConsumerLoop(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         # Function-local: ``perfect_loop_nesting`` imports this module.
-        from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops
+        from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops, groups_with_expansion
 
-        return distribute_loops(sdfg) or None
+        return distribute_loops(sdfg, grouping=functools.partial(groups_with_expansion, tried=set())) or None
 
 
 __all__ = ["DistributeProducerConsumerLoop", "_forward_flow_groups"]
