@@ -1,37 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Matrix multiplication whose innermost microkernel is described rather than written.
+Tiled matrix multiplication whose microkernel is written by a language model (``dace.ai``).
 
-The tiling, the parallel map and the data movement are ordinary DaCe: the program says which tile
-of ``A`` and which tile of ``B`` reach the kernel, and the frontend turns those slices into views
-that the kernel reads through. What is *not* written here is the kernel itself. ``dace.ai`` puts a
-node carrying the description below into the map, and the description is the specification: when
-the program is compiled, a language model is asked to write the tasklet that goes in its place,
-given the description and everything DaCe knows about the slot -- the strides of each view, the
-enclosing parallel map, and the compiler and CPU the code will be built for.
+The sample prints the generated kernel, compares it with NumPy, and with ``--refine`` asks for a
+faster version with the measurement as feedback::
 
-The first answer is rarely the last, so the sample also shows the loop around it: it prints the
-generated kernel (``dace.libraries.ai.show``), measures it against NumPy, hands that measurement
-back to the model as feedback for another round (``dace.libraries.ai.refine``), and lists the
-rounds the kernel has been through (``dace.libraries.ai.history``)::
-
-    python samples/optimization/ai_generated_matmul.py 512            # generate, run, measure
-    python samples/optimization/ai_generated_matmul.py 512 --refine   # ... and ask for a faster one
+    python samples/optimization/ai_generated_matmul.py 512
+    python samples/optimization/ai_generated_matmul.py 512 --refine
     python samples/optimization/ai_generated_matmul.py 512 --refine "Use 4 accumulators per row."
 
-Running it needs a model provider, so either set an API key::
+It needs a model provider (see the "AI-Generated Implementations" documentation)::
 
     ANTHROPIC_API_KEY=... python samples/optimization/ai_generated_matmul.py
-    # or, for the OpenAI SDK:
-    DACE_ai_provider=openai DACE_ai_model=gpt-6-astra python samples/optimization/ai_generated_matmul.py
-
-or relay the prompt by hand, without an API key, through a chat interface::
-
+    DACE_ai_provider=openai DACE_ai_model=<model> OPENAI_API_KEY=... python samples/optimization/ai_generated_matmul.py
     DACE_ai_provider=manual python samples/optimization/ai_generated_matmul.py
-
-The answer is cached, so a second run compiles without asking again. See :ref:`ai` for the whole
-feature: the providers, what the model is told about a slot, and the rest of the iteration API
-(``rollback`` to an earlier round, ``pin`` to freeze a kernel that is good enough).
 """
 
 import argparse
@@ -42,14 +24,13 @@ import numpy as np
 import dace
 from dace.libraries import ai
 
-#: Reduction length. A symbol, so that the generated kernel is written once for any matrix size.
+#: Matrix size. A symbol, so that the kernel is generated once for every size.
 N = dace.symbol("N")
 
-#: Edge of the output tile one invocation of the kernel computes. Eight single-precision elements
-#: are one AVX2 register, which is what makes a register-blocked kernel natural here.
+#: Edge of the output tile of one kernel invocation; eight floats fill one AVX2 register.
 TILE = 8
 
-#: Name of the node, and therefore of the slot that ``show``, ``refine`` and ``history`` address.
+#: Name of the node, as used by ``show``, ``refine`` and ``history``.
 KERNEL = "gemm_tile"
 
 MICROKERNEL = f"""
@@ -67,9 +48,7 @@ them with the strides given for each of them, and do not assume a row of a view 
 next row. The enclosing map is already parallel: do not open a parallel region of your own.
 """.strip()
 
-#: Sent to the model when ``--refine`` is given without a message of its own. The point of a
-#: refinement is that the model already knows this slot -- it sees the kernel it wrote and this
-#: note, rather than the original question again -- so the feedback is a measurement, not a respec.
+#: The feedback of ``--refine`` without a message.
 FEEDBACK = """
 The kernel you wrote is correct, but slow: multiplying two {n}x{n} single-precision matrices with
 it takes {ours:.2f} ms, while NumPy's BLAS does the same in {theirs:.2f} ms ({factor:.1f}x faster)
@@ -97,10 +76,9 @@ def matmul(A: dace.float32[N, N], B: dace.float32[N, N], C: dace.float32[N, N]):
 
 def best_of(call, repeats: int = 3) -> float:
     """
-    Times a callable, ignoring the outliers a first run and a busy machine produce.
+    Times a callable after one warm-up call.
 
-    :param call: What to time. Called once before the measurement to warm up (which is also what
-                 compiles the program).
+    :param call: What to time.
     :param repeats: How many times to measure.
     :return: The shortest wall-clock time observed, in milliseconds.
     """
@@ -115,11 +93,7 @@ def best_of(call, repeats: int = 3) -> float:
 
 def measure(sdfg: dace.SDFG, size: int):
     """
-    Runs the generated program, checks it against NumPy, and times both.
-
-    The program is compiled once and called through the compiled handle: calling the SDFG itself
-    re-checks (and here, because a library of that name is already loaded, re-runs) the build on
-    every call, which would dominate the measurement of a kernel this small.
+    Runs the compiled program, checks it against NumPy, and times both.
 
     :param sdfg: The expanded SDFG.
     :param size: Edge length of the matrices.
@@ -136,7 +110,6 @@ def measure(sdfg: dace.SDFG, size: int):
     ours = best_of(lambda: compiled(A=a, B=b, C=c, N=size))
     compiled.finalize()
 
-    # Into a buffer, like the generated program, so that the two timings measure the same work
     theirs = best_of(lambda: np.matmul(a, b, out=expected))
     error = np.linalg.norm(c - expected) / np.linalg.norm(expected)
     if not np.isfinite(error) or error > 1e-5:
@@ -166,9 +139,7 @@ if __name__ == "__main__":
     if args.N % TILE != 0:
         parser.error(f"N must be a multiple of the tile size ({TILE})")
 
-    # Expanding explicitly, rather than letting compilation do it, so that the kernel can be read
-    # before it runs. Everything from here on is an ordinary SDFG: it can be saved, transformed and
-    # run without the model being involved again.
+    # Expanded before compilation, to print the kernel
     sdfg = matmul.to_sdfg()
     sdfg.expand_library_nodes()
 
@@ -177,8 +148,7 @@ if __name__ == "__main__":
     ours, theirs = measure(sdfg, args.N)
 
     if args.refine is not None:
-        # A refinement is the next round of the same conversation, and it is atomic: if the new
-        # kernel fails to generate or to compile, the one measured above is left exactly as it was.
+        # If the new round fails, the kernel measured above is kept
         message = (
             args.refine or FEEDBACK.format(n=args.N, tile=TILE, ours=ours, theirs=theirs, factor=ours / theirs).strip()
         )
@@ -192,11 +162,10 @@ if __name__ == "__main__":
         change = 100 * (ours - revised) / ours
         print(f"The revised kernel is {abs(change):.1f}% {'faster' if change > 0 else 'slower'} than the first one")
 
-    # Every round is on disk, in the session for this slot, and can be restored without asking the
-    # model anything: dace.libraries.ai.rollback(sdfg, KERNEL, round=1)
+    # Earlier rounds can be restored with dace.libraries.ai.rollback(sdfg, KERNEL, round=1)
     rounds = ai.history(sdfg, KERNEL)
     print("\n=== History ===")
     for entry in rounds:
         print(f"  {entry}")
     if not rounds:
-        print("  (no session on disk -- sessions are off, or this answer came from the cache of another run)")
+        print("  (no session on disk: sessions are off, or the answer came from the cache)")

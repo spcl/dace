@@ -617,38 +617,32 @@ required:
         type: dict
         title: AI-generated code
         description: >
-            Preferences for the "ai" library node implementation, which expands a library node
-            into a tasklet written by a language model.
+            Settings of the "ai" library node implementation, a tasklet written by a language model.
         required:
             provider:
                 type: str
                 default: 'anthropic'
                 title: Model provider
                 description: >
-                    Which backend to generate code with. "anthropic" uses the Anthropic Messages
-                    API (pip install 'dace[agent-anthropic]'); "openai" uses the OpenAI Responses API
-                    (pip install 'dace[agent-openai]'); "manual" prints the prompt and
-                    reads the reply back from the terminal, needing neither a key nor an SDK. The
-                    SDK is only imported when an expansion actually runs.
+                    "anthropic" (Messages API, dace[agent-anthropic]), "openai" (Responses API,
+                    dace[agent-openai]), or "manual", which writes the prompt to a file and reads
+                    the reply from the terminal.
 
             api_key_envvar:
                 type: str
                 default: ''
                 title: API key environment variable
                 description: >
-                    Name of the environment variable holding the provider's API key. When empty,
-                    the provider's conventional variable is used (ANTHROPIC_API_KEY or
-                    OPENAI_API_KEY). If the variable is unset, the provider's own credential chain
-                    is used instead.
+                    Environment variable holding the API key. Empty means ANTHROPIC_API_KEY or
+                    OPENAI_API_KEY. If the variable is unset, the SDK's own credential lookup is used.
 
             base_url:
                 type: str
                 default: ''
                 title: API base URL
                 description: >
-                    Endpoint of the provider's API, e.g. a proxy, gateway, or self-hosted server
-                    with a compatible API. When empty, the SDK default (or its environment
-                    variable, such as ANTHROPIC_BASE_URL or OPENAI_BASE_URL) is used.
+                    Endpoint of the provider's API, e.g. a gateway or a compatible server. Empty
+                    means the SDK default (or ANTHROPIC_BASE_URL / OPENAI_BASE_URL).
 
             model:
                 type: str
@@ -660,69 +654,58 @@ required:
                 type: str
                 default: 'high'
                 title: Reasoning effort
-                description: >
-                    How much effort the model should spend per expansion, for providers that
-                    support it (low, medium, high, xhigh, max).
+                description: Reasoning effort, where supported (low, medium, high, xhigh, max).
 
             max_tokens:
                 type: int
                 default: 64000
                 title: Maximum response tokens
-                description: Upper bound on the length of a single generated response.
+                description: Maximum length of one response.
 
             timeout:
                 type: int
                 default: 600
                 title: Request timeout
-                description: Timeout, in seconds, for one request to the model provider.
+                description: Timeout of one request, in seconds.
 
             compile_check:
                 type: bool
                 default: true
                 title: Compile-check generated code
                 description: >
-                    Compile a program containing only the generated tasklet before it is inserted
-                    into the SDFG, and send compiler errors back to the model. This does not check
-                    that the result is correct.
+                    Compile a program containing only the generated tasklet before using it, and
+                    send compiler errors back to the model. Results are not checked.
 
             max_repair_attempts:
                 type: int
                 default: 2
                 title: Maximum repair attempts
                 description: >
-                    How many times the model may be asked to fix generated code that does not
-                    compile. Only used when ai.compile_check is enabled.
+                    How many times the model is asked to fix an answer that fails the compile check.
 
             cache:
                 type: bool
                 default: true
                 title: Reuse model answers
                 description: >
-                    Store every answer on disk, keyed by the provider, the model, the effort
-                    setting and the whole conversation, and reuse it when the same question is
-                    asked again. Re-expanding an unchanged library node then costs nothing. Any
-                    change to the SDFG, the node, or the model changes the key and misses the
-                    cache, so a stale answer cannot be picked up.
+                    Store answers in <build folder root>/ai-cache, keyed by the request settings and
+                    the conversation, and reuse them for identical requests.
 
             sessions:
                 type: bool
                 default: true
                 title: Record generation sessions
                 description: >
-                    Write the prompts, the model's answers, and the source and diagnostics of every
-                    probe compilation to disk, one directory per generated slot. An expansion is a
-                    paid and non-reproducible call whose result is baked into the SDFG, so the
-                    material that produced it is kept by default. It is also what a later round
-                    resumes: refining a tasklet replays this conversation rather than starting
-                    over. Set DACE_debugprint=verbose to see the same material as it happens.
+                    Write the prompts, answers and compile checks of each node to
+                    <build folder root>/ai-sessions. dace.libraries.ai.refine continues these
+                    sessions.
 
             extra_instructions:
                 type: str
                 default: ''
                 title: Extra prompt instructions
                 description: >
-                    Additional text appended to every code generation prompt, e.g. project-wide
-                    coding conventions or libraries that should be preferred.
+                    Text appended to every prompt, e.g. coding conventions or preferred libraries.
 
     instrumentation:
         type: dict

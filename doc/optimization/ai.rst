@@ -3,30 +3,21 @@
 AI-Generated Implementations
 ============================
 
-Some code is not worth writing by hand, and is not available in a library either: a vectorized
-microkernel for one specific tile shape, a sequence of vendor intrinsics, a call into a library
-DaCe does not wrap. DaCe can ask a language model to write those, as **tasklets**, in place of a
-:ref:`library node <libnodes>`.
-
-This is a code generation feature rather than a chat interface. The model is not asked "how would
-you multiply matrices"; it is given one slot in one SDFG -- the connectors and the strides of the
-data behind them, the maps and nested SDFGs around it, whether the code will be compiled as GPU
-device code, and the compiler and CPU it will be built for -- and asked for code that is correct
-*there*. What comes back is compiled in isolation before it is accepted, and then becomes an
-ordinary tasklet in the SDFG: it is saved with the SDFG, it is transformed like any other node,
-and compiling the program again does not query the model again.
+DaCe can ask a language model to write the tasklet that replaces a :ref:`library node <libnodes>`,
+e.g. a vectorized microkernel, a sequence of vendor intrinsics, or a call into an external library.
+The model is given the node's context in the SDFG: the connectors and the layout of the data behind
+them, the enclosing maps and nested SDFGs, whether the code runs on a GPU, and the compiler and
+hardware. The answer is compile-checked and becomes an ordinary tasklet in the SDFG, so compiling
+the program again does not query the model.
 
 .. note::
-    Generated code is compiled and run on your machine, and the probe described below only checks
-    that it *compiles*, never that it is correct or safe. Read what a model wrote before you trust
-    a result -- ``dace.libraries.ai.show`` prints it -- and keep the sessions on disk, which record
-    exactly what was asked and answered.
+    Generated code is compiled and run on your machine. The compile check does not check that it
+    is correct. Read the code before trusting a result (``dace.libraries.ai.show`` prints it).
 
-Three ways to ask for one
--------------------------
+Requesting an implementation
+----------------------------
 
-**In a Python program**, with :func:`dace.ai <dace.frontend.python.interface.ai>`. This is the
-common case: the description sits where the code would have been.
+**In a Python program**, with :func:`dace.ai <dace.frontend.python.interface.ai>`:
 
 .. code-block:: python
 
@@ -35,24 +26,17 @@ common case: the description sits where the code would have been.
     @dace.program
     def saxpy(a: dace.float32, x: dace.float32[N], y: dace.float32[N]):
         return dace.ai('Write _out[i] = _a * _x[i] + _y[i] for every element, using AVX2 FMA '
-                       'intrinsics on aligned loads and a scalar remainder loop.',
+                       'intrinsics and a scalar remainder loop.',
                        a=a, x=x, y=y)
 
-Because the description is the specification, it has to be able to name the variables the
-generated code will see. Those are the node's connectors, and they come from the call:
+The description refers to the node's connectors, which are named after the call: a keyword input
+``a=A`` becomes ``_a``, positional inputs become ``_in0``, ``_in1``, ..., and the output is
+``_out`` (``_out0``, ``_out1``, ... when ``out`` names several containers). Program symbols such as
+``N`` are in scope by name. The output is a new transient shaped like the first input, unless
+``shape``, ``dtype``, ``storage`` or ``out`` say otherwise. ``name`` names the node (it must be
+unique in the program) and ``schedule`` sets its schedule.
 
-* a keyword input ``a=A`` becomes the connector ``_a``,
-* a positional input becomes ``_in0``, ``_in1``, ... in the order given,
-* the output is ``_out``, or ``_out0``, ``_out1``, ... when ``out`` names several containers.
-
-Symbols of the program (``N`` above) are in scope in the generated code under their own names and
-are not passed in. The result is a new transient shaped like the first input unless ``shape``,
-``dtype`` and ``storage`` say otherwise, or ``out`` names containers to write into. The remaining
-keyword arguments configure the node rather than naming inputs: ``name`` labels it (and is how the
-iteration API addresses it later), and ``schedule`` sets its schedule.
-
-**In an SDFG**, with :class:`~dace.libraries.ai.nodes.ai_node.AINode`, which is the same node the
-frontend adds:
+**In an SDFG**, with :class:`~dace.libraries.ai.nodes.ai_node.AINode`:
 
 .. code-block:: python
 
@@ -64,237 +48,182 @@ frontend adds:
     state.add_edge(state.add_read('A'), None, node, '_a', dace.Memlet('A[ti:ti+8, 0:N]'))
     ...
 
-**On a library node that already exists**, through the reserved ``'ai'`` implementation. Every
-DaCe library node has it, including nodes defined outside DaCe by a downstream project, and
-without anything having been registered:
+**For an existing library node**, through the reserved ``'ai'`` implementation, which every
+library node has, including ones defined outside DaCe:
 
 .. code-block:: python
 
-    node.expand(state, 'ai')          # expand this node, now
-    node.implementation = 'ai'        # ... or when the SDFG is compiled
+    node.expand(state, 'ai')            # expand now
+    node.implementation = 'ai'          # or when the SDFG is compiled
 
     import dace.libraries.blas as blas
-    blas.default_implementation = 'ai'  # every BLAS node in this process
+    blas.default_implementation = 'ai'  # every BLAS node
 
-The node's class docstring, its properties and its name are all part of the prompt, so a
-:class:`~dace.libraries.blas.nodes.gemm.Gemm` does not need a description to be expanded this way
--- the semantics it must reproduce are already documented. :envvar:`ai.extra_instructions` appends
-text to every prompt, which is where project-wide conventions belong.
+The prompt includes the node's class docstring and properties, so e.g. a
+:class:`~dace.libraries.blas.nodes.gemm.Gemm` needs no description. :envvar:`ai.extra_instructions`
+is appended to every prompt.
 
-Choosing a provider
--------------------
-
-The model is reached through a provider, selected with :envvar:`ai.provider`. The SDK is imported
-only when an expansion actually runs, so none of them is a dependency of DaCe itself.
+Providers
+---------
 
 .. list-table::
     :header-rows: 1
-    :widths: 12 28 60
+    :widths: 12 30 58
 
-    * - Provider
+    * - :envvar:`ai.provider`
       - Install
-      - Use
-    * - ``anthropic``
+      - Description
+    * - ``anthropic`` (default)
       - ``pip install 'dace[agent-anthropic]'``
-      - The Anthropic Messages API, and the default. Reads the key from ``ANTHROPIC_API_KEY``,
-        falling back to the SDK's own credential chain if that variable is unset.
+      - Anthropic Messages API. The key is read from ``ANTHROPIC_API_KEY``, or the SDK's
+        credential lookup.
     * - ``openai``
       - ``pip install 'dace[agent-openai]'``
-      - The OpenAI Responses API. Reads the key from ``OPENAI_API_KEY``; set :envvar:`ai.model`
-        to an OpenAI model.
+      - OpenAI Responses API. The key is read from ``OPENAI_API_KEY``.
     * - ``manual``
       - --
-      - Neither an SDK nor a key: the prompt is written to a file for you to paste into a chat
-        interface, and the reply is read back from the terminal or from a file next to it.
+      - Writes the prompt to a file, to be pasted into a chat interface, and reads the reply from
+        the terminal or from a response file.
+
+``pip install 'dace[agent]'`` installs both SDKs; in a DaCe checkout, use ``uv sync --extra agent``.
+:envvar:`ai.base_url` sets the API endpoint, e.g. for a gateway or a compatible server.
 
 .. code-block:: bash
 
-    # Anthropic (the default provider)
     ANTHROPIC_API_KEY=... python my_program.py
 
-    # OpenAI
-    export DACE_ai_provider=openai
-    export DACE_ai_model=gpt-6-astra
-    OPENAI_API_KEY=... python my_program.py
+    DACE_ai_provider=openai DACE_ai_model=<model> OPENAI_API_KEY=... python my_program.py
 
-    # No API key: relay the prompt by hand
     DACE_ai_provider=manual python my_program.py
 
-The ``manual`` provider is also the way to *read* a prompt: it writes the full text to
-``<build folder root>/ai-prompts`` and waits for the model's JSON reply on standard input, or for it to be
-saved to the response file it names. A saved reply is reused on later runs, so the same program can
-be re-run, and re-compiled, without being asked again.
-
-The manual provider asks for one node at a time, while the program compiles. To answer every node
-of an SDFG in one sitting instead, write all the prompts out first and read the responses back
-afterwards, before compiling:
+The ``manual`` provider writes each prompt to ``<build folder root>/ai-prompts`` and reuses a saved
+reply while the prompt does not change. To answer the prompts of all nodes at once:
 
 .. code-block:: python
 
     import dace.libraries.ai as ai
 
-    ai.generate_prompts(sdfg, 'prompts')       # prompts/<node>_<hash>_prompt.md, one per node
+    ai.generate_prompts(sdfg, 'prompts')       # prompts/<node>_<hash>_prompt.md
     # ... save each reply as prompts/<node>_<hash>_response.json ...
-    ai.read_prompt_responses(sdfg, 'prompts')  # expands every node that has a response
+    ai.read_prompt_responses(sdfg, 'prompts')  # expands the nodes that have a response
 
-The same is available per node, as ``node.generate_prompt(state)`` and
-``node.read_prompt_response(state, reply)``. A response supplied this way is verified like any
-other, but code that does not compile is reported rather than sent back to a model for repair.
-Both flows use the same files, so the manual provider also finds a reply saved for the batch.
+Per node, the same is available as ``node.generate_prompt(state)`` and
+``node.read_prompt_response(state, reply)``. Such a reply is compile-checked, and a failure raises
+an error.
 
-Which model is used, how much effort it spends, and how long a request may take are set by
-:envvar:`ai.model`, :envvar:`ai.effort`, :envvar:`ai.max_tokens` and :envvar:`ai.timeout`.
+The prompt
+----------
 
-What the model is told
-----------------------
+The prompt contains:
 
-The prompt is built from the node's slot in the SDFG, and is worth understanding, because most
-disappointing answers are answers to a question the description left open. It contains:
-
-* **The node**: its type, its class docstring, its properties, and the description if it has one.
-* **The connectors**: for each one, the C++ declaration, whether it is a pointer or a scalar
-  value, the container behind it with its shape and *strides*, the memlet subset, the address of
-  the first element, and an explicit ``address element (i0, ...) as`` formula. A sliced operand is
-  a strided view, not a repacked buffer, which is the mistake this section exists to prevent.
-* **The capabilities of the slot**: whether the body is compiled into a GPU kernel that DaCe has
-  already launched (and with what block size), whether ``__state`` and a GPU stream are in scope,
-  and which pointers must not be dereferenced from where the code runs -- host code over GPU
-  memory, or the other way around.
-* **The nesting**: every map, loop, control flow region and nested SDFG between the node and the
-  top-level SDFG, with the resolved schedule of each. A body inside a ``CPU_Multicore`` map is told
-  not to open a parallel region of its own.
-* **The target**: the platform, the CPU and its ISA extensions, the GPU architecture where one is
-  involved, and the compiler with the exact flags DaCe will build with.
-
-The same node in two places therefore gets two different answers, which is the point: a ``Gemm``
-inside a GPU kernel, a ``Gemm`` on the host over GPU arrays, and a ``Gemm`` over CPU arrays need
-different code, and nothing about the node itself says which is which.
+* **The node**: its type, class docstring, properties and description.
+* **The connectors**: their C++ types, the containers behind them with shape and strides, the
+  memlet subset, the offset of the pointer, and how to index it.
+* **What the code may do**: whether it runs in a GPU kernel (and with which block size), whether
+  ``__state`` and a GPU stream are in scope, and which pointers it may not dereference.
+* **The enclosing scopes**: maps, loops, regions and nested SDFGs, with their resolved schedules.
+* **The target**: platform, CPU and ISA extensions, GPU architecture, compiler and flags.
+* **The DaCe environments** registered on the machine, split into those whose installation check
+  passes and those without a check.
 
 When to expand
 ~~~~~~~~~~~~~~
 
-The schedules, storage locations and connector types in the prompt are decided by DaCe's type
-inference, which normally runs during compilation, before library nodes are expanded. When a node
-is expanded earlier (``node.expand``, ``sdfg.expand_library_nodes``), the same inference runs on a
-copy of the SDFG, and the connector types it implies are fixed on the generated tasklet. A later
-transformation that changes where data lives or where the node runs (e.g. moving arrays to the GPU)
-therefore leaves the tasklet written for the old placement. Expand after such transformations, or
-regenerate the tasklet with ``refine``.
+Schedules, storage and connector types are resolved by DaCe's type inference, which normally runs
+during compilation before library nodes are expanded. A node expanded earlier (``node.expand``,
+``sdfg.expand_library_nodes``) runs the same inference on a copy of the SDFG, and the resulting
+connector types are fixed on the generated tasklet. A later transformation that moves data or the
+node (e.g. to the GPU) leaves the tasklet written for the old placement: expand after such
+transformations, or regenerate the tasklet with ``refine``.
 
-Verification and repair
------------------------
+Compile check and repair
+------------------------
 
-Generated code is compiled before it is accepted: DaCe builds a program containing only the
-generated tasklet, with the same containers, memlets, symbols and environments, through the same
-pipeline as the real program (in ``<build folder root>/ai-check``). This catches syntax and type
-errors, not wrong results. Compiler errors go back to the model as a repair round;
-:envvar:`ai.max_repair_attempts` bounds how many. Set :envvar:`ai.compile_check` to false to skip
-the check.
+DaCe builds a program containing only the generated tasklet, with the same containers, memlets,
+symbols and environments, in ``<build folder root>/ai-check``. Compiler errors go back to the model,
+up to :envvar:`ai.max_repair_attempts` times. :envvar:`ai.compile_check` turns the check off.
 
-The check compiles each tasklet alone, so it cannot see what only breaks when several are in one
-program, such as two answers defining the same helper in their file-scope code.
-:func:`~dace.libraries.ai.diagnose.build` handles that case: it compiles the whole program,
-attributes each compiler diagnostic to the tasklet that generated the line, feeds it back, and
-rebuilds. With ``DACE_debugprint`` set, DaCe prints compiler output instead of including it in the
-exception; ``build`` captures it either way, while ``repair`` needs the exception text.
+Some errors only appear when several generated tasklets are in one program, e.g. two definitions of
+the same helper. :func:`~dace.libraries.ai.diagnose.build` compiles the whole program, attributes
+each diagnostic to the tasklet that generated the line, and asks for repairs. ``sdfg.compile()``
+itself never repairs.
 
 .. code-block:: python
 
     from dace.libraries import ai
 
-    compiled = ai.build(sdfg, rounds=2)   # compile, repairing generated code up to twice
-    ai.repair(sdfg, error)                # or feed one build failure back by hand
+    compiled = ai.build(sdfg, rounds=2)   # compile, repairing up to twice
+    ai.repair(sdfg, error)                # or repair once from a build error
 
-Attribution is exact rather than heuristic: DaCe annotates every generated line with the node it
-came from. A diagnostic that belongs to no generated tasklet is reported as such instead of being
-blamed on whichever one was nearby, and an ordinary ``sdfg.compile()`` still fails the way it
-always has -- nothing is repaired unless you ask.
+With ``DACE_debugprint`` set, DaCe prints the compiler output instead of including it in the
+exception, so ``repair`` cannot use it; ``build`` captures it in either case.
 
-Iterating on a generated tasklet
---------------------------------
+Revising a generated tasklet
+----------------------------
 
-The first answer is rarely the last: code that compiles and is correct can still be slower than
-what it replaced, and running it can surface a requirement nobody stated. What is needed then is
-not a fresh generation, which throws away everything the model worked out about this slot, but the
-next round of the same conversation.
+A generated tasklet can be revised in a new round of its session, with feedback:
 
 .. code-block:: python
 
     from dace.libraries import ai
 
-    ai.sessions(sdfg)                   # every refinable slot: name, session, round, flags
-    ai.show(sdfg, 'gemm_tile')          # print what the slot holds right now
-    ai.history(sdfg, 'gemm_tile')       # the rounds it has been through, and why
+    ai.sessions(sdfg)                   # the generated tasklets: name, session, round, flags
+    ai.show(sdfg, 'gemm_tile')          # print the current code
+    ai.history(sdfg, 'gemm_tile')       # the rounds so far
 
     ai.refine(sdfg, 'gemm_tile', 'Too slow: 4.2 ms against 1.1 ms for MKL. Use 8x8 register '
                                  'blocking and unroll the reduction.')
 
-    ai.rollback(sdfg, 'gemm_tile', round=1)   # put an earlier round back; asks the model nothing
-    ai.pin(sdfg, 'gemm_tile')                 # this one is good: leave it alone from now on
+    ai.rollback(sdfg, 'gemm_tile', round=1)   # put the code of an earlier round back
+    ai.pin(sdfg, 'gemm_tile')                 # exclude from refine and repair
 
-The selector (``'gemm_tile'`` above) is the node's name; it can also be an ``AITasklet`` object,
-or be left out when the SDFG holds exactly one generated tasklet.
+The tasklet is selected by node name, as an ``AITasklet``, or omitted if there is only one. The
+generated tasklet (:class:`~dace.libraries.ai.nodes.ai_tasklet.AITasklet`) stores the library node
+it replaced, and the session is on disk, so this also works on an SDFG loaded from a file. If a
+round fails, the previous tasklet is kept. Code edited by hand is what the next round revises.
 
-Two things make this work after the fact. The generated tasklet is an
-:class:`~dace.libraries.ai.nodes.ai_tasklet.AITasklet`, which carries the serialized library node
-it replaced, so the node can be put back and expanded again. And the conversation lives in a
-session directory on disk (``<build folder root>/ai-sessions``) rather than in the process that started it.
-Both survive saving the SDFG and loading it days later, which is when this is most often wanted.
-Refinement is atomic: if the new round fails to generate or to verify, the tasklet that was
-working a moment ago is put back exactly as it was. If you edited the code by hand, the next round
-is told so and revises *your* version rather than silently discarding it.
+Storage
+-------
 
-Caching and reproducibility
----------------------------
+Everything is stored under the build folder root (:envvar:`default_build_folder`, ``.dacecache``
+by default):
 
-Every answer is stored on disk (:envvar:`ai.cache`, in ``<build folder root>/ai-cache``), keyed
-by the provider, endpoint, model, effort, token limit, response schema and the entire conversation. Re-expanding an unchanged node is then
-free, and two identical questions asked from different SDFGs share one entry. Any change to the
-node, its context or the model changes the key and asks again. Deleting the cache only costs
-requests.
+* ``ai-cache``: answers, keyed by the provider, endpoint, model, effort, token limit, response
+  schema and conversation (:envvar:`ai.cache`).
+* ``ai-sessions``: per node, the prompts, answers and compile checks of every round
+  (:envvar:`ai.sessions`).
+* ``ai-environments``: the DaCe environments requested by the model, as Python modules.
+* ``ai-check``: the build folders of the compile checks.
+* ``ai-prompts``: the files of the ``manual`` provider.
 
-Sessions (:envvar:`ai.sessions`) are the other half: one directory per
-slot, holding the prompts, the answers, the probe source and the compiler diagnostics of every
-round. An expansion is a paid, non-reproducible call whose result is baked into an SDFG, so this
-material is kept by default -- it is what ``history`` and ``rollback`` read, and what explains a
-tasklet nobody remembers asking for.
+An expanded SDFG does not depend on any of these, except for generated environments: it compiles
+on a machine without an API key.
 
-Nothing about a *compiled* program depends on any of this. Once expanded, the SDFG holds the code:
-it serializes to ``.sdfg`` files, compiles on a machine with no API key, and can be handed to
-someone who does not use this feature at all.
+External libraries
+------------------
 
-Calling external libraries
---------------------------
-
-An answer may ask for a **DaCe environment**: headers, CMake packages and libraries, and the
-initialization and finalization code for a resource whose lifetime spans calls -- an FFTW plan, a
-cuBLAS handle. DaCe renders each request into a real Python module under
-``<build folder root>/ai-environments`` and imports it, so the environment is a plain, readable file that can
-be edited or deleted. The directory is re-imported when :mod:`dace.libraries.ai` is first imported,
-which is how an SDFG expanded last week still resolves the environments its tasklets link against.
-
-Inside a GPU kernel, only headers providing ``__device__`` functions are allowed, and the prompt
-says so.
+An answer may reuse a registered DaCe environment or request a new one: headers, CMake packages and
+libraries, and initialization and finalization code (e.g. for an FFTW plan or a cuBLAS handle). A
+new environment is written as a Python module to ``<build folder root>/ai-environments``, which is
+imported again when :mod:`dace.libraries.ai` is loaded. Inside a GPU kernel, only headers with
+``__device__`` functions are allowed.
 
 Configuration
 -------------
 
-All entries live under the ``ai`` category of the configuration, and can be set in ``.dace.conf``, through
-:class:`dace.config.Config`, or as ``DACE_ai_*`` environment variables (see :ref:`config`):
+The entries are in the ``ai`` category of the configuration (see :ref:`config`):
 
 * Provider and model: :envvar:`ai.provider`, :envvar:`ai.model`, :envvar:`ai.api_key_envvar`,
   :envvar:`ai.base_url`, :envvar:`ai.effort`, :envvar:`ai.max_tokens`, :envvar:`ai.timeout`
-* Prompting: :envvar:`ai.extra_instructions`
+* Prompt: :envvar:`ai.extra_instructions`
 * Compile check: :envvar:`ai.compile_check`, :envvar:`ai.max_repair_attempts`
-* Storage: :envvar:`ai.cache`, :envvar:`ai.sessions`. Everything is stored in ``ai-*`` directories
-  under the build folder root (:envvar:`default_build_folder`, ``.dacecache`` by default).
+* Storage: :envvar:`ai.cache`, :envvar:`ai.sessions`
 
-A complete example
-------------------
+Example
+-------
 
 `samples/optimization/ai_generated_matmul.py <https://github.com/spcl/dace/blob/main/samples/optimization/ai_generated_matmul.py>`_
-is a tiled matrix multiplication whose innermost microkernel is described rather than written. It
-prints the generated kernel, measures it against NumPy, hands the measurement back as feedback for
-another round, and lists the rounds the kernel has been through::
+is a tiled matrix multiplication with a generated microkernel. It prints the kernel, compares it
+with NumPy, and optionally refines it with the measurement as feedback::
 
     ANTHROPIC_API_KEY=... python samples/optimization/ai_generated_matmul.py 512 --refine
