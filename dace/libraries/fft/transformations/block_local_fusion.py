@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Fuses a forward FFT, a computation in the frequency domain, and an inverse FFT into a single GPU kernel in which each
-thread block computes one transform in shared memory.
+Fuses a forward FFT, a computation in the frequency domain, and an inverse FFT into a single kernel in which each GPU
+thread block (or CPU map iteration) computes one transform in fast local memory.
 """
 
 import copy
@@ -29,6 +29,9 @@ class _Match:
     axes: list[int]
     #: The map parameter that indexes each dimension of the arrays.
     params: list[str]
+    #: On the CPU, the number of adjacent transforms that an iteration computes (see ``stockham.local_lanes``), or
+    #: None on the GPU.
+    lanes: int | None
 
 
 @properties.make_properties
@@ -38,11 +41,14 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
     Fuses an FFT, a map, and an inverse FFT (``ifft(f(fft(x)))``) into one GPU kernel with one thread block per
     transform. The block computes the Stockham stages of the FFT, the map, and the stages of the inverse FFT in shared
     memory, synchronizing between them, so that only the input and the output of the inverse FFT are in global memory.
+    On the CPU, the kernel is a parallel map in which each iteration computes the same steps for one transform (or a
+    few adjacent ones) in buffers on the stack, so that the arrays are read and written once.
 
     The map must compute each element of its output from the spectrum of the same transform, e.g., a pointwise product
     with a filter or a stencil along the transformed axes. It may read arbitrary other arrays. Both transforms must be
-    over the same axes of arrays in GPU global memory, and a transform must fit into the shared memory of a thread
-    block (see ``stockham.fits_block_local``).
+    over the same axes of arrays in GPU global (or host) memory, and a transform must fit into the shared memory of a
+    thread block (see ``stockham.fits_block_local``), or into the stack buffers of a CPU map iteration (see
+    ``stockham.local_lanes``).
     """
 
     forward = transformation.PatternNode(fft_nodes.FFT)
@@ -58,7 +64,9 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
 
     def _match(self, state: SDFGState, sdfg: SDFG) -> _Match | None:
         forward, spectrum, map_entry = self.forward, self.spectrum, self.map_entry
-        if state.entry_node(forward) is not None or map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
+        gpu = map_entry.map.schedule == dtypes.ScheduleType.GPU_Device
+        cpu_schedules = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore)
+        if state.entry_node(forward) is not None or not (gpu or map_entry.map.schedule in cpu_schedules):
             return None
 
         # Linear chain: source -> FFT -> spectrum -> map -> filtered -> IFFT -> result, with full-array memlets
@@ -92,7 +100,8 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         descs = [sdfg.arrays[node.data] for node in (source, spectrum, filtered, result)]
         if any(not isinstance(desc, data.Array) for desc in descs):
             return None
-        if any(desc.storage != dtypes.StorageType.GPU_Global for desc in (descs[0], descs[3])):
+        storages = (dtypes.StorageType.GPU_Global,) if gpu else stockham.HOST_STORAGES
+        if any(desc.storage not in storages for desc in (descs[0], descs[3])):
             return None
         shape = tuple(descs[0].shape)
         if any(tuple(desc.shape) != shape for desc in descs[1:]):
@@ -103,8 +112,13 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         axes = fft_nodes.transformed_axes(forward, len(shape))
         if fft_nodes.transformed_axes(inverse, len(shape)) != axes:
             return None
-        if not stockham.fits_block_local(shape, axes, dtype, sdfg.constants):
+        lanes = None
+        if gpu and not stockham.fits_block_local(shape, axes, dtype, sdfg.constants):
             return None
+        if not gpu:
+            lanes = stockham.local_lanes(shape, axes, dtype, sdfg.constants)
+            if lanes is None:
+                return None
 
         params = _map_dimensions(sdfg, state, map_entry, filtered.data, shape)
         if params is None or not _reads_one_transform(state, map_entry, spectrum.data, axes, params):
@@ -130,15 +144,15 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
                 return None
 
         # Nested SDFGs in the map (e.g., from conditionals) must access the spectrum and the output in a way that
-        # can be restated on the buffers in shared memory
+        # can be restated on the buffers of a single transform
         batch_dims = {dim for dim in range(len(shape)) if dim not in axes}
         for edge, node, conn in _nested_connections(
             state.scope_subgraph(map_entry).edges(), (spectrum.data, filtered.data)
         ):
-            if not _restate_nested(node, conn, edge.data.subset, batch_dims, None):
+            if (lanes or 1) > 1 or not _restate_nested(node, conn, edge.data.subset, batch_dims, None):
                 return None
 
-        return _Match(source, filtered, inverse, result, map_exit, axes, params)
+        return _Match(source, filtered, inverse, result, map_exit, axes, params, lanes)
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.NestedSDFG:
         match = self._match(state, sdfg)
@@ -147,18 +161,27 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         shape = tuple(sdfg.arrays[source.data].shape)
         dtype = sdfg.arrays[spectrum.data].dtype
         axes = match.axes
-        block_shape = stockham.block_local_shape(shape, axes, sdfg.constants)
+        gpu = match.lanes is None
+        lanes = match.lanes or 1
+        block_shape = stockham.block_local_shape(shape, axes, sdfg.constants, lanes)
         stages = stockham.plan_stages(block_shape, axes, {})
-        threads = stockham.block_local_threads(stages, block_shape)
+        threads = stockham.block_local_threads(stages, block_shape) if gpu else None
+        padding = 0
+        if not gpu and len(axes) == 1 and self._pointwise_along(state, match, axes[0]):
+            padding = stockham.local_padding(stages)
 
-        # Twiddle factor tables, allocated once and computed by maps in this state before the kernel reads them
+        # Twiddle factor tables, allocated once and computed by maps in this state before the kernel reads them (on
+        # the GPU), or once in the first call (on the CPU)
         persistent = dtypes.AllocationLifetime.Persistent
-        gpu_global, gpu_device = dtypes.StorageType.GPU_Global, dtypes.ScheduleType.GPU_Device
+        if gpu:
+            storage, schedule = dtypes.StorageType.GPU_Global, dtypes.ScheduleType.GPU_Device
+        else:
+            storage, schedule = dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.Default
         forward_tables = stockham.add_twiddle_tables(
-            sdfg, state, stages, -1, dtype, gpu_global, persistent, gpu_device, "__fft_block_tw"
+            sdfg, state, stages, -1, dtype, storage, persistent, schedule, "__fft_block_tw"
         )
         inverse_tables = stockham.add_twiddle_tables(
-            sdfg, state, stages, 1, dtype, gpu_global, persistent, gpu_device, "__ifft_block_tw"
+            sdfg, state, stages, 1, dtype, storage, persistent, schedule, "__ifft_block_tw"
         )
 
         # The nested SDFG of one thread block: one state per stage and one for the map
@@ -169,7 +192,15 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         table_nodes = list(forward_tables.values()) + list(inverse_tables.values())
         outer_names = {source.data, result.data, *other_inputs, *(node.data for node in table_nodes)}
         block, batch_symbols, batch_index, buffers = stockham.block_local_sdfg(
-            "fft_block_local", {name: sdfg.arrays[name] for name in outer_names}, shape, axes, dtype, sdfg.constants
+            "fft_block_local",
+            {name: sdfg.arrays[name] for name in outer_names},
+            shape,
+            axes,
+            dtype,
+            sdfg.constants,
+            storage=dtypes.StorageType.GPU_Shared if gpu else dtypes.StorageType.Register(force=True),
+            lanes=lanes,
+            padding=padding,
         )
 
         def stage_steps(sign: int, libnode: nodes.LibraryNode, tables: dict) -> list:
@@ -179,24 +210,47 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
 
         steps = stage_steps(-1, forward, forward_tables) + [None] + stage_steps(1, match.inverse, inverse_tables)
         block_states = stockham.add_block_local_steps(
-            block, steps, source.data, result.data, buffers, block_shape, batch_index, threads
+            block, steps, source.data, result.data, buffers, block_shape, batch_index, threads, padding
         )
         comp_state, comp_src, comp_dst = block_states[len(stages)]
 
         dependencies = [edge.src for edge in state.in_edges(map_entry) if edge.data.is_empty()]
-        self._move_map(sdfg, state, comp_state, match, comp_src, comp_dst, block_shape, batch_symbols, threads)
+        self._move_map(sdfg, state, comp_state, match, comp_src, comp_dst, block_shape, batch_symbols, threads, padding)
 
         # Remove the transforms and their intermediate arrays
         state.remove_nodes_from([forward, spectrum, match.filtered, match.inverse])
         for name in (spectrum.data, match.filtered.data):
             sdfg.remove_data(name, validate=False)
 
-        # The kernel: one thread block per transform
+        # The kernel: one thread block (or CPU map iteration) per transform
         input_nodes = {source.data: source, **other_inputs, **{node.data: node for node in table_nodes}}
-        kernel_entry, nsdfg = stockham.add_block_local_kernel(state, block, input_nodes, result, shape, batch_symbols)
+        kernel_entry, nsdfg = stockham.add_block_local_kernel(
+            state,
+            block,
+            input_nodes,
+            result,
+            shape,
+            batch_symbols,
+            dtypes.ScheduleType.GPU_Device if gpu else dtypes.ScheduleType.Default,
+            lanes,
+            sdfg.constants,
+        )
         for node in dependencies:
             state.add_nedge(node, kernel_entry, Memlet())
         return nsdfg
+
+    def _pointwise_along(self, state: SDFGState, match: _Match, axis: int) -> bool:
+        """
+        Returns True if the map accesses the spectrum and its output at single indices along the axis, outside of
+        nested SDFGs, so that the accesses can be restated on buffers that are split into padded rows.
+        """
+        names = (self.spectrum.data, match.filtered.data)
+        scope_edges = state.scope_subgraph(self.map_entry).edges()
+        if _nested_connections(scope_edges, names):
+            return False
+        return all(
+            edge.data.subset[axis][0] == edge.data.subset[axis][1] for edge in scope_edges if edge.data.data in names
+        )
 
     def _move_map(
         self,
@@ -208,12 +262,14 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         dst: str,
         block_shape: list[int],
         batch_symbols: dict[int, str],
-        threads: int,
+        threads: int | None,
+        padding: int,
     ) -> None:
         """
         Moves the map from the parent state into the state of the nested SDFG that computes it, reading the spectrum
-        from shared memory buffer ``src`` and writing to ``dst``. The threads of the block stride over the transformed
-        elements, and each iteration runs the original map for a single point.
+        from buffer ``src`` and writing to ``dst``. On the GPU, the threads of the block stride over the transformed
+        elements, and each iteration runs the original map for a single point. On the CPU, the map runs sequentially
+        over the transforms of the iteration.
         """
         map_entry, map_exit = self.map_entry, match.map_exit
         spectrum, filtered = self.spectrum.data, match.filtered.data
@@ -227,12 +283,27 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         batch_dims = set(batch_symbols)
 
         def localize(memlet: Memlet) -> Memlet:
+            """
+            Restates an access to the spectrum or the output on its buffer: relative to the first transform of the
+            block in the dimensions that are not transformed, and split into padded rows along the axis.
+            """
             memlet = copy.deepcopy(memlet)
-            if memlet.data in (spectrum, filtered):
-                memlet.data = src if memlet.data == spectrum else dst
-                memlet.subset = subsets.Range(
-                    [(0, 0, 1) if dim in batch_dims else rng for dim, rng in enumerate(memlet.subset.ndrange())]
-                )
+            if memlet.data not in (spectrum, filtered):
+                return memlet
+            memlet.data = src if memlet.data == spectrum else dst
+            ranges = []
+            for dim, (begin, end, step) in enumerate(memlet.subset.ndrange()):
+                if dim in batch_dims and block_shape[dim] == 1:
+                    ranges.append((0, 0, 1))
+                elif dim in batch_dims:
+                    first = symbolic.pystr_to_symbolic(batch_symbols[dim])
+                    ranges.append((begin - first, end - first, step))
+                elif padding and dim in match.axes:
+                    row, column = symbolic.int_floor(begin, padding), begin % padding
+                    ranges += [(row, row, 1), (column, column, 1)]
+                else:
+                    ranges.append((begin, end, step))
+            memlet.subset = subsets.Range(ranges)
             return memlet
 
         for node in scope_nodes:
@@ -252,23 +323,37 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         for edge in scope_edges:
             comp_state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, localize(edge.data))
 
-        # Each iteration of the map computes one point: its batch index is the block's, and its transformed index is
-        # delinearized from the iteration of the thread-block loop
-        loop_dims = [dim for dim in range(len(block_shape)) if block_shape[dim] > 1]
-        loop_index = dict(zip(loop_dims, stockham.delinearize("__u", [block_shape[dim] for dim in loop_dims])))
         param_dim = {param: dim for dim, param in enumerate(match.params)}
         ranges = []
-        for param in map_entry.map.params:
-            dim = param_dim[param]
-            index = symbolic.pystr_to_symbolic(batch_symbols.get(dim) or loop_index.get(dim, "0"))
-            ranges.append((index, index, 1))
+        if threads is None:
+            # The map iterates over the transforms of the iteration
+            for param in map_entry.map.params:
+                dim = param_dim[param]
+                if dim in batch_symbols:
+                    first = symbolic.pystr_to_symbolic(batch_symbols[dim])
+                    ranges.append((first, first + block_shape[dim] - 1, 1))
+                else:
+                    ranges.append((0, block_shape[dim] - 1, 1))
+        else:
+            # Each iteration of the map computes one point: its batch index is the block's, and its transformed index
+            # is delinearized from the iteration of the thread-block loop
+            loop_dims = [dim for dim in range(len(block_shape)) if block_shape[dim] > 1]
+            loop_index = dict(zip(loop_dims, stockham.delinearize("__u", [block_shape[dim] for dim in loop_dims])))
+            for param in map_entry.map.params:
+                dim = param_dim[param]
+                index = symbolic.pystr_to_symbolic(batch_symbols.get(dim) or loop_index.get(dim, "0"))
+                ranges.append((index, index, 1))
         map_entry.map.range = subsets.Range(ranges)
         map_entry.map.schedule = dtypes.ScheduleType.Sequential
+        map_entry.map.collapse = 1
         map_entry.map.gpu_block_size = None
 
-        tb_entry, tb_exit, seq_entry, seq_exit = stockham.block_local_loop(
-            comp_state, "fft_block_map", math.prod(block_shape), threads
-        )
+        scopes, exits = [map_entry], []
+        if threads is not None:
+            tb_entry, tb_exit, seq_entry, seq_exit = stockham.block_local_loop(
+                comp_state, "fft_block_map", math.prod(block_shape), threads
+            )
+            scopes, exits = [tb_entry, seq_entry, map_entry], [seq_exit, tb_exit]
         reads = {}
         for edge in in_edges:
             if edge.data.is_empty():
@@ -279,17 +364,14 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             desc = comp_state.sdfg.arrays[name]
             comp_state.add_memlet_path(
                 reads[name],
-                tb_entry,
-                seq_entry,
-                map_entry,
+                *scopes,
                 dst_conn=edge.dst_conn,
                 memlet=Memlet.from_array(name, desc),
                 propagate=False,
             )
         comp_state.add_memlet_path(
             map_exit,
-            seq_exit,
-            tb_exit,
+            *exits,
             comp_state.add_write(dst),
             src_conn=out_conn,
             memlet=Memlet.from_array(dst, comp_state.sdfg.arrays[dst]),

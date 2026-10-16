@@ -720,7 +720,7 @@ def stockham_sdfg(
     # The steps of the transform: single stages, or on the CPU all stages of an axis computed locally
     steps = []
     for stage in stages:
-        lanes = None if gpu else local_lanes(shape, stage[0], dtype, constants)
+        lanes = None if gpu else local_lanes(shape, [stage[0]], dtype, constants)
         if lanes is not None and steps and steps[-1][0] == "local" and steps[-1][1][0][0] == stage[0]:
             steps[-1][1].append(stage)
         elif lanes is not None:
@@ -986,29 +986,31 @@ def _divides(lanes: int, extent: symbolic.SymbolicType) -> bool:
 
 
 def local_lanes(
-    shape: tuple[symbolic.SymbolicType, ...], axis: int, dtype: dtypes.typeclass, constants: dict
+    shape: tuple[symbolic.SymbolicType, ...], axes: list[int], dtype: dtypes.typeclass, constants: dict
 ) -> int | None:
     """
-    Returns how many transforms of an axis one map iteration computes in stack buffers on the CPU (see
-    ``add_local_axis_kernel``), or None if the axis is transformed by one map per stage. If the axis is innermost,
-    an iteration transforms one row. Otherwise, it transforms adjacent columns, so that its accesses to the array are
-    contiguous, and the innermost dimension must be a fixed multiple of their number.
+    Returns how many transforms of the given axes one map iteration computes in stack buffers on the CPU (see
+    ``add_local_axis_kernel``), or None if they do not fit into ``LOCAL_BYTES``. If the innermost dimension is
+    transformed, an iteration computes one transform. Otherwise, it computes adjacent ones along the innermost
+    dimension, so that its accesses to the array are contiguous, and that dimension must be a fixed multiple of their
+    number.
 
     :param shape: The shape of the array.
-    :param axis: The axis.
+    :param axes: The (normalized) axes.
     :param dtype: The complex type of the buffers.
     :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
     :return: The number of transforms of an iteration, or None.
     """
-    length = fixed_length(shape[axis], constants)
-    if length is None or length < 2:
+    lengths = [fixed_length(shape[axis], constants) for axis in axes]
+    if any(length is None for length in lengths) or math.prod(lengths) < 2:
         return None
+    size = math.prod(lengths)
     innermost = len(shape) - 1
-    if axis == innermost:
-        return 1 if 2 * length * dtype.bytes <= LOCAL_BYTES else None
+    if innermost in axes:
+        return 1 if 2 * size * dtype.bytes <= LOCAL_BYTES else None
     extent = fixed_length(shape[innermost], constants)
     for lanes in VECTOR_LANES[:1]:
-        if extent is not None and _divides(lanes, extent) and 2 * length * lanes * dtype.bytes <= LOCAL_BYTES:
+        if extent is not None and _divides(lanes, extent) and 2 * size * lanes * dtype.bytes <= LOCAL_BYTES:
             return lanes
     return None
 
@@ -1289,11 +1291,13 @@ def add_block_local_steps(
     buffers: list[str],
     shape: list[int],
     batch_index: dict[str, list[str | None]],
-    threads: int,
+    threads: int | None,
+    padding: int = 0,
 ) -> list[tuple[SDFGState, str, str]]:
     """
     Adds one state per step to the SDFG of a thread block (see ``block_local_sdfg``), in order. The first step reads
-    ``src``, the last one writes ``dst``, and the steps in between alternate between the buffers.
+    ``src``, the last one writes ``dst``, and the steps in between alternate between the buffers. On the CPU, the
+    stages are sequential maps that compute several butterflies per iteration (see ``add_stage_map``).
 
     :param block: The SDFG of a thread block, without states.
     :param steps: The steps, each a stage as ``(stage, sign, tables, factor)`` (see ``add_block_local_stage``), or
@@ -1303,7 +1307,8 @@ def add_block_local_steps(
     :param buffers: The shared memory buffers.
     :param shape: The shape of one transform (one for dimensions that are not transformed).
     :param batch_index: The batch index of each array (see ``add_block_local_stage``).
-    :param threads: The number of threads of the block.
+    :param threads: The number of threads of the block, or None for a CPU map iteration.
+    :param padding: The number of elements of a padded row of the buffers (see ``block_local_sdfg``), or 0.
     :return: For each step, its state and the arrays it reads and writes.
     """
     locations = [src] + [buffers[i % 2] for i in range(len(steps) - 1)] + [dst]
@@ -1315,7 +1320,24 @@ def add_block_local_steps(
         else:
             state = block.add_state_after(prev_state, f"step_{i}")
         prev_state = state
-        if step is not None:
+        if step is not None and threads is None:
+            stage, sign, tables, factor = step
+            add_stage_map(
+                state,
+                f"{block.name}_stage_{i}",
+                stage,
+                sign,
+                state.add_read(locations[i]),
+                state.add_write(locations[i + 1]),
+                shape,
+                batch_index,
+                tables,
+                factor,
+                dtypes.ScheduleType.Sequential,
+                vectorize=True,
+                padding=dict.fromkeys(buffers, padding) if padding else None,
+            )
+        elif step is not None:
             stage, sign, tables, factor = step
             add_block_local_stage(
                 state, stage, sign, locations[i], locations[i + 1], shape, batch_index, tables, threads, factor
@@ -1333,11 +1355,12 @@ def add_block_local_kernel(
     batch_symbols: dict[int, str],
     schedule: dtypes.ScheduleType = dtypes.ScheduleType.GPU_Device,
     lanes: int = 1,
+    constants: dict | None = None,
 ) -> tuple[nodes.MapEntry, nodes.NestedSDFG]:
     """
     Adds a GPU kernel that runs the SDFG of a thread block (see ``block_local_sdfg``) with one thread block per
     transform, i.e., a ``GPU_Device`` map over the dimensions that are not transformed. With another schedule, it
-    adds a map with that schedule, in which each iteration runs the SDFG.
+    adds a map with that schedule, in which each iteration runs the SDFG, or a sequential one for a single iteration.
 
     :param state: The state to add the kernel to.
     :param block: The SDFG of a thread block, with all of its states.
@@ -1347,9 +1370,14 @@ def add_block_local_kernel(
     :param batch_symbols: The symbol of each dimension that is not transformed.
     :param schedule: The schedule of the map.
     :param lanes: The number of adjacent transforms along the innermost dimension that an iteration computes.
+    :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
     :return: The entry node of the kernel map and the nested SDFG node.
     """
     sdfg = state.sdfg
+    if schedule != dtypes.ScheduleType.GPU_Device:
+        # A single iteration does not need a parallel region
+        if fixed_length(math.prod(shape[dim] for dim in batch_symbols) / lanes, constants or {}) == 1:
+            schedule = dtypes.ScheduleType.Sequential
     ranges = {symbol: f"0:{symbolic.symstr(shape[dim])}" for dim, symbol in sorted(batch_symbols.items())}
     if lanes > 1:
         innermost = batch_symbols[len(shape) - 1]
@@ -1457,35 +1485,10 @@ def add_local_axis_kernel(
         padding,
     )
     block_shape = block_local_shape(shape, [axis], constants, lanes)
-    locations = [src] + [buffers[i % 2] for i in range(len(stages) - 1)] + [dst]
-    prev_state = None
-    for i, stage in enumerate(stages):
-        if prev_state is None:
-            block_state = block.add_state(f"stage_{i}", is_start_block=True)
-        else:
-            block_state = block.add_state_after(prev_state, f"stage_{i}")
-        prev_state = block_state
-        add_stage_map(
-            block_state,
-            f"{label}_stage_{i}",
-            stage,
-            sign,
-            block_state.add_read(locations[i]),
-            block_state.add_write(locations[i + 1]),
-            block_shape,
-            batch_index,
-            table_names,
-            factor if i == len(stages) - 1 else None,
-            dtypes.ScheduleType.Sequential,
-            vectorize=True,
-            padding=dict.fromkeys(buffers, padding) if padding else None,
-        )
+    steps = [(stage, sign, table_names, factor if i == len(stages) - 1 else None) for i, stage in enumerate(stages)]
+    add_block_local_steps(block, steps, src, dst, buffers, block_shape, batch_index, None, padding)
     inputs = {src: src_node, **{node.data: node for node in stage_tables.values()}}
-    # A single iteration does not need a parallel region
-    iterations = fixed_length(math.prod(shape[dim] for dim in batch_symbols) / lanes, constants)
-    if iterations == 1:
-        schedule = dtypes.ScheduleType.Sequential
-    entry, _ = add_block_local_kernel(state, block, inputs, dst_node, shape, batch_symbols, schedule, lanes)
+    entry, _ = add_block_local_kernel(state, block, inputs, dst_node, shape, batch_symbols, schedule, lanes, constants)
     return entry
 
 

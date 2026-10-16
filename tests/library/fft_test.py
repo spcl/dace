@@ -529,11 +529,10 @@ def test_block_local_fusion_r2c_gpu():
     assert np.allclose(y.get(), expected, rtol=1e-4, atol=1e-4)
 
 
-def _band_pass_program(B: int, H: int, W: int):
+def _band_pass_program(B: int, H: int, W: int, G: dace.StorageType = dace.StorageType.GPU_Global):
     """
     A radial band pass, written with a conditional that becomes a nested SDFG in the map.
     """
-    G = dace.StorageType.GPU_Global
 
     @dace.program
     def band_pass(x: dace.complex128[B, H, W] @ G, lo: dace.float64, hi: dace.float64, y: dace.complex128[B, H, W] @ G):
@@ -575,6 +574,123 @@ def test_block_local_fusion_conditional_gpu():
     assert np.allclose(y.get(), expected, rtol=1e-10, atol=1e-10)
 
 
+def _fused_block(sdfg: dace.SDFG) -> dace.SDFG:
+    """
+    Returns the SDFG of an iteration of the only fused kernel.
+    """
+    (block,) = [
+        node.sdfg
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg.name == "fft_block_local"
+    ]
+    return block
+
+
+@pytest.mark.parametrize("case", ("pointwise", "stencil", "general", "columns", "fft2", "conditional"))
+def test_block_local_fusion_cpu(case):
+    """
+    On the CPU, each iteration of the fused map computes one transform (or eight adjacent columns) in stack buffers.
+    """
+    B, N = 33, (60 if case == "general" else 256)
+
+    if case == "stencil":
+
+        @dace.program
+        def tester(x: dace.complex128[B, N], w: dace.complex128[N], y: dace.complex128[B, N]):
+            X = np.fft.fft(x, norm="ortho")
+            Y = np.empty_like(X)
+            for i, f in dace.map[0:B, 0:N]:
+                Y[i, f] = X[i, f] * w[f] + 0.5 * X[i, (f + 1) % N]
+            y[:] = np.fft.ifft(Y, norm="ortho")
+
+        x, w = _random_complex((B, N)), _random_complex(N)
+        X = np.fft.fft(x, norm="ortho")
+        expected = np.fft.ifft(X * w + 0.5 * np.roll(X, -1, axis=1), norm="ortho")
+        arguments = dict(x=x, w=w)
+    elif case == "columns":
+        # A real input, transformed along the first axis: iterations compute eight adjacent columns
+        B = 40
+
+        @dace.program
+        def tester(x: dace.float32[N, B], w: dace.complex64[N, B], y: dace.complex64[N, B]):
+            y[:] = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+
+        x, w = np.random.default_rng(0).random((N, B)).astype(np.float32), _random_complex((N, B), np.complex64)
+        expected = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+        arguments = dict(x=x, w=w)
+    elif case == "fft2":
+        B, H, W = 6, 16, 32
+
+        @dace.program
+        def tester(
+            x: dace.complex128[B, H, W], w: dace.complex128[H, W], s: dace.float64[B], y: dace.complex128[B, H, W]
+        ):
+            X = np.fft.fft2(x)
+            Y = np.empty_like(X)
+            for b, i, j in dace.map[0:B, 0:H, 0:W]:
+                Y[b, i, j] = X[b, i, j] * w[i, j] * s[b]
+            y[:] = np.fft.ifft2(Y)
+
+        x, w, s = _random_complex((B, H, W)), _random_complex((H, W)), np.random.default_rng(0).random(B)
+        expected = np.fft.ifft2(np.fft.fft2(x) * w * s[:, None, None])
+        arguments = dict(x=x, w=w, s=s)
+    elif case == "conditional":
+        B, H, W = 5, 32, 32
+        tester = _band_pass_program(B, H, W, dace.StorageType.Default)
+        x = _random_complex((B, H, W))
+        ki, kj = np.fft.fftfreq(H, 1 / H)[:, None], np.fft.fftfreq(W, 1 / W)[None, :]
+        r = np.sqrt(ki**2 + kj**2)
+        expected = np.fft.ifft2(np.fft.fft2(x) * ((r >= 3) & (r < 9)))
+        arguments = dict(x=x, lo=3.0, hi=9.0)
+    else:
+
+        @dace.program
+        def tester(x: dace.complex128[B, N], w: dace.complex128[N], y: dace.complex128[B, N]):
+            X = np.fft.fft(x)
+            Y = np.empty_like(X)
+            for i, f in dace.map[0:B, 0:N]:
+                Y[i, f] = X[i, f] * w[f]
+            y[:] = np.fft.ifft(Y)
+
+        x, w = _random_complex((B, N)), _random_complex(N)
+        expected = np.fft.ifft(np.fft.fft(x) * w)
+        arguments = dict(x=x, w=w)
+
+    sdfg = tester.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 1
+    sdfg.validate()
+    assert not any(isinstance(node, dace.nodes.LibraryNode) for node, _ in sdfg.all_nodes_recursive())
+    buffers = [desc for name, desc in _fused_block(sdfg).arrays.items() if name.startswith("__fft_block_buf")]
+    assert len(buffers) == 2 and all(desc.storage == dace.StorageType.Register for desc in buffers)
+    if case == "pointwise":
+        # Split into padded rows, as only pointwise accesses are restated
+        assert len(buffers[0].shape) == 3 and buffers[0].total_size > N
+    elif case == "columns":
+        assert buffers[0].shape[-1] == 8
+
+    y = np.empty(expected.shape, expected.dtype.type if case != "columns" else np.complex64)
+    sdfg(**arguments, y=y)
+    tolerance = 1e-4 if case == "columns" else 1e-10
+    assert np.allclose(y, expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("case", ("too_large", "partial_columns"))
+def test_block_local_fusion_cpu_not_applicable(case):
+    """
+    The columns of an iteration must fit into its stack buffers and span eight adjacent elements.
+    """
+    N, B = (4096, 256) if case == "too_large" else (64, 12)
+
+    @dace.program
+    def tester(x: dace.complex128[N, B], y: dace.complex128[N, B]):
+        y[:] = np.fft.ifft(np.fft.fft(x, axis=0) * 2, axis=0)
+
+    sdfg = tester.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 0
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -608,3 +724,7 @@ if __name__ == "__main__":
     test_block_local_fusion_r2c_gpu()
     test_block_local_fusion_conditional()
     test_block_local_fusion_conditional_gpu()
+    for case in ("pointwise", "stencil", "general", "columns", "fft2", "conditional"):
+        test_block_local_fusion_cpu(case)
+    for case in ("too_large", "partial_columns"):
+        test_block_local_fusion_cpu_not_applicable(case)
