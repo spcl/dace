@@ -1232,6 +1232,40 @@ def test_happens_before_edges_are_recorded_in_a_stable_order():
     assert len(fingerprints) == 1, f"the happens-before edges landed in {len(fingerprints)} different arrangements"
 
 
+def test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it():
+    """The first state writes ``t`` only inside a map (a size-1 kernel the offload wraps around host code,
+    whose ``t`` node is the map's own); the second copies ``t`` out. No node of the first state can take
+    the reader's merge or ordering, so the fused copy ran unordered against the map, and on the GPU read
+    ``t`` before the kernel wrote it (HB crc16 through CPF hip: 65535 instead of 26875)."""
+    sdfg = SDFG("scoped_write_then_copy")
+    sdfg.add_array("A", [1], dtypes.float64)
+    sdfg.add_array("B", [1], dtypes.float64)
+    sdfg.add_array("out", [1], dtypes.float64)
+    sdfg.add_array("t", [1], dtypes.float64, transient=True)
+    first = sdfg.add_state("kernel")
+    entry, exit_node = first.add_map("size1", {"w": "0:1"})
+    produce = first.add_tasklet("produce", {"a"}, {"o"}, "o = a + 1.0")
+    consume = first.add_tasklet("consume", {"x"}, {"o"}, "o = 2.0 * x")
+    inside = first.add_access("t")
+    first.add_memlet_path(first.add_read("A"), entry, produce, dst_conn="a", memlet=Memlet("A[0]"))
+    first.add_edge(produce, "o", inside, None, Memlet("t[0]"))
+    first.add_edge(inside, None, consume, "x", Memlet("t[0]"))
+    first.add_memlet_path(consume, exit_node, first.add_write("B"), src_conn="o", memlet=Memlet("B[0]"))
+    second = sdfg.add_state_after(first, "copy_out")
+    second.add_nedge(second.add_read("t"), second.add_write("out"), Memlet("t[0]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    sdfg.validate()
+    for state in sdfg.states():
+        readers = [n for n in state.data_nodes() if n.data == "t" and state.in_degree(n) == 0]
+        exits = [n for n in state.nodes() if isinstance(n, dnodes.MapExit)]
+        for reader in readers if exits else []:
+            assert any(nx.has_path(state._nx, x, reader) for x in exits), (
+                f"{state.label}: the copy of t is not ordered after the map that writes it"
+            )
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
@@ -1257,3 +1291,4 @@ if __name__ == "__main__":
     test_war_survives_downstream_simplify()
     test_war_from_dace_program_matches_reference()
     test_war_read_through_a_view_orders_the_copy_out_of_the_view()
+    test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it()
