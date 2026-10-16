@@ -90,19 +90,6 @@ def symbol_readers(sdfg: dace.SDFG, names: set[str]) -> dict[str, set[ControlFlo
     return readers
 
 
-def read_after(loop: LoopRegion, name: str, readers: dict[str, set[ControlFlowBlock]], reach: dict) -> bool:
-    """Whether a block outside ``loop`` that may run after it reads ``name``."""
-    blocks = readers.get(name)
-    after = reach.get(loop.parent_graph.cfg_id, {}).get(loop)
-    if not blocks or not after:
-        return False
-    inside = {loop}
-    for cfr in loop.all_control_flow_regions(recursive=True):
-        inside.add(cfr)
-        inside.update(cfr.nodes())
-    return any(block in after and block not in inside for block in blocks)
-
-
 @dace.properties.make_properties
 @explicit_cf_compatible
 class UniqueLoopIterators(ppl.Pass):
@@ -123,18 +110,42 @@ class UniqueLoopIterators(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, _) -> set[str] | None:
         """:returns: The new iterator names, or ``None`` if every iterator was unique already."""
         self.next_id = first_free_id(sdfg)
+        self.top = sdfg
         self.readers: dict[str, set[ControlFlowBlock]] = {}
-        self.reach: dict = {}
+        self.reach: dict | None = None
+        self.original: dict[LoopRegion, str] = {}
         names = {
             r.loop_variable
             for r in sdfg.all_control_flow_regions(recursive=True)
             if isinstance(r, LoopRegion) and r.loop_variable
         }
         if names:
-            # Renaming adds no blocks the queries depend on, so both are computed once, up front.
-            self.reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
             self.readers = symbol_readers(sdfg, names)
         return self.rename_loops(sdfg) or None
+
+    def binds(self, block: ControlFlowBlock, name: str) -> bool:
+        """Whether a loop around ``block`` has ``name`` as its own (original) iterator."""
+        region = block.parent_graph
+        while isinstance(region, ControlFlowRegion) and not isinstance(region, dace.SDFG):
+            if isinstance(region, LoopRegion) and self.original.get(region, region.loop_variable) == name:
+                return True
+            region = region.parent_graph
+        return False
+
+    def read_after(self, loop: LoopRegion, name: str) -> bool:
+        """Whether a block outside ``loop`` that may run after it reads ``name``."""
+        inside = {loop}
+        for cfr in loop.all_control_flow_regions(recursive=True):
+            inside.add(cfr)
+            inside.update(cfr.nodes())
+        outside = [block for block in self.readers.get(name, ()) if block not in inside and not self.binds(block, name)]
+        if not outside:
+            return False
+        if self.reach is None:
+            # Only on demand: the analysis resets the CFG list of the whole tree
+            self.reach = ControlFlowBlockReachability().apply_pass(self.top, {})
+        after = self.reach.get(loop.parent_graph.cfg_id, {}).get(loop)
+        return bool(after) and any(block in after for block in outside)
 
     def rename_loops(self, sdfg: dace.SDFG) -> set[str]:
         renamed: set[str] = set()
@@ -151,6 +162,7 @@ class UniqueLoopIterators(ppl.Pass):
             if iterator_id(old) >= 0 and old not in duplicated:
                 continue
             plan.append((loop, old, self.next_id))
+            self.original[loop] = old
             self.next_id += 1
         # Innermost first: a rename replaces ``old`` in the loop's whole subtree, so an inner loop that rebinds the
         # same name must already carry its own iterator when the enclosing loop is renamed.
@@ -160,7 +172,7 @@ class UniqueLoopIterators(ppl.Pass):
             renamed.add(new)
         # After every rename, so no rename rewrites an exit-value assignment.
         for loop, old, ident in plan:
-            value = exit_value(loop) if read_after(loop, old, self.readers, self.reach) else None
+            value = exit_value(loop) if self.read_after(loop, old) else None
             if value is not None:
                 loop.parent_graph.add_state_after(
                     loop,
