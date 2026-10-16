@@ -119,10 +119,10 @@ def normalize_axes(axes: tuple[int], max_dim: int) -> list[int]:
     return [ax if ax >= 0 else max_dim + ax for ax in axes]
 
 
-def broadcast_to(target_shape, operand_shape):
+def broadcast_to(target_shape, operand_shape, facts: symbolic.Facts | None = None):
     # the difference to normal broadcasting is that the broadcasted shape is the same as the target
     # I was unable to find documentation for this in numpy, so we follow the description from ONNX
-    results = broadcast_together(target_shape, operand_shape, unidirectional=True)
+    results = broadcast_together(target_shape, operand_shape, unidirectional=True, facts=facts)
 
     # the output_shape should be equal to the target_shape
     assert all(i == o for i, o in zip(target_shape, results[0]))
@@ -130,7 +130,9 @@ def broadcast_to(target_shape, operand_shape):
     return results
 
 
-def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
+def broadcast_together(arr1_shape, arr2_shape, unidirectional=False, facts: symbolic.Facts | None = None):
+    """numpy broadcasting of two shapes. ``facts`` are those of the SDFG the shapes belong to: two extents are the
+    same dimension when they are equal under them (:func:`~dace.symbolic.inequal_symbols`)."""
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -142,7 +144,7 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
     for i, (dim1, dim2) in enumerate(itertools.zip_longest(reversed(arr1_shape), reversed(arr2_shape))):
         all_idx.append(get_idx(i))
 
-        if not symbolic.inequal_symbols(dim1, dim2):
+        if not symbolic.inequal_symbols(dim1, dim2, facts):
             a1_idx.append(get_idx(i))
             a2_idx.append(get_idx(i))
 

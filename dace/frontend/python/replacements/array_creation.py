@@ -389,7 +389,7 @@ def _linspace(
     start_shape = _endpoint_shape(start)
     stop_shape = _endpoint_shape(stop)
 
-    shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape)
+    shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape, facts=sdfg.facts())
     shape_with_axis = _add_axis_to_shape(shape, axis, num)
     ranges_with_axis = _add_axis_to_shape(ranges, axis, ("__sind", f"0:{symbolic.symstr(num)}"))
     if outind:

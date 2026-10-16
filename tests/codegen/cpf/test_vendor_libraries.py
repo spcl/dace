@@ -149,6 +149,35 @@ def test_a_product_that_falls_back_to_the_pure_expansion_names_no_vendor_library
     assert rendering.link == () and rendering.libraries == ()
 
 
+@dace.program
+def strided_tap_tensordot(w: dace.float64[N, N, 3], b: dace.float64[N, N], c: dace.float64[N, N]):
+    c[:] = np.tensordot(w[:, :, 1], b, axes=([0], [0]))
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_a_product_whose_operand_no_blas_call_addresses_keeps_its_loops(language):
+    """``w[:, :, 1]`` is strided on both matrix axes, so no BLAS leading dimension names it; canonicalization's
+    finalize gives such a GEMM the loop expansion, and the rendering must not put the vendor call back in front of
+    it (``sAM or sAK should be 1``: conv_transpose3d_avg_pool_clamp_softmax_multiply's weight tap)."""
+    if not OpenBLAS.is_installed():
+        pytest.skip("OpenBLAS is not installed here")
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = strided_tap_tensordot.to_sdfg(simplify=True)
+    sdfg.name = f"cpf_strided_tap_{'c' if language == 'c' else 'cpp'}"
+    canonicalize(sdfg, target="cpu")
+    finalize_for_target(sdfg, "cpu")
+    rendering = render(sdfg, language=language)
+    library = build_standalone(rendering.code, sdfg.name, language=language)
+    rng = np.random.default_rng(0)
+    w = rng.standard_normal((SIZE, SIZE, 3))
+    b = rng.standard_normal((SIZE, SIZE))
+    arguments = {"w": w.copy(), "b": b.copy(), "c": np.zeros((SIZE, SIZE)), "N": SIZE}
+    call_standalone(library, rendering.sdfg, arguments, rendering.arguments)
+    assert np.allclose(arguments["c"], np.tensordot(w[:, :, 1], b, axes=([0], [0])), rtol=1e-10, atol=1e-10)
+
+
 if __name__ == "__main__":
     for case in sorted(CASES):
         for lang in ("c++", "c"):
@@ -156,3 +185,5 @@ if __name__ == "__main__":
     test_the_openblas_unit_keeps_a_pthreads_build_off_the_openmp_team()
     for lang in ("c++", "c"):
         test_a_product_that_falls_back_to_the_pure_expansion_names_no_vendor_library(lang)
+    for lang in ("c++", "c"):
+        test_a_product_whose_operand_no_blas_call_addresses_keeps_its_loops(lang)
