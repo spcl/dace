@@ -204,6 +204,9 @@ def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
             if not (isinstance(node, nodes.AccessNode) and node.data == name):
                 continue
             for in_edge in state.in_edges(node):
+                # An empty memlet only orders the access after the kernel; it writes nothing.
+                if in_edge.data.is_empty():
+                    continue
                 entry = state.entry_node(in_edge.src) if isinstance(in_edge.src, nodes.ExitNode) else None
                 if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
                     return True
