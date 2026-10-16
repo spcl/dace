@@ -966,29 +966,24 @@ template <typename T>
 inline constexpr bool cpf_lowp_narrow =
     std::is_same_v<std::remove_cv_t<T>, __bf16> || std::is_same_v<std::remove_cv_t<T>, _Float16>;
 template <typename T>
-static inline auto cpf_lowp_widen(const T &value) {
-    if constexpr (cpf_lowp_narrow<T>) {
-        return static_cast<float>(value);
-    } else {
-        return value;
-    }
+using cpf_lowp_wide_t = std::conditional_t<cpf_lowp_narrow<T>, float, T>;
+template <typename T>
+static inline cpf_lowp_wide_t<T> cpf_lowp_widen(const T &value) {
+    return static_cast<cpf_lowp_wide_t<T>>(value);
 }
 """
 INLINE_DEFINITIONS.update(
     {
         f"cpf_lowp_{name}": f"""\
+//: ``std::{name}`` run in ``float`` on a 16-bit float, its floating result stored back in the operands' type.
 template <typename... A>
-static inline auto cpf_lowp_{name}(const A &...a) {{
-    if constexpr ((cpf_lowp_narrow<A> || ...)) {{
-        auto r = std::{name}(cpf_lowp_widen(a)...);
-        if constexpr (std::is_same_v<decltype(r), float> || std::is_same_v<decltype(r), double>) {{
-            return static_cast<std::common_type_t<A...>>(r);
-        }} else {{
-            return r;
-        }}
-    }} else {{
-        return std::{name}(a...);
-    }}
+using cpf_lowp_{name}_t = std::conditional_t<
+    (cpf_lowp_narrow<A> || ...) &&
+        std::is_floating_point_v<decltype(std::{name}(std::declval<cpf_lowp_wide_t<A>>()...))>,
+    std::common_type_t<A...>, decltype(std::{name}(std::declval<cpf_lowp_wide_t<A>>()...))>;
+template <typename... A>
+static inline cpf_lowp_{name}_t<A...> cpf_lowp_{name}(const A &...a) {{
+    return static_cast<cpf_lowp_{name}_t<A...>>(std::{name}(cpf_lowp_widen(a)...));
 }}
 """
         for name in LOW_PRECISION_MATH
@@ -1024,7 +1019,7 @@ DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 #: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
 DEFINITION_HEADERS: dict[str, tuple[str, ...]] = {
     "cpf_lowp_base": ("<type_traits>",),
-    **{f"cpf_lowp_{name}": ("<cmath>", "<type_traits>") for name in LOW_PRECISION_MATH},
+    **{f"cpf_lowp_{name}": ("<cmath>", "<type_traits>", "<utility>") for name in LOW_PRECISION_MATH},
     "arg_pair": ("<complex>", "<type_traits>", "<utility>"),
     **{reduce_name(operation, True): ("<complex>",) for operation in COMPLEX_REDUCE_COMBINERS},
     "ifloor": ("<type_traits>",),
@@ -3100,7 +3095,13 @@ C_DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 }
 
 #: What the C dialect refuses, and why. Empty: every construct CPF reaches has a C spelling.
-C_UNSUPPORTED: dict[str, str] = {}
+C_UNSUPPORTED: dict[str, str] = {
+    # A C unit refuses 16-bit floats outright (``refuse_unspellable_containers``), so it never calls these.
+    **dict.fromkeys(
+        ["cpf_lowp_base", *(f"cpf_lowp_{name}" for name in LOW_PRECISION_MATH)],
+        "the C dialect has no 16-bit float; render the C++ dialect",
+    ),
+}
 
 #: Helpers C answers with a REWRITE of the CALL SITE rather than a definition or a refusal -- a
 #: third lane, and the only one, so the anti-rot tests can still insist every C++ helper is

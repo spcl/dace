@@ -518,6 +518,11 @@ NOT_CONSTEXPR = {
     "find_first_chunk": "reads the OpenMP thread count, which only exists at run time",
     "np_modf": "std::modf takes a pointer out-parameter and is not constexpr before C++23",
     "np_frexp": "std::frexp takes a pointer out-parameter and is not constexpr before C++23",
+    # The 16-bit float math wrappers call the <cmath> functions, which are not constexpr before C++26.
+    **dict.fromkeys(
+        ["cpf_lowp_base", *(f"cpf_lowp_{name}" for name in cpf_lowering.LOW_PRECISION_MATH)],
+        "calls <cmath> math, which is not constexpr before C++26",
+    ),
 }
 
 
@@ -587,7 +592,8 @@ def test_a_helper_returns_the_type_its_arithmetic_has(call, expected):
 #: guessed. Kept as a test-side copy so a silent addition to ``C_UNSUPPORTED`` fails here: a
 #: refusal is a capability gap, and it has to be a decision rather than an omission.
 #: Nothing: every C++ helper is answered in C by a definition or by a rewrite.
-EXPECTED_C_REFUSALS = set()
+#: The 16-bit float math wrappers: a C unit refuses 16-bit floats outright, so nothing in C calls them.
+EXPECTED_C_REFUSALS = {"cpf_lowp_base", *(f"cpf_lowp_{name}" for name in cpf_lowering.LOW_PRECISION_MATH)}
 
 
 def test_c_refuses_exactly_the_names_it_says_it_does():
