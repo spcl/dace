@@ -672,10 +672,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array_names = (
                 sdfg.arrays.keys()
             )  # set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
-            # A use with no access node of its own is represented below by a stand-in access node,
-            # which is NOT in any state's graph. That is harmless for an array (allocation only reads
-            # the descriptor) but not for a view, whose pointer is taken from its viewed edge -- so
-            # views are never stood in for. Their declaration follows the data they view regardless.
+            # A use with no access node of its own is stood in for by an access node that is in no state; a view's
+            # pointer comes from its viewed edge, so a view is never stood in for
             standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
@@ -684,10 +682,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
                     instances[node.data].append((state, node))
 
-                # A code node may reference a container directly in its code (a free
-                # symbol without connector/memlet/AccessNode). The allocation analysis
-                # must count those states as uses too, otherwise the declaration can
-                # land in a scope that does not enclose the reading code.
+                # A code node may name a container in its code alone (no connector, memlet or access node)
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
@@ -833,7 +828,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 multistate = name in control_flow_symbols[sdfg.cfg_id]
 
-                # Code nodes reading the container directly from their code (no AccessNode) count as uses as well
+                # Code nodes naming the container in their code are uses as well
                 state_uses = {
                     state: list(state_accesses)
                     for state, state_accesses in root_data_accesses[sdfg.cfg_id].get(name, {}).items()
