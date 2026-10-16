@@ -483,10 +483,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for i in top2:
                         if i not in list(second_state.source_nodes()):
                             continue
-                        paths = second_state.all_nodes_between(i, node)
-                        direct_edges = second_state.edges_between(i, node)
-
-                        if (paths != None and len(paths) > 0) or len(direct_edges) > 0:
+                        # Plain reachability: ``all_nodes_between`` gives up as soon as a path from ``i``
+                        # ends at another sink, so a source feeding more than this write was never ordered
+                        if i is node or nx.has_path(second_state._nx, i, node):
                             for j in conn[0]:
                                 # Order after the sinks downstream of the write too, so its readers finish first
                                 for k in [j, *sdutil.find_downstream_nodes(j, first_state)]:

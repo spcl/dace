@@ -265,6 +265,38 @@ def test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read():
             assert nx.has_path(state.nx, tasklets["rd"], tasklets["w"])
 
 
+def test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs():
+    """The first state fills ``A``; the second rewrites it from ``X``, which also feeds ``C``. The rewrite's
+    source reaches a sink other than ``A``, which must not stop the first write being ordered before it."""
+    sdfg = SDFG("extended_fusion_rewrite_with_fan_out")
+    for name in ("A", "C", "X"):
+        sdfg.add_array(name, [10], dtypes.float64)
+    first = sdfg.add_state("first")
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, InterstateEdge())
+
+    first.add_mapped_tasklet("fill", {"i": "0:10"}, {}, "a = 0", {"a": Memlet("A[i]")}, external_edges=True)
+    second.add_mapped_tasklet(
+        "rewrite",
+        {"i": "0:10"},
+        {"x": Memlet("X[i]")},
+        "a = x\nc = x",
+        {"a": Memlet("A[i]"), "c": Memlet("C[i]")},
+        external_edges=True,
+    )
+    first_a = next(n for n in first.data_nodes() if n.data == "A")
+    second_a = next(n for n in second.data_nodes() if n.data == "A")
+
+    assert sdfg.apply_transformations(StateFusionExtended) == 1
+    (fused,) = sdfg.states()
+    assert nx.has_path(fused.nx, first_a, second_a)
+
+    x = np.arange(10, dtype=np.float64) + 1
+    a, c = np.full(10, -1.0), np.zeros(10)
+    sdfg(A=a, C=c, X=x)
+    assert np.array_equal(a, x) and np.array_equal(c, x)
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
@@ -273,3 +305,4 @@ if __name__ == "__main__":
     test_extended_fusion_compares_a_copy_at_its_destination()
     test_extended_fusion_orders_a_writer_its_ordered_sibling_does_not_cover()
     test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read()
+    test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs()
