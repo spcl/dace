@@ -123,11 +123,7 @@ class ParallelizePipeline(ppl.Pass):
             # or re-guarded around the chain. Versioning the definitions removes that false
             # dependence while the unrolled chains are still intact.
             SymbolSSA(),
-            # ``assign_loop_iterator_post_value=False``: the post-value state materializes
-            # ``<orig_var> = <exit value>`` AFTER the loop, which is a read of a loop-defined symbol
-            # from a later block -- exactly what LoopToMap refuses. Emitting it here would undo the
-            # rename's whole purpose.
-            UniqueLoopIterators(assign_loop_iterator_post_value=False),
+            UniqueLoopIterators(),
             # Before the simplify: fission renames each use to its own copy (1426 z* scalars ->
             # 2676 on CloudSC), and the fold then gets to clean up the copies nothing needs.
             PrivatizeScalars(),

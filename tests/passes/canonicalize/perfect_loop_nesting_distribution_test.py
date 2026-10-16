@@ -612,7 +612,7 @@ def test_distribution_order_is_stable_across_runs():
     for _ in range(3):
         sdfg = chain_plus_independent.to_sdfg(simplify=True)
         distribute_loops(sdfg)
-        UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, {})
+        UniqueLoopIterators().apply_pass(sdfg, {})
         orders.append(emitted_write_order(sdfg))
     assert orders[0] == orders[1] == orders[2] == [["s"], ["p"], ["q"], ["r"]]
 

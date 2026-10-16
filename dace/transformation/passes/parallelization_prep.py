@@ -1792,7 +1792,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         PrivatizeScalars().apply_pass(candidate, {})
         SymbolPropagation().apply_pass(candidate, {})
         ConstantPropagation().apply_pass(candidate, {})
-        UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(candidate, {})
+        UniqueLoopIterators().apply_pass(candidate, {})
         # Built on the first loop that actually needs a probe, then shared by the rest (see
         # :meth:`_loop_to_map_prober`). Nothing here APPLIES a lift, so the graph the context
         # describes never changes under it.
