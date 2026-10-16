@@ -258,7 +258,10 @@ RENDERABLE_IMPLEMENTATIONS = ("pure", "pure-seq", "MappedTasklet")
 #: ``dace::find_first_index``, ``Scan``'s
 #: ``dace::scan`` entry points and ``ScatterConflictCheck``'s ``dace::detect_collision`` are
 #: re-spelled by :mod:`dace.cpf_lowering` as the OpenMP ``reduction`` loop, the cancelling search, the
-#: ``inscan`` scan and the tagged-write check. ``Reduce``'s ``pure`` would be a parallel loop with a
+#: ``inscan`` scan and the tagged-write check. ``StateScan``'s ``CPU`` lowering reaches no runtime at
+#: all -- it is its ``pure`` SDFG with the two block maps on ``CPU_Multicore`` instead of ``Sequential`` --
+#: and ``pure`` would run the scan's extra work (``(count + 1) * N`` steps for a finite scan) on one
+#: thread, slower than the loop the scan replaced. ``Reduce``'s ``pure`` would be a parallel loop with a
 #: ``critical`` section per element (argmax_value under canonicalize: ~0.5 s for 6M doubles). Without them a node falls to ``pure``, a SEQUENTIAL loop, and the rendered
 #: unit hands its reader a serial loop for work the canonicalize pipeline itself parallelizes --
 #: ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all measured 9-11x over numpy in the
@@ -278,6 +281,7 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
     "Reduce": ("CPU",),
     "Scan": ("CPU",),
     "ScatterConflictCheck": ("CPU",),
+    "StateScan": ("CPU",),
 }
 
 #: Per-node-type implementations tried ahead of everything else when a DEVICE dialect renders a
