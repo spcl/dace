@@ -37,8 +37,6 @@ def normalization(norm: StringLiteral, size: symbolic.SymbolicType, inverse: boo
 def resized(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, shape: list) -> nodes.AccessNode:
     """A copy of ``a`` cropped or zero-padded to ``shape``, as numpy's ``n`` and ``s`` arguments ask; the access
     node the copy writes, which the transform reads so dataflow orders the two."""
-    from dace.libraries.fft.algorithms.dft import GPU_BLOCK_SIZE  # Avoid import loops
-
     desc = sdfg.arrays[a]
     name = pv.add_temp_transient(shape, desc.dtype, storage=desc.storage)[0]
     index = ", ".join(f"__i{d}" for d in range(len(shape)))
@@ -52,8 +50,6 @@ def resized(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, shape: lis
         {"o": Memlet(data=name, subset=index)},
         external_edges=True,
     )[2]
-    # Ignored on the host; a kernel once the program is offloaded
-    exit_node.map.gpu_block_size = GPU_BLOCK_SIZE
     return state.out_edges(exit_node)[0].dst
 
 

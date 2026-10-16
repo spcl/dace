@@ -80,19 +80,6 @@ def floating_text(factor: dace.symbolic.SymbolicType) -> str:
     return FloatingPrinter().doprint(dace.symbolic.pystr_to_symbolic(factor))
 
 
-#: Threads per block of every map an expansion on device memory produces.
-GPU_BLOCK_SIZE = [128, 1, 1]
-
-
-def set_gpu_block_size(sdfg: dace.SDFG, storage: dace.StorageType) -> dace.SDFG:
-    """Give every map of ``sdfg`` a block size when it works on device memory, where the maps become kernels."""
-    if storage == dace.StorageType.GPU_Global:
-        for node, _ in sdfg.all_nodes_recursive():
-            if isinstance(node, dace.nodes.MapEntry) and node.map.gpu_block_size is None:
-                node.map.gpu_block_size = GPU_BLOCK_SIZE
-    return sdfg
-
-
 def complex_of(real: dace.typeclass) -> dace.typeclass:
     """The complex type with ``real``'s precision; a complex type is its own."""
     return {dace.float32: dace.complex64, dace.float64: dace.complex128}.get(real, real)
@@ -104,7 +91,7 @@ def real_of(complex_type: dace.typeclass) -> dace.typeclass:
 
 
 def index_ranges(shape: Sequence, prefix: str) -> dict[str, str]:
-    return {f"{prefix}{d}": f"0:{extent}" for d, extent in enumerate(shape)}
+    return {f"{prefix}{d}": f"0:{dace.symbolic.symstr(extent)}" for d, extent in enumerate(shape)}
 
 
 def add_elementwise_state(
@@ -232,7 +219,7 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
     )
     if not half_spectrum:
         add_dft_passes(sdfg, state, "__ping", "_out", outdesc.shape, axes, inverse, factor)
-        return set_gpu_block_size(sdfg, storage)
+        return sdfg
     if not inverse:
         sdfg.add_transient("__spectrum", indesc.shape, complex_type, storage=storage)
         state = add_dft_passes(sdfg, state, "__ping", "__spectrum", indesc.shape, axes, inverse, factor)
@@ -248,7 +235,7 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
             out_index,
             "o = i",
         )
-        return set_gpu_block_size(sdfg, storage)
+        return sdfg
     # Inverse: the axes before the last one are complex transforms over the half spectrum.
     last = axes[-1]
     if len(axes) > 1:
@@ -295,4 +282,4 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, nam
         "o = i.real();",
         dace.Language.CPP,
     )
-    return set_gpu_block_size(sdfg, storage)
+    return sdfg

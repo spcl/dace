@@ -12,21 +12,18 @@ from typing import NamedTuple
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
+from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft import environments as env
 from dace.libraries.fft.gpu_dialect import CUFFT, HIPFFT, GpuFftDialect
+from dace.sdfg import utils as sdutil
 
 
 def normalize_fft_axes(ndim: int, axes: Sequence[int] | None) -> list[int]:
     """The axes an FFT over ``axes`` transforms, in order, as indices in ``0..ndim-1``; ``None`` means every axis."""
-    if axes is None:
-        return list(range(ndim))
-    result = []
-    for axis in axes:
-        index = int(axis) + ndim if int(axis) < 0 else int(axis)
-        if not 0 <= index < ndim:
-            raise ValueError(f"FFT axis {axis} out of range for rank-{ndim} input")
-        result.append(index)
+    result = list(range(ndim)) if axes is None else normalize_axes([int(axis) for axis in axes], ndim)
+    if any(not 0 <= axis < ndim for axis in result):
+        raise ValueError(f"FFT axes {axes} out of range for rank-{ndim} input")
     return result
 
 
@@ -168,7 +165,7 @@ def vendor_fft_sdfg(
     layout the vendor cannot address even staged falls back to the ``pure`` expansion, with a warning naming the
     backend.
     """
-    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, real_of, set_gpu_block_size  # avoid loop
+    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, real_of  # avoid loop
 
     inverse = isinstance(node, IFFT)
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
@@ -220,8 +217,10 @@ def vendor_fft_sdfg(
         else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor)})"
     )
 
+    from dace.libraries.fft.algorithms.dft import index_ranges  # avoid loop
+
     def elementwise(state: SDFGState, label: str, src: str, dst: str, shape, code: str) -> None:
-        ranges = {f"__i{d}": f"0:{symbolic.symstr(extent)}" for d, extent in enumerate(shape)}
+        ranges = index_ranges(shape, "__i")
         subset = ", ".join(ranges)
         state.add_mapped_tasklet(
             label,
@@ -247,7 +246,7 @@ def vendor_fft_sdfg(
         elementwise(
             sdfg.add_state_after(state, "normalize"), "normalize", "_out", "_out", outdesc.shape, f"o = i{scale}"
         )
-    return set_gpu_block_size(sdfg, outdesc.storage)
+    return sdfg
 
 
 def dense_block_order(
@@ -631,7 +630,4 @@ class MKLIFFTExpansion(ExpandMKL):
 
 
 def input_and_output(state: SDFGState, sdfg: SDFG, node: nodes.LibraryNode) -> tuple[data.Data, data.Data]:
-    """The descriptors of the arrays on the node's ``_inp`` and ``_out`` connectors."""
-    in_edge = next(e for e in state.in_edges(node) if e.dst_conn)
-    out_edge = next(e for e in state.out_edges(node) if e.src_conn)
-    return sdfg.arrays[in_edge.data.data], sdfg.arrays[out_edge.data.data]
+    return sdutil.in_desc_with_name(node, state, sdfg, "_inp"), sdutil.out_desc_with_name(node, state, sdfg, "_out")
