@@ -244,9 +244,13 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if e.data.wcr is not None
         )
         handled = 0
+        from dace.codegen.python.dialects.cuda_tile_cpp import is_tile_kernel
+
         for name, desc, owner, kernel, kernel_state in self.kernel_internal_gpu_global_transients(
             sdfg, self.register_demotion_max_elements
         ):
+            if is_tile_kernel(kernel_state, kernel):
+                continue  # a CUDA Tile C++ kernel holds its tiles as values
             if name not in accumulated and is_register_demotable(desc, self.register_demotion_max_elements):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1

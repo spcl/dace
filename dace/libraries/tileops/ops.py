@@ -119,3 +119,48 @@ REDUCE_OPS = ("+", "*", "min", "max")
 
 #: The op codes of the ops that have one.
 UNARY_ISA_CODES = {op: spec.isa_code for op, spec in UNARY_OPS.items() if spec.isa_code is not None}
+
+#: The Python spelling of each binary op over whole tiles, for the tile DSL backends (``dace.codegen.python``). The
+#: ``f`` mapping names the dialect's function, ``f[minimum]`` is ``tl.minimum`` in Triton. ``%`` floors as Python does,
+#: built from the truncating remainder the DSLs share.
+PY_BINARY_OPS = {
+    "+": "({a} + {b})",
+    "-": "({a} - {b})",
+    "*": "({a} * {b})",
+    "/": "({a} / {b})",
+    "%": "((({a}) % ({b}) + ({b})) % ({b}))",
+    "py_mod": "((({a}) % ({b}) + ({b})) % ({b}))",
+    "c_mod": "{f[fmod]}({a}, {b})",
+    "<": "({a} < {b})",
+    "<=": "({a} <= {b})",
+    ">": "({a} > {b})",
+    ">=": "({a} >= {b})",
+    "==": "({a} == {b})",
+    "!=": "({a} != {b})",
+    "&&": "({a} & {b})",
+    "||": "({a} | {b})",
+    "&": "({a} & {b})",
+    "|": "({a} | {b})",
+    "^": "({a} ^ {b})",
+    "min": "{f[minimum]}({a}, {b})",
+    "max": "{f[maximum]}({a}, {b})",
+    "**": "{f[pow]}({a}, {b})",
+    "pow": "{f[pow]}({a}, {b})",
+    "ipow": "{f[pow]}({a}, {b})",
+    "atan2": "{f[atan2]}({a}, {b})",
+    "hypot": "{f[sqrt]}({a} * {a} + {b} * {b})",
+    "fmod": "{f[fmod]}({a}, {b})",
+}
+
+#: The Python spelling of each unary op over whole tiles; see :data:`PY_BINARY_OPS`.
+PY_UNARY_OPS = {
+    "neg": "(-{a})",
+    "not": "(~{a})",
+    **{name: f"{{f[{name}]}}({{a}})" for name in ("abs", "exp", "log", "sqrt", "sin", "cos", "tan", "asin", "acos")},
+    **{name: f"{{f[{name}]}}({{a}})" for name in ("atan", "sinh", "cosh", "floor", "ceil", "tanh")},
+    "sign_numpy_2": "{f[where]}({a} > 0, 1, {f[where]}({a} < 0, -1, 0))",
+}
+
+#: The function of each reduction and scan over a tile; see :data:`PY_BINARY_OPS`.
+PY_REDUCE_OPS = {"+": "sum", "*": "prod", "min": "min", "max": "max"}
+PY_SCAN_OPS = {"+": "cumsum", "*": "cumprod"}
