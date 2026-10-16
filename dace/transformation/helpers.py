@@ -199,6 +199,8 @@ def nest_sdfg_subgraph(
         loop_regions: list[LoopRegion] = [b for b in all_blocks if isinstance(b, LoopRegion) and b.loop_variable]
         internal_counters: set[str] = set()
         external_counters: set[str] = set()
+        # Counters whose value the subgraph sets itself: never mapped from, nor declared for, the parent
+        outright_counters: set[str] = set()
         for b in loop_regions:
             defined_symbols.add(b.loop_variable)
             # ``get_init_assignment`` returns None -- it does not raise -- when the init assigns the
@@ -208,6 +210,8 @@ def nest_sdfg_subgraph(
             binds_outright = not b.init_statement or (
                 init is not None and b.loop_variable not in symbolic.free_symbols_and_functions(init)
             )
+            if binds_outright:
+                outright_counters.add(b.loop_variable)
             internal = binds_outright and not loop_analysis.counter_used_outside_loop(
                 b.loop_variable, b, sdfg, use_sites=use_sites, descriptor_symbols=descriptor_symbols
             )
@@ -353,9 +357,9 @@ def nest_sdfg_subgraph(
         # (nest-forge stages a float read as exactly such a symbol and needs it in the ABI).
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols)
-        fsymbols = fsymbols - strictly_defined_symbols
+        fsymbols = fsymbols - strictly_defined_symbols - outright_counters
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
+        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping, bound_inside=outright_counters)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
