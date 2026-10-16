@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -47,15 +47,32 @@ class ExpandSymmPure(ExpandTransformation):
         return sdfg
 
 
-def symm_call(node, state, sdfg) -> SDFG:
-    """``_Cout = _Cin``, then ``?symm`` updates ``_Cout`` in place."""
+def symm_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_Cout = _Cin``, then ``?symm`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, b, c = (operand(node, state, sdfg, conn) for conn in ("_A", "_B", "_Cout"))
-    layout = blas_helpers.matrix_layout(a, b, c)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, a, b, c)
+    else:
+        layout = blas_helpers.matrix_layout(a, b, c)
     if layout is None or prefix is None:
         return ExpandSymmPure.expansion(node, state, sdfg)
-    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
     (m, n), (lda, ldb, ldc) = c.shape, layout.leading
+    if dialect is not None:
+        # Row-major C = A B is column-major C^T = B^T A^T = B^T A: the side and the stored triangle flip, the
+        # dimensions swap
+        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        right, upper = node.side != layout.row_major, node.uplo != layout.row_major
+        rows, cols = (n, m) if layout.row_major else (m, n)
+        call = (
+            f"{gpu.routine('symm')}({dialect.handle}, {dialect.side(right)}, {dialect.fill(upper)}, {rows}, {cols}, "
+            f"{arg['alpha']}, {gpu.pointer('__A')}, {lda}, {gpu.pointer('__B')}, {ldb}, {arg['beta']}, "
+            f"{gpu.pointer('__Cout')}, {ldc})"
+        )
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     side = "CblasRight" if node.side else "CblasLeft"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
@@ -86,12 +103,38 @@ class ExpandSymmMKL(ExpandTransformation):
         return symm_call(node, parent_state, parent_sdfg)
 
 
+@library.expansion
+class ExpandSymmCuBLAS(ExpandTransformation):
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return symm_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
+
+
+@library.expansion
+class ExpandSymmRocBLAS(ExpandTransformation):
+    environments = [environments.rocblas.rocBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return symm_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
+
+
 @library.node
 class Symm(nodes.LibraryNode):
     """BLAS ``?symm``: ``_Cout = alpha * _A @ _B + beta * _Cin``, or ``alpha * _B @ _A + beta * _Cin`` with ``side``,
     for a symmetric ``_A`` of which only the upper (``uplo``) or the lower triangle is read."""
 
-    implementations = {"pure": ExpandSymmPure, "OpenBLAS": ExpandSymmOpenBLAS, "MKL": ExpandSymmMKL}
+    implementations = {
+        "pure": ExpandSymmPure,
+        "OpenBLAS": ExpandSymmOpenBLAS,
+        "MKL": ExpandSymmMKL,
+        "cuBLAS": ExpandSymmCuBLAS,
+        "rocBLAS": ExpandSymmRocBLAS,
+    }
     default_implementation = None
 
     side = properties.Property(dtype=bool, default=False, desc="Multiply _A from the right instead of the left.")
@@ -100,7 +143,7 @@ class Symm(nodes.LibraryNode):
     beta = properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, side=False, uplo=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs={"_A", "_B", "_Cin"}, outputs={"_Cout"}, **kwargs)
+        super().__init__(name, inputs=["_A", "_B", "_Cin"], outputs=["_Cout"], **kwargs)
         self.side, self.uplo, self.alpha, self.beta = side, uplo, alpha, beta
 
     def validate(self, sdfg, state):

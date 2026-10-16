@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -45,11 +45,24 @@ class ExpandSymvPure(ExpandTransformation):
         return sdfg
 
 
-def symv_call(node, state, sdfg) -> SDFG:
-    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place."""
+def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, x, yout = (operand(node, state, sdfg, c) for c in ("_A", "_x", "_yout"))
-    layout = blas_helpers.matrix_layout(a)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if dialect is not None and prefix is not None:
+        # A row-major symmetric matrix is its own transpose in column-major order, with the other triangle stored
+        layout = gpu_dialect.required_layout(node, a)
+        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        upper = node.uplo != layout.row_major
+        call = (
+            f"{gpu.routine('symv')}({dialect.handle}, {dialect.fill(upper)}, {x.shape[0]}, {arg['alpha']}, "
+            f"{gpu.pointer('__A')}, {layout.leading[0]}, {gpu.pointer('__x')}, {x.strides[0]}, {arg['beta']}, "
+            f"{gpu.pointer('__yout')}, {yout.strides[0]})"
+        )
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", code)
+    layout = blas_helpers.matrix_layout(a)
     # CBLAS has no complex symv
     if layout is None or prefix is None or a.desc.dtype.is_complex():
         return ExpandSymvPure.expansion(node, state, sdfg)
@@ -83,12 +96,38 @@ class ExpandSymvMKL(ExpandTransformation):
         return symv_call(node, parent_state, parent_sdfg)
 
 
+@library.expansion
+class ExpandSymvCuBLAS(ExpandTransformation):
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return symv_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
+
+
+@library.expansion
+class ExpandSymvRocBLAS(ExpandTransformation):
+    environments = [environments.rocblas.rocBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return symv_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
+
+
 @library.node
 class Symv(nodes.LibraryNode):
     """BLAS ``?symv``: ``_yout = alpha * _A @ _x + beta * _yin`` for a symmetric ``_A`` of which only the upper
     (``uplo``) or the lower triangle is read."""
 
-    implementations = {"pure": ExpandSymvPure, "OpenBLAS": ExpandSymvOpenBLAS, "MKL": ExpandSymvMKL}
+    implementations = {
+        "pure": ExpandSymvPure,
+        "OpenBLAS": ExpandSymvOpenBLAS,
+        "MKL": ExpandSymvMKL,
+        "cuBLAS": ExpandSymvCuBLAS,
+        "rocBLAS": ExpandSymvRocBLAS,
+    }
     default_implementation = None
 
     uplo = properties.Property(dtype=bool, default=False, desc="Read the upper triangle of _A instead of the lower.")
@@ -96,7 +135,7 @@ class Symv(nodes.LibraryNode):
     beta = properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs={"_A", "_x", "_yin"}, outputs={"_yout"}, **kwargs)
+        super().__init__(name, inputs=["_A", "_x", "_yin"], outputs=["_yout"], **kwargs)
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):

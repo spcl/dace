@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -55,15 +55,30 @@ class ExpandSyrkPure(ExpandTransformation):
         return sdfg
 
 
-def syrk_call(node, state, sdfg) -> SDFG:
-    """``_Cout = _Cin``, then ``?syrk`` updates ``_Cout`` in place."""
+def syrk_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_Cout = _Cin``, then ``?syrk`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, c = operand(node, state, sdfg, "_A"), operand(node, state, sdfg, "_Cout")
-    layout = blas_helpers.matrix_layout(a, c)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, a, c)
+    else:
+        layout = blas_helpers.matrix_layout(a, c)
     if layout is None or prefix is None:
         return ExpandSyrkPure.expansion(node, state, sdfg)
-    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
     lda, ldc = layout.leading
+    k = a.shape[0 if node.transA else 1]
+    if dialect is not None:
+        # In column-major order a row-major A reads as A^T and C as C^T: the transposition and the triangle flip
+        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        upper, trans = node.uplo != layout.row_major, node.transA != layout.row_major
+        call = (
+            f"{gpu.routine('syrk')}({dialect.handle}, {dialect.fill(upper)}, {dialect.op(trans)}, {c.shape[0]}, {k}, "
+            f"{arg['alpha']}, {gpu.pointer('__A')}, {lda}, {arg['beta']}, {gpu.pointer('__Cout')}, {ldc})"
+        )
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
     trans = "CblasTrans" if node.transA else "CblasNoTrans"
@@ -94,12 +109,38 @@ class ExpandSyrkMKL(ExpandTransformation):
         return syrk_call(node, parent_state, parent_sdfg)
 
 
+@library.expansion
+class ExpandSyrkCuBLAS(ExpandTransformation):
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return syrk_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
+
+
+@library.expansion
+class ExpandSyrkRocBLAS(ExpandTransformation):
+    environments = [environments.rocblas.rocBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return syrk_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
+
+
 @library.node
 class Syrk(nodes.LibraryNode):
     """BLAS ``?syrk``: ``_Cout = alpha * _A @ _A^T + beta * _Cin``, or ``alpha * _A^T @ _A + beta * _Cin`` with
     ``transA``, updating only the upper (``uplo``) or the lower triangle; the other one keeps ``_Cin``."""
 
-    implementations = {"pure": ExpandSyrkPure, "OpenBLAS": ExpandSyrkOpenBLAS, "MKL": ExpandSyrkMKL}
+    implementations = {
+        "pure": ExpandSyrkPure,
+        "OpenBLAS": ExpandSyrkOpenBLAS,
+        "MKL": ExpandSyrkMKL,
+        "cuBLAS": ExpandSyrkCuBLAS,
+        "rocBLAS": ExpandSyrkRocBLAS,
+    }
     default_implementation = None
 
     uplo = properties.Property(dtype=bool, default=False, desc="Update the upper triangle of C instead of the lower.")
@@ -108,7 +149,7 @@ class Syrk(nodes.LibraryNode):
     beta = properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, transA=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs={"_A", "_Cin"}, outputs={"_Cout"}, **kwargs)
+        super().__init__(name, inputs=["_A", "_Cin"], outputs=["_Cout"], **kwargs)
         self.uplo, self.transA, self.alpha, self.beta = uplo, transA, alpha, beta
 
     def validate(self, sdfg, state):

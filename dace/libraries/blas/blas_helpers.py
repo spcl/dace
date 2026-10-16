@@ -1,5 +1,4 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from typing import Any, NamedTuple
 
@@ -67,6 +66,11 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
         return "Z", "cuDoubleComplex", "Complex128"
     else:
         raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
+
+
+def rocblas_type(ctype: str) -> str:
+    """The rocBLAS spelling of a CUDA C type from :func:`cublas_type_metadata`; only the complex types differ."""
+    return {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(ctype, ctype)
 
 
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
@@ -212,7 +216,7 @@ def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG",
     else:
         edge = sdutil.out_edge_with_name(node, state, connector)
     desc = sdfg.arrays[edge.data.data]
-    subset = copy.deepcopy(edge.data.subset)
+    subset = dc(edge.data.subset)
     dims = subset.squeeze()
     return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
 
@@ -275,7 +279,7 @@ def in_place_call(
     inputs = [c for c in node.in_connectors if c != source]
     # The call reads ``target`` too, so the copy into it is not dead
     reads = {f"_{c}": c for c in inputs} | {f"_{target}_before": target}
-    tasklet = call_state.add_tasklet(node.label, set(reads), {f"_{target}"}, code, language=dtypes.Language.CPP)
+    tasklet = call_state.add_tasklet(node.label, list(reads), [f"_{target}"], code, language=dtypes.Language.CPP)
     for connector, name in reads.items():
         call_state.add_edge(
             call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
