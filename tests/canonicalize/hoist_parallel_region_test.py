@@ -596,11 +596,11 @@ def test_strip_mine_keeps_a_column_scratch_outside_the_tiles():
     (CLOUDSC at L: one (klon)-wide set per thread, past the memory cap)."""
     sdfg = scratch_in_the_body_sdfg("tile_column_scratch")
     assert tiled(sdfg) == 1
-    (nest,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.NestedSDFG)]
+    (nest,) = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nd.NestedSDFG)]
     assert sdfg.arrays["t"].transient and "t" in nest.in_connectors | nest.out_connectors
     assert nest.sdfg.arrays["s"].transient, "a scratch at a fixed position stays private to the tile"
     a = np.random.default_rng(3).random((37, 37))
-    matches_at_every_team_size(sdfg, {"a": sweep_reference(a, lambda prev, _: 2.0 * prev + 1.0)}, a=a, N=37)
+    matches_at_every_team_size(sdfg, {"a": sweep_reference(a, lambda prev, row: 2.0 * prev + 1.0)}, a=a, N=37)
 
 
 def nested_scratch_sdfg(name):
