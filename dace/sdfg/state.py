@@ -3106,7 +3106,16 @@ class SymbolResolver:
             }
             for name, low, high, step in ranges:
                 sign = sympy.sympify(step)
-                low, high = (low, high) if sign.is_positive else (high, low) if sign.is_negative else (None, None)
+                if sign.free_symbols:
+                    # A symbolic step's sign is a fact about its symbols, which hold outside this scope
+                    outside = symbolic.Facts(relations, frozenset(integers))
+                    positive, negative = (
+                        symbolic.ask(symbolic.predicate_relation(predicate, sign), outside) is symbolic.Truth.TRUE
+                        for predicate in (symbolic.Predicate.POSITIVE, symbolic.Predicate.NEGATIVE)
+                    )
+                else:
+                    positive, negative = sign.is_positive, sign.is_negative
+                low, high = (low, high) if positive else (high, low) if negative else (None, None)
                 # The body of a provably empty range never runs, so its bounds, which contradict, are not facts
                 if low is not None and not (sympy.sympify(high) - sympy.sympify(low)).is_negative:
                     relations += [

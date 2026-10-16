@@ -65,6 +65,31 @@ def test_step_of_unknown_sign_gives_no_range():
     assert symbolic.ask(le("0", "j"), SymbolResolver().facts_at(state, tasklet)) is symbolic.Truth.UNKNOWN
 
 
+def test_step_positive_by_the_sdfg_facts_gives_the_range():
+    sdfg, state, _, tasklet = map_state("S")
+    sdfg.set_symbol_assumptions("S", frozenset({symbolic.Predicate.POSITIVE}))
+    facts = SymbolResolver().facts_at(state, tasklet)
+    assert symbolic.ask(le("0", "j"), facts) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("j", "N - 1"), facts) is symbolic.Truth.TRUE
+
+
+def test_step_negative_by_the_sdfg_facts_gives_the_reversed_range():
+    sdfg = dace.SDFG("facts_at_map_negative_step")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("S", dace.int64)
+    sdfg.set_symbol_assumptions("S", frozenset({symbolic.Predicate.NEGATIVE}))
+    sdfg.add_array("A", ["N"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet, entry, _ = state.add_mapped_tasklet(
+        "m", {"j": "0:N"}, {}, "a = 1.0", {"a": dace.Memlet("A[j]")}, external_edges=True
+    )
+    # Inclusive bounds, first to last: from N - 1 down to 0
+    entry.map.range = dace.subsets.Range([tuple(symbolic.pystr_to_symbolic(b) for b in ("N - 1", "0", "S"))])
+    facts = SymbolResolver().facts_at(state, tasklet)
+    assert symbolic.ask(le("0", "j"), facts) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("j", "N - 1"), facts) is symbolic.Truth.TRUE
+
+
 def test_nested_sdfg_inherits_outer_ranges_through_its_symbol_mapping():
     outer = dace.SDFG("facts_at_outer")
     outer.add_symbol("N", dace.int64)
@@ -133,6 +158,8 @@ if __name__ == "__main__":
     test_map_body_knows_the_parameter_range()
     test_map_entry_does_not_know_its_own_parameter_range()
     test_step_of_unknown_sign_gives_no_range()
+    test_step_positive_by_the_sdfg_facts_gives_the_range()
+    test_step_negative_by_the_sdfg_facts_gives_the_reversed_range()
     test_nested_sdfg_inherits_outer_ranges_through_its_symbol_mapping()
     test_nested_sdfg_assumption_provable_from_the_mapping_is_valid()
     test_nested_sdfg_assumption_unprovable_from_the_mapping_is_invalid()
