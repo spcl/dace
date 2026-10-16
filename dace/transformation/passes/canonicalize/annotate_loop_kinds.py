@@ -67,8 +67,9 @@ MAP_DIMENSIONS = "covers the {count} nested loops over {params}: every one of th
 #: thing each time.
 SEQUENTIAL_PROVEN = (
     "sequential -- carried: {reason}\n"
-    "settled: proven, {why}; focus: restructure around the dependence (reorder, block, rewrite as "
-    "a scan or reduction), or optimize the work inside"
+    "settled: proven, {why}; no schedule or annotation makes it parallel -- removing the dependence takes an "
+    "algorithmic change (break an anti dependence, privatize, rewrite the recurrence as a scan or reduction), "
+    "otherwise optimize the work inside"
 )
 
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
