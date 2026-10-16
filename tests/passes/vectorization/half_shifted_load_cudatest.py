@@ -192,9 +192,10 @@ def test_odd_neighbour_load_is_shifted_even_is_plain():
 
 def test_heat3d_widens_every_load():
     """heat3d's 7 stencil points split into aligned (``, 4``) and shifted (``, 4, 1``) loads with
-    nothing left on the per-element path -- the case ``c13a93c97`` explicitly did not cover."""
+    nothing left on the per-element path -- the case ``c13a93c97`` explicitly did not cover. Each 127-wide map is
+    narrower than the block's 256-lane tile, so it is all remainder: the loads are masked (``true``)."""
     cu = _device_code(_vectorized(_heat3d))
-    loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
+    loads = re.findall(r"tile_load<dace::float16, 2, (?:true|false)([^>]*)>", cu)
     assert loads, "no fp16 width-2 tile_load emitted"
     assert not [a for a in loads if a == ""], "a heat3d fp16 tile load stayed on the per-element path"
     assert ", 4, 1" in loads and ", 4" in loads, f"expected both residues among the loads, got {set(loads)}"
