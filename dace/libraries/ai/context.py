@@ -125,6 +125,8 @@ class ResolvedDefaults:
     schedules: dict[str, dtypes.ScheduleType] = field(default_factory=dict)
     #: (SDFG guid, container name) -> the storage that container will actually be allocated in.
     storage: dict[tuple[str, str], dtypes.StorageType] = field(default_factory=dict)
+    #: Node guid -> the node and its state in the resolved copy.
+    nodes: dict[str, tuple[nodes.Node, SDFGState]] = field(default_factory=dict)
 
 
 @dataclass
@@ -163,19 +165,6 @@ class ExpansionContext:
     available_environments: list[str] = field(default_factory=list)
 
 
-def _describe_range(rng: Any) -> str:
-    """
-    Renders a subset or range as a readable string.
-
-    :param rng: The range or subset to render.
-    :return: A string description, or ``'?'`` if it cannot be rendered.
-    """
-    try:
-        return str(rng)
-    except Exception:
-        return "?"
-
-
 def _scope_frame(
     entry: nodes.EntryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
 ) -> NestingFrame:
@@ -190,7 +179,7 @@ def _scope_frame(
     """
     if isinstance(entry, nodes.MapEntry):
         params = ", ".join(entry.map.params)
-        detail = f"{params} = {_describe_range(entry.map.range)}"
+        detail = f"{params} = {entry.map.range}"
         block_size = None
         if entry.map.schedule in dtypes.GPU_SCHEDULES:
             try:
@@ -305,28 +294,6 @@ def collect_nesting(
     return frames
 
 
-def _descriptor_for(state: SDFGState, sdfg: SDFG, edge: Any, incoming: bool) -> tuple[str | None, Any | None]:
-    """
-    Resolves the data container behind a library node edge.
-
-    Follows the memlet path to the outermost access node rather than trusting ``edge.data.data``,
-    which may name an inner or view container when the library node sits inside a map.
-
-    :param state: The state containing the edge.
-    :param sdfg: The SDFG containing the state.
-    :param edge: The edge to resolve.
-    :param incoming: True if the edge is an input to the library node.
-    :return: A tuple of (container name, data descriptor), either of which may be ``None``.
-    """
-    path = state.memlet_path(edge)
-    endpoint = path[0].src if incoming else path[-1].dst
-    if isinstance(endpoint, nodes.AccessNode) and endpoint.data in sdfg.arrays:
-        return endpoint.data, sdfg.arrays[endpoint.data]
-    if edge.data.data is not None and edge.data.data in sdfg.arrays:
-        return edge.data.data, sdfg.arrays[edge.data.data]
-    return None, None
-
-
 def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
     """
     Records where a pointer connector points and how to index it.
@@ -349,17 +316,11 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
         sizes = list(memlet.subset.size())
         info.view_shape = tuple(str(s) for s in sizes)
 
-        strides = list(desc.strides)
+        strides = memlet.subset.absolute_strides(desc.strides)
         terms = [f"i{dim}" if str(stride) == "1" else f"i{dim}*{sym2cpp(stride)}" for dim, stride in enumerate(strides)]
         ranges = ", ".join(f"i{dim} in 0:{sym2cpp(size)}" for dim, size in enumerate(sizes))
         info.index_formula = f"{info.name}[{' + '.join(terms)}]  with {ranges}"
-
-        # Contiguous only if the view's own packed strides match the container's
-        packed, running = [], 1
-        for size in reversed(sizes):
-            packed.insert(0, running)
-            running *= size
-        info.contiguous = all(str(a) == str(b) for a, b in zip(packed, strides))
+        info.contiguous = bool(memlet.subset.is_contiguous_subset(desc))
     except Exception:
         # A subset this helper cannot render must not stop the expansion; the raw subset and
         # strides are reported either way.
@@ -403,23 +364,16 @@ def _infer_conntype(
     declared = (node.in_connectors if direction == "in" else node.out_connectors).get(name)
     if declared is not None and declared.type is not None:
         return declared
-
-    if edge is None or edge.data.data is None or edge.data.data not in sdfg.arrays:
+    if edge is None or edge.data.data is None:
         return None
-    memlet = edge.data
-    desc = sdfg.arrays[memlet.data]
 
-    scalar = bool(memlet.subset) and memlet.subset.num_elements() == 1
-    if direction == "out":
-        # A dynamic output without a write-conflict resolution has no single destination to write
-        # back to, so it stays a pointer
-        scalar &= not memlet.dynamic or memlet.wcr is not None
-    scalar |= isinstance(desc, dt.Scalar)
-    # Never by value out of GPU global memory: the load or store would run wherever the tasklet
-    # does, which for a host tasklet means dereferencing a device pointer
-    storage = (defaults.storage if defaults else {}).get((sdfg.guid, memlet.data), desc.storage)
-    scalar &= storage is not dtypes.StorageType.GPU_Global
-    return desc.dtype if scalar else dtypes.pointer(desc.dtype)
+    # Inference reads storage, so it runs where the defaults are resolved
+    if defaults is not None and node.guid in defaults.nodes:
+        node, state = defaults.nodes[node.guid]
+        sdfg = state.sdfg
+    if direction == "in":
+        return infer_types.infer_in_connector_type(sdfg, state, node, name)
+    return infer_types.infer_out_connector_type(sdfg, state, node, name)
 
 
 def _connector_info(
@@ -457,7 +411,7 @@ def _connector_info(
         return info
 
     memlet = edge.data
-    info.subset = _describe_range(memlet.subset) if memlet.subset is not None else None
+    info.subset = str(memlet.subset) if memlet.subset is not None else None
     try:
         info.num_elements = str(memlet.subset.num_elements()) if memlet.subset is not None else None
     except Exception:
@@ -465,13 +419,14 @@ def _connector_info(
     info.wcr = str(memlet.wcr) if memlet.wcr is not None else None
     info.dynamic = bool(memlet.dynamic)
 
-    data_name, desc = _descriptor_for(state, sdfg, edge, direction == "in")
-    if desc is None:
+    # The memlet's own container, even if it is a view: codegen offsets the connector relative to it
+    if memlet.data is None or memlet.data not in sdfg.arrays:
         return info
+    data_name, desc = memlet.data, sdfg.arrays[memlet.data]
     info.data = data_name
     info.container_kind = type(desc).__name__
     info.dtype = str(desc.dtype)
-    info.data_ctype = getattr(desc.dtype, "ctype", None)
+    info.data_ctype = desc.dtype.ctype
     # The resolved storage, not the declared one: "Default" says nothing about whether this
     # pointer may be dereferenced where the code runs, and it is what `dereferenceable` is computed
     # from. The declared value is reported alongside so the prompt does not appear to contradict
@@ -645,9 +600,10 @@ def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDF
     :return: True if a schedule or storage relevant to the node is still ``Default``.
     """
     for edge in state.all_edges(node):
-        name, desc = _descriptor_for(state, sdfg, edge, edge.dst is node)
-        if desc is None:
+        name = edge.data.data
+        if name is None or name not in sdfg.arrays:
             continue
+        desc = sdfg.arrays[name]
         if desc.storage is dtypes.StorageType.Default:
             return True
         # Inference replaces the storage of a nested SDFG's non-transient with that of the outer container
@@ -727,11 +683,12 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
         for name, desc in nested.arrays.items():
             if isinstance(getattr(desc, "storage", None), dtypes.StorageType):
                 resolved.storage[(nested.guid, name)] = desc.storage
-        for state in nested.states():
-            for node in state.nodes():
-                schedule = getattr(node, "schedule", None)
-                if isinstance(schedule, dtypes.ScheduleType):
-                    resolved.schedules[node.guid] = schedule
+    for node, parent in copied.all_nodes_recursive():
+        if isinstance(parent, SDFGState):
+            resolved.nodes[node.guid] = (node, parent)
+            schedule = getattr(node, "schedule", None)
+            if isinstance(schedule, dtypes.ScheduleType):
+                resolved.schedules[node.guid] = schedule
     return resolved
 
 
@@ -810,26 +767,13 @@ def collect_class_docstring(node: nodes.LibraryNode) -> str:
     return ""
 
 
-def collect_symbols(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> dict[str, str]:
+def collect_symbols(node: nodes.LibraryNode, state: SDFGState) -> dict[str, str]:
     """
-    Lists the symbols that will be in scope as plain C++ variables inside the tasklet.
-
     :param node: The library node being expanded.
     :param state: The state containing the node.
-    :param sdfg: The SDFG containing the state.
-    :return: A mapping from symbol name to its C++ type.
+    :return: The symbols in scope at the node (SDFG, interstate, loop and map symbols), with their C++ types.
     """
-    symbols: dict[str, str] = {}
-    for name, stype in sdfg.symbols.items():
-        symbols[name] = stype.ctype if isinstance(stype, dtypes.typeclass) else str(stype)
-    sdict = state.scope_dict()
-    entry = sdict.get(node)
-    while entry is not None:
-        if isinstance(entry, nodes.MapEntry):
-            for param in entry.map.params:
-                symbols.setdefault(param, dtypes.int64.ctype)
-        entry = sdict.get(entry)
-    return symbols
+    return {name: stype.ctype for name, stype in state.symbols_defined_at(node).items()}
 
 
 def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> ExpansionContext:
@@ -884,7 +828,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         connectors=connectors,
         nesting=nesting,
         capabilities=capabilities,
-        symbols=collect_symbols(node, state, sdfg),
+        symbols=collect_symbols(node, state),
         target=collect_target_info(capabilities.device_level),
         available_environments=collect_available_environments(),
     )

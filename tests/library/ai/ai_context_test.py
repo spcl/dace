@@ -269,7 +269,54 @@ def test_host_code_cannot_dereference_gpu_memory():
     assert ctx.capabilities.current_stream_available
 
 
+def _connector(sdfg: dace.SDFG, name: str) -> ai_context.ConnectorInfo:
+    node, state, sdfg = _find_ai_node(sdfg)
+    return next(c for c in collect_context(node, state, sdfg).connectors if c.name == name)
+
+
+def test_a_stepped_subset_is_strided_and_not_contiguous():
+    sdfg = dace.SDFG("ai_stepped")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [4, 4], dace.float64)
+    state = sdfg.add_state()
+    node = AINode("copy", "Copy every other row.", inputs={"_in"}, outputs={"_out"})
+    state.add_edge(state.add_read("A"), None, node, "_in", dace.Memlet("A[0:8:2, 0:4]"))
+    state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0:4, 0:4]"))
+
+    info = _connector(sdfg, "_in")
+    assert info.is_pointer
+    assert not info.contiguous
+    # Consecutive elements of the subset are two rows apart
+    assert info.index_formula.startswith("_in[i0*8 + i1]")
+    assert _connector(sdfg, "_out").contiguous
+
+
+def test_a_view_chain_is_described_by_the_nearest_view():
+    sdfg = dace.SDFG("ai_view_chain")
+    sdfg.add_array("A", [8, 8], dace.float64)
+    sdfg.add_array("B", [2, 4], dace.float64)
+    sdfg.add_view("V1", [4, 8], dace.float64, strides=[8, 1])
+    sdfg.add_view("V2", [2, 4], dace.float64, strides=[8, 1])
+    state = sdfg.add_state()
+    v1, v2 = state.add_access("V1"), state.add_access("V2")
+    node = AINode("copy", "Copy the block.", inputs={"_in"}, outputs={"_out"})
+    state.add_edge(state.add_read("A"), None, v1, "views", dace.Memlet("A[2:6, 0:8]"))
+    state.add_edge(v1, None, v2, "views", dace.Memlet("V1[1:3, 0:4]"))
+    state.add_edge(v2, None, node, "_in", dace.Memlet("V2[0:2, 0:4]"))
+    state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0:2, 0:4]"))
+    sdfg.validate()
+
+    # Codegen offsets the connector relative to V2, whose strides are those of A
+    info = _connector(sdfg, "_in")
+    assert info.data == "V2" and info.container_kind == "ArrayView"
+    assert info.strides == ("8", "1")
+    assert info.index_formula.startswith("_in[i0*8 + i1]")
+    assert not info.contiguous
+
+
 if __name__ == "__main__":
+    test_a_stepped_subset_is_strided_and_not_contiguous()
+    test_a_view_chain_is_described_by_the_nearest_view()
     test_nesting_walk_crosses_maps_loops_and_nested_sdfgs()
     test_symbol_remapping_chain_is_recorded()
     test_device_level_is_detected_through_nested_sdfgs()
