@@ -24,7 +24,7 @@ class Abort(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_errorcode"}, outputs=set(), **kwargs)
+        super().__init__(name, *args, inputs=["_errorcode"], outputs=set(), **kwargs)
 
     def validate(self, sdfg, state):
         integer_input(self, state, sdfg, "_errorcode")
