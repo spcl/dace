@@ -34,6 +34,7 @@ import copy
 import numpy as np
 import pytest
 
+import dace
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
@@ -98,6 +99,13 @@ FORCE_K1_KERNELS = {
 }
 
 
+def known_nonnegative(sdfg: dace.SDFG) -> set[str]:
+    """What a caller such as the benchmark declares nonnegative: every size symbol and scalar argument."""
+    return set(sdfg.free_symbols) | {
+        n for n, d in sdfg.arrays.items() if isinstance(d, dace.data.Scalar) and not d.transient
+    }
+
+
 def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     """Assert every float output matches the reference, ``nan``/``inf`` equal.
 
@@ -124,7 +132,9 @@ def _canonicalized(name, tag="cvc"):
     """
     kernel = tsvc.collect(name=name)[0]
     sdfg = tsvc.to_sdfg(kernel, tag=tag, simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(
+        sdfg, validate=True, peel_limit=4, break_anti_dependence=True, nonnegative_symbols=known_nonnegative(sdfg)
+    )
     arrays, ck = tsvc.make_inputs(kernel, seed=1234)
     ref = {n: a.copy() for n, a in arrays.items()}
     REFERENCES[kernel.name](**ref, **ck)

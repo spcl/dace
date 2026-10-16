@@ -32,6 +32,7 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     GUARD_STATE_LABEL,
     AssumeSymbolConstraints,
     AssumeSymbolsNonnegative,
+    declare_nonnegative_symbols,
     insert_assumption_guards,
     insert_symbol_nonnegative_guard,
     set_symbol_nonnegative_assumptions,
@@ -61,7 +62,10 @@ def _axpy_sdfg():
         for i in dace.map[0:N]:
             y[i] = a * x[i] + y[i]
 
-    return axpy.to_sdfg(simplify=True)
+    sdfg = axpy.to_sdfg(simplify=True)
+    # The caller's knowledge: ``N`` sizes the arrays
+    declare_nonnegative_symbols(sdfg, {"N"})
+    return sdfg
 
 
 def _trap_tasklets(sdfg):
@@ -95,7 +99,7 @@ def test_a_symbol_read_only_by_a_branch_is_not_trapped():
             y[:] = -x
 
     sdfg = branch.to_sdfg(simplify=True)
-    canonicalize(sdfg)
+    canonicalize(sdfg, nonnegative_symbols={"N"})
     traps = " ".join(t.code.as_string for t in _trap_tasklets(sdfg))
     assert "N < 0" in traps and "K" not in traps, traps
     x = np.arange(4, dtype=np.float64)
@@ -273,7 +277,7 @@ def test_guard_aborts_on_negative_symbol():
             for i in dace.map[0:N]:
                 y[i] = a * x[i] + y[i]
         sdfg = axpy.to_sdfg(simplify=True)
-        canonicalize(sdfg)
+        canonicalize(sdfg, nonnegative_symbols={"N"})
         csdfg = sdfg.compile()
         # Allocate a real buffer so only the guard (not an OOB) can fault; pass N < 0.
         x = np.ones(4); y = np.ones(4)
@@ -301,7 +305,9 @@ def _kn_sdfg():
         for i in dace.map[0:N]:
             x[i] = x[i] + K
 
-    return kn.to_sdfg(simplify=True)
+    sdfg = kn.to_sdfg(simplify=True)
+    declare_nonnegative_symbols(sdfg, {"K", "N"})
+    return sdfg
 
 
 def test_tracked_assumption_emitted_as_own_tasklet():
