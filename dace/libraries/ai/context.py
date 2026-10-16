@@ -16,6 +16,7 @@ The central entry point is :func:`collect_context`, which gathers four kinds of 
   (:class:`TargetInfo`).
 """
 
+import copy
 import inspect
 import platform
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from typing import Any
 from dace import data as dt
 from dace import dtypes
 from dace.config import Config
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, infer_types, nodes
 from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_devicelevel_gpu
 
 
@@ -366,7 +367,13 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
 
 
 def _infer_conntype(
-    node: nodes.LibraryNode, name: str, direction: str, state: SDFGState, sdfg: SDFG, edge: Any
+    node: nodes.LibraryNode,
+    name: str,
+    direction: str,
+    state: SDFGState,
+    sdfg: SDFG,
+    edge: Any,
+    defaults: ResolvedDefaults | None = None,
 ) -> dtypes.typeclass | None:
     """
     Determines the type a connector will have in the generated code.
@@ -410,7 +417,8 @@ def _infer_conntype(
     scalar |= isinstance(desc, dt.Scalar)
     # Never by value out of GPU global memory: the load or store would run wherever the tasklet
     # does, which for a host tasklet means dereferencing a device pointer
-    scalar &= desc.storage is not dtypes.StorageType.GPU_Global
+    storage = (defaults.storage if defaults else {}).get((sdfg.guid, memlet.data), desc.storage)
+    scalar &= storage is not dtypes.StorageType.GPU_Global
     return desc.dtype if scalar else dtypes.pointer(desc.dtype)
 
 
@@ -501,7 +509,7 @@ def collect_connectors(
         # prompt differ between runs for no reason.
         for name in sorted(connectors):
             edge = edges.get(name)
-            ctype = _infer_conntype(node, name, direction, state, sdfg, edge)
+            ctype = _infer_conntype(node, name, direction, state, sdfg, edge, defaults)
             result.append(_connector_info(name, ctype, direction, state, sdfg, edge, defaults))
     return result
 
@@ -637,9 +645,15 @@ def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDF
     :return: True if a schedule or storage relevant to the node is still ``Default``.
     """
     for edge in state.all_edges(node):
-        _, desc = _descriptor_for(state, sdfg, edge, edge.dst is node)
-        if desc is not None and desc.storage is dtypes.StorageType.Default:
+        name, desc = _descriptor_for(state, sdfg, edge, edge.dst is node)
+        if desc is None:
+            continue
+        if desc.storage is dtypes.StorageType.Default:
             return True
+        # Inference replaces the storage of a nested SDFG's non-transient with that of the outer container
+        if not desc.transient and sdfg.parent is not None:
+            if infer_types.get_storage_from_parent(name, sdfg) != desc.storage:
+                return True
 
     if node.schedule is dtypes.ScheduleType.Default:
         return True
@@ -690,10 +704,6 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
     :return: The resolved decisions. Empty if inference could not run, in which case callers fall
              back to what the SDFG says.
     """
-    import copy
-
-    from dace.sdfg import infer_types  # Avoid a cyclic import
-
     try:
         root = sdfg.root_sdfg
     except Exception:

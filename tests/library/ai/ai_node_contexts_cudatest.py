@@ -12,7 +12,10 @@ import pytest
 
 import dace
 from dace import dtypes, nodes
+from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.nodes import AINode
+from tests.library.ai.ai_node_contexts_test import nested_gpu_scalar_sdfg
+from tests.library.ai.ai_test_utils import stub_provider
 
 M = 32
 
@@ -133,5 +136,45 @@ def test_device_slot_inside_a_kernel():
     assert np.allclose(c, a @ b, rtol=1e-4, atol=1e-4)
 
 
+@pytest.mark.gpu
+def test_a_nested_gpu_scalar_expanded_early_runs():
+    """
+    The end-to-end form of ``test_a_nested_container_takes_the_outer_storage``: a by-value connector
+    here would make the host load the input straight out of device memory.
+    """
+    sdfg, state, node = nested_gpu_scalar_sdfg(dtypes.StorageType.Default)
+    spec = TaskletSpec(
+        code_global="#include <cuda_runtime.h>",
+        code=(
+            "double value;\n"
+            "cudaDeviceSynchronize();\n"
+            "cudaMemcpy(&value, _in, sizeof(double), cudaMemcpyDeviceToHost);\n"
+            "value *= 2;\n"
+            "cudaMemcpy(_out, &value, sizeof(double), cudaMemcpyHostToDevice);"
+        ),
+    )
+    with dace.config.set_temporary("ai", "verify", value=False):
+        with dace.config.set_temporary("ai", "sessions", value=False):
+            with dace.config.set_temporary("ai", "cache", value=False):
+                with stub_provider(spec):
+                    node.expand(state, "ai")
+
+    # Host arrays around the GPU ones, copied in and out
+    sdfg.arrays["G"].transient = True
+    sdfg.arrays["H"].transient = True
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    copy_in = sdfg.add_state_before(sdfg.start_state)
+    copy_in.add_nedge(copy_in.add_read("A"), copy_in.add_write("G"), dace.Memlet("A[0]"))
+    copy_out = sdfg.add_state_after(state.sdfg.parent)
+    copy_out.add_nedge(copy_out.add_read("H"), copy_out.add_write("B"), dace.Memlet("H[0]"))
+
+    a = np.array([21.0])
+    b = np.zeros(1)
+    sdfg(A=a, B=b)
+    assert b[0] == 42.0
+
+
 if __name__ == "__main__":
+    test_a_nested_gpu_scalar_expanded_early_runs()
     pytest.main([__file__, "-m", "ai"])

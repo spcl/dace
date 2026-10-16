@@ -170,6 +170,17 @@ The same node in two places therefore gets two different answers, which is the p
 inside a GPU kernel, a ``Gemm`` on the host over GPU arrays, and a ``Gemm`` over CPU arrays need
 different code, and nothing about the node itself says which is which.
 
+When to expand
+~~~~~~~~~~~~~~
+
+The schedules, storage locations and connector types in the prompt are decided by DaCe's type
+inference, which normally runs during compilation, before library nodes are expanded. When a node
+is expanded earlier (``node.expand``, ``sdfg.expand_library_nodes``), the same inference runs on a
+copy of the SDFG, and the connector types it implies are fixed on the generated tasklet. A later
+transformation that changes where data lives or where the node runs (e.g. moving arrays to the GPU)
+therefore leaves the tasklet written for the old placement. Expand after such transformations, or
+regenerate the tasklet with ``refine``.
+
 Verification and repair
 -----------------------
 

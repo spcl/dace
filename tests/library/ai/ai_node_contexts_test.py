@@ -7,11 +7,14 @@ over CPU arrays all need different code, and the difference is not visible from 
 The context handed to the model must make it explicit.
 """
 
+import pytest
+
 import dace
 import dace.libraries.ai as ai
 from dace import dtypes, nodes
 from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
 from dace.libraries.ai.context import collect_context
+from dace.libraries.ai.nodes import AINode
 from dace.libraries.ai.prompts import build_user_prompt
 from dace.libraries.blas.nodes.gemm import Gemm
 from tests.library.ai.ai_test_utils import stub_provider
@@ -170,7 +173,53 @@ def test_each_context_is_generated_independently():
     assert ai.ExpandAI.for_node_class(Gemm) is ai.ExpandAI.for_node_class(Gemm)
 
 
+def nested_gpu_scalar_sdfg(declared: dtypes.StorageType) -> tuple[dace.SDFG, dace.SDFGState, AINode]:
+    """
+    Builds a host-level nested SDFG whose single-element containers are bound to GPU arrays outside.
+
+    :param declared: The storage the nested SDFG declares for its containers.
+    :return: The outer SDFG, the nested state, and the node in it.
+    """
+    inner = dace.SDFG("inner")
+    inner.add_array("x", [1], dace.float64, storage=declared)
+    inner.add_array("y", [1], dace.float64, storage=declared)
+    inner_state = inner.add_state()
+    node = AINode("twice", "Write twice _in into _out.", inputs={"_in"}, outputs={"_out"})
+    inner_state.add_node(node)
+    inner_state.add_edge(inner_state.add_read("x"), None, node, "_in", dace.Memlet("x[0]"))
+    inner_state.add_edge(node, "_out", inner_state.add_write("y"), None, dace.Memlet("y[0]"))
+
+    sdfg = dace.SDFG(f"ai_nested_gpu_scalar_{declared.name}")
+    sdfg.add_array("G", [1], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("H", [1], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {"x"}, {"y"})
+    state.add_edge(state.add_read("G"), None, nsdfg, "x", dace.Memlet("G[0]"))
+    state.add_edge(nsdfg, "y", state.add_write("H"), None, dace.Memlet("H[0]"))
+    return sdfg, inner_state, node
+
+
+@pytest.mark.parametrize("declared", [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap])
+def test_a_nested_container_takes_the_outer_storage(declared):
+    """
+    Storage inference gives a nested SDFG's non-transient the storage of the outer container, whatever
+    it declares. Expanded before compilation, a single element of GPU memory must still be a pointer.
+    """
+    sdfg, state, node = nested_gpu_scalar_sdfg(declared)
+    prompt = build_user_prompt(collect_context(node, state, state.sdfg))
+    assert "GPU_Global" in prompt
+
+    with dace.config.set_temporary("ai", "verify", value=False):
+        with stub_provider(TaskletSpec(code="_out[0] = 2 * _in[0];")):
+            node.expand(state, "ai")
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
+    assert isinstance(tasklet.in_connectors["_in"], dtypes.pointer)
+    assert isinstance(tasklet.out_connectors["_out"], dtypes.pointer)
+
+
 if __name__ == "__main__":
+    test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.Default)
+    test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.CPU_Heap)
     test_capabilities_differ_by_context()
     test_storage_reaches_the_connectors()
     test_prompts_are_pairwise_distinct()

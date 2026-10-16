@@ -168,8 +168,9 @@ def test_connectors_and_descriptors_are_collected():
     by_name = {c.name: c for c in ctx.connectors}
     assert set(by_name) == {"_in", "_out"}
 
-    # A single element of an array reaches the node as a scalar value, not a pointer
-    assert not by_name["_in"].is_pointer
+    # The container resolves to GPU memory (below), so even a single element is passed as a pointer,
+    # as DaCe's connector type inference does for library nodes
+    assert by_name["_in"].is_pointer
     assert by_name["_in"].element_type == "double"
     assert by_name["_in"].container_kind == "Array"
     assert by_name["_in"].data == "a2"

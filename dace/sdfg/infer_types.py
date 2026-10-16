@@ -211,7 +211,7 @@ def set_default_schedule_and_storage_types(
         for aname, desc in scope.arrays.items():
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and scope.parent_sdfg is not None:
-                desc.storage = _get_storage_from_parent(aname, scope)
+                desc.storage = get_storage_from_parent(aname, scope)
             elif (desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default:
                 # Indeterminate storage type, set to register
                 desc.storage = dtypes.StorageType.Register
@@ -422,7 +422,7 @@ def _set_default_storage_in_scope(
         desc = node.desc(sdfg)
         # If not transient in a nested SDFG, take storage from parent, regardless of current type
         if not desc.transient and sdfg.parent is not None:
-            desc.storage = _get_storage_from_parent(node.data, sdfg)
+            desc.storage = get_storage_from_parent(node.data, sdfg)
         elif desc.storage == dtypes.StorageType.Default:
             if isinstance(desc, data.View):
                 view_nodes.append(node)
@@ -445,12 +445,12 @@ def _set_default_storage_in_scope(
             desc = sdfg.arrays[edge.data.data]
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and sdfg.parent is not None:
-                desc.storage = _get_storage_from_parent(edge.data.data, sdfg)
+                desc.storage = get_storage_from_parent(edge.data.data, sdfg)
             elif desc.storage == dtypes.StorageType.Default:
                 desc.storage = child_storage
 
 
-def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
+def get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
     """
     Retrieves the storage type of an array from its parent SDFG.
 
