@@ -813,7 +813,7 @@ def test_a_per_iteration_assignment_moves_to_the_body_head():
     first, second = list(loop.nodes())
     assert HoistAssignmentsToLoopBodyHead().apply_pass(sdfg, {})
     assert not loop.edges_between(first, second)[0].data.assignments
-    head_edges = [e for e in loop.in_edges(first)]
+    head_edges = list(loop.in_edges(first))
     assert len(head_edges) == 1 and head_edges[0].data.assignments == {"k": "c[i]"}
     sdfg.validate()
 
