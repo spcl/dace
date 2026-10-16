@@ -560,7 +560,7 @@ class LoopToScan(ppl.Pass):
                     if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, owner))
                 ]
             if infos:
-                guard = _symbolic_stride_guard(infos)
+                guard = _symbolic_stride_guard(infos, owner.facts())
                 if guard is not None:
                     # At least one matched scan has a symbolic stride whose sign
                     # is unproven. The residue-class decomposition is valid only
@@ -2671,10 +2671,10 @@ def residue_classes_too_narrow_for_gpu(infos: list["_Scan"]) -> bool:
     return bool(infos) and all(isinstance(i.scan_stride, int) and i.scan_stride > 1 for i in infos)
 
 
-def _symbolic_stride_guard(infos: list["_Scan"]) -> str | None:
+def _symbolic_stride_guard(infos: list["_Scan"], facts: symbolic.Facts) -> str | None:
     """The ``&&``-joined ``stride >= 1`` predicate for every matched scan whose
-    stride is symbolic with a sign not provably positive, or ``None`` when all
-    strides lift unconditionally (constant, or a provably-positive symbol).
+    stride is symbolic and not provably ``>= 1`` under ``facts``, or ``None`` when all
+    strides lift unconditionally (constant, or proven ``>= 1``).
 
     A residue-class scan is only valid for ``stride >= 1``; the returned
     predicate is the true-branch guard of the ``if stride >= 1: scan else: seq``
@@ -2684,7 +2684,7 @@ def _symbolic_stride_guard(infos: list["_Scan"]) -> str | None:
     seen = set()
     for info in infos:
         s = info.scan_stride
-        if isinstance(s, sympy.Basic) and not s.is_Integer and s.is_positive is not True:
+        if isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts):
             cond = f"({symbolic.symstr(s)}) >= 1"
             if cond not in seen:
                 seen.add(cond)

@@ -259,6 +259,26 @@ def test_split_point_provably_past_the_end_is_refused():
     assert _loops(sdfg) == [loop], "a refused split must leave the loop alone"
 
 
+def test_split_point_past_the_end_by_the_sdfg_facts_is_refused():
+    """``x = K + D`` lies past the last iteration only because ``D`` is positive, a registry fact."""
+    sdfg = dace.SDFG("split_past_end_by_facts")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("D", dace.int64)
+    sdfg.set_symbol_assumptions("D", frozenset({symbolic.Predicate.POSITIVE}))
+    sdfg.add_array("a", [dace.symbol("K")], dace.float64)
+    loop = LoopRegion("l", "i < K", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body")
+    tasklet = body.add_tasklet("w", set(), {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    sdfg.validate()
+
+    x = symbolic.pystr_to_symbolic("K + D - 1")
+    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, x)
+    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, symbolic.pystr_to_symbolic("-D"))
+    assert _loops(sdfg) == [loop], "a refused split must leave the loop alone"
+
+
 def test_split_search_bound_never_undercounts_a_candidate():
     """The search skips a candidate whose bound cannot beat the best, so the bound must hold after the count's prep."""
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)

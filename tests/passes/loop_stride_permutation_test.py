@@ -127,6 +127,48 @@ def test_trapezoidal_nest_is_interchanged_by_bound_rewrite():
     assert np.allclose(aa, expected)
 
 
+K_NONNEGATIVE = dace.symbol("K_NONNEGATIVE", nonnegative=True)
+K_ANY = dace.symbol("K_ANY")
+
+
+@dace.program
+def trapezoid_from_nonnegative_symbol(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    for j in range(K_NONNEGATIVE, N):
+        for i in range(8 * j, N):
+            aa[i, j] = aa[i, j] + bb[i, j]
+
+
+@dace.program
+def trapezoid_from_unknown_sign_symbol(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    for j in range(K_ANY, N):
+        for i in range(8 * j, N):
+            aa[i, j] = aa[i, j] + bb[i, j]
+
+
+def test_trapezoid_start_proven_nonnegative_by_the_sdfg_facts_is_interchanged():
+    """The rewrite needs ``8 * K >= 0``; the sign of ``K`` is a registry fact, not a SymPy assumption."""
+    sdfg = trapezoid_from_nonnegative_symbol.to_sdfg(simplify=True)
+    assert LoopStridePermutation().apply_pass(sdfg, {}) == 1
+    assert _loop_nest_order(sdfg) == ["i", "j"]
+    sdfg.validate()
+
+    n, k = 64, 3
+    aa = np.arange(n * n, dtype=np.float64).reshape(n, n).copy()
+    bb = np.arange(n * n, dtype=np.float64).reshape(n, n).copy() * 0.5
+    expected = aa.copy()
+    for j in range(k, n):
+        for i in range(8 * j, n):
+            expected[i, j] = aa[i, j] + bb[i, j]
+    sdfg(aa=aa, bb=bb, N=n, K_NONNEGATIVE=k)
+    assert np.allclose(aa, expected)
+
+
+def test_trapezoid_start_of_unknown_sign_is_refused():
+    sdfg = trapezoid_from_unknown_sign_symbol.to_sdfg(simplify=True)
+    assert not LoopStridePermutation().apply_pass(sdfg, {})
+    assert _loop_nest_order(sdfg) == ["j", "i"]
+
+
 @dace.program
 def triangular_upper_bound(aa: dace.float64[N, N], bb: dace.float64[N, N]):
     for j in range(N):

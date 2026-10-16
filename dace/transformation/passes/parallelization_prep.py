@@ -35,6 +35,7 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     SDFGState,
+    SymbolResolver,
     enclosing_region_symbols,
 )
 from dace.transformation import pass_pipeline as ppl
@@ -101,8 +102,8 @@ def _retyped(expr, sdfg, scoped: dict[str, Any] | None = None):
     runs 250x slower than the un-canonicalized form.
 
     Re-binding to ``sdfg.symbols`` -- the declaration both spellings were meant to carry -- is what
-    makes the comparison well-typed. Assumptions already on the symbol are carried over, never
-    dropped: this widens a type, it must not weaken a proof.
+    makes the comparison well-typed. Signs and integrality are the SDFG's facts, which name the symbol, so
+    retyping it weakens no proof.
     """
     if sdfg is None or not isinstance(expr, sympy.Basic):
         return expr
@@ -114,8 +115,7 @@ def _retyped(expr, sdfg, scoped: dict[str, Any] | None = None):
         declared = scoped[sym.name] if scoped is not None and sym.name in scoped else sdfg.symbols.get(sym.name)
         if declared is None or declared == sym.dtype:
             continue
-        kept = {k: v for k, v in sym.assumptions0.items() if k in ("nonnegative", "positive", "integer")}
-        repl[sym] = symbolic.symbol(sym.name, dtype=declared, **kept)
+        repl[sym] = symbolic.symbol(sym.name, dtype=declared)
     return expr.subs(repl) if repl else expr
 
 
@@ -986,8 +986,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         # difference never cancels. Undecidable stays split: the caller's relations guard covers it.
         beyond = symbolic.simplify(symbolic.equalize_symbol(x - end))
         below = symbolic.simplify(symbolic.equalize_symbol(start - x))
-        if (beyond > 0) == True or (below > 0) == True:
+        if any(gap.is_number and gap > 0 for gap in (beyond, below)):
             return False
+        if not (beyond.is_number and below.is_number):
+            facts = SymbolResolver().facts_at(loop.parent_graph)
+            positive = symbolic.Predicate.POSITIVE
+            if any(
+                symbolic.ask(symbolic.predicate_relation(positive, gap), facts) is symbolic.Truth.TRUE
+                for gap in (beyond, below)
+            ):
+                return False
         ivar = loop.loop_variable
         parent = loop.parent_graph
         # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a
