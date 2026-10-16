@@ -598,6 +598,24 @@ def test_one_writer_ordered_through_a_match_does_not_order_its_sibling():
     assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
 
 
+def test_a_read_behind_an_ordering_edge_is_a_read():
+    # ``B`` is only read in the first state; its one in-edge orders, it writes nothing
+    sdfg = dace.SDFG("a_read_behind_an_ordering_edge_is_a_read")
+    for name in "ABC":
+        sdfg.add_array(name, [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    b = first.add_access("B")
+    first.add_nedge(first.add_access("A"), b, dace.Memlet())
+    read = first.add_tasklet("rd", {"i"}, {"o"}, "o = i")
+    first.add_edge(b, None, read, "i", dace.Memlet("B[0]"))
+    first.add_edge(read, "o", first.add_write("C"), None, dace.Memlet("C[0]"))
+    second = sdfg.add_state_after(first, "second")
+    write = second.add_tasklet("w", {}, {"o"}, "o = 7.0")
+    second.add_edge(write, "o", second.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+    assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -621,3 +639,4 @@ if __name__ == "__main__":
     test_subset_union_memlets_may_intersect()
     test_copy_without_other_subset_is_compared_at_its_destination()
     test_one_writer_ordered_through_a_match_does_not_order_its_sibling()
+    test_a_read_behind_an_ordering_edge_is_a_read()

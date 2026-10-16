@@ -10,7 +10,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import transformation
-from dace.transformation.interstate.state_fusion import StateFusion
+from dace.transformation.interstate.state_fusion import StateFusion, read_only_data_nodes
 
 
 # Helper class for finding connected component correspondences
@@ -187,13 +187,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             second_cc = list(nx.weakly_connected_components(second_state._nx))
 
             # Find source/sink (data) nodes
-            first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
+            first_input = read_only_data_nodes(first_state)
             first_output = {
                 node
                 for node in first_state.scope_children()[None]
                 if isinstance(node, nodes.AccessNode) and node not in first_input
             }
-            second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
+            second_input = read_only_data_nodes(second_state)
             second_output = {
                 node
                 for node in second_state.scope_children()[None]
