@@ -84,17 +84,17 @@ def test_extended_fusion():
     assert sdfg.number_of_nodes() == 1
 
 
-def test_extended_fusion_refuses_unsafe_write_after_read():
-    """A read state followed by an in-place write of the same array must
-    not be fused (write-after-read / anti-dependency).
+def test_extended_fusion_orders_unsafe_write_after_read():
+    """A read state followed by an in-place write of the same array fuses WITH a
+    happens-before ordering, not by refusing.
 
-    ``s1`` reads ``A[k]`` in two tasklets; the later ``s2`` does
-    ``A[k] = A[k] + 1``. Safely fusing would need a dependency edge to
-    every first-state sink reading ``A`` (arbitrarily fanned out), so
-    ``StateFusionExtended`` must refuse and leave the two states
-    separate; the interstate edge then keeps the write ordered after the
-    reads. Previously it fused without that ordering and the write
-    clobbered the still-pending reads.
+    ``s1`` reads ``A[k]`` in two tasklets; the later ``s2`` does ``A[k] = A[k] + 1``.
+    Fusing the two states drops the interstate edge that kept the write after the
+    reads, so ``StateFusionExtended`` records the write-after-read anti-dependency and
+    adds an ordering edge from every first-state ``A`` reader to the second-state write.
+    The result is a single fused state that still computes the reference: ``B`` and ``C``
+    see the ORIGINAL ``A[k]`` and ``A[k]`` is incremented after. (An earlier version
+    refused this fusion outright; ordering it is sound and strictly more capable.)
     """
     sdfg = SDFG("state_fusion_war_ordering")
     sdfg.add_array("A", [8], dtypes.float64)
@@ -126,8 +126,18 @@ def test_extended_fusion_refuses_unsafe_write_after_read():
     sdfg.validate()
 
     applied = sdfg.apply_transformations_repeated(StateFusionExtended)
-    assert applied == 0, "write-after-read fusion must be refused"
-    assert sdfg.number_of_nodes() == 2, "the two states must remain separate"
+    assert applied >= 1, "write-after-read fusion should apply with an ordering edge"
+    assert sdfg.number_of_nodes() == 1, "the two states must fuse into one"
+
+    # The ordering edge keeps the write after the reads: B, C get the original A[k]; A is incremented.
+    A = np.arange(8, dtype=np.float64) + 10.0
+    B = np.zeros(8)
+    C = np.zeros(8)
+    A0 = A.copy()
+    sdfg(A=A, B=B, C=C, k=3)
+    assert A[3] == A0[3] + 1.0
+    assert B[3] == A0[3]
+    assert C[3] == A0[3]
 
 
 def test_extended_fusion_orders_a_reused_transient():
@@ -267,7 +277,7 @@ def test_extended_fusion_orders_a_transient_with_two_producers():
 
 if __name__ == "__main__":
     test_extended_fusion()
-    test_extended_fusion_refuses_unsafe_write_after_read()
+    test_extended_fusion_orders_unsafe_write_after_read()
     test_extended_fusion_orders_a_reused_transient()
     test_extended_fusion_compares_a_copy_at_its_destination()
     test_extended_fusion_orders_a_writer_its_ordered_sibling_does_not_cover()
