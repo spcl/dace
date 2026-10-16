@@ -1901,6 +1901,18 @@ class OffloadToAccelerator(ppl.Pass):
         seen_transients: OrderedSet[str] = OrderedSet(
             name for name, desc in sdfg.arrays.items() if desc.storage in SCOPE_LOCAL_STORAGE
         )
+        # A ``Default`` transient that lives only inside kernels is thread-private, as a block-wide reduce's operands
+        # must be: ``Register``, what a kernel scope resolves ``Default`` to, not one ``GPU_Global`` buffer
+        kernel_local: dict[str, bool] = {}
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                inside = is_devicelevel_gpu(sdfg, state, node)
+                kernel_local[node.data] = kernel_local.get(node.data, True) and inside
+        for name, inside in kernel_local.items():
+            desc = sdfg.arrays[name]
+            if inside and desc.transient and desc.storage == dtypes.StorageType.Default:
+                desc.storage = dtypes.StorageType.Register
+                seen_transients.add(name)
 
         def _correct_transients(node: OffloadingIRNode):
             for name in node.gpu_set:
