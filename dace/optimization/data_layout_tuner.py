@@ -12,6 +12,7 @@ from dace import SDFG, dtypes
 from dace import data as dt
 from dace.codegen.instrumentation.data import data_report
 from dace.optimization import cutout_tuner
+from dace.optimization import utils as optim_utils
 from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.transformation import helpers as xfh
 
@@ -115,7 +116,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         **kwargs,
     ) -> dict:
         # No modification to original SDFG, best configuration needs to be determined globally
-        cutout.instrument = self.instrument
+        optim_utils.instrument_sdfg(cutout, self.instrument)
 
         # Prepare original arguments to sub-SDFG from instrumented data report
         arguments: dict[str, ArrayLike] = {}

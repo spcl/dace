@@ -2380,11 +2380,24 @@ def test_shared_collective_sync_property_controls_the_barrier():
     assert off_bodies and all(b.split(">::Copy")[0].endswith("true") for b in off_bodies), off_bodies
 
 
-def test_shared_collective_refuses_rank4():
-    """Rank 4 after collapsing is refused by name, not silently lowered."""
+def test_shared_collective_rank4_loops_over_rank3_collectives():
+    """Rank 4 after collapsing is a loop over its outermost axis of asynchronous rank-3 collectives,
+    with the node's one barrier after the loop."""
     sdfg, _, _ = _shared_stage_sdfg([8, 8, 8, 8], [4, 4, 4, 4], [1, 1, 1, 1])
-    with pytest.raises(Exception, match="covers up to rank 3"):
-        sdfg.expand_library_nodes()
+    bodies = [b for b in _collective_bodies(sdfg) if "BlockCollective3D" in b]
+    assert len(bodies) == 2, bodies
+    for body in bodies:
+        assert body.startswith("for (int64_t __cpy_o0 = 0; __cpy_o0 < 4; ++__cpy_o0)"), body
+        assert ", true>::Copy(" in body and body.rstrip().endswith("__syncthreads();"), body
+
+
+def test_shared_collective_aligned_words_moves_contiguous_rows_in_words():
+    """``aligned_words`` on rows contiguous on both sides lowers to the word-moving collective: Load into
+    shared memory, Store out of it."""
+    sdfg, load, store = _shared_stage_sdfg([64, 320], [37, 53], [3, 5], dtype=dace.float16)
+    load.aligned_words = store.aligned_words = True
+    bodies = [b for b in _collective_bodies(sdfg) if "BlockCollective3DVec" in b]
+    assert sorted(b.split(">::")[1].split("(")[0] for b in bodies) == ["Load", "Store"], bodies
 
 
 def test_shared_collective_refuses_reshape():
@@ -2454,6 +2467,53 @@ def test_shared_collective_moves_exactly_the_right_elements(g_shape, tile, offse
     mask = np.ones(o_shape, dtype=bool)
     mask[tuple(slice(0, t) for t in tile)] = False
     assert np.all(o[mask] == -7.0)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("dtype", [dace.float16, dace.float32, dace.float64])
+@pytest.mark.parametrize(
+    "g_shape,tile,offset,aligned_words",
+    [
+        ([64, 320], [37, 53], [3, 5], True),
+        ([64, 320], [8, 256], [1, 0], True),
+        ([16, 24, 40], [8, 16, 3], [2, 3, 1], True),
+        ([6, 8, 8, 40], [3, 4, 4, 29], [1, 2, 1, 3], True),
+        ([6, 8, 8, 40], [3, 4, 4, 29], [1, 2, 1, 3], False),
+    ],
+)
+def test_shared_collective_words_and_rank4_move_exactly_the_right_elements(g_shape, tile, offset, aligned_words, dtype):
+    """Aligned 16-byte words (any element type, rows starting off a word boundary) and the rank-4 loop nest
+    stage exactly the source slice and write nothing outside the tile."""
+    o_shape = [t + 1 for t in tile]
+    sdfg, load, store = _shared_stage_sdfg(g_shape, tile, offset, o_shape=o_shape, dtype=dtype)
+    sdfg.name = f"{sdfg.name}_{dtype.to_string()}_{int(aligned_words)}_{len(g_shape)}"
+    load.aligned_words = store.aligned_words = aligned_words
+    npdtype = dtype.as_numpy_dtype()
+    g = (np.arange(int(np.prod(g_shape))) % 2003).astype(npdtype).reshape(g_shape)
+    o = np.full(o_shape, -7, dtype=npdtype)
+    sdfg(G_h=g, O_h=o)
+
+    expected = g[tuple(slice(s, s + t) for s, t in zip(offset, tile))]
+    assert np.array_equal(o[tuple(slice(0, t) for t in tile)], expected)
+    mask = np.ones(o_shape, dtype=bool)
+    mask[tuple(slice(0, t) for t in tile)] = False
+    assert np.all(o[mask] == -7)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("aligned_words", [True, False])
+def test_shared_collective_row_offsets_past_int32(aligned_words):
+    """Rows more than 2**31 elements apart (a tile of a 144-level x 16M-column field): the collectives' strides and
+    offsets are 64-bit, so the second row is read from where it is, not from a wrapped-around address."""
+    row = 2**31 + 64
+    sdfg, load, store = _shared_stage_sdfg([2, row], [2, 64], [0, 0], dtype=dace.uint8)
+    sdfg.name = f"shared_stage_past_int32_{int(aligned_words)}"
+    load.aligned_words = store.aligned_words = aligned_words
+    g = np.zeros((2, row), dtype=np.uint8)
+    g[:, :64] = np.arange(128, dtype=np.uint8).reshape(2, 64)
+    o = np.zeros((2, 64), dtype=np.uint8)
+    sdfg(G_h=g, O_h=o)
+    assert np.array_equal(o, g[:, :64])
 
 
 @pytest.mark.gpu
@@ -2715,7 +2775,8 @@ if __name__ == "__main__":
         test_shared_collective_2d_uses_block_collective(tile, offset)
     test_shared_collective_3d_uses_block_collective()
     test_shared_collective_sync_property_controls_the_barrier()
-    test_shared_collective_refuses_rank4()
+    test_shared_collective_rank4_loops_over_rank3_collectives()
+    test_shared_collective_aligned_words_moves_contiguous_rows_in_words()
     test_shared_collective_refuses_reshape()
     test_shared_collective_refuses_dtype_conversion()
     for g_shape, tile, offset in (

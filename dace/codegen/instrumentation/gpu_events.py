@@ -3,14 +3,15 @@ from dace import config, dtypes, registry
 from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
-from dace.sdfg import is_devicelevel_gpu, nodes
+from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
 class GPUEventProvider(InstrumentationProvider):
-    """Timing instrumentation that reports GPU/copy time using CUDA/HIP events."""
+    """Timing instrumentation that reports the time of a kernel (a ``GPU_Device`` map) using CUDA/HIP events. Validation
+    refuses it anywhere else."""
 
     def __init__(self):
         self.backend = common.get_gpu_backend()
@@ -47,9 +48,12 @@ class GPUEventProvider(InstrumentationProvider):
     def _destroy_event(self, id):
         return f"{self.backend}EventDestroy(__dace_ev_{id});"
 
-    def _record_event(self, id, stream):
+    def _record_event(self, id, stream: int | str):
+        """Record event ``id`` on ``stream``: a stream index, or the expression the kernel itself is launched on."""
         concurrent_streams = int(config.Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if concurrent_streams < 0 or stream == -1:
+        if isinstance(stream, str):
+            streamstr = stream
+        elif concurrent_streams < 0 or stream == -1:
             streamstr = "nullptr"
         else:
             streamstr = f"__state->gpu_context->streams[{stream}]"
@@ -85,20 +89,12 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
         state_id = state.parent_graph.node_id(state)
         # Create GPU events for each instrumented scope in the state
         for node in state.nodes():
-            if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
-                s = self._get_sobj(node) if isinstance(node, nodes.EntryNode) else node
+            if isinstance(node, nodes.EntryNode):
+                s = self._get_sobj(node)
                 if s.instrument == dtypes.InstrumentationType.GPU_Events:
                     idstr = self._idstr(cfg, state, node)
                     local_stream.write(self._create_event("b" + idstr), cfg, state_id, node)
                     local_stream.write(self._create_event("e" + idstr), cfg, state_id, node)
-
-        # Create and record a CUDA/HIP event for the entire state
-        if state.instrument == dtypes.InstrumentationType.GPU_Events:
-            idstr = "b" + self._idstr(cfg, state, None)
-            local_stream.write(self._create_event(idstr), cfg, state_id)
-            local_stream.write(self._record_event(idstr, 0), cfg, state_id)
-            idstr = "e" + self._idstr(cfg, state, None)
-            local_stream.write(self._create_event(idstr), cfg, state_id)
 
     def on_state_end(
         self,
@@ -109,18 +105,10 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
         global_stream: CodeIOStream,
     ) -> None:
         state_id = state.parent_graph.node_id(state)
-        # Record and measure state stream event
-        if state.instrument == dtypes.InstrumentationType.GPU_Events:
-            idstr = self._idstr(cfg, state, None)
-            local_stream.write(self._record_event("e" + idstr, 0), cfg, state_id)
-            local_stream.write(self._report(f"State {state.label}", cfg, state), cfg, state_id)
-            local_stream.write(self._destroy_event("b" + idstr), cfg, state_id)
-            local_stream.write(self._destroy_event("e" + idstr), cfg, state_id)
-
         # Destroy CUDA/HIP events for scopes in the state
         for node in state.nodes():
-            if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
-                s = self._get_sobj(node) if isinstance(node, nodes.EntryNode) else node
+            if isinstance(node, nodes.EntryNode):
+                s = self._get_sobj(node)
                 if s.instrument == dtypes.InstrumentationType.GPU_Events:
                     idstr = self._idstr(cfg, state, node)
                     local_stream.write(self._destroy_event("b" + idstr), cfg, state_id, node)
@@ -167,56 +155,25 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
                 self._report(f"{type(s).__name__} {s.label}", cfg, state, entry_node), cfg, state_id, node
             )
 
-    def on_node_begin(
-        self,
-        sdfg: SDFG,
-        cfg: ControlFlowRegion,
-        state: SDFGState,
-        node: nodes.Node,
-        outer_stream: CodeIOStream,
-        inner_stream: CodeIOStream,
-        global_stream: CodeIOStream,
-    ) -> None:
-        if not isinstance(node, nodes.CodeNode) or is_devicelevel_gpu(sdfg, state, node):
-            return
-        # Only run for host nodes
-        # TODO(later): Implement "clock64"-based GPU counters
-        if node.instrument == dtypes.InstrumentationType.GPU_Events:
-            state_id = state.parent_graph.node_id(state)
-            idstr = "b" + self._idstr(cfg, state, node)
-            stream = gpu_stream_of(node, state)
-            outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
-    def on_node_end(
-        self,
-        sdfg: SDFG,
-        cfg: ControlFlowRegion,
-        state: SDFGState,
-        node: nodes.Node,
-        outer_stream: CodeIOStream,
-        inner_stream: CodeIOStream,
-        global_stream: CodeIOStream,
-    ) -> None:
-        if not isinstance(node, nodes.Tasklet) or is_devicelevel_gpu(sdfg, state, node):
-            return
-        # Only run for host nodes
-        # TODO(later): Implement "clock64"-based GPU counters
-        if node.instrument == dtypes.InstrumentationType.GPU_Events:
-            state_id = state.parent_graph.node_id(state)
-            idstr = "e" + self._idstr(cfg, state, node)
-            stream = gpu_stream_of(node, state)
-            outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
-            outer_stream.write(
-                self._report(f"{type(node).__name__} {node.label}", cfg, state, node), cfg, state_id, node
-            )
+def gpu_stream_of(node: nodes.Node, state: SDFGState) -> int | str:
+    """The GPU stream a node runs on: the stream a kernel's stream connector reads when it has one (the stream the
+    kernel is launched on), else a stream index, or ``-1`` (recorded on the default stream).
 
-
-def gpu_stream_of(node: nodes.Node, state: SDFGState) -> int:
-    """The GPU stream a node runs on, or ``-1`` (recorded on the default stream).
-
-    The experimental codegen schedules ``Node.gpu_stream_id`` and a map exit takes its entry's; the legacy
-    codegen attaches ``_cuda_stream`` to the node dynamically.
+    The experimental codegen wires a kernel's stream into its ``__dace_current_stream`` connector, or schedules
+    ``Node.gpu_stream_id``, and a map exit takes its entry's; the legacy codegen attaches ``_cuda_stream`` to the node
+    dynamically.
     """
+    from dace.codegen.common import sym2cpp
+    from dace.libraries.standard.helper import CURRENT_STREAM_NAME
+
+    # A kernel the experimental codegen launches on its ``__dace_current_stream`` connector is timed on the stream that
+    # connector reads (the connector itself is declared only inside the launch block).
+    entry = state.entry_node(node) if isinstance(node, nodes.ExitNode) else node
+    for edge in state.in_edges(entry):
+        if edge.dst_conn == CURRENT_STREAM_NAME and edge.data.data is not None:
+            (index,) = edge.data.subset.min_element()
+            return f"{edge.data.data}[{sym2cpp(index)}]"
     if isinstance(node, nodes.MapExit):
         entry = state.entry_node(node)
         if entry is not None and entry.gpu_stream_id is not None:

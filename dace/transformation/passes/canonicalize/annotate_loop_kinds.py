@@ -39,11 +39,11 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_range, free_symbols
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
 # settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
@@ -393,6 +393,180 @@ def proven_carrying_access(loop: LoopRegion) -> str | None:
     return None
 
 
+class Site(NamedTuple):
+    """An element access every execution of the loop body makes, with the iterators it sits under, outermost first."""
+
+    access: Access
+    iters: tuple[smt_dependence.IterRange, ...]
+
+
+def loop_range(loop: LoopRegion, mapping: dict[str, sympy.Expr]) -> smt_dependence.IterRange | None:
+    """``loop``'s counter with constant-stride inclusive bounds in the outer loop's names, or ``None``."""
+    start, end, step = (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
+    if start is None or end is None or step is None or not as_basic(step).is_Integer or step == 0:
+        return None
+    if loop_analysis.loop_jumps(loop):
+        return None  # an early exit may skip the later iteration a witness names
+    return loop.loop_variable, as_loop_names(start, mapping), as_loop_names(end, mapping), step
+
+
+def map_ranges(state: SDFGState, node: nodes.Node, mapping: dict[str, sympy.Expr]) -> tuple:
+    """The parameters of every map around ``node`` in ``state``, outermost first."""
+    ranges = []
+    entry = state.entry_node(node)
+    while entry is not None:
+        dims = [
+            (param, as_loop_names(begin, mapping), as_loop_names(end, mapping), step)
+            for param, (begin, end, step) in zip(entry.map.params, entry.map.range.ndrange())
+        ]
+        ranges[:0] = dims
+        entry = state.entry_node(entry)
+    return tuple(ranges)
+
+
+def copy_sites(
+    edge: MultiConnectorEdge[Memlet],
+    state: SDFGState,
+    arrays: ArrayBindings,
+    mapping: dict[str, sympy.Expr],
+    iters: tuple,
+) -> list[Site]:
+    """Both ends of an array copy as sites, each range dimension a fresh iterator over that range.
+
+    A copy moves every element of both subsets, so unlike a tasklet's or a library node's range, which the code
+    behind it may touch only in part, it names elements that are certainly accessed.
+    """
+    if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+        return []
+    if edge.data.is_empty() or edge.data.wcr is not None:
+        return []
+    sites = []
+    for side, (name, subset, write) in enumerate(
+        (
+            (edge.src.data, edge.data.get_src_subset(edge, state), False),
+            (edge.dst.data, edge.data.get_dst_subset(edge, state), True),
+        )
+    ):
+        if name not in arrays or subset is None:
+            continue
+        outer, offset = arrays[name]
+        if offset and len(offset) != as_range(subset).dims():
+            continue
+        index, extra = [], []
+        for dim, (begin, end, step) in enumerate(subset.ndrange()):
+            begin, end = as_loop_names(begin, mapping), as_loop_names(end, mapping)
+            if begin == end:
+                element = begin
+            else:
+                var = f"__copy{id(edge)}_{side}_{dim}"
+                extra.append((var, begin, end, step))
+                element = sympy.Symbol(var)
+            index.append(element + offset[dim] if offset else element)
+        sites.append(Site(Access(outer, write, tuple(index)), iters + tuple(extra)))
+    return sites
+
+
+def state_sites(
+    state: SDFGState, arrays: ArrayBindings, mapping: dict[str, sympy.Expr], iters: tuple, out: list
+) -> None:
+    """The element accesses of ``state`` and of the nested SDFGs in it, under ``iters`` and their maps."""
+    for edge in state.edges():
+        scoped = edge.dst if isinstance(edge.dst, nodes.Tasklet) else edge.src
+        inner = iters + map_ranges(state, scoped, mapping)
+        copies = copy_sites(edge, state, arrays, mapping, inner)
+        out.extend(copies or (Site(access, inner) for access in edge_accesses(edge, state, arrays, mapping)))
+    for node in state.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            inner_arrays, inner_mapping = nested_bindings(state, node, arrays, mapping)
+            region_sites(node.sdfg, inner_arrays, inner_mapping, iters + map_ranges(state, node, mapping), out)
+
+
+def region_sites(
+    region: ControlFlowRegion, arrays: ArrayBindings, mapping: dict[str, sympy.Expr], iters: tuple, out: list
+) -> None:
+    """Fill ``out`` with the unconditional accesses under ``region``.
+
+    A branch body may never run, and a loop without a constant-stride counter has no range to name, so neither
+    contributes: a witness has to be an execution that happens.
+    """
+    for block in region.nodes():
+        if isinstance(block, SDFGState):
+            state_sites(block, arrays, mapping, iters, out)
+        elif isinstance(block, LoopRegion):
+            counter = loop_range(block, mapping) if block.loop_variable else None
+            if counter is not None:
+                region_sites(block, arrays, mapping, iters + (counter,), out)
+        elif isinstance(block, ControlFlowRegion) and not isinstance(block, ConditionalBlock):
+            region_sites(block, arrays, mapping, iters, out)
+
+
+def size_symbols(sdfg: SDFG) -> set[str]:
+    """The symbols the argument arrays' shapes are written in, less any the program assigns: the only ones a conflict
+    witness may choose a value for."""
+    shapes = {
+        s.name
+        for desc in sdfg.arrays.values()
+        if not desc.transient
+        for dim in desc.shape
+        for s in as_basic(dim).free_symbols
+    }
+    assigned = {name for edge in sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
+    counters = {r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)}
+    return shapes - assigned - counters - set(sdfg.constants)
+
+
+def witnessed_carrying_access(loop: LoopRegion) -> str | None:
+    """``RAW on A[k, j] (witness: N=3, k=0 and k=1)`` when the solver finds two iterations of ``loop`` that touch
+    one element of an argument array, choosing values for array sizes only.
+
+    Every access involved runs on every iteration (no branch, no early exit, counted loops only), and its index
+    and bounds name only iterators and sizes, so the witness is an execution of the program for that size. A
+    transient is scratch the loop may privatize, so a conflict on one proves no order. A read meeting a write is
+    tried before two writes, since it names the dependence a reader acts on.
+    """
+    counter = loop_range(loop, {}) if loop.loop_variable else None
+    if counter is None:
+        return None
+    arrays = {name: (name, ()) for name, desc in loop.sdfg.arrays.items() if not isinstance(desc, data.View)}
+    mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
+    sites: list[Site] = []
+    region_sites(loop, arrays, mapping, (counter,), sites)
+    sites = [site for site in sites if not loop.sdfg.arrays[site.access.array].transient]
+    sizes = size_symbols(loop.sdfg)
+    pairs = [(w, o) for w in sites if w.access.write for o in sites if o.access.array == w.access.array]
+    pairs.sort(key=lambda pair: pair[1].access.write)
+    for write, other in pairs:
+        for first, second in ((write, other), (other, write)):
+            found = smt_dependence.find_conflict_witness(
+                first.access.index, second.access.index, first.iters, second.iters, sizes
+            )
+            if found is not None:
+                return conflict_label(first, second, found, counter[0])
+    return None
+
+
+def site_text(site: Site) -> str:
+    """``A[k, 0:k]``: the site's index, a copied range written as the range rather than its iterator."""
+    ranges = {
+        name: f"{begin}:{end + 1}" for name, begin, end, step in site.iters if name.startswith("__copy") and step == 1
+    }
+    return f"{site.access.array}[{', '.join(ranges.get(str(e), str(e)) for e in site.access.index)}]"
+
+
+def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: str) -> str:
+    """The carrying access with its witness: the access the dependence names, then the values."""
+    kind = "WAW" if first.access.write and second.access.write else ("RAW" if first.access.write else "WAR")
+    named = second if kind == "RAW" else first
+    values = ", ".join(f"{name}={value}" for name, value in witness.items() if not name.startswith(carrier + "__"))
+    order = f"{carrier}={witness[carrier + '__a']} and {carrier}={witness[carrier + '__b']}"
+    where = f"{values}, {order}" if values else order
+    return f"{kind} on {site_text(named)} (witness: {where})"
+
+
 def loop_hint(loop: LoopRegion) -> str:
     """The hint text naming what kind of loop ``loop`` is."""
     reason = refusal_reason(loop)
@@ -400,15 +574,21 @@ def loop_hint(loop: LoopRegion) -> str:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
     if not reason:
         return UNSURE.format(reason=NEVER_EXAMINED)
+    access = proof_of_carry(loop, reason)
+    if access is not None:
+        return SEQUENTIAL_PROVEN.format(reason=access, why=proven_why(access))
+    return UNSURE.format(reason=carrying_access(reason))
+
+
+def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
+    """The access that proves ``loop`` carries a dependence, or ``None``: a constant distance, a carried symbol
+    ``LoopToMap`` named, or a solver witness, cheapest first."""
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
-    if access is not None:
-        return SEQUENTIAL_PROVEN.format(reason=access, why=proven_why(access))
-    if refusal_matches_a_carried_symbol(reason):
-        carried = carrying_access(reason)
-        return SEQUENTIAL_PROVEN.format(reason=carried, why=proven_why(carried))
-    return UNSURE.format(reason=carrying_access(reason))
+    if access is None and refusal_matches_a_carried_symbol(reason):
+        access = carrying_access(reason)
+    return access if access is not None else witnessed_carrying_access(loop)
 
 
 #: Refusals whose pattern IS a carried dependence: a symbol the body updates from itself, or reads before it assigns.
@@ -420,6 +600,50 @@ CARRIED_SYMBOL_PATTERNS = ("self-recurrent carried symbol", "carried symbol depe
 def refusal_matches_a_carried_symbol(reason: str) -> bool:
     """Whether a ``LoopToMap`` refusal is a carried-symbol pattern, a proof rather than an unseparated pair."""
     return any(pattern in reason.lower() for pattern in CARRIED_SYMBOL_PATTERNS)
+
+
+#: Appended to a parallel map's class line when its independence rests on entry traps.
+ASSUMES = "; assumes {predicates}, trapped at entry"
+
+#: ``if <violation>:`` opening every abort guard's code (see ``tasklet_utils.add_abort_guard``).
+GUARD_HEAD = re.compile(r"^if (.*):\s*$", re.MULTILINE)
+
+
+def entry_traps(sdfg: SDFG) -> list[tuple[str, set[str]]]:
+    """``(predicate, names)`` for every abort guard in ``sdfg``: what the program assumes, and the symbols it names."""
+    from dace.sdfg import tasklet_utils
+
+    traps = []
+    for node, _ in sdfg.all_nodes_recursive():
+        if not tasklet_utils.is_abort_guard(node):
+            continue
+        head = GUARD_HEAD.search(node.code.as_string)
+        if head is None:
+            continue
+        violation = head.group(1).strip()
+        held = violation[len("not ") :].strip() if violation.startswith("not ") else f"not ({violation})"
+        names = {s.name for s in as_basic(symbolic.pystr_to_symbolic(held)).free_symbols}
+        traps.append((str(symbolic.pystr_to_symbolic(held)), names))
+    return traps
+
+
+def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
+    """The symbols the element accesses in ``entry``'s scope name: what independence can rest on. A bound only sets
+    how many iterations there are, so the range is left out."""
+    names: set[str] = set()
+    for edge in state.scope_subgraph(entry).edges():
+        if isinstance(edge.src, nodes.Tasklet) or isinstance(edge.dst, nodes.Tasklet):
+            names |= {str(s) for s in edge.data.free_symbols}
+    return names
+
+
+def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str, set[str]]]) -> str:
+    """``PARALLEL``, naming the entry traps whose symbols the map's element accesses use."""
+    relied = sorted({held for held, names in traps if names & map_names(state, entry)})
+    if not relied:
+        return PARALLEL
+    first, rest = PARALLEL.split("\n", 1)
+    return f"{first}{ASSUMES.format(predicates=' and '.join(relied))}\n{rest}"
 
 
 @xf.explicit_cf_compatible
@@ -444,6 +668,7 @@ class AnnotateLoopKinds(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
         labelled = 0
+        traps = entry_traps(sdfg)
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, (nodes.MapEntry, LoopRegion)):
                 continue
@@ -452,7 +677,7 @@ class AnnotateLoopKinds(ppl.Pass):
                 continue
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
-            kind = PARALLEL if isinstance(node, nodes.MapEntry) else loop_hint(node)
+            kind = parallel_hint(parent_graph, node, traps) if isinstance(node, nodes.MapEntry) else loop_hint(node)
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
         return labelled or None

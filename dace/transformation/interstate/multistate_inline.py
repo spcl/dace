@@ -78,8 +78,8 @@ def outer_names(sdfg: SDFG) -> tuple[dict[str, Any], set[str], set[str]]:
         labels.update([block.label for block in region.nodes()])
         if not own:
             continue
-        # A loop ``sdfg`` owns is a block of a region it owns.
-        if isinstance(region, LoopRegion) and region.loop_variable is not None:
+        # A loop ``sdfg`` owns is a block of a region it owns. A while loop's ``loop_variable`` is ``""``: no name.
+        if isinstance(region, LoopRegion) and region.loop_variable:
             assignments.add(region.loop_variable)
         for ise in region.edges():
             if ise.data.assignments:
@@ -358,9 +358,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
         for b in nsdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion):
-                if b.loop_variable is not None:
-                    inner_assignments.add(b.loop_variable)
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                inner_assignments.add(b.loop_variable)
         # The non-identity symbol_mapping keys are lowered below to interstate-edge assignments
         # (``inner_K = outer_expr``) planted on the edge entering the inlined SDFG, i.e. they become
         # symbols *defined* inside the inlined region. Treat them like inner assignments so that, if such a
@@ -428,6 +427,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
+            # The parent's own constant of the same name, type and value is this one: nesting copied it down
+            if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
+                continue
             if cstname in sdfg.constants:
                 if cstname in transients:
                     newname = transients[cstname]

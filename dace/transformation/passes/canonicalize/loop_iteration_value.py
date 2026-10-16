@@ -127,15 +127,23 @@ class Axis:
     lo: sympy.Expr = sympy.S.Zero
     hi: sympy.Expr = sympy.S.Zero
     var: str | None = None
+    offset: sympy.Expr = sympy.S.Zero  #: the index is ``var + offset``
 
 
 def classify(index: sympy.Expr, ranges: dict[str, tuple[sympy.Expr, sympy.Expr]]) -> Axis:
-    if isinstance(index, sympy.Symbol) and index.name in ranges:
-        lo, hi = ranges[index.name]
-        return Axis(AxisKind.FIXED if same(lo, hi) else AxisKind.RANGE, lo, hi, index.name)
-    if any(s.name in ranges for s in index.free_symbols):
-        return Axis(AxisKind.OTHER)
-    return Axis(AxisKind.FIXED, index, index)
+    moving = [s for s in index.free_symbols if s.name in ranges]
+    if not moving:
+        return Axis(AxisKind.FIXED, index, index)
+    if len(moving) == 1:
+        # ``var + offset`` with ``offset`` free of every range variable: the range shifted by ``offset`` (a slice
+        # ``A[k + 1:, k]`` lowered to a loop over ``0 .. N - k - 2`` writing ``A[i + k + 1, k]``).
+        (var,) = moving
+        offset = sympy.expand(index - var)
+        if not any(s.name in ranges for s in offset.free_symbols):
+            lo, hi = ranges[var.name]
+            kind = AxisKind.FIXED if same(lo, hi) else AxisKind.RANGE
+            return Axis(kind, sympy.expand(lo + offset), sympy.expand(hi + offset), var.name, offset)
+    return Axis(AxisKind.OTHER)
 
 
 def point_indices(subset: subsets.Subset | None) -> list[sympy.Expr]:
@@ -268,12 +276,32 @@ class IterationEvaluator:
             return None
         if axis.kind is AxisKind.FIXED and same(x, axis.lo):
             return True
-        lo, hi = self.facts.get(x, (x, x)) if isinstance(x, sympy.Symbol) else (x, x)
+        lo, hi = self.value_range(x)
         if nonnegative(lo - axis.lo) and nonnegative(axis.hi - hi):
             return True
-        if positive(axis.lo - hi) or positive(lo - axis.hi):
+        # Disjoint when even the write's lowest index lies above ``x``'s highest, or the reverse; a write index that
+        # is itself a bounded query symbol (a row ``q`` of another domain) contributes its whole range.
+        if positive(self.value_range(axis.lo)[0] - hi) or positive(lo - self.value_range(axis.hi)[1]):
             return False
         return None
+
+    def value_range(self, x: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
+        """``(lo, hi)`` bounding ``x``: a bounded symbol's range, carried through an expression affine in exactly one
+        bounded symbol with a numeric coefficient (``q - k - 1`` reads a slice temporary at the offset of ``q``);
+        ``(x, x)`` otherwise."""
+        if isinstance(x, sympy.Symbol):
+            return self.facts.get(x, (x, x))
+        bounded = [s for s in x.free_symbols if s in self.facts]
+        if len(bounded) != 1:
+            return x, x
+        (sym,) = bounded
+        coeff = sympy.expand(x).coeff(sym)
+        if not coeff.is_Number or coeff == 0 or sympy.expand(x - coeff * sym).has(sym):
+            return x, x
+        lo, hi = self.facts[sym]
+        if coeff < 0:
+            lo, hi = hi, lo
+        return sympy.expand(x.xreplace({sym: lo})), sympy.expand(x.xreplace({sym: hi}))
 
     def hit(self, write: Write, index: tuple[sympy.Expr, ...]) -> dict[str, sympy.Expr] | None:
         """The range-variable binding under which ``write`` stores ``index``, or ``None`` if it never does.
@@ -291,9 +319,10 @@ class IterationEvaluator:
             if verdict is None:
                 unknown = True
             elif axis.var is not None:
-                if axis.var in binding and not same(binding[axis.var], x):
+                value = sympy.expand(x - axis.offset)
+                if axis.var in binding and not same(binding[axis.var], value):
                     unknown = True
-                binding[axis.var] = x
+                binding[axis.var] = value
         if unknown:
             raise Refused("write may or may not hit the queried element")
         return binding
@@ -478,13 +507,13 @@ class StateValues:
         self.evaluator.step()
         producers = value_edges(self.state.in_edges(node))
         if not producers:
-            return self.evaluator.before(self.frame, self.pos, node.data, index)
+            return self.unstored(node, index)
         if len(producers) != 1:
             raise Refused(f"{node.data} has several producers")
         edge = producers[0]
         binding = self.evaluator.hit(self.evaluator.state_write(self.state, edge, self.frame.bind, {}), index)
         if binding is None:
-            raise Refused(f"{node.data} read outside what the state stores")
+            return self.unstored(node, index)
         src = edge.src
         if isinstance(src, (nodes.MapExit, nodes.Tasklet)):
             inner = self.state.memlet_path(edge)[0] if isinstance(src, nodes.MapExit) else edge
@@ -497,6 +526,39 @@ class StateValues:
         if isinstance(src, nodes.LibraryNode):
             return self.inner_product(src)
         raise Refused(f"value produced by {type(src).__name__}")
+
+    def unstored(self, node: nodes.AccessNode, index: tuple[sympy.Expr, ...]) -> sympy.Expr:
+        """The value of ``index`` at ``node`` where ``node``'s own producer (if any) does not store it: what the
+        nearest store of the container upstream in the state left there (an ordering edge ties a read to the copy
+        that fills a scalar), or, with none, its value before the state."""
+        upstream = self.nearest_upstream_stores(node)
+        if not upstream:
+            return self.evaluator.before(self.frame, self.pos, node.data, index)
+        if len(upstream) != 1:
+            raise Refused(f"{node.data} stored by unordered producers")
+        return self.value_at(upstream[0], index)
+
+    def nearest_upstream_stores(self, node: nodes.AccessNode) -> list[nodes.AccessNode]:
+        """The access nodes of ``node``'s container upstream of it in the state's dataflow that are stored into,
+        less those upstream of another such node."""
+
+        def ancestors(start: nodes.Node) -> set[nodes.Node]:
+            seen: set[nodes.Node] = set()
+            stack = [e.src for e in self.state.in_edges(start)]
+            while stack:
+                current = stack.pop()
+                if current not in seen:
+                    seen.add(current)
+                    stack.extend(e.src for e in self.state.in_edges(current))
+            return seen
+
+        stores = [
+            n
+            for n in ancestors(node)
+            if isinstance(n, nodes.AccessNode) and n.data == node.data and value_edges(self.state.in_edges(n))
+        ]
+        shadowed = set().union(*(ancestors(n) for n in stores)) if stores else set()
+        return [n for n in stores if n not in shadowed]
 
     def tasklet_value(
         self, tasklet: nodes.Tasklet, out_conn: str, params: dict[sympy.Symbol, sympy.Expr]

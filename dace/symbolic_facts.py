@@ -644,9 +644,10 @@ def prove(query: Relation, facts: Facts) -> Truth:
         if answer is Truth.UNKNOWN:
             # A case relation over a division (``int_floor(N, 2) <= N - 1``) is not one the solver uses. What holds
             # for every integer in place of each division holds for the division too, so ask that instead.
+            # The generalized query is asked whole: an extremum that occurred only inside a division is gone with
+            # it (``int_floor(Min(N, i + 13) - i - 1, 7)``), so there may be no extremum left to split on.
             generalized = generalized_divisions(expr)
             if generalized is not expr:
-                # The extremum may have sat inside a division and left with it.
                 answer = prove(Relation(query.kind, sympy.Integer(0), generalized), facts)
         return answer
     divisions: dict[sympy.Symbol, Division] = {}

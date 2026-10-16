@@ -52,6 +52,7 @@ from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -63,7 +64,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
-from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
+from dace.transformation.passes.canonicalize.finalize import blas_addresses, explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
@@ -159,6 +160,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Gemv": "BLAS gemv: y = alpha * A @ x + beta * y",
     "Ger": "BLAS ger: A = alpha * x @ y^T + A (rank-1 update)",
     "Getrf": "LAPACK getrf: LU factorization with partial pivoting",
+    "GetrfNoPivot": "LU factorization without pivoting, in place: A = L @ U, L unit lower triangular",
     "Getri": "LAPACK getri: matrix inverse from an LU factorization",
     "Getrs": "LAPACK getrs: solve A @ X = B from an LU factorization",
     "IFFT": "inverse discrete Fourier transform",
@@ -257,7 +259,10 @@ RENDERABLE_IMPLEMENTATIONS = ("pure", "pure-seq", "MappedTasklet")
 #: ``dace::find_first_index``, ``Scan``'s
 #: ``dace::scan`` entry points and ``ScatterConflictCheck``'s ``dace::detect_collision`` are
 #: re-spelled by :mod:`dace.cpf_lowering` as the OpenMP ``reduction`` loop, the cancelling search, the
-#: ``inscan`` scan and the tagged-write check. ``Reduce``'s ``pure`` would be a parallel loop with a
+#: ``inscan`` scan and the tagged-write check. ``StateScan``'s ``CPU`` lowering reaches no runtime at
+#: all -- it is its ``pure`` SDFG with the two block maps on ``CPU_Multicore`` instead of ``Sequential`` --
+#: and ``pure`` would run the scan's extra work (``(count + 1) * N`` steps for a finite scan) on one
+#: thread, slower than the loop the scan replaced. ``Reduce``'s ``pure`` would be a parallel loop with a
 #: ``critical`` section per element (argmax_value under canonicalize: ~0.5 s for 6M doubles). Without them a node falls to ``pure``, a SEQUENTIAL loop, and the rendered
 #: unit hands its reader a serial loop for work the canonicalize pipeline itself parallelizes --
 #: ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all measured 9-11x over numpy in the
@@ -277,6 +282,7 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
     "Reduce": ("CPU",),
     "Scan": ("CPU",),
     "ScatterConflictCheck": ("CPU",),
+    "StateScan": ("CPU",),
 }
 
 #: Per-node-type implementations tried ahead of everything else when a DEVICE dialect renders a
@@ -292,11 +298,23 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
 #: both correct and the rendering CPF wants -- so ``Reduce`` takes ``pure`` here, ahead of its host
 #: ``CPU`` lowering, its ``GPUAuto`` being a ``dace::`` cub call where its ``pure`` is loops.
 #:
+#: So are the node types whose ``pure`` expansion is maps that do NOT take the node's schedule.
+#: ``StateScan``'s ``pure`` pins every map ``Sequential`` (it is the form for readers of the SDFG), so
+#: at host level over device memory its step runs as host code and its loop headers read the device
+#: tables (crc16's ``data``, dfa's ``__symbols``). Its ``CUDA`` expansion is the same SDFG with the
+#: maps on ``GPU_Device`` -- kernels the device unit holds, no library call -- and it is the
+#: implementation canonicalize already chose for the node.
+#:
 #: The device expansions named here reach the runtime the same way the host ones do, and CPF spells
 #: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
-RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Reduce": ("pure",), "Scan": ("CUDA",)}
+RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {
+    "FindFirst": ("CUDA",),
+    "Reduce": ("pure",),
+    "Scan": ("CUDA",),
+    "StateScan": ("CUDA",),
+}
 
 #: The one vendor library family each architecture renders through, best first. A BLAS, LAPACK, linear-algebra or
 #: FFT node with one of these implementations becomes that library call rather than CPF loops: the libraries ship
@@ -426,8 +444,18 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
     if isinstance(node, TileOp) and node.implementation in tile_functions.ISAS:
         # Its tile functions are inline definitions of the unit, as :func:`target_tile_functions` chose them.
         return (node.implementation,)
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        # Inside a kernel: the tabled lowerings are host runtime (OpenMP reductions and scans, the
+        # cancelling search, ``std::sort``) and a vendor call is host code, so a ``__global__`` function
+        # cannot call any of them (cp2k_grid_integrate's per-thread ``Scan`` reached ``scan_incl_product``).
+        # Every tabled node has a loop expansion among the global ones, and loops are device code.
+        return RENDERABLE_IMPLEMENTATIONS
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
-    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES
+    # A GEMM whose operands no leading dimension names (a view strided on both matrix axes) is one finalize already
+    # gave the loop expansion; a vendor call in front of it would raise ``sAM or sAK should be 1`` on expansion.
+    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES and not (
+        isinstance(node, Gemm) and not blas_addresses(node, state)
+    )
     if cpf_lowering.device() and on_device_at_host_level(node, state):
         vendor = VENDOR_IMPLEMENTATIONS_DEVICE[cpf_lowering.active_dialect()] if vendored else ()
         preferred = vendor + RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred

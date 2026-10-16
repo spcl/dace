@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
+import contextlib
 import copy
 import ctypes
 import gzip
@@ -13,7 +14,7 @@ import shutil
 import sys
 import types
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from functools import lru_cache
 from hashlib import md5, sha256
@@ -27,6 +28,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 import sympy
 
 import dace
@@ -225,6 +227,33 @@ def scope_bound_names(sdfg: "SDFG") -> set[str]:
 def interstate_bound_names(sdfg: "SDFG") -> set[str]:
     """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
     return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+
+
+#: SDFG -> its ``facts()``, while :func:`memoize_facts` is active; ``None`` otherwise.
+_FACTS_MEMO: dict["SDFG", symbolic.Facts] | None = None
+
+
+@contextlib.contextmanager
+def memoize_facts(active: bool = True) -> Iterator[None]:
+    """Compute ``SDFG.facts()`` once per SDFG inside the block, or, with ``active=False``, suspend an enclosing memo.
+
+    ``facts()`` walks every interstate edge and data descriptor of the SDFG, so a span probing one graph many times
+    pays it once per SDFG. The caller owns invalidation: it drops every SDFG it changes with :func:`forget_facts`,
+    and suspends the memo while a change is under way.
+    """
+    global _FACTS_MEMO
+    enclosing = _FACTS_MEMO
+    _FACTS_MEMO = {} if active else None
+    try:
+        yield
+    finally:
+        _FACTS_MEMO = enclosing
+
+
+def forget_facts(sdfg: "SDFG") -> None:
+    """Drop the memoized facts of ``sdfg``, after a change to its symbols, data descriptors or interstate edges."""
+    if _FACTS_MEMO is not None:
+        _FACTS_MEMO.pop(sdfg, None)
 
 
 def _replace_dict_keys(d, old, new):
@@ -1348,6 +1377,15 @@ class SDFG(ControlFlowRegion):
         """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is equal to is
         nonnegative, for explicit use in proofs. What is assumed of a symbol holds for its value on entry only, so
         nothing is assumed of one an interstate edge assigns."""
+        if _FACTS_MEMO is None:
+            return self.derive_facts()
+        facts = _FACTS_MEMO.get(self)
+        if facts is None:
+            facts = _FACTS_MEMO[self] = self.derive_facts()
+        return facts
+
+    def derive_facts(self) -> symbolic.Facts:
+        """``facts()``, computed from the graph regardless of an active :func:`memoize_facts`."""
         own = self._symbol_repo.facts()
         assigned = interstate_bound_names(self)
         if assigned:
@@ -1358,6 +1396,7 @@ class SDFG(ControlFlowRegion):
                 own.parameters - assigned,
                 own.assumed,
             )
+        declared = self._symbol_repo.params.types
         extents = sorted(
             {
                 dim.name
@@ -1366,7 +1405,7 @@ class SDFG(ControlFlowRegion):
                 # An undefined symbol is a placeholder with no facts
                 if isinstance(dim, symbolic.symbol)
                 and not isinstance(dim, symbolic.UndefinedSymbol)
-                and dim.name in self.symbols
+                and dim.name in declared
                 and dim.name not in assigned
             }
         )
@@ -2407,6 +2446,30 @@ class SDFG(ControlFlowRegion):
     def is_name_free(self, name: str) -> bool:
         """Test if `name` is free, i.e. is not used by anything else."""
         return not self.is_name_used(name)
+
+    def constant_declarations(self) -> dict[str, tuple[dt.Data, Any]]:
+        """The descriptor and value of every constant visible here, its own and its enclosing SDFGs': what
+        ``constants`` casts, the nearest declaration of a name winning."""
+        chain = []
+        sdfg = self
+        while sdfg is not None:
+            chain.append(sdfg)
+            sdfg = sdfg._parent_sdfg
+        result = {}
+        for sdfg in reversed(chain):
+            result.update(sdfg.constants_prop)
+        return result
+
+    def holds_constant(self, name: str, dtype: dt.Data, value: Any) -> bool:
+        """Whether the constant ``name`` visible here has the descriptor ``dtype`` and the value ``value``."""
+        sdfg = self
+        while sdfg is not None and name not in sdfg.constants_prop:
+            sdfg = sdfg._parent_sdfg
+        if sdfg is None:
+            return False
+        own_type, own_value = sdfg.constants_prop[name]
+        own_value, value = np.asarray(own_value), np.asarray(value)
+        return own_type == dtype and own_value.dtype == value.dtype and np.array_equal(own_value, value)
 
     def find_new_constant(self, name: str):
         """

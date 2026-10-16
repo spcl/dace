@@ -260,6 +260,35 @@ def test_two_distinct_scatters_get_individual_guards():
     assert np.allclose(c, c_ref)
 
 
+def test_the_contract_probes_read_each_sdfgs_facts_once(monkeypatch):
+    """Every probe walked its SDFG's interstate edges for the facts, two probes per scatter loop on an unchanged
+    graph: a third of this pass on warpx_esirkepov_deposition."""
+    from dace.transformation.interstate.loop_to_map import LoopToMap
+
+    sdfg = two_distinct_scatters.to_sdfg(simplify=True)
+    UniqueLoopIterators().apply_pass(sdfg, {})
+    walked = []
+    probing = [False]
+    original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopToMap.can_be_applied
+
+    def walk(sd):
+        if probing[0]:
+            walked.append(sd)
+        return original_walk(sd)
+
+    def probe(self, graph, expr_index, sd, permissive=False):
+        probing[0] = True
+        try:
+            return original_probe(self, graph, expr_index, sd, permissive)
+        finally:
+            probing[0] = False
+
+    monkeypatch.setattr(dace.sdfg.sdfg, "interstate_bound_names", walk)
+    monkeypatch.setattr(LoopToMap, "can_be_applied", probe)
+    assert ScatterToGuardedMaps().apply_pass(sdfg, {}) == 2
+    assert walked.count(sdfg) == 1, f"{walked.count(sdfg)} walks of the unchanged SDFG"
+
+
 @dace.program
 def scatter_with_a_compaction_counter(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N], kept: dace.int64[N]):
     """A scatter whose loop also carries a counter (nfa_frontier's ``matched[base + n_match]``)."""
@@ -812,3 +841,5 @@ if __name__ == "__main__":
     test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(False)
     test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(True)
     test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential()
+    with pytest.MonkeyPatch.context() as mp:
+        test_the_contract_probes_read_each_sdfgs_facts_once(mp)

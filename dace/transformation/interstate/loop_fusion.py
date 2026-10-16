@@ -41,7 +41,7 @@ from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
@@ -257,9 +257,10 @@ class LoopFusion(transformation.MultiStateTransformation):
         both branches' accesses unioned together regardless of which one fires at runtime -- an
         over-approximation, which is the conservative direction: it can only add refusals, never hide a
         real dependence."""
-        blocks = LoopFusion._body_blocks(loop)
-        if blocks is None:
+        chain = LoopFusion._body_chain(loop)
+        if chain is None:
             return None
+        blocks, edges = chain
         reads: dict[str, list] = {}
         writes: dict[str, list] = {}
         for block in blocks:
@@ -268,7 +269,31 @@ class LoopFusion(transformation.MultiStateTransformation):
                 reads.setdefault(arr, []).extend(subs)
             for arr, subs in bw.items():
                 writes.setdefault(arr, []).extend(subs)
+        for memlet in LoopFusion._control_flow_reads(loop.sdfg, blocks, edges):
+            reads.setdefault(memlet.data, []).append(memlet.subset)
         return reads, writes
+
+    @staticmethod
+    def _control_flow_reads(sdfg: SDFG, blocks: list, edges: list) -> list:
+        """The reads ``blocks`` make outside their dataflow: the chain's own ``edges`` (a bridge assignment
+        ``row := perm[j]``), every interstate edge inside a block, and every loop or branch condition inside
+        one. An access node sees none of them, and a missed read is a missed dependence (``spgemm_hash``'s
+        bin scatter fused into the phase reading ``rows_in_bins[r]`` on an edge). Scalars count: a scalar the
+        first body writes is read by such an edge as surely as an array is."""
+        found = []
+        for edge in edges:
+            found.extend(edge.get_read_memlets(sdfg.arrays, include_scalars=True))
+        for block in blocks:
+            if isinstance(block, SDFGState):
+                continue
+            # Not into nested SDFGs: their reads reach this graph as the nested node's memlets, which
+            # ``_accesses`` already records.
+            for edge in block.all_interstate_edges():
+                found.extend(edge.data.get_read_memlets(sdfg.arrays, include_scalars=True))
+            for region in block.all_control_flow_regions():
+                if isinstance(region, (LoopRegion, ConditionalBlock)):
+                    found.extend(region.get_meta_read_memlets(sdfg.arrays, include_scalars=True))
+        return found
 
     @staticmethod
     def _rename_ivar(accesses: dict[str, list], old: str, new: str) -> dict[str, list]:

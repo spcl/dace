@@ -467,9 +467,22 @@ class OffloadToAccelerator(ppl.Pass):
                     other = edge.dst if edge.src is node else edge.src
                     if self.touches_device_code(scopes, other):
                         device.add(node.data)
+                    elif self.is_container_copy(sdfg, node, other):
+                        continue
                     elif not fallback and not hybrid:
                         host.add(node.data)
         return host, device, written
+
+    @staticmethod
+    def is_container_copy(sdfg: SDFG, node: nodes.AccessNode, other: nodes.Node) -> bool:
+        """Whether the edge between ``node`` and ``other`` copies one container into another: no code runs
+        on either side, so the copy says nothing about where either container belongs (a ``return x``
+        copied into ``__return``). A view is an alias, not a copy, and still counts as a use."""
+        return (
+            isinstance(other, nodes.AccessNode)
+            and not isinstance(sdfg.arrays.get(node.data), data.View)
+            and not isinstance(sdfg.arrays.get(other.data), data.View)
+        )
 
     def stage_on_host(self, sdfg: SDFG, name: str, write_back: bool) -> bool:
         """Give ``name`` a host copy, point every use at it, and copy at the SDFG's boundary.
@@ -825,8 +838,17 @@ class OffloadToAccelerator(ppl.Pass):
 
         Inputs only, and only when the body reads the value outside a kernel: one used on the device
         alone is already where it belongs.
+
+        The copy sits on the OUTERMOST edge of the binding's memlet path that still carries one
+        element, and a path of its own carries the host copy from there through the same scopes to
+        the connector. A body under a taskloop is bound through the map's entry, and its element
+        arrives from an access node outside the map (cp2k_grid_integrate's ``border_width_index``):
+        staging at the access node copies it once rather than once per iteration, and leaves no
+        device scalar entering the host map, which host code would dereference. The old path is
+        removed up to the first scope connector something else still reads. An element taken out of
+        a larger range at the map (``A[j]`` of ``A[0:N]``) is staged inside the map, from its entry.
         """
-        for edge in state.in_edges(nsdfg_node):
+        for edge in list(state.in_edges(nsdfg_node)):
             if edge.data is None or edge.data.is_empty() or edge.dst_conn is None:
                 continue
             body = nsdfg_node.sdfg
@@ -845,14 +867,24 @@ class OffloadToAccelerator(ppl.Pass):
                 find_new_name=True,
             )
             staged = state.add_access(host_name)
-            # Reuse the edge's own source: a second access node for the same data would leave the
-            # original isolated once this edge goes, which is not a valid SDFG.
-            source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(required(edge.data.data))
-            state.remove_edge(edge)
-            state.add_edge(source, edge.src_conn, staged, None, deepcopy(edge.data))
-            state.add_edge(
-                staged, None, nsdfg_node, edge.dst_conn, Memlet.from_array(host_name, sdfg.arrays[host_name])
+            path = state.memlet_path(edge)
+            # Memlets only widen outward, so the one-element edges are a suffix of the path.
+            top = len(path) - 1
+            while top > 0 and path[top - 1].data.num_elements() == 1:
+                top -= 1
+            # Staged from the path's own source and connector: a second access node for the same data
+            # would leave the original isolated once the old path goes, which is not a valid SDFG.
+            # A fresh memlet: the outer edge's volume counts the map's iterations, the copy reads once.
+            element = Memlet(data=path[top].data.data, subset=deepcopy(path[top].data.subset))
+            state.add_edge(path[top].src, path[top].src_conn, staged, None, element)
+            state.add_memlet_path(
+                staged,
+                *(step.dst for step in path[top:-1]),
+                nsdfg_node,
+                dst_conn=edge.dst_conn,
+                memlet=Memlet.from_array(host_name, sdfg.arrays[host_name]),
             )
+            state.remove_memlet_path(edge, remove_orphans=True)
 
     def read_outside_a_kernel(self, sdfg: SDFG, name: str) -> bool:
         """True if ``name`` is read anywhere in ``sdfg`` that a device schedule does not cover."""

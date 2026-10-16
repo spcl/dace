@@ -140,6 +140,12 @@ def row_staged_into_kernel_scratch() -> dace.SDFG:
     return sdfg
 
 
+@dace.program
+def blocked_columns(A: dace.float64[NB, M, N], B: dace.float64[NB, M, N]):
+    for jb, jk, jc in dace.map[0:NB, 0:M, 0:N]:
+        B[jb, jk, jc] = 2.0 * A[jb, jk, jc]
+
+
 def canonical_gpu(program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, target="gpu")
@@ -241,6 +247,18 @@ def test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_i
     the kernel sized for every thread (icon_scatter's staging copies, ~54 GB at preset M)."""
     sdfg = row_staged_into_kernel_scratch()
     BlockTileKernels().apply_pass(sdfg, {})
+    assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+
+
+def test_a_small_block_axis_is_not_strided_across_the_lanes():
+    """The offload keeps a SMALL ``nblks`` axis out of the grid as a sequential map inside the kernel. Striding it
+    across 256 lanes would make every grid point a block of which only ``nblks`` lanes work."""
+    sdfg = blocked_columns.to_sdfg(simplify=True)
+    sdfg.set_symbol_scale("NB", dace.symbolic.Scale.SMALL)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, "gpu")
+    assert maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
 
 

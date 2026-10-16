@@ -520,6 +520,19 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for n in first_state.data_nodes():
                 if first_scope[n] is None and first_state.in_degree(n) > 0:
                     first_producers[n.data] = first_producers.get(n.data, 0) + 1
+            # A container the first state writes only inside a scope reaches the second state through memory
+            # alone: no top-level node of the first state carries the write, so the second state's access
+            # can be neither merged with it nor ordered after it, and would run concurrently with the scope
+            # (crc16's ``c_0``, written in the size-1 kernel the offload wraps around host code and copied to
+            # the host after it).
+            top_writes = {
+                n.data for n in first_state.data_nodes() if first_scope[n] is None and first_state.in_degree(n) > 0
+            }
+            scoped_writes = {
+                n.data for n in first_state.data_nodes() if first_scope[n] is not None and first_state.in_degree(n) > 0
+            }
+            if (scoped_writes - top_writes) & {n.data for n in second_state.data_nodes()}:
+                return False
             second_scope = second_state.scope_dict()
             second_writes = {
                 n.data for n in second_state.data_nodes() if second_scope[n] is None and second_state.in_degree(n) > 0

@@ -70,7 +70,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 region.edge_id(edge),
             )
         references.add(id(edge))
@@ -78,7 +78,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 region.edge_id(edge),
             )
         references.add(id(edge.data))
@@ -109,7 +109,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f"Undefined symbols in edge: {undef_syms}. Add those with "
                 "`sdfg.add_symbol()` or define outside with `dace.symbol()`",
-                sdfg,
+                region,
                 eid,
             )
 
@@ -118,7 +118,7 @@ def validate_control_flow_region(
         if any(not dtypes.validate_name(s) for s in issyms):
             invalid = next(s for s in issyms if not dtypes.validate_name(s))
             eid = region.edge_id(edge)
-            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", sdfg, eid)
+            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", region, eid)
 
         # Ensure accessed data containers in assignments and conditions are accessible in this context
         ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
@@ -138,7 +138,7 @@ def validate_control_flow_region(
                     raise InvalidSDFGInterstateEdgeError(
                         f'Trying to read an inaccessible data container "{container}" '
                         f"(Storage: {sdfg.arrays[container].storage}) in host code interstate edge",
-                        sdfg,
+                        region,
                         eid,
                     )
 
@@ -152,7 +152,7 @@ def validate_control_flow_region(
                     f"Race condition: inter-state assignment {aname} = {aval} uses "
                     f"variables {also_assigned}, which are also modified in the same "
                     "edge.",
-                    sdfg,
+                    region,
                     eid,
                 )
 
@@ -204,7 +204,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 eid,
             )
         references.add(id(edge))
@@ -212,7 +212,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 eid,
             )
         references.add(id(edge.data))
@@ -220,7 +220,7 @@ def validate_control_flow_region(
         issyms = edge.data.assignments.keys()
         if any(not dtypes.validate_name(s) for s in issyms):
             invalid = next(s for s in issyms if not dtypes.validate_name(s))
-            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", sdfg, eid)
+            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", region, eid)
 
         # Ensure accessed data containers in assignments and conditions are accessible in this context
         ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
@@ -239,7 +239,7 @@ def validate_control_flow_region(
                     raise InvalidSDFGInterstateEdgeError(
                         f'Trying to read an inaccessible data container "{container}" '
                         f"(Storage: {sdfg.arrays[container].storage}) in host code interstate edge",
-                        sdfg,
+                        region,
                         eid,
                     )
 
@@ -283,6 +283,8 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
         # SDFG-level checks
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
+        if sdfg.instrument == dtypes.InstrumentationType.GPU_Events:
+            raise InvalidSDFGError(GPU_EVENTS_KERNELS_ONLY, sdfg, None)
 
         for cfg in sdfg.all_control_flow_regions():
             if isinstance(cfg, ConditionalBlock):
@@ -607,6 +609,27 @@ def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
             )
 
 
+#: Why ``GPU_Events`` instrumentation anywhere but on a kernel is invalid.
+GPU_EVENTS_KERNELS_ONLY = (
+    "GPU_Events instrumentation times kernels only: set it on a GPU_Device map entry, never on an SDFG, a state or "
+    "another node (code generation reorganizes those, so their events would time nothing)."
+)
+
+
+def gpu_events_off_kernel(node: Any) -> bool:
+    """Whether ``node`` carries ``GPU_Events`` instrumentation without being a kernel (``GPU_Device`` map) entry."""
+    from dace.sdfg import nodes as nd
+
+    if isinstance(node, (nd.MapEntry, nd.MapExit)):
+        return (
+            node.map.instrument == dtypes.InstrumentationType.GPU_Events
+            and node.map.schedule != dtypes.ScheduleType.GPU_Device
+        )
+    if isinstance(node, (nd.ConsumeEntry, nd.ConsumeExit)):
+        return node.consume.instrument == dtypes.InstrumentationType.GPU_Events
+    return getattr(node, "instrument", None) == dtypes.InstrumentationType.GPU_Events
+
+
 def validate_state(
     state: "dace.sdfg.SDFGState",
     state_id: int = None,
@@ -658,6 +681,9 @@ def validate_state(
     if state.sdfg != sdfg:
         raise InvalidSDFGError("State does not point to the correct parent", state.parent_graph, state_id)
 
+    if state.instrument == dtypes.InstrumentationType.GPU_Events:
+        raise InvalidSDFGError(GPU_EVENTS_KERNELS_ONLY, state.parent_graph, state_id)
+
     # Unreachable
     ########################################
     if sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0:
@@ -679,6 +705,9 @@ def validate_state(
                 nid,
             )
         references.add(id(node))
+
+        if gpu_events_off_kernel(node):
+            raise InvalidSDFGNodeError(GPU_EVENTS_KERNELS_ONLY, state.parent_graph, state_id, nid)
 
         # Node validation
         try:
@@ -1359,9 +1388,15 @@ class InvalidSDFGError(Exception):
 
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
-    """Exceptions of invalid inter-state edges in an SDFG."""
+    """Exceptions of invalid inter-state edges in an SDFG.
 
-    def __init__(self, message: str, sdfg: "SDFG", edge_id: int):
+    ``sdfg`` is the control flow region that OWNS the edge -- the SDFG only for a top-level edge -- and
+    ``edge_id`` its index among that region's edges, the same convention the state-level errors follow
+    with ``state.parent_graph``. An index into a nested loop's edges looked up in the SDFG's named the
+    wrong edge, or raised ``IndexError`` while the message was being formatted.
+    """
+
+    def __init__(self, message: str, sdfg: "ControlFlowRegion", edge_id: int):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
@@ -1511,6 +1546,6 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: "dace.ControlFlowRe
             if any(key in cfg.sdfg.arrays for key in edge.data.assignments):
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
-                    cfg.sdfg,
+                    cfg,
                     cfg.edge_id(edge),
                 )

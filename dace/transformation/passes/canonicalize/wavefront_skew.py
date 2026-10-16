@@ -349,7 +349,10 @@ def extract_two_level_nest(outer: LoopRegion) -> LoopRegion | None:
     body may itself be imperfect); ``None`` if ``outer`` holds anything else with
     data alongside the one inner loop. A pure ``arr_split_snap = arr`` snapshot
     state is tolerated -- :func:`commit_split_snapshots` folds it away before the
-    skew reasons about dependences."""
+    skew reasons about dependences. Any other block beside the inner loop -- a
+    conditional, a nested region -- is work of the outer iteration that the skew
+    would leave behind in the diagonal loop (``scan_levels_k32``'s reseed), so it
+    refuses too."""
     blocks = list(outer.nodes())
     inner = [b for b in blocks if isinstance(b, LoopRegion)]
     if len(inner) != 1:
@@ -357,7 +360,9 @@ def extract_two_level_nest(outer: LoopRegion) -> LoopRegion | None:
     for b in blocks:
         if b is inner[0]:
             continue
-        if isinstance(b, SDFGState) and len(list(b.nodes())) > 0 and not is_split_snapshot_state(b):
+        if not isinstance(b, SDFGState):
+            return None
+        if len(list(b.nodes())) > 0 and not is_split_snapshot_state(b):
             return None
     return inner[0]
 

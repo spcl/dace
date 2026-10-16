@@ -223,6 +223,16 @@ def test_inequality_of_identical_expressions_is_false():
     assert ask(Relation(RelationKind.NE, N, N), Facts.none()) is Truth.FALSE
 
 
+def test_extremum_only_inside_a_division_is_generalized_away_without_error():
+    """A Min that occurs only inside a division leaves no extremum once the division is generalized to a fresh
+    symbol; the generalized query must still be asked rather than split on an extremum it no longer has. The trip
+    count of a tile loop ``range(i, min(i + 13, N), 7)`` (``jacobi_2d_tile_4lvl_silly``) raised an IndexError."""
+    trips = cast(sympy.Expr, symbolic.int_floor(sympy.Min(N, ITERATOR + 13) - ITERATOR - 1, 7) + 1)
+    assert ask(predicate_relation(Predicate.NEGATIVE, trips), Facts.none()) is Truth.UNKNOWN
+    inside = facts_of(Relation(RelationKind.LT, ITERATOR, N))
+    assert ask(predicate_relation(Predicate.NEGATIVE, trips), inside) is Truth.FALSE
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -250,3 +260,4 @@ if __name__ == "__main__":
     test_divisibility_keeps_the_order_facts_of_its_multiple()
     test_simplify_writes_a_divisibility_quotient_back()
     test_inequality_of_identical_expressions_is_false()
+    test_extremum_only_inside_a_division_is_generalized_away_without_error()

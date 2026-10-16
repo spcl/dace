@@ -287,6 +287,41 @@ def set_default_schedule_and_storage_types(
         )
 
 
+def enclosing_schedules(state: SDFGState, node: nodes.Node) -> list[dtypes.ScheduleType | None]:
+    """The ``parent_schedules`` that :func:`set_default_schedule_and_storage_types` hands a nested SDFG at
+    ``node``'s position: ``None`` for the outermost SDFG, then the schedule of every scope enclosing ``node``,
+    outermost first, across the nested SDFGs around ``state``.
+
+    A kernel whose thread blocks are implicit (no thread-block map under it) runs its body once per
+    thread, so a ``GPU_ThreadBlock`` follows its ``GPU_Device``: the special case
+    :func:`_set_default_storage_in_scope` applies to the kernel's own scope, recorded where it holds. Taken
+    inside the nested SDFG instead, it would read that SDFG's own ``Default`` maps as thread-block maps.
+
+    A library expansion inferred from its node's schedule alone saw a ``Sequential`` node in a kernel as
+    host code -- ``Sequential`` defers to the scope around it, and there was none -- and placed its
+    transients in ``CPU_Heap``, allocated outside the kernel.
+
+    :param state: the state holding ``node``.
+    :param node: the node, still in ``state``.
+    :returns: the schedules, outermost first.
+    """
+    from dace.transformation.helpers import gpu_map_has_explicit_threadblocks  # Avoid import loops
+
+    chain: list[dtypes.ScheduleType | None] = []  # innermost first
+    while True:
+        scope = state.entry_node(node)
+        while scope is not None:
+            if scope.schedule == dtypes.ScheduleType.GPU_Device and not gpu_map_has_explicit_threadblocks(state, scope):
+                chain.append(dtypes.ScheduleType.GPU_ThreadBlock)
+            chain.append(scope.schedule)
+            scope = state.entry_node(scope)
+        caller, outer = state.sdfg.parent_nsdfg_node, state.sdfg.parent
+        if caller is None or not isinstance(outer, SDFGState):
+            break
+        node, state = caller, outer
+    return [None, *reversed(chain)]
+
+
 def _determine_child_schedule(parent_schedules: list[dtypes.ScheduleType]) -> dtypes.ScheduleType | None:
     for sched in reversed(parent_schedules):
         if sched is not None and sched in dtypes.SCOPEDEFAULT_SCHEDULE:

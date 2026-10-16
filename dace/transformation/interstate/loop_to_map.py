@@ -1406,6 +1406,13 @@ class LoopToMap(xf.MultiStateTransformation):
         targets of :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`)."""
         return permissive or name in vars(self).get("contract_arrays", ())
 
+    def probe_resolver(self) -> SymbolResolver:
+        """The resolver a probe derives its facts with: the ``symbol_resolver`` a pass probing many loops shares
+        until its next change to the graph, or a fresh one."""
+        # ``vars(self).get``, not ``getattr``, as for ``lift_context``: the attribute is absent on a plain match.
+        resolver = vars(self).get("symbol_resolver")
+        return SymbolResolver() if resolver is None else resolver
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
 
         # Exposed so companion passes can distinguish a genuine loop-carried
@@ -1446,7 +1453,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if not t in dtypes.INTEGER_TYPES:
             return refuse(f"loop bounds are not integer types - result_type={t}")
 
-        facts = SymbolResolver().facts_at(self.loop)
+        facts = self.probe_resolver().facts_at(self.loop)
         if self.keep_small_loops_sequential and spans_small_symbols(self.loop, facts):
             return refuse(f"loop range {start}..{end} spans SMALL symbols only")
 
@@ -1925,7 +1932,7 @@ class LoopToMap(xf.MultiStateTransformation):
         b = sp.Wild("b", exclude=[itersym])
         data = mmlt.data
         # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
-        facts = SymbolResolver().facts_at(state if state is not None else self.loop)
+        facts = self.probe_resolver().facts_at(state if state is not None else self.loop)
 
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up
