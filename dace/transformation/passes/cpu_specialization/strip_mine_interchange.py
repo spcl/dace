@@ -700,6 +700,7 @@ def collect_tile_accesses(
     shape: Shape,
     reads: dict[str, list[list[Any]]],
     writes: dict[str, list[list[Any]]],
+    every_array: bool = False,
 ) -> bool:
     """Add ``statement``'s per-element accesses to ``reads`` / ``writes``, on the tiles' own axes.
 
@@ -715,12 +716,14 @@ def collect_tile_accesses(
     :param shape: the statement's nests.
     :param reads: ``name -> [index expression lists]``, extended in place.
     :param writes: ``name -> [index expression lists]``, extended in place.
+    :param every_array: record the arrays that never cross the statement's boundary too (its per-iteration
+                        scratch), which the legality test leaves out and the slicing of loop locals needs.
     :returns: ``False`` if something in the scope cannot be analysed.
     """
     local_reads: dict[str, list[list[Any]]] = {}
     local_writes: dict[str, list[list[Any]]] = {}
     state, entry = statement.state, statement.entry
-    allowed = boundary_names(state, entry, shape.exit)
+    allowed = set(state.sdfg.arrays) if every_array else boundary_names(state, entry, shape.exit)
     inner_cut = statement.targets[0].nested is not None
     if not collect_accesses(state, entry, allowed, local_reads, local_writes, nested=not inner_cut):
         return False
@@ -877,6 +880,72 @@ def collect_replicated_reads(
     return True
 
 
+def tile_slice(index_lists: list[list[Any]]) -> bool:
+    """Whether every access of ``index_lists`` names one tile's own slice: one dimension carries the SAME cut
+    position in all of them (:func:`same_index`), naming the cut axis and no other, so two tiles never touch one
+    element."""
+    cut = {str(axis_symbol(0))}
+    if not index_lists:
+        return False
+    first = index_lists[0]
+    for dim, index in enumerate(first):
+        named = {str(s) for s in getattr(index, "free_symbols", ()) if str(s).startswith(AXIS_PREFIX)}
+        if named != cut:
+            continue
+        if all(len(other) == len(first) and same_index(other[dim], index) for other in index_lists):
+            return True
+    return False
+
+
+def within_statements(region: LoopRegion, name: str, cut: "Cut") -> bool:
+    """Whether every access node of ``name`` in ``region`` is one a cut statement covers: inside one of its map
+    scopes, or beside one with every edge into its entry or out of its exit. What the statements read and write
+    there is recorded element by element in ``cut``; an access anywhere else is not."""
+    entries = {id(statement.entry) for statement in cut.statements}
+    for block in region.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        scope = block.scope_dict()
+        for node in block.data_nodes():
+            if node.data != name:
+                continue
+            outermost = scope[node]
+            while outermost is not None and scope[outermost] is not None:
+                outermost = scope[outermost]
+            if outermost is not None:
+                if id(outermost) not in entries:
+                    return False
+                continue
+            for edge in block.all_edges(node):
+                other = edge.dst if edge.src is node else edge.src
+                entry = block.entry_node(other) if isinstance(other, nodes.ExitNode) else other
+                if id(entry) not in entries:
+                    return False
+    return True
+
+
+def sliced_locals(loop: LoopRegion, sdfg: SDFG, cut: "Cut") -> set[str]:
+    """The loop-local arrays each tile touches only its own slice of, which may stay outside the tile nest: one
+    buffer for every tile instead of a whole-extent copy per tile call.
+
+    Every access of such an array is one the cut was proven on (:func:`within_statements`), nested SDFGs' element
+    accesses included, and all of them name one tile's slice (:func:`tile_slice`). A branch or a symbol every tile
+    derives itself names no slice.
+
+    :param loop: the loop region about to be tiled.
+    :param sdfg: the SDFG owning ``loop``.
+    :param cut: the approved cut.
+    :returns: their names.
+    """
+    sliced = set()
+    branch_reads = {name for name, _ in control_flow_reads(loop)}
+    for name in loop_local_transients(sdfg, loop) - branch_reads:
+        accesses = cut.reads.get(name, []) + cut.writes.get(name, [])
+        if name in cut.writes and tile_slice(accesses) and within_statements(loop, name, cut):
+            sliced.add(name)
+    return sliced
+
+
 def extent(dimension: tuple[Any, Any, Any]) -> Any:
     """The number of positions ``(begin, end, step)`` covers at unit step."""
     begin, end, _ = dimension
@@ -891,6 +960,10 @@ class Cut(NamedTuple):
     size: Any
     innermost: bool
     bytes_per_position: int
+    #: Every array's per-element accesses in the statements, ``name -> [index lists]`` on the tiles' axes
+    #: (:func:`collect_tile_accesses`), nested SDFGs' included under their enclosing names.
+    reads: dict[str, list[list[Any]]] = {}  # noqa: RUF012 -- read only
+    writes: dict[str, list[list[Any]]] = {}  # noqa: RUF012 -- read only
 
 
 def tileable_maps(loop: LoopRegion, sdfg: SDFG) -> Cut | None:
@@ -968,7 +1041,14 @@ def cut_along(
         if any(names_a_param(index, cut_axis) for indices in index_lists for index in indices)
     }
     footprint = sum(sdfg.arrays[name].dtype.bytes for name in touched if name in sdfg.arrays)
-    return Cut(statements, size, innermost, footprint)
+    # Every array's element accesses, the statements' own scratch included, for :func:`sliced_locals`; a scope
+    # that cannot be read leaves them empty, and so nothing sliced.
+    elements: tuple[dict[str, list[list[Any]]], dict[str, list[list[Any]]]] = ({}, {})
+    for shape, statement in zip(shapes, statements, strict=True):
+        if not collect_tile_accesses(statement, shape, *elements, every_array=True):
+            elements = ({}, {})
+            break
+    return Cut(statements, size, innermost, footprint, *elements)
 
 
 def same_extent(left: Any, right: Any) -> bool:
@@ -1096,6 +1176,17 @@ class StripMineInterchange(HoistParallelRegion):
         parent = loop.parent_graph
         before = {id(n) for n in map_entries_of(parent)}
         shared = {name for name in top_level_loop_locals(sdfg, loop) if sdfg.arrays[name].total_size != 1}
+        # A loop-local array each tile touches only its own slice of stays outside too, allocated once. Outlined,
+        # every tile call allocated a private copy of the WHOLE extent: CLOUDSC's (klon)-wide scratch, one set per
+        # thread, ran past the kernel's memory cap to use one tile's columns of it.
+        defined = loop_defined_symbols(loop)
+        shared |= {
+            name
+            for name in sliced_locals(loop, sdfg, cut)
+            if not isinstance(sdfg.arrays[name], data.View)
+            and sdfg.arrays[name].total_size != 1
+            and not {str(symbol) for symbol in sdfg.arrays[name].free_symbols} & defined
+        }
         outline(loop, sdfg, shared)
         team, state = new_team_map(parent, before)
         if team is None:

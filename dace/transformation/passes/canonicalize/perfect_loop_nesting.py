@@ -304,7 +304,7 @@ class PerfectLoopNesting(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+        uniq = UniqueLoopIterators()
         verdicts: dict[LoopHeader, bool] = {}
         rounds = 0
         for round_index in range(MAX_ROUNDS):

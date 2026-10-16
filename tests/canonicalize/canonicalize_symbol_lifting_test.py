@@ -5,8 +5,7 @@ The Python frontend promotes non-symbol expressions that appear in loop
 ranges (``range(0, N + 1)``), array subscript bounds (``a[0:K + 1]``) and
 similar positions to auxiliary symbols (``N_plus_1``, ``K_plus_1`` etc.,
 per the ``get_target_name`` heuristic in ``newast.py``). After
-canonicalization with ``UniqueLoopIterators(assign_loop_iterator_post_value
-= False)`` (the canonicalize-pipeline default), these promoted symbols
+canonicalization with ``UniqueLoopIterators``, these promoted symbols
 must:
 
 1. Stay declared (not be lost on the NSDFG boundaries that ``LoopToMap``
