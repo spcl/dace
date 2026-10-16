@@ -3232,7 +3232,9 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    declare_read_symbol(self.sdfg, str(sym), defined_type(self.defined[str(sym)]))
+                    # A promoted scalar's symbol is declared on the SDFG, not among the program's names
+                    if str(sym) not in self.sdfg.symbols:
+                        declare_read_symbol(self.sdfg, str(sym), defined_type(self.defined[str(sym)]))
                 target_desc = self.sdfg.arrays.get(target_name)
                 if (
                     op is None
@@ -3508,7 +3510,9 @@ class ProgramVisitor(ExtNodeVisitor):
             op_subset = subsets.Range([(0, 0, 1)])
             if symbolic.issymbolic(operand):
                 for sym in operand.free_symbols:
-                    declare_read_symbol(self.sdfg, str(sym), defined_type(self.defined[str(sym)]))
+                    # A promoted scalar's symbol is declared on the SDFG, not among the program's names
+                    if str(sym) not in self.sdfg.symbols:
+                        declare_read_symbol(self.sdfg, str(sym), defined_type(self.defined[str(sym)]))
                 operand = symbolic.symstr(operand)
         proven = self.proven_symbol_values()
         if proven:
