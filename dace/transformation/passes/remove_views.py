@@ -44,10 +44,14 @@ import functools
 import operator
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, config, data as dt, dtypes, properties, subsets, symbolic
+from dace import SDFG, Memlet, SDFGState, config, dtypes, properties, subsets, symbolic
+from dace import data as dt
 from dace.frontend.python import astutils
-from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 _PASS = 'RemoveViews'
 _DEBUGPRINT = config.Config.get('debugprint') in (True, '1', 'true', 'yes')
@@ -59,11 +63,28 @@ def _fmt_desc(desc, name):
     return f'{name}: {kind}{list(desc.shape)} strides={list(desc.strides)}'
 
 
+def _ordering_side(
+    state: SDFGState,
+    view_node: nd.AccessNode,
+    view_edge: gr.MultiConnectorEdge,
+    is_viewed_src: bool,
+) -> tuple[list[gr.MultiConnectorEdge], list[gr.MultiConnectorEdge]]:
+    """Splits ``view_node``'s non-view edges by what :meth:`RemoveViews._reconnect_edges` does.
+
+    :return: ``(ordering, carriers)``. ``carriers`` are the edges the splice re-homes onto the
+             view edge's neighbour; ``ordering`` are the edges on the opposite side, which carry
+             no data (empty memlets are ordering constraints) and are re-homed onto the carriers.
+    """
+    in_edges = [e for e in state.in_edges(view_node) if e is not view_edge]
+    out_edges = [e for e in state.out_edges(view_node) if e is not view_edge]
+    return (in_edges, out_edges) if is_viewed_src else (out_edges, in_edges)
+
+
 def _classify_view(
     state: SDFGState,
     view_node: nd.AccessNode,
     sdfg: SDFG,
-) -> Optional[Tuple[nd.AccessNode, gr.MultiConnectorEdge, subsets.Range, bool]]:
+) -> tuple[nd.AccessNode, gr.MultiConnectorEdge, subsets.Range, bool] | None:
     """
     Classifies a View access node.
 
@@ -102,10 +123,19 @@ def _classify_view(
         is_viewed_src = False
 
     viewed_desc = sdfg.arrays[viewed_node.data]
-    assert viewed_desc.dtype == desc.dtype, "View and array must have the same dtype"
+    if viewed_desc.dtype != desc.dtype:
+        return None  # a reinterpreting view (mixed_precision_ir) has no element-for-element splice
 
     if viewed_subset is None:
         viewed_subset = subsets.Range.from_array(viewed_desc)
+
+    # An empty memlet is an ORDERING edge. On the side the splice ignores (in-edges of a read
+    # view, out-edges of a write view) it is re-homed onto the carriers -- so a view with no
+    # carrier has nowhere to put the constraint, and a non-empty edge there is not an ordering
+    # edge at all. Refuse both rather than drop the constraint with the node.
+    ordering, carriers = _ordering_side(state, view_node, view_edge, is_viewed_src)
+    if ordering and (not carriers or any(not e.data.is_empty() for e in ordering)):
+        return None
 
     return viewed_node, view_edge, viewed_subset, is_viewed_src
 
@@ -134,7 +164,7 @@ def _derive_mapping_from_subset(
     view_data_dims = [d for d, s in enumerate(view_shape) if s != 1]
     if len(view_data_dims) != len(array_data_dims):
         return None
-    return {vd: ad for vd, ad in zip(view_data_dims, array_data_dims)}
+    return dict(zip(view_data_dims, array_data_dims))
 
 
 def _compute_rewritten_subset(
@@ -664,7 +694,7 @@ class RemoveViews(ppl.Pass):
                 else:
                     self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src)
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1)
-                    self._reconnect_edges(state, vnode, viewed_node, view_edge, is_viewed_src)
+                    self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
                     self._cleanup_isolated_viewed_node(state, viewed_node)
                     removed.add(vnode.data)
@@ -678,7 +708,7 @@ class RemoveViews(ppl.Pass):
                 print(f'[{_PASS}]     strategy 1: map_view_to_array'
                       f' returned None')
 
-            # --- Strategy 1b: derive mapping from view edge subset ----------
+            # Strategy 1b: derive mapping from view edge subset
             mapping_1b = _derive_mapping_from_subset(viewed_subset, vdesc.shape)
             if mapping_1b is not None:
                 if _DEBUGPRINT:
@@ -702,7 +732,7 @@ class RemoveViews(ppl.Pass):
                     self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping_1b,
                                           is_viewed_src)
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1b)
-                    self._reconnect_edges(state, vnode, viewed_node, view_edge, is_viewed_src)
+                    self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
                     self._cleanup_isolated_viewed_node(state, viewed_node)
                     removed.add(vnode.data)
@@ -749,12 +779,12 @@ class RemoveViews(ppl.Pass):
     def _rewrite_memlets(self, state, view_node, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src):
         sdfg = state.parent
         full_view_range = subsets.Range.from_array(sdfg.arrays[view_node.data])
-        non_view_edges = (list(state.out_edges(view_node)) if is_viewed_src else list(state.in_edges(view_node)))
+        non_view_edges = list(state.out_edges(view_node)) if is_viewed_src else list(state.in_edges(view_node))
         for edge in non_view_edges:
             for tree_edge in state.memlet_tree(edge):
                 m = tree_edge.data
                 if m.data == view_node.data:
-                    old = f'{m.data}[{m.subset}]'
+                    old = f"{m.data}[{m.subset}]"
                     m.data = viewed_node.data
                     if m.subset is not None and m.subset == full_view_range:
                         # Full view range: copy the view edge subset
@@ -765,63 +795,85 @@ class RemoveViews(ppl.Pass):
                     else:
                         m.subset = copy.deepcopy(viewed_subset)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet: {old}'
-                              f' -> {m.data}[{m.subset}]')
+                        print(f"[{_PASS}]       memlet: {old} -> {m.data}[{m.subset}]")
                 elif m.other_subset is not None:
-                    old_other = f'other_subset={m.other_subset}'
+                    old_other = f"other_subset={m.other_subset}"
                     m.other_subset = _compute_rewritten_subset(mapping, viewed_subset, m.other_subset)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet {m.data}:'
-                              f' {old_other}'
-                              f' -> other_subset={m.other_subset}')
-                elif tree_edge is edge:
-                    # Memlet expressed in the OTHER array's space with an
-                    # implicit (None) view-side subset = the full view.
-                    # Materialize it in array space; keeping None would drop
-                    # the view's offset into the viewed array on reconnection
-                    # (covariance's ``cov_0_0[0:M-i] = __return[i, i:M]``
-                    # mirror-copy silently became a rank-mismatched
-                    # ``__return[0:M-i]`` slice).
-                    m.other_subset = _compute_rewritten_subset(mapping, viewed_subset, full_view_range)
+                        print(f"[{_PASS}]       memlet {m.data}: {old_other} -> other_subset={m.other_subset}")
+                elif m.data is not None:
+                    # A copy keyed to the OTHER endpoint leaves this side UNSPELLED, meaning the
+                    # view's full range -- so the view's own indices live nowhere else on the edge.
+                    # Both branches above miss it, and splicing the view out then rewires the edge
+                    # to the viewed array with that side still unspelled: a 2-D view of A[:, :, K-1]
+                    # silently becomes a 2-D read of the 3-D A, losing which plane is copied.
+                    # Spell it, exactly as the ``m.subset is None`` case above does for the near side.
+                    # ``m.data is None`` is an EMPTY memlet -- an ordering edge that moves no bytes
+                    # and must keep both sides unspelled.
+                    m.other_subset = copy.deepcopy(viewed_subset)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet {m.data}:'
-                              f' other_subset=None'
-                              f' -> other_subset={m.other_subset}')
+                        print(f"[{_PASS}]       memlet {m.data}: other_subset=None -> other_subset={m.other_subset}")
 
-    def _reconnect_edges(self, state, view_node, viewed_node, view_edge, is_viewed_src):
-        # Reconnect to the IMMEDIATE endpoint of the view edge. This is the
-        # viewed AccessNode in the common case, but when the view edge crosses
-        # a map scope boundary (MapEntry/MapExit ``views`` connector), the
-        # scope node must stay on the path -- reconnecting to the distant
-        # viewed AccessNode would bypass the scope node, orphaning it
-        # (MapExit with in_degree 0 -> "Leftover nodes in queue" in
-        # scope_dict()).
+    def _reconnect_edges(self, state, view_node, view_edge, is_viewed_src):
+        """Splice ``view_node`` out of its own edges, then drop the defining edge.
+
+        The replacement endpoint is the view edge's IMMEDIATE neighbour, never the viewed
+        AccessNode ``_classify_view`` resolved: when the view is staged through a Map
+        (``A -> MapEntry -> V``, ``V -> MapExit -> A``) the memlet path's far end is the outer
+        AccessNode while the connector on ``view_edge`` belongs to the scope node. Attaching that
+        connector to the outer node bypasses the scope, mints a bogus ``IN_``/``OUT_`` connector on
+        an AccessNode, and leaves the scope node's own connector pair with no edge -- the
+        "Dangling in-connector" validation failure. For a view edge that really does start (or end)
+        at the viewed AccessNode the neighbour IS that node, so the direct case is unchanged.
+
+        The opposite side carries only ordering edges (empty memlets). ``X -> V`` on a read view
+        means "X before the view's readers", so that constraint is re-homed onto the readers --
+        NOT onto the view edge's neighbour ``A``, which would mean "X before A" and is strictly
+        stronger. ``_classify_view`` has already refused the case with no carrier to hold it.
+        """
+        ordering, carriers = _ordering_side(state, view_node, view_edge, is_viewed_src)
+        far_ends = [e.dst if is_viewed_src else e.src for e in carriers]
         if is_viewed_src:
-            neighbor, neighbor_conn = view_edge.src, view_edge.src_conn
             for e in list(state.out_edges(view_node)):
                 if e is view_edge:
                     continue
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]       reconnect:'
-                          f' {view_node.data}:{e.src_conn}'
-                          f' -> {e.dst}:{e.dst_conn}'
-                          f'  =>  {neighbor}:{neighbor_conn}'
-                          f' -> {e.dst}:{e.dst_conn}')
+                    print(
+                        f"[{_PASS}]       reconnect:"
+                        f" {view_node.data}:{e.src_conn}"
+                        f" -> {e.dst}:{e.dst_conn}"
+                        f"  =>  {view_edge.src}:{view_edge.src_conn}"
+                        f" -> {e.dst}:{e.dst_conn}"
+                    )
                 state.remove_edge(e)
-                state.add_edge(neighbor, neighbor_conn, e.dst, e.dst_conn, e.data)
+                state.add_edge(view_edge.src, view_edge.src_conn, e.dst, e.dst_conn, e.data)
         else:
-            neighbor, neighbor_conn = view_edge.dst, view_edge.dst_conn
             for e in list(state.in_edges(view_node)):
                 if e is view_edge:
                     continue
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]       reconnect:'
-                          f' {e.src}:{e.src_conn}'
-                          f' -> {view_node.data}:{e.dst_conn}'
-                          f'  =>  {e.src}:{e.src_conn}'
-                          f' -> {neighbor}:{neighbor_conn}')
+                    print(
+                        f"[{_PASS}]       reconnect:"
+                        f" {e.src}:{e.src_conn}"
+                        f" -> {view_node.data}:{e.dst_conn}"
+                        f"  =>  {e.src}:{e.src_conn}"
+                        f" -> {view_edge.dst}:{view_edge.dst_conn}"
+                    )
                 state.remove_edge(e)
-                state.add_edge(e.src, e.src_conn, neighbor, neighbor_conn, e.data)
+                state.add_edge(e.src, e.src_conn, view_edge.dst, view_edge.dst_conn, e.data)
+        # ``X -> V -> C`` already implied X before C, so the re-homed ``X -> C`` adds no
+        # reachability and cannot close a cycle the graph did not already have.
+        for oe in ordering:
+            near = oe.src if is_viewed_src else oe.dst
+            for far in far_ends:
+                if far is near:
+                    continue
+                u, v = (near, far) if is_viewed_src else (far, near)
+                if not state.edges_between(u, v):
+                    state.add_nedge(u, v, Memlet())
+                    if _DEBUGPRINT:
+                        print(f"[{_PASS}]       ordering edge re-homed: {u} -> {v}")
+            state.remove_edge(oe)
         if view_edge in state.edges():
             state.remove_edge(view_edge)
 
@@ -1039,8 +1091,8 @@ class RemoveViews(ppl.Pass):
         # -- apply: rewrite interstate edge assignments & conditions --------
         self._rewrite_interstate_edges(sdfg, vnode.data, _rw_lin)
 
-        # -- reconnect and remove -------------------------------------------
-        self._reconnect_edges(state, vnode, viewed_node, view_edge, is_viewed_src)
+        # reconnect and remove
+        self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
         state.remove_node(vnode)
         self._cleanup_isolated_viewed_node(state, viewed_node)
         if _DEBUGPRINT:

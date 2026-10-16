@@ -1,29 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Regression tests for the ``dace.symbolic.simplify`` ``lru_cache`` type-conflation
-bug.
+"""Regression coverage for bool/integer cache collisions in symbolic simplification.
 
-``simplify`` is wrapped in :func:`functools.lru_cache`, which keys entries by
-``hash``/``==``. Python conflates booleans with integers
-(``hash(True) == hash(1)`` and ``True == sympy.Integer(1)``), so an *untyped*
-cache stores ``simplify(True)`` and ``simplify(sympy.Integer(1))`` under the
-same entry. Once ``simplify(True)`` (returning ``sympy.true``) is cached, a
-later ``simplify(sympy.Integer(1))`` returns that cached ``BooleanTrue`` instead
-of the integer ``1`` -- and vice versa. The same holds for ``False``/``0``.
-
-This poisoning is process-global and order dependent: an unrelated caller that
-fed a plain ``bool`` to ``simplify`` earlier (e.g. comparing a concrete shape,
-``simplify(s == 1)``) would later crash memlet-volume propagation with
-``TypeError: Property volume must be a literal or symbolic expression`` when the
-propagated volume happened to be ``sympy.Integer(1)``.
-
-The fix is to construct the cache with ``typed=True`` so arguments of different
-types (``bool`` vs ``sympy.Integer``) are cached under distinct entries.
-
-These tests are written to be **branch-agnostic**: they assert SymPy-level
-semantics only (``simplify`` returns a SymPy object), so they pass on the fixed
-code and fail/raise on the unfixed code, independent of any caller-side
-workaround. Every test clears the cache first to stay order independent.
+Python booleans and SymPy integers can share hash/equality keys. Simplifying one
+must not change the result type of the other, including during memlet propagation.
+Extended caches proofs in ``simplify_under``; older branches cache ``simplify``.
 """
 
 import sympy
@@ -31,10 +11,12 @@ from sympy.logic.boolalg import Boolean
 
 import dace
 
+_SIMPLIFY_CACHE = getattr(dace.symbolic, 'simplify_under', dace.symbolic.simplify)
+
 
 def _fresh_cache() -> None:
     """Clear the ``simplify`` cache so each test is order independent."""
-    dace.symbolic.simplify.cache_clear()
+    _SIMPLIFY_CACHE.cache_clear()
 
 
 def test_simplify_bool_does_not_poison_integer_one():
@@ -90,9 +72,9 @@ def test_simplify_symbolic_expressions_still_cache():
     n = sympy.Symbol('N')
     assert dace.symbolic.simplify(n + 1 - n) == 1
     assert dace.symbolic.simplify((n**2 - 1) / (n - 1)) == n + 1
-    # Same expression again: served from the cache with the same result.
-    assert dace.symbolic.simplify(n + 1 - n) == 1
-    assert dace.symbolic.simplify.cache_info().hits >= 1
+    # Repeat an expression that reaches the proof cache, rather than a fast path.
+    assert dace.symbolic.simplify((n**2 - 1) / (n - 1)) == n + 1
+    assert _SIMPLIFY_CACHE.cache_info().hits >= 1
 
 
 def test_volume_propagation_after_bool_simplify():

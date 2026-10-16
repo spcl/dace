@@ -220,7 +220,7 @@ class InsertExplicitCopies(ppl.Pass):
         outer_side_memlet.wcr = outer_memlet.wcr
         inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
-        label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
+        label = f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}"
         libnode = CopyLibraryNode(name=label)
         state.add_node(libnode)
         if stage_in:

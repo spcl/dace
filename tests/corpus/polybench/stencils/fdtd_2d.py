@@ -88,6 +88,7 @@ def fdtd2d(ex: datatype[NX, NY], ey: datatype[NX, NY], hz: datatype[NX, NY], _fi
             hzout = hzin - datatype(0.7) * (ex1 - ex2 + ey1 - ey2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(0, 'ex'), (1, 'ey'), (2, 'hz')], init_array, fdtd2d)
+
+    polybench.main(sizes, args, [(0, "ex"), (1, "ey"), (2, "hz")], init_array, fdtd2d)

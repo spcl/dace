@@ -66,6 +66,7 @@ def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
                 cov_ji_out = cov_ij_out
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 'cov')], init_array, covariance)
+
+    polybench.main(sizes, args, [(1, "cov")], init_array, covariance)

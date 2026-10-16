@@ -4,8 +4,6 @@ import collections
 import copy
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
-import numpy as np
-
 import dace
 from dace import data, dtypes
 from dace.cli import progress
@@ -922,7 +920,7 @@ class DaCePythonCodeGenerator(object):
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
-        global_symbols = copy.deepcopy(sdfg.symbols)
+        global_symbols = copy.deepcopy(dict(sdfg.symbols))
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():

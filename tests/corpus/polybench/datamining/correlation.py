@@ -94,6 +94,7 @@ def correlation(data: datatype[N, M], corr: datatype[M, M], mean: datatype[M], s
             corrout = corrin
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 'corr')], init_array, correlation)
+
+    polybench.main(sizes, args, [(1, "corr")], init_array, correlation)
