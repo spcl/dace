@@ -195,7 +195,7 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
 
         def stage_steps(sign: int, libnode: nodes.LibraryNode, tables: dict) -> list:
             names = {key: node.data for key, node in tables.items()}
-            factor = stockham.factor_code(libnode.factor, dtype)
+            factor = None if libnode.factor == 1 else libnode.factor
             return [(stage, sign, names, factor if s == len(stages) - 1 else None) for s, stage in enumerate(stages)]
 
         steps = stage_steps(-1, forward, forward_tables) + [None] + stage_steps(1, match.inverse, inverse_tables)
