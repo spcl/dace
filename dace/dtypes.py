@@ -95,25 +95,23 @@ class ScheduleType(ExtensibleAttributeEnum):
     GPU_Device = auto()  #: Kernel
     GPU_ThreadBlock = auto()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
-    GPU_Persistent = auto()  #: Kernel whose thread blocks stay resident and loop over the work
+    GPU_Persistent = auto()
 
     Snitch = auto()
     Snitch_Multicore = auto()
 
-    # GPU schedules without code generation yet: a map using one fails in the GPU code generator, and schedule
-    # inference never picks one
-    GPU_Chiplet = auto()  #: The thread blocks of one chiplet (AMD XCD), explicit rather than a swizzle of the grid
-    GPU_ThreadBlockCluster = auto()  #: Thread-block cluster (NVIDIA Hopper and later)
-    GPU_Warp = auto()  #: Warp-level code
+    # No code generation yet
+    GPU_Chiplet = auto()  #: AMD XCD
+    GPU_ThreadBlockCluster = auto()
+    GPU_Warp = auto()
 
 
-# Schedules that launch a kernel
 GPU_KERNEL_SCHEDULES = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent,
 ]
 
-# Schedules that distribute work over the threads of a running kernel, coarsest first
+# Coarsest first
 GPU_THREAD_SCHEDULES = [
     ScheduleType.GPU_ThreadBlockCluster,
     ScheduleType.GPU_ThreadBlock,
@@ -121,16 +119,12 @@ GPU_THREAD_SCHEDULES = [
     ScheduleType.GPU_Warp,
 ]
 
-# GPU schedules the code generator does not implement yet
 GPU_SCHEDULES_WITHOUT_CODEGEN = [
     ScheduleType.GPU_Chiplet,
     ScheduleType.GPU_ThreadBlockCluster,
     ScheduleType.GPU_Warp,
 ]
 
-
-# Every GPU schedule: the kernel schedules, the chiplet level between a kernel and its thread blocks, and the thread
-# schedules
 GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
 
 # A subset of CPU schedule types
