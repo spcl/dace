@@ -49,6 +49,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 
 N = dace.symbol("N")
+K = dace.symbol("K")
 
 #: Two lines, because a hint names a trade per device and the emitter has to keep them apart.
 MAP_HINT = "traded a tiled map for a flat one.\nCPU: the tiles are worth trying."
@@ -607,6 +608,54 @@ def test_a_triangular_solve_is_proven_through_its_row_copy():
     assert re.match(r"sequential -- carried: RAW on x\[0:\w+\] \(witness: N=\d+, \w+=0 and \w+=1\)$", hints[0]), hints
 
 
+def test_a_guarded_loop_names_its_guard_on_both_arms():
+    """s171: ``a[i*inc]`` is injective, so the loop is parallel, exactly when ``inc != 0``. The parallel arm says it
+    is parallel under that guard, and the sequential arm says it is the fallback for when the guard fails."""
+    inc = dace.symbol("inc")
+
+    @dace.program
+    def s171(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            a[i * inc] = a[i * inc] + b[i]
+
+    sdfg = s171.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    maps = [
+        n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
+    ]
+    loops = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
+    assert any(re.match(r"parallel -- under guard: .*inc.*", line) for line in maps), maps
+    assert any(re.match(r"sequential -- fallback arm, runs when not \(.*inc.*\)$", line) for line in loops), loops
+
+
+def test_a_map_resting_on_an_entry_trap_names_the_assumption():
+    """``a[i] = a[i + K] + b[i]`` is parallel after the snapshot only for ``K >= 0``, which an entry trap checks. The
+    map's label names that assumption, so a reader sees what the independence rests on."""
+
+    @dace.program
+    def shift_sym(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - K):
+            a[i] = a[i + K] + b[i]
+
+    sdfg = shift_sym.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    maps = [
+        n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
+    ]
+    assert any(
+        line.startswith("parallel -- the iterations are independent; assumes ")
+        and "K >= 0" in line
+        and line.endswith(", trapped at entry")
+        for line in maps
+    ), maps
+
+
+def test_a_map_resting_on_no_trap_assumes_nothing():
+    """A trap on a symbol the map never names is not part of its evidence."""
+    rendered = comment_lines(named(scaling_sdfg("cpf_kind_no_assumption")))
+    assert "// " + PARALLEL.splitlines()[0] in rendered
+
+
 if __name__ == "__main__":
     test_the_rendering_states_which_verdicts_are_settled_and_which_are_open()
     test_a_map_hint_is_rendered_one_comment_line_per_line()
@@ -640,3 +689,6 @@ if __name__ == "__main__":
     test_a_distance_set_by_an_argument_stays_unsure()
     test_a_conflict_only_under_a_branch_is_not_witnessed()
     test_a_triangular_solve_is_proven_through_its_row_copy()
+    test_a_guarded_loop_names_its_guard_on_both_arms()
+    test_a_map_resting_on_an_entry_trap_names_the_assumption()
+    test_a_map_resting_on_no_trap_assumes_nothing()

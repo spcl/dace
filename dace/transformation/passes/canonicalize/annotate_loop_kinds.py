@@ -602,6 +602,50 @@ def refusal_matches_a_carried_symbol(reason: str) -> bool:
     return any(pattern in reason.lower() for pattern in CARRIED_SYMBOL_PATTERNS)
 
 
+#: Appended to a parallel map's class line when its independence rests on entry traps.
+ASSUMES = "; assumes {predicates}, trapped at entry"
+
+#: ``if <violation>:`` opening every abort guard's code (see ``tasklet_utils.add_abort_guard``).
+GUARD_HEAD = re.compile(r"^if (.*):\s*$", re.MULTILINE)
+
+
+def entry_traps(sdfg: SDFG) -> list[tuple[str, set[str]]]:
+    """``(predicate, names)`` for every abort guard in ``sdfg``: what the program assumes, and the symbols it names."""
+    from dace.sdfg import tasklet_utils
+
+    traps = []
+    for node, _ in sdfg.all_nodes_recursive():
+        if not tasklet_utils.is_abort_guard(node):
+            continue
+        head = GUARD_HEAD.search(node.code.as_string)
+        if head is None:
+            continue
+        violation = head.group(1).strip()
+        held = violation[len("not ") :].strip() if violation.startswith("not ") else f"not ({violation})"
+        names = {s.name for s in as_basic(symbolic.pystr_to_symbolic(held)).free_symbols}
+        traps.append((str(symbolic.pystr_to_symbolic(held)), names))
+    return traps
+
+
+def map_names(state: SDFGState, entry: nodes.MapEntry) -> set[str]:
+    """The symbols the element accesses in ``entry``'s scope name: what independence can rest on. A bound only sets
+    how many iterations there are, so the range is left out."""
+    names: set[str] = set()
+    for edge in state.scope_subgraph(entry).edges():
+        if isinstance(edge.src, nodes.Tasklet) or isinstance(edge.dst, nodes.Tasklet):
+            names |= {str(s) for s in edge.data.free_symbols}
+    return names
+
+
+def parallel_hint(state: SDFGState, entry: nodes.MapEntry, traps: list[tuple[str, set[str]]]) -> str:
+    """``PARALLEL``, naming the entry traps whose symbols the map's element accesses use."""
+    relied = sorted({held for held, names in traps if names & map_names(state, entry)})
+    if not relied:
+        return PARALLEL
+    first, rest = PARALLEL.split("\n", 1)
+    return f"{first}{ASSUMES.format(predicates=' and '.join(relied))}\n{rest}"
+
+
 @xf.explicit_cf_compatible
 class AnnotateLoopKinds(ppl.Pass):
     """Open every Map's and LoopRegion's ``specialization_hint`` with its class.
@@ -624,6 +668,7 @@ class AnnotateLoopKinds(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
         labelled = 0
+        traps = entry_traps(sdfg)
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, (nodes.MapEntry, LoopRegion)):
                 continue
@@ -632,7 +677,7 @@ class AnnotateLoopKinds(ppl.Pass):
                 continue
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
-            kind = PARALLEL if isinstance(node, nodes.MapEntry) else loop_hint(node)
+            kind = parallel_hint(parent_graph, node, traps) if isinstance(node, nodes.MapEntry) else loop_hint(node)
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
         return labelled or None
