@@ -170,19 +170,9 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         if not gpu and len(axes) == 1 and self._pointwise_along(state, match, axes[0]):
             padding = stockham.local_padding(stages)
 
-        # Twiddle factor tables, allocated once and computed by maps in this state before the kernel reads them (on
-        # the GPU), or once in the first call (on the CPU)
-        persistent = dtypes.AllocationLifetime.Persistent
-        if gpu:
-            storage, schedule = dtypes.StorageType.GPU_Global, dtypes.ScheduleType.GPU_Device
-        else:
-            storage, schedule = dtypes.StorageType.CPU_Heap, dtypes.ScheduleType.Default
-        forward_tables = stockham.add_twiddle_tables(
-            sdfg, state, stages, -1, dtype, storage, persistent, schedule, "__fft_block_tw"
-        )
-        inverse_tables = stockham.add_twiddle_tables(
-            sdfg, state, stages, 1, dtype, storage, persistent, schedule, "__ifft_block_tw"
-        )
+        # Twiddle factor tables, from the program's cache
+        forward_tables = stockham.add_twiddle_tables(state, stages, -1, dtype, gpu, "__fft_block_tw")
+        inverse_tables = stockham.add_twiddle_tables(state, stages, 1, dtype, gpu, "__ifft_block_tw")
 
         # The nested SDFG of one thread block: one state per stage and one for the map
         other_inputs = {}

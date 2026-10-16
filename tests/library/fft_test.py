@@ -194,6 +194,34 @@ def test_stockham_nd():
         assert np.allclose(result, reference)
 
 
+def test_stockham_groups():
+    """
+    Axes whose transforms do not fit into the buffers of a map iteration are computed in groups of stages, each one
+    map over views of the arrays, with the twiddle factors of the group applied at its start.
+    """
+    assert stockham.group_lengths(2**16, 512) == [256, 256]
+    assert stockham.group_lengths(2**20, 512) == [128, 128, 64]
+    assert stockham.group_lengths(2 * 1031, 512) is None
+    assert stockham.axis_groups((2**16,), 0, dace.complex128, {}) == [(1, 256, 256), (256, 256, 1)]
+    assert stockham.axis_groups((4096,), 0, dace.complex128, {}) == [(1, 64, 64), (64, 64, 1)]
+
+    @dace.program
+    def tester(x: dace.complex128[2**16], c: dace.complex64[4096, 16], r: dace.float64[4, 3 * 2**12]):
+        return np.fft.ifft(x, norm="ortho"), np.fft.fft(c, axis=0), np.fft.fft(r)
+
+    sdfg = tester.to_sdfg()
+    sdfg.expand_library_nodes()
+    labels = [node.label for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.MapEntry)]
+    assert sum(re.fullmatch(r"stockham_group_\d+", label) is not None for label in labels) == 6
+
+    x, c = _random_complex(2**16), _random_complex((4096, 16), np.complex64)
+    r = np.random.default_rng(0).random((4, 3 * 2**12))
+    results = tester(x, c, r)
+    assert np.allclose(results[0], np.fft.ifft(x, norm="ortho"))
+    assert np.allclose(results[1], np.fft.fft(c, axis=0), rtol=1e-4, atol=1e-3)
+    assert np.allclose(results[2], np.fft.fft(r))
+
+
 def test_stockham_symbolic_batch():
     """
     A symbolic batch dimension keeps the buffers allocated per call, so calls with different sizes are correct.
@@ -706,6 +734,7 @@ if __name__ == "__main__":
     test_stockham_complex64()
     test_stockham_r2c()
     test_stockham_nd()
+    test_stockham_groups()
     test_stockham_symbolic_batch()
     test_stockham_inside_map()
     test_stockham_dispatch()

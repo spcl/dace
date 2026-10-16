@@ -8,14 +8,15 @@ the radices of the previous stages and ``M = N / (L * R_s)``. Each map iteration
 ``(b * R_s + a) * M + k``, multiplies them by the twiddle factors ``exp(+-2 pi i a b / (L * R_s))``, computes a
 radix-``R_s`` DFT in registers, and writes the results to ``(c * L + b) * M + k`` in another buffer. All stages of all
 transformed axes are chained through two ping-pong buffers in one state, so the expansion can be inlined. The
-twiddle factors of each stage are in a ``[R - 1, L]`` table, which a map in the same state computes in every call, or
-a tasklet in the first call of the program for a persistent table in host memory.
+twiddle factors of each stage are in a ``[R - 1, L]`` table, which a cache in the program state computes when the
+program first requests it and shares between all transforms that need it (see ``dace_stockham.h`` and ``add_table``).
 
 On the CPU, a tasklet computes several consecutive iterations of a stage in a SIMD loop (with interleaved complex AVX
 code for complex128 if the compiler targets AVX and FMA). All stages of an axis whose transforms fit into
 ``LOCAL_BYTES`` are one map over the other dimensions instead, in which each iteration transforms a row (or a block of
 columns) in buffers on the stack (see ``add_local_axis_kernel``), so that the array is read and written once rather
-than once per stage. On the GPU, the stage maps compute one butterfly per thread and fuse with elementwise maps.
+than once per stage. Longer axes are split into groups of stages that fit (see ``group_lengths``), each of which is
+one such map. On the GPU, the stage maps compute one butterfly per thread and fuse with elementwise maps.
 
 Prime factors without a generated butterfly (see ``PRIME_RADICES``) use general-radix stages, in which each map
 iteration computes one output ``j = c * L + b`` as the sum over ``a`` of the inputs times ``exp(+-2 pi i a j / (L *
@@ -32,10 +33,10 @@ transformation uses it to fuse an FFT, a computation in the frequency domain, an
 
 import copy
 import dataclasses
-import itertools
 import math
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, properties, symbolic
+from dace.libraries.fft.environments import stockham as stockham_environment
 from dace.sdfg import propagation
 
 #: Radices that butterflies are generated for. Powers of two are split recursively inside the butterfly and odd
@@ -50,11 +51,14 @@ SEQUENTIAL_SIZE_THRESHOLD = 2048
 #: Numbers of consecutive iterations that a CPU tasklet may compute in a SIMD loop, in order of preference.
 VECTOR_LANES = (8, 4, 2)
 
-#: Storage types of host memory, in which persistent twiddle factor tables are computed once.
+#: Storage types of host memory.
 HOST_STORAGES = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
 
 #: Stack memory of the two buffers in which a CPU map iteration may transform an axis (see ``local_lanes``).
 LOCAL_BYTES = 128 * 1024
+
+#: Number of adjacent transforms that a CPU map iteration of a group of stages computes (see ``axis_groups``).
+GROUP_LANES = 8
 
 #: Thread block size of the GPU kernels (64-256 threads perform the same on an RTX 3070).
 GPU_BLOCK_SIZE = [128, 1, 1]
@@ -64,10 +68,6 @@ BLOCK_LOCAL_MAX_THREADS = 256
 
 #: Shared memory that a block-local transform may use for its two buffers: the static shared memory limit of CUDA.
 BLOCK_LOCAL_SHARED_BYTES = 48 * 1024
-
-
-#: Unique identifiers of the flags of twiddle factor tables that are computed once.
-_twiddle_flag_ids = itertools.count()
 
 
 def factorize(n: int) -> list[int] | None:
@@ -460,58 +460,15 @@ def uses_avx(input_is_complex: bool, out_dtype: dtypes.typeclass, vector: Vector
     return vector is not None and input_is_complex and out_dtype == dtypes.complex128 and vector.length % 2 == 0
 
 
-def twiddle_code(radix: int, span: int, sign: int, out_dtype: dtypes.typeclass) -> str:
+def twiddle_loads(radix: int, span: int, b: str, dtype: dtypes.typeclass, consecutive: bool) -> str:
     """
-    Generates the C++ tasklet code that computes the twiddle factors ``w^a = exp(sign * 2 pi i a __b / (L * R))`` of a
-    stage into ``_w<a>`` for ``a`` in ``[1, R)``. Only ``w`` is evaluated with trigonometric functions; its powers are
-    computed by repeated multiplication. All computations are in double precision for all output types.
+    Generates C++ code that reads the twiddle factors ``w^a`` (for ``a`` in ``[1, R)``) of butterfly ``b`` of a stage
+    from its table ``_tw`` (see ``StockhamTwiddles::Stage`` in ``dace_stockham.h``) into ``_w<a>``, or with
+    ``consecutive``, points ``_w<a>`` to those of consecutive butterflies.
     """
-    step = repr(sign * 2 * math.pi / (span * radix))
-    lines = [
-        f"const double __angle = double(__b) * {step};",
-        "const double __c1 = cos(__angle), __s1 = sin(__angle);",
-        "double __c = __c1, __s = __s1;",
-        f"_w1 = {out_dtype.ctype}(__c, __s);",
-    ]
-    for a in range(2, radix):
-        lines += [
-            "{ const double __cn = __c * __c1 - __s * __s1; __s = __c * __s1 + __s * __c1; __c = __cn; }",
-            f"_w{a} = {out_dtype.ctype}(__c, __s);",
-        ]
-    return "\n".join(lines)
-
-
-def twiddle_table_code(radix: int, span: int, sign: int, dtype: dtypes.typeclass) -> str:
-    """
-    Generates C++ code that computes a whole table of a stage into ``_w``: the twiddle factors of a stage (see
-    ``twiddle_code``) as a ``[R - 1, L]`` table, or the roots of unity of a general-radix stage as a ``[L * R]`` table.
-    """
-    step = repr(sign * 2 * math.pi / (span * radix))
-    if is_general_radix(radix):
-        return "\n".join(
-            [
-                f"for (long long __t = 0; __t < {span * radix}; ++__t) {{",
-                f"    const double __angle = double(__t) * {step};",
-                f"    _w[__t] = {dtype.ctype}(cos(__angle), sin(__angle));",
-                "}",
-            ]
-        )
-    return "\n".join(
-        [
-            f"for (long long __b = 0; __b < {span}; ++__b) {{",
-            f"    const double __angle = double(__b) * {step};",
-            "    const double __c1 = cos(__angle), __s1 = sin(__angle);",
-            "    double __c = __c1, __s = __s1;",
-            f"    _w[__b] = {dtype.ctype}(__c, __s);",
-            f"    for (int __a = 2; __a < {radix}; ++__a) {{",
-            "        const double __cn = __c * __c1 - __s * __s1;",
-            "        __s = __c * __s1 + __s * __c1;",
-            "        __c = __cn;",
-            f"        _w[(__a - 1) * {span} + __b] = {dtype.ctype}(__c, __s);",
-            "    }",
-            "}",
-        ]
-    )
+    if consecutive:
+        return "".join(f"const {dtype.ctype}* _w{a} = _tw + {(a - 1) * span} + ({b});\n" for a in range(1, radix))
+    return "".join(f"const {dtype.ctype} _w{a} = _tw[{(a - 1) * span} + ({b})];\n" for a in range(1, radix))
 
 
 def general_stage_code(
@@ -573,87 +530,66 @@ def factor_code(factor: symbolic.SymbolicType, dtype: dtypes.typeclass) -> str |
     return f"{real_ctype}({symbolic.symstr(factor, cpp_mode=True)})"
 
 
+def add_table(state: SDFGState, name: str, dtype: dtypes.typeclass, call: str) -> nodes.AccessNode:
+    """
+    Adds a pointer to a twiddle factor table of the program's cache (see ``dace_stockham.h``), which a tasklet gets
+    from the cache, computing the table in the first call of the program.
+
+    :param state: The state to add the pointer and the tasklet to.
+    :param name: The name of the pointer.
+    :param dtype: The complex type of the table.
+    :param call: The call of the ``dace::fft::StockhamTwiddles`` method that returns the table.
+    :return: The access node of the pointer.
+    """
+    sdfg = state.sdfg
+    name, _ = sdfg.add_scalar(
+        name, dtypes.pointer(dtype), dtypes.StorageType.Register, transient=True, find_new_name=True
+    )
+    tasklet = state.add_tasklet(
+        f"get{name}",
+        {},
+        {"_table": dtypes.pointer(dtype)},
+        f"_table = __state->stockham_twiddles.{call};",
+        language=dtypes.Language.CPP,
+    )
+    tasklet.environments = {stockham_environment.Stockham.full_class_path()}
+    node = state.add_access(name)
+    state.add_edge(tasklet, "_table", node, None, Memlet(f"{name}[0]"))
+    return node
+
+
 def add_twiddle_tables(
-    sdfg: SDFG,
     state: SDFGState,
     stages: list[tuple[int, int, int, int]],
     sign: int,
     dtype: dtypes.typeclass,
-    storage: dtypes.StorageType,
-    lifetime: dtypes.AllocationLifetime,
-    schedule: dtypes.ScheduleType,
+    device: bool,
     prefix: str = "__stockham_tw",
 ) -> dict[tuple[int, int], nodes.AccessNode]:
     """
-    Adds a ``[R - 1, L]`` twiddle factor table for every distinct ``(L, R)`` of the stages that need twiddle factors,
-    and a ``[L * R]`` table of roots of unity for every distinct ``(L, R)`` of the general-radix stages (see
-    ``general_stage_code``), each computed by a map in the given state. Persistent tables in host memory are instead
-    computed once, by a tasklet that only computes them in the first call of the program.
+    Adds a pointer to the ``[R - 1, L]`` twiddle factor table of every distinct ``(L, R)`` of the stages that need
+    twiddle factors, and to the ``L * R`` roots of unity of every distinct ``(L, R)`` of the general-radix stages (see
+    ``general_stage_code``), from the program's cache of tables (see ``add_table``).
 
-    :param sdfg: The SDFG to add the tables to.
-    :param state: The state to compute the tables in.
+    :param state: The state to add the pointers to.
     :param stages: The stages, as returned by ``plan_stages``.
     :param sign: -1 for the forward transform, 1 for the inverse transform.
     :param dtype: The complex type of the tables.
-    :param storage: The storage of the tables.
-    :param lifetime: The allocation lifetime of the tables.
-    :param schedule: The schedule of the maps that compute the tables.
-    :param prefix: Prefix of the table names.
-    :return: A dictionary from ``(L, R)`` to the access node that the table is written to.
+    :param device: Whether the tables are in GPU memory.
+    :param prefix: Prefix of the pointer names.
+    :return: A dictionary from ``(L, R)`` to the access node of the pointer.
     """
     tables = {}
+    device_arg = "true" if device else "false"
     for _, radix, span, _ in stages:
         general = is_general_radix(radix)
         if (span == 1 and not general) or (span, radix) in tables:
             continue
-        table, _ = sdfg.add_transient(
-            f"{prefix}_{span}_{radix}",
-            (span * radix,) if general else (radix - 1, span),
-            dtype,
-            storage,
-            lifetime=lifetime,
-            find_new_name=True,
-        )
-        table_node = state.add_access(table)
-        if lifetime == dtypes.AllocationLifetime.Persistent and storage in HOST_STORAGES:
-            flag = f"__stockham_twiddles_ready_{next(_twiddle_flag_ids)}"
-            tasklet = state.add_tasklet(
-                f"stockham_twiddles_{span}_{radix}",
-                {},
-                {"_w"},
-                f"if (!__state->{flag}) {{\n{twiddle_table_code(radix, span, sign, dtype)}\n__state->{flag} = true;\n}}",
-                language=dtypes.Language.CPP,
-                state_fields=[f"bool {flag};"],
-                code_init=f"__state->{flag} = false;",
-            )
-            memlet = Memlet.from_array(table, sdfg.arrays[table])
-            memlet.dynamic = True
-            state.add_edge(tasklet, "_w", table_node, None, memlet)
-            tables[span, radix] = table_node
-            continue
         if general:
-            step = repr(sign * 2 * math.pi / (span * radix))
-            ranges = {"__t": f"0:{span * radix}"}
-            code = f"const double __angle = double(__t) * {step};\n_w = {dtype.ctype}(cos(__angle), sin(__angle));"
-            outputs = {"_w": Memlet(f"{table}[__t]")}
+            call = f"Roots<{dtype.ctype}>({span * radix}, {sign}, {device_arg})"
         else:
-            ranges = {"__b": f"0:{span}"}
-            code = twiddle_code(radix, span, sign, dtype)
-            outputs = {f"_w{a}": Memlet(f"{table}[{a - 1}, __b]") for a in range(1, radix)}
-        _, table_entry, _ = state.add_mapped_tasklet(
-            f"stockham_twiddles_{span}_{radix}",
-            ranges,
-            {},
-            code,
-            outputs,
-            language=dtypes.Language.CPP,
-            external_edges=True,
-            output_nodes={table: table_node},
-            schedule=schedule,
-        )
-        if storage == dtypes.StorageType.GPU_Global:
-            table_entry.map.gpu_block_size = GPU_BLOCK_SIZE
-        tables[span, radix] = table_node
+            call = f"Stage<{dtype.ctype}>({radix}, {span}, {sign}, {device_arg})"
+        tables[span, radix] = add_table(state, f"{prefix}_{span}_{radix}", dtype, call)
     return tables
 
 
@@ -673,7 +609,8 @@ def stockham_sdfg(
 
     On the CPU, all stages of an axis whose transforms fit into ``LOCAL_BYTES`` (see ``local_lanes``) are computed by
     one map over the other dimensions, in which each iteration transforms one row (or several adjacent columns) in
-    buffers on the stack. Each other stage is one map over the whole array.
+    buffers on the stack. A longer axis is split into groups of stages that fit, each computed by one such map (see
+    ``add_axis_group``). Each other stage is one map over the whole array.
 
     :param indesc: Descriptor of the input array (real or complex).
     :param outdesc: Descriptor of the complex output array, with the same shape as the input.
@@ -683,7 +620,7 @@ def stockham_sdfg(
     :param constants: Constants of the parent SDFG, used to evaluate symbolic axis lengths.
     :param schedule: Schedule of the library node. A GPU device schedule places the buffers in GPU global memory,
                      since they would otherwise default to shared memory.
-    :param persistent: Whether the buffers and twiddle tables may be allocated once per program rather than per call.
+    :param persistent: Whether the buffers may be allocated once per program rather than per call.
                        Only valid if the transform is not inside a map, where each iteration needs its own buffers.
     :param name: Name of the generated SDFG.
     :return: A single-state SDFG.
@@ -717,19 +654,24 @@ def stockham_sdfg(
     if not gpu and total_size is not None and total_size < SEQUENTIAL_SIZE_THRESHOLD:
         map_schedule = dtypes.ScheduleType.Sequential
 
-    # The steps of the transform: single stages, or on the CPU all stages of an axis computed locally
-    steps = []
-    for stage in stages:
-        lanes = None if gpu else local_lanes(shape, [stage[0]], dtype, constants)
-        if lanes is not None and steps and steps[-1][0] == "local" and steps[-1][1][0][0] == stage[0]:
-            steps[-1][1].append(stage)
-        elif lanes is not None:
-            steps.append(("local", [stage], lanes))
+    # The steps of the transform: single stages, or on the CPU all stages of an axis (or of a group of its stages)
+    # computed locally
+    steps, table_stages = [], []
+    for axis in dict.fromkeys(stage[0] for stage in stages):
+        axis_stages = [stage for stage in stages if stage[0] == axis]
+        lanes = None if gpu else local_lanes(shape, [axis], dtype, constants)
+        groups = None if gpu or lanes is not None else axis_groups(shape, axis, dtype, constants)
+        if lanes is not None:
+            steps.append(("local", axis_stages, lanes))
+        elif groups is not None:
+            steps += [("group", (axis, group), None) for group in groups]
+            table_stages += [stage for _, length, _ in groups for stage in plan_stages((length,), [0], {})]
+            continue
         else:
-            steps.append(("global", [stage], None))
+            steps += [("global", [stage], None) for stage in axis_stages]
+        table_stages += axis_stages
 
     # Allocate the buffers once if their size is fixed, as per-call allocations of large buffers dominate the runtime
-    table_lifetime = dtypes.AllocationLifetime.Persistent if persistent else dtypes.AllocationLifetime.Scope
     lifetime = dtypes.AllocationLifetime.Scope
     if persistent and not any(symbolic.issymbolic(size, constants) for size in shape):
         lifetime = dtypes.AllocationLifetime.Persistent
@@ -740,12 +682,29 @@ def stockham_sdfg(
 
     sign = 1 if inverse else -1
     factor_cpp = factor_code(factor, dtype)
-    tables = add_twiddle_tables(sdfg, state, stages, sign, dtype, storage, table_lifetime, map_schedule)
+    tables = add_twiddle_tables(state, table_stages, sign, dtype, gpu)
+    group_tables = {}
     src_node = state.add_read("_inp")
     stage_index = 0
     for s, (kind, step_stages, lanes) in enumerate(steps):
         last = s == len(steps) - 1
         dst_node = state.add_write("_out" if last else buffers[s % 2])
+        if kind == "group":
+            add_axis_group(
+                state,
+                f"stockham_group_{s}",
+                *step_stages,
+                sign,
+                src_node,
+                dst_node,
+                tables,
+                group_tables,
+                factor_cpp if last else None,
+                map_schedule,
+                constants,
+            )
+            src_node = dst_node
+            continue
         if kind == "local":
             add_local_axis_kernel(
                 state,
@@ -927,10 +886,11 @@ def add_stage_map(
         out_step = {"b": stride, "k": 1}.get(vector_dim, 0)
         inputs = {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}", in_step) for a in range(radix)}
         outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}", out_step) for c in range(radix)}
+        loads = ""
         if span > 1:
             table = table_name((span, radix))
-            twiddle_index = f"{b}:{b} + {lanes}" if vector_dim == "b" else b
-            inputs.update({f"_w{a}": Memlet(f"{table}[{a - 1}, {twiddle_index}]") for a in range(1, radix)})
+            inputs["_tw"] = Memlet(f"{table}[0]")
+            loads = twiddle_loads(radix, span, _cpp(b), out_dtype, vector_dim == "b")
         vector = None
         if vector_dim is not None:
 
@@ -950,7 +910,7 @@ def add_stage_map(
 
             in_stride, out_stride = distance(src, in_step), distance(dst, out_step)
             vector = Vector(lanes, _cpp(in_stride), _cpp(out_stride), "1" if vector_dim == "b" else None)
-        code = stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor, vector)
+        code = loads + stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor, vector)
 
     input_nodes = {src: src_node}
     for memlet in inputs.values():
@@ -986,7 +946,11 @@ def _divides(lanes: int, extent: symbolic.SymbolicType) -> bool:
 
 
 def local_lanes(
-    shape: tuple[symbolic.SymbolicType, ...], axes: list[int], dtype: dtypes.typeclass, constants: dict
+    shape: tuple[symbolic.SymbolicType, ...],
+    axes: list[int],
+    dtype: dtypes.typeclass,
+    constants: dict,
+    lanes: int = VECTOR_LANES[0],
 ) -> int | None:
     """
     Returns how many transforms of the given axes one map iteration computes in stack buffers on the CPU (see
@@ -999,6 +963,7 @@ def local_lanes(
     :param axes: The (normalized) axes.
     :param dtype: The complex type of the buffers.
     :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
+    :param lanes: The number of adjacent transforms of an iteration if the innermost dimension is not transformed.
     :return: The number of transforms of an iteration, or None.
     """
     lengths = [fixed_length(shape[axis], constants) for axis in axes]
@@ -1009,9 +974,8 @@ def local_lanes(
     if innermost in axes:
         return 1 if 2 * size * dtype.bytes <= LOCAL_BYTES else None
     extent = fixed_length(shape[innermost], constants)
-    for lanes in VECTOR_LANES[:1]:
-        if extent is not None and _divides(lanes, extent) and 2 * size * lanes * dtype.bytes <= LOCAL_BYTES:
-            return lanes
+    if extent is not None and _divides(lanes, extent) and 2 * size * lanes * dtype.bytes <= LOCAL_BYTES:
+        return lanes
     return None
 
 
@@ -1174,11 +1138,13 @@ def add_block_local_stage(
     else:
         b = row
         inputs = {src: {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}}
+        loads = ""
         if span > 1:
             table = tables[span, radix]
-            inputs[table] = {f"_w{a}": Memlet(f"{table}[{a - 1}, {b}]") for a in range(1, radix)}
+            inputs[table] = {"_tw": Memlet(f"{table}[0]")}
+            loads = twiddle_loads(radix, span, _cpp(b), out_dtype, False)
         outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
-        code = stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor)
+        code = loads + stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor)
 
     tasklet = state.add_tasklet(
         f"stockham_butterfly_{radix}",
@@ -1250,7 +1216,7 @@ def block_local_sdfg(
     for symbol in batch_symbols.values():
         block.add_symbol(symbol, dtypes.int64)
     for array_name, desc in sorted(arrays.items()):
-        desc = copy.deepcopy(desc)
+        desc = desc.as_array() if isinstance(desc, data.View) else copy.deepcopy(desc)
         desc.transient = False
         desc.lifetime = dtypes.AllocationLifetime.Scope
         block.add_datadesc(array_name, desc)
@@ -1442,12 +1408,14 @@ def add_local_axis_kernel(
     lanes: int,
     schedule: dtypes.ScheduleType,
     constants: dict,
+    twiddle: "GroupTwiddle | None" = None,
 ) -> nodes.MapEntry:
     """
     Adds a CPU map over the dimensions other than an axis, in which each iteration computes all stages of the axis
     for ``lanes`` adjacent transforms (see ``local_lanes``) in buffers on the stack, so that the array is read and
     written once rather than once per stage. Each iteration runs a nested SDFG with one state per stage, in which the
-    stages are sequential maps (see ``add_stage_map``).
+    stages are sequential maps (see ``add_stage_map``), preceded by a state that multiplies the inputs by the twiddle
+    factors of a group of stages, if given.
 
     :param state: The state to add the map to.
     :param label: The label of the map and of the nested SDFG.
@@ -1460,6 +1428,7 @@ def add_local_axis_kernel(
     :param lanes: The number of adjacent transforms of an iteration.
     :param schedule: The schedule of the map.
     :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
+    :param twiddle: The twiddle factors of a group of stages (see ``add_axis_group``), or None.
     :return: The entry node of the map.
     """
     sdfg = state.sdfg
@@ -1470,7 +1439,13 @@ def add_local_axis_kernel(
     keys = {(span, radix) for _, radix, span, _ in stages}
     stage_tables = {key: node for key, node in tables.items() if key in keys}
     table_names = {key: node.data for key, node in stage_tables.items()}
-    arrays = {name: sdfg.arrays[name] for name in (src, dst, *table_names.values())}
+    inputs = {src: src_node, **{node.data: node for node in stage_tables.values()}}
+    if twiddle is not None:
+        inputs.update({node.data: node for node in (twiddle.low, twiddle.high, twiddle.lane) if node is not None})
+    arrays = {name: sdfg.arrays[name] for name in (dst, *inputs)}
+    steps = [(stage, sign, table_names, factor if i == len(stages) - 1 else None) for i, stage in enumerate(stages)]
+    if twiddle is not None:
+        steps.insert(0, None)
     padding = local_padding(stages)
     block, batch_symbols, batch_index, buffers = block_local_sdfg(
         label,
@@ -1479,17 +1454,358 @@ def add_local_axis_kernel(
         [axis],
         dtype,
         constants,
-        min(len(stages) - 1, 2),
+        min(len(steps) - 1, 2),
         dtypes.StorageType.Register(force=True),
         lanes,
         padding,
     )
     block_shape = block_local_shape(shape, [axis], constants, lanes)
-    steps = [(stage, sign, table_names, factor if i == len(stages) - 1 else None) for i, stage in enumerate(stages)]
-    add_block_local_steps(block, steps, src, dst, buffers, block_shape, batch_index, None, padding)
-    inputs = {src: src_node, **{node.data: node for node in stage_tables.values()}}
+    block_states = add_block_local_steps(block, steps, src, dst, buffers, block_shape, batch_index, None, padding)
+    if twiddle is not None:
+        twiddle_state, step_src, step_dst = block_states[0]
+        _add_group_twiddle_step(
+            twiddle_state, step_src, step_dst, block_shape, axis, batch_index, batch_symbols, padding, twiddle
+        )
     entry, _ = add_block_local_kernel(state, block, inputs, dst_node, shape, batch_symbols, schedule, lanes, constants)
     return entry
+
+
+def _prime_factors(n: int) -> list[int]:
+    """
+    Returns the prime factors of a positive integer, with multiplicity, in ascending order.
+    """
+    factors, p = [], 2
+    while p * p <= n:
+        while n % p == 0:
+            factors.append(p)
+            n //= p
+        p += 1
+    return factors + ([n] if n > 1 else [])
+
+
+def group_lengths(length: int, max_length: int) -> list[int] | None:
+    """
+    Splits the length of an axis into the fewest (at least two) factors of at most ``max_length``, as equal as
+    possible. Each factor is the length of a group of stages that one map computes locally (see ``add_axis_group``).
+
+    :param length: The length of the axis.
+    :param max_length: The largest length of a group.
+    :return: The lengths of the groups, in order, or None if a prime factor is larger than ``max_length``.
+    """
+    primes = sorted(_prime_factors(length), reverse=True)
+    if len(primes) < 2 or primes[0] > max_length:
+        return None
+    for count in range(2, len(primes) + 1):
+        # Assign each prime, largest first, to the group with the smallest product
+        groups = [1] * count
+        for prime in primes:
+            smallest = min(range(count), key=lambda g: groups[g])
+            groups[smallest] *= prime
+        if max(groups) <= max_length:
+            return sorted(groups, reverse=True)
+    return None
+
+
+def _group_view(
+    shape: tuple[symbolic.SymbolicType, ...], axis: int, group: tuple[int, int, int]
+) -> list[tuple[int | str, symbolic.SymbolicType]]:
+    """
+    Returns the dimensions of the view of an array in which a group of stages ``(L, P, M)`` transforms one dimension:
+    the dimensions of the array, with the axis replaced by ``b`` in ``[0, L)``, ``a`` in ``[0, P)``, and ``k`` in
+    ``[0, M)``, of which those of length one are omitted. If ``a`` would be innermost, ``b`` is moved after it, so
+    that adjacent iterations of ``b`` write adjacent outputs.
+
+    :return: For each dimension of the view, the dimension of the array (or ``"b"``, ``"a"``, ``"k"``) and its extent.
+    """
+    span, length, stride = group
+    dims = [(dim, shape[dim]) for dim in range(axis)] + [("b", span), ("a", length), ("k", stride)]
+    dims += [(dim, shape[dim]) for dim in range(axis + 1, len(shape))]
+    dims = [(dim, extent) for dim, extent in dims if dim not in ("b", "k") or extent != 1]
+    if dims[-1][0] == "a" and span > 1:
+        dims.remove(("b", span))
+        dims.append(("b", span))
+    return dims
+
+
+def _group_strides(
+    desc: data.Array,
+    axis: int,
+    dims: list[tuple[int | str, symbolic.SymbolicType]],
+    group: tuple[int, int, int],
+    output: bool,
+) -> list[symbolic.SymbolicType]:
+    """
+    Returns the strides of the view of an array (see ``_group_view``): a group reads its input at ``(b * P + a) * M +
+    k`` and writes its output at ``(a * L + b) * M + k`` along the axis.
+    """
+    span, length, stride = group
+    unit = desc.strides[axis]
+    if output:
+        strides = {"b": stride * unit, "a": span * stride * unit, "k": unit}
+    else:
+        strides = {"b": length * stride * unit, "a": stride * unit, "k": unit}
+    return [strides[dim] if isinstance(dim, str) else desc.strides[dim] for dim, _ in dims]
+
+
+def axis_groups(
+    shape: tuple[symbolic.SymbolicType, ...], axis: int, dtype: dtypes.typeclass, constants: dict
+) -> list[tuple[int, int, int]] | None:
+    """
+    Returns the groups of stages that transform an axis on the CPU if its transforms do not fit into ``LOCAL_BYTES``
+    whole (see ``local_lanes``), or None if one map per stage transforms it. Each group is ``(L, P, M)``: one map
+    computes a length-``P`` transform of span ``L`` and stride ``M`` (see ``add_axis_group``) per iteration, for
+    adjacent transforms along the innermost dimension of its view.
+
+    :param shape: The shape of the array.
+    :param axis: The axis.
+    :param dtype: The complex type of the buffers.
+    :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
+    :return: The groups, in order, or None.
+    """
+    length = fixed_length(shape[axis], constants)
+    if length is None:
+        return None
+    lengths = group_lengths(length, LOCAL_BYTES // (2 * GROUP_LANES * dtype.bytes))
+    if lengths is None:
+        return None
+    groups, span = [], 1
+    for group_length in lengths:
+        groups.append((span, group_length, length // (span * group_length)))
+        span *= group_length
+    for group in groups:
+        dims = _group_view(shape, axis, group)
+        view_axis = next(i for i, (dim, _) in enumerate(dims) if dim == "a")
+        if local_lanes(tuple(extent for _, extent in dims), [view_axis], dtype, constants, GROUP_LANES) is None:
+            return None
+    return groups
+
+
+@dataclasses.dataclass
+class GroupTwiddle:
+    """
+    The twiddle factors ``exp(sign 2 pi i t / Q)`` with ``t = a * b mod Q`` that a group of stages multiplies its
+    inputs by (see ``add_axis_group``), as the product of ``low[t % S]`` and ``high[t / S]``. If the adjacent
+    transforms of an iteration are along ``b``, those of ``b + l`` are additionally multiplied by ``lane[a, l]``,
+    the twiddle factor of ``t = a * l``.
+    """
+
+    #: The dimension of ``b`` in the view of the group.
+    dim: int
+    #: ``Q``, the span of the group times its length.
+    modulus: int
+    #: ``S``, the length of the ``low`` table.
+    split: int
+    low: nodes.AccessNode
+    high: nodes.AccessNode
+    lane: nodes.AccessNode | None = None
+
+
+def add_group_twiddle_tables(
+    state: SDFGState,
+    modulus: int,
+    sign: int,
+    dtype: dtypes.typeclass,
+    lane_shape: tuple[int, int] | None = None,
+) -> tuple[nodes.AccessNode, nodes.AccessNode, int, nodes.AccessNode | None]:
+    """
+    Adds pointers to the tables of the twiddle factors of a group of stages (see ``GroupTwiddle``), of which ``low``
+    and ``high`` have about ``sqrt(Q)`` entries each, from the program's cache of tables (see ``add_table``).
+
+    :param lane_shape: The length of the group and the number of adjacent transforms along ``b`` of an iteration,
+                       if it needs a ``lane`` table.
+    :return: The access nodes of the ``low`` and ``high`` pointers, the length of the ``low`` table, and the access
+             node of the ``lane`` pointer or None.
+    """
+    split = math.isqrt(modulus - 1) + 1
+    ctype = dtype.ctype
+    prefix = f"__stockham_gtw_{modulus}"
+    low = add_table(state, f"{prefix}_low", dtype, f"GroupLow<{ctype}>({modulus}, {split}, {sign})")
+    high = add_table(state, f"{prefix}_high", dtype, f"GroupHigh<{ctype}>({modulus}, {split}, {sign})")
+    lane = None
+    if lane_shape is not None:
+        call = f"GroupLane<{ctype}>({modulus}, {lane_shape[0]}, {lane_shape[1]}, {sign})"
+        lane = add_table(state, f"{prefix}_lane", dtype, call)
+    return low, high, split, lane
+
+
+def add_axis_group(
+    state: SDFGState,
+    label: str,
+    axis: int,
+    group: tuple[int, int, int],
+    sign: int,
+    src_node: nodes.AccessNode,
+    dst_node: nodes.AccessNode,
+    tables: dict[tuple[int, int], nodes.AccessNode],
+    group_tables: dict[tuple[int, int], tuple[nodes.AccessNode, nodes.AccessNode, int]],
+    factor: str | None,
+    schedule: dtypes.ScheduleType,
+    constants: dict,
+) -> nodes.MapEntry:
+    """
+    Adds a CPU map that computes a group ``(L, P, M)`` of consecutive stages of an axis (see ``axis_groups``). The
+    stages of span ``L`` to ``L * P`` are equivalent to one radix-``P`` stage: for each ``b`` in ``[0, L)`` and ``k``
+    in ``[0, M)``, the group multiplies the inputs at ``(b * P + a) * M + k`` by ``exp(sign 2 pi i a b / (L * P))``,
+    computes their length-``P`` DFT, and writes output ``c`` to ``(c * L + b) * M + k``. The map is a local axis
+    kernel (see ``add_local_axis_kernel``) on views of the arrays in which the DFT is along one dimension.
+
+    :param state: The state to add the map to.
+    :param label: The label of the map and of its views.
+    :param axis: The axis.
+    :param group: The ``(L, P, M)`` of the group.
+    :param sign: -1 for the forward transform, 1 for the inverse transform.
+    :param src_node: The access node to read from.
+    :param dst_node: The access node to write to.
+    :param tables: The twiddle factor tables of the stages of the groups (see ``add_twiddle_tables``).
+    :param group_tables: The twiddle factor tables of groups by ``(Q, sign, lane shape)`` (see
+                         ``add_group_twiddle_tables``), to which missing tables are added.
+    :param factor: C++ expression of a factor to multiply the outputs by, or None.
+    :param schedule: The schedule of the map.
+    :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
+    :return: The entry node of the map.
+    """
+    sdfg = state.sdfg
+    span, length, _ = group
+    src, dst = src_node.data, dst_node.data
+    dtype = sdfg.arrays[dst].dtype
+    dims = _group_view(sdfg.arrays[dst].shape, axis, group)
+    view_shape = [extent for _, extent in dims]
+    view_axis = next(i for i, (dim, _) in enumerate(dims) if dim == "a")
+
+    # Views of the input and the output in which the group transforms one dimension
+    views = []
+    for node, output in ((src_node, False), (dst_node, True)):
+        desc = sdfg.arrays[node.data]
+        view, _ = sdfg.add_view(
+            f"{label}_{'out' if output else 'in'}",
+            view_shape,
+            desc.dtype,
+            desc.storage,
+            strides=_group_strides(desc, axis, dims, group, output),
+            total_size=desc.total_size,
+            find_new_name=True,
+        )
+        views.append(state.add_access(view))
+        memlet = Memlet.from_array(node.data, desc)
+        if output:
+            state.add_edge(views[-1], None, node, None, memlet)
+        else:
+            state.add_edge(node, None, views[-1], None, memlet)
+
+    stages = plan_stages(tuple(view_shape), [view_axis], {})
+    lanes = local_lanes(tuple(view_shape), [view_axis], dtype, constants, GROUP_LANES)
+    twiddle = None
+    if span > 1:
+        b_dim = next(i for i, (dim, _) in enumerate(dims) if dim == "b")
+        lane_shape = (length, lanes) if b_dim == len(dims) - 1 and lanes > 1 else None
+        key = (span * length, sign, lane_shape)
+        if key not in group_tables:
+            group_tables[key] = add_group_twiddle_tables(state, span * length, sign, dtype, lane_shape)
+        low, high, split, lane = group_tables[key]
+        twiddle = GroupTwiddle(b_dim, span * length, split, low, high, lane)
+    return add_local_axis_kernel(
+        state, label, stages, sign, views[0], views[1], tables, factor, lanes, schedule, constants, twiddle
+    )
+
+
+def _complex_product(left: str, right: str, dtype: dtypes.typeclass) -> str:
+    """
+    Returns a C++ expression of the product of two complex values with explicit arithmetic, which vectorizes (unlike
+    ``std::complex`` multiplication without fast-math options).
+    """
+    return (
+        f"{dtype.ctype}({left}.real() * {right}.real() - {left}.imag() * {right}.imag(), "
+        f"{left}.real() * {right}.imag() + {left}.imag() * {right}.real())"
+    )
+
+
+def _add_group_twiddle_step(
+    state: SDFGState,
+    src: str,
+    dst: str,
+    shape: list[int],
+    axis: int,
+    batch_index: dict[str, list[str | None]],
+    batch_symbols: dict[int, str],
+    padding: int,
+    twiddle: GroupTwiddle,
+) -> None:
+    """
+    Adds a tasklet to a state of a local axis kernel (see ``add_local_axis_kernel``) that multiplies the elements of
+    ``src`` by the twiddle factors of a group of stages and writes them to buffer ``dst``. It computes the twiddle
+    factors of the first transform of the iteration from the tables once, and multiplies the adjacent transforms in a
+    SIMD loop.
+
+    :param state: The (empty) state to add the tasklet to.
+    :param src: The array to read from.
+    :param dst: The buffer to write to.
+    :param shape: The shape of the transforms of an iteration.
+    :param axis: The transformed dimension.
+    :param batch_index: The batch index of each array (see ``add_block_local_stage``).
+    :param batch_symbols: The symbol of each dimension that is not transformed.
+    :param padding: The number of elements of a padded row of the buffers (see ``block_local_sdfg``), or 0.
+    :param twiddle: The twiddle factors.
+    """
+    sdfg = state.sdfg
+    dtype = sdfg.arrays[dst].dtype
+    length = shape[axis]
+    lane_dim = next((dim for dim, extent in enumerate(shape) if extent > 1 and dim != axis), None)
+    lanes = 1 if lane_dim is None else shape[lane_dim]
+
+    # The elements of the iteration in the input, and the whole buffer
+    subset = []
+    for dim, extent in enumerate(shape):
+        first = batch_index[src][dim]
+        if dim == axis:
+            subset.append(f"0:{extent}")
+        else:
+            subset.append(f"{first}:{first} + {extent}" if extent > 1 else first)
+    src_strides, dst_strides = sdfg.arrays[src].strides, sdfg.arrays[dst].strides
+    if padding:
+        dst_offset = (
+            f"(__a / {padding}) * {_cpp(dst_strides[axis])} + (__a % {padding}) * {_cpp(dst_strides[axis + 1])}"
+        )
+    else:
+        dst_offset = f"__a * {_cpp(dst_strides[axis])}"
+    src_lane, dst_lane = "0", "0"
+    if lane_dim is not None:
+        src_lane = _cpp(src_strides[lane_dim])
+        dst_lane = _cpp(dst_strides[lane_dim + 1 if padding and lane_dim > axis else lane_dim])
+
+    ctype = dtype.ctype
+    factor = "__row[__a]"
+    if twiddle.lane is not None:
+        factor = "__w"
+    lines = [
+        f"{ctype} __row[{length}];",
+        f"for (long long __a = 0; __a < {length}; ++__a) {{",
+        f"    const long long __t = __a * (long long)({batch_symbols[twiddle.dim]}) % {twiddle.modulus};",
+        f"    const {ctype} __lo = _low[__t % {twiddle.split}], __hi = _high[__t / {twiddle.split}];",
+        f"    __row[__a] = {_complex_product('__lo', '__hi', dtype)};",
+        "}",
+        f"for (long long __a = 0; __a < {length}; ++__a) {{",
+        f"    const {ctype}* __x = _x + __a * {_cpp(src_strides[axis])};",
+        f"    {ctype}* __y = _y + {dst_offset};",
+        "    #pragma omp simd",
+        f"    for (long long __l = 0; __l < {lanes}; ++__l) {{",
+        f"        const {ctype} __v = __x[__l * {src_lane}];",
+    ]
+    if twiddle.lane is not None:
+        lines.append(
+            f"        const {ctype} __w = {_complex_product('__row[__a]', f'_lane[__a * {lanes} + __l]', dtype)};"
+        )
+    lines += [f"        __y[__l * {dst_lane}] = {_complex_product('__v', factor, dtype)};", "    }", "}"]
+
+    inputs = {"_x": Memlet(f"{src}[{', '.join(subset)}]")}
+    for conn, node in (("_low", twiddle.low), ("_high", twiddle.high), ("_lane", twiddle.lane)):
+        if node is not None:
+            inputs[conn] = Memlet.from_array(node.data, sdfg.arrays[node.data])
+    tasklet = state.add_tasklet(
+        "stockham_group_twiddle", dict.fromkeys(inputs), {"_y": None}, "\n".join(lines), language=dtypes.Language.CPP
+    )
+    for conn, memlet in inputs.items():
+        state.add_edge(state.add_read(memlet.data), None, tasklet, conn, memlet)
+    state.add_edge(tasklet, "_y", state.add_write(dst), None, Memlet.from_array(dst, sdfg.arrays[dst]))
 
 
 def block_local_fft_sdfg(
@@ -1534,16 +1850,7 @@ def block_local_fft_sdfg(
     block_shape = block_local_shape(shape, axes, constants)
     stages = plan_stages(block_shape, axes, {})
     threads = block_local_threads(stages, block_shape)
-    table_nodes = add_twiddle_tables(
-        sdfg,
-        state,
-        stages,
-        sign,
-        dtype,
-        dtypes.StorageType.GPU_Global,
-        dtypes.AllocationLifetime.Persistent,
-        dtypes.ScheduleType.GPU_Device,
-    )
+    table_nodes = add_twiddle_tables(state, stages, sign, dtype, True)
     tables = {key: node.data for key, node in table_nodes.items()}
     arrays = {array: sdfg.arrays[array] for array in ("_inp", "_out", *tables.values())}
     block, batch_symbols, batch_index, buffers = block_local_sdfg(
