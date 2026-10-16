@@ -688,6 +688,40 @@ def test_dominator_tree_matches_the_transitive_closure():
     assert dom.dominates(first, last) and postdom.dominates(last, first) and not dom.dominates(left, last)
 
 
+def test_container_read_only_from_tasklet_code():
+    """``t`` is read by the code of a tasklet in a later state, with no access node there."""
+    sdfg = dace.SDFG("container_read_only_from_code")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    write = sdfg.add_state("write", is_start_block=True)
+    tasklet = write.add_tasklet("w", {"a"}, {"o"}, "o = 2 * a")
+    write.add_edge(write.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    write.add_edge(tasklet, "o", write.add_write("t"), None, dace.Memlet("t[0]"))
+    read = sdfg.add_state_after(write, "read")
+    tasklet = read.add_tasklet("r", {}, {"o"}, "o = t + 1")
+    read.add_edge(tasklet, "o", read.add_write("B"), None, dace.Memlet("B[0]"))
+    B = np.zeros(1)
+    sdfg(A=np.ones(1), B=B)
+    assert B[0] == 3
+
+
+def test_view_first_read_by_an_interstate_edge():
+    """A view whose first use is an interstate edge is declared with the data it views."""
+    sdfg = dace.SDFG("view_first_read_by_an_edge")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("buf", [8], dace.float64, transient=True)
+    sdfg.add_view("v", [8], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_nedge(first.add_read("A"), first.add_write("buf"), dace.Memlet("A[0:8]"))
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "v[0]"}))
+    view = second.add_access("v")
+    second.add_edge(second.add_read("buf"), None, view, "views", dace.Memlet("buf[0:8]"))
+    second.add_nedge(view, second.add_write("A"), dace.Memlet("v[0:8]"))
+    sdfg.generate_code()
+
+
 if __name__ == "__main__":
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -714,3 +748,5 @@ if __name__ == "__main__":
     test_multisize()
     test_a_view_does_not_reallocate_the_array_it_views()
     test_dominator_tree_matches_the_transitive_closure()
+    test_container_read_only_from_tasklet_code()
+    test_view_first_read_by_an_interstate_edge()
