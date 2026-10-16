@@ -1910,12 +1910,13 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None, c_operators=False):
     elif isinstance(code, sympy.Basic):
         from dace import symbolic
 
-        return cppunparse(
-            ast.parse(symbolic.symstr(code, cpp_mode=True)),
-            expr_semicolon,
-            defined_symbols=defined_symbols,
-            c_operators=True,
-        )
+        text = symbolic.symstr(code, cpp_mode=True)
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            # Already C++ that Python cannot parse (``dace::math::ipow``), as the string branch hands it back
+            return text
+        return cppunparse(tree, expr_semicolon, defined_symbols=defined_symbols, c_operators=True)
     elif isinstance(code, int):
         return str(code)
     elif code.__class__.__name__ == "function":
