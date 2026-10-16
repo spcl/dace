@@ -113,6 +113,7 @@ class UniqueLoopIterators(ppl.Pass):
         self.top = sdfg
         self.readers: dict[str, set[ControlFlowBlock]] = {}
         self.reach: dict | None = None
+        self.original: dict[LoopRegion, str] = {}
         names = {
             r.loop_variable
             for r in sdfg.all_control_flow_regions(recursive=True)
@@ -122,13 +123,22 @@ class UniqueLoopIterators(ppl.Pass):
             self.readers = symbol_readers(sdfg, names)
         return self.rename_loops(sdfg) or None
 
+    def binds(self, block: ControlFlowBlock, name: str) -> bool:
+        """Whether a loop around ``block`` has ``name`` as its own (original) iterator."""
+        region = block.parent_graph
+        while isinstance(region, ControlFlowRegion) and not isinstance(region, dace.SDFG):
+            if isinstance(region, LoopRegion) and self.original.get(region, region.loop_variable) == name:
+                return True
+            region = region.parent_graph
+        return False
+
     def read_after(self, loop: LoopRegion, name: str) -> bool:
         """Whether a block outside ``loop`` that may run after it reads ``name``."""
         inside = {loop}
         for cfr in loop.all_control_flow_regions(recursive=True):
             inside.add(cfr)
             inside.update(cfr.nodes())
-        outside = [block for block in self.readers.get(name, ()) if block not in inside]
+        outside = [block for block in self.readers.get(name, ()) if block not in inside and not self.binds(block, name)]
         if not outside:
             return False
         if self.reach is None:
@@ -152,6 +162,7 @@ class UniqueLoopIterators(ppl.Pass):
             if iterator_id(old) >= 0 and old not in duplicated:
                 continue
             plan.append((loop, old, self.next_id))
+            self.original[loop] = old
             self.next_id += 1
         # Innermost first: a rename replaces ``old`` in the loop's whole subtree, so an inner loop that rebinds the
         # same name must already carry its own iterator when the enclosing loop is renamed.
