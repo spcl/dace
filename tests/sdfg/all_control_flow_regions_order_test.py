@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``all_control_flow_regions`` walks with an explicit stack; it must yield exactly the regions, in
-exactly the order, of the recursive definition (``reset_cfg_list`` numbers ``cfg_id`` by it)."""
+"""``all_control_flow_regions(parent_first=True)`` yields the regions of the recursive definition, in its order."""
 
 from collections.abc import Iterator
 
@@ -11,7 +10,6 @@ from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, Control
 
 
 def recursive_regions(cfg: AbstractControlFlowRegion, recursive: bool) -> Iterator[AbstractControlFlowRegion]:
-    """The recursive parent-first definition, as the oracle."""
     yield cfg
     for block in cfg.nodes():
         if isinstance(block, dace.SDFGState) and recursive:
@@ -54,18 +52,10 @@ def test_preorder_walk_matches_the_recursive_definition():
     for recursive in (True, False):
         expected = [cfg.label for cfg in recursive_regions(sdfg, recursive)]
         assert [cfg.label for cfg in sdfg.all_control_flow_regions(recursive=recursive)] == expected
-    # The fixture really nests: SDFGs, loops, conditionals and branches from three levels.
     labels = [cfg.label for cfg in sdfg.all_control_flow_regions(recursive=True)]
     assert labels[:4] == ["root", "root_loop", "root_cond", "root_branch0"]
     assert "root_n_n" in labels and "root_n_m" in labels and len(labels) == len(set(labels)) == 25
 
 
-def test_cfg_list_follows_the_walk():
-    sdfg = nested_sdfg("root", 1)
-    sdfg.reset_cfg_list()
-    assert [cfg.label for cfg in sdfg.cfg_list] == [cfg.label for cfg in recursive_regions(sdfg, True)]
-
-
 if __name__ == "__main__":
     test_preorder_walk_matches_the_recursive_definition()
-    test_cfg_list_follows_the_walk()

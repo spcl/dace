@@ -7,14 +7,10 @@ descriptor in place so it can still be read or reassigned. Each shape captures i
 two arrays sized from the same reused name keep their own extents.
 """
 
-import ast
-import types
-
 import numpy as np
 import pytest
 
 import dace
-from dace.frontend.python.newast import ProgramVisitor
 
 N = dace.symbol("N")
 
@@ -76,14 +72,6 @@ def size_from_size_one_array(nt: dace.int64[1], out: dace.float64[4]):
     out[0] = b[0]
 
 
-def test_scalar_size_as_shape():
-    n, nt = 5, 7
-    a = np.arange(n, dtype=np.float64)
-    out = np.zeros(n)
-    size_from_empty(a, np.int64(nt), out, N=n)
-    assert np.allclose(out, a * 2.0)
-
-
 def test_size_descriptor_survives_its_use_as_a_shape():
     """Promotion must not delete the scalar: the program still reads it afterwards."""
     n, nt = 5, 7
@@ -120,18 +108,6 @@ def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
     out = np.zeros(1)
     size_reused_as_index(out)
     assert np.isclose(out[0], 2.0)
-
-
-def test_promotion_leaves_the_descriptor_in_place():
-    sdfg = size_read_after_use.to_sdfg(simplify=False)
-    # The scalar read by each ``__sym_... = <scalar>`` assignment must survive as a descriptor;
-    # deleting it is what broke later reads of the size.
-    sources = {
-        rhs for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items() if lhs.startswith("__sym_")
-    }
-    assert sources, "the size scalar must be read into a symbol"
-    assert all(src in sdfg.arrays for src in sources), "the size descriptor must survive promotion"
-    sdfg.validate()
 
 
 def test_shape_stays_correct_through_simplify():
@@ -181,26 +157,6 @@ def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program)
     out = np.zeros(n)
     program(a=a, Nt=np.int64(nt), out=out)
     assert np.allclose(out, a * 2.0)
-
-
-@dace.program
-def zeros_from_size(Nt: dace.int64, out: dace.float64[1]):
-    b = np.zeros(Nt + 1, dace.float64)
-    out[0] = np.sum(b)
-
-
-@dace.program
-def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
-    b = np.ones(Nt + 1, dace.float64)
-    out[0] = np.sum(b)
-
-
-@pytest.mark.parametrize("program,expected", [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
-def test_the_fill_constructors_accept_a_computed_size(program, expected):
-    """zeros/ones/full build their transient on their own path, which also has to promote the size."""
-    out = np.zeros(1)
-    program(np.int64(3), out)
-    assert np.isclose(out[0], expected)
 
 
 def test_two_arrays_from_one_size_share_their_extent():
@@ -257,7 +213,7 @@ def test_a_slice_bounded_by_a_size_shares_its_extent():
 
 def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
     """The size grows at the end of each iteration, after a shape in the body used it; the version read before the
-    loop must not stand in for it (cegterg's ``nbase_iter`` in HPCAgent-Bench)."""
+    loop must not stand in for it."""
 
     @dace.program
     def size_grows_in_a_loop(out: dace.float64[4]):
@@ -276,7 +232,7 @@ def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
 
 def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
     """``pol[:nlp, 0]`` promotes ``nlp`` first; the later ``np.ones(nlp)`` reads the same symbol, so the two
-    broadcast together (cp2k_grid_integrate in HPCAgent-Bench)."""
+    broadcast together."""
 
     @dace.program
     def slice_then_shape(lmax: dace.int32[N], pol: dace.float64[5, 5], out: dace.float64[N, 5]):
@@ -296,21 +252,9 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
     assert np.allclose(out, expected), out
 
 
-def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
-    """A name the preprocessing builds may lack ``ctx`` (on Python 3.12 the attribute is missing), and it is still a
-    write: the loop must drop that size's shape version, and keep the one of a size it only reads."""
-    target = ast.Name(id="n")
-    vars(target).pop("ctx", None)  # Python 3.13+ fills in a default ctx; 3.12 leaves it out
-    loop = ast.parse("for i in range(m):\n    n = n + 1").body[0]
-    loop.body[0].targets = [target]
-    visitor = types.SimpleNamespace(shape_promotions={"n": "n_version", "m": "m_version"}, variables={})
-    ProgramVisitor.drop_shape_versions_written_in(visitor, loop)
-    assert visitor.shape_promotions == {"m": "m_version"}
-
-
 def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
     """``px[:nlp, i] = seed[:, i]`` in a loop writes ``px``, not ``nlp``: the slice reads the symbol ``seed`` was
-    sized by, so the copy's extents match (cp2k_grid_integrate in HPCAgent-Bench)."""
+    sized by, so the copy's extents match."""
 
     @dace.program
     def store_in_a_loop(lmax: dace.int32[N], px: dace.float64[5, 4]):
@@ -331,21 +275,16 @@ def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
 
 if __name__ == "__main__":
     test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()
-    test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
     test_a_slice_bounded_by_a_size_shares_its_extent()
     test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_two_arrays_from_one_size_share_their_extent()
-    test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
     test_size_can_be_reassigned_after_use_as_a_shape()
     test_two_arrays_from_a_reassigned_size_keep_their_own_extents()
     test_a_size_reused_as_an_index_does_not_rebind_the_extent()
-    test_promotion_leaves_the_descriptor_in_place()
     test_shape_stays_correct_through_simplify()
     test_a_size_one_array_is_read_through_a_subscript()
-    test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
-    test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)

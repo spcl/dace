@@ -2322,10 +2322,6 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
 
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
-    def __init__(self, use_authority=True, settings=None):
-        super().__init__(settings)
-        self.use_authority = use_authority
-
     def _print_Symbol(self, expr):
         if expr.name == "?":
             return "$?"
@@ -2335,10 +2331,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             # Prefer the dtype the enclosing scope declares for this name over the
             # instance's own (possibly default-minted) dtype; a name the scope does not
             # declare keeps the instance dtype (the authority only overrides).
-            if self.use_authority:
-                dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
-            else:
-                dtype = expr.dtype
+            dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
             kwargs = _symbol_serializer_kwargs(expr, dtype)
             if not kwargs:
                 return f"${expr.name}"
@@ -2441,12 +2434,9 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 _PLAIN_INTEGER_TYPES = (sympy.Integer, type(sympy.S.One), type(sympy.S.Zero), type(sympy.S.NegativeOne))
 
 
-def _serialize_symbolic_uncached(expr: SymbolicType | int | float | numpy.number, use_authority: bool = True) -> str:
+def _serialize_symbolic_uncached(expr: SymbolicType | int | float | numpy.number) -> str:
     if isinstance(expr, SymExpr):
-        return (
-            f"SymExpr({serialize_symbolic(expr.expr, use_authority=use_authority)}, "
-            f"{serialize_symbolic(expr.approx, use_authority=use_authority)})"
-        )
+        return f"SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})"
     if isinstance(expr, TypedConstant):
         return _typed_constant_to_string(expr)
     if isinstance(expr, numpy.generic):
@@ -2461,28 +2451,25 @@ def _serialize_symbolic_uncached(expr: SymbolicType | int | float | numpy.number
         if expr_type in _PLAIN_INTEGER_TYPES:
             return str(expr.p)
         if expr_type is symbol or expr_type is sympy.Symbol:
-            return DaceSympySerializer(use_authority=use_authority)._print_Symbol(expr)
+            return DaceSympySerializer()._print_Symbol(expr)
         # SymPy equality ignores the dtypes of DaCe symbols, which are printed, so they are part of the key
         scope_dtypes = _SERIALIZATION_SYMBOL_DTYPES.get()
         symbol_dtypes = frozenset((s.name, scope_dtypes.get(s.name, s.dtype)) for s in expr.atoms(symbol))
-        return _serialize_sympy_expression(expr, symbol_dtypes, use_authority)
+        return _serialize_sympy_expression(expr, symbol_dtypes)
     return str(expr)
 
 
 @lru_cache(maxsize=16384)
-def _serialize_sympy_expression(
-    expr: sympy.Basic, symbol_dtypes: frozenset[tuple[str, "dtypes.typeclass"]], use_authority: bool
-) -> str:
+def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: frozenset[tuple[str, "dtypes.typeclass"]]) -> str:
     """
-    Serializes a SymPy expression. The result only depends on the expression, on the dtypes its DaCe symbols are
-    serialized with (``symbol_dtypes``, which the caller computes from the current scope) and on ``use_authority``,
-    so it is cached.
+    Serializes a SymPy expression. The result only depends on the expression and on the dtypes its DaCe symbols are
+    serialized with (``symbol_dtypes``, which the caller computes from the current scope), so it is cached.
     """
-    return DaceSympySerializer(use_authority=use_authority).doprint(expr)
+    return DaceSympySerializer().doprint(expr)
 
 
-def serialize_symbolic(expr, use_authority: bool = True):
-    return _serialize_symbolic_uncached(expr, use_authority=use_authority)
+def serialize_symbolic(expr):
+    return _serialize_symbolic_uncached(expr)
 
 
 @lru_cache(maxsize=16384, typed=True)

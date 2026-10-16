@@ -1007,11 +1007,6 @@ class NestedSDFG(CodeNode):
 class EntryNode(Node):
     """A type of node that opens a scope (e.g., Map or Consume)."""
 
-    @property
-    def dynamic_input_connectors(self) -> set[str]:
-        """Input connectors carrying dynamic scope inputs rather than a memlet path."""
-        return {c for c in self.in_connectors if not c.startswith("IN_")}
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 

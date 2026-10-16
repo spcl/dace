@@ -272,11 +272,11 @@ def test_ones_scalar_size_scalar():
 def test_ones_scalar_size():
 
     @dace.program
-    def ones_scalar_size(k: dace.int32):
+    def ones_scalar_size_2d(k: dace.int32):
         a = np.ones((k, k), dtype=np.uint32)
         return np.sum(a)
 
-    out = ones_scalar_size(20)
+    out = ones_scalar_size_2d(20)
     assert out[0] == 20 * 20
 
 

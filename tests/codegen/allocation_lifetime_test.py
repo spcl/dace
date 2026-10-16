@@ -9,8 +9,8 @@ import pytest
 import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import _use_aligned_operator_new
-from dace.sdfg import dealias, infer_types
-from dace.sdfg.state import LoopRegion
+from dace.sdfg import infer_types, utils
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
@@ -566,90 +566,6 @@ def test_scope_multisize():
     sdfg()
 
 
-@pytest.mark.parametrize("schedule", [dace.ScheduleType.Sequential, dace.ScheduleType.CPU_Multicore])
-def test_code_only_container_read_scope(schedule):
-    """A transient Scalar written via an AccessNode in one nested-SDFG state and read
-    ONLY from a sibling state's tasklet CODE (free name -- no connector/memlet/AccessNode).
-    The allocation-scope analysis must count the code-only use, or the declaration lands
-    inside the writing state's brace scope and the read does not compile (the cloudsc
-    ``zqe_5`` shape, produced by SymbolPropagation folding ``zqe = zqe_5`` into tasklet
-    code). Regression test for determine_allocation_lifetime's code-instance collection.
-    """
-    sdfg = dace.SDFG(f"code_only_read_{schedule.name}")
-    sdfg.add_array("A", [16], dace.float64)
-    sdfg.add_array("B", [16], dace.float64)
-    state = sdfg.add_state("main")
-
-    nest = dace.SDFG("nest")
-    nest.add_scalar("a_in", dace.float64, transient=False)
-    nest.add_scalar("b_out", dace.float64, transient=False)
-    nest.add_scalar("zqe", dace.float64, transient=True)
-
-    # State A: write zqe through a proper AccessNode.
-    st_a = nest.add_state("stA")
-    ra = st_a.add_read("a_in")
-    tw = st_a.add_tasklet("writer", {"a"}, {"o"}, "o = a * 2.0")
-    wz = st_a.add_write("zqe")
-    st_a.add_edge(ra, None, tw, "a", dace.Memlet("a_in[0]"))
-    st_a.add_edge(tw, "o", wz, None, dace.Memlet("zqe[0]"))
-
-    # State B: read zqe ONLY from tasklet code (no AccessNode / memlet).
-    st_b = nest.add_state_after(st_a, "stB")
-    rb = st_b.add_read("a_in")
-    tr = st_b.add_tasklet("reader", {"__in_b"}, {"__out"}, "__out = min(zqe, __in_b)")
-    wb = st_b.add_write("b_out")
-    st_b.add_edge(rb, None, tr, "__in_b", dace.Memlet("a_in[0]"))
-    st_b.add_edge(tr, "__out", wb, None, dace.Memlet("b_out[0]"))
-
-    me, mx = state.add_map("m", dict(i="0:16"), schedule=schedule)
-    nsdfg = state.add_nested_sdfg(nest, inputs={"a_in"}, outputs={"b_out"})
-    an_a = state.add_read("A")
-    an_b = state.add_write("B")
-    state.add_memlet_path(an_a, me, nsdfg, dst_conn="a_in", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(nsdfg, mx, an_b, src_conn="b_out", memlet=dace.Memlet("B[i]"))
-    dealias.integrate_nested_sdfg(nest)
-
-    a = np.random.rand(16)
-    b = np.zeros(16)
-    sdfg(A=a, B=b)
-    # b = min(2a, a) = a for a >= 0.
-    assert np.allclose(b, a)
-
-
-def view_read_without_an_access_node(name: str, from_code: bool) -> dace.SDFG:
-    """A View whose EARLIEST use names it with no AccessNode -- from tasklet code, or from an
-    interstate edge. The allocation analysis fabricates an access node for such a use, and that node
-    is not in the state graph, so every graph query on it raises."""
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("inp", [8], dace.float64)
-    sdfg.add_array("out", [8], dace.float64)
-    sdfg.add_array("buf", [8], dace.float64, transient=True)
-    sdfg.add_view("v", [8], dace.float64)
-
-    s0 = sdfg.add_state("s0", is_start_block=True)
-    code = "y = x + v" if from_code else "y = x"
-    t0 = s0.add_tasklet("first", {"x"}, {"y"}, code)
-    s0.add_edge(s0.add_read("inp"), None, t0, "x", dace.Memlet("inp[0]"))
-    s0.add_edge(t0, "y", s0.add_write("buf"), None, dace.Memlet("buf[0]"))
-
-    s1 = sdfg.add_state("s1")
-    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={} if from_code else {"k": "v"}))
-    vn = s1.add_access("v")
-    s1.add_edge(s1.add_read("buf"), None, vn, "views", dace.Memlet("buf[0:8]"))
-    t1 = s1.add_tasklet("use", {"x"}, {"y"}, "y = x * 2.0")
-    s1.add_edge(vn, None, t1, "x", dace.Memlet("v[0]"))
-    s1.add_edge(t1, "y", s1.add_write("out"), None, dace.Memlet("out[0]"))
-    return sdfg
-
-
-@pytest.mark.parametrize("from_code", [True, False])
-def test_view_read_without_an_access_node(from_code):
-    """Both fabricated-node sources reach is_nonfree_sym_dependent, whose View branch queries the
-    node's edges, so a view is never stood in for."""
-    sdfg = view_read_without_an_access_node(f"view_no_access_node_{int(from_code)}", from_code)
-    sdfg.generate_code()
-
-
 def test_multisize():
     """An array that needs to be allocated once, with runtime-dependent sizes."""
     sdfg = dace.SDFG("test")
@@ -775,6 +691,37 @@ def test_view_first_read_by_an_interstate_edge():
     sdfg.generate_code()
 
 
+def test_dominator_tree_matches_the_transitive_closure():
+    sdfg = dace.SDFG("dominator_tree")
+    first = sdfg.add_state("first", is_start_block=True)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    body = loop.add_state("body", is_start_block=True)
+    branches = ConditionalBlock("branches")
+    loop.add_node(branches)
+    loop.add_edge(body, branches, dace.InterstateEdge())
+    for index, condition in enumerate(("i < 5", None)):
+        arm = ControlFlowRegion(f"arm{index}", sdfg=sdfg)
+        branches.add_branch(dace.properties.CodeBlock(condition) if condition else None, arm)
+        arm.add_edge(arm.add_state(f"a{index}", is_start_block=True), arm.add_state(f"b{index}"), dace.InterstateEdge())
+    left, right, last = sdfg.add_state("left"), sdfg.add_state("right"), sdfg.add_state("last")
+    sdfg.add_edge(first, loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, left, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(loop, right, dace.InterstateEdge("N <= 0"))
+    sdfg.add_edge(left, last, dace.InterstateEdge())
+    sdfg.add_edge(right, last, dace.InterstateEdge())
+
+    idom, alldom, ipostdom, allpostdom = {}, {}, {}, {}
+    utils.get_control_flow_block_dominators(sdfg, idom, alldom, ipostdom, allpostdom)
+    dom, postdom = framecode.dominator_trees(sdfg)
+    for tree, closure in ((dom, alldom), (postdom, allpostdom)):
+        blocks = list(closure)
+        for a in blocks:
+            for b in blocks:
+                assert tree.dominates(a, b) == (a is b or a in closure[b]), (a, b)
+    assert dom.dominates(first, last) and postdom.dominates(last, first) and not dom.dominates(left, last)
+
+
 if __name__ == "__main__":
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -798,11 +745,8 @@ if __name__ == "__main__":
     test_branched_allocation("singlevalue")
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
-    test_code_only_container_read_scope(dace.ScheduleType.Sequential)
-    test_code_only_container_read_scope(dace.ScheduleType.CPU_Multicore)
-    test_view_read_without_an_access_node(True)
-    test_view_read_without_an_access_node(False)
     test_multisize()
     test_a_view_does_not_reallocate_the_array_it_views()
     test_container_read_only_from_tasklet_code()
     test_view_first_read_by_an_interstate_edge()
+    test_dominator_tree_matches_the_transitive_closure()

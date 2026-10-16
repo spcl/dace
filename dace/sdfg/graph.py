@@ -28,22 +28,20 @@ T = TypeVar("T")
 NodeT = TypeVar("NodeT")
 EdgeT = TypeVar("EdgeT")
 
-# ``id(graph) -> (graph, {id(node): index})`` while the graphs are frozen; the graph is kept to pin its id.
-_frozen_node_ids: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar(
-    "_frozen_node_ids", default=None
-)
+# ``id(graph) -> (graph, {id(node): index})`` while frozen; the graph is kept to pin its id
+FROZEN_NODE_IDS: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar("FROZEN_NODE_IDS", default=None)
 
 
 @contextmanager
 def frozen_node_ids() -> Iterator[None]:
     """Answers ``OrderedDiGraph.node_id`` from an index built once per graph. Only for spans that add or
     remove no nodes, e.g. serialization, where a linear scan per edge endpoint is quadratic."""
-    token = _frozen_node_ids.set({}) if _frozen_node_ids.get() is None else None
+    token = FROZEN_NODE_IDS.set({}) if FROZEN_NODE_IDS.get() is None else None
     try:
         yield
     finally:
         if token is not None:
-            _frozen_node_ids.reset(token)
+            FROZEN_NODE_IDS.reset(token)
 
 
 @dace.serialize.serializable
@@ -484,7 +482,6 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         #  in their source graph. If there is no reason we can even drop the `sorted()`
         #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
         if isinstance(graph, OrderedDiGraph):
-            # ``node_id`` is the position in ``nodes()``: one filtered walk replaces a scan per member.
             members = dict.fromkeys(subgraph_nodes)
             self._subgraph_nodes = {n: None for n in graph.nodes() if n in members}
             if len(self._subgraph_nodes) != len(members):
@@ -698,7 +695,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise NodeNotFoundError
 
     def node_id(self, node: NodeT) -> int:
-        frozen = _frozen_node_ids.get()
+        frozen = FROZEN_NODE_IDS.get()
         if frozen is not None:
             entry = frozen.get(id(self))
             if entry is None:
