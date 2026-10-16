@@ -109,9 +109,44 @@ b = mylocal
     sdfg.compile()
 
 
+def test_complex_parts():
+    """
+    The real and imaginary parts of complex numbers (connectors, locals and elements of array connectors) are member
+    functions in C++.
+    """
+    sdfg = dace.SDFG("complex_parts")
+    sdfg.add_array("A", [20], dace.complex128)
+    sdfg.add_array("B", [20], dace.complex128)
+    sdfg.add_array("C", [20], dace.complex64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "parts",
+        {"i": "0:20"},
+        {"a": dace.Memlet("A[i]"), "b": dace.Memlet("B[i]"), "row": dace.Memlet("B[0:20]")},
+        """
+re = a.real * b.real - a.imag * b.imag
+im = a.real * b.imag + a.imag * b.real
+product = dace.complex128(re, im)
+c = dace.complex64(product.imag + row[0].real, product.real)
+""",
+        {"c": dace.Memlet("C[i]")},
+        external_edges=True,
+    )
+    assert "a.real()" in sdfg.generate_code()[0].clean_code
+
+    rng = np.random.default_rng(42)
+    a = rng.random(20) + 1j * rng.random(20)
+    b = rng.random(20) + 1j * rng.random(20)
+    c = np.zeros(20, np.complex64)
+    sdfg(A=a, B=b, C=c)
+    product = a * b
+    assert np.allclose(c, product.imag + b[0].real + 1j * product.real)
+
+
 if __name__ == "__main__":
     test_integer_power()
     test_integer_power_constant()
     test_equality()
     test_pow_with_implicit_casting()
     test_tasklets_with_same_local_name()
+    test_complex_parts()

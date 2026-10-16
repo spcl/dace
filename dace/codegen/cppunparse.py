@@ -321,7 +321,9 @@ class CPPUnparser:
                         self.locals.define(target.id, t.lineno, self._indent, inferred_type)
                         self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
-                        self.locals.define(target.id, t.lineno, self._indent)
+                        # The type is still recorded where it is known, for expressions that depend on it (e.g., the
+                        # real part of a complex number)
+                        self.locals.define(target.id, t.lineno, self._indent, self._expr_type(t.value))
                         self.write("auto ")
 
             # dispatch target
@@ -955,7 +957,21 @@ class CPPUnparser:
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 
+    def _expr_type(self, expr: ast.expr) -> dace.dtypes.typeclass | None:
+        """The inferred type of an expression of the code, or None if it is unknown."""
+        symbols = {name: dtype for name, dtype in self.locals.get_name_type_associations().items() if dtype is not None}
+        symbols.update(self.defined_symbols)
+        return type_inference.infer_expr_type(expr, symbols)
+
     def _Attribute(self, t):
+        if isinstance(t.ctx, ast.Load) and t.attr in ("real", "imag"):
+            # In C++, the parts of a complex number are member functions
+            dtype = self._expr_type(t.value)
+            if isinstance(dtype, dace.dtypes.typeclass) and dtype.is_complex():
+                self.dispatch(t.value)
+                self.write(f".{t.attr}()")
+                return
+
         self.dispatch(t.value)
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
