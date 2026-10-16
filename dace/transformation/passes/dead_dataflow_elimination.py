@@ -354,10 +354,16 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             # Neither read nor written: every in-edge is empty and nothing follows it. Such a node holds no value
             # and orders nothing after it, so it is dead whatever its data's transience or lifetime -- and it must
             # not keep the producers of its ordering edges alive.
+            # Only plain data reached through ordering edges: an empty edge out of a code node (an MPI ``Dummy``
+            # declaring a process grid) carries the node's side effect, which the access node stands for.
             if (
                 state.in_degree(node) > 0
                 and state.out_degree(node) == 0
-                and all(e.data.is_empty() for e in state.in_edges(node))
+                and type(sdfg.arrays[node.data]) in (data.Array, data.Scalar)
+                and all(
+                    e.data.is_empty() and isinstance(e.src, (nodes.AccessNode, nodes.ExitNode))
+                    for e in state.in_edges(node)
+                )
             ):
                 return True
 
