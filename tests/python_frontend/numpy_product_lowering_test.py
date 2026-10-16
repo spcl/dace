@@ -55,6 +55,31 @@ def test_outer_flattens_operands():
     assert np.array_equal(result, np.outer(a, b))
 
 
+def test_outer_orders_the_flattening_copy_before_the_product():
+    """A strided operand is flattened by a copy into a transient; the product must read that transient AFTER
+    the copy. In one state the two are separate access nodes with no edge between them, and whether the read
+    sees the copy is down to the order code generation happens to emit (``RemoveViews`` reorders it, and an
+    in-place LU spelled ``A[k + 1:, k + 1:] -= np.outer(A[k + 1:, k], A[k, k + 1:])`` reads stale values)."""
+
+    @dace.program
+    def prog_outer_strided_column(a: dace.float64[5, 4], out: dace.float64[5, 4]):
+        out[:, :] = np.outer(a[:, 1], a[1, :])
+
+    sdfg = prog_outer_strided_column.to_sdfg(simplify=False)
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for name, desc in nested.arrays.items():
+                if not desc.transient or isinstance(desc, dace.data.View):
+                    continue
+                written = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
+                unordered = [n for n in state.source_nodes() if isinstance(n, nd.AccessNode) and n.data == name]
+                assert not (written and unordered), f"{state.label} writes {name} and reads it unordered"
+    a = np.arange(20.0).reshape(5, 4)
+    out = np.zeros((5, 4))
+    prog_outer_strided_column(a, out)
+    assert np.array_equal(out, np.outer(a[:, 1], a[1, :]))
+
+
 def test_inner_matrices():
     """Contraction over the LAST mode of BOTH operands -- a non-square pair catches a transpose."""
 
@@ -261,6 +286,7 @@ def test_kron_refuses_a_scalar_operand():
 if __name__ == "__main__":
     test_outer_vectors()
     test_outer_flattens_operands()
+    test_outer_orders_the_flattening_copy_before_the_product()
     test_inner_matrices()
     test_inner_is_not_dot()
     test_inner_matrix_vector()

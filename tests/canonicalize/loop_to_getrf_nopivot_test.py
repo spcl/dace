@@ -37,6 +37,14 @@ def lu_slices(A: dace.float64[N, N]):
 
 
 @dace.program
+def lu_augmented(A: dace.float64[N, N]):
+    """The npbench spelling: augmented slice assignments around ``np.outer``."""
+    for k in range(N):
+        A[k + 1 :, k] /= A[k, k]
+        A[k + 1 :, k + 1 :] -= np.outer(A[k + 1 :, k], A[k, k + 1 :])
+
+
+@dace.program
 def lu_loops(A: dace.float64[N, N]):
     for k in range(N):
         for i in range(k + 1, N):
@@ -142,7 +150,7 @@ def getrf_nodes(sdfg: dace.SDFG) -> list[GetrfNoPivot]:
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, GetrfNoPivot)]
 
 
-@pytest.mark.parametrize("program", [lu_slices, lu_loops, lu_loops_to_n_minus_1])
+@pytest.mark.parametrize("program", [lu_slices, lu_augmented, lu_loops, lu_loops_to_n_minus_1])
 def test_an_elimination_nest_lifts_to_one_node_that_factors(program):
     sdfg = normalized(program)
     assert LoopToGetrfNoPivot(target="gpu").apply_pass(sdfg, {}) == 1
@@ -197,7 +205,7 @@ def test_gpu_keeps_the_node_for_the_vendor_solver():
 
 
 if __name__ == "__main__":
-    for p in (lu_slices, lu_loops, lu_loops_to_n_minus_1):
+    for p in (lu_slices, lu_augmented, lu_loops, lu_loops_to_n_minus_1):
         test_an_elimination_nest_lifts_to_one_node_that_factors(p)
     test_ludcmp_lifts_the_factorization_and_keeps_the_solves()
     for p in (crout_rows, plus_update, unscaled_update, partial_update, second_output, left_looking):
