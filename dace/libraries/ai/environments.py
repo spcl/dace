@@ -18,6 +18,7 @@ import os
 import sys
 import warnings
 
+import dace.library
 from dace.config import Config
 from dace.libraries.ai import cache
 from dace.libraries.ai.backend import EnvironmentSpec
@@ -192,8 +193,6 @@ def resolve_installed(paths: list[str]) -> list[type]:
     :return: The registered environment classes, in the requested order and without duplicates.
     :raises AIExpansionError: If a requested environment is not registered.
     """
-    import dace.library  # Avoid a cyclic import
-
     resolved: list[type] = []
     for path in paths:
         name = (path or "").strip()
@@ -268,5 +267,8 @@ def load_generated_environments(directory: str | None = None) -> list[type]:
         except Exception as e:  # A broken or hand-edited module must not break importing DaCe
             warnings.warn(f"Could not load the generated DaCe environment at {path}: {e}")
             continue
-        loaded.extend(value for value in vars(module).values() if getattr(value, "_dace_library_environment", False))
+        prefix = module.__name__ + "."
+        loaded.extend(
+            env for path, env in dace.library._DACE_REGISTERED_ENVIRONMENTS.items() if path.startswith(prefix)
+        )
     return loaded

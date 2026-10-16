@@ -338,10 +338,10 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: str | None = None) -> Se
     session_id = session_id or make_id(node, state)
     index = {
         "id": session_id,
-        "sdfg": getattr(sdfg, "name", None),
-        "state": getattr(state, "label", None),
+        "sdfg": sdfg.name,
+        "state": state.label,
         "node_type": type(node).__name__,
-        "node_name": getattr(node, "name", None),
+        "node_name": node.name,
         "provider": Config.get("ai", "provider"),
         "model": Config.get("ai", "model"),
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),

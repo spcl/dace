@@ -19,11 +19,20 @@ imported inside :meth:`ExpandAI.expansion`.
 
 import functools
 import os
+import textwrap
 import warnings
 from typing import Any
 
 import dace.library
 from dace import dtypes
+from dace.config import Config
+from dace.libraries.ai import backend, iterate, prompts, verify
+from dace.libraries.ai import cache as ai_cache
+from dace.libraries.ai import environments as ai_environments
+from dace.libraries.ai import session as ai_session
+from dace.libraries.ai.context import collect_context
+from dace.libraries.ai.exceptions import AIExpansionError
+from dace.libraries.ai.nodes import AITasklet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -81,17 +90,6 @@ class ExpandAI(ExpandTransformation):
         :return: The generated tasklet.
         :raises AIExpansionError: If no tasklet could be generated.
         """
-        # Imported here so that resolving the reserved 'ai' implementation stays cheap and free of
-        # import cycles; none of this is needed unless an expansion actually runs.
-        from dace.config import Config
-        from dace.libraries.ai import cache as ai_cache
-        from dace.libraries.ai import environments as ai_environments
-        from dace.libraries.ai import prompts, verify
-        from dace.libraries.ai import session as ai_session
-        from dace.libraries.ai.backend import get_provider
-        from dace.libraries.ai.context import collect_context
-        from dace.libraries.ai.exceptions import AIExpansionError
-
         feedback = kwargs.get("feedback") or ""
         response = kwargs.get("response")
         described = f'{type(node).__name__} "{node.name}"'
@@ -100,14 +98,14 @@ class ExpandAI(ExpandTransformation):
         record.record_node(node.to_json(parent_state))
         record.begin_round(feedback)
         if record.path:
-            _status(f"{described}: session {record.id}, round {record.number} ({record.path})")
+            status(f"{described}: session {record.id}, round {record.number} ({record.path})")
 
         # Resolved on first use rather than up front, so that an expansion answered entirely from
         # the cache needs neither a provider SDK nor an API key
         provider = None
         system = prompts.SYSTEM_PROMPT
         record.record_system_prompt(system)
-        _detail("system prompt", system)
+        detail("system prompt", system)
 
         # A round with feedback continues the conversation: the model sees the code it wrote and
         # the critique of it, rather than being asked the original question again from scratch.
@@ -129,7 +127,7 @@ class ExpandAI(ExpandTransformation):
         try:
             for attempt in range(attempts):
                 entry = record.begin_attempt(attempt + 1, prompt)
-                _detail("user prompt" if attempt == 0 else "repair prompt", prompt)
+                detail("user prompt" if attempt == 0 else "repair prompt", prompt)
 
                 # Feedback changes the conversation and therefore the key on its own. A round with
                 # no feedback -- "just try again" -- would otherwise hash identically to the round
@@ -139,33 +137,33 @@ class ExpandAI(ExpandTransformation):
                 spec = None if response is not None else ai_cache.lookup(cache_key)
                 cached = spec is not None
                 if response is not None:
-                    _status(f"{described}: using the supplied response")
+                    status(f"{described}: using the supplied response")
                     spec = response
                     ai_cache.store(cache_key, spec, system, messages)
                 elif cached:
-                    _status(
+                    status(
                         f"{described}: reusing the cached answer for this prompt ({cache_key[:12]}), "
                         f"attempt {attempt + 1}/{attempts}"
                     )
                 else:
-                    _status(
+                    status(
                         f"{described}: asking {Config.get('ai', 'provider')} "
                         f"({Config.get('ai', 'model')}), attempt {attempt + 1}/{attempts}"
                     )
-                    provider = provider or get_provider()
+                    provider = provider or backend.get_provider()
                     spec = provider.generate(system, messages)
                     ai_cache.store(cache_key, spec, system, messages)
                 record.record_answer(entry, spec, cached=cached)
-                _detail("answer", spec.raw_response or spec.model_dump_json(indent=1))
+                detail("answer", spec.raw_response or spec.model_dump_json(indent=1))
                 try:
                     environments = ai_environments.collect(spec)
                 except ai_environments.EnvironmentConflict as e:
-                    _status(f"{described}: {e}")
+                    status(f"{described}: {e}")
                     problem = str(e)
                     prompt = prompts.build_rejection_prompt(problem)
                 else:
                     if not should_check:
-                        _status(
+                        status(
                             f"{described}: the compile check is off (ai.compile_check), taking the code as generated"
                         )
                         break
@@ -182,14 +180,14 @@ class ExpandAI(ExpandTransformation):
                     )
                     record.record_check(entry, result)
                     if result.skipped:
-                        _status(f"{described}: compile check skipped ({result.skipped}), taking the code as generated")
+                        status(f"{described}: compile check skipped ({result.skipped}), taking the code as generated")
                         break
                     if result.ok:
-                        _status(f"{described}: compile check passed")
+                        status(f"{described}: compile check passed")
                         break
 
-                    _status(f"{described}: compile check failed")
-                    _detail("compiler diagnostics", result.diagnostics)
+                    status(f"{described}: compile check failed")
+                    detail("compiler diagnostics", result.diagnostics)
                     problem = f"The code does not compile. Diagnostics:\n\n{result.diagnostics}"
                     prompt = prompts.build_repair_prompt(result.diagnostics, result.sources)
 
@@ -200,7 +198,7 @@ class ExpandAI(ExpandTransformation):
                     raise AIExpansionError(
                         f"The generated code for {described} is still not usable after {attempts} attempt(s). {problem}"
                     )
-                _status(f"{described}: asking for a repair (attempt {attempt + 2}/{attempts})")
+                status(f"{described}: asking for a repair (attempt {attempt + 2}/{attempts})")
                 messages.append({"role": "assistant", "content": spec.model_dump_json(indent=1)})
                 messages.append({"role": "user", "content": prompt})
         except Exception as e:
@@ -223,7 +221,7 @@ class ExpandAI(ExpandTransformation):
         record.conversation = messages + [{"role": "assistant", "content": spec.model_dump_json(indent=1)}]
         record.flush()
 
-        _status(
+        status(
             f"{described}: expanded into a tasklet"
             + (f" using {len(environments)} environment(s)" if environments else "")
         )
@@ -255,8 +253,6 @@ class ExpandAI(ExpandTransformation):
         :param record: The session this round belongs to.
         :return: The tasklet that replaces the library node.
         """
-        from dace.libraries.ai.nodes import AITasklet
-
         inputs = dict(node.in_connectors)
         outputs = dict(node.out_connectors)
         for conn in ctx.connectors:
@@ -278,15 +274,13 @@ class ExpandAI(ExpandTransformation):
             ignored_symbols=set(spec.ignored_symbols),
         )
         if record is not None and state is not None:
-            from dace.libraries.ai import iterate
-
             iterate.stamp(tasklet, session=record.id, round_number=record.number, node_json=node.to_json(state))
         if spec.notes:
-            _status(f'{type(node).__name__} "{node.name}": {spec.notes}')
+            status(f'{type(node).__name__} "{node.name}": {spec.notes}')
         return tasklet
 
 
-def _status(message: str) -> None:
+def status(message: str) -> None:
     """
     Prints one line describing a step of the expansion, when ``debugprint`` is set at all.
 
@@ -295,13 +289,11 @@ def _status(message: str) -> None:
 
     :param message: The message, without a trailing newline.
     """
-    from dace.config import Config
-
     if Config.get_bool("debugprint"):
         print(f"[ai] {message}", flush=True)
 
 
-def _detail(label: str, body: str | None) -> None:
+def detail(label: str, body: str | None) -> None:
     """
     Prints a block of text that a step acted on, only under ``debugprint=verbose``.
 
@@ -310,10 +302,6 @@ def _detail(label: str, body: str | None) -> None:
     :param label: A short heading, e.g. ``'user prompt'``.
     :param body: The text. Nothing is printed when it is empty.
     """
-    import textwrap
-
-    from dace.config import Config
-
     if Config.get("debugprint") != "verbose" or not body or not body.strip():
         return
     print(f"[ai] --- {label} ---", flush=True)

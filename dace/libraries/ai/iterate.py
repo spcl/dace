@@ -25,8 +25,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import dace.serialize
+from dace.libraries.ai import session as ai_session
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AITasklet
+from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 
@@ -113,11 +115,10 @@ def read(tasklet: nodes.Tasklet) -> dict[str, Any] | None:
     :param tasklet: The tasklet to inspect.
     :return: The decoded provenance, or ``None`` if it has none or it is unreadable.
     """
-    blob = getattr(tasklet, "provenance", "")
-    if not blob:
+    if not isinstance(tasklet, AITasklet) or not tasklet.provenance:
         return None
     try:
-        return json.loads(blob)
+        return json.loads(tasklet.provenance)
     except ValueError:
         warnings.warn(f'Ignoring unreadable provenance on tasklet "{tasklet.label}"')
         return None
@@ -295,8 +296,6 @@ def history(sdfg: SDFG, node: NodeSelector = None) -> list[Round]:
     :param node: Which slot.
     :return: The rounds, oldest first. Empty if the session is no longer on disk.
     """
-    from dace.libraries.ai import session as ai_session
-
     slot = _select(sdfg, node)
     record = ai_session.load(slot.session)
     if record is None:
@@ -327,8 +326,6 @@ def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
     :return: The tasklet now in the graph.
     :raises AIExpansionError: If that round has no code on record.
     """
-    from dace.libraries.ai import session as ai_session
-
     slot = _select(sdfg, node)
     record = ai_session.load(slot.session)
     spec = record.spec_of(round) if record is not None else None
@@ -339,7 +336,6 @@ def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
         )
 
     from dace import dtypes
-    from dace.properties import CodeBlock
 
     language = dtypes.Language.Python if spec.language.upper() == "PYTHON" else dtypes.Language.CPP
     tasklet = slot.tasklet

@@ -22,11 +22,16 @@ import platform
 from dataclasses import dataclass, field
 from typing import Any
 
+import dace.library
 from dace import data as dt
 from dace import dtypes
+from dace.codegen import common, compiler, compiler_family
+from dace.codegen.targets.cpp import cpp_offset_expr, sym2cpp
 from dace.config import Config
+from dace.libraries.ai.nodes import AINode
 from dace.sdfg import SDFG, SDFGState, infer_types, nodes
 from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_devicelevel_gpu
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 
 @dataclass
@@ -204,7 +209,7 @@ def _scope_frame(
             detail=f"{entry.consume.pe_index} < {entry.consume.num_pes}",
             schedule=_resolved_schedule(entry, defaults),
         )
-    return NestingFrame(kind="scope", label=str(entry), schedule=_resolved_schedule(entry, defaults))
+    return NestingFrame(kind="scope", label=str(entry))
 
 
 def _region_frame(region: Any) -> NestingFrame:
@@ -214,8 +219,6 @@ def _region_frame(region: Any) -> NestingFrame:
     :param region: The control flow region (loop, conditional, or a plain named region).
     :return: The corresponding nesting frame.
     """
-    from dace.sdfg.state import ConditionalBlock, LoopRegion  # Avoid a cyclic import
-
     if isinstance(region, LoopRegion):
         init = region.init_statement.as_string if region.init_statement is not None else ""
         cond = region.loop_condition.as_string if region.loop_condition is not None else ""
@@ -279,13 +282,11 @@ def collect_nesting(
             )
             break
         mapping = {k: str(v) for k, v in sorted(nsdfg_node.symbol_mapping.items())}
-        schedule = getattr(nsdfg_node, "schedule", None)
         frames.append(
             NestingFrame(
                 kind="nested_sdfg",
                 label=nsdfg_node.label,
                 detail=f'inner SDFG "{cur_sdfg.name}"',
-                schedule=schedule.name if schedule is not None else None,
                 symbol_mapping=mapping,
             )
         )
@@ -309,8 +310,6 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
     :param desc: The data descriptor behind the connector.
     :param memlet: The memlet attached to the connector.
     """
-    from dace.codegen.targets.cpp import cpp_offset_expr, sym2cpp  # Avoid a cyclic import
-
     if not info.is_pointer or memlet.subset is None or not isinstance(desc, dt.Data):
         return
     try:
@@ -488,8 +487,6 @@ def collect_capabilities(
     :param defaults: Resolved schedules and storage, from :func:`infer_defaults`.
     :return: The capability block for this expansion.
     """
-    from dace.codegen import common  # Avoid a cyclic import through the code generator
-
     device_level = is_devicelevel_gpu(sdfg, state, node)
     storages = {c.name: dtypes.StorageType[c.storage] for c in connectors if c.storage is not None}
 
@@ -542,8 +539,6 @@ def collect_target_info(device_level: bool) -> TargetInfo:
     :param device_level: True if the tasklet will be compiled as GPU device code.
     :return: The target description.
     """
-    from dace.codegen import common, compiler, compiler_family  # Avoid a cyclic import through the code generator
-
     cpu_model, cpu_flags = compiler.host_cpu()
     host_compiler = compiler_family.host_compiler()
     try:
@@ -679,22 +674,19 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
         # fails an expansion, so fall back to the unresolved schedules.
         if Config.get_bool("debugprint"):
             print(
-                f'[ai] Could not infer defaults for "{getattr(sdfg, "name", "?")}" ({e}); reporting schedules '
-                "and storage as declared."
+                f'[ai] Could not infer defaults for "{sdfg.name}" ({e}); reporting schedules and storage as declared.'
             )
         return ResolvedDefaults()
 
     resolved = ResolvedDefaults()
     for nested in copied.all_sdfgs_recursive():
         for name, desc in nested.arrays.items():
-            if isinstance(getattr(desc, "storage", None), dtypes.StorageType):
-                resolved.storage[(nested.guid, name)] = desc.storage
+            resolved.storage[(nested.guid, name)] = desc.storage
     for node, parent in copied.all_nodes_recursive():
         if isinstance(parent, SDFGState):
             resolved.nodes[node.guid] = (node, parent)
-            schedule = getattr(node, "schedule", None)
-            if isinstance(schedule, dtypes.ScheduleType):
-                resolved.schedules[node.guid] = schedule
+            if isinstance(node, (nodes.MapEntry, nodes.ConsumeEntry, nodes.LibraryNode)):
+                resolved.schedules[node.guid] = node.schedule
     return resolved
 
 
@@ -714,17 +706,17 @@ def _annotate_resolved(declared: Any, inferred: Any) -> str:
     return f"{inferred.name} (resolved from {declared.name})"
 
 
-def _resolved_schedule(node: nodes.Node, defaults: ResolvedDefaults | None) -> str | None:
+def _resolved_schedule(
+    node: nodes.MapEntry | nodes.ConsumeEntry | nodes.LibraryNode, defaults: ResolvedDefaults | None
+) -> str:
     """
     Renders one node's schedule, noting when it was resolved from ``Default``.
 
     :param node: The scope entry or library node.
     :param defaults: The result of :func:`infer_defaults`, if available.
-    :return: The schedule to report, or ``None`` if the node has none.
+    :return: The schedule to report.
     """
-    declared = getattr(node, "schedule", None)
-    if declared is None:
-        return None
+    declared = node.schedule
     return _annotate_resolved(declared, (defaults.schedules if defaults else {}).get(node.guid))
 
 
@@ -735,8 +727,6 @@ def collect_available_environments() -> tuple[list[str], list[str]]:
     :return: The full class paths of environments whose ``is_installed`` check passes, and of those
              that define no check.
     """
-    import dace.library  # Avoid a cyclic import
-
     installed, unchecked = [], []
     for path, env in dace.library._DACE_REGISTERED_ENVIRONMENTS.items():
         check = getattr(env, "is_installed", None)  # Optional in the environment protocol
@@ -822,7 +812,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
             continue
         properties[prop.attr_name] = str(value)
 
-    description = str(getattr(node, "description", "") or "").strip()
+    description = node.description.strip() if isinstance(node, AINode) else ""
     installed, unchecked = collect_available_environments()
     return ExpansionContext(
         node_type=type(node).__name__,

@@ -279,7 +279,7 @@ def get_provider() -> LLMProvider:
     :return: A ready-to-use provider.
     :raises AIExpansionError: If the provider is unknown or cannot be set up.
     """
-    # Providers import their SDKs, which are optional dependencies
+    # Imported here: the provider modules import this one
     provider = (Config.get("ai", "provider") or "anthropic").strip().lower()
     if provider == "anthropic":
         from dace.libraries.ai.providers.anthropic_provider import AnthropicProvider

@@ -26,7 +26,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from dace.config import Config
+from dace.codegen import exceptions as cgx
+from dace.config import Config, set_temporary
+from dace.libraries.ai import expansion, iterate
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.sdfg import SDFG
 
@@ -164,8 +166,6 @@ def attribute(sdfg: SDFG, diagnostics: list[Diagnostic]) -> Attribution:
     :param diagnostics: The parsed compiler output.
     :return: The grouping, with anything unattributable kept separate.
     """
-    from dace.libraries.ai import iterate
-
     index = build_line_index(sdfg)
     slots = {id(s.tasklet): s for s in iterate.sessions(sdfg)}
 
@@ -225,8 +225,6 @@ def repair(sdfg: SDFG, error: Any, **kwargs) -> list[str]:
     :return: The labels of the tasklets that were refined.
     :raises AIExpansionError: If no diagnostic can be attributed to a generated tasklet.
     """
-    from dace.libraries.ai import iterate
-
     diagnostics = parse_diagnostics(str(error))
     if not diagnostics:
         # DaCe streams the compiler's output live and omits it from the exception when debugprint
@@ -281,10 +279,6 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
     :raises CompilationError: If the build still fails, or fails for a reason no generated tasklet
                               is responsible for.
     """
-    from dace.codegen import exceptions as cgx
-    from dace.config import set_temporary
-    from dace.libraries.ai.expansion import _detail, _status
-
     for attempt in range(max(0, rounds) + 1):
         try:
             # The output goes into the exception only without debugprint, and one build job keeps
@@ -293,7 +287,7 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
                 with set_temporary("compiler", "build_jobs", value=1):
                     return sdfg.compile()
         except (cgx.CompilationError, cgx.CompilerConfigurationError) as e:
-            _detail("build diagnostics", str(e))
+            expansion.detail("build diagnostics", str(e))
             if attempt == rounds:
                 raise
             try:
@@ -302,4 +296,6 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
                 # The build failure is not something a model can be asked to fix. Report the
                 # original failure, with the reason this could not help attached.
                 raise e from repair_error
-            _status(f"build failed; refined {', '.join(refined)} and rebuilding (round {attempt + 1}/{rounds})")
+            expansion.status(
+                f"build failed; refined {', '.join(refined)} and rebuilding (round {attempt + 1}/{rounds})"
+            )
