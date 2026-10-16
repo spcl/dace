@@ -3,9 +3,8 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
-from dace.symbolic import symstr
+from dace.libraries.mpi import environments, utils
+from dace.libraries.mpi.nodes.node import MPINode, count_expression, expanded_input_connectors, resolve_comm
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -16,22 +15,7 @@ class ExpandBcastMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str), root = node.validate(parent_sdfg, parent_state)
-        dtype = buffer.dtype.base_type
-        mpi_dtype_str = "MPI_BYTE"
-        if dtype == dtypes.float32:
-            mpi_dtype_str = "MPI_FLOAT"
-        elif dtype == dtypes.float64:
-            mpi_dtype_str = "MPI_DOUBLE"
-        elif dtype == dtypes.complex64:
-            mpi_dtype_str = "MPI_COMPLEX"
-        elif dtype == dtypes.complex128:
-            mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
-        elif dtype == dtypes.int32:
-            mpi_dtype_str = "MPI_INT"
-        elif dtype == dtypes.int64:
-            mpi_dtype_str = "MPI_LONG_LONG"
-        else:
-            raise NotImplementedError("The datatype " + str(dtype) + " is not supported!")
+        mpi_dtype_str = utils.MPI_DDT(buffer.dtype.base_type)
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
         if root.dtype.base_type != dtypes.int32 and root.dtype.base_type != dtypes.int64:
@@ -42,11 +26,9 @@ class ExpandBcastMPI(ExpandTransformation):
             ref = "&"
 
         init = ""
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, "_grid")
-        if grid:
-            comm = "_grid"
-        elif node.fcomm:
+        comm = resolve_comm(node, parent_state)
+        if comm == "MPI_COMM_WORLD" and node.fcomm:
+            # fcomm is the legacy per-node handle, superseded by a _comm connector.
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 
@@ -75,7 +57,7 @@ class Bcast(MPINode):
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, fcomm=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inbuffer", "_root"], outputs=["_outbuffer"], **kwargs)
         self.fcomm = fcomm
 
     def validate(self, sdfg, state):
@@ -102,7 +84,6 @@ class Bcast(MPINode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset.num_elements_exact())
 
         return (inbuffer, count_str), root

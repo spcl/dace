@@ -3,7 +3,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode
+from dace.libraries.mpi.nodes.node import MPINode, count_expression, expanded_input_connectors, resolve_comm
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -20,15 +20,21 @@ class ExpandAllgatherMPI(ExpandTransformation):
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
 
+        comm = resolve_comm(node, parent_state)
+
         code = f"""
             int _commsize;
-            MPI_Comm_size(MPI_COMM_WORLD, &_commsize);
+            MPI_Comm_size({comm}, &_commsize);
             MPI_Allgather(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
                           _outbuffer, {out_count_str}/_commsize, {out_mpi_dtype_str},
-                          MPI_COMM_WORLD);
+                          {comm});
             """
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
         )
         return tasklet
 
@@ -42,7 +48,7 @@ class Allgather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inbuffer"], outputs=["_outbuffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -62,11 +68,9 @@ class Allgather(MPINode):
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
+                out_count_str = count_expression(data.subset.num_elements_exact())
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(data.subset.num_elements_exact())
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str)
