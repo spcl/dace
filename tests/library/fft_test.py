@@ -115,11 +115,12 @@ def test_stockham_factorize():
     assert stockham.factorize(2**20) == [16] * 5
     assert stockham.factorize(60) == [4, 3, 5]
     assert stockham.factorize(143) == [11, 13]
-    assert stockham.factorize(17) is None
+    assert stockham.factorize(17) == [17]
+    assert stockham.factorize(8001) == [127, 3, 3, 7]
     assert stockham.factorize(0) is None
 
 
-@pytest.mark.parametrize("n", (1, 2, 16, 21, 60, 143, 4096, 3 * 2**12))
+@pytest.mark.parametrize("n", (1, 2, 16, 21, 60, 143, 4096, 3 * 2**12, 8001))
 def test_stockham_1d(n):
     @dace.program
     def tester(x: dace.complex128[n]):
@@ -226,7 +227,8 @@ def test_stockham_inside_map():
 
 def test_stockham_dispatch():
     """
-    The native expansion uses Stockham for fixed supported lengths and falls back to the DFT otherwise.
+    The native expansion uses Stockham for fixed lengths (with a general-radix stage for a prime factor without a
+    generated butterfly) and falls back to the DFT otherwise.
     """
     N = dace.symbol("N")
 
@@ -242,12 +244,12 @@ def test_stockham_dispatch():
     def symbolic(x: dace.complex128[N]):
         return np.fft.fft(x)
 
-    for program, stages in ((fixed, 3), (prime, 0), (symbolic, 0)):
+    for program, stages in ((fixed, 3), (prime, 1), (symbolic, 0)):
         sdfg = program.to_sdfg()
         sdfg.expand_library_nodes()
         assert _stockham_stage_count(sdfg) == stages
 
-    sdfg = prime.to_sdfg()
+    sdfg = symbolic.to_sdfg()
     _set_fft_implementation(sdfg, "Stockham")
     with pytest.raises(ValueError, match="Stockham"):
         sdfg.expand_library_nodes()
@@ -286,32 +288,62 @@ def test_cufft_partial_axes():
         sdfg.expand_library_nodes()
 
 
+def _block_local_kernel_count(sdfg: dace.SDFG) -> int:
+    return sum(
+        1
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.MapEntry) and node.map.label == "stockham_fft_block_local_block"
+    )
+
+
+def _stockham_gpu_program(dtype_dace):
+    G = dace.StorageType.GPU_Global
+
+    @dace.program
+    def tester(
+        x: dtype_dace[2**16] @ G,
+        m: dtype_dace[24, 40] @ G,
+        v: dtype_dace[8, 323] @ G,
+        y: dtype_dace[2**16] @ G,
+        z: dtype_dace[24, 40] @ G,
+        w: dtype_dace[8, 323] @ G,
+    ):
+        y[:] = np.fft.ifft(np.fft.fft(x) * 2)
+        z[:] = np.fft.fft2(m)
+        w[:] = np.fft.ifft(v, norm="ortho")
+
+    return tester
+
+
+def test_stockham_gpu_expansion():
+    """
+    On a GPU, transforms that fit into shared memory and include the contiguous dimension are one kernel with a
+    thread block per transform (here, the two-dimensional transform and the general-radix transforms of length
+    ``17 * 19``), and larger ones have one kernel per stage.
+    """
+    sdfg = _stockham_gpu_program(dace.complex64).to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sdfg.expand_library_nodes()
+    assert _block_local_kernel_count(sdfg) == 2
+    assert _stockham_stage_count(sdfg) == 2 * len(stockham.factorize(2**16))
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype", (np.complex64, np.complex128))
 def test_stockham_gpu(dtype):
     import cupy as cp  # CuPy is only installed on GPU machines
 
-    dtype_dace = dace.dtypes.dtype_to_typeclass(dtype)
-
-    @dace.program
-    def tester(
-        x: dtype_dace[2**16] @ dace.StorageType.GPU_Global,
-        m: dtype_dace[24, 40] @ dace.StorageType.GPU_Global,
-        y: dtype_dace[2**16] @ dace.StorageType.GPU_Global,
-        z: dtype_dace[24, 40] @ dace.StorageType.GPU_Global,
-    ):
-        y[:] = np.fft.ifft(np.fft.fft(x) * 2)
-        z[:] = np.fft.fft2(m)
-
-    sdfg = tester.to_sdfg()
+    sdfg = _stockham_gpu_program(dace.dtypes.dtype_to_typeclass(dtype)).to_sdfg()
     sdfg.apply_gpu_transformations()
     _set_fft_implementation(sdfg, "Stockham")
     x, m = cp.asarray(_random_complex(2**16, dtype)), cp.asarray(_random_complex((24, 40), dtype))
-    y, z = cp.empty_like(x), cp.empty_like(m)
-    sdfg(x=x, m=m, y=y, z=z)
+    v = cp.asarray(_random_complex((8, 323), dtype))
+    y, z, w = cp.empty_like(x), cp.empty_like(m), cp.empty_like(v)
+    sdfg(x=x, m=m, v=v, y=y, z=z, w=w)
     tolerance = 1e-4 if dtype == np.complex64 else 1e-10
     assert np.allclose(y.get(), 2 * x.get(), rtol=tolerance, atol=tolerance)
     assert np.allclose(z.get(), np.fft.fft2(m.get()), rtol=tolerance, atol=100 * tolerance)
+    assert np.allclose(w.get(), np.fft.ifft(v.get(), norm="ortho"), rtol=tolerance, atol=tolerance)
 
 
 def _fuse_block_local(sdfg: dace.SDFG) -> int:
@@ -542,7 +574,7 @@ if __name__ == "__main__":
     test_cufft()
     test_cufft_twoplans()
     test_stockham_factorize()
-    for n in (1, 2, 16, 21, 60, 143, 4096, 3 * 2**12):
+    for n in (1, 2, 16, 21, 60, 143, 4096, 3 * 2**12, 8001):
         test_stockham_1d(n)
     test_stockham_complex64()
     test_stockham_r2c()
@@ -552,6 +584,7 @@ if __name__ == "__main__":
     test_stockham_dispatch()
     test_stockham_single_state_fusion()
     test_cufft_partial_axes()
+    test_stockham_gpu_expansion()
     test_stockham_gpu(np.complex64)
     test_stockham_gpu(np.complex128)
     test_block_local_fusion_structure()

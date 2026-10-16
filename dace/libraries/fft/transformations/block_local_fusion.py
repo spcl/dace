@@ -11,7 +11,6 @@ import math
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, properties, subsets, symbolic
 from dace.libraries.fft.algorithms import stockham
 from dace.libraries.fft.nodes import fft as fft_nodes
-from dace.sdfg import propagation
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
@@ -42,8 +41,8 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
 
     The map must compute each element of its output from the spectrum of the same transform, e.g., a pointwise product
     with a filter or a stencil along the transformed axes. It may read arbitrary other arrays. Both transforms must be
-    over the same axes of arrays in GPU global memory, have fixed axis lengths (see ``stockham.can_expand``), and a
-    transform must fit twice into the shared memory of a thread block (``stockham.BLOCK_LOCAL_SHARED_BYTES``).
+    over the same axes of arrays in GPU global memory, and a transform must fit into the shared memory of a thread
+    block (see ``stockham.fits_block_local``).
     """
 
     forward = transformation.PatternNode(fft_nodes.FFT)
@@ -102,12 +101,9 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         if dtype not in (dtypes.complex64, dtypes.complex128) or any(desc.dtype != dtype for desc in descs[2:]):
             return None
         axes = fft_nodes.transformed_axes(forward, len(shape))
-        if fft_nodes.transformed_axes(inverse, len(shape)) != axes or not stockham.can_expand(
-            shape, axes, sdfg.constants
-        ):
+        if fft_nodes.transformed_axes(inverse, len(shape)) != axes:
             return None
-        elements = math.prod(stockham.fixed_length(shape[axis], sdfg.constants) for axis in axes)
-        if 2 * elements * dtype.bytes > stockham.BLOCK_LOCAL_SHARED_BYTES:
+        if not stockham.fits_block_local(shape, axes, dtype, sdfg.constants):
             return None
 
         params = _map_dimensions(sdfg, state, map_entry, filtered.data, shape)
@@ -150,9 +146,8 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         source, result = match.source, match.result
         shape = tuple(sdfg.arrays[source.data].shape)
         dtype = sdfg.arrays[spectrum.data].dtype
-        ndim, axes = len(shape), match.axes
-        batch_dims = [dim for dim in range(ndim) if dim not in axes]
-        block_shape = [stockham.fixed_length(shape[dim], sdfg.constants) if dim in axes else 1 for dim in range(ndim)]
+        axes = match.axes
+        block_shape = stockham.block_local_shape(shape, axes, sdfg.constants)
         stages = stockham.plan_stages(block_shape, axes, {})
         threads = stockham.block_local_threads(stages, block_shape)
 
@@ -167,54 +162,26 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
         )
 
         # The nested SDFG of one thread block: one state per stage and one for the map
-        block = SDFG("fft_block_local")
-        batch_symbols = {dim: f"__fft_batch{dim}" for dim in batch_dims}
-        for symbol in batch_symbols.values():
-            block.add_symbol(symbol, dtypes.int64)
         other_inputs = {}
         for edge in state.in_edges(map_entry):
             if not edge.data.is_empty() and edge.src is not spectrum:
                 other_inputs.setdefault(edge.data.data, edge.src)
         table_nodes = list(forward_tables.values()) + list(inverse_tables.values())
         outer_names = {source.data, result.data, *other_inputs, *(node.data for node in table_nodes)}
-        for name in sorted(outer_names):
-            desc = copy.deepcopy(sdfg.arrays[name])
-            desc.transient = False
-            desc.lifetime = dtypes.AllocationLifetime.Scope
-            block.add_datadesc(name, desc)
-        buffers = [
-            block.add_transient(
-                f"__fft_block_buf{i}", block_shape, dtype, dtypes.StorageType.GPU_Shared, find_new_name=True
-            )[0]
-            for i in range(2)
-        ]
+        block, batch_symbols, batch_index, buffers = stockham.block_local_sdfg(
+            "fft_block_local", {name: sdfg.arrays[name] for name in outer_names}, shape, axes, dtype, sdfg.constants
+        )
 
-        global_index = [batch_symbols.get(dim) for dim in range(ndim)]
-        shared_index = ["0" if dim in batch_symbols else None for dim in range(ndim)]
-        batch_index = {source.data: global_index, result.data: global_index}
-        batch_index.update(dict.fromkeys(buffers, shared_index))
+        def stage_steps(sign: int, libnode: nodes.LibraryNode, tables: dict) -> list:
+            names = {key: node.data for key, node in tables.items()}
+            factor = stockham.factor_code(libnode.factor, dtype)
+            return [(stage, sign, names, factor if s == len(stages) - 1 else None) for s, stage in enumerate(stages)]
 
-        steps = [(stage, -1, forward) for stage in stages] + [None] + [(stage, 1, match.inverse) for stage in stages]
-        locations = [source.data] + [buffers[i % 2] for i in range(len(steps) - 1)] + [result.data]
-        prev_state = None
-        for i, step in enumerate(steps):
-            block_state = (
-                block.add_state(f"step_{i}", is_start_block=True)
-                if prev_state is None
-                else block.add_state_after(prev_state, f"step_{i}")
-            )
-            prev_state = block_state
-            src, dst = locations[i], locations[i + 1]
-            if step is None:
-                comp_state, comp_src, comp_dst = block_state, src, dst
-                continue
-            stage, sign, libnode = step
-            last = i + 1 == len(steps) or steps[i + 1] is None
-            tables = {key: node.data for key, node in (forward_tables if sign < 0 else inverse_tables).items()}
-            factor = stockham.factor_code(libnode.factor, dtype) if last else None
-            stockham.add_block_local_stage(
-                block_state, stage, sign, src, dst, block_shape, batch_index, tables, threads, factor
-            )
+        steps = stage_steps(-1, forward, forward_tables) + [None] + stage_steps(1, match.inverse, inverse_tables)
+        block_states = stockham.add_block_local_steps(
+            block, steps, source.data, result.data, buffers, block_shape, batch_index, threads
+        )
+        comp_state, comp_src, comp_dst = block_states[len(stages)]
 
         dependencies = [edge.src for edge in state.in_edges(map_entry) if edge.data.is_empty()]
         self._move_map(sdfg, state, comp_state, match, comp_src, comp_dst, block_shape, batch_symbols, threads)
@@ -225,38 +192,10 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             sdfg.remove_data(name, validate=False)
 
         # The kernel: one thread block per transform
-        kernel_ranges = {batch_symbols[dim]: f"0:{symbolic.symstr(shape[dim])}" for dim in batch_dims}
-        kernel_entry, kernel_exit = state.add_map(
-            "fft_block_local", kernel_ranges or {"__fft_block": "0:1"}, gpu_device
-        )
-        inputs = dict.fromkeys(sorted(outer_names - {result.data}))
-        free_symbols = block.free_symbols - set(batch_symbols.values())
-        for symbol in sorted(free_symbols):
-            block.add_symbol(symbol, sdfg.symbols.get(symbol, dtypes.int64))
-        nsdfg = state.add_nested_sdfg(
-            block,
-            inputs,
-            dict.fromkeys([result.data]),
-            {symbol: symbol for symbol in block.symbols},
-            name="fft_block_local",
-        )
         input_nodes = {source.data: source, **other_inputs, **{node.data: node for node in table_nodes}}
-        for name, node in input_nodes.items():
-            state.add_memlet_path(
-                node, kernel_entry, nsdfg, dst_conn=name, memlet=Memlet.from_array(name, sdfg.arrays[name])
-            )
-        state.add_memlet_path(
-            nsdfg,
-            kernel_exit,
-            result,
-            src_conn=result.data,
-            memlet=Memlet.from_array(result.data, sdfg.arrays[result.data]),
-        )
+        kernel_entry, nsdfg = stockham.add_block_local_kernel(state, block, input_nodes, result, shape, batch_symbols)
         for node in dependencies:
             state.add_nedge(node, kernel_entry, Memlet())
-
-        propagation.propagate_memlets_sdfg(block)
-        propagation.propagate_memlets_state(sdfg, state)
         return nsdfg
 
     def _move_map(

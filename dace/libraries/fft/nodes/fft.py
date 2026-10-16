@@ -58,8 +58,8 @@ class IFFT(nodes.LibraryNode):
 @library.register_expansion(FFT, "pure")
 class DFTExpansion(xf.ExpandTransformation):
     """
-    Native SDFG expansion: a Stockham FFT if the transformed axis lengths are fixed and factorize into supported
-    radices, otherwise a direct DFT (one-dimensional inputs only).
+    Native SDFG expansion: a Stockham FFT if the transformed axis lengths are fixed, otherwise a direct DFT
+    (one-dimensional inputs only).
     """
 
     environments = []
@@ -72,8 +72,8 @@ class DFTExpansion(xf.ExpandTransformation):
 @library.register_expansion(IFFT, "pure")
 class IDFTExpansion(xf.ExpandTransformation):
     """
-    Native SDFG expansion: a Stockham FFT if the transformed axis lengths are fixed and factorize into supported
-    radices, otherwise a direct DFT (one-dimensional inputs only).
+    Native SDFG expansion: a Stockham FFT if the transformed axis lengths are fixed, otherwise a direct DFT
+    (one-dimensional inputs only).
     """
 
     environments = []
@@ -86,7 +86,8 @@ class IDFTExpansion(xf.ExpandTransformation):
 @library.register_expansion(FFT, "Stockham")
 class StockhamFFTExpansion(xf.ExpandTransformation):
     """
-    Stockham autosort FFT with one map per stage. Requires fixed transformed axis lengths.
+    Stockham autosort FFT with one map per stage, or one kernel with a thread block per transform on a GPU (see
+    ``stockham.block_local_fft_sdfg``). Requires fixed transformed axis lengths.
     """
 
     environments = []
@@ -99,7 +100,8 @@ class StockhamFFTExpansion(xf.ExpandTransformation):
 @library.register_expansion(IFFT, "Stockham")
 class StockhamIFFTExpansion(xf.ExpandTransformation):
     """
-    Stockham autosort inverse FFT with one map per stage. Requires fixed transformed axis lengths.
+    Stockham autosort inverse FFT with one map per stage, or one kernel with a thread block per transform on a GPU
+    (see ``stockham.block_local_fft_sdfg``). Requires fixed transformed axis lengths.
     """
 
     environments = []
@@ -113,8 +115,30 @@ def _stockham_expansion(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, i
     indesc, outdesc = _connected_descriptors(state, sdfg, node)
     axes = transformed_axes(node, len(indesc.shape))
     persistent = not _in_map_scope(state, node)
+    if persistent and _block_local_applies(node, indesc, outdesc, axes, sdfg.constants):
+        return stockham.block_local_fft_sdfg(indesc, outdesc, axes, is_inverse, node.factor, sdfg.constants)
     return stockham.stockham_sdfg(
         indesc, outdesc, axes, is_inverse, node.factor, sdfg.constants, node.schedule, persistent
+    )
+
+
+def _block_local_applies(
+    node: nodes.LibraryNode, indesc: data.Array, outdesc: data.Array, axes: list[int], constants: dict
+) -> bool:
+    """
+    Returns True if a GPU (I)FFT node is computed by one thread block per transform: if a transform fits into shared
+    memory and is contiguous in global memory (it includes the dimension of unit stride), so that the threads of a
+    block access consecutive elements.
+    """
+    if node.schedule != dtypes.ScheduleType.GPU_Device:
+        return False
+    if any(desc.storage != dtypes.StorageType.GPU_Global for desc in (indesc, outdesc)):
+        return False
+    innermost = len(outdesc.shape) - 1
+    if innermost not in axes or any(desc.strides[innermost] != 1 for desc in (indesc, outdesc)):
+        return False
+    return outdesc.dtype in (dtypes.complex64, dtypes.complex128) and stockham.fits_block_local(
+        outdesc.shape, axes, outdesc.dtype, constants
     )
 
 
@@ -125,10 +149,7 @@ def _native_expansion(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, is_
     if stockham.can_expand(indesc.shape, transformed_axes(node, len(indesc.shape)), sdfg.constants):
         return _stockham_expansion(node, state, sdfg, is_inverse)
     if len(indesc.shape) != 1:
-        raise NotImplementedError(
-            "Native SDFG expansion of N-dimensional (I)FFT requires fixed axis lengths with prime factors in "
-            f"{(2,) + stockham.PRIME_RADICES}"
-        )
+        raise NotImplementedError("Native SDFG expansion of N-dimensional (I)FFT requires fixed axis lengths")
     program = dft.idft_explicit if is_inverse else dft.dft_explicit
     return program.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 

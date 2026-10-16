@@ -11,20 +11,27 @@ transformed axes are chained through two ping-pong buffers in one state, so the 
 with its surroundings. The twiddle factors of each stage are computed once per call into a small ``[L, R - 1]``
 table by a map in the same state.
 
+Prime factors without a generated butterfly (see ``PRIME_RADICES``) use general-radix stages, in which each map
+iteration computes one output ``j = c * L + b`` as the sum over ``a`` of the inputs times ``exp(+-2 pi i a j / (L *
+R_s))``, read from a table of ``L * R_s`` roots of unity. Such a stage costs ``O(N * R_s)`` operations, so any fixed
+length can be transformed, but a length with a large prime factor is transformed in up to ``O(N^2)`` operations.
+
 The radices and all stage sizes are fixed at expansion time, so the lengths of the transformed axes must be known
 integers. Batch dimensions may be symbolic.
 
 The stages can also be generated for a transform that a single GPU thread block computes in shared memory (see
-``add_block_local_stage``), which the ``BlockLocalFFTFusion`` transformation uses to fuse an FFT, a computation in the
-frequency domain, and an inverse FFT into one kernel.
+``block_local_fft_sdfg``). This is the GPU expansion of transforms that fit, and the ``BlockLocalFFTFusion``
+transformation uses it to fuse an FFT, a computation in the frequency domain, and an inverse FFT into one kernel.
 """
 
+import copy
 import math
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, symbolic
+from dace.sdfg import propagation
 
 #: Radices that butterflies are generated for. Powers of two are split recursively inside the butterfly and odd
-#: primes use a direct DFT, so other prime factors would need a different algorithm.
+#: primes use a direct DFT. Other prime factors use general-radix stages.
 POWER_OF_TWO_RADICES = (16, 8, 4, 2)
 PRIME_RADICES = (3, 5, 7, 11, 13)
 
@@ -47,8 +54,8 @@ def factorize(n: int) -> list[int] | None:
     Splits a transform length into the radices of the Stockham stages.
 
     :param n: The transform length.
-    :return: The list of radices whose product is ``n`` (empty for ``n == 1``), or None if ``n`` has a prime factor
-             with no butterfly.
+    :return: The list of radices whose product is ``n`` (empty for ``n == 1``), or None if ``n`` is not positive.
+             Prime factors with no generated butterfly come first, where their stages have the smallest tables.
     """
     if n < 1:
         return None
@@ -57,7 +64,23 @@ def factorize(n: int) -> list[int] | None:
         while n % radix == 0:
             radices.append(radix)
             n //= radix
-    return radices if n == 1 else None
+    general = []
+    prime = PRIME_RADICES[-1] + 2
+    while prime * prime <= n:
+        while n % prime == 0:
+            general.append(prime)
+            n //= prime
+        prime += 2
+    if n > 1:
+        general.append(n)
+    return general + radices
+
+
+def is_general_radix(radix: int) -> bool:
+    """
+    Returns True if a stage of the given radix is a general-radix stage, which has no generated butterfly.
+    """
+    return radix > 1 and radix not in POWER_OF_TWO_RADICES + PRIME_RADICES
 
 
 def fixed_length(length: symbolic.SymbolicType, constants: dict) -> int | None:
@@ -99,7 +122,7 @@ def can_expand(shape: tuple[symbolic.SymbolicType, ...], axes: list[int], consta
     :param shape: The shape of the array.
     :param axes: The (normalized) axes to transform.
     :param constants: Constants of the SDFG, used to evaluate symbolic axis lengths.
-    :return: True if every transformed axis has a fixed length with supported prime factors.
+    :return: True if every transformed axis has a fixed, positive length.
     """
     for axis in axes:
         length = fixed_length(shape[axis], constants)
@@ -257,6 +280,55 @@ def twiddle_code(radix: int, span: int, sign: int, out_dtype: dtypes.typeclass) 
     return "\n".join(lines)
 
 
+def general_stage_code(
+    radix: int,
+    span: int,
+    output: str,
+    input_stride: str,
+    input_is_complex: bool,
+    out_dtype: dtypes.typeclass,
+    factor: str | None,
+) -> str:
+    """
+    Generates the C++ tasklet code that computes one output ``_y`` of a general-radix stage: the sum over ``a`` of the
+    inputs ``_x[a * input_stride]`` times the roots ``_w[(a * j) mod (L * R)]`` of a table of ``exp(sign * 2 pi i t /
+    (L * R))``, which includes the twiddle factors.
+
+    :param radix: The radix ``R`` of the stage.
+    :param span: The product ``L`` of the radices of the previous stages.
+    :param output: C++ expression of the output index ``j = c * L + b`` in ``[0, L * R)``.
+    :param input_stride: C++ expression of the distance between consecutive inputs, in elements of the input array.
+    :param input_is_complex: Whether the inputs are complex (real inputs only reach the first stage).
+    :param out_dtype: The complex type of the output.
+    :param factor: C++ expression of the factor to multiply the output by, or None for no multiplication.
+    :return: The tasklet code.
+    """
+    real_ctype = "float" if out_dtype == dtypes.complex64 else "double"
+    size = span * radix
+    if input_is_complex:
+        accumulate = [
+            "__re += __x.real() * __w.real() - __x.imag() * __w.imag();",
+            "__im += __x.real() * __w.imag() + __x.imag() * __w.real();",
+        ]
+    else:
+        accumulate = ["__re += __x * __w.real();", "__im += __x * __w.imag();"]
+    scale = "" if factor is None else f" * {factor}"
+    lines = [
+        f"const long long __j = {output};",
+        f"{real_ctype} __re = 0, __im = 0;",
+        "long long __m = 0;",
+        f"for (int __a = 0; __a < {radix}; ++__a) {{",
+        f"    const auto __x = _x[__a * ({input_stride})];",
+        "    const auto __w = _w[__m];",
+        *(f"    {line}" for line in accumulate),
+        "    __m += __j;",
+        f"    if (__m >= {size}) __m -= {size};",
+        "}",
+        f"_y = {out_dtype.ctype}(__re{scale}, __im{scale});",
+    ]
+    return "\n".join(lines)
+
+
 def factor_code(factor: symbolic.SymbolicType, dtype: dtypes.typeclass) -> str | None:
     """
     Returns the C++ expression of an output factor in the real type of a complex type, or None if the factor is one.
@@ -280,7 +352,8 @@ def add_twiddle_tables(
 ) -> dict[tuple[int, int], nodes.AccessNode]:
     """
     Adds a ``[L, R - 1]`` twiddle factor table for every distinct ``(L, R)`` of the stages that need twiddle factors,
-    each computed by a map in the given state.
+    and a ``[L * R]`` table of roots of unity for every distinct ``(L, R)`` of the general-radix stages (see
+    ``general_stage_code``), each computed by a map in the given state.
 
     :param sdfg: The SDFG to add the tables to.
     :param state: The state to compute the tables in.
@@ -295,23 +368,33 @@ def add_twiddle_tables(
     """
     tables = {}
     for _, radix, span, _ in stages:
-        if span == 1 or (span, radix) in tables:
+        general = is_general_radix(radix)
+        if (span == 1 and not general) or (span, radix) in tables:
             continue
         table, _ = sdfg.add_transient(
             f"{prefix}_{span}_{radix}",
-            (span, radix - 1),
+            (span * radix,) if general else (span, radix - 1),
             dtype,
             storage,
             lifetime=lifetime,
             find_new_name=True,
         )
         table_node = state.add_access(table)
+        if general:
+            step = repr(sign * 2 * math.pi / (span * radix))
+            ranges = {"__t": f"0:{span * radix}"}
+            code = f"const double __angle = double(__t) * {step};\n_w = {dtype.ctype}(cos(__angle), sin(__angle));"
+            outputs = {"_w": Memlet(f"{table}[__t]")}
+        else:
+            ranges = {"__b": f"0:{span}"}
+            code = twiddle_code(radix, span, sign, dtype)
+            outputs = {f"_w{a}": Memlet(f"{table}[__b, {a - 1}]") for a in range(1, radix)}
         _, table_entry, _ = state.add_mapped_tasklet(
             f"stockham_twiddles_{span}_{radix}",
-            {"__b": f"0:{span}"},
+            ranges,
             {},
-            twiddle_code(radix, span, sign, dtype),
-            {f"_w{a}": Memlet(f"{table}[__b, {a - 1}]") for a in range(1, radix)},
+            code,
+            outputs,
             language=dtypes.Language.CPP,
             external_edges=True,
             output_nodes={table: table_node},
@@ -351,10 +434,7 @@ def stockham_sdfg(
     :return: A single-state SDFG with one map per stage.
     """
     if not can_expand(indesc.shape, axes, constants):
-        raise ValueError(
-            f"Stockham FFT requires fixed axis lengths with prime factors in {(2,) + PRIME_RADICES}, "
-            f"got shape {indesc.shape} and axes {axes}"
-        )
+        raise ValueError(f"Stockham FFT requires fixed axis lengths, got shape {indesc.shape} and axes {axes}")
     if outdesc.dtype not in (dtypes.complex64, dtypes.complex128):
         raise TypeError(f"Stockham FFT output must be complex, got {outdesc.dtype}")
     if len(indesc.shape) != len(outdesc.shape):
@@ -406,21 +486,24 @@ def stockham_sdfg(
         dst = "_out" if last else buffers[s % 2]
         dst_node = state.add_write(dst)
 
-        # Map dimensions, outermost to innermost: batch dimensions before the axis, b in [0, L), k in [0, M), and
-        # batch dimensions after the axis (contiguous in row-major arrays, and the GPU thread x dimension)
+        # Map dimensions, outermost to innermost: batch dimensions before the axis, b in [0, L) (or the output j in
+        # [0, L * R) of a general-radix stage), k in [0, M), and batch dimensions after the axis (contiguous in
+        # row-major arrays, and the GPU thread x dimension)
+        general = is_general_radix(radix)
+        rows = span * radix if general else span
         index = [f"__i{dim}" for dim in range(len(shape))]
         map_ranges = {f"__i{dim}": f"0:{symbolic.symstr(shape[dim])}" for dim in range(axis)}
-        if storage == dtypes.StorageType.GPU_Global and span > 1 and stride > 1:
+        if storage == dtypes.StorageType.GPU_Global and rows > 1 and stride > 1:
             # One linear thread index for (b, k): either range alone may be too short to fill a thread block, and
             # a long one could exceed the grid limits of the y and z dimensions
-            map_ranges["__t"] = f"0:{span * stride}"
-            b, k = f"int_floor(__t, {stride})", f"(__t % {stride})"
+            map_ranges["__t"] = f"0:{rows * stride}"
+            row, k = f"int_floor(__t, {stride})", f"(__t % {stride})"
         else:
-            if span > 1:
-                map_ranges["__b"] = f"0:{span}"
+            if rows > 1:
+                map_ranges["__b"] = f"0:{rows}"
             if stride > 1:
                 map_ranges["__k"] = f"0:{stride}"
-            b = "__b" if span > 1 else "0"
+            row = "__b" if rows > 1 else "0"
             k = "__k" if stride > 1 else "0"
         map_ranges.update({f"__i{dim}": f"0:{symbolic.symstr(shape[dim])}" for dim in range(axis + 1, len(shape))})
         if not map_ranges:
@@ -431,21 +514,36 @@ def stockham_sdfg(
             return Memlet(f"{dataname}[{subset}]")
 
         src = src_node.data
-        inputs = {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}
-        outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
         input_nodes = {src: src_node}
-        if span > 1:
+        input_is_complex = sdfg.arrays[src].dtype in (dtypes.complex64, dtypes.complex128)
+        stage_factor = factor_cpp if last else None
+        if general:
             table_node = twiddle_nodes[span, radix]
-            inputs.update({f"_w{a}": Memlet(f"{table_node.data}[{b}, {a - 1}]") for a in range(1, radix)})
             input_nodes[table_node.data] = table_node
-        code = stage_code(
-            radix,
-            sign,
-            span > 1,
-            input_is_complex=sdfg.arrays[src].dtype in (dtypes.complex64, dtypes.complex128),
-            out_dtype=outdesc.dtype,
-            factor=factor_cpp if last else None,
-        )
+            first = f"({row} % {span}) * {radix * stride} + {k}"
+            inputs = {
+                "_x": element(src, f"{first}:{first} + {(radix - 1) * stride + 1}:{stride}"),
+                "_w": Memlet.from_array(table_node.data, sdfg.arrays[table_node.data]),
+            }
+            outputs = {"_y": element(dst, f"{row} * {stride} + {k}")}
+            code = general_stage_code(
+                radix,
+                span,
+                _cpp(row),
+                _cpp(stride * sdfg.arrays[src].strides[axis]),
+                input_is_complex,
+                outdesc.dtype,
+                stage_factor,
+            )
+        else:
+            b = row
+            inputs = {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}
+            outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
+            if span > 1:
+                table_node = twiddle_nodes[span, radix]
+                inputs.update({f"_w{a}": Memlet(f"{table_node.data}[{b}, {a - 1}]") for a in range(1, radix)})
+                input_nodes[table_node.data] = table_node
+            code = stage_code(radix, sign, span > 1, input_is_complex, outdesc.dtype, stage_factor)
         _, map_entry, _ = state.add_mapped_tasklet(
             f"stockham_stage_{s}",
             map_ranges,
@@ -467,6 +565,15 @@ def stockham_sdfg(
     return sdfg
 
 
+def _cpp(expr: str | symbolic.SymbolicType) -> str:
+    """
+    Returns the C++ code of an index expression (e.g., ``int_floor(__t, 4)``).
+    """
+    if isinstance(expr, str):
+        expr = symbolic.pystr_to_symbolic(expr)
+    return symbolic.symstr(expr, cpp_mode=True)
+
+
 def delinearize(index: str, extents: list[int]) -> list[str]:
     """
     Returns expressions of the row-major multi-dimensional index that a linear index corresponds to.
@@ -484,15 +591,42 @@ def delinearize(index: str, extents: list[int]) -> list[str]:
     return result
 
 
+def block_local_shape(shape: tuple[symbolic.SymbolicType, ...], axes: list[int], constants: dict) -> list[int]:
+    """
+    Returns the shape of one transform of an array: the lengths of the transformed axes, and one for the other
+    dimensions.
+    """
+    return [fixed_length(shape[dim], constants) if dim in axes else 1 for dim in range(len(shape))]
+
+
+def fits_block_local(
+    shape: tuple[symbolic.SymbolicType, ...], axes: list[int], dtype: dtypes.typeclass, constants: dict
+) -> bool:
+    """
+    Checks whether one GPU thread block can compute a transform of the given axes of an array in shared memory, i.e.,
+    whether the axis lengths are fixed and two buffers of one transform fit into ``BLOCK_LOCAL_SHARED_BYTES``.
+
+    :param shape: The shape of the array.
+    :param axes: The (normalized) axes to transform.
+    :param dtype: The complex type of the transform.
+    :param constants: Constants of the SDFG, used to evaluate symbolic axis lengths.
+    """
+    if not can_expand(shape, axes, constants):
+        return False
+    return 2 * math.prod(block_local_shape(shape, axes, constants)) * dtype.bytes <= BLOCK_LOCAL_SHARED_BYTES
+
+
 def block_local_threads(stages: list[tuple[int, int, int, int]], shape: list[int]) -> int:
     """
     Returns the number of threads of a thread block that computes the given stages of one transform: one thread per
-    butterfly of the largest stage, rounded up to full warps and capped at ``BLOCK_LOCAL_MAX_THREADS``.
+    butterfly (or output of a general-radix stage) of the largest stage, rounded up to full warps and capped at
+    ``BLOCK_LOCAL_MAX_THREADS``.
 
     :param stages: The stages, as returned by ``plan_stages``.
     :param shape: The shape of one transform (one for dimensions that are not transformed).
     """
-    work = max(math.prod(shape) // radix for _, radix, _, _ in stages)
+    elements = math.prod(shape)
+    work = max(elements if is_general_radix(radix) else elements // radix for _, radix, _, _ in stages)
     return min(BLOCK_LOCAL_MAX_THREADS, 32 * math.ceil(work / 32))
 
 
@@ -546,16 +680,18 @@ def add_block_local_stage(
     """
     sdfg = state.sdfg
     axis, radix, span, stride = stage
+    general = is_general_radix(radix)
 
-    # Linear iteration space, outermost first: transformed dimensions before the axis, b, k, and the transformed
-    # dimensions after the axis, so that consecutive threads access consecutive elements where possible
+    # Linear iteration space, outermost first: transformed dimensions before the axis, b (or the output j of a
+    # general-radix stage), k, and the transformed dimensions after the axis, so that consecutive threads access
+    # consecutive elements where possible
     loop = [(dim, shape[dim]) for dim in range(axis) if shape[dim] > 1]
-    loop += [("b", span), ("k", stride)]
+    loop += [("row", span * radix if general else span), ("k", stride)]
     loop += [(dim, shape[dim]) for dim in range(axis + 1, len(shape)) if shape[dim] > 1]
     loop = [(name, extent) for name, extent in loop if extent > 1]
     work = math.prod(extent for _, extent in loop)
     indices = dict(zip((name for name, _ in loop), delinearize("__u", [extent for _, extent in loop])))
-    b, k = indices.get("b", "0"), indices.get("k", "0")
+    row, k = indices.get("row", "0"), indices.get("k", "0")
 
     def element(dataname: str, axis_index: str) -> Memlet:
         subset = []
@@ -568,20 +704,27 @@ def add_block_local_stage(
                 subset.append(indices.get(dim, "0"))
         return Memlet(f"{dataname}[{', '.join(subset)}]")
 
-    inputs = {src: {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}}
-    if span > 1:
+    input_is_complex = sdfg.arrays[src].dtype in (dtypes.complex64, dtypes.complex128)
+    out_dtype = sdfg.arrays[dst].dtype
+    if general:
         table = tables[span, radix]
-        inputs[table] = {f"_w{a}": Memlet(f"{table}[{b}, {a - 1}]") for a in range(1, radix)}
-    outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
+        first = f"({row} % {span}) * {radix * stride} + {k}"
+        inputs = {
+            src: {"_x": element(src, f"{first}:{first} + {(radix - 1) * stride + 1}:{stride}")},
+            table: {"_w": Memlet.from_array(table, sdfg.arrays[table])},
+        }
+        outputs = {"_y": element(dst, f"{row} * {stride} + {k}")}
+        input_stride = _cpp(stride * sdfg.arrays[src].strides[axis])
+        code = general_stage_code(radix, span, _cpp(row), input_stride, input_is_complex, out_dtype, factor)
+    else:
+        b = row
+        inputs = {src: {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}}
+        if span > 1:
+            table = tables[span, radix]
+            inputs[table] = {f"_w{a}": Memlet(f"{table}[{b}, {a - 1}]") for a in range(1, radix)}
+        outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
+        code = stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor)
 
-    code = stage_code(
-        radix,
-        sign,
-        span > 1,
-        input_is_complex=sdfg.arrays[src].dtype in (dtypes.complex64, dtypes.complex128),
-        out_dtype=sdfg.arrays[dst].dtype,
-        factor=factor,
-    )
     tasklet = state.add_tasklet(
         f"stockham_butterfly_{radix}",
         dict.fromkeys(conn for memlets in inputs.values() for conn in memlets),
@@ -611,3 +754,210 @@ def add_block_local_stage(
     seq_exit.add_out_connector(f"OUT_{dst}")
     tb_exit.add_in_connector(f"IN_{dst}")
     tb_exit.add_out_connector(f"OUT_{dst}")
+
+
+def block_local_sdfg(
+    name: str,
+    arrays: dict[str, data.Data],
+    shape: tuple[symbolic.SymbolicType, ...],
+    axes: list[int],
+    dtype: dtypes.typeclass,
+    constants: dict,
+    num_buffers: int = 2,
+) -> tuple[SDFG, dict[int, str], dict[str, list[str | None]], list[str]]:
+    """
+    Creates the SDFG that each thread block of a block-local kernel runs (see ``add_block_local_kernel``), without
+    states. It accesses the given arrays of the parent, which the kernel passes whole, has one symbol per dimension
+    that is not transformed (the transform of the block), and has shared memory buffers for one transform.
+
+    :param name: The name of the SDFG.
+    :param arrays: The arrays of the parent SDFG that the SDFG accesses, by name.
+    :param shape: The shape of the transformed arrays.
+    :param axes: The (normalized) transformed axes. Their lengths must be fixed.
+    :param dtype: The complex type of the buffers.
+    :param constants: Constants of the parent SDFG, used to evaluate symbolic axis lengths.
+    :param num_buffers: The number of shared memory buffers (at most two are needed).
+    :return: The SDFG, the symbol of each dimension that is not transformed, the batch index of each array (see
+             ``add_block_local_stage``), and the names of the buffers.
+    """
+    block = SDFG(name)
+    ndim = len(shape)
+    batch_symbols = {dim: f"__fft_batch{dim}" for dim in range(ndim) if dim not in axes}
+    for symbol in batch_symbols.values():
+        block.add_symbol(symbol, dtypes.int64)
+    for array_name, desc in sorted(arrays.items()):
+        desc = copy.deepcopy(desc)
+        desc.transient = False
+        desc.lifetime = dtypes.AllocationLifetime.Scope
+        block.add_datadesc(array_name, desc)
+    block_shape = block_local_shape(shape, axes, constants)
+    buffers = [
+        block.add_transient(
+            f"__fft_block_buf{i}", block_shape, dtype, dtypes.StorageType.GPU_Shared, find_new_name=True
+        )[0]
+        for i in range(num_buffers)
+    ]
+    global_index = [batch_symbols.get(dim) for dim in range(ndim)]
+    shared_index = ["0" if dim in batch_symbols else None for dim in range(ndim)]
+    batch_index = dict.fromkeys(arrays, global_index)
+    batch_index.update(dict.fromkeys(buffers, shared_index))
+    return block, batch_symbols, batch_index, buffers
+
+
+def add_block_local_steps(
+    block: SDFG,
+    steps: list[tuple[tuple[int, int, int, int], int, dict[tuple[int, int], str], str | None] | None],
+    src: str,
+    dst: str,
+    buffers: list[str],
+    shape: list[int],
+    batch_index: dict[str, list[str | None]],
+    threads: int,
+) -> list[tuple[SDFGState, str, str]]:
+    """
+    Adds one state per step to the SDFG of a thread block (see ``block_local_sdfg``), in order. The first step reads
+    ``src``, the last one writes ``dst``, and the steps in between alternate between the buffers.
+
+    :param block: The SDFG of a thread block, without states.
+    :param steps: The steps, each a stage as ``(stage, sign, tables, factor)`` (see ``add_block_local_stage``), or
+                  None for a state that the caller fills (e.g., with a computation from one buffer to the other).
+    :param src: The array that the first step reads.
+    :param dst: The array that the last step writes.
+    :param buffers: The shared memory buffers.
+    :param shape: The shape of one transform (one for dimensions that are not transformed).
+    :param batch_index: The batch index of each array (see ``add_block_local_stage``).
+    :param threads: The number of threads of the block.
+    :return: For each step, its state and the arrays it reads and writes.
+    """
+    locations = [src] + [buffers[i % 2] for i in range(len(steps) - 1)] + [dst]
+    result = []
+    prev_state = None
+    for i, step in enumerate(steps):
+        if prev_state is None:
+            state = block.add_state(f"step_{i}", is_start_block=True)
+        else:
+            state = block.add_state_after(prev_state, f"step_{i}")
+        prev_state = state
+        if step is not None:
+            stage, sign, tables, factor = step
+            add_block_local_stage(
+                state, stage, sign, locations[i], locations[i + 1], shape, batch_index, tables, threads, factor
+            )
+        result.append((state, locations[i], locations[i + 1]))
+    return result
+
+
+def add_block_local_kernel(
+    state: SDFGState,
+    block: SDFG,
+    inputs: dict[str, nodes.AccessNode],
+    output: nodes.AccessNode,
+    shape: tuple[symbolic.SymbolicType, ...],
+    batch_symbols: dict[int, str],
+) -> tuple[nodes.MapEntry, nodes.NestedSDFG]:
+    """
+    Adds a GPU kernel that runs the SDFG of a thread block (see ``block_local_sdfg``) with one thread block per
+    transform, i.e., a ``GPU_Device`` map over the dimensions that are not transformed.
+
+    :param state: The state to add the kernel to.
+    :param block: The SDFG of a thread block, with all of its states.
+    :param inputs: The access nodes of the arrays that the block reads, by name.
+    :param output: The access node of the array that the block writes.
+    :param shape: The shape of the transformed arrays.
+    :param batch_symbols: The symbol of each dimension that is not transformed.
+    :return: The entry node of the kernel map and the nested SDFG node.
+    """
+    sdfg = state.sdfg
+    ranges = {symbol: f"0:{symbolic.symstr(shape[dim])}" for dim, symbol in sorted(batch_symbols.items())}
+    kernel_entry, kernel_exit = state.add_map(
+        block.name, ranges or {"__fft_block": "0:1"}, dtypes.ScheduleType.GPU_Device
+    )
+    for symbol in sorted(block.free_symbols - set(batch_symbols.values())):
+        block.add_symbol(symbol, sdfg.symbols.get(symbol, dtypes.int64))
+    nsdfg = state.add_nested_sdfg(
+        block,
+        dict.fromkeys(sorted(inputs)),
+        dict.fromkeys([output.data]),
+        {symbol: symbol for symbol in block.symbols},
+        name=block.name,
+    )
+    for name in sorted(inputs):
+        state.add_memlet_path(
+            inputs[name], kernel_entry, nsdfg, dst_conn=name, memlet=Memlet.from_array(name, sdfg.arrays[name])
+        )
+    state.add_memlet_path(
+        nsdfg,
+        kernel_exit,
+        output,
+        src_conn=output.data,
+        memlet=Memlet.from_array(output.data, sdfg.arrays[output.data]),
+    )
+    propagation.propagate_memlets_sdfg(block)
+    propagation.propagate_memlets_state(sdfg, state)
+    return kernel_entry, nsdfg
+
+
+def block_local_fft_sdfg(
+    indesc: data.Array,
+    outdesc: data.Array,
+    axes: list[int],
+    inverse: bool,
+    factor: symbolic.SymbolicType,
+    constants: dict,
+    name: str = "stockham_fft_block_local",
+) -> SDFG:
+    """
+    Creates an SDFG that computes the (inverse) FFT of ``_inp`` over the given axes into ``_out``, both in GPU global
+    memory, as one kernel in which each thread block computes one transform in shared memory. The twiddle factor
+    tables are allocated once and computed per call by small kernels before it, so the SDFG must not be inside a map.
+
+    :param indesc: Descriptor of the input array (real or complex).
+    :param outdesc: Descriptor of the complex output array, with the same shape as the input.
+    :param axes: The (normalized) axes to transform. A transform must fit into shared memory (see
+                 ``fits_block_local``).
+    :param inverse: Whether to compute the inverse transform.
+    :param factor: Factor to multiply the outputs by (e.g., for normalization).
+    :param constants: Constants of the parent SDFG, used to evaluate symbolic axis lengths.
+    :param name: Name of the generated SDFG.
+    :return: A single-state SDFG with the table maps and the kernel.
+    """
+    shape = tuple(outdesc.shape)
+    if not fits_block_local(shape, axes, outdesc.dtype, constants):
+        raise ValueError(f"A transform of axes {axes} of shape {shape} does not fit into the shared memory of a block")
+    if outdesc.dtype not in (dtypes.complex64, dtypes.complex128):
+        raise TypeError(f"Stockham FFT output must be complex, got {outdesc.dtype}")
+    if len(indesc.shape) != len(outdesc.shape):
+        raise ValueError("Stockham FFT input and output must have the same number of dimensions")
+
+    sdfg = SDFG(name)
+    sdfg.add_array("_inp", indesc.shape, indesc.dtype, indesc.storage, strides=indesc.strides)
+    sdfg.add_array("_out", outdesc.shape, outdesc.dtype, outdesc.storage, strides=outdesc.strides)
+    state = sdfg.add_state("stockham")
+
+    dtype = outdesc.dtype
+    sign = 1 if inverse else -1
+    block_shape = block_local_shape(shape, axes, constants)
+    stages = plan_stages(block_shape, axes, {})
+    threads = block_local_threads(stages, block_shape)
+    table_nodes = add_twiddle_tables(
+        sdfg,
+        state,
+        stages,
+        sign,
+        dtype,
+        dtypes.StorageType.GPU_Global,
+        dtypes.AllocationLifetime.Persistent,
+        dtypes.ScheduleType.GPU_Device,
+    )
+    tables = {key: node.data for key, node in table_nodes.items()}
+    arrays = {array: sdfg.arrays[array] for array in ("_inp", "_out", *tables.values())}
+    block, batch_symbols, batch_index, buffers = block_local_sdfg(
+        f"{name}_block", arrays, shape, axes, dtype, constants, min(len(stages) - 1, 2)
+    )
+    factor_cpp = factor_code(factor, dtype)
+    steps = [(stage, sign, tables, factor_cpp if s == len(stages) - 1 else None) for s, stage in enumerate(stages)]
+    add_block_local_steps(block, steps, "_inp", "_out", buffers, block_shape, batch_index, threads)
+
+    inputs = {"_inp": state.add_read("_inp"), **{node.data: node for node in table_nodes.values()}}
+    add_block_local_kernel(state, block, inputs, state.add_write("_out"), shape, batch_symbols)
+    return sdfg
