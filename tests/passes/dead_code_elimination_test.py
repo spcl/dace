@@ -1023,6 +1023,37 @@ def test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg():
     assert np.allclose(B, 2 * A + 1)
 
 
+def test_dde_removes_a_dead_transient_whose_ordering_edge_ends_in_an_unused_global_sink():
+    """A global access node with only an empty in-edge and nothing after it is neither read nor written, so it
+    orders nothing. It must not keep the dead full-size transient feeding it alive (warpx_boris_push: a fused map
+    still wrote ``ux_times_tz[0:np]`` for an empty edge into a bare ``ux`` sink, and every tile of the CPF form
+    allocated that whole buffer again)."""
+    sdfg = dace.SDFG("dde_unused_global_sink")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_transient("t", [8], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:8"))
+    tasklet = state.add_tasklet("f", {"x"}, {"y", "z"}, "y = 2 * x\nz = x * x")
+    state.add_memlet_path(state.add_read("A"), me, tasklet, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    tnode = state.add_access("t")
+    state.add_memlet_path(tasklet, mx, tnode, src_conn="z", memlet=dace.Memlet("t[i]"))
+    sink = state.add_access("A")
+    state.add_nedge(tnode, sink, dace.Memlet())
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not any(n.data == "t" for n in state.data_nodes()), "the unread transient survived"
+    assert sink not in state.nodes(), "the data-less sink survived"
+
+    A = np.arange(8, dtype=np.float64)
+    B = np.zeros(8)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, 2 * np.arange(8))
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1058,6 +1089,7 @@ if __name__ == "__main__":
     test_dde_keeps_an_initializer_the_second_write_does_not_cover()
     test_dde_removes_an_initializer_the_second_write_fully_covers()
     test_dde_keeps_an_ordering_edge_whose_producer_is_live()
+    test_dde_removes_a_dead_transient_whose_ordering_edge_ends_in_an_unused_global_sink()
     test_dde_keeps_a_copy_that_a_write_through_a_view_does_not_cover()
     test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers()
     test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg()
