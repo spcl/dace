@@ -92,6 +92,7 @@ from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNum
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern,
 )
@@ -772,6 +773,8 @@ def ingest(target: str) -> Stages:
         (CLEANUP, ContinueToCondition()),
         (CLEANUP, SupplyNumThreads()),
         (CLEANUP, SimplifyPass()),
+        # A while loop that counts gets its counter here, so every later pass sees a counted loop.
+        (CLEANUP, WhileToFor()),
         # After simplification: the raised guard of a break still reads its condition through a separate
         # preparation region before it, which the matcher does not see through.
         (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
