@@ -484,9 +484,9 @@ class TestNestedDescSpansFullOuter:
         inner, outer = self._descs()
         assert not self._codegen()._nested_desc_spans_full_outer(Memlet('A[0:4:2, 0:5]'), inner, outer)
 
-    def test_rejects_indices_subset(self):
+    def test_rejects_nonzero_single_element_subset(self):
         inner, outer = self._descs()
-        memlet = Memlet(data='A', subset=subsets.Indices([2, 3]))
+        memlet = Memlet(data='A', subset=subsets.Range([(2, 2, 1), (3, 3, 1)]))
         assert not self._codegen()._nested_desc_spans_full_outer(memlet, inner, outer)
 
     def test_rejects_other_subset(self):

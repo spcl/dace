@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import copy
 import re
 from typing import TYPE_CHECKING, Optional
 import warnings
@@ -368,9 +369,6 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         actual_subset = self._normalize_subset(subset)
         if actual_subset is None:
             return runtime_name
-        if isinstance(actual_subset, subsets.Indices):
-            indices = ', '.join(_python_expr(index) for index in actual_subset.indices)
-            return f'{runtime_name}[{indices}]'
         if isinstance(actual_subset, subsets.Range):
             components = ', '.join(
                 _python_view_component(start, end, step) for start, end, step in actual_subset.ranges)
@@ -378,26 +376,25 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         raise NotImplementedError(f'Unsupported subset type for nested SDFG connector: {type(actual_subset).__name__}')
 
     @staticmethod
-    def _unify_symbols_by_name(expr):
-        """Rebuild ``expr`` from its string form so same-named symbols compare
-        equal across scopes: outer and nested symbols may carry different
-        sympy assumptions, but the backend emits both by name into one Python
-        scope, so name-based unification matches the generated code.
-        """
-        return symbolic.pystr_to_symbolic(symbolic.symstr(expr, cpp_mode=False))
+    def _unify_symbols_by_name(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+        """Unify symbol names without changing typed literals."""
+        expr = symbolic.pystr_to_symbolic(expr)
+        return symbolic.replace_symbols(expr, {str(sym): symbolic.symbol(str(sym)) for sym in expr.free_symbols})
 
     @classmethod
-    def _provably_equal(cls, a, b) -> bool:
-        """Whether two (symbolic) values are provably equal, unifying symbols
-        by name. Inconclusive comparisons count as not equal.
-        """
+    def _provably_equal(cls, a: symbolic.SymbolicType, b: symbolic.SymbolicType,
+                        facts: Optional[symbolic.Facts] = None) -> bool:
+        """Return whether the values are equal under the caller's facts."""
         try:
-            return symbolic.equal(cls._unify_symbols_by_name(a), cls._unify_symbols_by_name(b)) is True
+            facts = facts if facts is not None else symbolic.Facts.none()
+            lhs = symbolic.simplify(cls._unify_symbols_by_name(a), facts)
+            rhs = symbolic.simplify(cls._unify_symbols_by_name(b), facts)
+            return symbolic.ask(symbolic.Relation(symbolic.RelationKind.EQ, lhs, rhs), facts) is symbolic.Truth.TRUE
         except (TypeError, ValueError):
             return False
 
     @classmethod
-    def _is_c_contiguous_layout(cls, shape, strides) -> bool:
+    def _is_c_contiguous_layout(cls, shape, strides, facts: Optional[symbolic.Facts] = None) -> bool:
         """Whether ``strides`` are provably the canonical C-contiguous strides
         for ``shape``. Strides of provably size-1 dimensions are ignored.
 
@@ -407,12 +404,12 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         """
         expected = 1
         for dim, stride in zip(reversed(list(shape)), reversed(list(strides))):
-            if not symbolic.equal_valued(1, dim) and not cls._provably_equal(stride, expected):
+            if not cls._provably_equal(1, dim, facts) and not cls._provably_equal(stride, expected, facts):
                 return False
             expected = expected * dim
         return True
 
-    def _nested_shapes_match(self, memlet: mmlt.Memlet, desc: data.Array) -> bool:
+    def _nested_shapes_match(self, memlet: mmlt.Memlet, desc: data.Array, facts: Optional[symbolic.Facts] = None) -> bool:
         """Whether the outer memlet subset and the nested connector have
         provably identical ordered shapes (including singleton positions).
 
@@ -423,7 +420,7 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         subset_size = list(memlet.subset.size())
         conn_shape = list(desc.shape)
         return len(subset_size) == len(conn_shape) and all(
-            self._provably_equal(a, b) for a, b in zip(subset_size, conn_shape))
+            self._provably_equal(a, b, facts) for a, b in zip(subset_size, conn_shape))
 
     def _outer_view_dims(self, outer_desc: data.Array, subset) -> Optional[list]:
         """Per-dimension (size, stride, start, end, step) of the view the outer
@@ -437,14 +434,12 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         """
         if subset is None:
             return [(size, stride, 0, size - 1, 1) for size, stride in zip(outer_desc.shape, outer_desc.strides)]
-        if isinstance(subset, subsets.Indices):
-            return [(1, stride, index, index, 1) for index, stride in zip(subset.indices, outer_desc.strides)]
         if isinstance(subset, subsets.Range):
             return [(size, stride * step, start, end, step)
                     for (start, end, step), size, stride in zip(subset.ranges, subset.size(), outer_desc.strides)]
         return None
 
-    def _nested_strided_view_expr(self, sdfg: SDFG, memlet: mmlt.Memlet, desc: data.Array) -> Optional[str]:
+    def _nested_strided_view_expr(self, sdfg: SDFG, memlet: mmlt.Memlet, desc: data.Array, facts: Optional[symbolic.Facts] = None) -> Optional[str]:
         """Expression for a genuine strided view of the outer array matching
         the nested connector's declared shape/strides, or None when no such
         view provably exists.
@@ -473,21 +468,21 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         components = []
         kept = []  # (size, stride) of kept outer dims
         for size, stride, start, end, step in outer_dims:
-            if symbolic.equal_valued(1, size):
+            if self._provably_equal(1, size, facts):
                 components.append(_python_expr(start))
             else:
                 components.append(_python_view_component(start, end, step))
                 kept.append((size, stride))
 
         conn_nonsingleton = [(size, stride) for size, stride in zip(desc.shape, desc.strides)
-                             if not symbolic.equal_valued(1, size)]
+                             if not self._provably_equal(1, size, facts)]
         if len(kept) == 0 or len(conn_nonsingleton) != len(kept):
             return None
 
         # Match connector dims to kept outer dims: identity order first, then
         # a permutation (on provably equal size AND stride).
         if all(
-                self._provably_equal(cs, os) and self._provably_equal(ct, ot)
+                self._provably_equal(cs, os, facts) and self._provably_equal(ct, ot, facts)
                 for (cs, ct), (os, ot) in zip(conn_nonsingleton, kept)):
             perm = list(range(len(kept)))
         else:
@@ -496,7 +491,7 @@ class PythonCodeGen(PythonTargetCodeGenerator):
             for conn_size, conn_stride in conn_nonsingleton:
                 match = next(
                     (k for k in unmatched
-                     if self._provably_equal(conn_size, kept[k][0]) and self._provably_equal(conn_stride, kept[k][1])),
+                     if self._provably_equal(conn_size, kept[k][0], facts) and self._provably_equal(conn_stride, kept[k][1], facts)),
                     None)
                 if match is None:
                     return None
@@ -508,11 +503,11 @@ class PythonCodeGen(PythonTargetCodeGenerator):
             expr = f'{expr}.transpose({tuple(perm)})'
         if len(conn_nonsingleton) != len(desc.shape):
             # Insert singleton connector dims via None-indexing (a pure view).
-            inserts = ', '.join('None' if symbolic.equal_valued(1, size) else ':' for size in desc.shape)
+            inserts = ', '.join('None' if self._provably_equal(1, size, facts) else ':' for size in desc.shape)
             expr = f'{expr}[{inserts}]'
         return expr
 
-    def _nested_desc_spans_full_outer(self, memlet: mmlt.Memlet, desc: data.Array, outer_desc: data.Data) -> bool:
+    def _nested_desc_spans_full_outer(self, memlet: mmlt.Memlet, desc: data.Array, outer_desc: data.Data, facts: Optional[symbolic.Facts] = None) -> bool:
         """Whether the nested connector is declared over the WHOLE outer array
         while the memlet subset is only the (zero-based, step-1) accessed window.
 
@@ -541,7 +536,7 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         outer_shape = list(outer_desc.shape)
         if len(conn_shape) != len(outer_shape):
             return False
-        if not all(self._provably_equal(a, b) for a, b in zip(conn_shape, outer_shape)):
+        if not all(self._provably_equal(a, b, facts) for a, b in zip(conn_shape, outer_shape)):
             return False
         subset = self._normalize_subset(memlet.subset)
         if subset is None:
@@ -549,9 +544,9 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         if not isinstance(subset, subsets.Range):
             return False
         return all(
-            self._provably_equal(start, 0) and symbolic.equal_valued(1, step) for start, _end, step in subset.ranges)
+            self._provably_equal(start, 0, facts) and self._provably_equal(1, step, facts) for start, _end, step in subset.ranges)
 
-    def _nested_arg_needs_flat_reshape(self, connector_name: str, memlet: mmlt.Memlet, desc: data.Array) -> bool:
+    def _nested_arg_needs_flat_reshape(self, connector_name: str, memlet: mmlt.Memlet, desc: data.Array, facts: Optional[symbolic.Facts] = None) -> bool:
         """Whether a nested-SDFG array connector needs (and safely admits) a
         flat C-order ``.reshape`` from the outer memlet subset to its shape.
 
@@ -579,7 +574,7 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         subset_size = list(memlet.subset.size())
         conn_shape = list(desc.shape)
         # Identical ordered shapes (including singleton positions) need nothing.
-        if self._nested_shapes_match(memlet, desc):
+        if self._nested_shapes_match(memlet, desc, facts):
             return False
         # A pure squeeze/unsqueeze mismatch -- only size-1 dims differ (e.g. a
         # strided column slice ``A[0:N, i]`` of subset size ``(N, 1)`` feeding
@@ -588,13 +583,13 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         # reorders elements (NumPy realizes such a reshape as a view).  It
         # therefore needs the reshape but must BYPASS the C-contiguity guard
         # below, which would wrongly reject the non-contiguous column strides.
-        sub_nontrivial = [s for s in subset_size if not self._provably_equal(s, 1)]
-        conn_nontrivial = [s for s in conn_shape if not self._provably_equal(s, 1)]
+        sub_nontrivial = [s for s in subset_size if not self._provably_equal(s, 1, facts)]
+        conn_nontrivial = [s for s in conn_shape if not self._provably_equal(s, 1, facts)]
         if len(sub_nontrivial) == len(conn_nontrivial) and all(
-                self._provably_equal(a, b) for a, b in zip(sub_nontrivial, conn_nontrivial)):
+                self._provably_equal(a, b, facts) for a, b in zip(sub_nontrivial, conn_nontrivial)):
             return True
-        if (not self._provably_equal(prod(subset_size), prod(conn_shape))
-                or not self._is_c_contiguous_layout(desc.shape, desc.strides)):
+        if (not self._provably_equal(prod(subset_size), prod(conn_shape), facts)
+                or not self._is_c_contiguous_layout(desc.shape, desc.strides, facts)):
             raise NotImplementedError(
                 f'Cannot reconcile nested SDFG connector {connector_name!r} (shape {conn_shape}, '
                 f'strides {list(desc.strides)}) with the outer subset of array {memlet.data!r} '
@@ -622,8 +617,6 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         :param subset: The target memlet subset.
         :returns: List of sizes of the dimensions the rendered target keeps.
         """
-        if isinstance(subset, subsets.Indices):
-            return []  # Plain indices collapse every dimension.
         if not isinstance(subset, subsets.Range):
             return list(subset.size())
         return [
@@ -1086,6 +1079,7 @@ class PythonCodeGen(PythonTargetCodeGenerator):
         seen_inputs = set()
         seen_outputs = set()
         output_connector_names = {e.src_conn for e in state.out_edges(node) if e.src_conn is not None}
+        facts = self._frame._symbol_resolver.facts_at(state, node)
 
         def _bind_bridge(connector_name: str, memlet: mmlt.Memlet, desc: data.Data, is_input: bool) -> str:
             bridge_name = self._nested_scalar_bridge_name(cfg, state, node, connector_name)
@@ -1139,6 +1133,12 @@ class PythonCodeGen(PythonTargetCodeGenerator):
                 return
 
             desc = node.sdfg.arrays[connector_name]
+            if isinstance(desc, data.Array):
+                desc = copy.deepcopy(desc)
+                for field in ('shape', 'strides', 'offset'):
+                    setattr(desc, field, tuple(symbolic.replace_symbols(value, node.symbol_mapping)
+                                              for value in getattr(desc, field)))
+                desc.total_size = symbolic.replace_symbols(desc.total_size, node.symbol_mapping)
             outer_desc = sdfg.arrays[memlet.data]
             if isinstance(desc, data.Scalar):
                 arg_expr = self._nested_scalar_direct_expr(sdfg, memlet.data, memlet.subset)
@@ -1154,17 +1154,17 @@ class PythonCodeGen(PythonTargetCodeGenerator):
                 # connector with an explicit-full IN subset and a window OUT
                 # subset canonicalizes to the same (bare-name) binding instead of
                 # raising the inconsistent-binding error.
-                if self._nested_desc_spans_full_outer(memlet, desc, outer_desc):
+                if self._nested_desc_spans_full_outer(memlet, desc, outer_desc, facts):
                     arg_expr = self._runtime_data_name(sdfg, memlet.data)
                 else:
                     arg_expr = self._nested_view_expr(sdfg, memlet.data, memlet.subset)
-                    if not self._nested_shapes_match(memlet, desc):
+                    if not self._nested_shapes_match(memlet, desc, facts):
                         # Otherwise prefer a genuine strided view (exact layout,
                         # valid for reads and writes); otherwise fall back to a flat
                         # reshape, which raises when not provably order-preserving.
-                        if (strided_expr := self._nested_strided_view_expr(sdfg, memlet, desc)) is not None:
+                        if (strided_expr := self._nested_strided_view_expr(sdfg, memlet, desc, facts)) is not None:
                             arg_expr = strided_expr
-                        elif self._nested_arg_needs_flat_reshape(connector_name, memlet, desc):
+                        elif self._nested_arg_needs_flat_reshape(connector_name, memlet, desc, facts):
                             if connector_name in output_connector_names:
                                 # Writes must land in the outer array: go through a
                                 # contiguous bridge with an explicit copy-back.

@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
 
 import sympy as sp
 
-from dace import data, dtypes, registry, subsets
+from dace import data, dtypes, registry, subsets, symbolic
 import dace.codegen.dispatcher as dispatcher_mod
 from dace.codegen.py import control_flow as py_cflow
 from dace.codegen.py.framecode import codeblock_to_python
 from dace.codegen.py.prettycode import PythonCodeIOStream
 from dace.codegen.py.target import PythonTargetCodeGenerator
 from dace.sdfg import nodes
+from dace.sdfg.state import SymbolResolver
 from dace.symbolic import symstr
 
 if TYPE_CHECKING:
@@ -310,13 +311,11 @@ def _element_index_exprs(subset: object, allow_multi_element: bool = False) -> O
     exactly one element; ``None`` when it spans more than one element (or size
     cannot be proven 1 symbolically).
 
-    :param subset: A memlet subset (``Indices`` or ``Range``).
+    :param subset: A memlet range.
     :param allow_multi_element: Render the per-dim begin expressions even for
         a (possibly) multi-element ``Range`` instead of returning ``None``.
     :returns: ``"i, j"``-style index string, or ``None``.
     """
-    if isinstance(subset, subsets.Indices):
-        return ", ".join(symstr(i) for i in subset.indices)
     if not allow_multi_element:
         try:
             if any(sp.simplify(sp.sympify(r[1] - r[0])) != 0 for r in subset):
@@ -476,16 +475,17 @@ def _ordered_unique(items: Iterable[str]) -> List[str]:
     return sorted(set(items))
 
 
-def _collect_free_symbols(entry: nodes.MapEntry, dfg_scope: object, sdfg: "SDFG") -> List[str]:
+def _collect_free_symbols(entry: nodes.MapEntry, dfg_scope: object, sdfg: "SDFG",
+                          symbol_types: Optional[Dict[str, dtypes.typeclass]] = None) -> List[str]:
     """Collect free symbols used in a map scope.
 
-    Returns symbols that appear in the map range, memlet subsets, or
-    NestedSDFG symbol mappings and are declared in the SDFG's symbol
-    table (but not constants).
+    Only names visible at the launch site can be kernel arguments; names
+    defined in other states or sibling scopes are excluded.
 
     :param entry: The map entry node.
     :param dfg_scope: The scope subgraph view.
     :param sdfg: The SDFG.
+    :param symbol_types: Types visible at the entry, or None to resolve them.
     :returns: Sorted list of free symbol names.
     """
     syms = {str(s) for s in entry.map.range.free_symbols}
@@ -520,21 +520,9 @@ def _collect_free_symbols(entry: nodes.MapEntry, dfg_scope: object, sdfg: "SDFG"
         if isinstance(scope_node, nodes.MapEntry):
             bound_names |= {str(p) for p in scope_node.map.params}
     syms -= bound_names
-    # Loop induction variables and interstate-assigned names are module-level
-    # Python locals in the generated code but not necessarily in
-    # ``sdfg.symbols``; they must still become kernel parameters.
-    runtime_defined = set()
-    for region in sdfg.all_control_flow_regions():
-        loop_var = getattr(region, 'loop_variable', None)
-        if loop_var:
-            runtime_defined.add(str(loop_var))
-    for isedge in sdfg.all_interstate_edges():
-        runtime_defined |= set(isedge.data.assignments.keys())
-    syms = {
-        s
-        for s in syms
-        if (s in sdfg.symbols or s in runtime_defined) and s not in sdfg.constants and s not in sdfg.arrays
-    }
+    if symbol_types is None:
+        symbol_types = SymbolResolver().defined_at(dfg_scope.graph, entry)
+    syms = {s for s in syms if s in symbol_types and s not in sdfg.constants and s not in sdfg.arrays}
     return sorted(syms)
 
 
@@ -986,7 +974,7 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         """Resolve the shape of a single tile transient to concrete integers.
 
         Reads the shape from the tile's array descriptor and substitutes
-        map parameters and SDFG symbols to obtain integer dimensions.
+        declared constants. Runtime symbols cannot determine a tile shape.
 
         :param entry: The enclosing :class:`~dace.sdfg.nodes.MapEntry`.
         :param tile_name: Name of the tile transient in the SDFG.
@@ -998,16 +986,13 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         if desc is None:
             raise RuntimeError(f"Tile array {tile_name!r} not found in SDFG.")
 
-        _tile_subs = {sp.Symbol(p): r[0] for p, r in zip(entry.map.params, entry.map.range)}
-        _sym_subs = {sp.Symbol(s): sp.Integer(2**31) for s in sdfg.symbols}
-
+        constants = {name: value for name, value in sdfg.constants.items() if name not in sdfg.arrays}
         resolved: List[int] = []
-        for s in desc.shape:
-            val = sp.sympify(s).subs(_tile_subs).subs(_sym_subs)
-            if val.is_Number:
-                resolved.append(int(val))
-            else:
-                resolved.append(int(str(symstr(val))))  # best effort
+        for dimension in desc.shape:
+            value = symbolic.simplify(symbolic.replace_symbols(sp.sympify(dimension), constants))
+            if value.free_symbols or value.is_integer is not True:
+                raise ValueError(f'cuTile array {tile_name!r} needs compile-time integer dimensions, got {dimension}')
+            resolved.append(int(value))
         return tuple(resolved)
 
     # ------------------------------------------------------------------
@@ -1183,11 +1168,11 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         """
         if begins is None:
             return []
-        subs = {sp.Symbol(str(p)): sp.Integer(0) for p in entry.map.params}
+        subs = {str(p): sp.Integer(0) for p in entry.map.params}
         offsets: List[object] = []
         for b in begins:
             try:
-                offsets.append(sp.simplify(sp.sympify(b).subs(subs)))
+                offsets.append(symbolic.simplify(symbolic.replace_symbols(symbolic.pystr_to_symbolic(b), subs)))
             except Exception:  # noqa: BLE001 - non-symbolic begin -> assume anchored
                 offsets.append(sp.Integer(0))
         return offsets
@@ -2136,7 +2121,8 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
                                        if e.data and e.data.data and isinstance(e.src, nodes.AccessNode))
         output_arrays = _ordered_unique(e.data.data for e in state.out_edges(exit_node)
                                         if e.data and e.data.data and isinstance(e.dst, nodes.AccessNode))
-        free_syms = _collect_free_symbols(entry, dfg_scope, sdfg)
+        symbol_types = self._frame.symbols_defined_at(state, entry)
+        free_syms = _collect_free_symbols(entry, dfg_scope, sdfg, symbol_types)
         kernel_params = list(dict.fromkeys(input_arrays + output_arrays + free_syms))
 
         # A Scalar that is BOTH input and output cannot be launched: numeric
@@ -2163,21 +2149,16 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         # downstream use: binop broadcasting, tile indices, range() bounds,
         # and branch conditions all accept 0-d tiles). Grid-dimension
         # computations at the call site keep the raw host values.
-        # Maps sym name -> declared numpy dtype name, or None for a
-        # runtime-defined name (loop induction variable / interstate-
-        # assignment key, absent from ``sdfg.symbols``): those are staged with
-        # the runtime value's own dtype (``cupy.asarray`` types a Python float
-        # float64 and an int int64 -- exact; a bool becomes a 0-d bool tile,
-        # probe-verified as a branch condition). Declared bool symbols stay by
-        # value (typed exactly at the launch boundary).
-        device_syms: Dict[str, Optional[str]] = {}
-        for s in free_syms:
-            if s in sdfg.symbols:
-                np_dtype = sdfg.symbols[s].as_numpy_dtype()
-                if np_dtype.kind in 'fiu':
-                    device_syms[s] = np_dtype.name
-            else:
-                device_syms[s] = None
+        # Scoped repository types also cover host loop and interstate variables.
+        # Numeric symbols use device buffers; bool symbols remain exact by value.
+        device_syms: Dict[str, str] = {}
+        for symbol in free_syms:
+            dtype = symbol_types[symbol]
+            if dtype is None:
+                raise TypeError(f'Cannot determine the type of cuTile symbol {symbol!r}')
+            np_dtype = dtype.as_numpy_dtype()
+            if np_dtype.kind in 'fiu':
+                device_syms[symbol] = np_dtype.name
 
         kernel_name = (f"__dace_cutile_{sdfg.name}_{cfg.cfg_id}_"
                        f"{state.block_id}_{state.node_id(entry)}")
@@ -2226,10 +2207,9 @@ class CuTilePythonCodeGen(PythonTargetCodeGenerator):
         for s in free_syms:
             if s in device_syms:
                 # Numeric symbols travel through device memory (see above):
-                # declared symbols preserve the declared dtype, runtime-defined
-                # names use the runtime value's own dtype.
+                # symbols retain the dtype visible at the launch site.
                 np_name = device_syms[s]
-                dtype_arg = f", dtype=numpy.{np_name}" if np_name is not None else ""
+                dtype_arg = f", dtype=numpy.{np_name}"
                 launch_args.append(f"cupy.asarray({s}{dtype_arg}).reshape(1)")
             else:
                 launch_args.append(s)

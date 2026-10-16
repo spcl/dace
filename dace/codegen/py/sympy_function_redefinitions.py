@@ -3,6 +3,8 @@ import numpy as _np
 Min = min
 Max = max
 Abs = abs
+CMod = _np.fmod
+PyMod = _np.remainder
 
 def int_ceil(x, y):
     return -(-x // y)

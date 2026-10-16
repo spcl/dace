@@ -208,9 +208,11 @@ class ExpandTileBinopPure(ExpandTransformation):
         # but ``double`` operands, so casting the symbol to ``out_dtype`` would
         # emit ``(bool)RLMIN`` — truncating ``RLMIN=1e-12`` to ``1`` and
         # corrupting the comparison. Prefer a data operand's descriptor dtype;
-        # else the symbol's own declared dtype from ``sdfg.symbols``; else
+        # else the symbol type visible at this node; else
         # fall back to ``out_dtype`` (all-Symbol case with no resolvable type).
-        def _operand_dtype():
+        symbol_types = parent_state.symbols_defined_at(node)
+
+        def _operand_dtype() -> str:
             for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b")):
                 if k in (_TILE, _SCALAR) and c in in_e:
                     return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
@@ -219,8 +221,8 @@ class ExpandTileBinopPure(ExpandTransformation):
                     continue
                 try:
                     for s in dace.symbolic.symlist(dace.symbolic.pystr_to_symbolic(expr)):
-                        if str(s) in parent_sdfg.symbols:
-                            return parent_sdfg.symbols[str(s)].ctype
+                        if str(s) in symbol_types:
+                            return symbol_types[str(s)].ctype
                 except Exception:  # noqa: BLE001
                     pass
             return out_dtype

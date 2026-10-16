@@ -415,7 +415,7 @@ def _promote_demoted_scope_transients(state: SDFGState, map_entry: nodes.MapEntr
         st, nds = frontier.pop()
         for node in nds:
             if isinstance(node, nodes.NestedSDFG):
-                frontier.extend((ns, ns.nodes()) for ns in node.sdfg.all_states())
+                frontier.extend((ns, ns.nodes()) for ns in node.sdfg.states())
                 continue
             if not isinstance(node, nodes.AccessNode):
                 continue

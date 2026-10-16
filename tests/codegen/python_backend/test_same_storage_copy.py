@@ -455,7 +455,7 @@ def _build_vadd_with_tile_copy(name: str, width: int = 8) -> Tuple[SDFG, str]:
         data = getattr(n, "data", None)
         return isinstance(data, str) and data.endswith("C_tile_out")
 
-    kstate = next(s for s in sdfg.all_states() if any(_is_out_tile(n) for n in s.nodes()))
+    kstate = next(s for s in sdfg.states() if any(_is_out_tile(n) for n in s.nodes()))
     c_out = next(n for n in kstate.nodes() if _is_out_tile(n))
     out_name = c_out.data
     store_edge = next(e for e in kstate.out_edges(c_out) if isinstance(e.dst, nodes.LibraryNode))

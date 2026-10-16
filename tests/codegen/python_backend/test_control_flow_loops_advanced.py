@@ -202,7 +202,6 @@ class TestLoopCorrectnessForLoop:
         sdfg.backend = dace.dtypes.BackendLanguage.Python
 
         sdfg.add_array('result', [1], dace.int64)
-        sdfg.add_symbol('i', dace.int64)
 
         # Init state: result = 0
         init = sdfg.add_state('init', is_start_block=True)
@@ -240,7 +239,6 @@ class TestLoopCorrectnessForLoop:
         sdfg.backend = dace.dtypes.BackendLanguage.Python
 
         sdfg.add_array('A', [N], dace.int64)
-        sdfg.add_symbol('i', dace.int64)
 
         loop = LoopRegion('fillloop', condition_expr=f'i < {N}', loop_var='i',
                           initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)
@@ -344,8 +342,6 @@ class TestLoopCorrectnessNested:
         sdfg.backend = dace.dtypes.BackendLanguage.Python
 
         sdfg.add_array('result', [1], dace.int64)
-        sdfg.add_symbol('i', dace.int64)
-        sdfg.add_symbol('j', dace.int64)
 
         init = sdfg.add_state('init', is_start_block=True)
 
@@ -397,7 +393,6 @@ class TestLoopCorrectnessBreakContinue:
         sdfg.backend = dace.dtypes.BackendLanguage.Python
 
         sdfg.add_array('result', [1], dace.int64)
-        sdfg.add_symbol('i', dace.int64)
 
         init = sdfg.add_state('init', is_start_block=True)
 
@@ -446,7 +441,6 @@ class TestLoopCorrectnessBreakContinue:
         sdfg.backend = dace.dtypes.BackendLanguage.Python
 
         sdfg.add_array('result', [1], dace.int64)
-        sdfg.add_symbol('i', dace.int64)
         sdfg.add_symbol('do_continue', dace.int64)
 
         init = sdfg.add_state('init', is_start_block=True)

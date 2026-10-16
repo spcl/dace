@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
-import copy
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 import dace
@@ -10,15 +9,15 @@ from dace.cli import progress
 from dace.codegen.py import control_flow as py_cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.py.prettycode import PythonCodeIOStream
+from dace.codegen.py.symbols import generate_assumption_check
 from dace.codegen.target import TargetCodeGenerator
 from dace.frontend.python import astutils
-from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SymbolResolver
+from dace.transformation.passes.analysis import StateReachability
 from dace.properties import CodeBlock
 
 
@@ -187,6 +186,7 @@ class DaCePythonCodeGenerator(object):
         individual states based on the target. """
 
     def __init__(self, sdfg: SDFG):
+        self._symbol_resolver = SymbolResolver()
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = PythonCodeIOStream()
@@ -231,6 +231,15 @@ class DaCePythonCodeGenerator(object):
                         result.add(edge.dst_conn)
 
                 self._symbols_and_constants[nsdfg.cfg_id] = result
+
+    def symbols_defined_at(self, state: SDFGState, node: nodes.Node) -> dict[str, dtypes.typeclass]:
+        """Return the types visible at a node, including its enclosing scopes.
+
+        :param state: The node's state.
+        :param node: The node where the types are needed.
+        :returns: A mutable dictionary of visible names and types.
+        """
+        return self._symbol_resolver.defined_at(state, node)
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
@@ -494,7 +503,7 @@ class DaCePythonCodeGenerator(object):
     def generate_states(self, sdfg: SDFG, global_stream: PythonCodeIOStream, callsite_stream: PythonCodeIOStream) -> Set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
+        opbar = progress.OptionalProgressBar(sdfg.num_states(), title=f'Generating code (SDFG {sdfg.cfg_id})')
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -919,46 +928,8 @@ class DaCePythonCodeGenerator(object):
             else:
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
-        # Allocate inter-state variables
-        global_symbols = copy.deepcopy(dict(sdfg.symbols))
-        global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
-        interstate_symbols = {}
-        for cfr in sdfg.all_control_flow_regions():
-            if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
-                if not cfr.loop_variable in interstate_symbols:
-                    if cfr.loop_variable in global_symbols:
-                        interstate_symbols[cfr.loop_variable] = global_symbols[cfr.loop_variable]
-                    else:
-                        l_end = loop_analysis.get_loop_end(cfr)
-                        l_start = loop_analysis.get_init_assignment(cfr)
-                        l_step = loop_analysis.get_loop_stride(cfr)
-                        sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
-                                                         infer_expr_type(l_step, global_symbols),
-                                                         infer_expr_type(l_end, global_symbols))
-                        interstate_symbols[cfr.loop_variable] = sym_type
-                if not cfr.loop_variable in global_symbols:
-                    global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
-
-            for e in cfr.dfs_edges(cfr.start_block):
-                symbols = e.data.new_symbols(sdfg, global_symbols)
-                # Inferred symbols only take precedence if global symbol not defined or None
-                symbols = {
-                    k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
-                    for k, v in symbols.items()
-                }
-                interstate_symbols.update(symbols)
-                global_symbols.update(symbols)
-
-        # In Python, variables don't need explicit declaration — they are
-        # created on first assignment.  We still record them so that
-        # ``defined_vars`` stays in sync with the C++ backend expectations.
-        for isvarName, isvarType in interstate_symbols.items():
-            if isvarType is None:
-                raise TypeError(f'Type inference failed for symbol {isvarName}')
-            if not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping:
-                continue
-            # No emit needed: Python variables are created on assignment.
-            # TODO: Check that this is true for all cases, and that no "undefined variable" errors can occur.
+        # Python creates control-flow variables on assignment. Symbol types and
+        # facts are resolved at each node, where loop and map bindings are visible.
 
         #######################################################################
         # Generate actual program body
@@ -968,7 +939,7 @@ class DaCePythonCodeGenerator(object):
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(sdfg.states()):
+        if len(states_generated) != sdfg.num_states():
             raise RuntimeError(
                 "Not all states were generated in SDFG {}!"
                 "\n  Generated: {}\n  Missing: {}".format(sdfg.label, [s.label for s in states_generated],
@@ -1010,10 +981,15 @@ class DaCePythonCodeGenerator(object):
         if body_preamble:
             body = '\n'.join(section for section in (body_preamble, body) if section)
 
+        assumption_call = ''
+        if is_top_level:
+            assumption_helper, assumption_call = generate_assumption_check(sdfg, self.arglist)
+            generated_header += assumption_helper
         if emit_function_wrapper:
-            generated_code = self._build_function(emitted_function_name, params, body, sdfg, function_body_finally)
+            generated_code = self._build_function(emitted_function_name, params, body, sdfg, function_body_finally,
+                                                  entry_code=assumption_call)
             if is_top_level and include_lifecycle:
-                generated_code = self._build_lifecycle_functions(sdfg, params) + generated_code
+                generated_code = self._build_lifecycle_functions(sdfg, params, assumption_call) + generated_code
         else:
             generated_code = callsite_stream.getvalue()
 
@@ -1025,10 +1001,13 @@ class DaCePythonCodeGenerator(object):
                         params: str,
                         body: str,
                         sdfg: SDFG,
-                        finalizer: str = "") -> str:
+                        finalizer: str = "",
+                        entry_code: str = "") -> str:
         func_code = PythonCodeIOStream()
         func_code.write(f'\ndef {function_name}({params}):\n', cfg=sdfg)
         with func_code.indented():
+            if entry_code:
+                func_code.write(entry_code, cfg=sdfg)
             if finalizer.strip():
                 func_code.write('try:', cfg=sdfg)
                 with func_code.indented():
@@ -1067,7 +1046,7 @@ class DaCePythonCodeGenerator(object):
             helper.write(body)
         return helper.getvalue()
 
-    def _build_lifecycle_functions(self, sdfg: SDFG, params: str) -> str:
+    def _build_lifecycle_functions(self, sdfg: SDFG, params: str, assumption_call: str = "") -> str:
         # TODO: Dispatch the on_sdfg_init_* / on_sdfg_exit_* instrumentation
         # provider hooks here, analogous to the C++ frame code's __dace_init /
         # __dace_exit generation (see dace/codegen/targets/framecode.py). They
@@ -1078,7 +1057,7 @@ class DaCePythonCodeGenerator(object):
         # false-mode report save -- currently written straight into self._exitcode
         # from on_sdfg_end -- should move into on_sdfg_exit_end and receive the
         # exit-code stream as a hook argument.
-        init_sources: List[str] = []
+        init_sources: List[str] = [assumption_call] if assumption_call else []
         if self._initcode.getvalue().strip():
             init_sources.append(self._initcode.getvalue().strip())
         init_sources.extend(self._collect_runtime_code(sdfg, 'init_code'))

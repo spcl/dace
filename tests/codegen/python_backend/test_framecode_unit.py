@@ -1,8 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for dace/codegen/py/framecode.py — DaCePythonCodeGenerator and helpers."""
 
-import collections
-import copy
+from collections.abc import Set
 from types import SimpleNamespace
 import pytest
 import numpy as np
@@ -15,7 +14,7 @@ from dace.codegen.py.prettycode import PythonCodeIOStream
 from dace.codegen.py.python_target import PythonCodeGen
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +657,7 @@ class TestGetSchedule:
         """SDFGState of top-level SDFG → Sequential."""
         sdfg = _make_sdfg("sched_state")
         codegen = DaCePythonCodeGenerator(sdfg)
-        state = sdfg.states()[0]
+        state = next(sdfg.states())
         result = codegen._get_schedule(state)
         assert result == dtypes.ScheduleType.Sequential
 
@@ -682,7 +681,7 @@ class TestCanAllocate:
         sdfg = _make_sdfg("alloc_cpu")
         codegen = DaCePythonCodeGenerator(sdfg)
         desc = data.Array(dace.float64, [10], storage=dtypes.StorageType.CPU_Heap)
-        result = codegen._can_allocate(sdfg, sdfg.states()[0], desc, sdfg)
+        result = codegen._can_allocate(sdfg, next(sdfg.states()), desc, sdfg)
         assert result is True
 
     def test_can_allocate_register(self):
@@ -690,7 +689,7 @@ class TestCanAllocate:
         sdfg = _make_sdfg("alloc_reg")
         codegen = DaCePythonCodeGenerator(sdfg)
         desc = data.Scalar(dace.float64, storage=dtypes.StorageType.Register)
-        result = codegen._can_allocate(sdfg, sdfg.states()[0], desc, sdfg)
+        result = codegen._can_allocate(sdfg, next(sdfg.states()), desc, sdfg)
         assert result is True
 
 
@@ -876,7 +875,7 @@ class TestGenerateState:
         sdfg = _make_sdfg("gen_state_empty")
         codegen = DaCePythonCodeGenerator(sdfg)
         codegen.determine_allocation_lifetime(sdfg)
-        state = sdfg.states()[0]
+        state = next(sdfg.states())
 
         global_stream = PythonCodeIOStream()
         callsite_stream = PythonCodeIOStream()
@@ -1394,8 +1393,8 @@ class TestEdgeCasesAndErrors:
         header, code, targets, envs = result
         assert isinstance(header, str)
         assert isinstance(code, str)
-        assert isinstance(targets, set)
-        assert isinstance(envs, set)
+        assert isinstance(targets, Set)
+        assert isinstance(envs, Set)
 
     def test_code_object_properties(self):
         """Code objects have correct language and title."""
@@ -1531,7 +1530,7 @@ class TestAdditionalFramecodeBranches:
     def test_can_allocate_uses_gpu_devicelevel_check(self, monkeypatch):
         """When can_allocate is false for GPU storage, fallback uses device-level check."""
         sdfg = _make_sdfg("gpu_alloc")
-        state = sdfg.states()[0]
+        state = next(sdfg.states())
         codegen = DaCePythonCodeGenerator(sdfg)
         desc = data.Array(dace.float64, [4], storage=dtypes.StorageType.GPU_Shared)
 
@@ -1660,34 +1659,17 @@ class TestAdditionalFramecodeBranches:
         with pytest.raises(AttributeError):
             codegen.deallocate_arrays_in_scope(sdfg, sdfg, sdfg, PythonCodeIOStream(), PythonCodeIOStream())
 
-    def test_generate_code_interstate_symbol_none_type_raises(self, monkeypatch):
-        """Interstate symbol inferred with None type raises TypeError."""
-        sdfg = dace.SDFG("none_symbol_type")
-        sdfg.backend = dace.dtypes.BackendLanguage.Python
-        sdfg.add_state("s0")
+    def test_symbols_defined_at_respects_map_scope(self):
+        sdfg = dace.SDFG("scoped_symbol_types")
+        state = sdfg.add_state()
+        outside = state.add_tasklet("outside", {}, {}, "pass")
+        entry, _ = state.add_map("inner", {"i": "0:4"})
+        inside = state.add_tasklet("inside", {}, {}, "pass")
+        state.add_edge(entry, None, inside, None, dace.Memlet())
         codegen = DaCePythonCodeGenerator(sdfg)
-
-        class FakeEdgeData:
-            def new_symbols(self, *_args, **_kwargs):
-                return {"bad": None}
-
-        class FakeEdge:
-            data = FakeEdgeData()
-
-        class FakeRegion:
-            start_block = object()
-
-            def dfs_edges(self, *_args, **_kwargs):
-                return [FakeEdge()]
-
-        monkeypatch.setattr(sdfg, "all_control_flow_regions", lambda: [FakeRegion()])
-        monkeypatch.setattr(codegen, "determine_allocation_lifetime", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(codegen, "allocate_arrays_in_scope", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(codegen, "deallocate_arrays_in_scope", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(codegen, "generate_states", lambda *_args, **_kwargs: set())
-
-        with pytest.raises(TypeError, match="Type inference failed"):
-            codegen.generate_code(sdfg, None)
+        assert "i" not in codegen.symbols_defined_at(state, outside)
+        assert codegen.symbols_defined_at(state, inside)["i"] in dace.dtypes.INTEGER_TYPES
+        assert "i" not in codegen.symbols_defined_at(state, outside)
 
 
 # ===========================================================================
@@ -1793,7 +1775,7 @@ class TestCoverageBoostV2:
     def test_can_allocate_returns_false_non_gpu_storage(self, monkeypatch):
         """Line 351: _can_allocate → False when storage not GPU and can_allocate=False."""
         sdfg = _make_sdfg("can_alloc_f")
-        state = sdfg.states()[0]
+        state = next(sdfg.states())
         codegen = DaCePythonCodeGenerator(sdfg)
         desc = data.Array(dace.float64, [4], storage=dtypes.StorageType.CPU_Heap)
         monkeypatch.setattr(framecode_module.dtypes, "can_allocate", lambda *_: False)
@@ -2156,23 +2138,22 @@ class TestCoverageBoostV2:
         assert "TABLE" in code
 
     # ------------------------------------------------------------------
-    # Line 721: loop variable already in global_symbols → branch taken
+    # Explicit loop-variable types live in the symbol repository.
     # ------------------------------------------------------------------
 
-    def test_loop_variable_already_in_global_symbols(self):
-        """Line 721: LoopRegion loop_variable is in global_symbols → uses global type."""
+    def test_loop_variable_declared_in_its_scope(self):
+        """A scoped declaration survives code generation and executes correctly."""
         sdfg = dace.SDFG("loop_in_syms")
         sdfg.backend = dace.dtypes.BackendLanguage.Python
-        # Pre-declare "i" as a symbol so it's in global_symbols before the loop
-        sdfg.add_symbol("i", dace.int32)
         sdfg.add_array("A", [1], dace.float64)
 
         init_state = sdfg.add_state("init")
 
-        loop = LoopRegion("loop_i", condition_expr="i < 5", loop_var="i",
-                          initialize_expr="i = 0", update_expr="i = i + 1",
+        loop = LoopRegion("loop_i", condition_expr="i < numpy.int64(5)", loop_var="i",
+                          initialize_expr="i = numpy.int64(0)", update_expr="i = i + numpy.int64(1)",
                           sdfg=sdfg)
         sdfg.add_node(loop)
+        sdfg.symbol_repo.add("i", dace.int64, at=loop)
         sdfg.add_edge(init_state, loop, dace.InterstateEdge())
 
         body = loop.add_state("body")
@@ -2182,10 +2163,13 @@ class TestCoverageBoostV2:
         body.add_edge(ar, None, tk, "x", dace.Memlet("A[0]"))
         body.add_edge(tk, "y", aw, None, dace.Memlet("A[0]"))
 
-        # generate_code checks: cfr.loop_variable ("i") in global_symbols → line 721 hit
         code_objects = _generate_code_for(sdfg)
         code = code_objects[0].code
         assert "def loop_in_syms" in code
+        assert DaCePythonCodeGenerator(sdfg).symbols_defined_at(body, tk)["i"] == dace.int64
+        output = np.zeros(1)
+        sdfg.compile()(A=output)
+        np.testing.assert_array_equal(output, [5.0])
 
     # ------------------------------------------------------------------
     # Line 750: nested SDFG symbol skipped when in symbol_mapping

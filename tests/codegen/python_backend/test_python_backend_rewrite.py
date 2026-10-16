@@ -241,7 +241,7 @@ def test_structure_transient_allocation_uses_python_constructor():
 
 def test_advanced_indexing_helper_emits_python_index_expression():
     desc = data.Array(dace.float64, (10,))
-    index_subset = subsets.Indices([symbolic.pystr_to_symbolic('idxs')])
+    index_subset = subsets.Range.from_indices([symbolic.pystr_to_symbolic('idxs')])
 
     expression = pyutils.data_access_expression('A', desc, index_subset)
 

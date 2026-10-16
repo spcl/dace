@@ -110,6 +110,7 @@ class PythonCompiledSDFG:
                 f"Generated Python code does not define function '{func_name}'"
             )
         self._func = self._namespace[func_name]
+        self._check_assumptions = self._namespace.get(f'__dace_check_assumptions_{func_name}')
         self._init = self._namespace.get(f'__dace_init_{func_name}')
         self._exit = self._namespace.get(f'__dace_exit_{func_name}')
 
@@ -347,6 +348,9 @@ class PythonCompiledSDFG:
         # Convert positional args to keyword args
         kwargs = self._bind_positional(args, kwargs)
         kwargs = self._marshal_arguments(kwargs)
+
+        if self._check_assumptions is not None:
+            self._check_assumptions(**kwargs)
 
         # Resolve symbols for shape evaluation
         syms = {k: v for k, v in kwargs.items()

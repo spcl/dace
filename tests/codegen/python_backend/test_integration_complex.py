@@ -227,7 +227,7 @@ def test_multistate_symbols_constants_pipeline(dtype, np_dtype):
     start = sdfg.add_state('start', is_start_block=True)
     sdfg.add_edge(start, sdfg.add_state('after_copy'), InterstateEdge(assignments={'k': '2'}))
 
-    copy_state = sdfg.states()[1]
+    copy_state = list(sdfg.states())[1]
     copy_state.add_edge(copy_state.add_read('A'), None, copy_state.add_write('B'), None, dace.Memlet('A[0:N] -> [0:N]'))
 
     loop = LoopRegion('loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1', sdfg=sdfg)

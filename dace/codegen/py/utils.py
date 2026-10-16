@@ -45,9 +45,7 @@ def subset_to_python_indices(desc: data.Data, subset: subsets.Subset | None) -> 
     if hasattr(desc, 'offset') and any(str(offset) != '0' for offset in desc.offset):
         subset = subset.offset_new(desc.offset, False)
 
-    if isinstance(subset, subsets.Indices):
-        parts = [python_symbolic(index) for index in subset.indices]
-    elif isinstance(subset, subsets.Range):
+    if isinstance(subset, subsets.Range):
         parts = [_python_slice_component(start, end, step) for start, end, step in subset.ranges]
     else:
         raise NotImplementedError(f'Unsupported subset type for Python backend: {type(subset).__name__}')

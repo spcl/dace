@@ -255,7 +255,8 @@ def _runtime_defined_symbol_sdfg(name: str,
     sdfg.add_array('_ty', [tile_w], dtype, storage=StorageType.CuTile_Tile, transient=True)
     init = sdfg.add_state('init')
     state = sdfg.add_state('main')
-    sdfg.add_edge(init, state, dace.InterstateEdge(assignments={'c_rt': assign_expr}))
+    edge = sdfg.add_edge(init, state, dace.InterstateEdge(assignments={'c_rt': f'numpy.{dtype.type.__name__}({assign_expr})'}))
+    sdfg.symbol_repo.add('c_rt', dtype, at=edge.data)
     me, mx = state.add_map('cutile_map', {'tile_i': f'0:{n}:{tile_w}'}, schedule=ScheduleType.CuTile)
     xr = state.add_read('x')
     yw = state.add_write('y')
@@ -271,13 +272,11 @@ def _runtime_defined_symbol_sdfg(name: str,
     return sdfg
 
 
-def test_runtime_defined_symbol_staged_without_dtype():
-    """A runtime-defined name has no declared dtype: it is staged with the
-    runtime value's own dtype (bare ``cupy.asarray``) and rebound as a 0-d
-    tile at kernel entry, not passed by value."""
+def test_runtime_defined_symbol_staged_with_scoped_dtype():
+    """Resolve interstate bindings at the kernel launch site."""
     sdfg = _runtime_defined_symbol_sdfg('rt_sym_structural', '1.0 + 2.0**(-40)', dace.float64, '*')
     code = sdfg.generate_code()[0].code.replace(' ', '')
-    assert 'cupy.asarray(c_rt).reshape(1)' in code
+    assert 'cupy.asarray(c_rt,dtype=numpy.float64).reshape(1)' in code
     assert 'c_rt=ct.load(c_rt,(0,),shape=()).item()' in code
 
 
@@ -319,3 +318,22 @@ def test_runtime_defined_int_symbol_large_value_runtime():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('dtype,value', [
+    (dace.int32, 123), (dace.int64, 2**40 + 17),
+    (dace.uint64, 2**63 + 17), (dace.float64, 1.0 + 2.0**-40),
+])
+def test_interstate_symbol_repository_dtype_runtime(dtype: dace.typeclass, value: object):
+    """The type resolved at an interstate edge determines the device buffer."""
+    cupy = pytest.importorskip('cupy')
+    sdfg = _runtime_defined_symbol_sdfg(f'scoped_{dtype.type.__name__}', repr(value), dtype, '+')
+    edge = sdfg.edges()[0]
+    sdfg.symbol_repo.add('c_rt', dtype, at=edge.data)
+    compiled = sdfg.compile()
+    assert f'cupy.asarray(c_rt, dtype=numpy.{dtype.type.__name__})' in compiled.code
+    host = np.arange(64, dtype=dtype.as_numpy_dtype())
+    output = cupy.zeros(64, dtype=dtype.as_numpy_dtype())
+    compiled(x=cupy.asarray(host), y=output)
+    np.testing.assert_array_equal(cupy.asnumpy(output), host + value)
