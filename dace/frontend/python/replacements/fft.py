@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 import sympy as sp
 
-from dace import SDFG, Memlet, SDFGState, dtypes, symbolic
+from dace import SDFG, Memlet, SDFGState, dtypes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
@@ -42,7 +42,7 @@ def _fft_core(
     desc = sdfg.arrays[a]
     ndim = len(desc.shape)
     if axes is None:
-        axes = list(range(ndim))
+        axes = list(range(ndim)) if s is None else list(range(ndim - len(s), ndim))
     else:
         axes = [int(axis) for axis in axes]
         if any(not -ndim <= axis < ndim for axis in axes):
@@ -51,13 +51,20 @@ def _fft_core(
         if len(set(axes)) != len(axes):
             raise ValueError(f"Repeated FFT axes are not supported, got {axes}")
     libnode.axes = axes
+
+    # With s (or n), the input is zero-padded or truncated to the given lengths along the axes: the node reads the
+    # first elements of a longer input, and pads a shorter one
+    out_shape, in_subset = list(desc.shape), [(0, extent - 1, 1) for extent in desc.shape]
+    if s is not None:
+        if len(s) != len(axes):
+            raise ValueError("The shape and the axes of an FFT must have the same length")
+        for axis, length in zip(axes, s):
+            out_shape[axis] = length
+            if (symbolic.simplify(length - desc.shape[axis]) < 0) == True:
+                in_subset[axis] = (0, length - 1, 1)
     N = 1
     for axis in axes:
-        N *= desc.shape[axis]
-
-    # If s (or n) is not None, either pad input or slice and add a view
-    if s is not None:
-        raise NotImplementedError
+        N *= out_shape[axis]
 
     # Compute factor
     if norm == "forward":
@@ -75,10 +82,13 @@ def _fft_core(
         raise TypeError(f"Inverse FFT only accepts complex inputs, got {desc.dtype}")
     dtype = _real_to_complex(desc.dtype)
 
-    name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
+    if s is None:
+        name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
+    else:
+        name, odesc = sdfg.add_transient(pv.get_target_name(), out_shape, dtype, desc.storage, find_new_name=True)
     r = state.add_read(a)
     w = state.add_write(name)
-    state.add_edge(r, None, libnode, "_inp", Memlet.from_array(a, desc))
+    state.add_edge(r, None, libnode, "_inp", Memlet(data=a, subset=subsets.Range(in_subset)))
     state.add_edge(libnode, "_out", w, None, Memlet.from_array(name, odesc))
 
     return name

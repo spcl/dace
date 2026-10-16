@@ -233,8 +233,10 @@ def _native_expansion(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, is_
     from dace.libraries.fft.algorithms import dft  # Lazy import functions
 
     indesc, outdesc = _connected_descriptors(state, sdfg, node)
-    if stockham.can_expand(indesc.shape, transformed_axes(node, len(indesc.shape)), sdfg.constants):
+    if stockham.can_expand(outdesc.shape, transformed_axes(node, len(outdesc.shape)), sdfg.constants):
         return _stockham_expansion(node, state, sdfg, is_inverse)
+    if tuple(indesc.shape) != tuple(outdesc.shape):
+        raise NotImplementedError("Zero-padded FFTs require fixed axis lengths")
     if len(indesc.shape) != 1:
         raise NotImplementedError("Native SDFG expansion of N-dimensional (I)FFT requires fixed axis lengths")
     program = dft.idft_explicit if is_inverse else dft.dft_explicit
@@ -285,6 +287,8 @@ def _generate_cufft_code(node: nodes.LibraryNode, indesc: data.Data, outdesc: da
         raise NotImplementedError("cuFFT expansion only supports transforming all axes")
     if indesc.storage != dtypes.StorageType.GPU_Global:
         raise ValueError("cuFFT implementation requires input array to be on GPU")
+    if tuple(indesc.shape) != tuple(outdesc.shape):
+        raise NotImplementedError("cuFFT expansion does not support zero-padded inputs")
     if outdesc.storage != dtypes.StorageType.GPU_Global:
         raise ValueError("cuFFT implementation requires output array to be on GPU")
 

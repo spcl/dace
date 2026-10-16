@@ -742,6 +742,75 @@ def test_block_local_fusion_cpu_not_applicable(case):
     assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 0
 
 
+def _shaped_fft_program(G=dace.StorageType.Default):
+
+    @dace.program
+    def tester(
+        x: dace.float32[3, 26, 26] @ G,
+        z: dace.complex128[40] @ G,
+        a: dace.complex64[3, 32, 32] @ G,
+        b: dace.complex128[16] @ G,
+        c: dace.complex64[3, 26, 48] @ G,
+        d: dace.complex64[3, 26, 8192] @ G,
+    ):
+        a[:] = np.fft.fft2(x, s=(32, 32))
+        b[:] = np.fft.ifft(z, n=16)
+        c[:] = np.fft.fft(x, n=48, norm="ortho")
+        d[:] = np.fft.fft(x, n=8192)
+
+    return tester
+
+
+def _check_shaped_fft(x: np.ndarray, z: np.ndarray, results: dict) -> None:
+    expected = dict(
+        a=np.fft.fft2(x, s=(32, 32)),
+        b=np.fft.ifft(z, n=16),
+        c=np.fft.fft(x, n=48, norm="ortho"),
+        d=np.fft.fft(x, n=8192),
+    )
+    for name, value in expected.items():
+        tolerance = 1e-12 if results[name].dtype == np.complex128 else 1e-5
+        assert np.allclose(results[name], value, rtol=tolerance, atol=tolerance * np.abs(value).max()), name
+
+
+def test_fft_shape():
+    """
+    Transforms of the lengths given by ``s`` (or ``n``): shorter inputs are zero-padded and longer ones truncated, and
+    normalization uses the lengths of the transforms. A padded transform of 8192 elements is not local.
+    """
+    rng = np.random.default_rng(3)
+    x, z = rng.random((3, 26, 26)).astype(np.float32), _random_complex(40)
+    results = dict(
+        a=np.zeros((3, 32, 32), np.complex64),
+        b=np.zeros(16, np.complex128),
+        c=np.zeros((3, 26, 48), np.complex64),
+        d=np.zeros((3, 26, 8192), np.complex64),
+    )
+    _shaped_fft_program()(x=x, z=z, **results)
+    _check_shaped_fft(x, z, results)
+
+
+@pytest.mark.gpu
+def test_fft_shape_gpu():
+    """
+    Zero-padded transforms on the GPU, in thread blocks (which pad the input in shared memory) and in global stages.
+    """
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    sdfg = _shaped_fft_program(dace.StorageType.GPU_Global).to_sdfg()
+    sdfg.apply_gpu_transformations()
+    rng = np.random.default_rng(3)
+    x, z = rng.random((3, 26, 26)).astype(np.float32), _random_complex(40)
+    results = dict(
+        a=cp.zeros((3, 32, 32), np.complex64),
+        b=cp.zeros(16, np.complex128),
+        c=cp.zeros((3, 26, 48), np.complex64),
+        d=cp.zeros((3, 26, 8192), np.complex64),
+    )
+    sdfg(x=cp.asarray(x), z=cp.asarray(z), **results)
+    _check_shaped_fft(x, z, {name: value.get() for name, value in results.items()})
+
+
 def _real_step_count(sdfg: dace.SDFG) -> int:
     """
     Counts the steps that separate or combine the halves of a real transform of half length (see ``stockham_real``).
@@ -849,6 +918,8 @@ if __name__ == "__main__":
     test_fft_r2c()
     test_real_fft()
     test_real_fft_gpu()
+    test_fft_shape()
+    test_fft_shape_gpu()
     test_ifft("backward")
     test_ifft("forward")
     test_ifft("ortho")

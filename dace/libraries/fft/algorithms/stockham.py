@@ -442,8 +442,9 @@ def stockham_sdfg(
     buffers on the stack. A longer axis is split into groups of stages that fit, each computed by one such map (see
     ``add_axis_group``). Each other stage is one map over the whole array.
 
-    :param indesc: Descriptor of the input array (real or complex).
-    :param outdesc: Descriptor of the complex output array, with the same shape as the input.
+    :param indesc: Descriptor of the input array (real or complex). It may be shorter than the output along the
+                   transformed axes, in which case it is zero-padded (see ``padded_dims``).
+    :param outdesc: Descriptor of the complex output array.
     :param axes: The (normalized) axes to transform. Their lengths must be fixed (see ``can_expand``).
     :param inverse: Whether to compute the inverse transform.
     :param factor: Factor to multiply the outputs by (e.g., for normalization).
@@ -455,12 +456,11 @@ def stockham_sdfg(
     :param name: Name of the generated SDFG.
     :return: A single-state SDFG.
     """
-    if not can_expand(indesc.shape, axes, constants):
-        raise ValueError(f"Stockham FFT requires fixed axis lengths, got shape {indesc.shape} and axes {axes}")
+    if not can_expand(outdesc.shape, axes, constants):
+        raise ValueError(f"Stockham FFT requires fixed axis lengths, got shape {outdesc.shape} and axes {axes}")
     if outdesc.dtype not in (dtypes.complex64, dtypes.complex128):
         raise TypeError(f"Stockham FFT output must be complex, got {outdesc.dtype}")
-    if len(indesc.shape) != len(outdesc.shape):
-        raise ValueError("Stockham FFT input and output must have the same number of dimensions")
+    padded_dims(indesc.shape, outdesc.shape, axes, constants)
 
     sdfg = SDFG(name)
     sdfg.add_array("_inp", indesc.shape, indesc.dtype, indesc.storage, strides=indesc.strides)
@@ -470,6 +470,148 @@ def stockham_sdfg(
         state, state.add_read("_inp"), state.add_write("_out"), axes, inverse, factor, constants, schedule, persistent
     )
     return sdfg
+
+
+def padded_dims(
+    src_shape: tuple[symbolic.SymbolicType, ...],
+    dst_shape: tuple[symbolic.SymbolicType, ...],
+    axes: list[int],
+    constants: dict,
+) -> list[int]:
+    """
+    Returns the transformed dimensions along which the input of a transform is shorter than its output, i.e., is
+    zero-padded at the end (like ``numpy.fft.fftn`` with ``s``). The other dimensions must be equal.
+
+    :raises ValueError: If the shapes do not match.
+    """
+    if len(src_shape) != len(dst_shape):
+        raise ValueError("FFT input and output must have the same number of dimensions")
+    result = []
+    for dim, (src, dst) in enumerate(zip(src_shape, dst_shape)):
+        if symbolic.simplify(src - dst) == 0:
+            continue
+        src_length, dst_length = fixed_length(src, constants), fixed_length(dst, constants)
+        if dim not in axes or src_length is None or dst_length is None or src_length > dst_length:
+            raise ValueError(f"FFT input of shape {src_shape} cannot be zero-padded to {dst_shape} along axes {axes}")
+        result.append(dim)
+    return result
+
+
+def padding_code(dst_dtype: dtypes.typeclass, condition: str) -> str:
+    """
+    Returns the Python tasklet code that copies ``_i`` to ``_o`` (converting real numbers to complex ones) where the
+    condition holds, and writes zero otherwise.
+    """
+    target = f"dace.{dst_dtype.to_string()}"
+    if not condition:
+        return f"_o = {target}(_i)"
+    return f"_o = {target}(_i) if ({condition}) else {target}(0)"
+
+
+def padded_element(name: str, src_shape: tuple, index: list[str], padded: list[int]) -> tuple[Memlet, str]:
+    """
+    Returns the memlet of the element of a shorter input at the index of the padded array, clamped into the input so
+    that it is always valid, and the condition under which the element is inside the input.
+    """
+    subset, conditions = [], []
+    for dim, expr in enumerate(index):
+        if dim in padded:
+            subset.append(f"Min({expr}, {symbolic.symstr(src_shape[dim] - 1)})")
+            conditions.append(f"{expr} < {symbolic.symstr(src_shape[dim])}")
+        else:
+            subset.append(expr)
+    return Memlet(f"{name}[{', '.join(subset)}]"), " and ".join(conditions)
+
+
+def add_padding(
+    state: SDFGState, src_node: nodes.AccessNode, dst_node: nodes.AccessNode, schedule: dtypes.ScheduleType
+) -> None:
+    """
+    Adds a map that copies an array into a longer one, with zeros beyond its extents (see ``padded_dims``).
+    """
+    sdfg = state.sdfg
+    src, dst = sdfg.arrays[src_node.data], sdfg.arrays[dst_node.data]
+    padded = [dim for dim in range(len(dst.shape)) if symbolic.simplify(src.shape[dim] - dst.shape[dim]) != 0]
+    index = [f"__p{dim}" for dim in range(len(dst.shape))]
+    memlet, condition = padded_element(src_node.data, src.shape, index, padded)
+    state.add_mapped_tasklet(
+        "stockham_pad",
+        {param: f"0:{symbolic.symstr(extent)}" for param, extent in zip(index, dst.shape)},
+        {"_i": memlet},
+        padding_code(dst.dtype, condition),
+        {"_o": Memlet(f"{dst_node.data}[{', '.join(index)}]")},
+        external_edges=True,
+        input_nodes={src_node.data: src_node},
+        output_nodes={dst_node.data: dst_node},
+        schedule=schedule,
+    )
+
+
+def add_padding_step(
+    state: SDFGState,
+    src: str,
+    dst: str,
+    shape: list[int],
+    batch_index: dict[str, list[str | None]],
+    src_shape: tuple,
+    padding: int,
+    threads: int | None,
+) -> None:
+    """
+    Adds the first step of a block-local transform of a shorter input (see ``padded_dims``): copies the elements of
+    the transforms of the iteration (or thread block) into buffer ``dst``, with zeros beyond the extents of ``src``.
+
+    :param state: The (empty) state to add the step to.
+    :param src: The shorter input array.
+    :param dst: The buffer.
+    :param shape: The shape of the transforms of the iteration.
+    :param batch_index: The batch index of each array (see ``add_block_local_stage``).
+    :param src_shape: The shape of the input array.
+    :param padding: The number of elements of a padded row of the buffer (see ``block_local_sdfg``), or 0.
+    :param threads: The number of threads of a GPU thread block, or None on the CPU.
+    """
+    sdfg = state.sdfg
+    dims = [dim for dim, extent in enumerate(shape) if extent > 1]
+    extents = [shape[dim] for dim in dims]
+    if threads is None:
+        names = [f"__p{dim}" for dim in dims]
+    else:
+        names = delinearize("__u", extents)
+    loop_index = dict(zip(dims, names))
+
+    # The index in the input: the batch index of the transform plus the index in the transforms of the iteration
+    src_index, dst_index = [], []
+    for dim in range(len(shape)):
+        base = batch_index[src][dim]
+        local = loop_index.get(dim, "0")
+        src_index.append(local if base is None else (base if dim not in loop_index else f"{base} + {local}"))
+        dst_base = batch_index[dst][dim]
+        dst_index.append(
+            local if dst_base is None else (dst_base if dim not in loop_index else f"{dst_base} + {local}")
+        )
+    transformed = [dim for dim in range(len(shape)) if batch_index[src][dim] is None]
+    padded = [dim for dim in transformed if symbolic.simplify(src_shape[dim] - shape[dim]) != 0]
+    memlet, condition = padded_element(src, src_shape, src_index, padded)
+    if padding:
+        axis = transformed[0]
+        row, column = f"int_floor({dst_index[axis]}, {padding})", f"({dst_index[axis]}) % {padding}"
+        dst_index = dst_index[:axis] + [row, column] + dst_index[axis + 1 :]
+    output = Memlet(f"{dst}[{', '.join(dst_index)}]")
+    code = padding_code(sdfg.arrays[dst].dtype, condition)
+    if threads is None:
+        state.add_mapped_tasklet(
+            "stockham_pad",
+            {name: f"0:{extent}" for name, extent in zip(names, extents)},
+            {"_i": memlet},
+            code,
+            {"_o": output},
+            external_edges=True,
+            schedule=dtypes.ScheduleType.Sequential,
+        )
+        return
+    add_block_local_tasklet(
+        state, "stockham_pad", math.prod(extents), threads, {src: {"_i": memlet}}, dst, {"_o": output}, code
+    )
 
 
 def add_stockham(
@@ -510,6 +652,18 @@ def add_stockham(
         storage = dtypes.StorageType.GPU_Global
     elif persistent:
         storage = dtypes.StorageType.CPU_Heap
+    lifetime = dtypes.AllocationLifetime.Scope
+    if persistent and not any(symbolic.issymbolic(size, constants) for size in shape):
+        lifetime = dtypes.AllocationLifetime.Persistent
+
+    # A shorter input is zero-padded first
+    if padded_dims(sdfg.arrays[src_node.data].shape, shape, axes, constants):
+        padded, _ = sdfg.add_transient(
+            "__stockham_padded", shape, dtype, storage, lifetime=lifetime, find_new_name=True
+        )
+        padded_node = state.add_access(padded)
+        add_padding(state, src_node, padded_node, schedule)
+        src_node = padded_node
 
     # Small fixed-size transforms on the CPU run sequentially
     map_schedule = dtypes.ScheduleType.Default
@@ -535,9 +689,6 @@ def add_stockham(
         table_stages += axis_stages
 
     # Allocate the buffers once if their size is fixed, as per-call allocations of large buffers dominate the runtime
-    lifetime = dtypes.AllocationLifetime.Scope
-    if persistent and not any(symbolic.issymbolic(size, constants) for size in shape):
-        lifetime = dtypes.AllocationLifetime.Persistent
     buffers = []
     for i in range(min(len(steps) - 1, 2)):
         buffer_name, _ = sdfg.add_transient(
@@ -1763,8 +1914,8 @@ def block_local_fft_sdfg(
     memory, as one kernel in which each thread block computes one transform in shared memory. The twiddle factor
     tables are allocated once and computed per call by small kernels before it, so the SDFG must not be inside a map.
 
-    :param indesc: Descriptor of the input array (real or complex).
-    :param outdesc: Descriptor of the complex output array, with the same shape as the input.
+    :param indesc: Descriptor of the input array (real or complex), which may be zero-padded (see ``padded_dims``).
+    :param outdesc: Descriptor of the complex output array.
     :param axes: The (normalized) axes to transform. A transform must fit into shared memory (see
                  ``fits_block_local``).
     :param inverse: Whether to compute the inverse transform.
@@ -1778,8 +1929,7 @@ def block_local_fft_sdfg(
         raise ValueError(f"A transform of axes {axes} of shape {shape} does not fit into the shared memory of a block")
     if outdesc.dtype not in (dtypes.complex64, dtypes.complex128):
         raise TypeError(f"Stockham FFT output must be complex, got {outdesc.dtype}")
-    if len(indesc.shape) != len(outdesc.shape):
-        raise ValueError("Stockham FFT input and output must have the same number of dimensions")
+    padded = padded_dims(indesc.shape, outdesc.shape, axes, constants)
 
     sdfg = SDFG(name)
     sdfg.add_array("_inp", indesc.shape, indesc.dtype, indesc.storage, strides=indesc.strides)
@@ -1794,12 +1944,17 @@ def block_local_fft_sdfg(
     table_nodes = add_twiddle_tables(state, stages, sign, dtype, True)
     tables = {key: node.data for key, node in table_nodes.items()}
     arrays = {array: sdfg.arrays[array] for array in ("_inp", "_out", *tables.values())}
-    block, batch_symbols, batch_index, buffers = block_local_sdfg(
-        f"{name}_block", arrays, shape, axes, dtype, constants, min(len(stages) - 1, 2)
-    )
     out_factor = None if factor == 1 else factor
     steps = [(stage, sign, tables, out_factor if s == len(stages) - 1 else None) for s, stage in enumerate(stages)]
-    add_block_local_steps(block, steps, "_inp", "_out", buffers, block_shape, batch_index, threads)
+    if padded:
+        steps.insert(0, None)  # The input is copied into a buffer with zeros
+    block, batch_symbols, batch_index, buffers = block_local_sdfg(
+        f"{name}_block", arrays, shape, axes, dtype, constants, min(len(steps) - 1, 2)
+    )
+    block_states = add_block_local_steps(block, steps, "_inp", "_out", buffers, block_shape, batch_index, threads)
+    if padded:
+        pad_state, pad_src, pad_dst = block_states[0]
+        add_padding_step(pad_state, pad_src, pad_dst, block_shape, batch_index, indesc.shape, 0, threads)
 
     inputs = {"_inp": state.add_read("_inp"), **{node.data: node for node in table_nodes.values()}}
     add_block_local_kernel(state, block, inputs, state.add_write("_out"), shape, batch_symbols)
