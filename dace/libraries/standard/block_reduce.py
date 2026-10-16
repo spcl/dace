@@ -156,3 +156,32 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     if isinstance(node, Scan) and block_refusal(node) is not None:
         return None
     return block
+
+
+#: Schedules whose code already runs per thread: a collective there would be entered once per lane.
+THREAD_LEVEL_SCHEDULES = (
+    dtypes.ScheduleType.GPU_ThreadBlock,
+    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+    dtypes.ScheduleType.GPU_Warp,
+)
+
+
+def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) -> str | None:
+    """The block collective ``node`` lowers to by default: inside a GPU kernel, outside thread-level code.
+
+    Choosing it releases the kernel's declared block size, which the collective's lane map now sets.
+
+    :returns: The implementation key, or ``None`` on the host, in thread-level code, or for a shape the
+              node's block lowering refuses.
+    """
+    from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
+    maps = [s for s in get_parent_map_and_loop_scopes(state.sdfg, node, state) if isinstance(s, nodes.MapEntry)]
+    kernels = [m for m in maps if m.map.schedule == dtypes.ScheduleType.GPU_Device]
+    if not kernels or any(m.map.schedule in THREAD_LEVEL_SCHEDULES for m in maps):
+        return None
+    block = gpu_block_implementation(node, state, state.sdfg)
+    if block is not None:
+        for kernel in kernels:
+            kernel.map.gpu_block_size = None
+    return block

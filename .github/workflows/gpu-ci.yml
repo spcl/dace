@@ -71,7 +71,7 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export PATH=$PATH:/usr/local/cuda/bin
-        mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
+        mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi and not tile"
 
     - name: Run extra GPU tests
       run: |

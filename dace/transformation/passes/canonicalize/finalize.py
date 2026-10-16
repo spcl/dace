@@ -30,7 +30,7 @@ from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
 from dace.libraries.fft.environments import fftw3
-from dace.libraries.standard.block_reduce import gpu_block_implementation
+from dace.libraries.standard.block_reduce import in_kernel_block_implementation
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
@@ -139,16 +139,6 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
     return prio
 
 
-def release_kernel_block_size(node: nodes.Node, state: SDFGState, sdfg: SDFG) -> None:
-    """Clear the declared block size of the kernel enclosing ``node``: a thread-block level inside it
-    (a block collective's lane map, or a thread-block map) sizes the block, and two sizes conflict."""
-    from dace.transformation.helpers import get_parent_map_and_loop_scopes
-
-    for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device:
-            scope.map.gpu_block_size = None
-
-
 def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """``node`` sits inside a GPU kernel, so whatever it lowers to has to be device code.
 
@@ -205,11 +195,10 @@ def canonicalize_set_fast_implementations(
 
         # Inside a kernel a node that can run as a BLOCK collective does (``Reduce``, ``Dot``, ``Gemm``,
         # ``Scan``): the kernel gets one block per outer iteration, not a per-thread serial loop.
-        if device == dtypes.DeviceType.GPU and libnode_is_device_code(node, state, sdfg):
-            block = gpu_block_implementation(node, state, state.sdfg)
+        if device == dtypes.DeviceType.GPU:
+            block = in_kernel_block_implementation(node, state)
             if block is not None:
                 node.implementation = block
-                release_kernel_block_size(node, state, sdfg)
                 continue
 
         # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.

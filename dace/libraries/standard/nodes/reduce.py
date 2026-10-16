@@ -464,6 +464,9 @@ class ExpandReduceAuto(pm.ExpandTransformation):
     Dispatches to one of the existing expansions based on the node's schedule, which
     ``set_default_schedule_and_storage_types`` assigns before expansion:
 
+    * inside a GPU kernel, outside thread-level code -> the thread-block collective
+      (:func:`~dace.libraries.standard.block_reduce.in_kernel_block_implementation`).
+
     * ``Sequential`` (the node is nested in a parallel map) -> the sequential accumulator,
       whose combination order is fixed and therefore independent of the thread count. It needs
       an identity to seed the accumulator, so a node without one goes the parallel way.
@@ -483,7 +486,14 @@ class ExpandReduceAuto(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
+        from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+
         ExpandReduceAuto.environments = []
+        block = in_kernel_block_implementation(node, state)
+        if block is not None:
+            node.implementation = block
+            ExpandReduceAuto.environments = list(Reduce.implementations[block].environments)
+            return Reduce.implementations[block].expansion(node, state, sdfg)
         if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:
             return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
         if node.schedule in dtypes.GPU_SCHEDULES:

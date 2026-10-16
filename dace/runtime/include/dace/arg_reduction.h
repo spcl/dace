@@ -25,7 +25,7 @@ template <typename V>
 struct arg_is_complex<V, std::void_t<decltype(std::declval<V>().imag())>> : std::true_type {};
 
 template <typename V>
-static inline bool arg_greater(const V& a, const V& b) {
+DACE_HDFI bool arg_greater(const V& a, const V& b) {
   if constexpr (arg_is_complex<V>::value) {
     return a.real() > b.real() || (a.real() == b.real() && a.imag() > b.imag());
   } else {
@@ -34,27 +34,27 @@ static inline bool arg_greater(const V& a, const V& b) {
 }
 
 template <typename V, typename I>
-static inline arg_pair<V, I> arg_pair_of(const V& v, I i) {
+DACE_HDFI arg_pair<V, I> arg_pair_of(const V& v, I i) {
   return arg_pair<V, I>{v, i};
 }
 
 // One thread's scan: a strictly better value replaces the held one, so the first extreme in index order stays.
 template <typename V, typename I>
-static inline arg_pair<V, I> arg_max_step(const arg_pair<V, I>& held, const V& v, I i) {
+DACE_HDFI arg_pair<V, I> arg_max_step(const arg_pair<V, I>& held, const V& v, I i) {
   return arg_greater(v, held.__ar_v) ? arg_pair<V, I>{v, i} : held;
 }
 template <typename V, typename I>
-static inline arg_pair<V, I> arg_min_step(const arg_pair<V, I>& held, const V& v, I i) {
+DACE_HDFI arg_pair<V, I> arg_min_step(const arg_pair<V, I>& held, const V& v, I i) {
   return arg_greater(held.__ar_v, v) ? arg_pair<V, I>{v, i} : held;
 }
 
 // Two threads' answers: the better value, or on a tie the lower index.
 template <typename V, typename I>
-static inline arg_pair<V, I> arg_max_combine(const arg_pair<V, I>& out, const arg_pair<V, I>& in) {
+DACE_HDFI arg_pair<V, I> arg_max_combine(const arg_pair<V, I>& out, const arg_pair<V, I>& in) {
   return (arg_greater(in.__ar_v, out.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) ? in : out;
 }
 template <typename V, typename I>
-static inline arg_pair<V, I> arg_min_combine(const arg_pair<V, I>& out, const arg_pair<V, I>& in) {
+DACE_HDFI arg_pair<V, I> arg_min_combine(const arg_pair<V, I>& out, const arg_pair<V, I>& in) {
   return (arg_greater(out.__ar_v, in.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) ? in : out;
 }
 
