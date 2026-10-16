@@ -1364,7 +1364,7 @@ def sympy_to_dace(exprs, symbol_map=None):
                         # enclosing scope declares keeps the default, so an unscoped parse is
                         # unchanged.
                         declared = _SERIALIZATION_SYMBOL_DTYPES.get().get(atom.name)
-                        repl[atom] = sympy_symbol(atom.name, declared, **atom.assumptions0)
+                        repl[atom] = sympy_symbol(atom.name, declared)
             exprs[i] = rename_symbols(expr, repl)
     if oneelem:
         return exprs[0]

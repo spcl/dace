@@ -21,7 +21,7 @@ def is_scalar_dtype(dtype: dtypes.typeclass) -> bool:
 
 
 def retype_expression(expr: Any, table: Mapping[str, dtypes.typeclass]) -> Any:
-    """``expr`` with every symbol of a declared name rebuilt at the declared dtype, keeping its assumptions.
+    """``expr`` with every symbol of a declared name rebuilt at the declared dtype.
 
     :param expr: A sympy expression, ``SymExpr``, or a plain number (returned as is).
     :param table: Declared dtype per symbol name, as :func:`~dace.transformation.passes.analysis.scopes.state_scope_symbol_tables` builds it.
@@ -40,7 +40,7 @@ def retype_expression(expr: Any, table: Mapping[str, dtypes.typeclass]) -> Any:
         declared = table.get(sym.name)
         if declared is None or declared == sym.dtype or not is_scalar_dtype(declared):
             continue
-        replacements[sym] = symbolic.symbol(sym.name, declared, **sym.assumptions0)
+        replacements[sym] = symbolic.symbol(sym.name, declared)
     return expr.xreplace(replacements) if replacements else expr
 
 
