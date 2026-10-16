@@ -820,6 +820,9 @@ def normalize_statements(
         )
     ]
     s += [(label, MaterializeLoopExitSymbols()), (label, CascadeInterstateEdgeAssignmentsUp())]
+    # Again after the round: an unrolled body indexed through a strength-reduced counter shows its ``a[4*i + c]``
+    # copies only once induction-variable substitution has closed the counter.
+    s += [(label, RerollUnrolledLoops())]
     s += [
         (label, DistributeProducerConsumerLoop()),
         (label, MoveIfIntoLoop()),

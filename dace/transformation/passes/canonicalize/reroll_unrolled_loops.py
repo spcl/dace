@@ -45,6 +45,136 @@ from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 
 
+class IteratorScaling:
+    """Undo record of :func:`unscale_iterator`: the loop's header and every subset it rewrote."""
+
+    __slots__ = ("loop", "factor", "header", "subsets")
+
+    def __init__(self, loop: LoopRegion, factor: int, header: tuple, subsets: list[tuple[Memlet, Subset]]):
+        self.loop = loop
+        self.factor = factor
+        self.header = header
+        self.subsets = subsets
+
+    def restore(self) -> None:
+        self.loop.init_statement, self.loop.loop_condition, self.loop.update_statement = self.header
+        for memlet, subset in self.subsets:
+            memlet.subset = subset
+
+
+def fuse_body_states(loop: LoopRegion) -> None:
+    """Fuse the chain of states an unrolled body still has once its counter edges are empty.
+
+    The accumulator matcher reads one state; the copies of a counter-indexed body sat in one state each, split by the
+    counter assignments induction-variable substitution has since removed. Fusion preserves the body's semantics, so
+    it stays even when no matcher fires afterwards.
+    """
+    from dace.transformation.interstate.state_fusion import StateFusion
+
+    fused = True
+    while fused and len(loop.nodes()) > 1:
+        fused = False
+        for edge in list(loop.edges()):
+            if (
+                not (isinstance(edge.src, SDFGState) and isinstance(edge.dst, SDFGState))
+                or not edge.data.is_unconditional()
+            ):
+                continue
+            if edge.data.assignments:
+                continue
+            if StateFusion.can_be_applied_to(loop.sdfg, first_state=edge.src, second_state=edge.dst):
+                StateFusion.apply_to(loop.sdfg, verify=False, first_state=edge.src, second_state=edge.dst)
+                fused = True
+                break
+
+
+def names_of(expr) -> set[str]:
+    """The free symbol names of a subset, an expression or an interstate edge."""
+    return {str(x) for x in expr.free_symbols}
+
+
+def iterator_outside_subsets(loop: LoopRegion, var: str) -> bool:
+    """Does ``var`` appear anywhere in ``loop``'s body but a memlet subset, or the body hold more than tasklets?"""
+    if any(var in edge.data.free_symbols for edge in loop.all_interstate_edges()):
+        return True
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            if block is not loop and var in names_of(block):
+                return True
+            continue
+        for node in block.nodes():
+            if not isinstance(node, (nodes.AccessNode, nodes.Tasklet)):
+                return True
+            if isinstance(node, nodes.Tasklet) and re.search(rf"\b{re.escape(var)}\b", node.code.as_string or ""):
+                return True
+    return False
+
+
+def scaled_subsets(loop: LoopRegion, var: str) -> tuple[int, list[Memlet]] | None:
+    """The one coefficient ``m >= 2`` of ``var`` across the body's subsets, and the memlets that carry it."""
+    sym = symbolic.pystr_to_symbolic(var)
+    factors: set = set()
+    memlets: list[Memlet] = []
+    for state in loop.states():
+        for edge in state.edges():
+            memlet = edge.data
+            if memlet is None or memlet.subset is None or var not in names_of(memlet.subset):
+                continue
+            if memlet.other_subset is not None and var in names_of(memlet.other_subset):
+                return None
+            exprs = [as_expr(bound) for begin, last, _ in memlet.subset.ndrange() for bound in (begin, last)]
+            if any((expr - expr.coeff(sym) * sym).has(sym) for expr in exprs):
+                return None
+            factors.update(expr.coeff(sym) for expr in exprs)
+            memlets.append(memlet)
+    factors.discard(0)
+    factor = _const_int(factors.pop()) if len(factors) == 1 else None
+    return (factor, memlets) if factor is not None and factor >= 2 else None
+
+
+def unscale_iterator(loop: LoopRegion) -> IteratorScaling | None:
+    """Rewrite a unit-step loop whose iterator appears only as ``m*i + c`` in subsets into a step-``m`` loop over ``i + c``.
+
+    Induction-variable substitution closes an unrolled body's strength-reduced counter into ``a[4*i + c]``: the
+    hand-unrolled shape with its iterator scaled. Scaling the range by ``m`` instead gives ``a[i + c]`` over step ``m``,
+    the shape the re-roll matchers read. The loop variable must not appear anywhere but memlet subsets, where every
+    occurrence has the one coefficient ``m >= 2``.
+
+    :returns: The undo record, or ``None`` (loop untouched).
+    """
+    var = loop.loop_variable
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    if start is None or end is None or iterator_outside_subsets(loop, var):
+        return None
+    scaled = scaled_subsets(loop, var)
+    if scaled is None:
+        return None
+    factor, memlets = scaled
+    sym = symbolic.pystr_to_symbolic(var)
+    header = (loop.init_statement, loop.loop_condition, loop.update_statement)
+    saved = [(memlet, copy.deepcopy(memlet.subset)) for memlet in memlets]
+    for memlet in memlets:
+        memlet.subset.replace({sym: sym / factor})
+    lo = symbolic.symstr(symbolic.simplify(start * factor))
+    hi = symbolic.symstr(symbolic.simplify((end + 1) * factor))
+    loop.init_statement = dace.properties.CodeBlock(f"{var} = {lo}")
+    loop.loop_condition = dace.properties.CodeBlock(f"{var} < {hi}")
+    loop.update_statement = dace.properties.CodeBlock(f"{var} = {var} + {factor}")
+    return IteratorScaling(loop, factor, header, saved)
+
+
+def unrolled_step(loop: LoopRegion) -> tuple[int | None, IteratorScaling | None]:
+    """The step the re-roll matchers read: the loop's own, or ``m`` once a scaled iterator is unscaled."""
+    stride = loop_analysis.get_loop_stride(loop)
+    step = _const_int(stride) if stride is not None else None
+    undo = unscale_iterator(loop) if step == 1 else None
+    if undo is None:
+        return step, None
+    fuse_body_states(loop)
+    return undo.factor, undo
+
+
 def _const_int(value: symbolic.SymbolicType | int) -> int | None:
     """Return ``value`` as a Python ``int`` if it is a constant integer, else ``None``.
 
@@ -149,8 +279,7 @@ class RerollUnrolledLoops(ppl.Pass):
                         continue
                     # One stride read per loop -- all three matchers refuse on the same constant step >= 2,
                     # and a matcher that mutates returns True, so the value cannot go stale between them.
-                    stride = loop_analysis.get_loop_stride(cfg)
-                    step = _const_int(stride) if stride is not None else None
+                    step, undo = unrolled_step(cfg)
                     if step is None or step < 2:
                         continue
                     if (
@@ -159,6 +288,8 @@ class RerollUnrolledLoops(ppl.Pass):
                         or self._try_reroll_accumulator_reduction(cfg, step)
                     ):
                         rerolled += 1
+                    elif undo is not None:
+                        undo.restore()
             if rerolled == 0:
                 break
             total += rerolled
