@@ -138,7 +138,8 @@ def test_dace_symbol_keeps_its_dtype_through_a_linear_form(monkeypatch: pytest.M
 
     assert calls == []
     assert structurally_equal(result, REFERENCE_SIMPLIFY(expr))
-    assert [s.dtype for s in result.free_symbols] == [dace.int64]
+    # The answer is the very expression: same symbol objects, so nothing about ``N`` was re-minted
+    assert result is expr or result.free_symbols == expr.free_symbols
 
 
 def test_python_int_becomes_the_sympy_integer_sympy_would_return(monkeypatch: pytest.MonkeyPatch) -> None:

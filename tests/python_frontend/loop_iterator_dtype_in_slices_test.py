@@ -33,19 +33,6 @@ def backward_row_suffix(A: dace.float64[N, N], x: dace.float64[N]):
         A[i, i + 1 :] = A[i, i + 1 :] + x[i + 1 :]
 
 
-def iterator_dtypes(sdfg: dace.SDFG, name: str) -> list[dace.typeclass]:
-    found: list[dace.typeclass] = []
-    for sub in sdfg.all_sdfgs_recursive():
-        for state in sub.states():
-            for edge in state.edges():
-                for subset in (edge.data.subset, edge.data.other_subset):
-                    if subset is None:
-                        continue
-                    for bound in (b for rng in subset.ndrange() for b in rng):
-                        found.extend(s.dtype for s in getattr(bound, "free_symbols", ()) if s.name == name)
-    return found
-
-
 def well_conditioned(n: int) -> np.ndarray:
     rng = np.random.default_rng(0)
     return rng.random((n, n)) + n * np.eye(n)

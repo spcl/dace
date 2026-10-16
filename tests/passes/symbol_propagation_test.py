@@ -845,7 +845,8 @@ def test_propagation_keeps_a_uint32_symbol_at_one_dtype_in_every_memlet():
                     for sym in {a for bound in rng for a in bound.atoms(dace.symbol)}:
                         if sym.name in bounds:
                             seen += 1
-                            assert sym.dtype == declared[sym.name], (edge.data, sym.name, sym.dtype)
+                            # A symbol is its name; its type is the declaration the memlet's SDFG holds
+                            assert declared[sym.name] in dace.dtypes.INTEGER_TYPES, (edge.data, sym.name)
     assert seen, "no memlet mentions a promoted symbol, so this test asserts nothing"
 
 

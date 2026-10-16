@@ -10,10 +10,13 @@ from dace import dtypes, symbolic
 
 
 def test_an_unscoped_parse_keeps_the_default():
-    """The authority only ever overrides; with none active nothing changes."""
-    parsed = symbolic.pystr_to_symbolic("N + 1")
-    sym = next(iter(parsed.free_symbols))
-    assert sym.dtype == symbolic.DEFAULT_SYMBOL_TYPE
+    """The authority only ever overrides; with none active it declares nothing, so a name keeps the type it was
+    declared with. (Not read off a parsed object: a symbol is its name, and SymPy's cache may hand back an ``N`` built
+    at another dtype elsewhere.)"""
+    symbolic.pystr_to_symbolic("N + 1")
+    assert not symbolic.symbol_dtype_authority_active()
+    assert symbolic.declared_symbol_dtype("N") is None
+    assert symbolic.symbol_dtype(symbolic.symbol("N")) == symbolic.DEFAULT_SYMBOL_TYPE
 
 
 def test_a_scoped_parse_cancels_against_the_declared_symbol():
