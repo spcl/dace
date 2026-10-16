@@ -180,6 +180,9 @@ def loop_carried_symbols(sd: SDFG) -> OrderedSet[str]:
         for edge in loop.all_interstate_edges():
             for name, value in edge.data.assignments.items():
                 reads.setdefault(name.strip(), set()).update(symbolic.free_symbols_and_functions(value))
+        # A symbol a body assigns afresh each iteration (``idx := a[i]``) carries nothing either, but it keeps
+        # ``LoopToMap`` from the loop; as a scalar it is per-iteration data.
+        carried.update(reads)
         for name in reads:
             seen: set[str] = set()
             frontier = set(reads[name])
