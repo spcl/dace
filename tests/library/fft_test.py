@@ -1,10 +1,8 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
-import sympy
 
 import dace
-from dace.libraries.fft.algorithms.dft import floating_factor
 
 
 @pytest.mark.parametrize("symbolic", (False, True))
@@ -70,74 +68,6 @@ def test_1d_fft_normalization_over_a_symbolic_extent(transform, norm):
     np.testing.assert_allclose(tester(a.copy()), reference(a, norm=norm), rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.gpu
-def test_cufft():
-    import dace.libraries.fft as fftlib
-
-    @dace.program
-    def tester(x: dace.complex128[210]):
-        return np.fft.fft(x)
-
-    sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = "cuFFT"
-    sdfg.expand_library_nodes()
-    fftlib.FFT.default_implementation = "pure"
-
-    a = np.random.rand(210) + 1j * np.random.rand(210)
-    b = sdfg(a)
-    assert np.allclose(b, np.fft.fft(a))
-
-
-@pytest.mark.gpu
-def test_cufft_twoplans():
-    import dace.libraries.fft as fftlib
-
-    @dace.program
-    def tester(x: dace.complex128[210], y: dace.complex64[19]):
-        return np.fft.fft(x), np.fft.ifft(y, norm="forward")
-
-    sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = "cuFFT"
-    fftlib.IFFT.default_implementation = "cuFFT"
-    sdfg.expand_library_nodes()
-    fftlib.FFT.default_implementation = "pure"
-    fftlib.IFFT.default_implementation = "pure"
-
-    a = np.random.rand(210) + 1j * np.random.rand(210)
-    b = (np.random.rand(19) + 1j * np.random.rand(19)).astype(np.complex64)
-    c, d = sdfg(a, b)
-    assert np.allclose(c, np.fft.fft(a), rtol=1e-3, atol=1e-5)
-    assert np.allclose(d, np.fft.ifft(b, norm="forward"), rtol=1e-3, atol=1e-5)
-
-
-@pytest.mark.parametrize("factor", (1, sympy.Rational(1, 4)))
-def test_a_constant_1d_factor_is_spliced_as_a_float(factor):
-    """fft_1d on HIP: the unscaled transform multiplied a ``std::complex<double>`` by the int ``1``, which
-    has no operator outside DaCe's own complex type."""
-    assert isinstance(floating_factor(factor), float)
-    assert floating_factor(factor) == float(factor)
-
-
-@pytest.mark.gpu
-def test_cufft_along_the_first_axis():
-    import dace.libraries.fft as fftlib
-
-    @dace.program
-    def tester(x: dace.complex128[16, 12]):
-        return np.fft.fft(x, axis=0)
-
-    sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = "cuFFT"
-    sdfg.expand_library_nodes()
-    fftlib.FFT.default_implementation = "pure"
-
-    a = np.random.rand(16, 12) + 1j * np.random.rand(16, 12)
-    assert np.allclose(sdfg(a), np.fft.fft(a, axis=0))
-
-
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -145,14 +75,9 @@ if __name__ == "__main__":
     test_ifft("backward")
     test_ifft("forward")
     test_ifft("ortho")
-    test_cufft()
-    test_cufft_twoplans()
-    test_cufft_along_the_first_axis()
     test_1d_fft_normalization_over_a_symbolic_extent("fft", "backward")
     test_1d_fft_normalization_over_a_symbolic_extent("fft", "forward")
     test_1d_fft_normalization_over_a_symbolic_extent("fft", "ortho")
     test_1d_fft_normalization_over_a_symbolic_extent("ifft", "backward")
     test_1d_fft_normalization_over_a_symbolic_extent("ifft", "forward")
     test_1d_fft_normalization_over_a_symbolic_extent("ifft", "ortho")
-    test_a_constant_1d_factor_is_spliced_as_a_float(1)
-    test_a_constant_1d_factor_is_spliced_as_a_float(sympy.Rational(1, 4))

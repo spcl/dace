@@ -4,7 +4,6 @@
 import ctypes.util
 
 import dace.library
-from dace.libraries.blas.environments.rocblas import rocBLAS
 
 
 @dace.library.environment
@@ -24,10 +23,7 @@ class hipFFT:
     finalize_code = ""
     dependencies: list[str] = []
 
-    @staticmethod
-    def cmake_includes():
-        """The ROCm include directory, for the host compiler that builds the plan-and-execute call."""
-        return rocBLAS.cmake_includes()
+    cmake_includes: list[str] = []
 
     @staticmethod
     def is_installed():

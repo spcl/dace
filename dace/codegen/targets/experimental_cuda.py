@@ -105,6 +105,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         assert isinstance(cpu_codegen, CPUCodeGen)  # the generic node dispatcher is always the CPU target
         self._cpu_codegen: CPUCodeGen = cpu_codegen
         self._dispatcher.register_map_dispatcher(dtypes.EXPERIMENTAL_GPU_SCHEDULES, self)
+        # Claimed only so that preprocess refuses them by name
+        unemitted = [s for s in dtypes.GPU_SCHEDULES_WITHOUT_CODEGEN if s not in dtypes.EXPERIMENTAL_GPU_SCHEDULES]
+        self._dispatcher.register_map_dispatcher(unemitted, self)
         self._dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
@@ -140,6 +143,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         """
         # CPF supplies its own context (cpf_gpu_context) with the same shape, because the field is what the generated
         # body reaches the stream through; the runtime type would drag in the header the rendering exists to do without.
+        for node, _ in sdfg.all_nodes_recursive():
+            if (
+                isinstance(node, nodes.MapEntry)
+                and node.map.schedule in dtypes.GPU_SCHEDULES_WITHOUT_CODEGEN
+                and node.map.schedule not in dtypes.EXPERIMENTAL_GPU_SCHEDULES
+            ):
+                raise NotImplementedError(f"GPU code generation does not implement {node.map.schedule} maps yet")
         context_type = "cpf_gpu_context" if cpf_lowering.device() else "dace::cuda::Context"
         self._frame.statestruct.append(f"{context_type} *gpu_context;")
         self._dispatcher._used_targets.add(self)
