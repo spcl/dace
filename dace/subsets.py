@@ -180,17 +180,15 @@ def is_one(val) -> bool:
 
 def _cancels_exactly(val) -> bool:
     """
-    Returns True if ``val + c - val`` evaluates to ``c``: an integer, or a symbolic expression holding no infinity
-    and no floating-point value, whose identical terms the addition cancels structurally -- symbols, sums and
-    products of them (``i * p + t``), and integer functions of them (``max(0, lo) * s + t``, a strided window's start).
+    Returns True if ``val + c - val`` evaluates to ``c``: an integer, or an expression over symbols and exact numbers
+    (sums, products and functions of them, ``i*S + Max(0, k)``), as opposed to one holding an infinity, a NaN or a
+    floating-point value.
     """
     if type(val) is int:
         return True
     if not isinstance(val, sp.Basic):
         return False
-    if val.is_Symbol or val.is_Integer:
-        return True
-    return not val.has(sp.oo, -sp.oo, sp.zoo, sp.nan) and not val.atoms(sp.Float)
+    return not val.has(sp.Float, sp.oo, sp.S.NegativeInfinity, sp.zoo, sp.nan)
 
 
 def _simplified_str(val):
@@ -372,7 +370,9 @@ class Range(Subset):
                 iMax = iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax
                 step = step.approx if isinstance(step, symbolic.SymExpr) else step
                 if is_one(ts) and _cancels_exactly(iMin) and iMin == iMax:
-                    # Single index (e.g., ``i:i+1``): ``ceiling(+-1 / step)`` is one for every nonzero integer step
+                    # Single index (``i:i+1``, or ``i*S + k`` to itself by ``S``): an inclusive range whose ends meet
+                    # holds that one element for any nonzero step. ``ceiling(1/S)`` folds to one only where the
+                    # step's sign is known, which a registry symbol, a bare name, does not carry.
                     result.append(sp.S.One)
                 else:
                     result.append(ts * symbolic.ceiling_div(iMax + off - iMin, step))

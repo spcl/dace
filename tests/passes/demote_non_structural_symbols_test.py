@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Only iteration domains and data accesses keep their symbols; every other interstate symbol becomes a scalar."""
+"""Only iteration domains and data accesses keep their symbols. The pass demotes a symbol a loop updates from itself;
+the demotion mechanism (``demote_symbols``) is tested on any assigned symbol, which is what other callers hand it."""
 
 import numpy as np
 import pytest
@@ -8,7 +9,11 @@ import dace
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow import AugAssignToWCR
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
+from dace.transformation.passes.demote_non_structural_symbols import (
+    DemoteNonStructuralSymbols,
+    assigned_symbols,
+    demote_symbols,
+)
 
 
 def counting_sdfg() -> dace.SDFG:
@@ -66,7 +71,7 @@ def test_a_demoted_value_keeps_its_arithmetic_as_written():
     write = use.add_tasklet("store", {}, {"o"}, "o = z")
     use.add_edge(write, "o", use.add_write("R"), None, dace.Memlet("R[0]"))
     sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    assert demote_symbols(sdfg, assigned_symbols) == 1
     sdfg.validate()
 
     assign = next(
@@ -101,7 +106,7 @@ def test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression(code, renamed, 
     use.add_edge(use.add_read("Y"), None, tasklet, "y", dace.Memlet("Y[0]"))
     use.add_edge(tasklet, "o", use.add_write("R"), None, dace.Memlet("R[0]"))
     sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    assert demote_symbols(sdfg, assigned_symbols) == 1
     sdfg.validate()
     assert renamed in tasklet.code.as_string, tasklet.code.as_string
 
@@ -130,7 +135,7 @@ def test_an_index_read_inside_a_branch_condition_stays_a_symbol():
     sdfg.add_node(cond)
     sdfg.add_edge(read, cond, dace.InterstateEdge(assignments={"w": "A[j]"}))
     sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    assert demote_symbols(sdfg, assigned_symbols) == 1
     sdfg.validate()
     assert "j" in sdfg.symbols and "w" in sdfg.arrays
 
@@ -188,7 +193,7 @@ def test_a_float_guard_becomes_a_scalar_read_before_the_guarded_write():
     container, so the branch still tests the value read before its write."""
     sdfg = float_guard_sdfg()
     sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    assert demote_symbols(sdfg, assigned_symbols) == 1
     assert "g" in sdfg.arrays and "g" not in sdfg.symbols
 
     A = np.array([0.9])
@@ -197,6 +202,23 @@ def test_a_float_guard_becomes_a_scalar_read_before_the_guarded_write():
     A = np.array([0.2])
     sdfg(A=A)
     assert A[0] == 0.2
+
+
+def test_a_value_assigned_once_stays_a_symbol():
+    """``z`` is computed once from data and read once: no iteration carries it, so the pass leaves it a symbol and adds
+    no tasklet. The loop counter ``k`` of ``counting_sdfg`` is the case the pass is for."""
+    sdfg = dace.SDFG("assigned_once")
+    sdfg.add_symbol("z", dace.float64)
+    sdfg.add_array("S", [1], dace.float64)
+    sdfg.add_array("R", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    use = sdfg.add_state_after(start, "use", assignments={"z": "S[0] * 2.0"})
+    write = use.add_tasklet("store", {}, {"o"}, "o = z")
+    use.add_edge(write, "o", use.add_write("R"), None, dace.Memlet("R[0]"))
+    tasklets = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) is None
+    assert "z" in sdfg.symbols and "z" not in sdfg.arrays
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)) == tasklets
 
 
 if __name__ == "__main__":

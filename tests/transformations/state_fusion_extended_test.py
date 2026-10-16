@@ -1266,6 +1266,141 @@ def test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it():
             )
 
 
+def test_extended_fusion_orders_a_reused_transient():
+    """Both states write then read ``tmp``; the second write must wait for the first state's read."""
+    sdfg = SDFG("state_fusion_reused_transient")
+    sdfg.add_array("A", [4], dtypes.float64)
+    sdfg.add_array("B", [4], dtypes.float64)
+    sdfg.add_scalar("tmp", dtypes.float64, transient=True)
+
+    s1 = sdfg.add_state("c0", is_start_block=True)
+    s2 = sdfg.add_state_after(s1, "c1")
+    for st, idx in ((s1, 0), (s2, 1)):
+        tmp = st.add_access("tmp")
+        load = st.add_tasklet(f"load{idx}", {"_i"}, {"_o"}, "_o = _i * 2.0")
+        store = st.add_tasklet(f"store{idx}", {"_i"}, {"_o"}, "_o = _i")
+        st.add_edge(st.add_read("A"), None, load, "_i", Memlet(f"A[{idx}]"))
+        st.add_edge(load, "_o", tmp, None, Memlet("tmp[0]"))
+        st.add_edge(tmp, None, store, "_i", Memlet("tmp[0]"))
+        st.add_edge(store, "_o", st.add_write("B"), None, Memlet(f"B[{idx}]"))
+
+    assert sdfg.apply_transformations_repeated(StateFusionExtended) == 1
+    A = np.array([10.0, 20.0, 30.0, 40.0])
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert B[0] == 20.0 and B[1] == 40.0
+
+
+def test_extended_fusion_orders_a_transient_with_two_producers():
+    """The first state writes ``t[0]`` and ``t[1]`` through two access nodes and reads both; the second state writes
+    ``t[0]`` again, which must wait for that read."""
+    sdfg = SDFG("state_fusion_two_producers")
+    sdfg.add_array("arr", [8], dtypes.float64)
+    sdfg.add_array("out1", [1], dtypes.float64)
+    sdfg.add_array("out2", [1], dtypes.float64)
+    sdfg.add_transient("t", [2], dtypes.float64)
+
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    arr = s1.add_read("arr")
+    reader = s1.add_tasklet("rd", {"i0", "i1"}, {"o"}, "o = i0 + i1")
+    for k in range(2):
+        write = s1.add_tasklet(f"w{k}", {"i"}, {"o"}, "o = i")
+        t = s1.add_access("t")
+        s1.add_edge(arr, None, write, "i", Memlet(f"arr[{k}]"))
+        s1.add_edge(write, "o", t, None, Memlet(f"t[{k}]"))
+        s1.add_edge(t, None, reader, f"i{k}", Memlet(f"t[{k}]"))
+    s1.add_edge(reader, "o", s1.add_write("out1"), None, Memlet("out1[0]"))
+
+    s2 = sdfg.add_state_after(s1, "s2")
+    t = s2.add_access("t")
+    write = s2.add_tasklet("w2", {"i"}, {"o"}, "o = i")
+    copy = s2.add_tasklet("r2", {"i"}, {"o"}, "o = i")
+    s2.add_edge(s2.add_read("arr"), None, write, "i", Memlet("arr[2]"))
+    s2.add_edge(write, "o", t, None, Memlet("t[0]"))
+    s2.add_edge(t, None, copy, "i", Memlet("t[0]"))
+    s2.add_edge(copy, "o", s2.add_write("out2"), None, Memlet("out2[0]"))
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    out1, out2 = np.zeros(1), np.zeros(1)
+    sdfg(arr=np.arange(8, dtype=np.float64), out1=out1, out2=out2)
+    assert out1[0] == 1.0 and out2[0] == 2.0
+
+
+def test_extended_fusion_compares_a_copy_at_its_destination():
+    # ``A[5:10] -> B`` writes ``B[0:5]``, which the second state writes again: the writes must be ordered
+    sdfg = SDFG("extended_copy_other_subset")
+    sdfg.add_array("A", [10], dtypes.float64)
+    sdfg.add_array("B", [5], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s1.add_nedge(s1.add_read("A"), s1.add_write("B"), Memlet("A[5:10]"))
+    s2 = sdfg.add_state_after(s1, "s2")
+    s2.add_mapped_tasklet("w", {"i": "0:5"}, {}, "b = 1.0", {"b": Memlet("B[i]")}, external_edges=True)
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    for state in sdfg.states():
+        writers = [n for n in state.data_nodes() if n.data == "B" and state.in_degree(n) > 0]
+        assert all(nx.has_path(state.nx, a, b) or nx.has_path(state.nx, b, a) for a in writers for b in writers)
+
+
+def test_extended_fusion_orders_a_writer_its_ordered_sibling_does_not_cover():
+    # ``B[0]`` reaches the second state through ``C``; its sibling ``B[1]`` writer does not, and the second state
+    # writes ``B[1]``
+    sdfg = SDFG("extended_fusion_orders_a_writer_its")
+    sdfg.add_array("A", [1], dtypes.float64)
+    sdfg.add_array("B", [2], dtypes.float64)
+    sdfg.add_array("C", [1], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    a = first.add_read("A")
+    t0 = first.add_tasklet("w0", {"i"}, {"o"}, "o = i")
+    first.add_edge(a, None, t0, "i", Memlet("A[0]"))
+    b0 = first.add_access("B")
+    first.add_edge(t0, "o", b0, None, Memlet("B[0]"))
+    copy = first.add_tasklet("cp", {"i"}, {"o"}, "o = i")
+    first.add_edge(b0, None, copy, "i", Memlet("B[0]"))
+    first.add_edge(copy, "o", first.add_write("C"), None, Memlet("C[0]"))
+    t1 = first.add_tasklet("w1", {"i"}, {"o"}, "o = i + 1")
+    first.add_edge(a, None, t1, "i", Memlet("A[0]"))
+    first.add_edge(t1, "o", first.add_write("B"), None, Memlet("B[1]"))
+    second = sdfg.add_state_after(first, "second")
+    t2 = second.add_tasklet("w2", {"i"}, {"o"}, "o = i")
+    second.add_edge(second.add_read("C"), None, t2, "i", Memlet("C[0]"))
+    second.add_edge(t2, "o", second.add_write("B"), None, Memlet("B[1]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    for state in sdfg.states():
+        writers = [
+            n for n in state.data_nodes() if n.data == "B" and any(str(e.data.subset) == "1" for e in state.in_edges(n))
+        ]
+        assert all(
+            nx.has_path(state.nx, a, b) or nx.has_path(state.nx, b, a) for a in writers for b in writers if a is not b
+        )
+
+
+def test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read():
+    # ``B`` is only read in the first state; its one in-edge orders, it writes nothing
+    sdfg = SDFG("extended_fusion_a_read_behind_an_orderin")
+    for name in "ABC":
+        sdfg.add_array(name, [1], dtypes.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    b = first.add_access("B")
+    first.add_nedge(first.add_access("A"), b, Memlet())
+    read = first.add_tasklet("rd", {"i"}, {"o"}, "o = i")
+    first.add_edge(b, None, read, "i", Memlet("B[0]"))
+    first.add_edge(read, "o", first.add_write("C"), None, Memlet("C[0]"))
+    second = sdfg.add_state_after(first, "second")
+    write = second.add_tasklet("w", {}, {"o"}, "o = 7.0")
+    second.add_edge(write, "o", second.add_write("B"), None, Memlet("B[0]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    for state in sdfg.states():
+        tasklets = {n.label: n for n in state.nodes() if isinstance(n, dnodes.Tasklet)}
+        if tasklets.keys() == {"rd", "w"}:
+            assert nx.has_path(state.nx, tasklets["rd"], tasklets["w"])
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
@@ -1292,3 +1427,8 @@ if __name__ == "__main__":
     test_war_from_dace_program_matches_reference()
     test_war_read_through_a_view_orders_the_copy_out_of_the_view()
     test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it()
+    test_extended_fusion_orders_a_reused_transient()
+    test_extended_fusion_orders_a_transient_with_two_producers()
+    test_extended_fusion_compares_a_copy_at_its_destination()
+    test_extended_fusion_orders_a_writer_its_ordered_sibling_does_not_cover()
+    test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read()

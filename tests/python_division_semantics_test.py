@@ -29,7 +29,7 @@ TARGETS = (pytest.param("host"), pytest.param("device", marks=pytest.mark.gpu))
 
 # (label, spelling of ``a`` and ``b`` in Python code or a symbolic expression, NumPy function with the same rounding)
 SPELLINGS = (
-    ("percent", "{a} % {b}", np.mod),
+    ("percent", "{a} % {b}", np.fmod),  # a bare ``%`` in an SDFG is C's
     ("slashes", "{a} // {b}", np.floor_divide),
     ("PyMod", "PyMod({a}, {b})", np.mod),
     ("PyFloor", "PyFloor({a}, {b})", np.floor_divide),
@@ -344,8 +344,8 @@ def test_a_python_program_subscript_and_range_have_pythons_semantics(name, dtype
 
 
 CONSTANTS = (
-    ("(-7) % 3", 2),
-    ("7 % (-3)", -2),
+    ("(-7) % 3", -1),
+    ("7 % (-3)", 1),
     ("CMod(-7, 3)", -1),
     ("FtnMod(-7, 3)", -1),
     ("Mod(-7, 3)", 2),
@@ -516,6 +516,34 @@ def test_sympy_mod_prints_the_c_operator_only_where_no_sign_can_differ(dividend,
     assert ("py_mod(" in printed) == (not infix), printed
 
 
+@dace.program
+def floored_subscript(a: dace.int64[N], out: dace.int64[1]):
+    out[0] = a[(I - 3) % N]
+
+
+@dace.program
+def floored_condition(out: dace.int64[1]):
+    if (I - 3) % 4 == 1:
+        out[0] = 1
+    else:
+        out[0] = 0
+
+
+def test_a_python_program_modulo_in_a_subscript_floors():
+    """``(0 - 3) % 8`` is ``5`` in Python and ``-3`` in C, an out-of-bounds read."""
+    a = np.arange(8, dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    floored_subscript(a=a, out=out, I=0, N=8)
+    assert out[0] == 5
+
+
+def test_a_python_program_modulo_in_a_condition_floors():
+    """``(0 - 3) % 4`` is ``1`` in Python and ``-3`` in C."""
+    out = np.zeros(1, dtype=np.int64)
+    floored_condition(out=out, I=0)
+    assert out[0] == 1
+
+
 if __name__ == "__main__":
     for whole_arrays in (True, False):
         for op, reference, label in OPERATORS:
@@ -561,3 +589,5 @@ if __name__ == "__main__":
         test_a_negative_modulo_in_a_subscript_is_floored(size, "host")
     for dividend, divisor, infix in ((I - 2, N, False), (K, N, False), (I, M, False), (K, M, True)):
         test_sympy_mod_prints_the_c_operator_only_where_no_sign_can_differ(dividend, divisor, infix)
+    test_a_python_program_modulo_in_a_subscript_floors()
+    test_a_python_program_modulo_in_a_condition_floors()
