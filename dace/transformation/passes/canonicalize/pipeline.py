@@ -695,7 +695,7 @@ def rail(label: str = CLEANUP) -> Stages:
 
 
 def unique_iterators() -> ppl.Pass:
-    return UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    return UniqueLoopIterators()
 
 
 def privatization_units() -> list[ppl.Pass]:

@@ -3,8 +3,7 @@
 
 Loops from independent sources can share an iterator name; merged into one SDFG, the shared name aliases them. Each
 loop variable is renamed to ``_loop_it_<N>`` in the loop, the descriptors it sizes and the symbol mappings of nested
-SDFGs. With ``assign_loop_iterator_post_value``, the original name is assigned its exit value after the loop when a
-later block reads it, as Fortran leaves the iterator of a counted ``DO`` loop.
+SDFGs. When a block after the loop reads the original name, that name is assigned the iterator's exit value.
 """
 
 import dace
@@ -91,42 +90,16 @@ def symbol_readers(sdfg: dace.SDFG, names: set[str]) -> dict[str, set[ControlFlo
     return readers
 
 
-def exit_value_is_read(loop: LoopRegion, name: str, readers: dict[str, set[ControlFlowBlock]], reach: dict) -> bool:
-    """Whether ``name`` may be read after ``loop``, so its exit value has to be assigned.
-
-    The one case it is not: every reader lies outside the loop and none after it. ``name`` is then an input that only
-    shares the iterator's name, and assigning it would declare a local shadowing that input.
-    """
-    blocks = readers.get(name)
-    if not blocks:
-        return True
-    inside = {loop}
-    for cfr in loop.all_control_flow_regions(recursive=True):
-        inside.add(cfr)
-        inside.update(cfr.nodes())
-    if blocks <= inside:
-        return True
-    after = reach.get(loop.parent_graph.cfg_id, {}).get(loop)
-    return not after or not blocks.isdisjoint(after)
-
-
 @dace.properties.make_properties
 @explicit_cf_compatible
 class UniqueLoopIterators(ppl.Pass):
     """Rename the iterator of every ``LoopRegion`` in the SDFG tree to a unique ``_loop_it_<N>``.
 
     ``<N>`` counts from past every ``_loop_it_<N>`` already in the tree, so the pass is idempotent and deterministic.
+
+    Where a block after a loop reads the original iterator name, that name is assigned the iterator's exit value. We
+    follow the DO rule: the exit value is one step past the last iteration, so after ``range(10)`` it is ``10``.
     """
-
-    assign_loop_iterator_post_value = dace.properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Assign the original iterator name its exit value after the loop when a later block reads it",
-    )
-
-    def __init__(self, assign_loop_iterator_post_value: bool = True):
-        super().__init__()
-        self.assign_loop_iterator_post_value = assign_loop_iterator_post_value
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -137,19 +110,42 @@ class UniqueLoopIterators(ppl.Pass):
     def apply_pass(self, sdfg: dace.SDFG, _) -> set[str] | None:
         """:returns: The new iterator names, or ``None`` if every iterator was unique already."""
         self.next_id = first_free_id(sdfg)
+        self.top = sdfg
         self.readers: dict[str, set[ControlFlowBlock]] = {}
-        self.reach: dict = {}
-        if self.assign_loop_iterator_post_value:
-            names = {
-                r.loop_variable
-                for r in sdfg.all_control_flow_regions(recursive=True)
-                if isinstance(r, LoopRegion) and r.loop_variable
-            }
-            if names:
-                # Renaming adds no blocks the queries depend on, so both are computed once, up front.
-                self.reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
-                self.readers = symbol_readers(sdfg, names)
+        self.reach: dict | None = None
+        self.original: dict[LoopRegion, str] = {}
+        names = {
+            r.loop_variable
+            for r in sdfg.all_control_flow_regions(recursive=True)
+            if isinstance(r, LoopRegion) and r.loop_variable
+        }
+        if names:
+            self.readers = symbol_readers(sdfg, names)
         return self.rename_loops(sdfg) or None
+
+    def binds(self, block: ControlFlowBlock, name: str) -> bool:
+        """Whether a loop around ``block`` has ``name`` as its own (original) iterator."""
+        region = block.parent_graph
+        while isinstance(region, ControlFlowRegion) and not isinstance(region, dace.SDFG):
+            if isinstance(region, LoopRegion) and self.original.get(region, region.loop_variable) == name:
+                return True
+            region = region.parent_graph
+        return False
+
+    def read_after(self, loop: LoopRegion, name: str) -> bool:
+        """Whether a block outside ``loop`` that may run after it reads ``name``."""
+        inside = {loop}
+        for cfr in loop.all_control_flow_regions(recursive=True):
+            inside.add(cfr)
+            inside.update(cfr.nodes())
+        outside = [block for block in self.readers.get(name, ()) if block not in inside and not self.binds(block, name)]
+        if not outside:
+            return False
+        if self.reach is None:
+            # Only on demand: the analysis resets the CFG list of the whole tree
+            self.reach = ControlFlowBlockReachability().apply_pass(self.top, {})
+        after = self.reach.get(loop.parent_graph.cfg_id, {}).get(loop)
+        return bool(after) and any(block in after for block in outside)
 
     def rename_loops(self, sdfg: dace.SDFG) -> set[str]:
         renamed: set[str] = set()
@@ -166,6 +162,7 @@ class UniqueLoopIterators(ppl.Pass):
             if iterator_id(old) >= 0 and old not in duplicated:
                 continue
             plan.append((loop, old, self.next_id))
+            self.original[loop] = old
             self.next_id += 1
         # Innermost first: a rename replaces ``old`` in the loop's whole subtree, so an inner loop that rebinds the
         # same name must already carry its own iterator when the enclosing loop is renamed.
@@ -175,14 +172,13 @@ class UniqueLoopIterators(ppl.Pass):
             renamed.add(new)
         # After every rename, so no rename rewrites an exit-value assignment.
         for loop, old, ident in plan:
-            if self.assign_loop_iterator_post_value:
-                value = exit_value(loop) if exit_value_is_read(loop, old, self.readers, self.reach) else None
-                if value is not None:
-                    loop.parent_graph.add_state_after(
-                        loop,
-                        f"{POST_VALUE_STATE_PREFIX}_{ident}",
-                        assignments={old: f"({symbolic.symstr(value, arrayexprs=frozenset(sdfg.arrays))})"},
-                    )
+            value = exit_value(loop) if self.read_after(loop, old) else None
+            if value is not None:
+                loop.parent_graph.add_state_after(
+                    loop,
+                    f"{POST_VALUE_STATE_PREFIX}_{ident}",
+                    assignments={old: f"({symbolic.symstr(value, arrayexprs=frozenset(sdfg.arrays))})"},
+                )
             elif old in sdfg.symbols and old not in sdfg.used_symbols(all_symbols=False):
                 # Nothing reads the old name any more; its declaration would leak as a free symbol of the SDFG.
                 sdfg.remove_symbol(old)
