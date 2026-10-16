@@ -427,6 +427,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
+            # The parent's own constant of the same name, type and value is this one: nesting copied it down
+            if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
+                continue
             if cstname in sdfg.constants:
                 if cstname in transients:
                     newname = transients[cstname]
