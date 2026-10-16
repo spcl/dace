@@ -742,10 +742,113 @@ def test_block_local_fusion_cpu_not_applicable(case):
     assert sdfg.apply_transformations_repeated(BlockLocalFFTFusion) == 0
 
 
+def _real_step_count(sdfg: dace.SDFG) -> int:
+    """
+    Counts the steps that separate or combine the halves of a real transform of half length (see ``stockham_real``).
+    """
+    return sum(
+        1
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.Tasklet) and node.label in ("stockham_real_separate", "stockham_real_combine")
+    )
+
+
+def _real_fft_program(G=dace.StorageType.Default):
+
+    @dace.program
+    def tester(
+        x: dace.float64[16, 64] @ G,
+        y: dace.complex128[16, 33] @ G,
+        z: dace.float64[16, 64] @ G,
+        u: dace.complex128[16, 33] @ G,
+        v: dace.float64[16, 64] @ G,
+        f: dace.float32[8, 31] @ G,
+        g: dace.complex64[8, 16] @ G,
+        h: dace.float32[8, 31] @ G,
+        c: dace.float64[64, 16] @ G,
+        d: dace.complex128[33, 16] @ G,
+    ):
+        y[:] = np.fft.rfft(x)
+        z[:] = np.fft.irfft(y)
+        u[:] = np.fft.rfft2(x, norm="ortho")
+        v[:] = np.fft.irfftn(u, s=(16, 64), norm="ortho")
+        g[:] = np.fft.rfft(f, axis=1)
+        h[:] = np.fft.irfft(g, n=31)
+        d[:] = np.fft.rfft(c, axis=0, norm="forward")
+
+    return tester
+
+
+def _real_fft_arguments(module=np):
+    rng = np.random.default_rng(1)
+    inputs = dict(x=rng.random((16, 64)), f=rng.random((8, 31)).astype(np.float32), c=rng.random((64, 16)))
+    outputs = dict(
+        y=((16, 33), np.complex128),
+        z=((16, 64), np.float64),
+        u=((16, 33), np.complex128),
+        v=((16, 64), np.float64),
+        g=((8, 16), np.complex64),
+        h=((8, 31), np.float32),
+        d=((33, 16), np.complex128),
+    )
+    arguments = {name: module.asarray(value) for name, value in inputs.items()}
+    arguments.update({name: module.zeros(shape, dtype) for name, (shape, dtype) in outputs.items()})
+    return inputs, arguments
+
+
+def _check_real_fft(inputs: dict, results: dict) -> None:
+    x, f, c = inputs["x"], inputs["f"], inputs["c"]
+    expected = dict(
+        y=np.fft.rfft(x),
+        z=x,
+        u=np.fft.rfft2(x, norm="ortho"),
+        v=x,
+        g=np.fft.rfft(f),
+        h=f,
+        d=np.fft.rfft(c, axis=0, norm="forward"),
+    )
+    for name, value in expected.items():
+        tolerance = 1e-5 if results[name].dtype in (np.float32, np.complex64) else 1e-12
+        assert np.allclose(results[name], value, rtol=tolerance, atol=tolerance * np.abs(value).max()), name
+
+
+def test_real_fft():
+    """
+    R2C and C2R transforms of rows, columns and both axes, normalized in all directions, in single and double
+    precision. Even lengths are complex transforms of half the length, and the odd length 31 is a complex transform of
+    the whole length.
+    """
+    sdfg = _real_fft_program().to_sdfg()
+    inputs, arguments = _real_fft_arguments()
+    sdfg(**arguments)
+    _check_real_fft(inputs, arguments)
+
+    sdfg.expand_library_nodes()
+    # One step each for rfft, irfft, rfft2, irfftn and the columns; the transforms of length 31 are complex
+    assert _real_step_count(sdfg) == 5
+    full_transforms = [
+        name for _, name, desc in sdfg.arrays_recursive() if name == "__stockham_real_full" and desc.transient
+    ]
+    assert len(full_transforms) == 2
+
+
+@pytest.mark.gpu
+def test_real_fft_gpu():
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    sdfg = _real_fft_program(dace.StorageType.GPU_Global).to_sdfg()
+    sdfg.apply_gpu_transformations()
+    inputs, arguments = _real_fft_arguments(cp)
+    sdfg(**arguments)
+    _check_real_fft(inputs, {name: value.get() for name, value in arguments.items()})
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
     test_fft_r2c()
+    test_real_fft()
+    test_real_fft_gpu()
     test_ifft("backward")
     test_ifft("forward")
     test_ifft("ortho")

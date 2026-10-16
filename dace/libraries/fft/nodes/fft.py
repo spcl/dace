@@ -6,7 +6,7 @@ Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 from dace import SDFG, SDFGState, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.libraries.fft import environments as env
-from dace.libraries.fft.algorithms import stockham
+from dace.libraries.fft.algorithms import stockham, stockham_real
 
 
 # Define the library nodes
@@ -50,9 +50,96 @@ class IFFT(nodes.LibraryNode):
         super().__init__(name, *args, schedule=schedule, inputs={"_inp"}, outputs={"_out"}, **kwargs)
 
 
+@library.node
+class RFFT(nodes.LibraryNode):
+    """
+    Real-to-complex FFT with the half spectrum of ``numpy.fft.rfftn``: the last of the transformed axes is the real
+    one, of length ``N`` in the real input and ``N // 2 + 1`` in the complex output.
+    """
+
+    implementations = {}
+    default_implementation = "pure"
+
+    factor = properties.SymbolicProperty(
+        category="Semantics", desc="Coefficient to multiply outputs. Used for normalization", default=1.0
+    )
+    axes = properties.ListProperty(
+        element_type=int,
+        allow_none=True,
+        default=None,
+        category="Semantics",
+        desc="Axes to transform over, the real one last. If None, all axes are transformed",
+    )
+
+    def __init__(self, name, *args, schedule=None, **kwargs):
+        super().__init__(name, *args, schedule=schedule, inputs={"_inp"}, outputs={"_out"}, **kwargs)
+
+
+@library.node
+class IRFFT(nodes.LibraryNode):
+    """
+    Complex-to-real inverse FFT of a half spectrum, like ``numpy.fft.irfftn``: the last of the transformed axes is the
+    real one, of length ``N // 2 + 1`` in the complex input and ``N`` in the real output.
+    """
+
+    implementations = {}
+    default_implementation = "pure"
+
+    factor = properties.SymbolicProperty(
+        category="Semantics", desc="Coefficient to multiply outputs. Used for normalization", default=1.0
+    )
+    axes = properties.ListProperty(
+        element_type=int,
+        allow_none=True,
+        default=None,
+        category="Semantics",
+        desc="Axes to transform over, the real one last. If None, all axes are transformed",
+    )
+
+    def __init__(self, name, *args, schedule=None, **kwargs):
+        super().__init__(name, *args, schedule=schedule, inputs={"_inp"}, outputs={"_out"}, **kwargs)
+
+
 ##################################################################################################
 # Native SDFG expansions
 ##################################################################################################
+
+
+@library.register_expansion(RFFT, "pure")
+class RFFTExpansion(xf.ExpandTransformation):
+    """
+    Native SDFG expansion: a Stockham FFT of half the length of the real axis (see ``stockham_real``). Requires fixed
+    transformed axis lengths.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: RFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return _real_expansion(node, parent_state, parent_sdfg, False)
+
+
+@library.register_expansion(IRFFT, "pure")
+class IRFFTExpansion(xf.ExpandTransformation):
+    """
+    Native SDFG expansion: a Stockham inverse FFT of half the length of the real axis (see ``stockham_real``).
+    Requires fixed transformed axis lengths.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: IRFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return _real_expansion(node, parent_state, parent_sdfg, True)
+
+
+def _real_expansion(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, is_inverse: bool) -> SDFG:
+    indesc, outdesc = _connected_descriptors(state, sdfg, node)
+    axes = real_transformed_axes(node, len(indesc.shape))
+    persistent = not _in_map_scope(state, node)
+    return stockham_real.real_stockham_sdfg(
+        indesc, outdesc, axes, is_inverse, node.factor, sdfg.constants, node.schedule, persistent
+    )
 
 
 @library.register_expansion(FFT, "pure")
@@ -289,6 +376,25 @@ def transformed_axes(node: nodes.LibraryNode, ndim: int) -> list[int]:
     if len(axes) != len(node.axes) or any(not -ndim <= axis < ndim for axis in node.axes):
         raise ValueError(f"Invalid FFT axes {node.axes} for a {ndim}-dimensional array")
     return axes
+
+
+def real_transformed_axes(node: nodes.LibraryNode, ndim: int) -> list[int]:
+    """
+    Returns the normalized axes that a real (I)FFT node transforms: the complex axes in ascending order, followed by
+    the real axis (the last of the node's axes).
+
+    :param node: The RFFT or IRFFT library node.
+    :param ndim: The number of dimensions of the transformed array.
+    :return: The list of axes.
+    """
+    if node.axes is None:
+        return list(range(ndim))
+    if any(not -ndim <= axis < ndim for axis in node.axes):
+        raise ValueError(f"Invalid FFT axes {node.axes} for a {ndim}-dimensional array")
+    axes = [axis % ndim for axis in node.axes]
+    if len(set(axes)) != len(axes):
+        raise ValueError(f"Repeated FFT axes are not supported, got {node.axes}")
+    return sorted(axes[:-1]) + [axes[-1]]
 
 
 def _in_map_scope(state: SDFGState, node: nodes.Node) -> bool:
