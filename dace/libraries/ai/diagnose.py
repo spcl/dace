@@ -287,11 +287,11 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
 
     for attempt in range(max(0, rounds) + 1):
         try:
-            # DaCe prints the compiler's output live and drops it from the exception when
-            # debugprint is on. The diagnostics are the entire point here, so take them in the
-            # exception and re-emit them below rather than lose them to the terminal.
+            # The output goes into the exception only without debugprint, and one build job keeps
+            # the diagnostics of different files from interleaving
             with set_temporary("debugprint", value=False):
-                return sdfg.compile()
+                with set_temporary("compiler", "build_jobs", value=1):
+                    return sdfg.compile()
         except (cgx.CompilationError, cgx.CompilerConfigurationError) as e:
             _detail("build diagnostics", str(e))
             if attempt == rounds:
