@@ -20,7 +20,7 @@ class OpenAIProvider:
         try:
             import openai  # Optional dependency: only needed when the 'ai' expansion is used
         except ImportError as e:
-            raise backend.missing_sdk_error("openai", "openai", "ai-openai", e)
+            raise backend.missing_sdk_error("openai", "openai", "agent-openai", e)
 
         self._openai = openai
         key = backend.api_key("openai")

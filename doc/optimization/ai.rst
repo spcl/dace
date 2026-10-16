@@ -95,11 +95,11 @@ only when an expansion actually runs, so none of them is a dependency of DaCe it
       - Install
       - Use
     * - ``anthropic``
-      - ``pip install 'dace[ai-anthropic]'``
+      - ``pip install 'dace[agent-anthropic]'``
       - The Anthropic Messages API, and the default. Reads the key from ``ANTHROPIC_API_KEY``,
         falling back to the SDK's own credential chain if that variable is unset.
     * - ``openai``
-      - ``pip install 'dace[ai-openai]'``
+      - ``pip install 'dace[agent-openai]'``
       - The OpenAI Responses API. Reads the key from ``OPENAI_API_KEY``; set :envvar:`ai.model`
         to an OpenAI model.
     * - ``manual``

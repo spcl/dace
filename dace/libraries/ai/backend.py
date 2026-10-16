@@ -271,7 +271,7 @@ def missing_sdk_error(provider: str, package: str, extra: str, exc: BaseExceptio
     error = AIExpansionError(
         f"The 'ai' library node expansion needs the {package} Python package, which is not "
         f"installed.\n"
-        f"    pip install 'dace[{extra}]'   (or: pip install {package})\n"
+        f"    pip install 'dace[{extra}]'   (in a DaCe checkout: uv sync --extra {extra})\n"
         f"Configured provider: {provider} (change it with DACE_ai_provider)."
     )
     error.__cause__ = exc

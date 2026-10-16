@@ -40,7 +40,7 @@ def test_missing_sdk_points_at_the_extra():
 
     message = str(info.value)
     assert "anthropic" in message
-    assert "dace[ai-anthropic]" in message
+    assert "dace[agent-anthropic]" in message
     assert "DACE_ai_provider" in message
 
 
@@ -51,7 +51,7 @@ def test_missing_openai_sdk_points_at_its_own_extra():
                 backend.get_provider()
 
     assert "openai" in str(info.value)
-    assert "dace[ai-openai]" in str(info.value)
+    assert "dace[agent-openai]" in str(info.value)
 
 
 def test_unknown_provider_is_rejected():

@@ -712,11 +712,18 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-ai-anthropic = [
+agent = [
     { name = "anthropic" },
-]
-ai-openai = [
     { name = "openai" },
+    { name = "pydantic" },
+]
+agent-anthropic = [
+    { name = "anthropic" },
+    { name = "pydantic" },
+]
+agent-openai = [
+    { name = "openai" },
+    { name = "pydantic" },
 ]
 gpu = [
     { name = "cupy-cuda13x" },
@@ -808,7 +815,8 @@ testing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'ai-anthropic'", specifier = ">=1.0" },
+    { name = "anthropic", marker = "extra == 'agent'", specifier = ">=1.0" },
+    { name = "anthropic", marker = "extra == 'agent-anthropic'", specifier = ">=1.0" },
     { name = "astunparse" },
     { name = "click", specifier = ">=8.0" },
     { name = "cmake" },
@@ -826,11 +834,15 @@ requires-dist = [
     { name = "onnxruntime", marker = "extra == 'ml'" },
     { name = "onnxscript", marker = "extra == 'ml'" },
     { name = "onnxsim", marker = "extra == 'ml'" },
-    { name = "openai", marker = "extra == 'ai-openai'", specifier = ">=1.0" },
+    { name = "openai", marker = "extra == 'agent'", specifier = ">=1.66" },
+    { name = "openai", marker = "extra == 'agent-openai'", specifier = ">=1.66" },
     { name = "ordered-set", specifier = ">=4.0.0" },
     { name = "packaging" },
     { name = "ply" },
     { name = "protobuf", marker = "extra == 'ml'" },
+    { name = "pydantic", marker = "extra == 'agent'", specifier = ">=2" },
+    { name = "pydantic", marker = "extra == 'agent-anthropic'", specifier = ">=2" },
+    { name = "pydantic", marker = "extra == 'agent-openai'", specifier = ">=2" },
     { name = "pyreadline", marker = "sys_platform == 'win32'" },
     { name = "pytest-mpi", marker = "extra == 'mpi'" },
     { name = "pyyaml" },
@@ -839,7 +851,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'ml'" },
     { name = "typing-extensions" },
 ]
-provides-extras = ["ml", "mpi", "gpu", "ai-anthropic", "ai-openai"]
+provides-extras = ["ml", "mpi", "gpu", "agent-anthropic", "agent-openai", "agent"]
 
 [package.metadata.requires-dev]
 dev = [

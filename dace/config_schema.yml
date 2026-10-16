@@ -626,8 +626,8 @@ required:
                 title: Model provider
                 description: >
                     Which backend to generate code with. "anthropic" uses the Anthropic Messages
-                    API (pip install 'dace[ai-anthropic]'); "openai" uses the OpenAI Responses API
-                    (pip install 'dace[ai-openai]'); "manual" prints the prompt and
+                    API (pip install 'dace[agent-anthropic]'); "openai" uses the OpenAI Responses API
+                    (pip install 'dace[agent-openai]'); "manual" prints the prompt and
                     reads the reply back from the terminal, needing neither a key nor an SDK. The
                     SDK is only imported when an expansion actually runs.
 

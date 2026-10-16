@@ -21,7 +21,7 @@ class AnthropicProvider:
         try:
             import anthropic  # Optional dependency: only needed when the 'ai' expansion is used
         except ImportError as e:
-            raise backend.missing_sdk_error("anthropic", "anthropic", "ai-anthropic", e)
+            raise backend.missing_sdk_error("anthropic", "anthropic", "agent-anthropic", e)
 
         self._anthropic = anthropic
         key = backend.api_key("anthropic")

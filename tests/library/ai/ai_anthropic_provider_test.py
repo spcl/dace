@@ -19,7 +19,7 @@ import dace
 from dace.libraries.ai import backend
 from dace.libraries.ai.exceptions import AIExpansionError
 
-anthropic = pytest.importorskip("anthropic", reason="needs the Anthropic SDK (pip install dace[ai-anthropic])")
+anthropic = pytest.importorskip("anthropic", reason="needs the Anthropic SDK (pip install dace[agent-anthropic])")
 
 from dace.libraries.ai.providers.anthropic_provider import AnthropicProvider  # noqa: E402
 
