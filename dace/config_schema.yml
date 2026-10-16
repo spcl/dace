@@ -478,6 +478,19 @@ required:
                             memory beyond this size is requested from the device at kernel launch. If 0, the
                             limit of the GPU backend is used (48 KiB on CUDA, 64 KiB on HIP).
 
+                    max_shared_memory:
+                        type: int
+                        default: 0
+                        title: Maximum shared memory per thread-block
+                        description: >
+                            The number of bytes of shared memory, static and dynamic, that a thread-block may use.
+                            Code generators that choose how much shared memory to use (e.g., the native FFT
+                            expansion) stay within it. Shared memory beyond ``max_static_shared_memory`` is dynamic
+                            and requested from the device at kernel launch, so this must not exceed the opt-in limit
+                            of the target GPUs (e.g., 99 KiB on compute capability 8.6 and 8.9, 163 KiB on 8.0, 227
+                            KiB on 9.0). If 0, 64 KiB is used, which all GPUs that CUDA 13 supports and all AMD GPUs
+                            provide.
+
                     persistent_map_SM_fraction:
                         type: float
                         title: Fraction of SMs to use for persistent GPU map

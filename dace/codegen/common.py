@@ -337,6 +337,18 @@ def gpu_max_static_shared_memory() -> int:
     return 64 * 1024 if get_gpu_backend() == "hip" else 48 * 1024
 
 
+def gpu_max_shared_memory() -> int:
+    """
+    Returns the number of bytes of shared memory, static and dynamic, that a GPU thread-block may use: the
+    ``compiler.cuda.max_shared_memory`` configuration entry, or 64 KiB if it is 0, and at least the static limit (see
+    ``gpu_max_static_shared_memory``).
+
+    :return: The limit in bytes.
+    """
+    limit = config.Config.get("compiler", "cuda", "max_shared_memory") or 64 * 1024
+    return max(limit, gpu_max_static_shared_memory())
+
+
 def platform_library_name(libname: str) -> str:
     """Get the filename of a library.
 

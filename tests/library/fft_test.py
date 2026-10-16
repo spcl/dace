@@ -367,6 +367,26 @@ def test_stockham_gpu_expansion():
     assert _stockham_stage_count(sdfg) == 2 * len(stockham.factorize(2**16))
 
 
+def test_stockham_gpu_shared_memory_limit():
+    """
+    A transform is computed by one thread block if its two buffers fit into ``compiler.cuda.max_shared_memory``, beyond
+    the static limit of 48 KiB (here, 64 KiB for 4096 complex64 elements), and by one kernel per stage otherwise.
+    """
+    G = dace.StorageType.GPU_Global
+
+    @dace.program
+    def tester(x: dace.complex64[8, 4096] @ G, y: dace.complex64[8, 4096] @ G):
+        y[:] = np.fft.fft(x)
+
+    for limit, block_local in ((64 * 1024, True), (48 * 1024, False)):
+        with dace.config.set_temporary("compiler", "cuda", "max_shared_memory", value=limit):
+            sdfg = tester.to_sdfg()
+            sdfg.apply_gpu_transformations()
+            sdfg.expand_library_nodes()
+        assert _block_local_kernel_count(sdfg) == int(block_local)
+        assert _stockham_stage_count(sdfg) == (0 if block_local else len(stockham.factorize(4096)))
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype", (np.complex64, np.complex128))
 def test_stockham_gpu(dtype):
@@ -425,7 +445,7 @@ def test_block_local_fusion_structure():
     "case", ("other_transform", "too_large", "spectrum_reused", "different_axes", "symbolic", "in_place")
 )
 def test_block_local_fusion_not_applicable(case):
-    B, N = 8, (4096 if case == "too_large" else 32)
+    B, N = 8, (8192 if case == "too_large" else 32)
     if case == "symbolic":
         N = dace.symbol("N")
     G = dace.StorageType.GPU_Global
@@ -471,10 +491,13 @@ def test_block_local_fusion_not_applicable(case):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("dtype,n", ((np.complex64, 2048), (np.complex128, 1024), (np.complex128, 60)))
+@pytest.mark.parametrize(
+    "dtype,n", ((np.complex64, 2048), (np.complex64, 4096), (np.complex128, 1024), (np.complex128, 60))
+)
 def test_block_local_fusion_gpu(dtype, n):
     """
-    A frequency-domain filter with a stencil along the transformed axis and orthonormal transforms.
+    A frequency-domain filter with a stencil along the transformed axis and orthonormal transforms. The buffers of 4096
+    complex64 elements exceed the static shared memory of a thread block and use dynamic shared memory.
     """
     import cupy as cp  # CuPy is only installed on GPU machines
 
@@ -741,12 +764,14 @@ if __name__ == "__main__":
     test_stockham_gpu_stage_fusion()
     test_cufft_partial_axes()
     test_stockham_gpu_expansion()
+    test_stockham_gpu_shared_memory_limit()
     test_stockham_gpu(np.complex64)
     test_stockham_gpu(np.complex128)
     test_block_local_fusion_structure()
     for case in ("other_transform", "too_large", "spectrum_reused", "different_axes", "symbolic", "in_place"):
         test_block_local_fusion_not_applicable(case)
     test_block_local_fusion_gpu(np.complex64, 2048)
+    test_block_local_fusion_gpu(np.complex64, 4096)
     test_block_local_fusion_gpu(np.complex128, 1024)
     test_block_local_fusion_gpu(np.complex128, 60)
     test_block_local_fusion_fft2_gpu()

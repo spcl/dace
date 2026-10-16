@@ -36,6 +36,7 @@ import dataclasses
 import math
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, symbolic
+from dace.codegen import common
 from dace.libraries.fft.environments import stockham as stockham_environment
 from dace.sdfg import propagation
 
@@ -66,9 +67,6 @@ GPU_BLOCK_SIZE = [128, 1, 1]
 
 #: Maximum number of threads of a thread block that computes a transform in shared memory. Larger transforms loop.
 BLOCK_LOCAL_MAX_THREADS = 256
-
-#: Shared memory that a block-local transform may use for its two buffers: the static shared memory limit of CUDA.
-BLOCK_LOCAL_SHARED_BYTES = 48 * 1024
 
 
 def factorize(n: int) -> list[int] | None:
@@ -805,7 +803,9 @@ def fits_block_local(
 ) -> bool:
     """
     Checks whether one GPU thread block can compute a transform of the given axes of an array in shared memory, i.e.,
-    whether the axis lengths are fixed and two buffers of one transform fit into ``BLOCK_LOCAL_SHARED_BYTES``.
+    whether the axis lengths are fixed and two buffers of one transform fit into the shared memory of a thread block
+    (see ``compiler.cuda.max_shared_memory``). Code generation moves buffers that exceed the static limit to dynamic
+    shared memory.
 
     :param shape: The shape of the array.
     :param axes: The (normalized) axes to transform.
@@ -814,7 +814,7 @@ def fits_block_local(
     """
     if not can_expand(shape, axes, constants):
         return False
-    return 2 * math.prod(block_local_shape(shape, axes, constants)) * dtype.bytes <= BLOCK_LOCAL_SHARED_BYTES
+    return 2 * math.prod(block_local_shape(shape, axes, constants)) * dtype.bytes <= common.gpu_max_shared_memory()
 
 
 def block_local_threads(stages: list[tuple[int, int, int, int]], shape: list[int]) -> int:
