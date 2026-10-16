@@ -3,8 +3,7 @@
 
 Loops from independent sources can share an iterator name; merged into one SDFG, the shared name aliases them. Each
 loop variable is renamed to ``_loop_it_<N>`` in the loop, the descriptors it sizes and the symbol mappings of nested
-SDFGs. When a block after the loop reads the original name, that name is assigned the iterator's exit value, as Python
-and Fortran leave the iterator of a counted loop.
+SDFGs. When a block after the loop reads the original name, that name is assigned the iterator's exit value.
 """
 
 import dace
@@ -110,6 +109,9 @@ class UniqueLoopIterators(ppl.Pass):
     """Rename the iterator of every ``LoopRegion`` in the SDFG tree to a unique ``_loop_it_<N>``.
 
     ``<N>`` counts from past every ``_loop_it_<N>`` already in the tree, so the pass is idempotent and deterministic.
+
+    Where a block after a loop reads the original iterator name, that name is assigned the iterator's exit value. We
+    follow the DO rule: the exit value is one step past the last iteration, so after ``range(10)`` it is ``10``.
     """
 
     def modifies(self) -> ppl.Modifies:
