@@ -76,7 +76,7 @@ from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr, as_typeclass, coeff_of, free_symbols, ndrange_exprs, simplified
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
@@ -668,6 +668,12 @@ def loop_bounds(loop: LoopRegion) -> tuple[sympy.Expr, sympy.Expr] | None:
     if lo is None or hi is None:
         return None
     return as_expr(lo), as_expr(hi)
+
+
+def spans_small_axis(outer: LoopRegion, *bounds: tuple[sympy.Expr, sympy.Expr]) -> bool:
+    """Whether any of the nest's inclusive ``bounds``, read inside ``outer``, spans ``SMALL`` symbols only."""
+    facts = SymbolResolver().facts_at(outer)
+    return any(symbolic.is_small(hi - lo, facts) for lo, hi in bounds)
 
 
 def nested_loop_context(state: SDFGState, inner: LoopRegion) -> list[tuple[str, sympy.Expr, sympy.Expr]] | None:
@@ -1409,6 +1415,9 @@ class WavefrontSkew(ppl.Pass):
         # in the inner bound is fine -- that is the triangular case ISL handles.
         vsym = sym(v)
         if vsym in free_symbols(simplified(vb[0])) or vsym in free_symbols(simplified(vb[1])):
+            return False
+        # A front is at most as wide as the shorter axis: over a SMALL axis the parallel map would be a SMALL one.
+        if spans_small_axis(outer, ub, vb):
             return False
 
         # Plan (do not yet apply) the absorb of any per-iteration anti-dependence

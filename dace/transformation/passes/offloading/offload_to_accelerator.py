@@ -31,10 +31,12 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    SymbolResolver,
 )
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import TrivialMapElimination
+from dace.transformation.helpers import extract_map_dims
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
@@ -183,6 +185,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.find_taskloops(sdfg)
+        if self.isolate_small_kernel_axes(sdfg):
+            self.cache_scopes(sdfg)
         self.assign_schedules(sdfg)
 
         # Read before any copy is placed: the staging below renames the accesses this looks at.
@@ -910,6 +914,58 @@ class OffloadToAccelerator(ppl.Pass):
         # A host map launches the kernels under it; a pinned map keeps its whole subtree host code.
         self._host_pinned = maps_pinned_by_host_loops(sdfg)
 
+    def is_kernel(self, node: nodes.MapEntry, host_level: bool) -> bool:
+        """Whether the map ``node``, at a host level or not, is a kernel: see :meth:`assign_schedules`."""
+        return (
+            host_level
+            and node not in self._host_pinned
+            and node not in self.taskloops
+            and node not in self._host_map_entries
+        )
+
+    def isolate_small_kernel_axes(self, sdfg: SDFG) -> bool:
+        """Take the ``SMALL`` axes of every kernel off its grid, into a map nested inside it.
+
+        A ``SMALL`` axis (``nblks``: a handful, much smaller than every other size) as a grid dimension launches a
+        handful of threads along it. A kernel with both kinds keeps its other axes, in their order, as the grid and
+        runs the ``SMALL`` ones in an inner map, which :meth:`assign_schedules` makes sequential like any map under a
+        kernel. A kernel over ``SMALL`` axes only has no other grid and stays as it is.
+
+        :returns: whether any map changed; nothing does unless some SDFG declares a ``SMALL`` symbol.
+        """
+        # The root's too: a scale reaches a nested SDFG offloaded on its own through its symbol mapping.
+        root = sdfg
+        while root.parent_sdfg is not None:
+            root = root.parent_sdfg
+        if not any(nested.symbol_repo.small for nested in root.all_sdfgs_recursive()):
+            return False
+        resolver = SymbolResolver()
+        splits: list[tuple[SDFGState, nodes.MapEntry, list[int]]] = []
+
+        def walk(state: SDFGState, entry, host_level: bool) -> None:
+            for node in self.cached_scope_children[state].get(entry, ()):
+                if isinstance(node, nodes.MapEntry):
+                    is_kernel = self.is_kernel(node, host_level)
+                    if is_kernel:
+                        facts = resolver.facts_at(state, node)
+                        large = [
+                            dim
+                            for dim, (begin, end, _) in enumerate(node.map.range.ranges)
+                            if not symbolic.is_small(end - begin, facts)
+                        ]
+                        if 0 < len(large) < len(node.map.params):
+                            splits.append((state, node, large))
+                    walk(state, node, host_level and not is_kernel and node not in self._host_pinned)
+                elif isinstance(node, nodes.NestedSDFG):
+                    for nested_state in node.sdfg.states():
+                        walk(nested_state, None, host_level)
+
+        for state in sdfg.states():
+            walk(state, None, True)
+        for state, entry, large in splits:
+            extract_map_dims(state.sdfg, entry, large)
+        return bool(splits)
+
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
 
@@ -920,9 +976,7 @@ class OffloadToAccelerator(ppl.Pass):
             for node in self.cached_scope_children[state].get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
                     pinned = node in self._host_pinned
-                    is_kernel = (
-                        host_level and not pinned and node not in self.taskloops and node not in self._host_map_entries
-                    )
+                    is_kernel = self.is_kernel(node, host_level)
                     self.set_schedule(
                         node, dtypes.ScheduleType.GPU_Device if is_kernel else dtypes.ScheduleType.Sequential
                     )
