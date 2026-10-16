@@ -399,6 +399,17 @@ def test_a_container_cannot_name_the_node():
         prog.to_sdfg(simplify=False)
 
 
+def test_two_nodes_cannot_share_a_name():
+
+    @dace.program
+    def prog(A: dace.float64[M]):
+        B = dace.ai("Compute twice the input.", a=A, name="operation")
+        return dace.ai("Compute the square of the input.", a=B, name="operation")
+
+    with pytest.raises(DaceSyntaxError, match='already named "operation"'):
+        prog.to_sdfg(simplify=False)
+
+
 def test_an_output_cannot_be_inferred_without_inputs():
 
     @dace.program

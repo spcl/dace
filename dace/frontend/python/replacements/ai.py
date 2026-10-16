@@ -294,6 +294,12 @@ def ai_node(
             '"name", "schedule"), so it cannot be used to name an input connector.',
         )
 
+    # The name identifies the node's generation session, so it must be unique
+    if name is not None and any(
+        isinstance(n, nodes.LibraryNode) and n.name == str(name) for n, _ in sdfg.all_nodes_recursive()
+    ):
+        raise DaceSyntaxError(pv, None, f'Another node of this program is already named "{name}".')
+
     in_connectors = _input_connectors(pv, sdfg, inputs, named_inputs)
 
     if out is None:
