@@ -155,7 +155,7 @@ def test_each_context_is_generated_independently():
     sdfg, slots = _build_three_contexts()
     seen_prompts = []
 
-    with dace.config.set_temporary("ai", "verify", value=False):
+    with dace.config.set_temporary("ai", "compile_check", value=False):
         for index, (name, (node, state)) in enumerate(slots.items()):
             spec = TaskletSpec(code=f"// generated for {name}\n_c[0] = _a[0] * _b[0];")
             with stub_provider(spec) as provider:
@@ -209,7 +209,7 @@ def test_a_nested_container_takes_the_outer_storage(declared):
     prompt = build_user_prompt(collect_context(node, state, state.sdfg))
     assert "GPU_Global" in prompt
 
-    with dace.config.set_temporary("ai", "verify", value=False):
+    with dace.config.set_temporary("ai", "compile_check", value=False):
         with stub_provider(TaskletSpec(code="_out[0] = 2 * _in[0];")):
             node.expand(state, "ai")
     tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))

@@ -1,356 +1,169 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Compilation probe for AI-generated tasklets.
+"""Compile check of a generated tasklet: a program containing only the tasklet, built the way DaCe builds the real one."""
 
-Compiling the whole SDFG in order to check a generated tasklet is not possible: code generation
-runs after expansion, and would recurse straight back into it. Instead a small standalone
-translation unit is synthesized -- the connectors and symbols become function parameters, the
-program state struct is rebuilt from the requested state fields -- and handed to the same compiler
-DaCe would use. It is compiled but never linked or run, so the probe catches syntax and type
-errors, not wrong results.
-
-A probe that fails because an environment header cannot be found is treated as *inconclusive*
-rather than as an error: header search paths generally come from CMake package discovery, which
-the probe does not perform.
-"""
-
+import copy
 import os
-import shlex
-import shutil
-import subprocess
-import tempfile
+import warnings
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
-from dace.config import Config
-from dace.libraries.ai.backend import TaskletSpec
+from dace import SDFG, SDFGState, dtypes
+from dace import data as dt
+from dace.codegen import exceptions as cgx
+from dace.config import set_temporary
+from dace.libraries.ai import diagnose
 from dace.libraries.ai.context import ExpansionContext
+from dace.sdfg import nodes
 
-#: Maximum time (in seconds) to wait for the probe compilation.
-_COMPILE_TIMEOUT = 180
-
-#: Host compiler flags that make no sense for, or actively break, a syntax-only probe.
-_DROPPED_HOST_FLAGS = ("-Werror", "-fPIC", "-shared")
-
-#: Stands in for the probe's real path in reported diagnostics, which would otherwise carry the
-#: name of a temporary directory that changes on every run.
-PROBE_DISPLAY_NAME = "generated_tasklet"
+#: Maximum number of compiler diagnostics reported back to the model.
+MAX_DIAGNOSTICS = 40
 
 
 @dataclass
-class ProbeResult:
-    """Outcome of a probe compilation."""
+class CheckResult:
+    """Outcome of a compile check."""
 
+    #: True if the program compiled, or if the check could not be run (see ``skipped``).
     ok: bool
-    inconclusive: bool = False
-    command: str = ""
-    stderr: str = ""
-    #: The translation unit that was compiled, kept so that a probe which accepted code the real
-    #: build later rejects can be compared against what DaCe actually generates.
-    source: str = ""
+    #: Why the check could not be run. A skipped check accepts the code.
+    skipped: str = ""
+    #: The compiler diagnostics, for the model.
+    diagnostics: str = ""
+    #: The generated source files of the check program, by file name.
+    sources: dict[str, str] = field(default_factory=dict)
 
 
-def _headers_of(env: Any) -> list[str]:
+def _check_storage(storage: dtypes.StorageType, device: bool) -> dtypes.StorageType:
     """
-    Extracts the header list of a DaCe environment.
-
-    ``headers`` may be a list, a per-target dictionary, or a callable returning either.
-
-    :param env: The environment class.
-    :return: The headers that apply to host or frame code.
+    :param storage: The resolved storage of a container in the slot.
+    :param device: Whether the tasklet runs in a GPU kernel.
+    :return: A storage the same pointer can have as an argument of the check program.
     """
-    headers = env.headers
-    if callable(headers):
-        try:
-            headers = headers()
-        except Exception:
-            return []
-    if isinstance(headers, dict):
-        collected: list[str] = []
-        for value in headers.values():
-            collected.extend(value)
-        return collected
-    return list(headers or [])
+    if storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+        return storage
+    if device or storage in dtypes.GPU_STORAGES:
+        return dtypes.StorageType.GPU_Global
+    return dtypes.StorageType.CPU_Heap
 
 
-def _env_flags(environments: Sequence[Any]) -> list[str]:
+def check_sdfg(
+    tasklet: nodes.Tasklet, node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, ctx: ExpansionContext
+) -> SDFG:
     """
-    Collects include directories and compile flags contributed by environments.
+    Builds a program containing only the tasklet, with the containers, memlets and symbols of the
+    library node it replaces.
 
-    CMake variable references (``${...}``) are dropped, since the probe does not run CMake.
-
-    :param environments: The environment classes attached to the expansion.
-    :return: Compiler flags for the probe.
-    """
-    flags: list[str] = []
-    for env in environments:
-        flags.extend(
-            f"-I{include}"
-            for include in getattr(env, "cmake_includes", None) or []
-            if isinstance(include, str) and "${" not in include
-        )
-        flags.extend(
-            flag
-            for flag in getattr(env, "cmake_compile_flags", None) or []
-            if isinstance(flag, str) and "${" not in flag
-        )
-        # Headers stored next to the environment definition are resolved relative to its file
-        env_path = getattr(env, "_dace_file_path", None)
-        if env_path:
-            flags.append(f"-I{os.path.dirname(env_path)}")
-    return flags
-
-
-def probe_ctype(conn: Any) -> str | None:
-    """
-    Returns the C++ type to declare a connector with in the probe.
-
-    A connector whose own type could not be inferred falls back to the element type of the
-    container behind it. It must fall back to *something* concrete: declaring the probe function as
-    a template instead would leave its body uninstantiated, and an uninstantiated template body is
-    barely checked at all -- which would turn the probe into a source of false passes.
-
-    :param conn: The connector information.
-    :return: The type, or ``None`` if nothing about the connector is known.
-    """
-    if conn.ctype != "auto":
-        return conn.ctype
-    if not conn.data_ctype:
-        return None
-    return conn.data_ctype if conn.num_elements == "1" else f"{conn.data_ctype}*"
-
-
-def build_probe_source(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequence[Any]) -> str | None:
-    """
-    Synthesizes a standalone translation unit around a generated tasklet.
-
-    :param spec: The generated tasklet.
-    :param ctx: The context the tasklet was generated for.
-    :param environments: The environment classes attached to the expansion.
-    :return: The source of the probe translation unit, or ``None`` if a connector's type is
-             unknown, in which case no faithful probe can be built.
+    :param tasklet: The generated tasklet, with its connector types and environments set.
+    :param node: The library node it replaces.
+    :param state: The state containing the node.
+    :param sdfg: The SDFG containing the state.
+    :param ctx: The context the tasklet was generated for, for resolved storage and device level.
+    :return: The check program.
     """
     device = ctx.capabilities is not None and ctx.capabilities.device_level
+    storage_of = {conn.name: conn.storage for conn in ctx.connectors}
 
-    lines: list[str] = [
-        "// Standalone probe generated by the DaCe AI library node expansion.",
-        # Symbols and many dtypes are declared with fixed-width integer types (a map parameter is
-        # an int64_t), which the real build gets from dace/dace.h. The probe deliberately does not
-        # include that header, so it has to declare them itself -- without this every node inside a
-        # map fails to probe, whatever the generated code says.
-        "#include <cstddef>",
-        "#include <cstdint>",
+    check = SDFG("ai_check")
+    for name, stype in state.symbols_defined_at(node).items():
+        if name not in sdfg.arrays:
+            check.add_symbol(name, stype)
+
+    check_state = check.add_state()
+    check_state.add_node(tasklet)
+    if device:
+        entry, exit_node = check_state.add_map("ai_check", {"__ai_check": "0:1"}, dtypes.ScheduleType.GPU_Device)
+
+    edges = [(e, e.dst_conn, True) for e in state.in_edges(node)] + [
+        (e, e.src_conn, False) for e in state.out_edges(node)
     ]
-    for env in environments:
-        lines.extend(
-            f'#include "{header}"' if header.startswith(".") else f"#include <{header}>" for header in _headers_of(env)
-        )
+    for edge, conn, incoming in edges:
+        if conn is None or edge.data.is_empty():
+            continue
+        memlet = copy.deepcopy(edge.data)
+        if memlet.data not in check.arrays:
+            desc = sdfg.arrays[memlet.data]
+            desc = desc.as_array() if isinstance(desc, dt.View) else copy.deepcopy(desc)
+            desc.transient = False
+            resolved = dtypes.StorageType[storage_of[conn]] if storage_of.get(conn) else desc.storage
+            desc.storage = _check_storage(resolved, device)
+            check.add_datadesc(memlet.data, desc)
 
-    state_fields = list(spec.state_fields)
-    for env in environments:
-        state_fields.extend(getattr(env, "state_fields", None) or [])
-    lines.append("struct __dace_probe_state {")
-    lines.extend(f"    {declaration}" for declaration in state_fields)
-    lines.append("    int __dace_probe_placeholder;")
-    lines.append("};")
-
-    if spec.code_global.strip():
-        lines.append(spec.code_global)
-
-    # A scalar output is an uninitialized *local* in the generated code, not a parameter. Declaring
-    # it the same way here is what lets the compiler warn about a body that leaves it unassigned --
-    # as a by-value parameter it always looks initialized, so the probe could never catch the one
-    # mistake the contract explicitly warns about ("Assign it on every path").
-    params, locals_ = [], []
-    for conn in ctx.connectors:
-        ctype = probe_ctype(conn)
-        if ctype is None:
-            if Config.get_bool("debugprint"):
-                print(
-                    f'[ai] Skipping AI expansion verification: the type of connector "{conn.name}" is not known, '
-                    "so the probe would not check the generated code faithfully."
-                )
-            return None
-        if conn.direction == "out" and not conn.is_pointer:
-            locals_.append(f"    {ctype} {conn.name};")
+        if incoming:
+            access = check_state.add_read(memlet.data)
+            path = [access, entry, tasklet] if device else [access, tasklet]
+            check_state.add_memlet_path(*path, dst_conn=conn, memlet=memlet)
         else:
-            params.append(f"{ctype} {conn.name}")
-    params += [f"{ctype} {name}" for name, ctype in sorted(ctx.symbols.items())]
-    qualifier = "__device__ " if device else ""
-    lines.append(f"{qualifier}static void __dace_probe_tasklet({', '.join(params) or 'void'}) {{")
-    if not device:
-        lines.append("    __dace_probe_state __dace_probe_state_value;")
-        lines.append("    __dace_probe_state* __state = &__dace_probe_state_value;")
-        lines.append("    (void)__state;")
-        if ctx.capabilities is not None and ctx.capabilities.current_stream_available:
-            lines.append("    cudaStream_t __dace_current_stream = nullptr;")
-            lines.append("    (void)__dace_current_stream;")
-    lines.extend(locals_)
-    lines.append("    ///////////////////")
-    lines.append(spec.code)
-    lines.append("    ///////////////////")
-    lines.append("}")
-
-    if spec.code_init.strip() or spec.code_exit.strip():
-        for name, body in (("__dace_probe_init", spec.code_init), ("__dace_probe_exit", spec.code_exit)):
-            if not body.strip():
-                continue
-            lines.append(f"static void {name}(__dace_probe_state* __state) {{")
-            lines.append("    (void)__state;")
-            lines.append(body)
-            lines.append("}")
-
-    return "\n".join(lines) + "\n"
+            access = check_state.add_write(memlet.data)
+            path = [tasklet, exit_node, access] if device else [tasklet, access]
+            check_state.add_memlet_path(*path, src_conn=conn, memlet=memlet)
+    return check
 
 
-def _standard_flag(flags: Sequence[str]) -> list[str]:
+def _sources(build_folder: str) -> dict[str, str]:
     """
-    Returns the C++ standard flag to add, if the existing flags do not already set one.
-
-    The host flags DaCe passes to CMake often already carry a ``-std=``; appending a second one
-    puts two conflicting standards on the probe's command line, which then contradicts the standard
-    reported to the model.
-
-    :param flags: Flags already on the command line.
-    :return: A single-element list with the flag to add, or an empty list.
+    :param build_folder: The build folder of a compiled program.
+    :return: The generated source files, by file name.
     """
-    if any(f.startswith("-std=") for f in flags):
-        return []
-    standard = Config.get("compiler", "cpp_standard")
-    return [f"-std=c++{standard}"] if standard else []
+    sources = {}
+    for root, _, files in os.walk(os.path.join(build_folder, "src")):
+        for name in sorted(files):
+            with open(os.path.join(root, name), encoding="utf-8") as fp:
+                sources[name] = fp.read()
+    return sources
 
 
-def _host_command(source: str) -> list[str] | None:
+def _diagnostics(output: str, sources: dict[str, str]) -> str:
     """
-    Builds the command line for a host-code probe.
-
-    :param source: Path of the probe source file.
-    :return: The command line, or ``None`` if no usable compiler was found.
+    :param output: The output of a failed build.
+    :param sources: The generated source files, by file name.
+    :return: The errors in it, and the warnings about generated files, or its last lines if none can be parsed.
     """
-    from dace.codegen import compiler_family  # Avoid a cyclic import through the code generator
-
-    compiler = compiler_family.host_compiler()
-    if not compiler or shutil.which(compiler) is None:
-        return None
-    try:
-        family = compiler_family.detect(compiler)
-    except Exception:
-        family = None
-    if family == "msvc":
-        # The probe's flag vocabulary is GCC/Clang-flavored
-        return None
-
-    try:
-        flags = shlex.split(compiler_family.cpu_args())
-    except Exception:
-        flags = shlex.split(Config.get("compiler", "cpu", "args"))
-    flags = [f for f in flags if f not in _DROPPED_HOST_FLAGS]
-    flags += _standard_flag(flags)
-    return [compiler, "-fsyntax-only", "-x", "c++", *flags, source]
-
-
-def _device_command(source: str, ctx: ExpansionContext) -> list[str] | None:
-    """
-    Builds the command line for a GPU device-code probe.
-
-    :param source: Path of the probe source file.
-    :param ctx: The context the tasklet was generated for.
-    :return: The command line, or ``None`` if no usable compiler was found.
-    """
-    backend = ctx.capabilities.gpu_backend if ctx.capabilities is not None else None
-    architectures = ctx.target.gpu_architectures if ctx.target is not None else None
-    first_arch = architectures.split(",")[0].strip() if architectures else None
-
-    if backend == "hip":
-        compiler = shutil.which("hipcc")
-        if compiler is None:
-            return None
-        flags = ["-fsyntax-only", "-x", "hip"]
-        if first_arch:
-            flags.append(f"--offload-arch={first_arch}")
-        return [compiler, *flags, source]
-
-    compiler = shutil.which("nvcc")
-    if compiler is None:
-        return None
-    flags = ["-x", "cu", "-c", "-o", os.devnull]
-    if first_arch:
-        flags.append(f"-arch={first_arch}")
-    flags += _standard_flag(flags)
-    return [compiler, *flags, source]
-
-
-def _is_inconclusive(stderr: str) -> bool:
-    """
-    Decides whether a failed probe should be reported to the model.
-
-    :param stderr: The compiler's diagnostic output.
-    :return: True if the failure is an artifact of the probe rather than of the generated code.
-    """
-    lowered = stderr.lower()
-    return "no such file or directory" in lowered and ("#include" in lowered or "fatal error" in lowered)
-
-
-def probe_compile(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequence[Any]) -> ProbeResult:
-    """
-    Compiles a generated tasklet in isolation.
-
-    :param spec: The generated tasklet.
-    :param ctx: The context the tasklet was generated for.
-    :param environments: The environment classes attached to the expansion.
-    :return: The probe outcome. An outcome with ``inconclusive`` set should be treated as a pass.
-    """
-    if spec.language.upper() != "CPP":
-        return ProbeResult(ok=True, inconclusive=True)
-
-    device = ctx.capabilities is not None and ctx.capabilities.device_level
-    suffix = ".cu" if device else ".cpp"
-    source = build_probe_source(spec, ctx, environments)
-    if source is None:
-        return ProbeResult(ok=True, inconclusive=True)
-
-    directory = tempfile.mkdtemp(prefix="dace_ai_probe_")
-    source_path = os.path.join(directory, f"probe{suffix}")
-    try:
-        with open(source_path, "w", encoding="utf-8") as fp:
-            fp.write(source)
-
-        command = _device_command(source_path, ctx) if device else _host_command(source_path)
-        if command is None:
-            if Config.get_bool("debugprint"):
-                print("[ai] Skipping AI expansion verification: no suitable compiler was found.")
-            return ProbeResult(ok=True, inconclusive=True, source=source)
-        command = command[:1] + _env_flags(environments) + command[1:]
-
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=_COMPILE_TIMEOUT, check=False)
-        except (OSError, subprocess.SubprocessError) as e:
-            if Config.get_bool("debugprint"):
-                print(f"[ai] Skipping AI expansion verification: the probe could not be run ({e}).")
-            return ProbeResult(ok=True, inconclusive=True, source=source)
-
-        # The probe lives in a randomly named temporary directory. Replacing that path with a
-        # stable placeholder keeps the diagnostics -- and therefore any repair prompt built from
-        # them -- identical across runs for identical code, which is what lets a saved answer be
-        # reused and the repair loop converge.
-        def stable(text: str) -> str:
-            return text.replace(source_path, PROBE_DISPLAY_NAME).replace(directory, "")
-
-        if result.returncode == 0:
-            return ProbeResult(ok=True, command=stable(" ".join(command)), source=source)
-        if _is_inconclusive(result.stderr):
-            if Config.get_bool("debugprint"):
-                print("[ai] AI expansion verification was inconclusive (a header could not be located by the probe).")
-            return ProbeResult(
-                ok=False,
-                inconclusive=True,
-                command=stable(" ".join(command)),
-                stderr=stable(result.stderr),
-                source=source,
-            )
-        return ProbeResult(
-            ok=False, command=stable(" ".join(command)), stderr=stable(result.stderr or result.stdout), source=source
+    found = list(
+        dict.fromkeys(
+            str(d)
+            for d in diagnose.parse_diagnostics(output)
+            if "error" in d.severity or os.path.basename(d.file) in sources
         )
-    finally:
-        shutil.rmtree(directory, ignore_errors=True)
+    )
+    if found:
+        return "\n".join(found[:MAX_DIAGNOSTICS])
+    return "\n".join(output.strip().splitlines()[-MAX_DIAGNOSTICS:])
+
+
+def compile_check(
+    tasklet: nodes.Tasklet,
+    node: nodes.LibraryNode,
+    state: SDFGState,
+    sdfg: SDFG,
+    ctx: ExpansionContext,
+    environments: Sequence[type],
+    build_folder: str,
+) -> CheckResult:
+    """
+    Compiles a generated tasklet in a program of its own.
+
+    :param tasklet: The generated tasklet. It is moved into the check program, so pass a copy.
+    :param node: The library node it replaces.
+    :param state: The state containing the node.
+    :param sdfg: The SDFG containing the state.
+    :param ctx: The context the tasklet was generated for.
+    :param environments: The environment classes the tasklet needs.
+    :param build_folder: Where to build. Reused by later checks of the same slot.
+    :return: The outcome.
+    """
+    tasklet.environments = {env.full_class_path() for env in environments}
+    try:
+        check = check_sdfg(tasklet, node, state, sdfg, ctx)
+        check.build_folder = build_folder
+        # The output goes into the exception only without debugprint, and one build job keeps the
+        # diagnostics of different files from interleaving
+        with set_temporary("debugprint", value=False):
+            with set_temporary("compiler", "build_jobs", value=1):
+                check.compile()
+    except (cgx.CompilationError, cgx.CompilerConfigurationError) as e:
+        sources = _sources(build_folder)
+        return CheckResult(ok=False, diagnostics=_diagnostics(str(e), sources), sources=sources)
+    except Exception as e:  # Not caused by the generated code: the check program itself is at fault
+        warnings.warn(f"Skipping the compile check of an AI-generated tasklet: {type(e).__name__}: {e}")
+        return CheckResult(ok=True, skipped=f"{type(e).__name__}: {e}")
+    return CheckResult(ok=True, sources=_sources(build_folder))

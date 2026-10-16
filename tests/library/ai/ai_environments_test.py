@@ -127,7 +127,7 @@ def test_a_conflicting_environment_is_sent_back_to_the_model(tmp_path):
     bad = TaskletSpec(code="_out = _in;", environments=[SPEC.model_copy(update={"name": "Test-FFT"})])
     good = TaskletSpec(code="_out = _in;", environments=[SPEC])
     with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-        with dace.config.set_temporary("ai", "verify", value=False):
+        with dace.config.set_temporary("ai", "compile_check", value=False):
             with stub_provider_sequence([bad, good]) as provider:
                 node.expand(state, "ai")
 
@@ -159,7 +159,7 @@ def test_requested_environment_reaches_the_generated_tasklet(tmp_path):
 
     spec = TaskletSpec(code="_out = _in;", environments=[SPEC])
     with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-        with dace.config.set_temporary("ai", "verify", value=False):
+        with dace.config.set_temporary("ai", "compile_check", value=False):
             with stub_provider(spec):
                 node.expand(state, "ai")
 
@@ -207,7 +207,7 @@ def test_reused_environments_reach_the_tasklet(tmp_path):
     state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0]"))
 
     spec = TaskletSpec(code="_out = _in;", use_environments=[env.full_class_path()])
-    with dace.config.set_temporary("ai", "verify", value=False):
+    with dace.config.set_temporary("ai", "compile_check", value=False):
         with stub_provider(spec):
             node.expand(state, "ai")
 

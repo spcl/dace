@@ -3,9 +3,8 @@
 Tests for the per-slot session record and for the progress printouts.
 
 An expansion is a paid, non-reproducible call whose result is baked into the SDFG, so what the
-model was told and what it answered has to survive the run -- both to explain a tasklet that passes
-the probe and then fails the real build, and because the next round of work on that slot resumes
-this conversation rather than starting a new one.
+model was told and what it answered has to survive the run, and the next round of work on that slot
+resumes this conversation rather than starting a new one.
 """
 
 import glob
@@ -28,7 +27,7 @@ GOOD = "_out = 2.0 * _in;"
 BAD = "_out = this_symbol_does_not_exist(_in);"
 
 needs_compiler = pytest.mark.skipif(
-    shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler for the probe"
+    shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler"
 )
 
 
@@ -73,7 +72,7 @@ def test_a_successful_expansion_is_recorded_in_full(tmp_path):
 
     with dace.config.set_temporary("ai", "sessions", value=True):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-            with dace.config.set_temporary("ai", "verify", value=False):
+            with dace.config.set_temporary("ai", "compile_check", value=False):
                 with stub_provider(spec) as provider:
                     node.expand(state, "ai")
 
@@ -114,20 +113,19 @@ def test_every_repair_attempt_is_recorded(tmp_path):
                 node.expand(state, "ai")
 
     path, index = _only_session(tmp_path)
-    # A probe failure is answered within the same round: it is one question, asked again
+    # A compile failure is answered within the same round: it is one question, asked again
     assert len(index["rounds"]) == 1
     attempts = index["rounds"][0]["attempts"]
     assert len(attempts) == 2
-    assert attempts[0]["verification"]["ok"] is False
-    assert "this_symbol_does_not_exist" in attempts[0]["verification"]["diagnostics"]
-    assert attempts[1]["verification"]["ok"] is True
+    assert attempts[0]["check"]["ok"] is False
+    assert "this_symbol_does_not_exist" in attempts[0]["check"]["diagnostics"]
+    assert attempts[1]["check"]["ok"] is True
     assert "does not compile" in attempts[1]["prompt"]
 
-    # The probe's translation unit is what a tasklet that compiles here and fails in the real
-    # build has to be compared against, so it is written out rather than only summarized
-    with open(os.path.join(path, "round_1", "probe.cpp")) as fp:
-        assert BAD in fp.read()
-    assert os.path.exists(os.path.join(path, "round_1", "probe.log"))
+    # The generated sources of the check program are kept with the diagnostics
+    sources = glob.glob(os.path.join(path, "round_1", "check_1", "*.cpp"))
+    assert any(BAD in open(source).read() for source in sources)
+    assert os.path.exists(os.path.join(path, "round_1", "check_1", "diagnostics.log"))
 
 
 @needs_compiler
@@ -153,7 +151,7 @@ def test_sessions_can_be_turned_off(tmp_path):
 
     with dace.config.set_temporary("ai", "sessions", value=False):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-            with dace.config.set_temporary("ai", "verify", value=False):
+            with dace.config.set_temporary("ai", "compile_check", value=False):
                 with stub_provider(TaskletSpec(code=GOOD)):
                     node.expand(state, "ai")
 
@@ -172,11 +170,11 @@ def test_debugprint_verbose_shows_the_prompts_and_the_attempts(capsys):
     out = capsys.readouterr().out
     assert "attempt 1/3" in out and "attempt 2/3" in out
     assert "asking for a repair" in out
-    assert "probe compilation failed" in out and "probe compiled cleanly" in out
+    assert "compile check failed" in out and "compile check passed" in out
     # Verbose adds the material each step acted on
     assert "--- system prompt ---" in out
     assert "--- user prompt ---" in out and "--- repair prompt ---" in out
-    assert "--- probe source ---" in out and "--- probe diagnostics ---" in out
+    assert "--- compiler diagnostics ---" in out
     assert "this_symbol_does_not_exist" in out
 
 
@@ -190,7 +188,7 @@ def test_plain_debugprint_reports_steps_without_the_text(capsys):
 
     out = capsys.readouterr().out
     assert "attempt 1/3" in out
-    assert "probe compiled cleanly" in out
+    assert "compile check passed" in out
     assert "expanded into a tasklet" in out
     assert "--- user prompt ---" not in out, "the full prompt should only appear in verbose mode"
 
@@ -199,7 +197,7 @@ def test_nothing_is_printed_by_default(capsys):
     sdfg, state, node = _sdfg_and_node()
 
     with dace.config.set_temporary("debugprint", value=False):
-        with dace.config.set_temporary("ai", "verify", value=False):
+        with dace.config.set_temporary("ai", "compile_check", value=False):
             with stub_provider(TaskletSpec(code=GOOD)):
                 node.expand(state, "ai")
 

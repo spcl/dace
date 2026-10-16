@@ -184,18 +184,19 @@ regenerate the tasklet with ``refine``.
 Verification and repair
 -----------------------
 
-Generated code is compiled before it is accepted. DaCe synthesizes a small standalone translation
-unit -- the connectors and symbols become parameters, the state struct is rebuilt from the state
-fields the answer asked for -- and hands it to the compiler it would use for the real build. It is
-compiled but never linked or run, so this catches syntax and type errors, not wrong results. A
-failure goes back to the model as a repair round; :envvar:`ai.max_repair_attempts` bounds how many
-times. Set :envvar:`ai.verify` to false to skip the probe.
+Generated code is compiled before it is accepted: DaCe builds a program containing only the
+generated tasklet, with the same containers, memlets, symbols and environments, through the same
+pipeline as the real program (in ``<build folder root>/ai-check``). This catches syntax and type
+errors, not wrong results. Compiler errors go back to the model as a repair round;
+:envvar:`ai.max_repair_attempts` bounds how many. Set :envvar:`ai.compile_check` to false to skip
+the check.
 
-The probe compiles each tasklet *alone*, so it cannot see what only breaks when several land in
-one translation unit -- two answers defining the same helper in their file-scope code, colliding
-state fields, a header the probe could not locate. Those appear at build time, and
-:func:`~dace.libraries.ai.diagnose.build` closes that loop: it compiles, attributes each compiler
-diagnostic to the tasklet that generated the line, feeds it back, and rebuilds.
+The check compiles each tasklet alone, so it cannot see what only breaks when several are in one
+program, such as two answers defining the same helper in their file-scope code.
+:func:`~dace.libraries.ai.diagnose.build` handles that case: it compiles the whole program,
+attributes each compiler diagnostic to the tasklet that generated the line, feeds it back, and
+rebuilds. With ``DACE_debugprint`` set, DaCe prints compiler output instead of including it in the
+exception; ``build`` captures it either way, while ``repair`` needs the exception text.
 
 .. code-block:: python
 
@@ -284,7 +285,7 @@ All entries live under the ``ai`` category of the configuration, and can be set 
 * Provider and model: :envvar:`ai.provider`, :envvar:`ai.model`, :envvar:`ai.api_key_envvar`,
   :envvar:`ai.base_url`, :envvar:`ai.effort`, :envvar:`ai.max_tokens`, :envvar:`ai.timeout`
 * Prompting: :envvar:`ai.extra_instructions`
-* Verification: :envvar:`ai.verify`, :envvar:`ai.max_repair_attempts`
+* Compile check: :envvar:`ai.compile_check`, :envvar:`ai.max_repair_attempts`
 * Storage: :envvar:`ai.cache`, :envvar:`ai.sessions`. Everything is stored in ``ai-*`` directories
   under the build folder root (:envvar:`default_build_folder`, ``.dacecache`` by default).
 

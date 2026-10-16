@@ -334,7 +334,7 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
     A pointer connector is a *view* into its container, positioned at the first
     element of the memlet subset and strided by the container's strides.
     Getting it wrong produces code that compiles cleanly and computes the wrong
-    answer, which the verification probe cannot catch.
+    answer, which the compile check cannot catch.
 
     :param info: The connector being described, updated in place.
     :param desc: The data descriptor behind the connector.
@@ -390,7 +390,7 @@ def _infer_conntype(
     :meth:`dace.libraries.ai.expansion.ExpandAI._make_tasklet` stamps the types computed here onto
     the tasklet's connectors, which is what makes this prediction hold rather than merely describe
     an intent. A prediction that did not hold would be worse than none: the model is told the type,
-    and the probe compiles against it.
+    and the compile check uses it.
 
     :param node: The library node being expanded.
     :param name: The connector name.

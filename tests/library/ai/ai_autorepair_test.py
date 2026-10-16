@@ -2,8 +2,8 @@
 """
 Tests for feeding a failed build back to the tasklets that caused it.
 
-The probe compiles each generated tasklet alone, so it cannot see what only breaks once several of
-them share a translation unit. What makes that usable is attribution: with more than one generated
+The compile check builds each generated tasklet alone, so it cannot see what only breaks once several
+of them share a program. What makes that usable is attribution: with more than one generated
 tasklet in the SDFG, a diagnostic has to land on the one responsible, and a diagnostic that belongs
 to no generated tasklet must not land on any of them.
 """
@@ -24,7 +24,7 @@ from dace.libraries.ai.nodes import AINode
 from tests.library.ai.ai_test_utils import stub_provider
 
 GOOD = "_out = 2.0 * _in;"
-#: Passes a standalone probe and fails the real build: the name is simply not declared anywhere.
+#: Fails the build: the name is not declared anywhere.
 BAD = "_out = _in; undeclared_thing_here();"
 #: Two tasklets emitting this collide, because the helper has external linkage.
 COLLIDING_GLOBAL = "double ai_shared_helper(double x) { return x + x; }"
@@ -37,13 +37,13 @@ pytestmark = pytest.mark.skipif(
 @contextlib.contextmanager
 def sessions_in(tmp_path):
     """
-    Runs with sessions on and verification off, in a temporary directory.
+    Runs with sessions on and the compile check off, in a temporary directory.
 
     :param tmp_path: The pytest temporary directory.
     """
     with dace.config.set_temporary("ai", "sessions", value=True):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-            with dace.config.set_temporary("ai", "verify", value=False):
+            with dace.config.set_temporary("ai", "compile_check", value=False):
                 # With debugprint on, DaCe streams the compiler output live and leaves it out of
                 # the exception, so a test that reads diagnostics from the exception has to turn it
                 # off. ai.build() does the same thing internally, for the same reason.

@@ -5,7 +5,7 @@ The durable record of one generated slot, across every round it goes through.
 A slot is one library node in one place in one SDFG. Generating code for it is a paid,
 non-reproducible call, and the first answer is rarely the last: it may compile and be slow, or run
 and turn out to need a case nobody stated. So the material is kept -- the prompts, the answers, the
-probe sources and diagnostics -- not as a write-only log but as a conversation that the next round
+check sources and diagnostics -- not as a write-only log but as a conversation that the next round
 resumes.
 
 Layout, one directory per slot::
@@ -13,7 +13,7 @@ Layout, one directory per slot::
     <session id>/
         session.json          slot identity, serialized node, and the index of rounds
         conversation.json     the running message list, replayed on the next round
-        round_1/              system_prompt.md prompt.md answer.json tasklet.json probe.cpp
+        round_1/              system_prompt.md prompt.md answer.json tasklet.json check_1/
         round_2/              feedback.md prompt.md answer.json tasklet.json
 
 The session id is derived from the SDFG and node names rather than from a ``guid``, because it has
@@ -149,8 +149,10 @@ class Session:
         directory = self._round_dir(create=True) if in_round else self.directory
         if directory is None:
             return
+        path = os.path.join(directory, filename)
         try:
-            with open(os.path.join(directory, filename), "w", encoding="utf-8") as fp:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fp:
                 fp.write(content)
         except OSError as e:
             warnings.warn(f"Could not write the AI session file {filename}: {e}")
@@ -195,7 +197,7 @@ class Session:
         """
         Opens a generation attempt within the round.
 
-        A round can take several attempts, because a probe failure is answered by asking again.
+        A round can take several attempts, because a compile failure is answered by asking again.
 
         :param index: One-based attempt number within the round.
         :param prompt: The user message this attempt sends.
@@ -225,30 +227,19 @@ class Session:
         self._write(f"answer{suffix}.json", spec.raw_response or spec.model_dump_json(indent=1))
         self.flush()
 
-    def record_verification(self, attempt: dict[str, Any], result: Any, source: str, device: bool) -> None:
+    def record_check(self, attempt: dict[str, Any], result: Any) -> None:
         """
-        Records a probe compilation.
-
-        The probe source is written out verbatim: it is the translation unit that was actually
-        accepted or rejected, and comparing it against what DaCe later generates is the only way to
-        explain a tasklet that passes verification and then fails the real build.
+        Records a compile check, with the generated sources of the check program.
 
         :param attempt: The record returned by :meth:`begin_attempt`.
-        :param result: The :class:`~dace.libraries.ai.verify.ProbeResult`.
-        :param source: The probe translation unit.
-        :param device: Whether the probe was compiled as GPU device code.
+        :param result: The :class:`~dace.libraries.ai.verify.CheckResult`.
         """
-        attempt["verification"] = {
-            "ok": result.ok,
-            "inconclusive": result.inconclusive,
-            "command": result.command,
-            "diagnostics": result.stderr,
-        }
-        suffix = f"_{attempt['attempt']}" if attempt["attempt"] > 1 else ""
-        if source:
-            self._write(f"probe{suffix}.{'cu' if device else 'cpp'}", source)
-        if result.stderr:
-            self._write(f"probe{suffix}.log", f"{result.command}\n\n{result.stderr}")
+        attempt["check"] = {"ok": result.ok, "skipped": result.skipped, "diagnostics": result.diagnostics}
+        folder = f"check_{attempt['attempt']}"
+        for name, source in result.sources.items():
+            self._write(os.path.join(folder, name), source)
+        if result.diagnostics:
+            self._write(os.path.join(folder, "diagnostics.log"), result.diagnostics)
         self.flush()
 
     def record_outcome(

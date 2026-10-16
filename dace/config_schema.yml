@@ -676,14 +676,14 @@ required:
                 title: Request timeout
                 description: Timeout, in seconds, for one request to the model provider.
 
-            verify:
+            compile_check:
                 type: bool
                 default: true
-                title: Verify generated code
+                title: Compile-check generated code
                 description: >
-                    Compile the generated tasklet in isolation before it is inserted into the
-                    SDFG, and send any compiler diagnostics back to the model. This catches
-                    syntax and type errors; it does not check that the result is correct.
+                    Compile a program containing only the generated tasklet before it is inserted
+                    into the SDFG, and send compiler errors back to the model. This does not check
+                    that the result is correct.
 
             max_repair_attempts:
                 type: int
@@ -691,7 +691,7 @@ required:
                 title: Maximum repair attempts
                 description: >
                     How many times the model may be asked to fix generated code that does not
-                    compile. Only used when verification is enabled.
+                    compile. Only used when ai.compile_check is enabled.
 
             cache:
                 type: bool

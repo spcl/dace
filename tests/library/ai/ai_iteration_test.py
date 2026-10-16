@@ -11,7 +11,7 @@ Any configured provider works::
     DACE_ai_provider=openai OPENAI_API_KEY=... ...         # OpenAI
     DACE_ai_provider=manual ...  -s < /dev/null            # relay the prompt by hand
 
-Add ``DACE_debugprint=verbose`` to watch the prompts, answers and probe compilations go by. Each
+Add ``DACE_debugprint=verbose`` to watch the prompts, answers and compile checks go by. Each
 test makes **two** paid generations: one to produce the tasklet, one to revise it, and prints the
 directory holding the conversation when it finishes (run with ``-s`` to see it).
 

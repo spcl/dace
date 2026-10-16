@@ -12,7 +12,10 @@ import pytest
 
 import dace
 from dace import dtypes, nodes
+from dace.libraries.ai import verify
 from dace.libraries.ai.backend import TaskletSpec
+from dace.libraries.ai.context import collect_context
+from dace.libraries.ai.expansion import ExpandAI
 from dace.libraries.ai.nodes import AINode
 from tests.library.ai.ai_node_contexts_test import nested_gpu_scalar_sdfg
 from tests.library.ai.ai_test_utils import stub_provider
@@ -153,7 +156,7 @@ def test_a_nested_gpu_scalar_expanded_early_runs():
             "cudaMemcpy(_out, &value, sizeof(double), cudaMemcpyHostToDevice);"
         ),
     )
-    with dace.config.set_temporary("ai", "verify", value=False):
+    with dace.config.set_temporary("ai", "compile_check", value=False):
         with dace.config.set_temporary("ai", "sessions", value=False):
             with dace.config.set_temporary("ai", "cache", value=False):
                 with stub_provider(spec):
@@ -173,6 +176,33 @@ def test_a_nested_gpu_scalar_expanded_early_runs():
     b = np.zeros(1)
     sdfg(A=a, B=b)
     assert b[0] == 42.0
+
+
+@pytest.mark.gpu
+def test_the_compile_check_builds_device_code(tmp_path):
+    """A slot inside a kernel is checked as device code: host-only code is rejected there."""
+    sdfg = dace.SDFG("ai_check_device")
+    sdfg.add_array("A", [64], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [64], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("kernel", {"i": "0:64"}, schedule=dtypes.ScheduleType.GPU_Device)
+    node = AINode("twice", "Write twice _in into _out.", inputs={"_in"}, outputs={"_out"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="_in", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(node, exit_node, state.add_write("B"), src_conn="_out", memlet=dace.Memlet("B[i]"))
+    ctx = collect_context(node, state, sdfg)
+    assert ctx.capabilities.device_level
+
+    def check(code: str, folder: str) -> verify.CheckResult:
+        tasklet = ExpandAI._make_tasklet(node, TaskletSpec(code=code), ctx)
+        return verify.compile_check(tasklet, node, state, sdfg, ctx, [], str(tmp_path / folder))
+
+    # A single element of GPU memory is a pointer, as for every library node
+    good = check("_out[0] = __fmul_rn(_in[0], 2.0f);", "good")
+    assert good.ok and not good.skipped, good.skipped
+    assert any(name.endswith(".cu") for name in good.sources)
+
+    host_only = check("_out[0] = _in[0]; __state->nothing = 0;", "host_only")
+    assert not host_only.ok
 
 
 if __name__ == "__main__":

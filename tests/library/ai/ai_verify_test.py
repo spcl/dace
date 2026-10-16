@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the probe compilation and the repair loop around it."""
+"""Tests for the compile check and the repair loop around it."""
 
 import shutil
 
@@ -11,12 +11,13 @@ from dace.libraries.ai import verify
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.exceptions import AIExpansionError
+from dace.libraries.ai.expansion import ExpandAI
 from dace.libraries.ai.nodes import AINode
 from dace.sdfg import infer_types
 from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler for the probe"
+    shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler"
 )
 
 GOOD = "_out = 2.0 * _in;"
@@ -40,47 +41,61 @@ def _sdfg_and_node():
     return sdfg, state, node
 
 
-def test_probe_source_reconstructs_the_tasklet_environment():
-    sdfg, state, node = _sdfg_and_node()
+def _check(spec: TaskletSpec, sdfg: dace.SDFG, state: dace.SDFGState, node: AINode, folder) -> verify.CheckResult:
+    """
+    Runs the compile check on a specification for a node.
+
+    :return: The check result.
+    """
     ctx = collect_context(node, state, sdfg)
-    spec = TaskletSpec(code=GOOD, code_global="#include <cmath>", state_fields=["int counter;"])
-
-    source = verify.build_probe_source(spec, ctx, [])
-
-    assert "#include <cmath>" in source
-    assert "int counter;" in source
-    assert "__dace_ai_state" in source or "__dace_probe_state" in source
-    assert GOOD in source
-    # Connectors become parameters, with the types the generated code will actually see
-    assert "_in" in source and "_out" in source
+    tasklet = ExpandAI._make_tasklet(node, spec, ctx)
+    return verify.compile_check(tasklet, node, state, sdfg, ctx, [], str(folder))
 
 
-def test_probe_accepts_valid_code():
+def test_check_accepts_valid_code(tmp_path):
     sdfg, state, node = _sdfg_and_node()
-    ctx = collect_context(node, state, sdfg)
-
-    result = verify.probe_compile(TaskletSpec(code=GOOD), ctx, [])
-    assert result.ok
-    assert not result.inconclusive
+    result = _check(TaskletSpec(code=GOOD), sdfg, state, node, tmp_path)
+    assert result.ok and not result.skipped
+    assert any(GOOD in source for source in result.sources.values())
 
 
-def test_probe_rejects_invalid_code_with_diagnostics():
+def test_check_rejects_invalid_code_with_diagnostics(tmp_path):
     sdfg, state, node = _sdfg_and_node()
-    ctx = collect_context(node, state, sdfg)
-
-    result = verify.probe_compile(TaskletSpec(code=BAD), ctx, [])
+    result = _check(TaskletSpec(code=BAD), sdfg, state, node, tmp_path)
     assert not result.ok
-    assert not result.inconclusive
-    assert "this_symbol_does_not_exist" in result.stderr
-    assert result.command
+    assert "this_symbol_does_not_exist" in result.diagnostics
+    assert result.sources, "the generated sources are kept for the repair prompt"
 
 
-def test_probe_skips_python_tasklets():
+def test_check_builds_global_code_and_state_fields(tmp_path):
     sdfg, state, node = _sdfg_and_node()
-    ctx = collect_context(node, state, sdfg)
+    spec = TaskletSpec(
+        code="__state->counter += 1;\n_out = std::sqrt(_in);",
+        code_global="#include <cmath>",
+        state_fields=["int counter;"],
+    )
+    result = _check(spec, sdfg, state, node, tmp_path)
+    assert result.ok and not result.skipped, result.skipped
 
-    result = verify.probe_compile(TaskletSpec(code="_out = _in", language="Python"), ctx, [])
-    assert result.ok and result.inconclusive
+
+def test_check_defines_map_symbols(tmp_path):
+    sdfg = dace.SDFG("ai_check_map")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", {"i": "0:8"})
+    node = AINode("double", "Double the input.", inputs={"_in"}, outputs={"_out"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="_in", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(node, exit_node, state.add_write("B"), src_conn="_out", memlet=dace.Memlet("B[i]"))
+
+    result = _check(TaskletSpec(code="_out = _in * i;"), sdfg, state, node, tmp_path)
+    assert result.ok and not result.skipped, result.skipped
+
+
+def test_check_covers_python_tasklets(tmp_path):
+    sdfg, state, node = _sdfg_and_node()
+    result = _check(TaskletSpec(code="_out = _in * 2", language="Python"), sdfg, state, node, tmp_path)
+    assert result.ok and not result.skipped, result.skipped
 
 
 def test_repair_loop_recovers_from_a_compile_error():
@@ -113,14 +128,14 @@ def test_repair_loop_gives_up_after_the_configured_attempts():
     assert any(isinstance(n, AINode) for n in state.nodes())
 
 
-def test_verification_can_be_disabled():
+def test_the_compile_check_can_be_disabled():
     sdfg, state, node = _sdfg_and_node()
 
-    with dace.config.set_temporary("ai", "verify", value=False):
+    with dace.config.set_temporary("ai", "compile_check", value=False):
         with stub_provider(TaskletSpec(code=BAD)) as provider:
             node.expand(state, "ai")
 
-    assert len(provider.calls) == 1, "the code was verified even though verification is off"
+    assert len(provider.calls) == 1, "the code was checked even though the check is off"
 
 
 #: storage, memlet subset, dynamic, and the C++ types both the prompt and the generated code must
@@ -137,14 +152,8 @@ CONNECTOR_SHAPES = {
 
 
 @pytest.mark.parametrize("shape", sorted(CONNECTOR_SHAPES))
-def test_the_probe_declares_connectors_the_way_codegen_will(shape):
-    """
-    The probe must predict connector types exactly as ``infer_types`` later resolves them.
-
-    A pointer where the generated code will hold a value (or the reverse) makes the probe accept
-    code the real build rejects -- the one failure the verification step exists to prevent, and one
-    that no amount of prompting can recover from, since the model is told the wrong type too.
-    """
+def test_connector_types_match_codegen(shape):
+    """The connector types told to the model must be the ones ``infer_types`` later resolves."""
     storage, subset, dynamic, expected_in, expected_out = CONNECTOR_SHAPES[shape]
 
     sdfg = dace.SDFG(f"ai_conn_{shape}")
@@ -161,7 +170,7 @@ def test_the_probe_declares_connectors_the_way_codegen_will(shape):
 
     predicted = {c.name: c.ctype for c in collect_context(node, state, sdfg).connectors}
 
-    with dace.config.set_temporary("ai", "verify", value=False):
+    with dace.config.set_temporary("ai", "compile_check", value=False):
         with stub_provider(TaskletSpec(code="// nothing")):
             node.expand(state, "ai")
     infer_types.infer_connector_types(sdfg)
@@ -176,4 +185,8 @@ def test_the_probe_declares_connectors_the_way_codegen_will(shape):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_repair_loop_recovers_from_a_compile_error()
+    test_repair_loop_gives_up_after_the_configured_attempts()
+    test_the_compile_check_can_be_disabled()
+    for shape in sorted(CONNECTOR_SHAPES):
+        test_connector_types_match_codegen(shape)

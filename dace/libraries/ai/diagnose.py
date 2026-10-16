@@ -2,7 +2,7 @@
 """
 Turning a failed build into feedback for the tasklets that caused it.
 
-The probe in :mod:`dace.libraries.ai.verify` compiles each generated tasklet **in isolation**, so
+The check in :mod:`dace.libraries.ai.verify` compiles each generated tasklet **in isolation**, so
 by construction it cannot see what only breaks when several of them land in one translation unit:
 two tasklets whose ``code_global`` defines the same helper, colliding ``state_fields``, an
 environment header the probe could only report inconclusive. Those diagnostics are exactly the

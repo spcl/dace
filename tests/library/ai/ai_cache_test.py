@@ -33,7 +33,7 @@ def caching(tmp_path):
     """
     with dace.config.set_temporary("ai", "cache", value=True):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-            with dace.config.set_temporary("ai", "verify", value=False):
+            with dace.config.set_temporary("ai", "compile_check", value=False):
                 yield tmp_path
 
 
@@ -160,7 +160,7 @@ def test_a_cache_hit_needs_no_provider(tmp_path):
 def test_caching_can_be_turned_off(tmp_path):
     with dace.config.set_temporary("ai", "cache", value=False):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-            with dace.config.set_temporary("ai", "verify", value=False):
+            with dace.config.set_temporary("ai", "compile_check", value=False):
                 for _ in range(2):
                     _, state, node = _sdfg_and_node()
                     with stub_provider(TaskletSpec(code=CODE)) as provider:

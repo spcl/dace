@@ -18,6 +18,7 @@ imported inside :meth:`ExpandAI.expansion`.
 """
 
 import functools
+import os
 import warnings
 from typing import Any
 
@@ -121,7 +122,7 @@ class ExpandAI(ExpandTransformation):
         messages.append({"role": "user", "content": prompt})
 
         attempts = max(0, int(Config.get("ai", "max_repair_attempts"))) + 1
-        should_verify = Config.get_bool("ai", "verify")
+        should_check = Config.get_bool("ai", "compile_check")
 
         spec = None
         environments: list[Any] = []
@@ -163,26 +164,34 @@ class ExpandAI(ExpandTransformation):
                     problem = str(e)
                     prompt = prompts.build_rejection_prompt(problem)
                 else:
-                    if not should_verify:
-                        _status(f"{described}: verification is off (ai.verify), taking the code as generated")
+                    if not should_check:
+                        _status(
+                            f"{described}: the compile check is off (ai.compile_check), taking the code as generated"
+                        )
                         break
 
-                    result = verify.probe_compile(spec, ctx, environments)
-                    record.record_verification(
-                        entry, result, result.source, ctx.capabilities is not None and ctx.capabilities.device_level
+                    check_folder = os.path.join(ai_cache.storage_dir("check"), *record.id.split("/"))
+                    result = verify.compile_check(
+                        ExpandAI._make_tasklet(node, spec, ctx),
+                        node,
+                        parent_state,
+                        parent_sdfg,
+                        ctx,
+                        environments,
+                        check_folder,
                     )
-                    _detail("probe source", result.source)
-                    if result.inconclusive:
-                        _status(f"{described}: probe compilation was inconclusive, taking the code as generated")
+                    record.record_check(entry, result)
+                    if result.skipped:
+                        _status(f"{described}: compile check skipped ({result.skipped}), taking the code as generated")
                         break
                     if result.ok:
-                        _status(f"{described}: probe compiled cleanly ({result.command})")
+                        _status(f"{described}: compile check passed")
                         break
 
-                    _status(f"{described}: probe compilation failed ({result.command})")
-                    _detail("probe diagnostics", result.stderr)
-                    problem = f"The code does not compile. Diagnostics:\n\n{result.stderr}"
-                    prompt = prompts.build_repair_prompt(result.stderr, result.command)
+                    _status(f"{described}: compile check failed")
+                    _detail("compiler diagnostics", result.diagnostics)
+                    problem = f"The code does not compile. Diagnostics:\n\n{result.diagnostics}"
+                    prompt = prompts.build_repair_prompt(result.diagnostics, result.sources)
 
                 if response is not None:
                     # Not sent for repair: whoever supplied it chose not to use a provider
@@ -229,7 +238,7 @@ class ExpandAI(ExpandTransformation):
 
         The connector types resolved during context collection are stamped onto the tasklet rather
         than left for :func:`dace.sdfg.infer_types.infer_connector_types` to fill in later. They
-        have to be: the model was told those types and the probe compiled against them, while
+        have to be: the model was told those types and the compile check used them, while
         inference re-derives them from the *tasklet*, and one of its rules -- never pass GPU global
         memory by value -- only applies while the node is still a library node. Leaving it to
         inference would turn a GPU operand the model was told to treat as a pointer into a value

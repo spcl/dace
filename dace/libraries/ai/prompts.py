@@ -335,21 +335,20 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
     return "\n\n".join(sections)
 
 
-def build_repair_prompt(stderr: str, command: str) -> str:
+def build_repair_prompt(diagnostics: str, sources: dict[str, str]) -> str:
     """
     Builds the follow-up message sent when generated code fails to compile.
 
-    :param stderr: The compiler's diagnostic output.
-    :param command: The command line that was used to compile the probe.
+    :param diagnostics: The compiler diagnostics.
+    :param sources: The generated source files of the check program, by file name.
     :return: The rendered prompt.
     """
+    files = "\n\n".join(f"{name}:\n\n{textwrap.indent(source.rstrip(), '    ')}" for name, source in sources.items())
     return (
-        "The generated code does not compile. This is the output of a standalone probe "
-        "compilation of your tasklet (the connectors and symbols were declared as function "
-        "parameters, and the state struct was rebuilt from your `state_fields`), so line "
-        "numbers will not match your snippet exactly.\n\n"
-        f"Command:\n\n    {command}\n\n"
-        f"Diagnostics:\n\n{textwrap.indent(stderr.strip(), '    ')}\n\n"
+        "The generated code does not compile. DaCe built a program containing only your tasklet, "
+        "with the same connectors, symbols and environments, the way it builds the real program.\n\n"
+        f"Diagnostics:\n\n{textwrap.indent(diagnostics.strip(), '    ')}\n\n"
+        f"Generated source files:\n\n{files}\n\n"
         "Fix the problem and return the complete JSON object again, including any parts that "
         "did not change. Do not remove functionality to make it compile."
     )

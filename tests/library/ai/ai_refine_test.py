@@ -27,7 +27,7 @@ V2 = "_out = _in + _in;"
 BAD = "_out = this_symbol_does_not_exist(_in);"
 
 needs_compiler = pytest.mark.skipif(
-    shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler for the probe"
+    shutil.which("c++") is None and shutil.which("g++") is None, reason="needs a host C++ compiler"
 )
 
 
@@ -37,11 +37,11 @@ def iterating(tmp_path, verify=False):
     Turns sessions on, pointed at a temporary directory.
 
     :param tmp_path: The pytest temporary directory.
-    :param verify: Whether to run the probe compilation.
+    :param verify: Whether to run the compile check.
     """
     with dace.config.set_temporary("ai", "sessions", value=True):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
-            with dace.config.set_temporary("ai", "verify", value=verify):
+            with dace.config.set_temporary("ai", "compile_check", value=verify):
                 yield
 
 
