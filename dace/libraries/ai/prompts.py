@@ -355,6 +355,19 @@ def build_repair_prompt(stderr: str, command: str) -> str:
     )
 
 
+def build_rejection_prompt(reason: str) -> str:
+    """
+    Builds the follow-up message sent when an answer cannot be used as given.
+
+    :param reason: What is wrong with the answer.
+    :return: The rendered prompt.
+    """
+    return (
+        f"Your answer cannot be used: {reason}\n\n"
+        "Fix the problem and return the complete JSON object again, including any parts that did not change."
+    )
+
+
 def build_feedback_prompt(feedback: str, context: str, standalone: bool = False) -> str:
     """
     Builds the message that opens a new round on an already-generated tasklet.

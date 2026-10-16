@@ -7,9 +7,12 @@ import pytest
 
 import dace
 import dace.library
+from dace import nodes
 from dace.libraries.ai import environments as ai_environments
 from dace.libraries.ai.backend import EnvironmentSpec, TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
+from dace.libraries.ai.nodes import AINode
+from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
 
 SPEC = EnvironmentSpec(
     name="TestFFT",
@@ -86,12 +89,52 @@ def test_broken_module_is_skipped(tmp_path):
         assert ai_environments.load_generated_environments() == []
 
 
-def test_names_are_sanitized(tmp_path):
-    spec = EnvironmentSpec(name="My Env-2!", headers=["x.h"])
+@pytest.mark.parametrize("name", ["my-env", "my env", "2fft", "class", ""])
+def test_names_must_be_identifiers(tmp_path, name):
+    spec = EnvironmentSpec(name=name, headers=["x.h"])
     with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
-        env = ai_environments.materialize(spec)
-    assert env.__name__ == "My_Env_2"
-    assert (tmp_path / "dace_ai_env_my_env_2.py").exists()
+        with pytest.raises(ai_environments.EnvironmentConflict, match="not a valid identifier"):
+            ai_environments.materialize(spec)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_name_cannot_be_redefined(tmp_path):
+    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+        first = ai_environments.materialize(SPEC)
+        # The same definition is reused
+        assert ai_environments.materialize(SPEC.model_copy()).full_class_path() == first.full_class_path()
+
+        for name in ("TestFFT", "testfft"):
+            changed = SPEC.model_copy(update={"name": name, "cmake_libraries": ["fftw3f"]})
+            with pytest.raises(ai_environments.EnvironmentConflict, match="different definition"):
+                ai_environments.materialize(changed)
+
+    # The existing definition is left alone
+    assert "'fftw3f'" not in (tmp_path / "dace_ai_env_testfft.py").read_text()
+
+
+def test_a_conflicting_environment_is_sent_back_to_the_model(tmp_path):
+    sdfg = dace.SDFG("ai_env_conflict")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    node = AINode("needs_a_library", "Copy the value.", inputs={"_in"}, outputs={"_out"})
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_in", dace.Memlet("A[0]"))
+    state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0]"))
+
+    bad = TaskletSpec(code="_out = _in;", environments=[SPEC.model_copy(update={"name": "Test-FFT"})])
+    good = TaskletSpec(code="_out = _in;", environments=[SPEC])
+    with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
+        with dace.config.set_temporary("ai", "verify", value=False):
+            with stub_provider_sequence([bad, good]) as provider:
+                node.expand(state, "ai")
+
+    assert len(provider.calls) == 2
+    assert "cannot be used" in provider.calls[1][-1]["content"]
+    assert "not a valid identifier" in provider.calls[1][-1]["content"]
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
+    assert any(path.endswith(".TestFFT") for path in tasklet.environments)
 
 
 def test_environment_dir_is_not_created_by_reading(tmp_path):
@@ -104,16 +147,6 @@ def test_environment_dir_is_not_created_by_reading(tmp_path):
 
 
 def test_requested_environment_reaches_the_generated_tasklet(tmp_path):
-    import os
-    import sys
-
-    sys.path.insert(0, os.path.dirname(__file__))
-    from ai_test_utils import stub_provider
-
-    from dace import nodes
-    from dace.libraries.ai.backend import TaskletSpec
-    from dace.libraries.ai.nodes import AINode
-
     sdfg = dace.SDFG("ai_env_flow")
     sdfg.add_array("A", [1], dace.float64)
     sdfg.add_array("B", [1], dace.float64)
@@ -160,14 +193,6 @@ def test_an_unknown_environment_reference_is_reported():
 
 
 def test_reused_environments_reach_the_tasklet(tmp_path):
-    import sys
-
-    sys.path.insert(0, os.path.dirname(__file__))
-    from ai_test_utils import stub_provider
-
-    from dace import nodes
-    from dace.libraries.ai.nodes import AINode
-
     with dace.config.set_temporary("ai", "environment_dir", value=str(tmp_path)):
         env = ai_environments.materialize(SPEC)
 

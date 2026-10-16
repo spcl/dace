@@ -13,8 +13,8 @@ edited.
 """
 
 import importlib.util
+import keyword
 import os
-import re
 import sys
 import warnings
 
@@ -78,17 +78,21 @@ def environment_dir(create: bool = False) -> str:
     return path
 
 
-def _sanitize(name: str) -> str:
-    """
-    Turns a model-supplied environment name into a valid Python identifier.
+class EnvironmentConflict(AIExpansionError):
+    """An environment requested by the model cannot be created as specified; the model is asked to fix it."""
 
-    :param name: The requested name.
-    :return: A safe class-name suffix.
+
+def _check_name(name: str) -> str:
     """
-    cleaned = re.sub(r"\W+", "_", name).strip("_")
-    if not cleaned or cleaned[0].isdigit():
-        cleaned = f"env_{cleaned}"
-    return cleaned
+    :param name: An environment name requested by the model.
+    :return: The name, which is used verbatim as the class name.
+    :raises EnvironmentConflict: If the name is not a valid Python identifier.
+    """
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise EnvironmentConflict(
+            f'The environment name "{name}" is not a valid identifier. Use only letters, digits and underscores.'
+        )
+    return name
 
 
 def render_environment(spec: EnvironmentSpec) -> str:
@@ -102,7 +106,7 @@ def render_environment(spec: EnvironmentSpec) -> str:
     :return: The module source.
     """
     return _MODULE_TEMPLATE.format(
-        classname=_sanitize(spec.name),
+        classname=_check_name(spec.name),
         cmake_minimum_version=spec.cmake_minimum_version,
         cmake_packages=list(spec.cmake_packages),
         cmake_variables={var.name: var.value for var in spec.cmake_variables},
@@ -145,21 +149,27 @@ def materialize(spec: EnvironmentSpec) -> type:
     :return: The registered environment class.
     :raises AIExpansionError: If the environment cannot be written or imported.
     """
-    classname = _sanitize(spec.name)
+    classname = _check_name(spec.name)
     directory = environment_dir(create=True)
-    path = os.path.join(directory, f"{MODULE_PREFIX}{classname.lower()}.py")
     source = render_environment(spec)
 
-    existing = None
+    # Module names are lower case, so names differing only in case would share a file on a
+    # case-insensitive file system
+    path = os.path.join(directory, f"{MODULE_PREFIX}{classname.lower()}.py")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fp:
             existing = fp.read()
-    if existing != source:
+        if existing != source:
+            raise EnvironmentConflict(
+                f'An environment named "{spec.name}" already exists with a different definition ({path}). '
+                "Reuse it through use_environments if it fits, or give the new environment a different name."
+            )
+    else:
         with open(path, "w", encoding="utf-8") as fp:
             fp.write(source)
 
     module = _import_module(path)
-    env = getattr(module, classname, None)
+    env = vars(module).get(classname)
     if env is None:
         raise AIExpansionError(f"The generated environment module {path} does not define {classname}.")
     if Config.get_bool("debugprint"):
@@ -227,7 +237,7 @@ def _deduplicate(environments: list[type]) -> list[type]:
     seen = set()
     distinct = []
     for env in environments:
-        key = env.full_class_path() if hasattr(env, "full_class_path") else env
+        key = env.full_class_path()
         if key in seen:
             continue
         seen.add(key)

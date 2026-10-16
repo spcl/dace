@@ -156,37 +156,42 @@ class ExpandAI(ExpandTransformation):
                     ai_cache.store(cache_key, spec, system, messages)
                 record.record_answer(entry, spec, cached=cached)
                 _detail("answer", spec.raw_response or spec.model_dump_json(indent=1))
-                environments = ai_environments.collect(spec)
-                if not should_verify:
-                    _status(f"{described}: verification is off (ai.verify), taking the code as generated")
-                    break
+                try:
+                    environments = ai_environments.collect(spec)
+                except ai_environments.EnvironmentConflict as e:
+                    _status(f"{described}: {e}")
+                    problem = str(e)
+                    prompt = prompts.build_rejection_prompt(problem)
+                else:
+                    if not should_verify:
+                        _status(f"{described}: verification is off (ai.verify), taking the code as generated")
+                        break
 
-                result = verify.probe_compile(spec, ctx, environments)
-                record.record_verification(
-                    entry, result, result.source, ctx.capabilities is not None and ctx.capabilities.device_level
-                )
-                _detail("probe source", result.source)
-                if result.inconclusive:
-                    _status(f"{described}: probe compilation was inconclusive, taking the code as generated")
-                    break
-                if result.ok:
-                    _status(f"{described}: probe compiled cleanly ({result.command})")
-                    break
+                    result = verify.probe_compile(spec, ctx, environments)
+                    record.record_verification(
+                        entry, result, result.source, ctx.capabilities is not None and ctx.capabilities.device_level
+                    )
+                    _detail("probe source", result.source)
+                    if result.inconclusive:
+                        _status(f"{described}: probe compilation was inconclusive, taking the code as generated")
+                        break
+                    if result.ok:
+                        _status(f"{described}: probe compiled cleanly ({result.command})")
+                        break
 
-                _status(f"{described}: probe compilation failed ({result.command})")
-                _detail("probe diagnostics", result.stderr)
+                    _status(f"{described}: probe compilation failed ({result.command})")
+                    _detail("probe diagnostics", result.stderr)
+                    problem = f"The code does not compile. Diagnostics:\n\n{result.stderr}"
+                    prompt = prompts.build_repair_prompt(result.stderr, result.command)
+
                 if response is not None:
                     # Not sent for repair: whoever supplied it chose not to use a provider
-                    raise AIExpansionError(
-                        f"The supplied response for {described} does not compile. Diagnostics:\n\n{result.stderr}"
-                    )
+                    raise AIExpansionError(f"The supplied response for {described} cannot be used. {problem}")
                 if attempt == attempts - 1:
                     raise AIExpansionError(
-                        f"The generated code for {described} still does not compile after "
-                        f"{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}"
+                        f"The generated code for {described} is still not usable after {attempts} attempt(s). {problem}"
                     )
                 _status(f"{described}: asking for a repair (attempt {attempt + 2}/{attempts})")
-                prompt = prompts.build_repair_prompt(result.stderr, result.command)
                 messages.append({"role": "assistant", "content": spec.model_dump_json(indent=1)})
                 messages.append({"role": "user", "content": prompt})
         except Exception as e:
@@ -201,7 +206,7 @@ class ExpandAI(ExpandTransformation):
             raise
 
         cls.environments = list(environments)
-        env_paths = [env.full_class_path() for env in environments if hasattr(env, "full_class_path")]
+        env_paths = [env.full_class_path() for env in environments]
         record.record_outcome("expanded", spec=spec, environments=env_paths)
 
         # Persist the conversation *including* this answer, so the next round resumes from a
