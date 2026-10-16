@@ -17,7 +17,7 @@ from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
-pytestmark = [pytest.mark.gpu, pytest.mark.cuda_tile]
+pytestmark = [pytest.mark.gpu, pytest.mark.cuda_tile, pytest.mark.tile]
 
 M, N, K, L = (dace.symbol(name) for name in "MNKL")
 

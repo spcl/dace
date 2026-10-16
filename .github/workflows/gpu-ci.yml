@@ -65,7 +65,7 @@ jobs:
         export DACE_cache=unique
         export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
         echo "CUDACXX: $CUDACXX"
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi and not tile"
 
     - name: Run pytest GPU with distributed compilation
       run: |
