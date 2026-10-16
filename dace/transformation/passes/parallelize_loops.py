@@ -12,7 +12,8 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.sdfg import forget_facts, memoize_facts
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_to_map import (
@@ -261,8 +262,11 @@ class ParallelizeLoops(ppl.Pass):
                 {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
             )
         with scope:
-            for order in (loop_order_key, None):
-                applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
+            # Every probe reads the facts of its loop's SDFG and of each SDFG nesting it; only a lift changes them,
+            # and ``lift`` drops the lifted SDFG's.
+            with memoize_facts():
+                for order in (loop_order_key, None):
+                    applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
             if applied:
                 self.finish(sdfg)
@@ -315,7 +319,11 @@ class ParallelizeLoops(ppl.Pass):
             before_apply()
         end, last = loop_analysis.get_loop_end(loop), last_iteration(loop)
         itervar = loop.loop_variable
-        xform.apply(graph, sd)
+        with memoize_facts(active=False):
+            xform.apply(graph, sd)
+        # The lift edits ``sd``'s descriptors, symbols and interstate edges, and builds a new nested SDFG. The one
+        # edit outside ``sd``, the symbol mapping of the node nesting it, is not a fact of its parent.
+        forget_facts(sd)
         for state in graph.states():
             lifted = [
                 node
@@ -365,6 +373,9 @@ class ParallelizeLoops(ppl.Pass):
         # One instance, reused: ``setup_match`` overwrites every field a probe reads, and building a
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
         xform = LoopToMap()
+        # The facts every probe derives for its loop, and for each scope and SDFG enclosing it, are shared by the
+        # probes until the next lift, which changes them for the lifted SDFG and every SDFG nested in it.
+        xform.symbol_resolver = SymbolResolver()
         # Kept across sweeps and patched after each lift, like the contexts: rebuilding either walks the
         # whole SDFG, once per lift.
         candidates = candidate_loops(sdfg)
@@ -396,6 +407,7 @@ class ParallelizeLoops(ppl.Pass):
                     continue
                 applied += 1
                 lifted_one = True
+                xform.symbol_resolver = SymbolResolver()
                 site = sites[0]
                 added = lifted_blocks(site, loop, graph)
                 if ctx.post_lift_free_symbols is None:
