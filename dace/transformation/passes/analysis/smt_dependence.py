@@ -655,7 +655,83 @@ def classify_read_write_pair(
     return None
 
 
+#: One iterator an access sits under: ``(name, start, end, step)``, bounds inclusive and in iteration order.
+IterRange = tuple[str, Any, Any, Any]
+
+
+def is_plain_index(expr: sp.Basic) -> bool:
+    """Whether ``expr`` is integer arithmetic over symbols: no array read, no opaque function."""
+    return not expr.atoms(sp.Indexed, symbolic.Subscript, sp.Function) - expr.atoms(sp.Min, sp.Max, sp.Mod)
+
+
+def admissible(exprs: list[sp.Basic], allowed: set[str]) -> bool:
+    """Whether every expression is integer arithmetic over ``allowed`` names only."""
+    return all(is_plain_index(e) and {s.name for s in e.free_symbols} <= allowed for e in exprs)
+
+
+def encode_side(suffix: str, index: tuple[sp.Basic, ...], iters: tuple[IterRange, ...], sym_cache: dict[str, Any]):
+    """``(bounds, terms)`` for one access with its own copy of every iterator (named with ``suffix``), else None."""
+    names = {name for name, *_ in iters}
+
+    def local(expr):
+        expr = sp.sympify(expr)
+        return expr.xreplace({s: sp.Symbol(s.name + suffix) for s in expr.free_symbols if s.name in names})
+
+    bounds = []
+    for name, start, end, step in iters:
+        domain = _iter_bounds(required(z3).Int(name + suffix), local(start), local(end), step)
+        if not domain:
+            return None
+        bounds += domain
+    terms = [_sympy_to_z3(local(e), sym_cache, {}) for e in index]
+    if any(t is None or not required(z3).is_int(t) for t in terms):
+        return None
+    return bounds, terms
+
+
+def find_conflict_witness(
+    first: tuple[sp.Basic, ...],
+    second: tuple[sp.Basic, ...],
+    first_iters: tuple[IterRange, ...],
+    second_iters: tuple[IterRange, ...],
+    sizes: set[str],
+    rlimit: int = DEFAULT_RLIMIT,
+) -> dict[str, int] | None:
+    """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
+    touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
+
+    The iterator lists run outermost first, and both start with the carrying loop. Each side gets its own copy of
+    every iterator. The only other symbols the witness may choose are ``sizes``, nonnegative: a symbol outside
+    them is a fixed value nobody knows, and a conflict for one chosen value of it proves nothing about the
+    program, so its presence refuses the query.
+    """
+    exprs = [sp.sympify(e) for e in first + second]
+    exprs += [sp.sympify(b) for _, start, end, _ in first_iters + second_iters for b in (start, end)]
+    allowed = {name for name, *_ in first_iters + second_iters} | sizes
+    if not _HAS_Z3 or len(first) != len(second) or not admissible(exprs, allowed):
+        return None
+    sym_cache: dict[str, Any] = {}
+    sides = [encode_side("__a", first, first_iters, sym_cache), encode_side("__b", second, second_iters, sym_cache)]
+    if None in sides:
+        return None
+    carrier, _, _, step = first_iters[0]
+    earlier, later = required(z3).Int(carrier + "__a"), required(z3).Int(carrier + "__b")
+    solver = bounded_solver(rlimit)
+    solver.add(*sides[0][0], *sides[1][0], *(a == b for a, b in zip(sides[0][1], sides[1][1])))
+    solver.add(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
+    solver.add(*(required(z3).Int(name) >= 0 for name in sorted(sizes)))
+    try:
+        if solver.check() != required(z3).sat:
+            return None
+    except Exception:
+        return None
+    model = solver.model()
+    shown = [carrier + "__a", carrier + "__b"] + sorted({s.name for e in exprs for s in e.free_symbols} & sizes)
+    return {name: model.eval(required(z3).Int(name), model_completion=True).as_long() for name in shown}
+
+
 __all__ = [
+    "find_conflict_witness",
     "has_z3",
     "prove_injective_write",
     "prove_disjoint_write_ranges",

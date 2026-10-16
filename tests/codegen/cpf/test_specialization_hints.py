@@ -536,8 +536,8 @@ def test_a_pinned_independent_loop_does_not_read_as_parallel():
 
 
 def overlapping_writes_sdfg(name: str) -> dace.SDFG:
-    """Writes ``a[5*i]`` and ``a[3*i]``: the test cannot separate the iterations, and no access pattern proves a
-    carried dependence either."""
+    """Writes ``a[5*i]`` and ``a[3*i]``: ``LoopToMap`` cannot separate the iterations, and no constant distance
+    relates them, but ``i = 3`` and ``i = 5`` write the same element once ``N >= 6``."""
 
     @dace.program
     def two_strides(a: dace.float64[5 * N], b: dace.float64[N]):
@@ -550,12 +550,61 @@ def overlapping_writes_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def test_writes_the_test_cannot_separate_are_unsure_not_a_proof():
-    """``LoopToMap`` refuses ``a[5*i]`` against ``a[3*i]`` because they MAY overlap; that is a test that stopped, not a
-    carried dependence it found, so the hint must not call the loop sequential."""
+def test_writes_the_test_cannot_separate_are_proven_by_a_witness():
+    """``LoopToMap`` refuses ``a[5*i]`` against ``a[3*i]`` because they MAY overlap. The solver finds two iterations
+    that DO write one element, for an array size it chooses, so the loop is sequential and the hint says why."""
     rendered = comment_lines(named(overlapping_writes_sdfg("cpf_kind_overlap")))
+    carried = [line for line in rendered if line.startswith("// sequential -- carried: WAW on a[")]
+    assert len(carried) == 1, rendered
+    witness = re.search(r"\(witness: N=(\d+), i=(\d+) and i=(\d+)\)$", carried[0])
+    assert witness, carried
+    size, first, second = (int(g) for g in witness.groups())
+    assert first < second < size, carried
+    assert {5 * first, 3 * first} & {5 * second, 3 * second}, carried
+
+
+def test_a_distance_set_by_an_argument_stays_unsure():
+    """``a[i] = a[i - k]`` with ``k`` an argument: ``k`` is fixed but unknown, and ``k = 0`` carries nothing, so a
+    witness that picks ``k = 1`` proves nothing about the program."""
+
+    @dace.program
+    def shift_by(a: dace.float64[N], k: dace.int64):
+        for i in range(N):
+            a[i] = a[i - k] + 1.0
+
+    rendered = comment_lines(named(shift_by.to_sdfg(simplify=True)))
     assert [line for line in rendered if line.startswith("// unsure -- ")], rendered
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+
+
+def test_a_conflict_only_under_a_branch_is_not_witnessed():
+    """A branch body may never run, so an access inside one cannot be half of a witness."""
+
+    @dace.program
+    def guarded_stride(a: dace.float64[5 * N], b: dace.float64[N]):
+        for i in range(N):
+            a[5 * i] = b[i]
+            if b[i] > 0.0:
+                a[3 * i] = b[i] + 1.0
+
+    rendered = comment_lines(named(guarded_stride.to_sdfg(simplify=True)))
+    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+
+
+def test_a_triangular_solve_is_proven_through_its_row_copy():
+    """trisolv: each row reads ``x[0:i]``, which the earlier iterations wrote. The read is an array copy, so every
+    element of the range is read, and the witness names the copied range."""
+
+    @dace.program
+    def trisolv(L: dace.float64[N, N], x: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]
+
+    sdfg = trisolv.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    hints = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
+    assert len(hints) == 1, hints
+    assert re.match(r"sequential -- carried: RAW on x\[0:\w+\] \(witness: N=\d+, \w+=0 and \w+=1\)$", hints[0]), hints
 
 
 if __name__ == "__main__":
@@ -587,3 +636,7 @@ if __name__ == "__main__":
     test_a_read_ahead_dependence_is_named_war_not_raw()
     test_no_carried_dependence_is_claimed_for_independent_elements()
     test_a_pinned_independent_loop_does_not_read_as_parallel()
+    test_writes_the_test_cannot_separate_are_proven_by_a_witness()
+    test_a_distance_set_by_an_argument_stays_unsure()
+    test_a_conflict_only_under_a_branch_is_not_witnessed()
+    test_a_triangular_solve_is_proven_through_its_row_copy()
