@@ -17,7 +17,7 @@ from typing import Any, cast
 
 import sympy
 
-from dace import SDFG, data, subsets, symbolic, symbolic_facts
+from dace import SDFG, data, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -40,8 +40,7 @@ def relaxed_exponent(exp: sympy.Expr, facts: symbolic.Facts) -> sympy.Expr | Non
         else:
             return None  # genuinely fractional (0.5 -> sqrt)
         return sympy.Integer(value) if value >= 0 else None  # negative: a reciprocal
-    integer = symbolic_facts.with_integers(exp, facts.integers).is_integer
-    return exp if integer and symbolic.provably_nonnegative(exp, facts) else None
+    return exp if symbolic.provably_integer(exp, facts) and symbolic.provably_nonnegative(exp, facts) else None
 
 
 def exponent_relaxes_to_ipow(exp: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
