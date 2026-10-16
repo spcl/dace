@@ -14,6 +14,7 @@ from dace import data, dtypes
 from dace.codegen.exceptions import CodegenError
 from dace.codegen.python.emit import expr
 from dace.codegen.python.kernel import Dialect, Element, KernelEmitter, TileStatement, accumulates, is_register
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileMMA, TileReduce, TileScan
 
 IMPORTS = """\
@@ -136,16 +137,19 @@ class TileLangStatement(TileStatement):
             super().emit()
 
     def masked_copy(self) -> None:
-        source, target = self.inputs["_cpy_in"], self.outputs["_cpy_out"]
+        source, target = (
+            self.inputs[CopyLibraryNode.INPUT_CONNECTOR_NAME],
+            self.outputs[CopyLibraryNode.OUTPUT_CONNECTOR_NAME],
+        )
         src, dst = source.data.data, target.data.data
         widths = list(self.node.widths)
         mask = self.lane_mask()
         if is_register(self.sdfg.arrays[dst]):
             if is_register(self.sdfg.arrays[src]):
-                self.assign("_cpy_out", self.masked(src))
+                self.assign(CopyLibraryNode.OUTPUT_CONNECTOR_NAME, self.masked(src))
             else:
                 self.assign(
-                    "_cpy_out",
+                    CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
                     self.dialect.load(src, self.offsets(src, source.data.subset), mask, self.sdfg.arrays[src].dtype),
                 )
             return
