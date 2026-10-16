@@ -646,7 +646,7 @@ required:
 
             model:
                 type: str
-                default: 'claude-opus-5'
+                default: 'claude-opus-5-5'
                 title: Model
                 description: Identifier of the model used to generate tasklets.
 

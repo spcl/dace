@@ -54,7 +54,7 @@ def _message_stream(text: str, stop_reason: str = "end_turn") -> bytes:
         "id": "msg_test",
         "type": "message",
         "role": "assistant",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5-5",
         "content": [],
         "stop_reason": None,
         "stop_sequence": None,
@@ -141,7 +141,7 @@ def local_api(monkeypatch):
 
 def test_request_carries_the_configured_model_and_schema(local_api):
     with local_api(_message_stream(json.dumps(RESPONSE))) as server:
-        with dace.config.set_temporary("ai", "model", value="claude-opus-5"):
+        with dace.config.set_temporary("ai", "model", value="claude-opus-5-5"):
             with dace.config.set_temporary("ai", "effort", value="high"):
                 spec = AnthropicProvider().generate("SYSTEM", [{"role": "user", "content": "USER"}])
 
@@ -150,7 +150,7 @@ def test_request_carries_the_configured_model_and_schema(local_api):
     assert spec.notes == "doubling"
 
     request = server.requests[0]
-    assert request["model"] == "claude-opus-5"
+    assert request["model"] == "claude-opus-5-5"
     assert request["system"] == "SYSTEM"
     assert request["messages"] == [{"role": "user", "content": "USER"}]
     assert request["stream"] is True
