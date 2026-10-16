@@ -49,7 +49,7 @@ def emit_dim_index_definitions(
     map_range = subsets.Range(scope_map.range[::-1])  # reversed for memory coalescing
     dimensions = len(map_range)
     dim_sizes = map_range.size()
-    sym_indices = [symbolic.symbol(f"__SYM_IDX{i}", nonnegative=True, integer=True) for i in range(dimensions)]
+    sym_indices = [symbolic.symbol(f"__SYM_IDX{i}") for i in range(dimensions)]
     sym_coords = map_range.coord_at(sym_indices)
 
     for dim in range(dimensions):

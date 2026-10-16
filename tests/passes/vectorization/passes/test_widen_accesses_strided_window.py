@@ -29,6 +29,13 @@ from tests.passes.vectorization.tile_assertions import masked_stores
 N = dace.symbol("N")
 
 
+def known_nonnegative(sdfg: dace.SDFG) -> set[str]:
+    """What a caller such as the benchmark declares nonnegative: every size symbol and scalar argument."""
+    return set(sdfg.free_symbols) | {
+        n for n, d in sdfg.arrays.items() if isinstance(d, dace.data.Scalar) and not d.transient
+    }
+
+
 def widened(index: str, iter_var: str = "i", width: int = 8):
     """Widen a single-element subset ``[index]`` and return its one ``(begin, end, step)``."""
     new = WidenAccesses(widths=(width,))._widen_subset_inplace(subsets.Range.from_string(index), (iter_var,))
@@ -84,7 +91,9 @@ def assert_window_strides_by(edge, stride_name: str, width: int = 8):
 def canonicalized_and_vectorized(prog):
     """Canonicalize + vectorize ``prog``, returning the SDFG and any refusal messages."""
     sdfg = prog.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(
+        sdfg, validate=True, peel_limit=4, break_anti_dependence=True, nonnegative_symbols=known_nonnegative(sdfg)
+    )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         VectorizeCPUMultiDim(
@@ -172,7 +181,9 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
     is a ``W x W`` box at strides ``(N, 1)`` over ONE array dim, which a per-array-dim tile window
     cannot spell, so the kernel must stay un-tiled and correct."""
     sdfg = linearized_write.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(
+        sdfg, validate=True, peel_limit=4, break_anti_dependence=True, nonnegative_symbols=known_nonnegative(sdfg)
+    )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         VectorizeCPUMultiDim(

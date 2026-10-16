@@ -230,6 +230,28 @@ def test_one_trip_map_releases_the_maps_in_its_body():
     assert schedules(sdfg) == {"peeled": dtypes.ScheduleType.Sequential, "plane_map": dtypes.ScheduleType.CPU_Multicore}
 
 
+def test_map_of_at_most_one_trip_by_the_sdfg_facts_is_released():
+    """``K <= 1`` is a registry relation, not a numeric bound of the extent."""
+    inner = dace.SDFG("facts_one_trip_body")
+    inner.add_array("a", [N], dace.float64)
+    map_state(inner, inner, "plane", ["0:N"])
+    sdfg = dace.SDFG("facts_one_trip_wrapper")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", [N], dace.float64)
+    k = dace.symbolic.pystr_to_symbolic("K")
+    sdfg.add_symbol_relation(
+        dace.symbolic.Relation(dace.symbolic.RelationKind.LE, k, dace.symbolic.pystr_to_symbolic("1"))
+    )
+    state = sdfg.add_state("peeled", is_start_block=True)
+    entry, exit_node = state.add_map("peeled", {"k": "0:K"})
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a"}, symbol_mapping={"N": N})
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
+    sdfg.validate()
+    assert release_one_trip_maps(sdfg) == 1
+    assert schedules(sdfg)["peeled"] == dtypes.ScheduleType.Sequential
+
+
 def staged_map_state(container, label, out):
     """A state with one map over ``0:N`` that computes ``out[i]`` through the scalar transient ``t`` inside it."""
     state = container.add_state(label, is_start_block=len(container.nodes()) == 0)
@@ -521,6 +543,7 @@ def test_each_distinct_trip_count_is_asked_once():
 
 
 if __name__ == "__main__":
+    test_map_of_at_most_one_trip_by_the_sdfg_facts_is_released()
     test_map_below_break_even_goes_sequential()
     test_map_above_break_even_stays_parallel()
     test_symbolic_extent_stays_parallel()

@@ -63,12 +63,12 @@ import re
 import sympy
 
 import dace
-from dace import SDFG
+from dace import SDFG, symbolic
 from dace import data as dt
 from dace.optionals import required
 from dace.properties import CodeBlock
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 from dace.symbolic import pystr_to_symbolic, symstr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -280,11 +280,16 @@ class LoopStridePermutation(ppl.Pass):
         osym = pystr_to_symbolic(ovar)
         c = as_expr(i0).coeff(as_expr(osym), 1)
         d = dace.symbolic.simplify(i0 - required(c) * osym)
-        if osym in as_basic(d).free_symbols or not required(c).is_integer or not required(c).is_positive:
+        if osym in as_basic(d).free_symbols:
+            return False
+        # Integrality and signs of the bounds' symbols are facts of the SDFG, not of the expressions
+        facts = SymbolResolver().facts_at(outer.parent_graph)
+        positive = symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, required(c)), facts)
+        if not symbolic.provably_integer(required(c), facts) or positive is not symbolic.Truth.TRUE:
             return False
         # ``int_floor`` is a floor division: a negative numerator would round the wrong way, so the
         # rewrite is only taken where the new outer loop starts at or above ``d``.
-        if (required(c) * j0).is_nonnegative is not True:
+        if not symbolic.provably_nonnegative(required(c) * j0, facts):
             return False
 
         floor_expr = symstr(dace.symbolic.int_floor(pystr_to_symbolic(ivar) - d, c))

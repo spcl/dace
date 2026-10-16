@@ -6,7 +6,7 @@
 and not a recurrence. The constant-divisor spelling (``// 2``, TSVC ``s1421``) was already handled;
 the symbolic one was not, because the canonicalize contract builds free symbols ``nonnegative`` and
 that admits ``M == 0``, leaving SymPy unable to decide the sign of ``-floor(LEN_1D/M)``.
-``_admissible_scan_stride`` read UNKNOWN as admissible and lifted a scan, which cost the Map and
+``admissible_scan_stride`` read UNKNOWN as admissible and lifted a scan, which cost the Map and
 measured 3.1x slower on CPU and 84x slower on GPU than the same kernel with a constant divisor.
 """
 

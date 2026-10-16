@@ -27,10 +27,17 @@ from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 
+def known_nonnegative(sdfg: dace.SDFG) -> set[str]:
+    """What a caller such as the benchmark declares nonnegative: every size symbol and scalar argument."""
+    return set(sdfg.free_symbols) | {
+        n for n, d in sdfg.arrays.items() if isinstance(d, dace.data.Scalar) and not d.transient
+    }
+
+
 def _canonicalize_counts(name):
     kernel = [k for k in tsvc.collect() if k.name == name][0]
     sdfg = tsvc.to_sdfg(kernel, "iv_" + name, simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4)
+    canonicalize(sdfg, validate=True, peel_limit=4, nonnegative_symbols=known_nonnegative(sdfg))
 
     arrays, call_kwargs = tsvc.make_inputs(kernel)
     ref = {n: a.copy() for n, a in arrays.items()}
@@ -195,7 +202,7 @@ def test_two_level_counter_exit_value_is_exact():
         out[0] = k
 
     sdfg = two_level_counter_exit.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4)
+    canonicalize(sdfg, validate=True, peel_limit=4, nonnegative_symbols=known_nonnegative(sdfg))
 
     for n in (3, 5, 8):
         out = np.zeros(1, dtype=np.int64)

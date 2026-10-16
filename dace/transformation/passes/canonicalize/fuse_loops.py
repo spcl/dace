@@ -8,7 +8,7 @@ Thomas sweeps, sequential scans) are never fused. This pass fuses such a pair --
 same iteration space, straight-line bodies -- into one loop whose body
 runs the first body then the second per iteration. It is the exact inverse of
 ``LoopFission`` and shares its soundness kernel (``break_anti_dependence``'s
-``_dep_class`` and ``loop_fission``'s per-iteration-subset reasoning), so a pair
+``dep_class`` and ``loop_fission``'s per-iteration-subset reasoning), so a pair
 that fission would have separated is a pair that fusion may legally rejoin.
 
 Designed to run POST-``LoopToMap`` (every DOALL loop is already a Map, hence not

@@ -680,3 +680,12 @@ def provably_nonnegative(expr: sympy.Expr, facts: Facts) -> bool:
 
 def provably_le(lhs: sympy.Expr, rhs: sympy.Expr, facts: Facts) -> bool:
     return ask(Relation(RelationKind.LE, lhs, rhs), facts) is Truth.TRUE
+
+
+def provably_integer(expr: sympy.Expr, facts: Facts) -> bool:
+    """Whether ``expr`` is an integer for every value of its symbols, those the facts type as integers flagged so."""
+    return with_integers(cast(sympy.Expr, sympy.sympify(expr)), facts.integers).is_integer is True
+
+
+def provably_positive(expr: sympy.Expr, facts: Facts) -> bool:
+    return ask(Relation(RelationKind.LT, sympy.Integer(0), cast(sympy.Expr, sympy.sympify(expr))), facts) is Truth.TRUE

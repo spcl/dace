@@ -124,10 +124,13 @@ def test_exponent_classifier_reuses_relax_proof():
 
 
 def test_set_symbol_nonnegative_assumptions():
-    """``set_symbol_nonnegative_assumptions`` assumes a signed-integer size symbol nonnegative in the SDFG's facts, so a
-    size-power proof can conclude ``>= 0``."""
+    """``set_symbol_nonnegative_assumptions`` registers a size symbol the caller declared nonnegative in the SDFG's
+    facts, so a size-power proof can conclude ``>= 0``."""
+    from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import declare_nonnegative_symbols
+
     sdfg = symbolic_power.to_sdfg(simplify=True)
     assert dace.symbolic.Predicate.NONNEGATIVE not in sdfg.symbol_repo.params.predicates.get("S", frozenset())
+    declare_nonnegative_symbols(sdfg, {"S"})
     set_symbol_nonnegative_assumptions(sdfg)
     assert dace.symbolic.Predicate.NONNEGATIVE in sdfg.symbol_repo.params.predicates["S"]
 

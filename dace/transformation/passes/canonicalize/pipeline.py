@@ -7,7 +7,7 @@ computation.
 """
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from dace import SDFG, data, properties, symbolic
@@ -38,6 +38,8 @@ from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     AssumeSymbolConstraints,
     SetSymbolNonnegativeAssumptions,
+    declare_nonnegative_symbols,
+    set_symbol_nonnegative_assumptions,
 )
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
@@ -1529,6 +1531,7 @@ def canonicalize(
     semantic_lifting: bool = True,
     dump_dir: str | None = None,
     stages: Sequence[str] | None = None,
+    nonnegative_symbols: Iterable[str] | None = None,
 ) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
@@ -1608,8 +1611,15 @@ def canonicalize(
     :param stages: Stage labels to run, in recipe order (see :func:`stage_labels`); ``None``
                    (default) runs every stage. A label that does not occur in the recipe
                    raises ``ValueError``.
+    :param nonnegative_symbols: The symbols (and scalar arguments promoted to symbols) the caller knows are never
+                                negative. Registered in the SDFG's facts before the first pass, so every proof reads
+                                them, and checked at program entry. Any other symbol has an unknown sign. ``None``
+                                (default) keeps what an earlier call declared, else none.
     :returns: The same ``sdfg`` instance, canonicalized.
     """
+    if nonnegative_symbols is not None:
+        declare_nonnegative_symbols(sdfg, nonnegative_symbols)
+    set_symbol_nonnegative_assumptions(sdfg)
     # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing
     # them -- and an unscoped parse mints ``DEFAULT_SYMBOL_TYPE``. Declaring the SDFG's own symbol
     # table as the authority for the whole run is what keeps one name spelled as ONE symbol, so a

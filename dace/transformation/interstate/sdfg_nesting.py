@@ -1249,6 +1249,12 @@ class NestSDFG(transformation.MultiStateTransformation):
 
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
+                facts = nested_sdfg.facts()
+
+                def nonpositive(size, facts=facts) -> bool:
+                    relation = symbolic.predicate_relation(symbolic.Predicate.NONPOSITIVE, size)
+                    return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
+
                 for node in state.nodes():
                     if (
                         isinstance(node, nodes.AccessNode)
@@ -1304,8 +1310,8 @@ class NestSDFG(transformation.MultiStateTransformation):
                                             newsz_limit = newsz.subs({s: replacement_limit_value})
                                             newsz_initial = newsz.subs({s: replacement_initial_value})
 
-                                            if newsz_limit.is_negative or newsz_limit.is_zero:
-                                                if newsz_initial.is_negative and newsz_initial.is_zero:
+                                            if nonpositive(newsz_limit):
+                                                if nonpositive(newsz_initial):
                                                     raise ValueError(
                                                         f"Can not over-approximate shape for transient{node.data}"
                                                     )

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Soundness strengthening for ``SplitStatements`` -- the forward-read snapshot.
 
-``SplitStatements._snapshot_forward_reads`` snapshots a global array before a loop
+``SplitStatements.snapshot_forward_reads`` snapshots a global array before a loop
 and redirects a read-ahead access ``arr[i + off]`` to the pre-loop snapshot so the
 loop can fission. For a symbolic offset it plants a runtime positive-check guard on
 ``off`` and, under the nonnegative-symbol assumption, admits every provably

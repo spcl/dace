@@ -263,6 +263,7 @@ class WidenAccesses(ppl.Pass):
             except Exception:  # noqa: BLE001
                 per_dim_kinds = None
         modified = False
+        facts = None
         for d in range(len(ranges)):
             beg, end, step = ranges[d]
             try:
@@ -286,7 +287,9 @@ class WidenAccesses(ppl.Pass):
             if per_dim_kinds is not None and d < len(per_dim_kinds) and per_dim_kinds[d] == PerDimKind.GATHER:
                 continue
             w = widths[dominating_k]
-            lane_stride = self._lane_stride(beg, iter_vars[dominating_k])
+            if facts is None:
+                facts = inner_sdfg.facts() if inner_sdfg is not None else symbolic.Facts.none()
+            lane_stride = self._lane_stride(beg, iter_vars[dominating_k], facts)
             if lane_stride is None:
                 new_end, new_step = dace.symbolic.pystr_to_symbolic(f"({beg}) + {w} - 1"), step
             else:
@@ -297,7 +300,7 @@ class WidenAccesses(ppl.Pass):
         return subsets.Range(ranges) if modified else None
 
     @staticmethod
-    def _lane_stride(beg: symbolic.SymbolicType, iter_var: str) -> symbolic.SymbolicType | None:
+    def _lane_stride(beg: symbolic.SymbolicType, iter_var: str, facts: symbolic.Facts) -> symbolic.SymbolicType | None:
         # Per-lane element step of index expression ``beg`` along ``iter_var``.
         if not dace.symbolic.issymbolic(beg):
             return None
@@ -309,7 +312,11 @@ class WidenAccesses(ppl.Pass):
         if iv is None:
             return None
         step = dace.symbolic.simplify(beg.subs(iv, as_expr(iv) + 1) - beg)
-        if any(str(sym) == iter_var for sym in as_basic(step).free_symbols) or as_basic(step).is_negative:
+        # A descending stride (by the facts) is left to the contiguous fallback; an unknown sign keeps the stride
+        negative = symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, as_basic(step))
+        if any(str(sym) == iter_var for sym in as_basic(step).free_symbols) or (
+            symbolic.ask(negative, facts) is symbolic.Truth.TRUE
+        ):
             return None
         return step
 

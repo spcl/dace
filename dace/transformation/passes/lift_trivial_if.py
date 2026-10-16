@@ -284,7 +284,9 @@ class LiftTrivialIf(ppl.Pass):
                     ivar_to_range[ivar][0], cfb.sdfg.facts()
                 ):
                     return "unknown"
-                c = symbolic.guard_crossing(ast.unparse(varying), ivar, c, strict=opname in ("Lt", "GtE"))
+                c = symbolic.guard_crossing(
+                    ast.unparse(varying), ivar, c, strict=opname in ("Lt", "GtE"), facts=SymbolResolver().facts_at(cfb)
+                )
                 if c is None:
                     return "unknown"
                 opname = {"Lt": "Lt", "LtE": "Lt", "Gt": "GtE", "GtE": "GtE"}[opname]

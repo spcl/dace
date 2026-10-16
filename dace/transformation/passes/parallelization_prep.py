@@ -35,6 +35,7 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     SDFGState,
+    SymbolResolver,
     enclosing_region_symbols,
 )
 from dace.transformation import pass_pipeline as ppl
@@ -101,8 +102,8 @@ def _retyped(expr, sdfg, scoped: dict[str, Any] | None = None):
     runs 250x slower than the un-canonicalized form.
 
     Re-binding to ``sdfg.symbols`` -- the declaration both spellings were meant to carry -- is what
-    makes the comparison well-typed. Assumptions already on the symbol are carried over, never
-    dropped: this widens a type, it must not weaken a proof.
+    makes the comparison well-typed. Signs and integrality are the SDFG's facts, which name the symbol, so
+    retyping it weakens no proof.
     """
     if sdfg is None or not isinstance(expr, sympy.Basic):
         return expr
@@ -114,8 +115,7 @@ def _retyped(expr, sdfg, scoped: dict[str, Any] | None = None):
         declared = scoped[sym.name] if scoped is not None and sym.name in scoped else sdfg.symbols.get(sym.name)
         if declared is None or declared == sym.dtype:
             continue
-        kept = {k: v for k, v in sym.assumptions0.items() if k in ("nonnegative", "positive", "integer")}
-        repl[sym] = symbolic.symbol(sym.name, dtype=declared, **kept)
+        repl[sym] = symbolic.symbol(sym.name, dtype=declared)
     return expr.subs(repl) if repl else expr
 
 
@@ -703,7 +703,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                     else:
                         # A monotone guard (``i * 8192 < N``, ``i * i < N``) flips where it crosses its bound.
                         x = symbolic.guard_crossing(
-                            ast.unparse(varying), loop.loop_variable, ast.unparse(other), strict=offset == 0
+                            ast.unparse(varying),
+                            loop.loop_variable,
+                            ast.unparse(other),
+                            strict=offset == 0,
+                            facts=SymbolResolver().facts_at(loop),
                         )
                 except Exception:
                     continue
@@ -986,8 +990,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         # difference never cancels. Undecidable stays split: the caller's relations guard covers it.
         beyond = symbolic.simplify(symbolic.equalize_symbol(x - end))
         below = symbolic.simplify(symbolic.equalize_symbol(start - x))
-        if (beyond > 0) == True or (below > 0) == True:
+        if any(gap.is_number and gap > 0 for gap in (beyond, below)):
             return False
+        if not (beyond.is_number and below.is_number):
+            facts = SymbolResolver().facts_at(loop.parent_graph)
+            positive = symbolic.Predicate.POSITIVE
+            if any(
+                symbolic.ask(symbolic.predicate_relation(positive, gap), facts) is symbolic.Truth.TRUE
+                for gap in (beyond, below)
+            ):
+                return False
         ivar = loop.loop_variable
         parent = loop.parent_graph
         # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a
@@ -1140,7 +1152,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         count as the modulus (and NO wrap offsets, so no offset facts are relied
         on) proves only such affine-in-trip boundary points; a point leaning on a
         free offset (``N - K``) is left guarded. A non-affine floor/ceil point
-        (``N // 2``) falls through to :meth:`_provably_nonneg_symbolic`, which
+        (``N // 2``) falls through to :meth:`provably_nonneg_symbolic`, which
         bounds it from the nonnegative-symbol contract."""
         if self._provably_nonneg(expr):
             return True
@@ -1152,8 +1164,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         # Floor/ceil-of-a-nonnegative-bound split points (``x = int_floor(N, 2)``) are not affine in
         # the trip count, so the large-modulus path leaves them guarded; the symbolic nonnegativity
         # prover discharges them from the canonicalization nonnegative-symbol contract + floor/ceil
-        # bounds. See :meth:`_provably_nonneg_symbolic`.
-        return self._provably_nonneg_symbolic(expr)
+        # bounds. See :meth:`provably_nonneg_symbolic`.
+        return self.provably_nonneg_symbolic(expr, SymbolResolver().facts_at(loop.parent_graph))
 
     def _specialize_index_set_split(
         self, sdfg: SDFG, loop: LoopRegion, x, relations, middle_singleton: bool = True, guarded: bool = False
@@ -1332,9 +1344,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         return as_basic(s).is_number and s >= 0
 
     @staticmethod
-    def _provably_nonneg_symbolic(x) -> bool:
-        """Whether ``x`` is provably ``>= 0`` for EVERY value of its free symbols, given the
-        canonicalization contract that those symbols are nonnegative -- the symbolic superset of
+    def provably_nonneg_symbolic(x, facts: symbolic.Facts) -> bool:
+        """Whether ``x`` is provably ``>= 0`` under ``facts`` (around the loop), which carry the
+        canonicalization contract that the symbols are nonnegative -- the symbolic superset of
         :meth:`_provably_nonneg`, which only decides concrete numbers.
 
         This discharges the range-membership relations of an index-set split whose split point is
@@ -1344,10 +1356,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         guard is redundant and the split applies unconditionally.
 
         The rounding relaxation itself lives in :func:`dace.symbolic.provably_nonnegative`, which
-        ``subsets.Range.intersects`` also uses to decide whether a split's two halves overlap. Only
-        the nonnegative-symbol assumption is added here: it is canonicalization's contract, not a
-        property of SDFGs in general, so the shared helper leaves it off by default."""
-        return symbolic.provably_nonnegative(x, symbolic.contract_facts(x))
+        ``subsets.Range.intersects`` also uses to decide whether a split's two halves overlap."""
+        return symbolic.provably_nonnegative(x, facts)
 
     def _nonneg_assuming_large_modulus(self, x, m, offsets=frozenset()):
         """Prove ``x >= 0`` given the modulus ``m`` is at least ``peel_limit + 1`` and

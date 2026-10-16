@@ -95,6 +95,13 @@ MULTIDIM_KNOBS = [
 ]
 
 
+def known_nonnegative(sdfg: dace.SDFG) -> set[str]:
+    """What a caller such as the benchmark declares nonnegative: every size symbol and scalar argument."""
+    return set(sdfg.free_symbols) | {
+        n for n, d in sdfg.arrays.items() if isinstance(d, dace.data.Scalar) and not d.transient
+    }
+
+
 def _oracle(program):
     """The numpy oracle for a kernel: ``ref_`` + name with any ``ext_`` dropped."""
     base = program.name.rsplit("tsvc_2_5_", 1)[-1]
@@ -137,7 +144,12 @@ def _canonicalized(program):
     cand = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(
-            cand, validate=True, peel_limit=PEEL_LIMIT, break_anti_dependence=BREAK_ANTI_DEP, unroll_limit=UNROLL_LIMIT
+            cand,
+            validate=True,
+            peel_limit=PEEL_LIMIT,
+            break_anti_dependence=BREAK_ANTI_DEP,
+            unroll_limit=UNROLL_LIMIT,
+            nonnegative_symbols=known_nonnegative(cand),
         )
     return cand
 

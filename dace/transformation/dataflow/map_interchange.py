@@ -8,6 +8,7 @@ from dace.properties import make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg.state import SymbolResolver
 from dace.symbolic import symlist
 from dace.transformation import transformation
 
@@ -33,7 +34,7 @@ class MapInterchange(transformation.SingleStateTransformation):
         "runtime assumption, neither of which a caller asking for a plain swap expects.",
     )
 
-    def trapezoid(self):
+    def trapezoid(self, state: SDFGState):
         """``(param, lo, hi, slope, base)`` when the nest is trapezoidal and this rewrite handles it.
 
         The shape is ``for p in [plo, phi]: for q in [base + slope*p, qhi]`` with unit steps -- the
@@ -63,9 +64,20 @@ class MapInterchange(transformation.SingleStateTransformation):
         base = symbolic.simplify(qlo - slope * p)
         if p in getattr(slope, "free_symbols", set()) or p in getattr(base, "free_symbols", set()):
             return None  # not affine in the outer parameter
-        if slope == 0 or slope.is_negative:
-            # A zero slope is the rectangular case; a negative one inverts to a different bound
-            # shape (a MAX over an int_ceil) that this rewrite does not emit.
+        # A zero slope is the rectangular case; a negative one inverts to a different bound
+        # shape (a MAX over an int_ceil) that this rewrite does not emit.
+        if slope == 0:
+            return None
+        if slope.is_number:
+            if slope.is_negative:
+                return None
+        elif (
+            symbolic.ask(
+                symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, slope),
+                SymbolResolver().facts_at(state, self.outer_map_entry),
+            )
+            is symbolic.Truth.TRUE
+        ):
             return None
         return outer.params[0], plo, phi, slope, base
 
@@ -89,7 +101,7 @@ class MapInterchange(transformation.SingleStateTransformation):
         for s in inner_map_entry.map.range:
             map_deps |= set(map(str, symlist(s)))
         if any(dep in outer_map_entry.map.params for dep in map_deps):
-            if not self.transform_bounds or self.trapezoid() is None:
+            if not self.transform_bounds or self.trapezoid(graph) is None:
                 return False
 
         # Check that the destination of all the outgoing edges
@@ -131,7 +143,8 @@ class MapInterchange(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         # Read the trapezoid BEFORE the swap: it is a property of the nest as matched, and the swap
         # is what invalidates it.
-        trapezoid = self.trapezoid() if self.transform_bounds else None
+        trapezoid = self.trapezoid(graph) if self.transform_bounds else None
+        facts = SymbolResolver().facts_at(graph, self.outer_map_entry) if trapezoid is not None else None
         # The inner parameter's dtype follows from a range that names the outer one, which the swap takes out of scope.
         if trapezoid is not None:
             declared = self.inner_map_entry.new_symbols(sdfg, graph, graph.symbols_defined_at(self.inner_map_entry))
@@ -195,9 +208,11 @@ class MapInterchange(transformation.SingleStateTransformation):
             e.data.subset = propagate_memlet(graph, edge_to_propagate.data, outer_map_exit, True).subset
 
         if trapezoid is not None:
-            self.rewrite_trapezoid_bounds(sdfg, trapezoid, inner_param_dtype)
+            self.rewrite_trapezoid_bounds(sdfg, trapezoid, inner_param_dtype, facts)
 
-    def rewrite_trapezoid_bounds(self, sdfg: SDFG, trapezoid, inner_param_dtype: dtypes.typeclass) -> None:
+    def rewrite_trapezoid_bounds(
+        self, sdfg: SDFG, trapezoid, inner_param_dtype: dtypes.typeclass, facts: symbolic.Facts
+    ) -> None:
         """Re-derive both ranges after swapping a nest whose inner start leaned on the outer param.
 
         ``for p in [plo, phi]: for q in [base + slope*p, qhi]`` covers
@@ -208,7 +223,8 @@ class MapInterchange(transformation.SingleStateTransformation):
         therefore identical; only its traversal order changes, which is what a Map leaves free.
 
         A symbolic ``slope`` must be ``>= 1`` for the inverted bound to mean anything (it is a
-        divisor). That is recorded as a tracked assumption rather than assumed silently, so
+        divisor). Unless the facts at the nest prove it, that is recorded as a tracked assumption rather than assumed
+        silently, so
         :func:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative.insert_assumption_guards`
         emits the matching runtime trap -- the same discipline the modular-wrap split uses for
         ``K < N``.
@@ -223,7 +239,8 @@ class MapInterchange(transformation.SingleStateTransformation):
         new_outer.range = subsets.Range([(symbolic.simplify(base + slope * plo), qhi, 1)])
         reach = symbolic.int_floor(q - base, slope)
         new_inner.range = subsets.Range([(plo, sympy.Min(phi, reach), 1)])
-        if not slope.is_number:
+        at_least_one = symbolic.Relation(symbolic.RelationKind.LE, sympy.Integer(1), slope)
+        if not slope.is_number and symbolic.ask(at_least_one, facts) is not symbolic.Truth.TRUE:
             record_assumption(sdfg, sympy.Ge(slope, 1))
 
     @staticmethod

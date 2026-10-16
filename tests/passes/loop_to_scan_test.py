@@ -1920,6 +1920,37 @@ def test_symbolic_stride_scan_value_exact(k):
     assert np.allclose(got, exp), f"value mismatch at K={k}: max diff {np.abs(got - exp).max():.2e}"
 
 
+K_POSITIVE = dace.symbol("K_POSITIVE", positive=True)
+
+
+@dace.program
+def _positive_symbolic_stride_scan(a: dace.float64[N_SS], x: dace.float64[N_SS]):
+    for i in range(K_POSITIVE, N_SS):
+        a[i] = a[i - K_POSITIVE] + x[i]
+
+
+@pytest.mark.parametrize("k", [1, 3])
+def test_symbolic_stride_positive_by_the_sdfg_facts_lifts_without_a_guard(k):
+    """``K >= 1`` is a registry fact, so the residue-class scan needs no runtime specialization."""
+    sdfg = _positive_symbolic_stride_scan.to_sdfg(simplify=True)
+    sdfg.name = f"positive_symbolic_stride_scan_k{k}"
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {})
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+    assert _num_scan_nodes(sdfg) == 1
+
+    n = 64
+    rng = np.random.default_rng(200 + k)
+    a0 = rng.standard_normal(n)
+    x = rng.standard_normal(n)
+    got = a0.copy()
+    sdfg(a=got, x=x, N_SS=n, K_POSITIVE=k)
+    exp = a0.copy()
+    for i in range(k, n):
+        exp[i] = exp[i - k] + x[i]
+    assert np.allclose(got, exp)
+
+
 @dace.program
 def _forward_shift_half_scan(a: dace.float64[N], b: dace.float64[N]):
     """TSVC ``s173_d_single``: ``a[i + N//2] = a[i] + b[i]`` over ``i in [0, N//2)``.
@@ -2609,15 +2640,17 @@ def test_a_read_ahead_is_refused_rather_than_guarded():
     from dace.transformation.passes.loop_to_scan import carry_distance_kind
 
     N, M, K = (symbolic.symbol(s) for s in ("N", "M", "K"))
+    # Canonicalization's contract, as the facts at the loop carry it
+    facts = symbolic.contract_facts(N, M, K)
     for distance in (-symbolic.int_floor(N, 2), -symbolic.int_floor(N, M), -N, -K, 0, -1):
-        assert carry_distance_kind(distance) is None, f"{distance} is not a carry, but was not refused"
+        assert carry_distance_kind(distance, facts) is None, f"{distance} is not a carry, but was not refused"
 
     # The converse must survive: a distance whose sign is genuinely unknown still owes its guard,
     # and a known positive one is a scan outright.
-    assert carry_distance_kind(K) == "guard"
-    assert carry_distance_kind(symbolic.int_floor(N, M)) == "guard"
-    assert carry_distance_kind(1) == "scan"
-    assert carry_distance_kind(5) == "scan"
+    assert carry_distance_kind(K, facts) == "guard"
+    assert carry_distance_kind(symbolic.int_floor(N, M), facts) == "guard"
+    assert carry_distance_kind(1, facts) == "scan"
+    assert carry_distance_kind(5, facts) == "scan"
 
 
 def test_loop_to_scan_doesnt_lift_break_loop():

@@ -20,7 +20,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry, as_range
 from dace.sdfg.nodes import Node, Tasklet
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.symbolic import SymbolicType
 
 #: Suffix of the label of the map a tile-remainder split leaves fully in bounds. The vectorizer writes it and the proof
@@ -262,28 +262,52 @@ def linear_base_offset(
     # the raw coefficient refused every such transient for a reason the substitution answers.
     subs = even_extent_substitutions(even)
     add_stride_substitutions(subs, stride_divisor_facts(parent_sdfg), (offset, size))
+    # Canonicalization's nonnegativity contract is among the facts at the access
+    facts = SymbolResolver().facts_at(parent_state, node)
     for idx, (param, (start, end, step)) in enumerate(ranges.items()):
         sym = by_name.get(param)
         if sym is None:
             continue
         coeff = dace.symbolic.simplify(dace.symbolic.equalize_symbol(as_expr(offset).diff(sym).subs(subs)))
-        # Under canonicalization's contract every program symbol is nonnegative
-        if not dace.symbolic.provably_nonnegative(coeff, dace.symbolic.contract_facts(coeff)):
+        if not dace.symbolic.provably_nonnegative(coeff, with_proof_locals(facts, coeff)):
             return None
         k = sympy.Symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
         start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))
         at_base = at_base.subs(sym, start + step * k)
         at_end = at_end.subs(sym, end)
-    # The residues and bounds below are SymPy's to decide; it decides them over the contract's nonnegative integers
-    return tuple(contract_symbols(e.subs(subs)) for e in (at_base, at_end, size))
+    # The residues and bounds below are SymPy's to decide; it decides them over what the facts prove of each symbol
+    return tuple(facts_symbols(e.subs(subs), facts) for e in (at_base, at_end, size))
 
 
-def contract_symbols(expr: SymbolicType) -> SymbolicType:
-    """``expr`` over proof-local nonnegative integer symbols of the same names: canonicalization's contract for a
-    program symbol, which is a bare name."""
+def with_proof_locals(facts: dace.symbolic.Facts, expr: SymbolicType) -> dace.symbolic.Facts:
+    """``facts`` plus the sign and integrality of the proof-local symbols in ``expr`` (``__dace_align_*``), which the
+    prover reads by name and so only from the facts."""
+    local = sorted(
+        (s for s in as_basic(expr).free_symbols if isinstance(s, sympy.Symbol) and s.name.startswith("__dace_align_")),
+        key=str,
+    )
+    if not local:
+        return facts
+    predicate = dace.symbolic.Predicate
+    relations = [
+        dace.symbolic.predicate_relation(predicate.POSITIVE if s.is_positive else predicate.NONNEGATIVE, s)
+        for s in local
+    ]
+    return dace.symbolic.Facts(
+        (*facts.relations, *relations),
+        facts.integers | {s.name for s in local},
+        facts.small,
+        facts.parameters,
+        facts.assumed,
+    )
+
+
+def facts_symbols(expr: SymbolicType, facts: dace.symbolic.Facts) -> SymbolicType:
+    """``expr`` over proof-local SymPy symbols of the same names, carrying the integrality and sign ``facts`` prove for
+    each program symbol (a bare name); the proof-local integer symbols already in ``expr`` stay."""
     return as_basic(expr).xreplace(
         {
-            sym: sympy.Symbol(sym.name, nonnegative=True, integer=True)
+            sym: sympy.Symbol(sym.name, **facts.assumptions(sym.name))
             for sym in as_basic(expr).free_symbols
             if isinstance(sym, sympy.Symbol) and not sym.is_integer
         }

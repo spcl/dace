@@ -177,8 +177,8 @@ def canonical_iterators(expr: sympy.Expr, iters: tuple[str, ...]) -> sympy.Expr:
     5-point Gauss-Seidel), and the loop variables leaked into the emitted runtime guard, where
     they became program arguments no caller can supply.
 
-    Only the ITERATORS are re-keyed. An offset symbol keeps the object carrying its declared
-    ``positive=True``, which :func:`offset_symbols` reads to decide whether a guard is needed.
+    Only the ITERATORS are re-keyed. An offset symbol keeps its object; whether it needs a guard is
+    asked of the SDFG's facts.
     """
     e = as_expr(expr)
     mp: dict[sympy.Basic, sympy.Expr] = {}

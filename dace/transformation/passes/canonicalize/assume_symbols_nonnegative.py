@@ -37,6 +37,7 @@ no data outputs (the same drop that silently removed scatter guards before they
 were marked side-effecting).
 """
 
+from collections.abc import Iterable
 from typing import Any
 
 import sympy
@@ -61,6 +62,31 @@ SIGN_PREDICATES = frozenset(
 )
 
 
+#: Attribute under which the root SDFG records the symbols its caller knows to be nonnegative.
+NONNEGATIVE_ATTR = "_declared_nonnegative_symbols"
+
+
+def root_of(sdfg: SDFG) -> SDFG:
+    while sdfg.parent_sdfg is not None:
+        sdfg = sdfg.parent_sdfg
+    return sdfg
+
+
+def declare_nonnegative_symbols(sdfg: SDFG, names: Iterable[str]) -> None:
+    """Record on the root of ``sdfg`` the symbols its caller knows to be nonnegative: the only ones canonicalization
+    assumes nonnegative. A name that is a scalar argument now and a symbol later is registered once it is one.
+
+    :param sdfg: The SDFG (or one nested in it) being canonicalized.
+    :param names: Symbol (or scalar argument) names whose values are never negative.
+    """
+    vars(root_of(sdfg))[NONNEGATIVE_ATTR] = frozenset(names)
+
+
+def declared_nonnegative_symbols(sdfg: SDFG) -> frozenset[str]:
+    """The names :func:`declare_nonnegative_symbols` recorded on the root of ``sdfg``; none when nothing was."""
+    return vars(root_of(sdfg)).get(NONNEGATIVE_ATTR, frozenset())
+
+
 def names_still_plain(sdfg: SDFG) -> dict[str, None]:
     """The signed-integer symbols ``sdfg`` declares with no sign predicate yet: the ones
     :func:`set_symbol_nonnegative_assumptions` would assume nonnegative (one level of ``sdfg``).
@@ -69,10 +95,13 @@ def names_still_plain(sdfg: SDFG) -> dict[str, None]:
     :returns: The names, membership-checked only.
     """
     predicates = sdfg.symbol_repo.params.predicates
+    declared = declared_nonnegative_symbols(sdfg)
     return dict.fromkeys(
         name
         for name in sorted(sdfg.free_symbols)
-        if sdfg.symbols.get(name) in SIGNED_INTEGER_DTYPES and not predicates.get(name, frozenset()) & SIGN_PREDICATES
+        if name in declared
+        and sdfg.symbols.get(name) in SIGNED_INTEGER_DTYPES
+        and not predicates.get(name, frozenset()) & SIGN_PREDICATES
     )
 
 
@@ -107,23 +136,20 @@ def passed_through(node: nodes.NestedSDFG, name: str) -> bool:
 
 
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> int | None:
-    """Assume every signed-integer symbol the root of ``sdfg`` declares nonnegative, in its symbol repository. A
+    """Register as nonnegative, in the symbol repository of the root of ``sdfg``, every signed-integer symbol it
+    declares that the caller named (:func:`declare_nonnegative_symbols`); no other symbol is assumed anything. A
     nested SDFG is left alone: it inherits the facts through its symbol mapping, and assuming more there than the
     mapped values prove is what validation refuses.
 
-    This is the compile-time half of the offset/size nonnegativity contract
-    ([[feedback_symbols_nonnegative_canonicalization]]): a size or a loop count always is ``>= 0``, and proofs over
-    the symbols (``RelaxIntegerPowers`` deciding an integer power is ``>= 0``, the offset-sign reasoning ``LoopToMap``
-    relies on) read it from the SDFG's facts. A symbol already declared with a sign keeps it.
+    Proofs over the symbols (``RelaxIntegerPowers`` deciding an integer power is ``>= 0``, the offset-sign reasoning
+    ``LoopToMap`` relies on) read it from the SDFG's facts. A symbol already declared with a sign keeps it.
     :func:`insert_assumption_guards` emits the matching runtime trap so the assumption is checked at the boundary
     rather than merely assumed.
 
     :param sdfg: the SDFG whose symbols are updated in place.
     :returns: the number of symbols updated, or ``None`` if none.
     """
-    root = sdfg
-    while root.parent_sdfg is not None:
-        root = root.parent_sdfg
+    root = root_of(sdfg)
     predicates = root.symbol_repo.params.predicates
     updated = 0
     for name in names_still_plain(root):
@@ -219,7 +245,14 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> list[str]:
     (a tracked relation) carries the assumption; a symbol read only by a branch condition never
     did, and trapping it aborted ``if K > 0`` at ``K = -1`` (llr fuse_move_ifs).
     """
-    args = sdfg.used_symbols(all_symbols=False)
+    predicates = root_of(sdfg).symbol_repo.params.predicates
+    declared = declared_nonnegative_symbols(sdfg)
+    args = {
+        name
+        for name in sdfg.used_symbols(all_symbols=False)
+        if name in declared
+        or predicates.get(name, frozenset()) & {symbolic.Predicate.NONNEGATIVE, symbolic.Predicate.POSITIVE}
+    }
     sized = sized_names(sdfg) | {
         s.name for relation in tracked_assumptions(sdfg) for s in as_basic(relation).free_symbols
     }

@@ -68,7 +68,14 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_loop, as_state, free_symbols
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    SymbolResolver,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -560,7 +567,7 @@ class LoopToScan(ppl.Pass):
                     if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, owner))
                 ]
             if infos:
-                guard = _symbolic_stride_guard(infos)
+                guard = _symbolic_stride_guard(infos, owner.facts())
                 if guard is not None:
                     # At least one matched scan has a symbolic stride whose sign
                     # is unproven. The residue-class decomposition is valid only
@@ -603,7 +610,7 @@ class LoopToScan(ppl.Pass):
             # can lift keeps its existing lowering unchanged.
             aff = match_affine_scan(loop, owner)
             if aff is not None:
-                if carry_distance_kind(aff.stride) == "guard":
+                if carry_distance_kind(aff.stride, SymbolResolver().facts_at(loop)) == "guard":
                     self._specialize_affine_by_distance(parent, loop, aff, owner)
                 else:
                     rewrite_affine_scan(parent, loop, aff, owner)
@@ -2583,7 +2590,7 @@ def _divisor_symbols(expr) -> set:
     The canonicalize contract builds every free symbol ``nonnegative`` (see
     :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`), and for a divisor
     that is one bound too weak: ``nonnegative`` admits ``0``, so SymPy cannot decide the sign of
-    ``-floor(LEN_1D/M)`` and answers UNKNOWN, which :func:`_admissible_scan_stride` reads as an
+    ``-floor(LEN_1D/M)`` and answers UNKNOWN, which :func:`admissible_scan_stride` reads as an
     admissible symbolic stride. That is how ``a[i] = a[i + LEN_1D//M] + b[i]`` -- a read-ahead over
     a disjoint region, the same shape as the constant-divisor ``s1421`` this function already
     handles -- gets lifted to a scan and loses its Map.
@@ -2600,27 +2607,29 @@ def _divisor_symbols(expr) -> set:
     return out
 
 
-def _provably_nonpositive(expr) -> bool:
-    """``True`` iff ``expr`` is provably ``<= 0`` under the canonicalize nonnegative-symbol
-    contract (see :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`).
+def provably_nonpositive_stride(expr, facts: symbolic.Facts) -> bool:
+    """``True`` iff ``expr`` is provably ``<= 0`` under ``facts``, the facts at the loop, which carry the canonicalize
+    nonnegative-symbol contract (see :mod:`~dace.transformation.passes.canonicalize.assume_symbols_nonnegative`).
 
     Plain ``expr.is_nonpositive`` is too weak on the expressions scan strides actually take:
     ``int_floor`` / ``int_ceil`` are DaCe ``sympy.Function`` subclasses with no sign rule, so
     a shift stride like ``-int_floor(LEN_1D, 2)`` reads as sign-UNKNOWN and gets mislabelled
     an admissible symbolic scan stride (TSVC ``s1421``: ``b[i] = b[half + i] + a[i]`` is a pure
     ``+half`` read-ahead over a disjoint region, not a recurrence). The proof bounds them under the
-    contract's facts, with a divisor positive. Only *provable* nonpositivity is reported; a sign that stays
+    facts, with a divisor positive. Only *provable* nonpositivity is reported; a sign that stays
     unknown (a bare symbolic stride ``K``, which may be ``0`` or positive) yields ``False``.
     """
     if not isinstance(expr, sympy.Basic):
         return False
     if expr.is_nonpositive is True:
         return True
-    divisors = {str(symbol) for symbol in _divisor_symbols(expr)}
-    return symbolic.provably_nonnegative(-expr, symbolic.contract_facts(expr, positive=divisors))
+    positive = symbolic.Predicate.POSITIVE
+    divisors = sorted({str(symbol) for symbol in _divisor_symbols(expr)})
+    facts = facts.with_relations(symbolic.predicate_relation(positive, symbolic.symbol(name)) for name in divisors)
+    return symbolic.provably_nonnegative(-expr, facts)
 
 
-def _admissible_scan_stride(diff):
+def admissible_scan_stride(diff, facts: symbolic.Facts):
     """Return the scan stride if ``diff`` (``= k_w - k_r`` in iteration order) is an
     admissible positive stride, else ``None``.
 
@@ -2646,7 +2655,7 @@ def _admissible_scan_stride(diff):
     # an always-false guard, leaving the pinned sequential fallback to run every time.
     # Refusing the match instead lets the loop reach ``LoopToMap``, whose own dependency
     # proof lifts it to an unconditional Map when the read/write regions are disjoint.
-    if symbolic._integral(diff) and not _provably_nonpositive(diff):
+    if symbolic._integral(diff) and not provably_nonpositive_stride(diff, facts):
         return diff
     return None
 
@@ -2671,10 +2680,10 @@ def residue_classes_too_narrow_for_gpu(infos: list["_Scan"]) -> bool:
     return bool(infos) and all(isinstance(i.scan_stride, int) and i.scan_stride > 1 for i in infos)
 
 
-def _symbolic_stride_guard(infos: list["_Scan"]) -> str | None:
+def _symbolic_stride_guard(infos: list["_Scan"], facts: symbolic.Facts) -> str | None:
     """The ``&&``-joined ``stride >= 1`` predicate for every matched scan whose
-    stride is symbolic with a sign not provably positive, or ``None`` when all
-    strides lift unconditionally (constant, or a provably-positive symbol).
+    stride is symbolic and not provably ``>= 1`` under ``facts``, or ``None`` when all
+    strides lift unconditionally (constant, or proven ``>= 1``).
 
     A residue-class scan is only valid for ``stride >= 1``; the returned
     predicate is the true-branch guard of the ``if stride >= 1: scan else: seq``
@@ -2684,7 +2693,7 @@ def _symbolic_stride_guard(infos: list["_Scan"]) -> str | None:
     seen = set()
     for info in infos:
         s = info.scan_stride
-        if isinstance(s, sympy.Basic) and not s.is_Integer and s.is_positive is not True:
+        if isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts):
             cond = f"({symbolic.symstr(s)}) >= 1"
             if cond not in seen:
                 seen.add(cond)
@@ -2842,7 +2851,7 @@ def _find_scan_update_tasklet(
                         diff = symbolic.simplify((k_w - k_r_cand) if write_coef == 1 else (k_r_cand - k_w))
                     except Exception:
                         diff = None
-                    stride_val = _admissible_scan_stride(diff)
+                    stride_val = admissible_scan_stride(diff, SymbolResolver().facts_at(state))
                     if stride_val is not None:
                         if carry_edge is not None:
                             ambiguous = True
@@ -4634,7 +4643,7 @@ def tasklet_symbolic_output(tasklet: nodes.Tasklet, out_conn: str) -> Any | None
     return result
 
 
-def carry_distance_kind(distance: Any) -> str | None:
+def carry_distance_kind(distance: Any, facts: symbolic.Facts) -> str | None:
     """Classify a carrier read's distance behind the write: ``'scan'``, ``'guard'``, or ``None``.
 
     At distance ``S >= 1`` the loop is a scan -- ``S`` independent unit-stride affine scans, one
@@ -4649,13 +4658,14 @@ def carry_distance_kind(distance: Any) -> str | None:
     establishes it (:meth:`LoopToScan._specialize_affine_by_distance`).
 
     :param distance: ``k_w - k_r``, the carry's reach.
+    :param facts: The facts at the loop.
     :returns: ``'scan'`` to lift unconditionally, ``'guard'`` to lift under a runtime test, or
               ``None`` to refuse.
     """
     simplified = symbolic.simplify(distance)
     if isinstance(simplified, sympy.Basic) and simplified.is_Integer or isinstance(simplified, int):
         return "scan" if int(simplified) >= 1 else None
-    query, facts = sign_query(simplified)
+    query, facts = sign_query(simplified, facts)
     positive = symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, query), facts)
     if positive is symbolic.Truth.TRUE:
         return "scan"
@@ -4664,7 +4674,7 @@ def carry_distance_kind(distance: Any) -> str | None:
     return "guard"
 
 
-def sign_query(expr) -> tuple[Any, symbolic.Facts]:
+def sign_query(expr, facts: symbolic.Facts) -> tuple[Any, symbolic.Facts]:
     """``expr`` and the facts to ask its SIGN under.
 
     Two things stand between a distance and its sign, and a read-AHEAD needs both cleared. Its
@@ -4674,14 +4684,15 @@ def sign_query(expr) -> tuple[Any, symbolic.Facts]:
 
     ``int_floor`` is bounded by the prover itself (an integer floor, kept as such: spelled as SymPy's
     ``floor(N / 2)`` it loses its integrality and ``-floor(N / 2) <= 0`` no longer follows for ``N < 2``).
-    And a bare dace symbol carries integrality but nothing about its sign, so the facts say what dace's
-    canonicalization already assumes -- every symbol NONNEGATIVE, and a symbol under a DIVISOR
-    positive, since a divisor left merely nonnegative may be zero and ``floor(N / M)`` is then
+    And a bare dace symbol carries nothing about its sign: the facts at the loop say what canonicalization
+    assumes (every symbol nonnegative unless declared possibly negative), and a symbol under a DIVISOR is
+    added positive, since a divisor left merely nonnegative may be zero and ``floor(N / M)`` is then
     undefined. The stronger fact stays confined to divisors: declaring every symbol positive would
     decide a bare carry distance ``K`` to be a scan without the runtime test that establishes it.
 
     :param expr: the distance.
-    :returns: the expression to ask about, and the per-symbol-name facts to ask it under.
+    :param facts: The facts at the loop.
+    :returns: the expression to ask about, and the facts to ask it under.
     """
     divisors: set[str] = set()
     for node in sympy.preorder_traversal(expr):
@@ -4689,18 +4700,10 @@ def sign_query(expr) -> tuple[Any, symbolic.Facts]:
             divisors.update(sym.name for sym in free_symbols(as_expr(node.base)))
         elif isinstance(node, (symbolic.int_floor, symbolic.int_ceil)):
             divisors.update(sym.name for sym in free_symbols(as_expr(node.args[1])))
-    names = {sym.name for sym in free_symbols(as_expr(expr))}
-    facts = symbolic.Facts(
-        [
-            symbolic.predicate_relation(
-                symbolic.Predicate.POSITIVE if name in divisors else symbolic.Predicate.NONNEGATIVE,
-                symbolic.symbol(name),
-            )
-            for name in sorted(names)
-        ],
-        frozenset(names),
+    positive = symbolic.Predicate.POSITIVE
+    return expr, facts.with_relations(
+        symbolic.predicate_relation(positive, symbolic.symbol(name)) for name in sorted(divisors)
     )
-    return expr, facts
 
 
 def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any):
@@ -4744,7 +4747,7 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
                 or coef != 1
                 or others
                 or k_r is None
-                or carry_distance_kind(symbolic.simplify(k_w - k_r)) is None
+                or carry_distance_kind(symbolic.simplify(k_w - k_r), SymbolResolver().facts_at(state)) is None
             ):
                 raise _AffineRefused("carrier read is not a positive-distance predecessor")
             if carry:

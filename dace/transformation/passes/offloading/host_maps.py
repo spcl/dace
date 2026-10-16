@@ -12,7 +12,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_only_launches
 
 #: What a caller may pass as ``host_maps``:
@@ -195,14 +195,16 @@ def moved_elements(memlet) -> symbolic.SymbolicType | int:
     return memlet.volume
 
 
-def provably_moves_less(traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int) -> bool:
-    """Whether ``traffic`` is provably below ``size``; undecidable answers False, keeping the map a kernel.
+def provably_moves_less(
+    traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int, facts: symbolic.Facts
+) -> bool:
+    """Whether ``traffic`` is provably below ``size`` under ``facts`` (at the map); undecidable answers False, keeping
+    the map a kernel.
 
     A symbolic extent is taken as big enough, so a constant count is below any symbolic ``size``.
     """
     if not symbolic.issymbolic(traffic):
         return symbolic.issymbolic(size) or symbolic.provably_nonnegative(size - traffic - 1, symbolic.Facts.none())
-    facts = symbolic.contract_facts(traffic, size)
     return symbolic.provably_nonnegative(size - traffic, facts) and not symbolic.provably_nonnegative(
         traffic - size, facts
     )
@@ -264,7 +266,8 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
                     continue
                 names, traffic = map_containers_and_traffic(state, node)
                 shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
-                if shared and provably_moves_less(traffic, sum(sdfg.arrays[n].total_size for n in shared)):
+                total = sum(sdfg.arrays[n].total_size for n in shared)
+                if shared and provably_moves_less(traffic, total, SymbolResolver().facts_at(state, node)):
                     candidates.add(node)
                 else:
                     device_loop = True

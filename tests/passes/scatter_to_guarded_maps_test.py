@@ -669,7 +669,8 @@ def test_no_conflict_guard_survives_full_canonicalize(kernel):
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
     sdfg = kernel.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True)
+    # The kernel's sizes, as a caller such as the benchmark declares them
+    canonicalize(sdfg, validate=True, nonnegative_symbols=sdfg.free_symbols)
     sdfg.validate()
 
     has_check = _count_guard_nodes(sdfg) >= 1

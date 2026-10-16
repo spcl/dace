@@ -16,7 +16,7 @@ the stride was admitted as symbolic, and the loop was specialized into
 always FALSE for a nonnegative ``LEN_1D``, so the scan branch was dead and the sequential
 fallback ran every single time -- correct, but never parallel.
 
-:func:`_provably_nonpositive` rewrites ``int_floor``/``int_ceil`` to SymPy's sign-propagating
+:func:`provably_nonpositive_stride` rewrites ``int_floor``/``int_ceil`` to SymPy's sign-propagating
 ``floor``/``ceiling`` over nonnegative-rebuilt symbols, so the stride is now PROVEN ``<= 0``,
 the bogus scan match is refused, and ``LoopToMap`` lifts the loop to a bare Map.
 """
@@ -31,7 +31,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-from dace.transformation.passes.loop_to_scan import _admissible_scan_stride, _provably_nonpositive
+from dace.transformation.passes.loop_to_scan import admissible_scan_stride, provably_nonpositive_stride
 
 LEN_1D = dace.symbol("LEN_1D")
 
@@ -59,8 +59,9 @@ def test_int_floor_stride_is_proven_nonpositive():
     stride = -symbolic.int_floor(n, 2)
 
     # Canonicalization's contract makes ``LEN_1D`` nonnegative: a nonnegative dividend over a positive divisor.
-    assert _provably_nonpositive(stride)
-    assert _admissible_scan_stride(stride) is None
+    facts = symbolic.contract_facts(n)
+    assert provably_nonpositive_stride(stride, facts)
+    assert admissible_scan_stride(stride, facts) is None
 
 
 def test_unknown_sign_stride_still_admitted():
@@ -69,13 +70,14 @@ def test_unknown_sign_stride_still_admitted():
     ``K`` may be ``0`` at runtime, so its sign is NOT provable and the guard MUST stay.
     """
     k = symbolic.symbol("K", dtype=dace.int64, nonnegative=True)
-    assert not _provably_nonpositive(k)
-    assert _admissible_scan_stride(k) is k
+    facts = symbolic.contract_facts(k)
+    assert not provably_nonpositive_stride(k, facts)
+    assert admissible_scan_stride(k, facts) is k
 
     # A positive-but-not-provably-so floor stride is likewise still admitted (only PROVABLE
     # nonpositivity refuses).
     n = symbolic.symbol("LEN_1D", dtype=dace.int64, nonnegative=True)
-    assert not _provably_nonpositive(symbolic.int_floor(n, 2))
+    assert not provably_nonpositive_stride(symbolic.int_floor(n, 2), symbolic.contract_facts(n))
 
 
 def test_s1421_read_ahead_closes_to_unconditional_map():

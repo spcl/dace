@@ -17,7 +17,7 @@ Two things close it, both pinned here:
    an iteration ABOVE ``end`` (``x - 1 > end``). Its true safety bound is therefore ``x <= end + 1``,
    not the stricter ``x <= end`` -- at ``x == end + 1`` the ``before`` segment is exactly the whole
    loop and the clamped middle singleton and ``after`` are both empty.
-2. :meth:`BestEffortLoopPeeling._provably_nonneg_symbolic` discharges the resulting two sides,
+2. :meth:`BestEffortLoopPeeling.provably_nonneg_symbolic` discharges the resulting two sides,
    ``0 <= int_floor(N, 2)`` and ``int_floor(N, 2) <= N``, from the canonicalization
    nonnegative-symbol contract plus the floor/ceil bounds. Both hold for EVERY ``N >= 0``.
 
@@ -82,9 +82,10 @@ def test_provably_nonneg_symbolic_discharges_the_floor_membership_sides():
     n = dace.symbolic.pystr_to_symbolic("LEN_1D")
     x = dace.symbolic.pystr_to_symbolic("int_floor(LEN_1D, 2)")
     # after side: start <= x, i.e. int_floor(N, 2) - 0 >= 0.
-    assert peel._provably_nonneg_symbolic(x) is True
+    facts = dace.symbolic.contract_facts(n)  # the facts at a loop of ``LEN_1D`` iterations
+    assert peel.provably_nonneg_symbolic(x, facts) is True
     # before side against the TRUE bound: x <= end + 1, i.e. (N-1) + 1 - int_floor(N, 2) >= 0.
-    assert peel._provably_nonneg_symbolic((n - 1) + 1 - x) is True
+    assert peel.provably_nonneg_symbolic((n - 1) + 1 - x, facts) is True
 
 
 def test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims():
@@ -94,14 +95,15 @@ def test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims
     x = dace.symbolic.pystr_to_symbolic("int_floor(LEN_1D, 2)")
     # The STRICTER (historical) bound ``x <= end`` is genuinely false at N == 0 (0 <= -1), so it
     # must stay unproven -- this is what forces the closure onto the correct ``x <= end + 1``.
-    assert peel._provably_nonneg_symbolic((n - 1) - x) is False
-    # Plainly false / undecidable claims stay unproven.
-    assert peel._provably_nonneg_symbolic(-n) is False
-    assert peel._provably_nonneg_symbolic(n - 5) is False
-    assert peel._provably_nonneg_symbolic(x - (n - 1)) is False
-    # A free (unbounded-above) offset must not be provable either.
     k = dace.symbolic.pystr_to_symbolic("KOFF")
-    assert peel._provably_nonneg_symbolic(n - k) is False
+    facts = dace.symbolic.contract_facts(n, k)  # even with every symbol nonnegative
+    assert peel.provably_nonneg_symbolic((n - 1) - x, facts) is False
+    # Plainly false / undecidable claims stay unproven.
+    assert peel.provably_nonneg_symbolic(-n, facts) is False
+    assert peel.provably_nonneg_symbolic(n - 5, facts) is False
+    assert peel.provably_nonneg_symbolic(x - (n - 1), facts) is False
+    # A free (unbounded-above) offset must not be provable either.
+    assert peel.provably_nonneg_symbolic(n - k, facts) is False
 
 
 def test_split_range_relations_are_fully_discharged():
