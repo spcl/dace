@@ -1342,9 +1342,7 @@ class IfExpr(sympy.Function):
 
 
 class int32(sympy.Function):
-    """Explicit ``INTEGER(4)`` typecast in a symbolic expression (interstate edge /
-    memlet subset), where ``dace.int32(x)`` is not sympy-parseable as an attribute
-    call. Prints as the truncating ``dace::int32(x)`` C++ cast."""
+    """Cast to ``int32`` in a symbolic expression, where ``dace.int32(x)`` does not parse."""
 
     nargs = 1
 
@@ -1353,8 +1351,6 @@ class int32(sympy.Function):
 
 
 class int64(sympy.Function):
-    """Explicit ``INTEGER(8)`` typecast -- see :class:`int32`."""
-
     nargs = 1
 
     def _eval_is_integer(self):
@@ -1362,8 +1358,6 @@ class int64(sympy.Function):
 
 
 class float32(sympy.Function):
-    """Explicit ``REAL(4)`` typecast -- see :class:`int32`."""
-
     nargs = 1
 
     def _eval_is_real(self):
@@ -1371,16 +1365,14 @@ class float32(sympy.Function):
 
 
 class float64(sympy.Function):
-    """Explicit ``REAL(8)`` typecast -- see :class:`int32`."""
-
     nargs = 1
 
     def _eval_is_real(self):
         return True
 
 
-# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``.
-_TYPECAST_CPP = {"int32": "dace::int32", "int64": "dace::int64", "float32": "dace::float32", "float64": "dace::float64"}
+#: Cast function -> C++ cast
+TYPECAST_CPP = {"int32": "dace::int32", "int64": "dace::int64", "float32": "dace::float32", "float64": "dace::float64"}
 
 
 class bitwise_and(sympy.Function):
@@ -1928,14 +1920,13 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
     def visit_Call(self, node):
-        # Rewrite ``dace.int32(x)`` etc. to the bare typecast function ``int32(x)``:
-        # the default visit_Attribute would turn it into an uncallable ``Attr(dace, int32)``.
+        # ``dace.int32(x)`` -> ``int32(x)``; visit_Attribute would make it an uncallable ``Attr(dace, int32)``
         func = node.func
         if (
             isinstance(func, ast.Attribute)
             and isinstance(func.value, ast.Name)
             and func.value.id == "dace"
-            and func.attr in _TYPECAST_CPP
+            and func.attr in TYPECAST_CPP
         ):
             new_node = ast.Call(
                 func=ast.Name(id=func.attr, ctx=ast.Load), args=[self.visit(a) for a in node.args], keywords=[]
@@ -2716,8 +2707,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f"{expr.func}[{indices}]"
         if self.cpp_mode and str(expr.func) == "int_floor":
             return "((%s) / (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
-        if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
-            return "%s(%s)" % (_TYPECAST_CPP[str(expr.func)], self._print(expr.args[0]))
+        if self.cpp_mode and str(expr.func) in TYPECAST_CPP:
+            return f"{TYPECAST_CPP[str(expr.func)]}({self._print(expr.args[0])})"
         if self.cpp_mode and str(expr.func) in ("conj", "conjugate"):
             return "dace::math::conj(%s)" % self._print(expr.args[0])
         if str(expr.func) == "AND":
@@ -2777,7 +2768,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return f"ceil({self._print(expr.args[0])})"
 
     def _print_Mod(self, expr):
-        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor.
+        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor
         dividend, divisor = expr.args
         if dividend.is_nonnegative and divisor.is_positive:
             return f"(({self._print(dividend)}) % ({self._print(divisor)}))"

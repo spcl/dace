@@ -492,6 +492,73 @@ def test_check_paths():
     assert not do_fuse
 
 
+def test_one_ordered_writer_does_not_exempt_an_unordered_one():
+    """``a1`` reaches the second state through ``m``; ``a2`` writes the same element as the second state unordered."""
+    sdfg = dace.SDFG("ordered_and_unordered_writers")
+    for name in ("x", "a", "m"):
+        sdfg.add_array(name, [2], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+
+    x = first.add_read("x")
+    t0 = first.add_tasklet("t0", {"i"}, {"o"}, "o = i")
+    a1 = first.add_access("a")
+    t1 = first.add_tasklet("t1", {"i"}, {"o"}, "o = i")
+    t2 = first.add_tasklet("t2", {"i"}, {"o"}, "o = i + 1")
+    first.add_edge(x, None, t0, "i", dace.Memlet("x[0]"))
+    first.add_edge(t0, "o", a1, None, dace.Memlet("a[0]"))
+    first.add_edge(a1, None, t1, "i", dace.Memlet("a[0]"))
+    first.add_edge(t1, "o", first.add_write("m"), None, dace.Memlet("m[0]"))
+    first.add_edge(x, None, t2, "i", dace.Memlet("x[1]"))
+    first.add_edge(t2, "o", first.add_write("a"), None, dace.Memlet("a[1]"))
+
+    t3 = second.add_tasklet("t3", {"i"}, {"o"}, "o = i * 2")
+    second.add_edge(second.add_read("m"), None, t3, "i", dace.Memlet("m[0]"))
+    second.add_edge(t3, "o", second.add_write("a"), None, dace.Memlet("a[1]"))
+
+    assert sdfg.apply_transformations(StateFusion) == 0
+
+
+def test_check_all_paths_checks_every_reader():
+    """``r1`` reaches the second state's write through ``m``, ``r2`` does not; ``r2`` alone must fail the check."""
+    sdfg = dace.SDFG("every_reader")
+    for name in ("a", "b", "m"):
+        sdfg.add_array(name, [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+
+    r1, r2, m = first.add_read("a"), first.add_read("a"), first.add_write("m")
+    t1 = first.add_tasklet("t1", {"i"}, {"o"}, "o = i")
+    t2 = first.add_tasklet("t2", {"i"}, {"o"}, "o = i")
+    first.add_edge(r1, None, t1, "i", dace.Memlet("a[0]"))
+    first.add_edge(t1, "o", m, None, dace.Memlet("m[0]"))
+    first.add_edge(r2, None, t2, "i", dace.Memlet("a[0]"))
+    first.add_edge(t2, "o", first.add_write("b"), None, dace.Memlet("b[0]"))
+
+    m2, w = second.add_read("m"), second.add_write("a")
+    t3 = second.add_tasklet("t3", {"i"}, {"o"}, "o = i")
+    second.add_edge(m2, None, t3, "i", dace.Memlet("m[0]"))
+    second.add_edge(t3, "o", w, None, dace.Memlet("a[0]"))
+
+    assert not StateFusion()._check_all_paths(first, second, {m: m2}, [r1, r2], [w], True, False)
+    assert StateFusion()._check_all_paths(first, second, {m: m2}, [r1], [w], True, False)
+
+
+def test_subset_union_memlets_may_intersect():
+    sdfg = dace.SDFG("subset_union")
+    sdfg.add_array("a", [8], dace.float64)
+    states = []
+    for label in ("first", "second"):
+        state = sdfg.add_state(label)
+        tasklet = state.add_tasklet("w", set(), {"o"}, "o = 1")
+        write = state.add_write("a")
+        state.add_edge(tasklet, "o", write, None, dace.Memlet("a[0:4]"))
+        state.in_edges(write)[0].data.subset = dace.subsets.SubsetUnion([dace.subsets.Range.from_string("0:4")])
+        states.append((state, write))
+    (first, a1), (second, a2) = states
+    assert StateFusion.memlets_intersect(first, [a1], False, second, [a2], False)
+
+
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -510,3 +577,6 @@ if __name__ == "__main__":
     test_inout_second_state()
     test_inout_second_state_2()
     test_check_paths()
+    test_one_ordered_writer_does_not_exempt_an_unordered_one()
+    test_check_all_paths_checks_every_reader()
+    test_subset_union_memlets_may_intersect()

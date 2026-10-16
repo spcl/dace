@@ -996,8 +996,7 @@ class CPPUnparser:
         "FtnModulo": "ftn_modulo",
     }
 
-    # Sympy-side names that lower to a differently-named C++ call: numeric casts (kind coercions
-    # emitted by the Fortran frontend) and complex-component accessors.
+    # Numeric casts of the symbolic engine and complex components
     _renamed_funcs = {
         "int32": "dace::int32",
         "int64": "dace::int64",
