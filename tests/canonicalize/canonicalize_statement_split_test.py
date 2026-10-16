@@ -356,18 +356,19 @@ def test_forward_reads_copy_forward_read_preserves_destination_subset():
     assert next(e for e in body.out_edges(rAb) if e.data is not None).data.data == "A"
 
 
-def test_forward_reads_symbolic_forward_offset_snapshots_with_guard():
-    """``d[i] = a[i] + a[i + K]`` with symbolic ``K``: snapshot AND plant the runtime
-    positivity guard that makes the rename sound.
+def test_forward_reads_symbolic_forward_offset_is_versioned_strictly():
+    """``d[i] = a[i] + a[i + K]`` with symbolic ``K``: the read-ahead is snapshotted only under ``K >= 1``.
 
-    The guard must be STRICT (``K >= 1``), not the ``>= 0`` the whole-array pure-WAR
-    rename in ``BreakAntiDependence`` uses. Here a sibling statement writes ``A[i]``
-    earlier in the SAME iteration, so ``K == 0`` makes ``A[i + K]`` alias that
-    just-written value -- reading the stale pre-loop snapshot instead would be a silent
-    miscompile, and the guard is what turns it into a loud runtime fault."""
+    STRICT, not ``>= 0``: a sibling statement writes ``A[i]`` earlier in the SAME iteration, so ``K == 0`` makes
+    ``A[i + K]`` alias that just-written value, and reading the stale pre-loop snapshot would be a silent
+    miscompile. The loop is versioned on exactly that condition, with the original loop as the fallback; no
+    runtime trap remains."""
+    from dace.sdfg.state import ConditionalBlock
+
     sdfg, loop, body = _mixed_loop("split_mixed_symK")
     for nm in ("A", "B", "D"):
         sdfg.add_array(nm, [N], dace.float64)
+    sdfg.add_symbol("K", dace.int64)
     tw = body.add_tasklet("w", {"b"}, {"a"}, "a = b + 1.0")
     wA = body.add_access("A")
     body.add_edge(body.add_read("B"), None, tw, "b", dace.Memlet("B[i]"))
@@ -377,21 +378,20 @@ def test_forward_reads_symbolic_forward_offset_snapshots_with_guard():
     body.add_edge(wA, None, tr, "a1", dace.Memlet("A[i + K]"))
     body.add_edge(tr, "d", body.add_write("D"), None, dace.Memlet("D[i]"))
 
-    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
-    (snap,) = _split_snaps(sdfg)
-    assert next(e for e in body.in_edges(tr) if e.dst_conn == "a1").src.data == snap
-    pre = _pre_state(sdfg, loop)
-    guards = [n for n in pre.nodes() if isinstance(n, nodes.Tasklet) and "guard" in n.label]
-    assert len(guards) == 1
-    code = guards[0].code.as_string
-    # ``K - 1 >= 0`` is exactly the strict ``K > 0`` for integer offsets; a bare ``K >= 0``
-    # here would admit the aliasing K == 0 case.
-    assert "K - 1" in code and ">= 0" in code, code
-    assert "abort()" in code, code
-    # The guard carries no connectors, so only ``side_effects`` keeps dead-code elimination
-    # from pruning it -- pruning would silently restore the unsound assume-positive path.
-    assert guards[0].side_effects
-    assert not guards[0].in_connectors and not guards[0].out_connectors
+    BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {})
+    BreakAntiDependence().apply_pass(sdfg, {})
+    conditions = [
+        c.as_string
+        for r in sdfg.all_control_flow_regions()
+        if isinstance(r, ConditionalBlock)
+        for c, branch in r.branches
+        if c is not None
+    ]
+    assert conditions == ["(1 <= K)"], conditions
+    assert not [
+        n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and "abort()" in n.code.as_string
+    ]
+    sdfg.validate()
 
 
 def test_forward_reads_symbolic_behind_offset_is_recurrence_noop():

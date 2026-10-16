@@ -4056,11 +4056,14 @@ def has_rounding(expr) -> bool:
     return bool(expr.atoms(*ROUNDING_FUNCTIONS))
 
 
-def guard_crossing(expr: SymbolicType | str, var: str, bound: SymbolicType | str, strict: bool) -> SymbolicType | None:
+def guard_crossing(
+    expr: SymbolicType | str, var: str, bound: SymbolicType | str, strict: bool, facts: Facts
+) -> SymbolicType | None:
     """The first integer ``var`` at which ``expr < bound`` (``strict``) or ``expr <= bound`` stops holding, for an ``expr``
     increasing in ``var``: ``a*var + b`` with a positive number ``a`` and a nonnegative rational root, or ``var**2 + d`` (increasing
     only for ``var >= 0``, which the caller establishes). Over the integers ``expr < bound`` is then ``var < result``,
-    spelled with exact integer rounding (``int_ceil``, ``int_floor``, ``int_sqrt``); ``None`` for any other shape.
+    spelled with exact integer rounding (``int_ceil``, ``int_floor``, ``int_sqrt``); ``None`` for any other shape. The
+    rounding is exact only on a numerator ``facts`` (at the guard) prove nonnegative.
     """
     difference = sympy.expand(pystr_to_symbolic(expr) - pystr_to_symbolic(bound))
     symbol = next((s for s in difference.free_symbols if str(s) == var), None)
@@ -4075,7 +4078,7 @@ def guard_crossing(expr: SymbolicType | str, var: str, bound: SymbolicType | str
             denominator.is_integer
             and denominator.is_number
             and denominator > 0
-            and provably_nonnegative(numerator, contract_facts(numerator))
+            and provably_nonnegative(numerator, facts)
         ):
             return int_ceil(numerator, denominator) if strict else int_floor(numerator, denominator) + 1
         return None

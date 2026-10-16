@@ -11,7 +11,7 @@ transformation applied to every legal pair until a fixpoint; the transformation 
 the legality kernel, so the pass and the transformation can never disagree.
 
 It is the exact inverse of ``LoopFission`` and shares its soundness kernel (``break_anti_dependence``'s
-``_dep_class`` and ``loop_fission``'s per-iteration-subset reasoning), so a pair that fission would have
+``dep_class`` and ``loop_fission``'s per-iteration-subset reasoning), so a pair that fission would have
 separated is a pair that fusion may legally rejoin.
 
 Designed to run POST-``LoopToMap`` (every DOALL loop is already a Map, hence not a candidate), so it only
@@ -41,7 +41,14 @@ from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    SymbolResolver,
+)
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
@@ -325,12 +332,14 @@ class LoopFusion(transformation.MultiStateTransformation):
         See the module docstring for the rule."""
         ivar = first.loop_variable
         classifier = BreakAntiDependence()
+        # The offsets' signs are facts of the region both loops sit in
+        facts = SymbolResolver().facts_at(first.parent_graph)
         r1, w1 = acc1
         r2, w2 = acc2
         # ``_merge`` unifies the two iterators (``_same_iteration_space`` only requires equal range and
         # stride, explicitly "iterator names may differ"), so legality MUST be judged in the post-merge
         # namespace. Comparing ``s2``'s raw subsets against ``s1``'s makes every cross-body pair name
-        # two different symbols, which ``_dep_class`` can only call 'complex' -> refuse: same-index
+        # two different symbols, which ``dep_class`` can only call 'complex' -> refuse: same-index
         # ``t[j]`` vs ``t[j']`` read as unrelated, and seidel_2d's read-ahead ``A[i, j+2]`` vs
         # ``A[i, j+1]`` never gets classified as the legal WAR it is.
         if second.loop_variable and second.loop_variable != ivar:
@@ -348,7 +357,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             # there while fused it sees the RUNNING one (`for i: s = a[i]` then `for i: d[i] = d[i-1] + s`).
             for write in w1.get(arr, []):
                 for read in r2.get(arr, []):
-                    cls, _ = classifier._dep_class(read, write, ivar)
+                    cls = classifier.dep_class(read, write, ivar, facts=facts)[0]
                     if cls not in ("RAW", "none"):
                         return False
             # anti: a value read in body1 must not have been overwritten earlier in the fused sweep by
@@ -357,7 +366,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             # location held before the second loop ran at all.
             for read in r1.get(arr, []):
                 for write in w2.get(arr, []):
-                    cls, _ = classifier._dep_class(read, write, ivar)
+                    cls = classifier.dep_class(read, write, ivar, facts=facts)[0]
                     if cls not in ("WAR", "none"):
                         return False
             # output: writes from both bodies must hit the same cell each iteration, else the last-writer

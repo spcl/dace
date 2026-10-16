@@ -41,6 +41,7 @@ from dace import properties, symbolic
 from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STATE_LABEL, TILE_MAIN_MARKER
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.nodes import MapEntry
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
 from dace.transformation.passes.vectorization.utils.map_predicates import (
@@ -200,15 +201,17 @@ class SplitMapForTileRemainder(ppl.Pass):
         """
         return False
 
-    def _provably_divisible(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> bool:
-        # Whether dim ``[lb:ub]`` is provably a whole number of tiles.
+    def provably_divisible(
+        self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int, facts: symbolic.Facts
+    ) -> bool:
+        # Whether dim ``[lb:ub]`` is provably a whole number of tiles under the facts at the map.
         trip = symbolic.simplify(ub - lb + 1)
         query = symbolic.Relation(symbolic.RelationKind.DIVIDES, W, trip)
-        return symbolic.ask(query, symbolic.contract_facts(trip)) is symbolic.Truth.TRUE
+        return symbolic.ask(query, facts) is symbolic.Truth.TRUE
 
-    def _trip_class(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> str:
+    def trip_class(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int, facts: symbolic.Facts) -> str:
         # Classify a tiled dim's extent against width ``W``.
-        if self._provably_divisible(lb, ub, W):  # constant or symbolic (``4*M % 4 == 0``)
+        if self.provably_divisible(lb, ub, W, facts):  # constant or symbolic (``4*M % 4 == 0``)
             return "divisible"
         trip = symbolic.simplify(ub - lb + 1)
         try:
@@ -226,6 +229,7 @@ class SplitMapForTileRemainder(ppl.Pass):
 
     def _split(self, state: dace.SDFGState, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
         # Peel ``map_entry``'s K innermost dims into interior + K slabs.
+        facts = SymbolResolver().facts_at(state, map_entry)
         ranges = list(map_entry.map.range.ranges)
         K = len(widths)
         if K == 0 or len(ranges) < K:
@@ -237,7 +241,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             classes = []
             for d, W in zip(tiled_dims, (self.even_widths or list(widths))[-K:]):
                 lb, ub, _ = map_entry.map.range[d]
-                classes.append((self._trip_class(lb, ub, W), d, W, lb, ub))
+                classes.append((self.trip_class(lb, ub, W, facts), d, W, lb, ub))
             # A provably-too-small dim (extent < W) keeps the whole map scalar, matching MarkTileDims under
             # ``assume_even``. With a remainder path the short dim is peeled into one masked tile instead.
             if any(c == "below" for c, *_ in classes):
@@ -261,7 +265,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             return True
         for d, W in zip(tiled_dims, widths):
             lb, ub, step = map_entry.map.range[d]
-            if self._provably_divisible(lb, ub, W):
+            if self.provably_divisible(lb, ub, W, facts):
                 continue
             trip = symbolic.simplify(ub - lb + 1)
             # ``int_floor`` (not ``//``) -> C++ codegen emits integer division

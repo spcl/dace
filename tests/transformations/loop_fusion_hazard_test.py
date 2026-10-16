@@ -230,7 +230,7 @@ def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
     `LoopFusion._accesses` does not special-case an unresolvable subset the way
     `map_fusion_helper._boundary_access` does (returning `None`) -- it goes through
     `Memlet.get_dst_subset`, whose `try_initialize` fills a blanked subset in with the FULL ARRAY range.
-    That is still fail-CLOSED: a full-array range fails `_dep_class`'s single-point-access check, so
+    That is still fail-CLOSED: a full-array range fails `dep_class`'s single-point-access check, so
     `_fusion_legal` refuses exactly like the explicit-`None` path does. Different mechanism, same
     contract -- an access the scan cannot resolve must never look like "this loop touches nothing".
     """
@@ -653,7 +653,7 @@ def test_read_ahead_flow_hazard_across_multi_state_bodies_still_refused():
     """The shape gate now lets a multi-state body (`_linear_blocks`) reach `_fusion_legal` -- this test is
     the guard that the relaxation did not also relax legality: a genuine read-ahead flow hazard on `y`
     must still refuse, on the module docstring's own flow rule (`read in body2 ahead of its production in
-    body1`), which `BreakAntiDependence._dep_class` reports as ``'WAR'`` for the constant +1 offset here.
+    body1`), which `BreakAntiDependence.dep_class` reports as ``'WAR'`` for the constant +1 offset here.
     """
     sdfg = build_read_ahead_multi_state_pair()
     first = next(loop for loop in loop_regions(sdfg) if loop.label == "loop1")

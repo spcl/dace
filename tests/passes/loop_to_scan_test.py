@@ -2640,15 +2640,17 @@ def test_a_read_ahead_is_refused_rather_than_guarded():
     from dace.transformation.passes.loop_to_scan import carry_distance_kind
 
     N, M, K = (symbolic.symbol(s) for s in ("N", "M", "K"))
+    # Canonicalization's contract, as the facts at the loop carry it
+    facts = symbolic.contract_facts(N, M, K)
     for distance in (-symbolic.int_floor(N, 2), -symbolic.int_floor(N, M), -N, -K, 0, -1):
-        assert carry_distance_kind(distance) is None, f"{distance} is not a carry, but was not refused"
+        assert carry_distance_kind(distance, facts) is None, f"{distance} is not a carry, but was not refused"
 
     # The converse must survive: a distance whose sign is genuinely unknown still owes its guard,
     # and a known positive one is a scan outright.
-    assert carry_distance_kind(K) == "guard"
-    assert carry_distance_kind(symbolic.int_floor(N, M)) == "guard"
-    assert carry_distance_kind(1) == "scan"
-    assert carry_distance_kind(5) == "scan"
+    assert carry_distance_kind(K, facts) == "guard"
+    assert carry_distance_kind(symbolic.int_floor(N, M), facts) == "guard"
+    assert carry_distance_kind(1, facts) == "scan"
+    assert carry_distance_kind(5, facts) == "scan"
 
 
 def test_loop_to_scan_doesnt_lift_break_loop():

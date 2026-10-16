@@ -31,7 +31,7 @@ only:
   stay sequential; what this buys is that the read-ahead no longer binds two
   otherwise-independent statements, so fission can distribute them (TSVC ``s1244``,
   ``A[i]=..; d[i]=A[i]+A[i+1]``). Its symbolic-offset guard is STRICTLY positive
-  rather than nonnegative -- see :meth:`BreakAntiDependence._snapshot_forward_reads`.
+  rather than nonnegative -- see :meth:`BreakAntiDependence.snapshot_forward_reads`.
 
 ORDER: run this AFTER ``SplitStatements``, not before. Distribution is what makes
 an anti-dependence go away for free -- once the read-ahead and the write sit in
@@ -64,13 +64,13 @@ from dace.sdfg import SDFG, nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 
 
 def _subset_key(subset):
     """A hashable identity for a subset that captures exactly what
-    :meth:`BreakAntiDependence._dep_class` reads off it -- its ``ndrange``.
+    :meth:`BreakAntiDependence.dep_class` reads off it -- its ``ndrange``.
 
     Used to drop duplicate subsets before the read x write cross product. Falls
     back to the string form for the odd subset whose bounds are not hashable.
@@ -150,17 +150,13 @@ def _is_identically_zero(diff) -> bool:
     return symbolic.simplify(diff) == 0
 
 
-def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
-    """``True`` iff ``expr >= 0`` for every nonnegative value of its free symbols.
+def provably_nonnegative_offset(expr, facts: symbolic.Facts) -> bool:
+    """``True`` iff ``expr >= 0`` under ``facts``, the facts at the loop.
 
-    Canonicalization assumes symbols (array sizes, strides, offsets) are
-    nonnegative, but DaCe symbols carry no sign assumption (``is_nonnegative`` is
-    ``None``), so we re-evaluate the expression with each free symbol replaced by
-    a nonnegative one and ask sympy. ``>= 0`` -- not ``> 0`` -- is exactly the
-    soundness condition for the snapshot-and-redirect rewrite: a read at
-    ``a[i + offset]`` with ``offset >= 0`` is never written by an *earlier*
-    iteration (which writes ``a[i' ], i' < i``), so reading the snapshot is sound;
-    an ``offset < 0`` read-behind is a true RAW recurrence.
+    The facts carry what the caller declared nonnegative. ``offset >= 0`` classifies
+    the read as a read-ahead: ``a[i + offset]`` is never written by an *earlier*
+    iteration (which writes ``a[i' ], i' < i``); an ``offset < 0`` read-behind is a
+    true RAW recurrence. The rename itself needs ``offset >= 1`` (:meth:`BreakAntiDependence.rename_loop`).
 
     A bare symbol (``K``) or a sum of nonnegatives (``K + N``) is provably
     nonnegative; a negation (``-K``) is not; and -- importantly -- a difference of
@@ -168,25 +164,23 @@ def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
     undecidable even under the assumption), so it is rejected rather than renamed.
     Returns ``False`` on any sympy uncertainty (``is_nonnegative`` is ``None``).
     """
-    from dace import symbolic
-
     try:
-        return symbolic.provably_nonnegative(expr, symbolic.contract_facts(expr))
+        return symbolic.provably_nonnegative(expr, facts)
     except (AttributeError, TypeError):
         return False
 
 
-def _provably_nonpositive_under_nonneg_symbols(expr) -> bool:
+def provably_nonpositive_offset(expr, facts: symbolic.Facts) -> bool:
     """``True`` iff ``expr <= 0`` for every nonnegative value of its free symbols.
 
-    Mirror of :func:`_provably_nonnegative_under_nonneg_symbols` (``expr <= 0`` iff
+    Mirror of :func:`provably_nonnegative_offset` (``expr <= 0`` iff
     ``-expr >= 0``). Used to separate a *provable* read-behind offset (``a[i - K]``, a
     true recurrence -- read-behind, sequential, and safe for a consumer to fuse) from an
     offset whose sign is undecidable even under the assumption (``K - M``), which is
     neither provably read-ahead nor provably read-behind and must not be mistaken for
     either. Returns ``False`` on any sympy uncertainty.
     """
-    return _provably_nonnegative_under_nonneg_symbols(-expr)
+    return provably_nonnegative_offset(-expr, facts)
 
 
 def referenced_arrays(expr) -> set[str]:
@@ -288,7 +282,7 @@ class BreakAntiDependence(ppl.Pass):
     def _safe_stride(self, loop: LoopRegion, sdfg: SDFG) -> bool:
         """``True`` for loops whose stride is forward (numeric > 0 or symbolic).
 
-        The per-iteration WAR analysis in :meth:`_dep_class` is direction-aware
+        The per-iteration WAR analysis in :meth:`dep_class` is direction-aware
         only by the sign of the carried offset, so reverse-iteration loops
         would misclassify (a forward-read pattern under stride < 0 is RAW, not
         WAR). Reverse loops are normalised away by
@@ -315,7 +309,7 @@ class BreakAntiDependence(ppl.Pass):
             # Symbolic stride: defer the positivity check to the runtime guard.
             return True
 
-    def _dep_class(self, read, write, ivar, loop=None, sdfg=None, iedge_subs=None):
+    def dep_class(self, read, write, ivar, loop=None, sdfg=None, iedge_subs=None, facts=None):
         """Classify the dependence between a read and a write subset (both affine
         point accesses) of one array under unit-stride iteration of ``ivar``.
 
@@ -464,10 +458,14 @@ class BreakAntiDependence(ppl.Pass):
                         return ("WAR_indirected", arr)
                 if offset_names & array_sourced_symbols(sdfg):
                     return ("complex", None)  # an offset read from data has no sign to assume
-            if _provably_nonnegative_under_nonneg_symbols(carried_offset):
+            if facts is None:
+                facts = self.offset_facts(loop, sdfg)
+            if provably_nonnegative_offset(carried_offset, facts):
                 return ("WAR_symbolic", carried_offset)
-            if _provably_nonpositive_under_nonneg_symbols(carried_offset):
+            if provably_nonpositive_offset(carried_offset, facts):
                 return ("RAW", None)  # provable read-behind (``a[i - K]``): a true recurrence
+            # A read-ahead under ``offset >= 1``: the loop may be versioned on it (``version_on_offset_sign``)
+            vars(self).setdefault("_unproven_offsets", []).append(carried_offset)
             # Sign undecidable even under the nonneg-symbol assumption (``K - M``): keep
             # sequential, but do NOT report 'RAW'. RAW means a *proven* read-behind, and a
             # consumer that fuses on that (LoopFusion) would then wrongly permit fusing a possible
@@ -493,7 +491,7 @@ class BreakAntiDependence(ppl.Pass):
         bindings=None,
         loop_bounds=None,
     ):
-        """The verdict :meth:`_dep_class` could not reach, asked of the SMT oracle.
+        """The verdict :meth:`dep_class` could not reach, asked of the SMT oracle.
 
         Only ever consulted where the affine matcher already gave up (``'complex'``), and only
         ever ANSWERS ``'WAR'`` or ``'none'``. ``'WAR'`` is a proof that no iteration up to and
@@ -818,7 +816,7 @@ class BreakAntiDependence(ppl.Pass):
             asserted ``> 0`` at runtime for the rename to be sound; empty when
             the offset is a numeric positive constant.
         """
-        # Subsets are DEDUPED by their ndrange -- the only thing :meth:`_dep_class`
+        # Subsets are DEDUPED by their ndrange -- the only thing :meth:`dep_class`
         # ever reads off a subset -- so two subsets with the same ndrange classify
         # identically. The verdicts are consumed as a set, so dropping the
         # duplicates cannot change the outcome; it only avoids re-deriving the same
@@ -870,7 +868,7 @@ class BreakAntiDependence(ppl.Pass):
             disqualified = False
             for rkey, r in read_subsets.items():
                 for w in write_subsets.values():
-                    c = self._dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
+                    c = self.dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
                     if c[0] == "complex":
                         if bindings is None and have_z3:
                             bindings, loop_bounds = consistent_bindings(sdfg), _smt_loop_bounds(loop)
@@ -947,12 +945,9 @@ class BreakAntiDependence(ppl.Pass):
         may have no src connectors"). Trips ``abort()`` on violation so
         the failure is loud at runtime and does not corrupt downstream output.
 
-        The soundness condition for the snapshot rename is ``offset >= 0`` (a
-        read ahead of, or at, the write index never aliases an earlier write), so
-        the guard tests ``>= 0`` -- a renamed ``+K`` offset that happens to be 0
-        at runtime is still sound and must not trap. The classifier only routes
-        provably-nonnegative offsets here, so in practice the guard never trips;
-        it is a defensive backstop.
+        A symbolic offset is renamed only where the facts prove it ``>= 1`` (or
+        inside a version on it), so no symbolic guard reaches this; it remains the
+        backstop for any caller passing one.
         """
         expr_str = symbolic.symstr(expr)
         # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the
@@ -1085,7 +1080,7 @@ class BreakAntiDependence(ppl.Pass):
                     if verdict is None:
                         kinds = set()
                         for w in writes:
-                            kind = self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
+                            kind = self.dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
                             if kind == "complex":
                                 if bindings is None and have_z3:
                                     bindings, loop_bounds = consistent_bindings(sdfg), _smt_loop_bounds(loop)
@@ -1153,7 +1148,7 @@ class BreakAntiDependence(ppl.Pass):
             if st.degree(src) == 0:
                 st.remove_node(src)
 
-    def _snapshot_forward_reads(self, loop: LoopRegion, sdfg: SDFG) -> int:
+    def forward_read_plans(self, loop: LoopRegion, sdfg: SDFG) -> list | None:
         """Break only the READ-AHEAD edges of ``loop``, leaving the array's other reads live.
 
         The whole-array policy above disqualifies an array the moment ONE read/write pair is a true
@@ -1173,22 +1168,21 @@ class BreakAntiDependence(ppl.Pass):
 
         state = _single_compute_state(loop)
         if state is None:
-            return 0
+            return None
         ivar = loop.loop_variable
-        # Forward stride only. ``_dep_class`` reads direction off the sign of the carried
+        # Forward stride only. ``dep_class`` reads direction off the sign of the carried
         # offset alone, so under a reverse stride it calls ``a[i + 1]`` read-ahead when it is
         # really the value the PREVIOUS iteration wrote -- redirecting it to the pre-loop
         # snapshot then silently computes the wrong thing.
         if not self._safe_stride(loop, sdfg):
-            return 0
+            return None
         internal_syms = self._loop_internal_symbols(loop)
-        applied = 0
-
         written = sorted(
             dict.fromkeys(
                 n.data for n in state.data_nodes() if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
             )
         )
+        plans = []
         for arr in written:
             write_subsets = []
             for n in state.data_nodes():
@@ -1210,7 +1204,7 @@ class BreakAntiDependence(ppl.Pass):
                     rs = e.data.get_src_subset(e, state) if e.data is not None else None
                     if rs is None:
                         continue
-                    verdicts = [self._dep_class(rs, ws, ivar, loop=loop, sdfg=sdfg) for ws in write_subsets]
+                    verdicts = [self.dep_class(rs, ws, ivar, loop=loop, sdfg=sdfg) for ws in write_subsets]
                     kinds = dict.fromkeys(v[0] for v in verdicts)
                     # Redirect to the pre-loop snapshot ONLY when EVERY verdict is a read-ahead
                     # (WAR / WAR_symbolic). A RAW/complex producer, OR a 'none' (offset-0, same-index
@@ -1226,33 +1220,75 @@ class BreakAntiDependence(ppl.Pass):
                         continue
                     sym_guards |= guards
                     fwd_edges.append((n, e))
-            if not fwd_edges:
-                continue
+            if fwd_edges:
+                plans.append((arr, fwd_edges, sym_guards, state))
+        return plans
 
-            # Snapshot before the loop and redirect only the read-ahead edges to it. The copy
-            # covers the window those edges read (see :meth:`_snapshot_window`), not the whole
-            # array. The break itself is never declined because the copy looked expensive.
+    def snapshot_forward_reads(self, loop: LoopRegion, sdfg: SDFG) -> int:
+        """Break only the READ-AHEAD edges of ``loop`` (:meth:`forward_read_plans`). Each symbolic offset must be
+        ``>= 1`` (an offset ``0`` aliases the value a sibling statement just wrote): one the facts at the loop do not
+        prove, or whose sign is unknown, versions the loop as ``if offset >= 1: broken else: original``.
+
+        :param loop: The loop to break.
+        :param sdfg: The SDFG owning ``loop``.
+        """
+        vars(self)["_unproven_offsets"] = []
+        plans = self.forward_read_plans(loop, sdfg)
+        if plans is None:
+            return 0
+        facts = self.offset_facts(loop, sdfg)
+        one = symbolic.pystr_to_symbolic("1")
+        unproven = [g for plan in plans for g in plan[2] if not symbolic.provably_le(one, g, facts)]
+        unproven += vars(self)["_unproven_offsets"]
+        unproven = list(dict.fromkeys(unproven))
+        if not unproven:
+            return self.break_forward_reads(loop, sdfg, plans)
+        proven = [plan for plan in plans if not set(plan[2]) & set(unproven)]
+        memo = vars(self)["_facts_memo"]
+        # A loop the whole-array policy renames under the same ``offset >= 1`` is left to it: it maps the loop
+        memo[loop] = facts.with_relations(symbolic.Relation(symbolic.RelationKind.LE, one, o) for o in unproven)
+        try:
+            whole = list(self._renamable_arrays(loop, sdfg))
+        finally:
+            memo[loop] = facts
+        if whole:
+            return self.break_forward_reads(loop, sdfg, proven)
+        conditions = [symbolic.Relation(symbolic.RelationKind.LE, one, offset) for offset in unproven]
+        memo[loop] = facts.with_relations(conditions)
+        try:
+            versioned = self.forward_read_plans(loop, sdfg)
+        finally:
+            memo[loop] = facts
+        # The offsets the versioned break relies on: a condition on any other would only narrow the fast branch
+        relied = list(dict.fromkeys(g for plan in versioned or () for g in plan[2] if g in unproven))
+        if not relied:
+            return self.break_forward_reads(loop, sdfg, proven)
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_relations
+
+        applied = 0
+
+        def break_in_branch(par_loop: LoopRegion, region, owner: SDFG) -> None:
+            nonlocal applied
+            applied = self.snapshot_forward_reads(par_loop, owner)
+
+        relations = [symbolic.Relation(symbolic.RelationKind.LE, one, offset) for offset in relied]
+        specialize_loop_under_relations(loop, relations, break_in_branch, sdfg)
+        return applied
+
+    def break_forward_reads(self, loop: LoopRegion, sdfg: SDFG, plans: list) -> int:
+        """Redirect each plan's read-ahead edges of ``loop`` to a snapshot taken before it; every symbolic offset is
+        proven ``>= 1`` by then, so no guard is emitted."""
+        applied = 0
+        for plan in plans:
+            arr, fwd_edges, state = plan[0], plan[1], plan[3]
             desc = sdfg.arrays[arr]
-            snap, _ = sdfg.add_transient(
+            snap, snap_desc = sdfg.add_transient(
                 f"{arr}_split_snap", desc.shape, desc.dtype, storage=desc.storage, find_new_name=True
             )
             read_subsets = [e.data.get_src_subset(e, state) for _, e in fwd_edges]
             copy_mem = self._snapshot_window(loop, arr, sdfg, read_subsets) or Memlet.from_array(arr, desc)
             pre = loop.parent_graph.add_state_before(loop, label=f"{arr}_split_snapshot")
             pre.add_nedge(pre.add_read(arr), pre.add_write(snap), copy_mem)
-            # sorted: ``sym_guards`` is a set of sympy exprs (hashed via symbol-name strings). It is iterated
-            # to EMIT tasklets into ``pre``, so its order fixes their node names/ids and the emitted C order.
-            for expr in sorted(sym_guards, key=symbolic.symstr):
-                # STRICT (>0) guard -- NOT the >=0 the whole-array policy uses. There every read of
-                # ``arr`` moves to the snapshot and a same-index read ``arr[i]`` equals the pre-loop
-                # original (only iteration i writes ``arr[i]``), so a symbolic offset of 0 is sound.
-                # HERE the shape is MIXED -- ``arr[i]=..; d[i]=arr[i]+arr[i+sym]`` -- so a SIBLING
-                # statement writes ``arr[i]`` earlier in the SAME iteration, and a read
-                # ``arr[i+sym]`` with ``sym == 0`` aliases that just-written live value and must NOT
-                # be redirected to the stale snapshot. Trap unless ``sym >= 1`` (offsets are integer,
-                # so ``sym - 1 >= 0`` is exactly the strict ``sym > 0``); ``sym == 0`` is then a loud
-                # runtime fault instead of a silent miscompile.
-                self._emit_positive_guard(pre, expr - 1)
 
             for src, e in fwd_edges:
                 snap_node = state.add_access(snap)
@@ -1266,31 +1302,127 @@ class BreakAntiDependence(ppl.Pass):
             applied += 1
         return applied
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
+    def offset_facts(self, loop: LoopRegion | None, sdfg: SDFG | None) -> symbolic.Facts:
+        """The facts a carried offset's sign is asked under: at ``loop``, else of ``sdfg``; derived once per loop
+        and pass run (the rename adds containers and states, never a bound or a symbol fact)."""
+        memo = vars(self).setdefault("_facts_memo", {})
+        key = loop if loop is not None else sdfg
+        if key not in memo:
+            if loop is not None:
+                memo[key] = SymbolResolver().facts_at(loop)
+            else:
+                memo[key] = sdfg.facts() if sdfg is not None else symbolic.Facts.none()
+        return memo[key]
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Snapshot-rename every loop with a read-ahead anti-dependence; returns the
         number of arrays renamed, or ``None``.
 
         ``forward_reads`` picks the admission policy (see the module docstring): the default
         whole-array pure-WAR rename, or the per-edge read-ahead break that unbinds two statements
         of a loop that stays sequential."""
+        vars(self)["_facts_memo"] = {}
         if self.forward_reads:
             applied = 0
             for loop in self._loops(sdfg):
-                applied += self._snapshot_forward_reads(loop, sdfg)
+                applied += self.snapshot_forward_reads(loop, sdfg)
             return applied or None
         renamed = 0
         for loop in self._loops(sdfg):
+            # A loop nested in one versioned earlier is gone with it; its clones are renamed there
+            if loop.parent_graph is None or loop not in loop.parent_graph.nodes():
+                continue
             if not self._safe_stride(loop, sdfg):
                 continue
-            n_before = renamed
-            for name, sym_guards, array_guards in self._renamable_arrays(loop, sdfg):
-                self._snapshot_and_redirect(loop, name, sdfg, guards=sym_guards, array_guards=array_guards)
-                renamed += 1
-            if renamed > n_before:
-                self._forwardize_reverse_iterator(loop, sdfg)
+            vars(self)["_unproven_offsets"] = []
+            renames = list(self._renamable_arrays(loop, sdfg))
+            facts = self.offset_facts(loop, sdfg)
+            unproven = [
+                g
+                for name, guards, array_guards in renames
+                for g in guards
+                if not symbolic.provably_le(self.least_offset(loop, name), g, facts)
+            ]
+            unproven = list(dict.fromkeys(unproven + vars(self)["_unproven_offsets"]))
+            if not unproven:
+                renamed += self.rename_loop(loop, sdfg, renames) if renames else 0
+                continue
+            renamed += self.version_on_offset_sign(loop, sdfg, unproven)
         return renamed or None
 
-    def _forwardize_reverse_iterator(self, loop: LoopRegion, sdfg: SDFG) -> None:
+    @staticmethod
+    def least_offset(loop: LoopRegion, name: str) -> sympy.Integer:
+        """The least symbolic offset a rename of ``name`` in ``loop`` is sound for. Only the read-ahead reads move to
+        the snapshot, so a read at offset ``0`` must not see a write of the same iteration: ``1`` when a read may
+        follow a write of ``name`` within an iteration (an access node both written and read, or a write in another
+        state than the reads), ``0`` otherwise (the read feeds the write, as in ``a[i] = a[i + K] + b[i]``)."""
+        written, read, both = [], [], False
+        for state in loop.states():
+            nodes_of = [n for n in state.data_nodes() if n.data == name]
+            if any(state.in_degree(n) > 0 for n in nodes_of):
+                written.append(state)
+            if any(state.out_degree(n) > 0 for n in nodes_of):
+                read.append(state)
+            both |= any(state.in_degree(n) > 0 and state.out_degree(n) > 0 for n in nodes_of)
+        if both or len(written) > 1 or any(state not in written for state in read):
+            return sympy.Integer(1)
+        return sympy.Integer(0)
+
+    def rename_loop(self, loop: LoopRegion, sdfg: SDFG, renames) -> int:
+        """Snapshot-rename ``renames`` (from :meth:`_renamable_arrays`) in ``loop``; a guard on an offset the facts
+        at the loop prove at least :meth:`least_offset` (as inside a version on it) is not emitted."""
+        facts = self.offset_facts(loop, sdfg)
+        for name, sym_guards, array_guards in renames:
+            least = self.least_offset(loop, name)
+            needed = type(sym_guards)(g for g in sym_guards if not symbolic.provably_le(least, g, facts))
+            self._snapshot_and_redirect(loop, name, sdfg, guards=needed, array_guards=array_guards)
+        self.forwardize_reverse_iterator(loop, sdfg)
+        return len(renames)
+
+    def version_on_offset_sign(self, loop: LoopRegion, sdfg: SDFG, offsets: list) -> int:
+        """Version ``loop`` as ``if offset >= least: renamed else: original`` (:meth:`least_offset`) when its only
+        obstacle is the unknown sign of symbolic carried offsets: under that condition each is a read-ahead,
+        renamable as any other. The version is built only if the renames then go through (checked against the facts
+        plus the condition, before the graph changes). Returns the number of arrays renamed."""
+        if loop.parent_graph is None:
+            return 0
+        zero = sympy.Integer(0)
+        conditions = [symbolic.Relation(symbolic.RelationKind.LE, zero, offset) for offset in offsets]
+        memo = vars(self)["_facts_memo"]
+        facts = self.offset_facts(loop, sdfg)
+        memo[loop] = facts.with_relations(conditions)
+        try:
+            renames = list(self._renamable_arrays(loop, sdfg))
+        finally:
+            memo[loop] = facts
+        # The offsets the versioned rename relies on, each at the least value its array needs: a condition on any
+        # other would only narrow the fast branch
+        relied: dict[Any, sympy.Integer] = {}
+        for name, guards, array_guards in renames:
+            least = self.least_offset(loop, name)
+            for g in guards:
+                if g in offsets or not symbolic.provably_le(least, g, facts):
+                    relied[g] = max(relied.get(g, zero), least)
+
+        def conditions_on(bounds: dict) -> list[symbolic.Relation]:
+            return [symbolic.Relation(symbolic.RelationKind.LE, least, offset) for offset, least in bounds.items()]
+
+        if not relied:
+            # Nothing renamable relies on an unproven offset: rename what the facts already prove
+            proven = [r for r in renames if not set(r[1]) & set(offsets)]
+            return self.rename_loop(loop, sdfg, proven) if proven else 0
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_relations
+
+        renamed = 0
+
+        def rename_in_branch(par_loop: LoopRegion, region, owner: SDFG) -> None:
+            nonlocal renamed
+            renamed = self.rename_loop(par_loop, owner, list(self._renamable_arrays(par_loop, owner)))
+
+        specialize_loop_under_relations(loop, conditions_on(relied), rename_in_branch, sdfg)
+        return renamed
+
+    def forwardize_reverse_iterator(self, loop: LoopRegion, sdfg: SDFG) -> None:
         """Inline a renamed loop's reverse-iterator binding (alpha -1 -> +1).
 
         A loop that :class:`NormalizeNegativeStride` reversed indexes its body via

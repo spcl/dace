@@ -907,7 +907,7 @@ def test_unknown_sign_symbolic_read_ahead_is_not_fused():
     """K0b: L1 writes ``a[i]``; L2 reads ``a[i + K - M]``. The carried offset ``K - M`` has an
     undecidable sign even under the nonnegative-symbol assumption, so it is neither a proven
     read-behind nor a proven read-ahead. Fusing it is illegal -- at runtime ``K > M`` makes it a
-    read-ahead whose fused read is the not-yet-produced (stale) value. Pre-fix ``_dep_class`` dumped
+    read-ahead whose fused read is the not-yet-produced (stale) value. Pre-fix ``dep_class`` dumped
     ``K - M`` into ``'RAW'`` (its "keep sequential" verdict) and ``LoopFusion`` read ``'RAW'`` as a
     proven read-behind, wrongly judging the pair fusable."""
     K, M = dace.symbol("K"), dace.symbol("M")
@@ -942,6 +942,8 @@ def test_provable_read_behind_symbolic_still_fuses():
             b[i] = b[i - 1] * 0.5 + a[i - K]
 
     sd = prog_provable_read_behind_symbolic_still_fuses.to_sdfg(simplify=True)
+    # ``K`` is known nonnegative (the caller's declaration); of unknown sign, ``a[i - K]`` may read ahead
+    sd.set_symbol_assumptions("K", frozenset({dace.symbolic.Predicate.NONNEGATIVE}))
     pairs = adjacent_loop_pairs(sd)
     assert any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), (
         "provable read-behind a[i-K] must remain fusable"

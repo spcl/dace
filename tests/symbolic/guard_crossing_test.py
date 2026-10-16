@@ -22,7 +22,8 @@ def test_the_crossing_is_exactly_where_the_guard_flips(guard, strict, holds):
     """For every bound and every nonnegative ``i``: ``g(i) < k`` iff ``i < x``. A perfect square, its neighbours and a
     bound below the first value are where a floating ``ceil(sqrt(k))`` or a C-truncating division goes wrong."""
     bound = "k + 7" if guard == "3 * i + 2" else "k"
-    crossing = symbolic.guard_crossing(guard, "i", bound, strict)
+    facts = symbolic.contract_facts(symbolic.pystr_to_symbolic("k"))
+    crossing = symbolic.guard_crossing(guard, "i", bound, strict, facts)
     assert crossing is not None
     for k in range(0, 300):
         x = int(symbolic.evaluate(crossing, {"k": k}))
@@ -31,7 +32,23 @@ def test_the_crossing_is_exactly_where_the_guard_flips(guard, strict, holds):
 
 @pytest.mark.parametrize("guard", ["-2 * i", "i ** 3", "2 * i ** 2", "i * j"])
 def test_a_guard_of_another_shape_has_no_crossing(guard):
-    assert symbolic.guard_crossing(guard, "i", "k", strict=True) is None
+    facts = symbolic.contract_facts(symbolic.pystr_to_symbolic("k"))
+    assert symbolic.guard_crossing(guard, "i", "k", strict=True, facts=facts) is None
+
+
+def test_a_numerator_nonnegative_only_by_a_relation_has_a_crossing():
+    """``8 * i < N - K`` crosses at ``int_ceil(N - K, 8)``, exact only for ``N - K >= 0``: a relation of the facts,
+    which the contract's per-symbol signs alone cannot give."""
+    n, k = symbolic.pystr_to_symbolic("N"), symbolic.pystr_to_symbolic("K")
+    signs = symbolic.contract_facts(n, k)
+    related = signs.with_relations([symbolic.Relation(symbolic.RelationKind.LE, k, n)])
+    assert symbolic.guard_crossing("8 * i", "i", "N - K", strict=True, facts=signs) is None
+    crossing = symbolic.guard_crossing("8 * i", "i", "N - K", strict=True, facts=related)
+    assert crossing is not None
+    for nv in range(0, 60):
+        for kv in range(0, nv + 1):
+            x = int(symbolic.evaluate(crossing, {"N": nv, "K": kv}))
+            assert all((8 * i < nv - kv) == (i < x) for i in range(0, 20)), (nv, kv, x)
 
 
 def test_int_sqrt_is_the_exact_integer_root():
@@ -57,5 +74,6 @@ if __name__ == "__main__":
         test_the_crossing_is_exactly_where_the_guard_flips(*case)
     for guard in ["-2 * i", "i ** 3", "2 * i ** 2", "i * j"]:
         test_a_guard_of_another_shape_has_no_crossing(guard)
+    test_a_numerator_nonnegative_only_by_a_relation_has_a_crossing()
     test_int_sqrt_is_the_exact_integer_root()
     test_int_sqrt_plus_one_is_provably_nonnegative()

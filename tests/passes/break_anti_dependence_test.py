@@ -99,128 +99,102 @@ def test_break_anti_dependence_out_of_place_noop():
     sdfg.validate()
 
 
-def test_break_anti_dependence_symbolic_positive_offset():
-    """``a[i] = a[i + inc] + b[i]`` with ``inc`` a free symbol -- carried offset is
-    ``+inc`` which is non-numeric. The pass renames under the assumption ``inc > 0``
-    AND inserts a runtime ``std::abort`` guard on ``inc <= 0``. This mirrors
-    TSVC s175 (forward-read parallel with symbolic stride)."""
+def test_break_anti_dependence_symbolic_offset_positive_by_the_facts_renames_without_a_trap():
+    """``a[i] = a[i + inc] + b[i]`` (TSVC s175) with ``inc`` known positive: a read-ahead the rename needs no runtime
+    check for. (Known only nonnegative, ``inc == 0`` would alias a sibling write; see the versioned tests.)"""
     inc = dace.symbol("inc")
 
     @dace.program
-    def s175_like_break_anti_dependence_symbolic_positive_offset(a: dace.float64[N], b: dace.float64[N]):
+    def s175_nonnegative_offset(a: dace.float64[N], b: dace.float64[N]):
         for i in range(N - inc):
             a[i] = a[i + inc] + b[i]
 
-    sdfg = s175_like_break_anti_dependence_symbolic_positive_offset.to_sdfg(simplify=True)
+    sdfg = s175_nonnegative_offset.to_sdfg(simplify=True)
+    sdfg.set_symbol_assumptions("inc", frozenset({dace.symbolic.Predicate.POSITIVE}))
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     _l2m(sdfg)
     assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
-
-    # The pass must have planted a guard tasklet whose code asserts ``inc > 0``
-    # (CPP language, no connectors -- pure side effect on a free symbol).
-    guards = []
-    for st in sdfg.states():
-        guards.extend(
-            n for n in st.nodes() if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_guard")
-        )
-    assert len(guards) == 1, [g.label for g in guards]
-    g = guards[0]
-    assert g.code.language == dace.dtypes.Language.Python
-    assert not g.in_connectors and not g.out_connectors
-    # The guard's expression should contain the offset symbol.
-    assert "inc" in g.code.as_string and "abort()" in g.code.as_string
-
-    # Numerical correctness (with inc=1, equivalent to the constant-offset case s121).
-    rng = np.random.default_rng(0)
-    a = rng.random(50)
-    b = rng.random(50)
-    ref_a = a.copy()
-    for i in range(50 - 1):
-        ref_a[i] = ref_a[i + 1] + b[i]  # numpy serial reference (inc=1 case)
-    a_run = a.copy()
-    sdfg(a=a_run, b=b, N=50, inc=1)
-    assert np.allclose(a_run, ref_a)
+    assert not [
+        n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.Tasklet) and "abort()" in n.code.as_string
+    ]
+    n = 32
+    rng = np.random.default_rng(3)
+    for inc_value in (1, 3):
+        a0, b = rng.random(n), rng.random(n)
+        got, expected = a0.copy(), a0.copy()
+        sdfg(a=got, b=b, N=n, inc=inc_value)
+        for i in range(n - inc_value):
+            expected[i] = a0[i + inc_value] + b[i]
+        assert np.allclose(got, expected), inc_value
 
 
-def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
-    """The runtime positive guard for ``a[i] = a[i + inc] + b[i]`` (TSVC s175) must
-    survive the FULL canonicalize pipeline -- a connector-less side-effect tasklet
-    is otherwise pruned by dead-code elimination, silently restoring the unsound
-    assume-nonneg parallelization. Runs with a valid ``inc > 0`` (the trap must not
-    fire) and checks the snapshot-renamed parallel result."""
+def test_break_anti_dependence_unknown_sign_offset_is_versioned_through_full_canonicalize():
+    """``a[i] = a[i + inc] + b[i]`` with ``inc`` of unknown sign: the loop is versioned on ``inc >= 0`` (renamed and
+    parallel) and keeps its original form otherwise; both branches compute the reference."""
+    from dace.sdfg.state import ConditionalBlock
     from dace.transformation.passes.canonicalize import canonicalize
 
     inc = dace.symbol("inc")
 
     @dace.program
-    def s175_like_break_anti_dependence_symbolic_guard_survives_full_canonicalize(
-        a: dace.float64[N], b: dace.float64[N]
-    ):
-        for i in range(N - inc):
+    def s175_unknown_sign_offset(a: dace.float64[N + 8], b: dace.float64[N + 8]):
+        for i in range(4, N):
             a[i] = a[i + inc] + b[i]
 
-    sdfg = s175_like_break_anti_dependence_symbolic_guard_survives_full_canonicalize.to_sdfg(simplify=True)
+    sdfg = s175_unknown_sign_offset.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-
-    guards = [
-        n
-        for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.Tasklet) and "abort()" in (n.code.as_string or "")
+    conditions = [
+        c.as_string
+        for r in sdfg.all_control_flow_regions()
+        if isinstance(r, ConditionalBlock)
+        for c, branch in r.branches
+        if c is not None
     ]
-    assert len(guards) >= 1, "the positive-offset guard must survive full canonicalize"
-    assert all(g.side_effects for g in guards), "guard must be side-effecting so DCE keeps it"
-    assert any("inc" in g.code.as_string for g in guards)
-    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, "the read-ahead loop should be parallelized"
+    assert any("inc" in c for c in conditions), conditions
+    assert _nmaps(sdfg) >= 1
 
-    n = 50
+    n = 40
     rng = np.random.default_rng(1)
-    a0, b = rng.standard_normal(n), rng.standard_normal(n)
-    got = a0.copy()
-    sdfg(a=got, b=b, N=n, inc=1)  # valid inc>0: trap does not fire
-    exp = a0.copy()
-    for i in range(n - 1):
-        exp[i] = a0[i + 1] + b[i]  # snapshot read of the ORIGINAL a (read-ahead)
-    assert np.allclose(got, exp)
+    for inc_value in (-3, -1, 0, 1, 4):
+        a0, b = rng.random(n + 8), rng.random(n + 8)
+        got, expected = a0.copy(), a0.copy()
+        sdfg(a=got, b=b, N=n, inc=inc_value)
+        for i in range(4, n):
+            expected[i] = expected[i + inc_value] + b[i]
+        assert np.allclose(got, expected), inc_value
 
 
-def test_break_anti_dependence_refuses_symbolic_difference_offset():
-    """``a[i] = a[i + K - M] + b[i]`` -- the carried offset ``K - M`` is a difference
-    of two (nonnegative) symbols whose sign is undecidable even under the
-    canonicalization assumption that symbols are nonnegative. It must be refused
-    (left sequential), NOT snapshot-renamed: at runtime ``K < M`` makes this a
-    read-behind RAW recurrence, and renaming it produced wrong results (the old
-    ``could_extract_minus_sign`` test let ``K - M`` through as a guarded WAR while
-    refusing the algebraically equivalent ``M - K`` -- a canonical-ordering
-    artifact -- emitting an unsatisfiable ``> 0`` guard that trapped or, once
-    DCE'd, silently corrupted the output)."""
+def test_break_anti_dependence_versions_a_difference_offset_on_its_sign():
+    """``a[i] = a[i + K - M] + b[i]``: the offset ``K - M`` has no known sign. It is a read-ahead exactly when
+    ``K - M >= 0``, so the loop is renamed under that condition and kept as the read-behind recurrence otherwise --
+    never renamed unconditionally (``K < M`` renamed computes the wrong result)."""
+    from dace.sdfg.state import ConditionalBlock
+
     K, M = dace.symbol("K"), dace.symbol("M")
 
     @dace.program
-    def diff_offset(a: dace.float64[N], b: dace.float64[N]):
+    def diff_offset_versioned(a: dace.float64[N + 8], b: dace.float64[N + 8]):
         for i in range(M, N):
             a[i] = a[i + K - M] + b[i]
 
-    sdfg = diff_offset.to_sdfg(simplify=True)
-    # Refused: no snapshot transient, no rename.
-    assert not BreakAntiDependence().apply_pass(sdfg, {})
-    assert not any(name.endswith("_antidep_snap") for name in sdfg.arrays), list(sdfg.arrays)
-    _l2m(sdfg)
-    # The read-behind RAW cannot be mapped -> stays sequential.
-    assert _nloops(sdfg) == 1 and _nmaps(sdfg) == 0
+    sdfg = diff_offset_versioned.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    versions = [r for r in sdfg.all_control_flow_regions() if isinstance(r, ConditionalBlock)]
+    assert len(versions) == 1
+    assert sum(1 for c, branch in versions[0].branches if c is not None) == 1
     sdfg.validate()
 
-    # Numerical correctness with nonnegative symbol values K=2 < M=5 (read-behind).
-    n, k, m = 16, 2, 5
     rng = np.random.default_rng(7)
-    a = rng.random(n)
-    b = rng.random(n)
-    ref_a = a.copy()
-    for i in range(m, n):
-        ref_a[i] = ref_a[i + k - m] + b[i]  # sequential oracle (offset k-m = -3)
-    a_run = a.copy()
-    sdfg(a=a_run, b=b, N=n, K=k, M=m)
-    assert np.allclose(a_run, ref_a), f"max-diff {np.abs(a_run - ref_a).max()}"
+    for n, k, m in ((16, 2, 5), (16, 5, 2), (16, 3, 3)):
+        a = rng.random(n + 8)
+        b = rng.random(n + 8)
+        ref_a = a.copy()
+        for i in range(m, n):
+            ref_a[i] = ref_a[i + k - m] + b[i]
+        a_run = a.copy()
+        sdfg(a=a_run, b=b, N=n, K=k, M=m)
+        assert np.allclose(a_run, ref_a), (k, m)
 
 
 def test_break_anti_dependence_sum_of_symbols_offset_renames():
@@ -236,6 +210,8 @@ def test_break_anti_dependence_sum_of_symbols_offset_renames():
             a[i] = a[i + K + P] + b[i]
 
     sdfg = sum_offset.to_sdfg(simplify=True)
+    sdfg.set_symbol_assumptions("K", frozenset({dace.symbolic.Predicate.POSITIVE}))
+    sdfg.set_symbol_assumptions("P", frozenset({dace.symbolic.Predicate.NONNEGATIVE}))
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
     assert any(name.endswith("_antidep_snap") for name in sdfg.arrays), list(sdfg.arrays)
     _l2m(sdfg)
@@ -602,13 +578,14 @@ def test_forward_reads_leaves_a_same_index_read_on_the_live_array():
     assert np.array_equal(got_d, ref_d)
 
 
-def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
-    """The mixed shape needs ``offset >= 1``, not the ``offset >= 0`` the whole-array policy emits.
+def test_forward_reads_symbolic_offset_is_versioned_strictly_positive():
+    """The mixed shape needs ``offset >= 1``, not the ``offset >= 0`` the whole-array policy needs.
 
     A sibling statement writes ``a[i]`` earlier in the SAME iteration, so an offset that turns out
     to be 0 at runtime aliases that just-written live value; redirecting it to the stale snapshot
-    would be a silent miscompile, and the guard has to trap instead.
+    would be a silent miscompile. The break is versioned on exactly ``K >= 1``.
     """
+    from dace.sdfg.state import ConditionalBlock
 
     @dace.program
     def sym_mixed(a: dace.float64[N], d: dace.float64[N], x: dace.float64[N]):
@@ -617,16 +594,17 @@ def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
             d[i] = a[i] + a[i + K]
 
     sdfg = sym_mixed.to_sdfg(simplify=True)
-    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
-    guards = [
-        n.code.as_string
-        for st in sdfg.states()
-        for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and n.name.startswith("_break_antidep_guard_")
+    # Left to the whole-array policy, which renames it under the same condition and maps it
+    BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {})
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    conditions = [
+        c.as_string
+        for r in sdfg.all_control_flow_regions()
+        if isinstance(r, ConditionalBlock)
+        for c, branch in r.branches
+        if c is not None
     ]
-    assert guards, "a symbolic offset must carry a runtime guard"
-    strict = dace.symbolic.symstr(dace.symbolic.pystr_to_symbolic("K") - 1)
-    assert any(strict in g for g in guards), guards
+    assert conditions == ["(1 <= K)"], conditions
 
 
 # Snapshot window: the copy covers the elements the redirected reads touch, not
@@ -792,9 +770,9 @@ if __name__ == "__main__":
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
     test_break_anti_dependence_out_of_place_noop()
-    test_break_anti_dependence_symbolic_positive_offset()
-    test_break_anti_dependence_symbolic_guard_survives_full_canonicalize()
-    test_break_anti_dependence_refuses_symbolic_difference_offset()
+    test_break_anti_dependence_symbolic_offset_positive_by_the_facts_renames_without_a_trap()
+    test_break_anti_dependence_unknown_sign_offset_is_versioned_through_full_canonicalize()
+    test_break_anti_dependence_versions_a_difference_offset_on_its_sign()
     test_break_anti_dependence_sum_of_symbols_offset_renames()
     test_break_anti_dependence_data_indirected_offset_via_runtime_check()
     test_break_anti_dependence_symbolic_offset_uses_iter_var_refused()
@@ -807,7 +785,7 @@ if __name__ == "__main__":
     test_forward_reads_preserves_values()
     test_forward_reads_is_idempotent()
     test_forward_reads_leaves_a_same_index_read_on_the_live_array()
-    test_forward_reads_symbolic_offset_guard_is_strictly_positive()
+    test_forward_reads_symbolic_offset_is_versioned_strictly_positive()
     test_snapshot_copies_only_the_block_a_nested_loop_reads()
     test_forward_reads_snapshot_copies_only_the_swept_window()
     test_smt_fallback_breaks_a_guarded_indirected_read_ahead()

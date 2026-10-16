@@ -14,8 +14,9 @@ control-flow surgery, the callback owns what "parallel" means.
 """
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
+from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
@@ -100,4 +101,38 @@ def specialize_loop_under_condition(
     return conditional
 
 
-__all__ = ["specialize_loop_under_condition"]
+def specialize_loop_under_relations(
+    loop: LoopRegion,
+    relations: Sequence[symbolic.Relation],
+    parallelize: Callable[[LoopRegion, ControlFlowRegion, SDFG], None],
+    owner_sdfg: SDFG | None = None,
+) -> ConditionalBlock | None:
+    """Version ``loop`` on a sign or order fact the facts cannot prove: ``if relations: parallel else: original``.
+
+    The true-branch clone declares ``relations`` as facts of its own scope before ``parallelize`` runs, so every
+    proof about the clone or its body reads them, and none outside it (a pass hoisting code out of the branch asks
+    there). This is a contract guard, the runtime test of exactly what the parallel form assumes.
+
+    :param loop: Loop to version (see :func:`specialize_loop_under_condition`).
+    :param relations: What the parallel form needs; their conjunction is the branch condition.
+    :param parallelize: Callback mutating the true-branch clone into its parallel form.
+    :param owner_sdfg: Top-level SDFG (derived from ``loop`` if omitted).
+    :returns: The inserted :class:`ConditionalBlock`.
+    """
+    condition = " and ".join(
+        f"(({symbolic.symstr(r.lhs)}) {'<' if r.kind is symbolic.RelationKind.LT else '<='} ({symbolic.symstr(r.rhs)}))"
+        for r in relations
+    )
+
+    def declare_then_parallelize(par_loop: LoopRegion, par_region: ControlFlowRegion, owner: SDFG) -> None:
+        repo = par_loop.sdfg.symbol_repo
+        for relation in relations:
+            # A fact can only name declared symbols; the branch condition still guards the clone
+            if symbolic.relation_names(relation) <= repo.params.types.keys():
+                repo.add_relation(relation, at=par_loop)
+        parallelize(par_loop, par_region, owner)
+
+    return specialize_loop_under_condition(loop, condition, declare_then_parallelize, owner_sdfg)
+
+
+__all__ = ["specialize_loop_under_condition", "specialize_loop_under_relations"]
