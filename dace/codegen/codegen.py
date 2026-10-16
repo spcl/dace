@@ -337,6 +337,12 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     if validate:
         sdfg.validate()
 
+    if Config.get("compiler", "backend") == "python":
+        from dace.codegen.python import PythonTarget, emit, prepare
+
+        prepare.prepare(sdfg)
+        return [CodeObject(sdfg.name, emit.generate(sdfg), "py", PythonTarget, "Frame", linkable=False, sdfg=sdfg)]
+
     if Config.get_bool("testing", "serialization"):
         import difflib
         import filecmp
