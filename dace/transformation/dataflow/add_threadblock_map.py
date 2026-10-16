@@ -130,6 +130,11 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Only applicable to GPU_Device maps
         if map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
             return False
+        # A CUDA Tile C++ kernel runs one tile block per iteration and has no threads to map
+        from dace.codegen.python.dialects.cuda_tile_cpp import is_tile_kernel
+
+        if is_tile_kernel(state, map_entry):
+            return False
 
         # Check if any inner maps are GPU-scheduled (e.g., GPU_ThreadBlock)
         for _, inner_entry in helpers.get_internal_scopes(state, map_entry):

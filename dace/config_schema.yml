@@ -153,6 +153,16 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            backend:
+                type: str
+                default: cpp
+                title: Code generation backend
+                enum: [cpp, python]
+                description: >
+                    ``cpp`` compiles the SDFG to a shared library. ``python`` emits it as one Python
+                    function over NumPy arrays (``dace.codegen.python``) and loads it without a C++
+                    compiler.
+
             emit_tree_reductions:
                 type: bool
                 default: false
@@ -379,6 +389,20 @@ required:
 
             #############################################
             # CPU compiler
+            python:
+                type: dict
+                title: Python
+                description: Python backend preferences
+                required:
+                    tile_dialect:
+                        type: str
+                        default: triton
+                        title: Tile kernel dialect
+                        enum: [triton, cutile, tilelang]
+                        description: >
+                            The tile DSL a GPU map over BLOCK tile nodes is written in by the
+                            Python backend (``compiler.backend: python``).
+
             cpu:
                 type: dict
                 title: CPU
@@ -1036,6 +1060,25 @@ required:
                             work-in-progress rewrite (ExperimentalCUDACodeGen).
                         enum: [legacy, experimental]
                         default: experimental
+
+                    tile_backend:
+                        type: str
+                        title: GPU tile kernel backend
+                        enum: [block, cuda_tile]
+                        default: block
+                        description: >
+                            How the experimental CUDA generator writes a GPU kernel over BLOCK tile nodes.
+                            ``block`` spreads each tile over the threads of a block (``ExpandTileBlock``).
+                            ``cuda_tile`` writes it as a CUDA Tile C++ ``__tile_global__`` kernel, one tile
+                            block per map iteration; it needs CUDA 13.3 or newer and sm_80 or newer.
+
+                    tile_args:
+                        type: str
+                        title: CUDA Tile C++ arguments
+                        default: '--enable-tile'
+                        description: >
+                            nvcc arguments added to a build only when it holds a CUDA Tile C++ kernel
+                            (``tile_backend: cuda_tile``), on top of ``compiler.cuda.args``.
 
                     allow_implicit_memlet_to_map:
                         type: bool

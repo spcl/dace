@@ -182,6 +182,7 @@ def generate_program_folder(
     if sdfg is not None:
         hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
         filepath = os.path.join(out_path, "include", "hash.h")
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
             # The folder already held a DIFFERENT program, so its artifacts cannot be reused and
@@ -599,6 +600,9 @@ def configure_and_compile(
         program_name = os.path.basename(program_folder)
     program_folder = os.path.abspath(program_folder)
     src_folder = os.path.join(program_folder, "src")
+    if Config.get("compiler", "backend") == "python":
+        # The module is the program; there is nothing to build
+        return pathlib.Path(src_folder, "python", f"{program_name}.py")
 
     # Prepare build folder
     build_folder = os.path.join(program_folder, "build")
@@ -1015,6 +1019,10 @@ def load_precompiled_sdfg(
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
 
+    if Config.get("compiler", "backend") == "python":
+        from dace.codegen.python.compiled import PythonCompiledSDFG
+
+        return PythonCompiledSDFG(sdfg, folder / "src" / "python" / f"{sdfg.name}.py")
     return get_program_handle(
         library_path=get_binary_name(folder, sdfg_name=sdfg.name, folder_mode=folder_mode), sdfg=sdfg
     )

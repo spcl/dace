@@ -198,10 +198,15 @@ class GridStrideKernels(ppl.Pass):
         """
         # Collected first: the tiling rewires scopes, and iterating a graph being rewritten skips
         # nodes.
+        from dace.codegen.python.dialects.cuda_tile_cpp import is_tile_kernel
+
+        # A CUDA Tile C++ kernel launches one tile block per iteration, with no threads to stride
         kernels = [
             (n, s)
             for n, s in sdfg.all_nodes_recursive()
-            if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+            if isinstance(n, nodes.MapEntry)
+            and n.map.schedule == dtypes.ScheduleType.GPU_Device
+            and not is_tile_kernel(s, n)
         ]
         strided = hinted = 0
         for entry, state in kernels:

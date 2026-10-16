@@ -784,8 +784,9 @@ def validate_state(
                     arr.transient
                     and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
-                    # Streams do not need to be initialized
+                    # Streams and the GPU stream handles codegen creates do not need to be initialized
                     and not isinstance(arr, dt.Stream)
+                    and arr.dtype != dtypes.gpuStream_t
                 ):
                     if node.setzero == False:
                         warnings.warn(f'WARNING: Use of uninitialized transient "{node.data}" in state "{state.label}"')

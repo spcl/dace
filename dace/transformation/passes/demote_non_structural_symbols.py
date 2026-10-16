@@ -16,7 +16,7 @@ import dataclasses
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from dace import SDFG, InterstateEdge, dtypes, properties
+from dace import SDFG, InterstateEdge, dtypes, properties, symbolic
 from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
@@ -165,6 +165,35 @@ def assigned_symbols(sd: SDFG) -> OrderedSet[str]:
     return OrderedSet(name.strip() for edge in sd.all_interstate_edges() for name in edge.data.assignments)
 
 
+def loop_carried_symbols(sd: SDFG) -> OrderedSet[str]:
+    """Every symbol a loop body of ``sd`` updates from itself: ``count := count + 1``, or through the symbols the same loop
+    assigns on the way (``count_0 := count + 1; count := count_0``).
+
+    A value assigned once (a scale factor, a copy of data) carries nothing between iterations; demoting it only turns
+    a symbol read into a tasklet, so it stays a symbol.
+    """
+    carried: OrderedSet[str] = OrderedSet()
+    for loop in sd.all_control_flow_regions(recursive=True):
+        if not isinstance(loop, LoopRegion):
+            continue
+        reads: dict[str, set[str]] = {}
+        for edge in loop.all_interstate_edges():
+            for name, value in edge.data.assignments.items():
+                reads.setdefault(name.strip(), set()).update(symbolic.free_symbols_and_functions(value))
+        for name in reads:
+            seen: set[str] = set()
+            frontier = set(reads[name])
+            while frontier:
+                current = frontier.pop()
+                if current == name:
+                    carried.add(name)
+                    break
+                if current in reads and current not in seen:
+                    seen.add(current)
+                    frontier |= reads[current]
+    return carried
+
+
 def fuse_into_successor(states: Iterable[SDFGState]) -> None:
     """Fuse each state a demotion added (it loads the demoted value) into the state it leads to, where legal.
 
@@ -198,7 +227,8 @@ def fuse_into_successor(states: Iterable[SDFGState]) -> None:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DemoteNonStructuralSymbols(ppl.Pass):
-    """Demote every non-boolean interstate-assigned symbol no iteration domain or data access is written in to a scalar."""
+    """Demote every non-boolean symbol a loop updates from itself and no iteration domain or data access is written in to a
+    scalar; a symbol assigned once stays a symbol."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -214,7 +244,7 @@ class DemoteNonStructuralSymbols(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many symbols were demoted, or ``None`` when none was."""
         before = {id(state) for state in sdfg.states()}
-        demoted = demote_symbols(sdfg, assigned_symbols)
+        demoted = demote_symbols(sdfg, loop_carried_symbols)
         if demoted:
             fuse_into_successor([state for state in sdfg.states() if id(state) not in before])
         return demoted or None

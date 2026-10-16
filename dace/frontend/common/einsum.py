@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Classes to handle Einstein-notation sums (einsum) as a library node."""
 
-from itertools import chain
+from itertools import chain, combinations
 from string import ascii_letters
 
 import numpy as np
@@ -117,6 +117,11 @@ class EinsumParser:
                 return False
         for val in self.fields().values():
             if not _is_sequential(val):
+                return False
+        # The GEMM path flattens each index group into one dimension, so the group must keep its order in every
+        # operand: ``ijk,kj->i`` sums ``jk`` in A but ``kj`` in B, which one flat K reads transposed.
+        for first, second in combinations((*self.inputs, self.output), 2):
+            if [d for d in first if d in second] != [d for d in second if d in first]:
                 return False
         return True
 

@@ -210,7 +210,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             KernelScopeGenerator,
             ScopeGenerationStrategy,
             ThreadBlockScopeGenerator,
+            TileKernelScopeGenerator,
             WarpScopeGenerator,
+            tile_kernel_dimensions,
         )
 
         scope_entry = scope_map_entry(dfg_scope)
@@ -234,6 +236,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             kernel_spec = KernelSpec(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id)
             self._current_kernel_spec = kernel_spec
+            if TileKernelScopeGenerator(codegen=self).applicable(
+                sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream
+            ):
+                kernel_spec.grid_dims, kernel_spec.block_dims = tile_kernel_dimensions(scope_entry)
 
             self.define_variables_in_kernel_scope(sdfg, self._dispatcher)
             self.synchronize_host_reads(cfg, state_id, scope_entry, callsite_stream, launch_arguments=True)
@@ -249,6 +255,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._cpu_codegen.calling_codegen = self
 
             kernel_scope_generator = KernelScopeGenerator(codegen=self)
+            tile_generator = TileKernelScopeGenerator(codegen=self)
+            if tile_generator.applicable(sdfg, cfg, dfg_scope, state_id, kernel_function_stream, kernel_stream):
+                kernel_scope_generator = tile_generator
             try:
                 if not kernel_scope_generator.applicable(
                     sdfg, cfg, dfg_scope, state_id, kernel_function_stream, kernel_stream

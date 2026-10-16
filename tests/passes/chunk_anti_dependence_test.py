@@ -9,6 +9,7 @@ import contextlib
 import os
 
 import numpy as np
+import pytest
 import sympy
 
 import dace
@@ -35,6 +36,12 @@ def _shift(a: dace.float64[N], b: dace.float64[N]):
 def _shift_two(a: dace.float64[N], b: dace.float64[N]):
     for i in range(N - 2):
         a[i] = a[i + 2] + b[i]
+
+
+@dace.program
+def _shift_three(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N - 3):
+        a[i] = a[i + 3] + b[i]
 
 
 @dace.program
@@ -281,11 +288,27 @@ def test_chunk_rewrite_never_matches_a_gpu_scheduled_map():
     assert len(_snapshot_copies(sdfg)) == 1
 
 
-def test_chunk_rewrite_refuses_a_wider_read_ahead_offset():
-    """``a[i] = a[i+2]`` needs a run of seam elements per chunk, not a point; keep the snapshot."""
-    sdfg = _canonical(_shift_two)
+@pytest.mark.parametrize("prog,offset", [(_shift_two, 2), (_shift_three, 3)])
+def test_a_wider_read_ahead_offset_chunks_with_a_row_of_seam_cells(prog, offset):
+    """``a[i] = a[i+D]``: the last ``D`` iterations of a chunk read the next chunk's first ``D`` cells, so the seam
+    keeps a row of ``D`` per chunk. Sizes include a last chunk shorter than ``D`` and more chunks than threads."""
+    sdfg = _canonical(prog)
     assert _snapshot_copies(sdfg), "the canonical snapshot form is the precondition"
-    assert ChunkAntiDependence().apply_pass(sdfg, {}) is None
+    assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not _snapshot_copies(sdfg)
+    assert tuple(_seam_buffer(sdfg).shape)[1:] == (offset,)
+
+    rng = np.random.default_rng(offset)
+    for n in (offset + 1, offset + 2, 7, 40, 1001):
+        a, b = rng.standard_normal(n), rng.standard_normal(n)
+        want = a.copy()
+        for i in range(n - offset):
+            want[i] = want[i + offset] + b[i]
+        got = a.copy()
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
+            sdfg(a=got, b=b.copy(), N=n)
+        assert np.array_equal(got, want), n
 
 
 def test_chunk_rewrite_is_idempotent():
@@ -308,7 +331,7 @@ if __name__ == "__main__":
     test_the_seam_holds_exactly_one_slot_per_thread_plus_one()
     test_short_constant_extent_stays_bit_exact()
     test_chunk_rewrite_never_matches_a_gpu_scheduled_map()
-    test_chunk_rewrite_refuses_a_wider_read_ahead_offset()
+    test_a_wider_read_ahead_offset_chunks_with_a_row_of_seam_cells(_shift_two, 2)
     test_chunk_rewrite_is_idempotent()
 
 
