@@ -313,7 +313,7 @@ def probe_compile(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequen
     directory = tempfile.mkdtemp(prefix="dace_ai_probe_")
     source_path = os.path.join(directory, f"probe{suffix}")
     try:
-        with open(source_path, "w") as fp:
+        with open(source_path, "w", encoding="utf-8") as fp:
             fp.write(source)
 
         command = _device_command(source_path, ctx) if device else _host_command(source_path)

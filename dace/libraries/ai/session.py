@@ -162,7 +162,7 @@ class Session:
         if directory is None:
             return
         try:
-            with open(os.path.join(directory, filename), "w") as fp:
+            with open(os.path.join(directory, filename), "w", encoding="utf-8") as fp:
                 fp.write(content)
         except OSError as e:
             warnings.warn(f"Could not write the AI session file {filename}: {e}")
@@ -314,7 +314,7 @@ class Session:
             return None
         path = os.path.join(self.directory, f"round_{round_number}", "tasklet.json")
         try:
-            with open(path) as fp:
+            with open(path, encoding="utf-8") as fp:
                 return backend.spec_from_dict(json.load(fp))
         except (OSError, ValueError, KeyError):
             return None
@@ -332,7 +332,7 @@ def load(session_id: str) -> Session | None:
     if not os.path.exists(index_path):
         return None
     try:
-        with open(index_path) as fp:
+        with open(index_path, encoding="utf-8") as fp:
             index = json.load(fp)
     except (OSError, ValueError) as e:
         warnings.warn(f"Ignoring an unreadable AI session index at {index_path}: {e}")
@@ -340,7 +340,7 @@ def load(session_id: str) -> Session | None:
 
     conversation: list[dict[str, str]] = []
     try:
-        with open(os.path.join(directory, CONVERSATION_NAME)) as fp:
+        with open(os.path.join(directory, CONVERSATION_NAME), encoding="utf-8") as fp:
             conversation = json.load(fp)
     except (OSError, ValueError):
         pass

@@ -53,7 +53,7 @@ def cpu_description() -> dict[str, str]:
     """
     info: dict[str, str] = {"machine": platform.machine()}
     try:
-        with open("/proc/cpuinfo") as fp:
+        with open("/proc/cpuinfo", encoding="utf-8") as fp:
             for line in fp:
                 # 'Features' is the aarch64 spelling of 'flags'
                 if line.startswith("model name") and "model" not in info:

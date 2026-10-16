@@ -102,7 +102,7 @@ def lookup(cache_key: str) -> backend.TaskletSpec | None:
     if not enabled():
         return None
     try:
-        with open(_path(cache_key)) as fp:
+        with open(_path(cache_key), encoding="utf-8") as fp:
             entry = json.load(fp)
         return backend.spec_from_dict(entry["answer"], raw=entry.get("raw", ""))
     except FileNotFoundError:
@@ -138,7 +138,7 @@ def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: list
     }
     try:
         cache_dir(create=True)
-        with open(_path(cache_key), "w") as fp:
+        with open(_path(cache_key), "w", encoding="utf-8") as fp:
             json.dump(entry, fp, indent=1)
     except OSError as e:
         warnings.warn(f"Could not write the AI answer cache entry at {_path(cache_key)}: {e}")

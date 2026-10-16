@@ -93,7 +93,7 @@ def read_saved(path: str) -> str:
     :return: Its contents, or an empty string if it does not exist or is empty.
     """
     try:
-        with open(path) as fp:
+        with open(path, encoding="utf-8") as fp:
             return fp.read().strip()
     except OSError:
         return ""
@@ -193,7 +193,7 @@ def generate_prompts(sdfg: SDFG, directory: str | None = None) -> list[str]:
     for node, state in _ai_nodes(sdfg):
         prompt = generate_prompt(node, state)
         prompt_path, _ = exchange_paths(directory, prompt, node.name)
-        with open(prompt_path, "w") as fp:
+        with open(prompt_path, "w", encoding="utf-8") as fp:
             fp.write(prompt)
         written.append(prompt_path)
     return written

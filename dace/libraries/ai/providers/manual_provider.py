@@ -65,7 +65,7 @@ class ManualProvider:
                 flush=True,
             )
         else:
-            with open(prompt_path, "w") as fp:
+            with open(prompt_path, "w", encoding="utf-8") as fp:
                 fp.write(prompt)
             print(
                 _INSTRUCTIONS.format(

@@ -152,10 +152,10 @@ def materialize(spec: EnvironmentSpec) -> type:
 
     existing = None
     if os.path.exists(path):
-        with open(path) as fp:
+        with open(path, encoding="utf-8") as fp:
             existing = fp.read()
     if existing != source:
-        with open(path, "w") as fp:
+        with open(path, "w", encoding="utf-8") as fp:
             fp.write(source)
 
     module = _import_module(path)
