@@ -320,12 +320,20 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
         target_lines += [f"{label}: {value}" for label, value in optional if value]
         sections.append("\n".join(target_lines))
 
-    if ctx.available_environments:
-        sections.append(
+    if ctx.available_environments or ctx.unchecked_environments:
+        section = (
             "# DaCe environments already available on this machine\n\n"
             "Name any of these in `use_environments`, copying the path verbatim, instead of describing "
-            "the same library again in `environments`.\n\n" + "\n".join(f"  {e}" for e in ctx.available_environments)
+            "the same library again in `environments`. Reuse one whenever it provides what you need."
         )
+        if ctx.available_environments:
+            section += "\n\nChecked and installed:\n\n" + "\n".join(f"  {e}" for e in ctx.available_environments)
+        if ctx.unchecked_environments:
+            section += (
+                "\n\nRegistered, but without an installation check, so the library may be missing "
+                "from this machine:\n\n" + "\n".join(f"  {e}" for e in ctx.unchecked_environments)
+            )
+        sections.append(section)
 
     extra = Config.get("ai", "extra_instructions")
     if extra:

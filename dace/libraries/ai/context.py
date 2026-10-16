@@ -163,6 +163,8 @@ class ExpansionContext:
     symbols: dict[str, str] = field(default_factory=dict)
     target: TargetInfo | None = None
     available_environments: list[str] = field(default_factory=list)
+    #: Registered environments that define no installation check.
+    unchecked_environments: list[str] = field(default_factory=list)
 
 
 def _scope_frame(
@@ -726,26 +728,27 @@ def _resolved_schedule(node: nodes.Node, defaults: ResolvedDefaults | None) -> s
     return _annotate_resolved(declared, (defaults.schedules if defaults else {}).get(node.guid))
 
 
-def collect_available_environments() -> list[str]:
+def collect_available_environments() -> tuple[list[str], list[str]]:
     """
-    Lists the DaCe library environments that are installed on this machine.
+    Lists the registered DaCe library environments.
 
-    Environments that do not define an ``is_installed`` check are assumed to be available, since
-    that is the convention used throughout ``dace.libraries``.
-
-    :return: Full class paths of usable environments.
+    :return: The full class paths of environments whose ``is_installed`` check passes, and of those
+             that define no check.
     """
     import dace.library  # Avoid a cyclic import
 
-    available = []
+    installed, unchecked = [], []
     for path, env in dace.library._DACE_REGISTERED_ENVIRONMENTS.items():
-        check = getattr(env, "is_installed", None)
-        try:
-            if check is None or check():
-                available.append(path)
-        except Exception:
+        check = getattr(env, "is_installed", None)  # Optional in the environment protocol
+        if check is None:
+            unchecked.append(path)
             continue
-    return sorted(available)
+        try:
+            if check():
+                installed.append(path)
+        except Exception:  # A failing check means not installed
+            continue
+    return sorted(installed), sorted(unchecked)
 
 
 def collect_class_docstring(node: nodes.LibraryNode) -> str:
@@ -820,6 +823,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         properties[prop.attr_name] = str(value)
 
     description = str(getattr(node, "description", "") or "").strip()
+    installed, unchecked = collect_available_environments()
     return ExpansionContext(
         node_type=type(node).__name__,
         node_name=node.name,
@@ -834,5 +838,6 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         capabilities=capabilities,
         symbols=collect_symbols(node, state),
         target=collect_target_info(capabilities.device_level),
-        available_environments=collect_available_environments(),
+        available_environments=installed,
+        unchecked_environments=unchecked,
     )

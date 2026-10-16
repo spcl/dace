@@ -10,8 +10,10 @@ import dace.library
 from dace import nodes
 from dace.libraries.ai import environments as ai_environments
 from dace.libraries.ai.backend import EnvironmentSpec, TaskletSpec
+from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
+from dace.libraries.ai.prompts import build_user_prompt
 from tests.library.ai.ai_test_utils import stub_provider, stub_provider_sequence
 
 SPEC = EnvironmentSpec(
@@ -213,6 +215,33 @@ def test_reused_environments_reach_the_tasklet(tmp_path):
 
     tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
     assert list(tasklet.environments) == [env.full_class_path()]
+
+
+def test_the_prompt_separates_checked_from_unchecked_environments(monkeypatch):
+    class Installed:
+        is_installed = staticmethod(lambda: True)
+
+    class Missing:
+        is_installed = staticmethod(lambda: False)
+
+    class Unchecked:
+        pass
+
+    registry = {"x.Installed": Installed, "x.Missing": Missing, "x.Unchecked": Unchecked}
+    monkeypatch.setattr(dace.library, "_DACE_REGISTERED_ENVIRONMENTS", registry)
+
+    sdfg = dace.SDFG("ai_env_listing")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    node = AINode("copy", "Copy the value.", inputs={"_in"}, outputs={"_out"})
+    state.add_edge(state.add_read("A"), None, node, "_in", dace.Memlet("A[0]"))
+    state.add_edge(node, "_out", state.add_write("B"), None, dace.Memlet("B[0]"))
+    prompt = build_user_prompt(collect_context(node, state, sdfg))
+
+    checked, _, unchecked = prompt.partition("without an installation check")
+    assert "x.Installed" in checked and "x.Unchecked" in unchecked
+    assert "x.Missing" not in prompt
 
 
 if __name__ == "__main__":
