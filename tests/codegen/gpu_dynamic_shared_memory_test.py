@@ -110,6 +110,17 @@ def three_arrays(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_G
 
 
 @dace.program
+def two_large_arrays(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_Global):
+    for i in dace.map[0:N:32] @ dace.ScheduleType.GPU_Device:
+        s1 = dace.define_local([KIB32], dace.float64, storage=S.GPU_Shared)
+        s2 = dace.define_local([KIB32], dace.float64, storage=S.GPU_Shared)
+        for j in dace.map[0:32] @ dace.ScheduleType.GPU_ThreadBlock:
+            s1[j] = A[i + j]
+            s2[j] = s1[j] * 2
+            B[i + j] = s2[j] + 1
+
+
+@dace.program
 def symbolic_size(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_Global):
     for i in dace.map[0:N:32] @ dace.ScheduleType.GPU_Device:
         s = dace.define_local([M], dace.float64, storage=S.GPU_Shared)
@@ -269,6 +280,18 @@ def test_overflow_is_placed_dynamically():
     sdfg.validate()
 
 
+def test_static_and_dynamic_beyond_the_limit_is_requested():
+    """
+    Devices grant more than the static limit of shared memory in total, static and dynamic together, only to kernels
+    that opt in, even if the dynamic part alone is within the limit.
+    """
+    sdfg = two_large_arrays.to_sdfg(simplify=False)
+    code, _ = _generate(sdfg)
+    assert _placement(sdfg, "s1") is False and _placement(sdfg, "s2") is True
+    assert re.search(r'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY\((\w+), "\1", 32768\);', code)
+    assert re.search(r"LaunchKernel\(.*, 32768, ", code)
+
+
 def test_explicit_placement():
     sdfg = two_arrays.to_sdfg(simplify=False)
     _set_storage(sdfg, "s1", S.GPU_Shared(dynamic=True))
@@ -413,6 +436,12 @@ def test_dynamic_shared_memory_beyond_the_default_limit():
 
 
 @pytest.mark.gpu
+def test_static_and_dynamic_shared_memory_beyond_the_default_limit():
+    B = _run(two_large_arrays)
+    assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
+
+
+@pytest.mark.gpu
 def test_symbolic_size():
     B = _run(symbolic_size, M=32)
     assert np.array_equal(B, np.arange(1024, dtype=np.float64) + 1)
@@ -453,6 +482,7 @@ if __name__ == "__main__":
         test_storage_type_serialization(storage)
     test_fitting_containers_stay_static()
     test_overflow_is_placed_dynamically()
+    test_static_and_dynamic_beyond_the_limit_is_requested()
     test_explicit_placement()
     test_static_placement_of_symbolic_size_raises()
     test_symbolic_size_is_placed_dynamically()
@@ -465,6 +495,7 @@ if __name__ == "__main__":
     test_hip_limit()
     test_configured_limit()
     test_dynamic_shared_memory_beyond_the_default_limit()
+    test_static_and_dynamic_shared_memory_beyond_the_default_limit()
     test_symbolic_size()
     test_nested_sdfg_offset()
     test_kernels_with_separate_containers()

@@ -2318,14 +2318,18 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 scope_entry,
             )
 
-        # Beyond the limit, devices only grant dynamic shared memory to kernels that opt in
+        # Beyond the limit, devices only grant dynamic shared memory to kernels that opt in. On CUDA, the limit applies
+        # to static and dynamic shared memory together (on HIP, the static limit is all the shared memory there is)
         limit = common.gpu_max_static_shared_memory()
-        if (dynsmem_size > limit) != False:
+        total_smem = dynsmem_size
+        if common.get_gpu_backend() == "cuda":
+            total_smem += getattr(scope_entry, "_cuda_static_shared_memory", 0)
+        if (total_smem > limit) != False:
             request = (
                 f'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY({kernel_name}, "{kernel_name}", {_topy(dynsmem_size)});'
             )
-            if symbolic.issymbolic(dynsmem_size):
-                request = f"if (({_topy(dynsmem_size)}) > {limit}) {{\n{request}\n}}"
+            if symbolic.issymbolic(total_smem):
+                request = f"if (({_topy(total_smem)}) > {limit}) {{\n{request}\n}}"
             self._localcode.write(request, cfg, state_id, scope_entry)
 
         self._localcode.write(
