@@ -787,6 +787,8 @@ class ExpandTransformation(PatternTransformation):
 
     def apply(self, state, sdfg, *args, **kwargs):
         node = state.node(self.subgraph[type(self)._match_node])
+        # Read while the node is still in place: the expansion is inferred as the nested SDFG it becomes.
+        enclosing = infer_types.enclosing_schedules(state, node)
         # Expansions build their graphs from strings; parse the parent's symbols at their declared dtypes.
         with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
             expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
@@ -828,7 +830,7 @@ class ExpandTransformation(PatternTransformation):
         # Fix nested schedules and aliasing
         if isinstance(expansion, nd.NestedSDFG):
             dealias.integrate_nested_sdfg(expansion.sdfg)
-            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [node.schedule], True)
+            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [*enclosing, node.schedule], True)
 
         type(self).postprocessing(sdfg, state, expansion)
 

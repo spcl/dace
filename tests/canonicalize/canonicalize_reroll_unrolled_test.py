@@ -715,5 +715,43 @@ def test_read_ahead_gap_value_preserving():
     assert np.allclose(got, _read_ahead_ref(a0, n, 8, (0, 1, 2, 3), (1, 2, 3, 4)))
 
 
+@dace.program
+def unrolled_strength_reduced_sum(a: dace.float64[4 * N], out: dace.float64[1]):
+    partial = 0.0
+    k = -1
+    for i in range(N):
+        k = k + 1
+        partial = partial + a[k]
+        k = k + 1
+        partial = partial + a[k]
+        k = k + 1
+        partial = partial + a[k]
+        k = k + 1
+        partial = partial + a[k]
+    out[0] = partial
+
+
+def test_unrolled_reduction_through_a_strength_reduced_counter_lifts():
+    """An unrolled sum whose index is a counter bumped before each copy becomes one ``Reduce``.
+
+    Induction-variable substitution closes ``k`` to ``a[4*i + c]``; the re-roll then reads the scaled iterator as a
+    step-4 loop over ``a[i + c]`` and folds the four copies. Before, the counter stayed a carried symbol and the loop
+    stayed sequential."""
+    from dace.libraries.standard.nodes import Reduce
+
+    sdfg = unrolled_strength_reduced_sum.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not [
+        r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    ]
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)) == 1
+
+    for n in (1, 10, 257):
+        a = np.random.default_rng(n).random(4 * n)
+        out = np.zeros(1)
+        sdfg(a=a, out=out, N=n)
+        assert np.isclose(out[0], a.sum())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
