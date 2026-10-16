@@ -3,39 +3,76 @@
 Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 """
 
-from typing import Any, NamedTuple
+import functools
+import itertools
+import operator
+import warnings
+from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
-from dace import SDFG, SDFGState, data, dtypes, library, nodes, properties, symbolic
+from dace import SDFG, Memlet, SDFGState, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
+from dace.frontend.python.replacements.utils import normalize_axes
+from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft import environments as env
-from dace.utils import prod
+from dace.libraries.fft.gpu_dialect import CUFFT, HIPFFT, GpuFftDialect
+from dace.sdfg import utils as sdutil
+
+
+def normalize_fft_axes(ndim: int, axes: Sequence[int] | None) -> list[int]:
+    """The axes an FFT over ``axes`` transforms, in order, as indices in ``0..ndim-1``; ``None`` means every axis."""
+    result = list(range(ndim)) if axes is None else normalize_axes([int(axis) for axis in axes], ndim)
+    if any(not 0 <= axis < ndim for axis in result):
+        raise ValueError(f"FFT axes {axes} out of range for rank-{ndim} input")
+    return result
 
 
 @properties.make_properties
 class FourierTransform(nodes.LibraryNode):
-    """A transform of ``_inp`` into ``_out`` along every axis, or along ``axis`` only, batched over the others."""
+    """``_out`` is the discrete Fourier transform of ``_inp`` over ``axes``, scaled by ``factor``.
+
+    With ``axes is None`` (default) every axis is transformed (``np.fft.fftn``). With ``axes`` set the listed axes
+    are transformed in order and the others are batch dimensions, matching ``np.fft.fftn(x, axes=...)`` and
+    ``np.fft.fft(x, axis=k)`` (``axes=[k]``). With ``half_spectrum`` the complex side holds only the non-negative
+    frequencies of the last transformed axis (``np.fft.rfftn`` / ``np.fft.irfftn``): :class:`FFT` reads a real
+    input and :class:`IFFT` writes a real output, whose extents are the transform lengths.
+    """
 
     factor = properties.SymbolicProperty(
         category="Semantics", desc="Coefficient to multiply outputs. Used for normalization", default=1.0
     )
-    axis = properties.Property(
-        dtype=int, allow_none=True, default=None, desc="The one axis to transform along; None transforms along all."
+    axes = properties.ListProperty(
+        element_type=int,
+        allow_none=True,
+        default=None,
+        category="Semantics",
+        desc="Axes transformed in order (0..rank-1); unlisted axes are batch dimensions. ``None`` means every axis.",
+    )
+    half_spectrum = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Semantics",
+        desc="The complex side keeps only the non-negative frequencies of the last transformed axis (rfft/irfft).",
     )
 
-    def __init__(self, name, *args, schedule=None, axis=None, **kwargs):
+    def __init__(self, name, *args, schedule=None, axes=None, half_spectrum=False, **kwargs):
         super().__init__(name, *args, schedule=schedule, inputs={"_inp"}, outputs={"_out"}, **kwargs)
-        self.axis = axis
+        self.axes = axes
+        self.half_spectrum = half_spectrum
 
 
-# Define the library nodes
 @library.node
 class FFT(FourierTransform):
+    """Forward FFT. See :class:`FourierTransform`."""
+
     implementations = {}
     default_implementation = "pure"
 
 
 @library.node
 class IFFT(FourierTransform):
+    """Inverse FFT, unnormalized unless ``factor`` says otherwise. See :class:`FourierTransform`."""
+
     implementations = {}
     default_implementation = "pure"
 
@@ -45,290 +82,546 @@ class IFFT(FourierTransform):
 ##################################################################################################
 
 
-def _expand_dft(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG, inverse: bool) -> SDFG:
+def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
     from dace.libraries.fft.algorithms import dft  # Lazy import functions
 
-    input, output = _get_input_and_output(parent_state, node)
-    indesc = parent_sdfg.arrays[input]
-    outdesc = parent_sdfg.arrays[output]
-    if len(indesc.shape) > 1 or node.axis is not None:
-        return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=inverse, axis=node.axis)
-    program = dft.idft_explicit if inverse else dft.dft_explicit
-    return program.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
+    indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
+    return dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
 
 
 @library.register_expansion(FFT, "pure")
 class DFTExpansion(xf.ExpandTransformation):
-    environments: list[type] = []
+    environments = []
 
     @staticmethod
     def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_dft(node, parent_state, parent_sdfg, inverse=False)
+        return pure_sdfg(node, parent_state, parent_sdfg)
 
 
 @library.register_expansion(IFFT, "pure")
 class IDFTExpansion(xf.ExpandTransformation):
-    environments: list[type] = []
+    environments = []
 
     @staticmethod
     def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_dft(node, parent_state, parent_sdfg, inverse=True)
+        return pure_sdfg(node, parent_state, parent_sdfg)
 
 
 ##################################################################################################
-# Vendor expansions: cuFFT and hipFFT (one API, two spellings) and FFTW3
+# Vendor expansions: FFTW3 / MKL on the CPU, cuFFT / hipFFT on the GPU
 ##################################################################################################
 
+#: The complex types every vendor transform computes in.
+COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
-class BatchedTransform(NamedTuple):
-    """A vendor plan's view of a transform: ``count`` transforms of ``length`` elements, each ``stride`` apart, the
-    first elements of consecutive transforms ``distance`` apart."""
+#: The most axes one cuFFT / hipFFT plan transforms.
+MAX_GPU_FFT_RANK = 3
 
-    length: Any
-    count: Any
-    stride: Any
-    distance: Any
+#: Suffix of each plan's state fields, unique across every program in the process.
+PLAN_IDS = itertools.count()
 
 
-def batched_transform(desc: data.Data, axis: int) -> BatchedTransform | None:
-    """The transform along ``axis`` of a C-ordered ``desc``, or ``None`` for an axis other than the first and the
-    last, which a vendor plan does not express as one batch."""
-    rank = len(desc.shape)
-    length, count = desc.shape[axis], prod(s for d, s in enumerate(desc.shape) if d != axis)
-    if axis == rank - 1:
-        return BatchedTransform(length, count, 1, length)
-    if axis == 0:
-        return BatchedTransform(length, count, count, 1)
+class Transform(NamedTuple):
+    """One vendor call: ``out`` is the transform of ``src`` over ``axes``."""
+
+    src: data.Data
+    out: data.Data
+    axes: list[int]
+    inverse: bool
+    half_spectrum: bool
+
+    @property
+    def real_input(self) -> bool:
+        return self.half_spectrum and not self.inverse
+
+    @property
+    def real_output(self) -> bool:
+        return self.half_spectrum and self.inverse
+
+    @property
+    def lengths(self) -> list[symbolic.SymbolicType]:
+        """The transform lengths: the extents of the transformed axes on the real (or the only) side."""
+        signal = self.out if self.real_output else self.src
+        return [signal.shape[a] for a in self.axes]
+
+    @property
+    def double(self) -> bool:
+        return (self.src if self.real_output else self.out).dtype == dtypes.complex128
+
+
+#: Builds the vendor call for a :class:`Transform`, or returns ``None`` when the library cannot address its layout.
+VendorCall = Callable[[Transform], nodes.Tasklet | None]
+
+
+def vendor_fft_sdfg(
+    node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG, call: VendorCall, backend: str
+) -> SDFG:
+    """Wrap one vendor FFT call in the numpy semantics the library node carries.
+
+    The vendor transforms are unnormalized and read the complex type, or the real one for a half-spectrum forward
+    transform. An input of another type, or one the vendor cannot address, is staged into a copy of the right type
+    and layout first; a half-spectrum inverse is always staged, because the vendor overwrites its input. The
+    ``factor`` scales that staging copy when there is one (the transform is linear), and the output otherwise. A
+    layout the vendor cannot address even staged falls back to the ``pure`` expansion, with a warning naming the
+    backend.
+    """
+    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, real_of  # avoid loop
+
+    inverse = isinstance(node, IFFT)
+    indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
+    axes = normalize_fft_axes(len(indesc.shape), node.axes)
+    transform = Transform(indesc, outdesc, axes, inverse, node.half_spectrum)
+    complex_type = complex_of(outdesc.dtype)
+    read_type = real_of(complex_type) if transform.real_input else complex_type
+    # The staged copy takes the output's layout where the shapes agree: the relayout a source the vendor cannot
+    # plan against needs (a batch-innermost view into a Fortran-order result). One copy beats the separable DFT.
+    staged = data.Array(
+        read_type,
+        indesc.shape,
+        storage=outdesc.storage,
+        strides=outdesc.strides if indesc.shape == outdesc.shape else None,
+    )
+    tasklet = None
+    stage = indesc.dtype != read_type or transform.real_output
+    if complex_type in COMPLEX_TYPES:
+        if not stage:
+            tasklet = call(transform)
+            stage = tasklet is None
+        if stage:
+            tasklet = call(transform._replace(src=staged))
+    if tasklet is None:
+        warnings.warn(
+            f"{backend} cannot transform axes {axes} of {indesc.dtype}{list(indesc.shape)} "
+            f"(strides {list(indesc.strides)}); falling back to the pure expansion",
+            stacklevel=2,
+        )
+        return pure_sdfg(node, parent_state, parent_sdfg)
+
+    sdfg = SDFG(f"{node.label}_{backend}")
+    sdfg.add_array(
+        "_inp", indesc.shape, indesc.dtype, storage=indesc.storage, strides=indesc.strides, offset=indesc.offset
+    )
+    sdfg.add_array(
+        "_out", outdesc.shape, outdesc.dtype, storage=outdesc.storage, strides=outdesc.strides, offset=outdesc.offset
+    )
+    # Explicit on the GPU: the maps sit at host level next to a host-side library call.
+    schedule = (
+        dtypes.ScheduleType.GPU_Device
+        if outdesc.storage == dtypes.StorageType.GPU_Global
+        else dtypes.ScheduleType.Default
+    )
+    # Divide in floating point: ``1/N`` over an integer extent symbol is C integer division.
+    scale = (
+        ""
+        if str(node.factor) == "1"
+        else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor)})"
+    )
+
+    from dace.libraries.fft.algorithms.dft import index_ranges  # avoid loop
+
+    def elementwise(state: SDFGState, label: str, src: str, dst: str, shape, code: str) -> None:
+        ranges = index_ranges(shape, "__i")
+        subset = ", ".join(ranges)
+        state.add_mapped_tasklet(
+            label,
+            ranges,
+            {"i": Memlet(data=src, subset=subset)},
+            code,
+            {"o": Memlet(data=dst, subset=subset)},
+            schedule=schedule,
+            external_edges=True,
+        )
+
+    source = "_inp"
+    state = sdfg.add_state("fft", is_start_block=True)
+    if stage:
+        sdfg.add_transient("__staged", staged.shape, staged.dtype, storage=staged.storage, strides=staged.strides)
+        # The cast names the type: ``decltype(o)`` would be a reference to the target element.
+        elementwise(state, "stage", "_inp", "__staged", indesc.shape, f"o = dace.{read_type.to_string()}(i){scale}")
+        source = "__staged"
+        state = sdfg.add_state_after(state, "fft")
+    state.add_edge(state.add_read(source), None, tasklet, "__in", Memlet.from_array(source, sdfg.arrays[source]))
+    state.add_edge(tasklet, "__out", state.add_write("_out"), None, Memlet.from_array("_out", sdfg.arrays["_out"]))
+    if scale and not stage:
+        elementwise(
+            sdfg.add_state_after(state, "normalize"), "normalize", "_out", "_out", outdesc.shape, f"o = i{scale}"
+        )
+    return sdfg
+
+
+def dense_block_order(
+    descs: Sequence[data.Data], axes: Sequence[int]
+) -> tuple[list[int], list[symbolic.SymbolicType]] | None:
+    """An order of ``axes``, slowest first, in which every descriptor lays them out as ONE dense block.
+
+    Returned with each descriptor's element stride (its fastest axis's stride): axis ``order[k]``
+    steps by that stride times the extents of every later axis. The order is shared, since a plan's
+    dimension list maps the same logical axis in the input and the output.
+    """
+    for order in itertools.permutations(axes):
+        steps = []
+        for desc in descs:
+            step = span = desc.strides[order[-1]]
+            for axis in reversed(order):
+                if symbolic.equal(desc.strides[axis], span) is not True:
+                    break
+                span = span * desc.shape[axis]
+            else:
+                steps.append(step)
+                continue
+            break
+        if len(steps) == len(descs):
+            return list(order), steps
     return None
 
 
-def vendor_supported(indesc: data.Data, outdesc: data.Data, node: FourierTransform, scales: bool) -> bool:
-    """Whether a vendor plan can compute ``node``: rank 1 to 3, C-ordered arrays, an axis it can batch, and a factor
-    of 1 unless the expansion ``scales`` its output. Otherwise the pure expansion computes it."""
-    rank = len(indesc.shape)
-    c_order = [prod(indesc.shape[d + 1 :]) for d in range(rank)]
+def plan_cache(prefix: str, handle: str, key_length: int, destroy: str) -> tuple[str, list[str], str, str]:
+    """State fields, init and exit code of one cached plan, and the C++ that compares ``__key`` against it."""
+    plan = f"{prefix}_plan_{next(PLAN_IDS)}"
+    fields = [f"{handle} {plan};", f"long long {plan}_key[{key_length}];", f"bool {plan}_made;"]
+    return plan, fields, f"__state->{plan}_made = false;", f"if (__state->{plan}_made) {destroy}(__state->{plan});"
+
+
+def key_matches(plan: str, key_length: int) -> str:
     return (
-        rank in (1, 2, 3)
-        and list(indesc.strides) == c_order
-        and list(outdesc.strides) == c_order
-        and (scales or str(node.factor) == "1")
-        and (node.axis is None or batched_transform(indesc, node.axis) is not None)
+        f"bool __same = __state->{plan}_made;\n"
+        f"for (int __k = 0; __same && __k < {key_length}; ++__k)\n"
+        f"    __same = __state->{plan}_key[__k] == __key[__k];"
     )
 
 
-class GpuFftApi(NamedTuple):
-    """Spelling of a GPU FFT API: the function prefix, the constant prefix and the inverse direction."""
+def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
+    """One ``fftw_plan_guru64_dft`` (``_r2c``, ``_c2r``) over the transformed axes, every other axis a ``howmany``
+    batch dimension, planned once and kept in the SDFG state.
 
-    name: str
-    prefix: str
-    constant: str
-    inverse: str
+    Both dimension lists step by the descriptors' own strides, so any rank, any axis set and any strided view is
+    one plan, and one buffer on both connectors is FFTW's in-place transform. The plan is replanned when its key
+    changes: the extents and strides, whether the transform is in place, the planner's thread count and the
+    arrays' alignment, the conditions under which FFTW's new-array execute may reuse a plan. FFTW's planner is
+    not thread-safe, so planning is serialized; execution is not. Inside a parallel region a plan that does not
+    match the cached one is planned for that call only, since another thread may be executing the cached one.
+    """
+    from dace.codegen.targets import cpp  # avoid import loop
+    from dace.libraries.fft.environments import fftw3
 
+    src, out, axes = transform.src, transform.out, transform.axes
+    if len(set(axes)) != len(axes):
+        return None
+    prefix = "fftw" if transform.double else "fftwf"
+    real_t = "double" if transform.double else "float"
+    complex_t = f"{prefix}_complex"
+    in_t = real_t if transform.real_input else complex_t
+    out_t = real_t if transform.real_output else complex_t
+    kind = "dft_r2c" if transform.real_input else "dft_c2r" if transform.real_output else "dft"
+    batch = [d for d in range(len(src.shape)) if d not in axes]
 
-CUFFT = GpuFftApi("cuFFT", "cufft", "CUFFT", "CUFFT_INVERSE")
-HIPFFT = GpuFftApi("hipFFT", "hipfft", "HIPFFT", "HIPFFT_BACKWARD")
+    def iodim(
+        extent: symbolic.SymbolicType, istride: symbolic.SymbolicType, ostride: symbolic.SymbolicType
+    ) -> list[str]:
+        return [cpp.sym2cpp(extent), cpp.sym2cpp(istride), cpp.sym2cpp(ostride)]
 
-
-def _expand_gpu_fft(node, parent_state: SDFGState, parent_sdfg: SDFG, is_inverse: bool, api: GpuFftApi):
-    input, output = _get_input_and_output(parent_state, node)
-    indesc = parent_sdfg.arrays[input]
-    outdesc = parent_sdfg.arrays[output]
-    if not vendor_supported(indesc, outdesc, node, scales=False):
-        return _expand_dft(node, parent_state, parent_sdfg, is_inverse)
-    return _generate_gpu_fft_code(indesc, outdesc, parent_sdfg, is_inverse, node.axis, api)
-
-
-@library.register_expansion(FFT, "cuFFT")
-class cuFFTFFTExpansion(xf.ExpandTransformation):
-    environments = [env.cuFFT]
-    plan_uid = 0
-
-    @staticmethod
-    def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_gpu_fft(node, parent_state, parent_sdfg, False, CUFFT)
-
-
-@library.register_expansion(IFFT, "cuFFT")
-class cuFFTIFFTExpansion(xf.ExpandTransformation):
-    environments = [env.cuFFT]
-    plan_uid = 0
-
-    @staticmethod
-    def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_gpu_fft(node, parent_state, parent_sdfg, True, CUFFT)
-
-
-@library.register_expansion(FFT, "hipFFT")
-class hipFFTFFTExpansion(xf.ExpandTransformation):
-    environments = [env.hipFFT]
-
-    @staticmethod
-    def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_gpu_fft(node, parent_state, parent_sdfg, False, HIPFFT)
-
-
-@library.register_expansion(IFFT, "hipFFT")
-class hipFFTIFFTExpansion(xf.ExpandTransformation):
-    environments = [env.hipFFT]
-
-    @staticmethod
-    def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_gpu_fft(node, parent_state, parent_sdfg, True, HIPFFT)
-
-
-def _generate_gpu_fft_code(
-    indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_inverse: bool, axis: int | None, api: GpuFftApi
-):
-    from dace.codegen.targets import cpp  # Avoid import loops
-
-    p = api.prefix
-    if indesc.storage != dtypes.StorageType.GPU_Global:
-        raise ValueError(f"{api.name} implementation requires input array to be on GPU")
-    if outdesc.storage != dtypes.StorageType.GPU_Global:
-        raise ValueError(f"{api.name} implementation requires output array to be on GPU")
-
-    fft_type = _types_to_gpu_fft(indesc.dtype, outdesc.dtype, api)
-    init_code = ""
-    exit_code = ""
-    callsite_code = ""
-
-    # Make a unique name for this plan
-    if not is_inverse:
-        plan_name = f"fwdplan{cuFFTFFTExpansion.plan_uid}"
-        cuFFTFFTExpansion.plan_uid += 1
-        direction = f"{api.constant}_FORWARD"
-        tasklet_prefix = ""
+    dims = [iodim(n, src.strides[d], out.strides[d]) for n, d in zip(transform.lengths, axes)]
+    # MKL's FFTW3 interface plans at most one batch dimension and returns no plan otherwise, so a batch that is one
+    # dense block goes as one dimension, and any other batch plans its innermost dimension and loops over the rest,
+    # one plan executed per slice.
+    block = dense_block_order((src, out), batch) if len(batch) > 1 else None
+    looped: list[int] = []
+    if block is not None:
+        howmany = [iodim(functools.reduce(operator.mul, (src.shape[d] for d in batch), 1), *block[1])]
     else:
-        plan_name = f"invplan{cuFFTIFFTExpansion.plan_uid}"
-        cuFFTIFFTExpansion.plan_uid += 1
-        direction = api.inverse
-        tasklet_prefix = "i"
+        looped, planned = batch[:-1], batch[-1:]
+        howmany = [iodim(src.shape[d], src.strides[d], out.strides[d]) for d in planned]
 
-    fields = [
-        f"{p}Handle {plan_name};",
-    ]
-    plan_name = f"__state->{plan_name}"
+    def iodims(name: str, entries: list[list[str]]) -> str:
+        values = ", ".join(f"{{{', '.join(entry)}}}" for entry in entries)
+        return f"{prefix}_iodim64 {name}[{len(entries)}] = {{{values}}};" if entries else ""
 
-    init_code += f"""
-    {p}Create(&{plan_name});
-    """
-    exit_code += f"""
-    {p}Destroy({plan_name});
-    """
-
-    if axis is None:
-        cdims = ", ".join([cpp.sym2cpp(s) for s in indesc.shape])
-        # Of the MakePlan{N}d functions only the 1-D one takes a batch count
-        batch = ", /*batch=*/1" if len(indesc.shape) == 1 else ""
-        make_plan = f"""
-        {{
-            size_t __work_size = 0;
-            {p}MakePlan{len(indesc.shape)}d({plan_name}, {cdims}, {fft_type}{batch}, &__work_size);
+    loop_open = "".join(f"for (long long __b{d} = 0; __b{d} < {cpp.sym2cpp(src.shape[d])}; ++__b{d}) " for d in looped)
+    in_offset = "".join(f" + __b{d} * ({cpp.sym2cpp(src.strides[d])})" for d in looped)
+    out_offset = "".join(f" + __b{d} * ({cpp.sym2cpp(out.strides[d])})" for d in looped)
+    # Slices of the planned arrays have any alignment; a whole array keeps the planned one, part of the key.
+    flags = "FFTW_ESTIMATE | FFTW_UNALIGNED" if looped else "FFTW_ESTIMATE"
+    alignment = (
+        "0, 0"
+        if looped
+        else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
+    )
+    key = [value for entry in dims + howmany for value in entry]
+    key_length = len(key) + 4
+    sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
+    threaded = fftw3.threaded()
+    # A threaded FFTW plans for the team the program runs (pocketfft's ``workers``); inside a parallel region, one.
+    team = (
+        f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
+        f"{prefix}_plan_with_nthreads(__threads);"
+        if threaded
+        else ""
+    )
+    threads = "omp_in_parallel() ? 1 : omp_get_max_threads()" if threaded else "1"
+    plan, fields, init, exit_code = plan_cache(prefix, f"{prefix}_plan", key_length, f"{prefix}_destroy_plan")
+    code = f"""
+    {iodims("__dims", dims)}
+    {iodims("__howmany", howmany)}
+    const int __threads = {threads};
+    const long long __key[{key_length}] = {{{", ".join(key)}, (long long)((const void *)__in == (const void *)__out),
+                                          (long long)__threads, {alignment}}};
+    {prefix}_plan __plan = nullptr;
+    bool __local = false;
+    #pragma omp critical(dace_fftw_planner)
+    {{
+        {key_matches(plan, key_length)}
+        if (__same) {{
+            __plan = __state->{plan};
+        }} else {{
+            {team}
+            __plan = {prefix}_plan_guru64_{kind}({len(dims)}, __dims, {len(howmany)}, {"__howmany" if howmany else "NULL"},
+                                              ({in_t} *)__in, ({out_t} *)__out, {sign}{flags});
+            __local = omp_in_parallel();
+            if (__plan && !__local) {{
+                if (__state->{plan}_made)
+                    {prefix}_destroy_plan(__state->{plan});
+                __state->{plan} = __plan;
+                for (int __k = 0; __k < {key_length}; ++__k)
+                    __state->{plan}_key[__k] = __key[__k];
+                __state->{plan}_made = true;
+            }}
         }}
-        """
-    else:
-        batch = batched_transform(indesc, axis)
-        assert batch is not None  # vendor_supported checked it
-        length, count, stride, distance = (cpp.sym2cpp(v) for v in batch)
-        make_plan = f"""
-        {{
-            size_t __work_size = 0;
-            int __length = {length};
-            {p}MakePlanMany({plan_name}, /*rank=*/1, &__length, /*inembed=*/&__length, {stride}, {distance},
-                            /*onembed=*/&__length, {stride}, {distance}, {fft_type}, {count}, &__work_size);
-        }}
-        """
-
-    # Make plan in init if not symbolic or not data-dependent, otherwise make at callsite.
-    symbols_that_change = {s for ise in sdfg.edges() for s in ise.data.assignments.keys()}
-    symbols_that_change &= set(map(str, sdfg.symbols.keys()))
-
-    def _fsyms(x):
-        if symbolic.issymbolic(x):
-            return set(map(str, x.free_symbols))
-        return set()
-
-    if symbols_that_change and any(_fsyms(s) & symbols_that_change for s in indesc.shape):
-        callsite_code += make_plan
-    else:
-        init_code += make_plan
-
-    # Execute plan
-    callsite_code += f"""
-    {p}SetStream({plan_name}, __dace_current_stream);
-    {p}XtExec({plan_name}, _inp, _out, {direction});
+    }}
+    if (!__plan)
+        throw std::runtime_error("FFTW returned no plan for this transform layout");
+    {loop_open}{prefix}_execute_{kind}(__plan, ({in_t} *)__in{in_offset}, ({out_t} *)__out{out_offset});
+    if (__local) {{
+        #pragma omp critical(dace_fftw_planner)
+        {prefix}_destroy_plan(__plan);
+    }}
     """
-
     return nodes.Tasklet(
-        f"{p}_{tasklet_prefix}fft",
-        {"_inp"},
-        {"_out"},
-        callsite_code,
+        f"fftw3_{'i' if transform.inverse else ''}fft",
+        {"__in"},
+        {"__out"},
+        code,
         language=dtypes.Language.CPP,
         state_fields=fields,
-        code_init=init_code,
+        code_init=init,
         code_exit=exit_code,
     )
 
 
-def _expand_fftw3(node, parent_state: SDFGState, parent_sdfg: SDFG, is_inverse: bool):
-    from dace.codegen.targets import cpp  # Avoid import loops
+class GpuFftLayout(NamedTuple):
+    """One ``MakePlanMany`` plan: ``lengths`` in plan order, each side's embed (its own extents in that order),
+    element stride and batch distance, and the batch count."""
 
-    input, output = _get_input_and_output(parent_state, node)
-    indesc = parent_sdfg.arrays[input]
-    outdesc = parent_sdfg.arrays[output]
-    if (
-        not vendor_supported(indesc, outdesc, node, scales=True)
-        or indesc.dtype not in (dtypes.complex64, dtypes.complex128)
-        or outdesc.dtype != indesc.dtype
-    ):
-        return _expand_dft(node, parent_state, parent_sdfg, is_inverse)
+    lengths: list[symbolic.SymbolicType]
+    in_embed: list[symbolic.SymbolicType]
+    in_stride: symbolic.SymbolicType
+    in_distance: symbolic.SymbolicType
+    out_embed: list[symbolic.SymbolicType]
+    out_stride: symbolic.SymbolicType
+    out_distance: symbolic.SymbolicType
+    batch: symbolic.SymbolicType
 
-    prefix, complex_t = ("fftw_", "fftw_complex") if indesc.dtype == dtypes.complex128 else ("fftwf_", "fftwf_complex")
-    direction = "FFTW_BACKWARD" if is_inverse else "FFTW_FORWARD"
-    if node.axis is None:
-        cdims = ", ".join(cpp.sym2cpp(s) for s in indesc.shape)
-        plan = f"{prefix}plan_dft_{len(indesc.shape)}d({cdims}, ({complex_t} *)_inp, ({complex_t} *)_out, {direction}, "
-        plan += "FFTW_ESTIMATE)"
+
+def gpu_fft_layout(transform: Transform) -> GpuFftLayout | None:
+    """``transform`` as ONE ``MakePlanMany`` plan, else ``None``.
+
+    A plan reads element ``(p, q, r)`` of batch ``b`` at ``stride * (p*n1*n2 + q*n2 + r) + dist * b``, separately
+    for input and output with each side's embed. So each side's transformed axes must be one dense block under a
+    single element stride, and its other axes one dense block under a single batch distance, in an axis order both
+    sides share. That covers the C-order trailing and leading runs, a Fortran-order batch (the C-order batch of its
+    reversed axes), and a batch-innermost view of an ``order='F'`` reshape. numpy's result does not depend on the
+    axis order, so the order is free to choose -- except for a half-spectrum transform, whose halved axis must stay
+    the last.
+    """
+    src, out, axes = transform.src, transform.out, transform.axes
+    if len(set(axes)) != len(axes) or len(axes) > MAX_GPU_FFT_RANK:
+        return None
+    if any(d.storage != dtypes.StorageType.GPU_Global for d in (src, out)):
+        return None
+    block = dense_block_order((src, out), axes)
+    if block is None or (transform.half_spectrum and block[0][-1] != axes[-1]):
+        return None
+    order, (istride, ostride) = block
+    lengths = dict(zip(axes, transform.lengths))
+    rest = [a for a in range(len(src.shape)) if a not in axes]
+    in_size = functools.reduce(operator.mul, (src.shape[a] for a in order), 1)
+    out_size = functools.reduce(operator.mul, (out.shape[a] for a in order), 1)
+    if not rest:
+        idist, odist, batch = istride * in_size, ostride * out_size, 1
     else:
-        batch = batched_transform(indesc, node.axis)
-        assert batch is not None  # vendor_supported checked it
-        length, count, stride, distance = (cpp.sym2cpp(v) for v in batch)
-        plan = (
-            f"{prefix}plan_many_dft(1, &__length, {count}, ({complex_t} *)_inp, NULL, {stride}, {distance}, "
-            f"({complex_t} *)_out, NULL, {stride}, {distance}, {direction}, FFTW_ESTIMATE)"
-        )
-    code = f"""
-    int __length = {cpp.sym2cpp(indesc.shape[node.axis or 0])};
-    {prefix}plan __plan = {plan};
-    {prefix}execute(__plan);
-    {prefix}destroy_plan(__plan);
-    """
-    if str(node.factor) != "1":
-        code += f"""
-    for (long long __i = 0; __i < {cpp.sym2cpp(prod(outdesc.shape))}; ++__i) _out[__i] *= {cpp.sym2cpp(node.factor)};
-    """
-    return nodes.Tasklet(
-        f"fftw3_{'i' if is_inverse else ''}fft", {"_inp"}, {"_out"}, code, language=dtypes.Language.CPP
+        batched = dense_block_order((src, out), rest)
+        if batched is None:
+            return None
+        batch_order, (idist, odist) = batched
+        batch = functools.reduce(operator.mul, (src.shape[a] for a in batch_order), 1)
+    return GpuFftLayout(
+        [lengths[a] for a in order],
+        [src.shape[a] for a in order],
+        istride,
+        idist,
+        [out.shape[a] for a in order],
+        ostride,
+        odist,
+        batch,
     )
 
 
-@library.register_expansion(FFT, "FFTW3")
-class FFTW3FFTExpansion(xf.ExpandTransformation):
+def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
+    """The cuFFT / hipFFT call in ``dialect``'s spelling: a cached ``MakePlanMany64`` plan run on the SDFG's stream.
+
+    The plan lives in the SDFG state and is rebuilt only when its layout changes between calls, so a
+    transform inside a loop plans once. One buffer on both connectors is the vendor's in-place transform.
+    """
+
+    def call(transform: Transform) -> nodes.Tasklet | None:
+        from dace.codegen.targets import cpp  # avoid import loop
+
+        layout = gpu_fft_layout(transform)
+        if layout is None:
+            return None
+        rank = len(layout.lengths)
+        key = [
+            cpp.sym2cpp(e)
+            for e in (
+                *layout.lengths,
+                *layout.in_embed,
+                layout.in_stride,
+                layout.in_distance,
+                *layout.out_embed,
+                layout.out_stride,
+                layout.out_distance,
+                layout.batch,
+            )
+        ]
+        lengths, in_embed, out_embed = "__key", f"__key + {rank}", f"__key + {2 * rank + 2}"
+        in_layout = f"{in_embed}, __key[{2 * rank}], __key[{2 * rank + 1}]"
+        out_layout = f"{out_embed}, __key[{3 * rank + 2}], __key[{3 * rank + 3}]"
+        batch = f"__key[{3 * rank + 4}]"
+        letter = "Z" if transform.double else "C"
+        real_letter = "D" if transform.double else "R"
+        kind = (
+            f"{real_letter}2{letter}"
+            if transform.real_input
+            else f"{letter}2{real_letter}"
+            if transform.real_output
+            else f"{letter}2{letter}"
+        )
+        direction = dialect.inverse if transform.inverse else f"{dialect.enum}FORWARD"
+        plan, fields, init, exit_code = plan_cache(
+            dialect.api, f"{dialect.api}Handle", len(key), f"{dialect.api}Destroy"
+        )
+        check = (
+            f"auto __check = [](const char *what, {dialect.api}Result result) {{ "
+            f'if (result != {dialect.enum}SUCCESS) throw std::runtime_error(std::string("{dialect.name} ") + '
+            f'what + " failed with status " + std::to_string((int)result)); }};'
+        )
+        code = f"""
+        {check}
+        long long __key[{len(key)}] = {{{", ".join(key)}}};
+        // An empty transform is numpy's empty result: nothing to plan, and the vendor planner raises
+        // SIGFPE on a zero extent or batch.
+        bool __empty = {batch} == 0;
+        for (int __k = 0; __k < {rank}; ++__k)
+            __empty = __empty || __key[__k] == 0;
+        if (!__empty) {{
+        {key_matches(plan, len(key))}
+        if (!__same) {{
+            if (__state->{plan}_made)
+                __check("{dialect.api}Destroy", {dialect.api}Destroy(__state->{plan}));
+            __check("{dialect.api}Create", {dialect.api}Create(&__state->{plan}));
+            size_t __work_size = 0;
+            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__state->{plan}, {rank}, {lengths},
+                {in_layout}, {out_layout}, {dialect.enum}{kind}, {batch}, &__work_size));
+            for (int __k = 0; __k < {len(key)}; ++__k)
+                __state->{plan}_key[__k] = __key[__k];
+            __state->{plan}_made = true;
+        }}
+        __check("{dialect.api}SetStream", {dialect.api}SetStream(__state->{plan}, __dace_current_stream));
+        __check("{dialect.api}XtExec", {dialect.api}XtExec(__state->{plan}, (void *)__in, (void *)__out, {direction}));
+        }}
+        """
+        return nodes.Tasklet(
+            f"{dialect.api}_{'i' if transform.inverse else ''}fft",
+            {"__in"},
+            {"__out"},
+            code,
+            language=dtypes.Language.CPP,
+            state_fields=fields,
+            code_init=init,
+            code_exit=exit_code,
+        )
+
+    return call
+
+
+class ExpandFFTW3(xf.ExpandTransformation):
+    """CPU FFTW3 backend: any rank, axes, strides, real or complex input, any ``norm``."""
+
     environments = [env.FFTW3]
 
     @staticmethod
-    def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_fftw3(node, parent_state, parent_sdfg, is_inverse=False)
+    def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, fftw3_call, "FFTW3")
+
+
+@library.register_expansion(FFT, "FFTW3")
+class FFTW3FFTExpansion(ExpandFFTW3):
+    pass
 
 
 @library.register_expansion(IFFT, "FFTW3")
-class FFTW3IFFTExpansion(xf.ExpandTransformation):
-    environments = [env.FFTW3]
+class FFTW3IFFTExpansion(ExpandFFTW3):
+    pass
 
-    @staticmethod
-    def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return _expand_fftw3(node, parent_state, parent_sdfg, is_inverse=True)
+
+class ExpandGPUFFT(xf.ExpandTransformation):
+    """The one GPU FFT expansion; a backend subclass names its environment and :class:`GpuFftDialect`."""
+
+    environments = []
+    dialect: GpuFftDialect
+
+    @classmethod
+    def expansion(cls, node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, gpu_fft_call(cls.dialect), cls.dialect.name)
+
+
+@library.register_expansion(FFT, "cuFFT")
+class cuFFTFFTExpansion(ExpandGPUFFT):
+    environments = [env.cuFFT]
+    dialect = CUFFT
+
+
+@library.register_expansion(IFFT, "cuFFT")
+class cuFFTIFFTExpansion(ExpandGPUFFT):
+    environments = [env.cuFFT]
+    dialect = CUFFT
+
+
+@library.register_expansion(FFT, "hipFFT")
+class hipFFTFFTExpansion(ExpandGPUFFT):
+    environments = [env.hipFFT]
+    dialect = HIPFFT
+
+
+@library.register_expansion(IFFT, "hipFFT")
+class hipFFTIFFTExpansion(ExpandGPUFFT):
+    environments = [env.hipFFT]
+    dialect = HIPFFT
+
+
+class ExpandMKL(ExpandFFTW3):
+    """MKL backend: MKL exposes the FFTW3 C ABI, so the code is the FFTW3 expansion's, linked against MKL."""
+
+    environments = [IntelMKL]
+
+
+@library.register_expansion(FFT, "MKL")
+class MKLFFTExpansion(ExpandMKL):
+    pass
+
+
+@library.register_expansion(IFFT, "MKL")
+class MKLIFFTExpansion(ExpandMKL):
+    pass
 
 
 ##################################################################################################
@@ -336,20 +629,5 @@ class FFTW3IFFTExpansion(xf.ExpandTransformation):
 ##################################################################################################
 
 
-def _get_input_and_output(state: SDFGState, node: nodes.LibraryNode):
-    """
-    Helper function that returns the input and output arrays of the library node
-    """
-    in_edge = next(e for e in state.in_edges(node) if e.dst_conn)
-    out_edge = next(e for e in state.out_edges(node) if e.src_conn)
-    return in_edge.data.data, out_edge.data.data
-
-
-def _types_to_gpu_fft(indtype: dtypes.typeclass, outdtype: dtypes.typeclass, api: GpuFftApi):
-    typedict = {
-        dtypes.float32: "R",
-        dtypes.float64: "D",
-        dtypes.complex64: "C",
-        dtypes.complex128: "Z",
-    }
-    return f"{api.constant}_{typedict[indtype]}2{typedict[outdtype]}"
+def input_and_output(state: SDFGState, sdfg: SDFG, node: nodes.LibraryNode) -> tuple[data.Data, data.Data]:
+    return sdutil.in_desc_with_name(node, state, sdfg, "_inp"), sdutil.out_desc_with_name(node, state, sdfg, "_out")
