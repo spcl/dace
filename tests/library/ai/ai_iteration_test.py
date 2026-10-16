@@ -33,9 +33,9 @@ import pytest
 import dace
 import dace.libraries.ai as ai
 from dace import dtypes, nodes
+from dace.codegen import compiler
 from dace.libraries.ai import cache as ai_cache
 from dace.libraries.ai.nodes import AINode
-from dace.libraries.ai.sysinfo import cpu_has_feature
 
 N = 64
 TILE = 8
@@ -207,7 +207,8 @@ def test_feedback_revises_a_working_tasklet():
 @pytest.mark.ai
 @pytest.mark.skipif(platform.machine() != "x86_64", reason="needs an x86-64 host")
 @pytest.mark.skipif(
-    not cpu_has_feature("avx2") or not cpu_has_feature("fma"), reason="needs a host CPU with AVX2 and FMA"
+    "avx2" not in compiler.host_cpu()[1] or "fma" not in compiler.host_cpu()[1],
+    reason="needs a host CPU with AVX2 and FMA",
 )
 def test_a_performance_complaint_gets_a_vectorized_rewrite():
     """

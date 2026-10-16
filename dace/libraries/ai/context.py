@@ -540,10 +540,9 @@ def collect_target_info(device_level: bool) -> TargetInfo:
     :param device_level: True if the tasklet will be compiled as GPU device code.
     :return: The target description.
     """
-    from dace.codegen import compiler_family  # Avoid a cyclic import through the code generator
-    from dace.libraries.ai import sysinfo
+    from dace.codegen import common, compiler, compiler_family  # Avoid a cyclic import through the code generator
 
-    cpu = sysinfo.cpu_description()
+    cpu_model, cpu_flags = compiler.host_cpu()
     host_compiler = compiler_family.host_compiler()
     try:
         family = compiler_family.detect(host_compiler)
@@ -556,9 +555,9 @@ def collect_target_info(device_level: bool) -> TargetInfo:
 
     info = TargetInfo(
         platform=platform.system(),
-        machine=cpu.get("machine", platform.machine()),
-        cpu_model=cpu.get("model"),
-        cpu_features=cpu.get("flags"),
+        machine=platform.machine(),
+        cpu_model=cpu_model,
+        cpu_features=" ".join(cpu_flags) or None,
         host_compiler=host_compiler,
         compiler_family=family,
         host_flags=host_flags,
@@ -566,17 +565,22 @@ def collect_target_info(device_level: bool) -> TargetInfo:
         cpp_standard=Config.get("compiler", "cpp_standard"),
     )
 
-    gpu_arch = sysinfo.gpu_architectures()
-    if gpu_arch is not None or device_level:
-        from dace.codegen import common
-
-        try:
-            backend = common.get_gpu_backend()
-        except RuntimeError:
-            backend = None
+    try:
+        backend = common.get_gpu_backend()
+    except RuntimeError:
+        backend = None
+    # What nvcc or hipcc will target: the configured architecture, else the local devices
+    configured = Config.get("compiler", "cuda", "cuda_arch" if backend == "cuda" else "hip_arch") if backend else ""
+    gpus = common.local_gpus() if backend else ()
+    if configured:
+        prefix = "sm_" if backend == "cuda" else ""
+        architectures = ", ".join(prefix + a.strip() for a in configured.split(",") if a.strip())
+    else:
+        architectures = ", ".join(sorted({gpu.architecture for gpu in gpus if gpu.architecture}))
+    if architectures or device_level:
         info.gpu_backend = backend
-        info.gpu_architectures = gpu_arch
-        info.gpu_names = sysinfo.gpu_names()
+        info.gpu_architectures = architectures or None
+        info.gpu_names = ", ".join(sorted({gpu.name for gpu in gpus if gpu.name})) or None
         if backend == "hip":
             info.gpu_flags = Config.get("compiler", "cuda", "hip_args")
         elif backend == "cuda":

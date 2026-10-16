@@ -20,8 +20,8 @@ import pytest
 
 import dace
 from dace import dtypes, nodes
+from dace.codegen import compiler
 from dace.libraries.ai.nodes import AINode
-from dace.libraries.ai.sysinfo import cpu_has_feature
 
 N = 64
 TILE = 8
@@ -80,7 +80,8 @@ def _tile_gemm_sdfg(description: str) -> dace.SDFG:
 @pytest.mark.ai
 @pytest.mark.skipif(platform.machine() != "x86_64", reason="needs an x86-64 host")
 @pytest.mark.skipif(
-    not cpu_has_feature("avx2") or not cpu_has_feature("fma"), reason="needs a host CPU with AVX2 and FMA"
+    "avx2" not in compiler.host_cpu()[1] or "fma" not in compiler.host_cpu()[1],
+    reason="needs a host CPU with AVX2 and FMA",
 )
 def test_vectorized_tile_in_a_multicore_map():
     sdfg = _tile_gemm_sdfg(TILE_GEMM_DESCRIPTION)
