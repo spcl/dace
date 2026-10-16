@@ -151,6 +151,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "FillLibraryNode": "fill: set every element to a constant",
     "FindFirst": "find-first: index of the first element satisfying the predicate",
     "FortranIONode": "Fortran I/O statement",
+    "FourierTransform": "discrete Fourier transform, forward or inverse",
     "Gather": "MPI_Gather: collect from every rank onto the root",
     "Gatherv": "MPI_Gatherv: collect variable-sized blocks onto the root",
     "Gearbox": "gearbox: change the element width of a stream",
@@ -1168,7 +1169,8 @@ def preamble(
     seen_wrappers: set[str] = set()
     wrappers: list[str] = []
     for vendor in vendors:
-        if vendor.wrapper:
+        # The wrappers are C++; a C unit's expansions call the vendor directly.
+        if vendor.wrapper and dialect is not cpf_lowering.Dialect.STANDALONE_C:
             wrapper_headers, wrapper = cpf_lowering.vendor_wrapper(vendor.wrapper, seen_wrappers)
             vendor_headers += wrapper_headers
             wrappers.append(wrapper)
@@ -1534,12 +1536,13 @@ def render(
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
                     body = re.sub(r"\b__restrict__\b", "restrict", body)
+                # Last, because the passes above match the DaCe spellings the generator wrote.
                 if dialect in cpf_lowering.DEVICE_DIALECTS:
-                    # Last, because the passes above match the DaCe spellings the generator wrote.
-                    body = cpf_lowering.respell_vendor_namespaces(cpf_lowering.device_spell_out(body, dialect))
+                    body = cpf_lowering.device_spell_out(body, dialect)
                     device_body = cpf_lowering.respell_vendor_namespaces(
                         cpf_lowering.device_spell_out(device_body, dialect)
                     )
+                body = cpf_lowering.respell_vendor_namespaces(body)
     code = preamble(body, dialect, frame.environments) + body
     # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
     device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
