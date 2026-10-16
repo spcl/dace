@@ -291,11 +291,23 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
 #: both correct and the rendering CPF wants -- so ``Reduce`` takes ``pure`` here, ahead of its host
 #: ``CPU`` lowering, its ``GPUAuto`` being a ``dace::`` cub call where its ``pure`` is loops.
 #:
+#: So are the node types whose ``pure`` expansion is maps that do NOT take the node's schedule.
+#: ``StateScan``'s ``pure`` pins every map ``Sequential`` (it is the form for readers of the SDFG), so
+#: at host level over device memory its step runs as host code and its loop headers read the device
+#: tables (crc16's ``data``, dfa's ``__symbols``). Its ``CUDA`` expansion is the same SDFG with the
+#: maps on ``GPU_Device`` -- kernels the device unit holds, no library call -- and it is the
+#: implementation canonicalize already chose for the node.
+#:
 #: The device expansions named here reach the runtime the same way the host ones do, and CPF spells
 #: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
-RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Reduce": ("pure",), "Scan": ("CUDA",)}
+RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {
+    "FindFirst": ("CUDA",),
+    "Reduce": ("pure",),
+    "Scan": ("CUDA",),
+    "StateScan": ("CUDA",),
+}
 
 #: The one vendor library family each architecture renders through, best first. A BLAS, LAPACK, linear-algebra or
 #: FFT node with one of these implementations becomes that library call rather than CPF loops: the libraries ship
