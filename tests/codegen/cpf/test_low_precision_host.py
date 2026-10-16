@@ -7,10 +7,12 @@ conversions and the OpenMP reductions on them; the standard math functions are a
 in ``float`` through CPF's ``cpf_lowp_*`` wrappers. The C dialect, whose helpers are typed by name, refuses them.
 """
 
+import ctypes
 import re
 import shutil
 import subprocess
 
+import ml_dtypes
 import numpy as np
 import pytest
 
@@ -72,9 +74,57 @@ def test_a_low_precision_unit_builds_where_the_compiler_has_the_type(dtype):
     cpf.render(scaled_sum(dtype), language="c++", check_compiles=True)
 
 
+@pytest.mark.parametrize("dtype", [dace.bfloat16, dace.float16], ids=["bf16", "fp16"])
+def test_a_narrow_scalar_is_passed_as_float(dtype, tmp_path):
+    """A 16-bit float BY VALUE is not ``uint16_t`` on the ABI (x86-64 passes it in a vector register), so the entry
+    takes ``float`` and narrows inside; arrays stay native pointers over the caller's 16-bit storage. Called the
+    way HB's judge calls, through ctypes: ``c_float`` for the scalar, the raw 16-bit buffers for the arrays."""
+    compiler = native_compiler()
+    if compiler is None:
+        pytest.skip("no C++ compiler here takes __bf16 / _Float16 (GCC 13+ or Clang 18+ do)")
+    sdfg = scaled_sum(dtype)
+    rendering = cpf.render(sdfg, language="c++", check_compiles=False)
+    entry = re.search(r'extern "C" void (\w+)\(([^)]*)\)', rendering.code)
+    params = [" ".join(param.split()) for param in entry.group(2).split(",")]
+    assert any(re.fullmatch(r"(const )?float a", param) for param in params), params
+    source = tmp_path / "unit.cpp"
+    source.write_text(rendering.code)
+    library = tmp_path / "unit.so"
+    subprocess.run(
+        [compiler, "-std=c++20", "-O2", "-fopenmp", "-shared", "-fPIC", str(source), "-o", str(library)], check=True
+    )
+
+    n, a = 64, 1.5
+    storage = ml_dtypes.bfloat16 if dtype == dace.bfloat16 else np.float16
+    rng = np.random.default_rng(3)
+    x = rng.standard_normal(n).astype(storage)
+    y = rng.standard_normal(n).astype(storage)
+    out = np.zeros(n, storage)
+    total = np.zeros(1, storage)
+    buffers = {"x": x, "y": y, "out": out, "total": total}
+    args = []
+    for param in params:
+        name = param.split()[-1].lstrip("*")
+        if name in buffers:
+            args.append(buffers[name].ctypes.data_as(ctypes.c_void_p))
+        elif name == "a":
+            args.append(ctypes.c_float(a))
+        else:
+            assert name == "N", param
+            args.append(ctypes.c_int64(n))
+    getattr(ctypes.CDLL(str(library)), entry.group(1))(*args)
+
+    expected = x.astype(np.float32) * a + y.astype(np.float32) / (2 * n) + np.exp(x.astype(np.float32))
+    np.testing.assert_allclose(out.astype(np.float32), expected, rtol=2e-2, atol=2e-2)
+
+
 if __name__ == "__main__":
     for dtype in (dace.bfloat16, dace.float16):
         test_a_low_precision_kernel_renders_with_the_native_type(dtype)
         test_the_c_dialect_refuses_a_low_precision_kernel(dtype)
         if native_compiler() is not None:
             test_a_low_precision_unit_builds_where_the_compiler_has_the_type(dtype)
+            import pathlib
+            import tempfile
+
+            test_a_narrow_scalar_is_passed_as_float(dtype, pathlib.Path(tempfile.mkdtemp()))

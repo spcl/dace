@@ -464,6 +464,8 @@ def test_a_bfloat16_kernel_renders_with_the_toolkit_type(language, vendor_type):
     code = both(rendering)
     assert "dace::bfloat16" not in code
     assert re.search(rf"\b{vendor_type}\s*\*\s*__restrict__\s+x\b", rendering.code), "the entry takes the toolkit type"
+    entry = re.search(r"void \w+\(([^)]*)\)\s*\{", rendering.code).group(1)
+    assert re.search(r"(?:const )?float a\b", entry), "a 16-bit float scalar crosses the ABI as float"
     assert ("hip/hip_bf16.h" if language == "hip" else "cuda_bf16.h") in code
     assert "cpf_narrow<" in code, "an integer reaches bf16 through float"
     assert "sizeof(T) == 2" in rendering.device_code, "the 2-byte accumulation has its own CAS"

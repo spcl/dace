@@ -746,6 +746,41 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
             )
 
 
+#: The 16-bit floats an entry takes by value as ``float`` (:func:`widen_narrow_scalar_arguments`).
+NARROW_SCALAR_TYPES = frozenset({dtypes.bfloat16, dtypes.float16})
+
+
+def widen_narrow_scalar_arguments(sdfg: SDFG) -> list[str]:
+    """Take every read-only 16-bit float scalar argument (bfloat16, float16) as ``float``, converted on entry.
+
+    Pointers to a 16-bit float cross the C ABI as the caller's ``uint16_t`` storage does, but a VALUE does not:
+    x86-64 passes ``__bf16`` / ``_Float16`` in a vector register and a ``uint16_t`` in an integer one, so a
+    ctypes caller's ``c_uint16`` would arrive as garbage. ``float`` is passed alike everywhere and holds every
+    16-bit float exactly. The argument keeps its name; the narrow value becomes a transient the program reads,
+    filled by a new first state. A written scalar is an output, which no caller passes by value, and is left alone.
+
+    :param sdfg: the SDFG to rewrite in place. Call on a COPY -- :func:`prepare` does.
+    :returns: the arguments taken as ``float``.
+    """
+    written = {node.data for state in sdfg.states() for node in state.data_nodes() if state.in_degree(node) > 0}
+    widened = []
+    for name, desc in list(sdfg.arrays.items()):
+        if desc.transient or not isinstance(desc, dt.Scalar) or desc.dtype not in NARROW_SCALAR_TYPES:
+            continue
+        if name in written:
+            continue
+        narrow = sdfg.find_new_name_avoiding_connectors(f"{name}_narrow")
+        sdfg.replace(name, narrow)
+        sdfg.arrays[narrow].transient = True
+        sdfg.add_scalar(name, dtypes.float32)
+        entry = sdfg.add_state_before(sdfg.start_block, f"narrow_{name}", is_start_block=True)
+        convert = entry.add_tasklet(f"narrow_{name}", {"__wide"}, {"__narrow"}, "__narrow = __wide")
+        entry.add_edge(entry.add_read(name), None, convert, "__wide", Memlet(f"{name}[0]"))
+        entry.add_edge(convert, "__narrow", entry.add_write(narrow), None, Memlet(f"{narrow}[0]"))
+        widened.append(name)
+    return widened
+
+
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> None:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
@@ -771,6 +806,7 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
                                  the entry signature cannot pass back (:func:`refuse_by_value_returns`).
     """
     cpf_lowering.refuse_unspellable_containers(sdfg)
+    widen_narrow_scalar_arguments(sdfg)
     device = uses_device_code(sdfg)
     if device:
         raise NotImplementedError(
