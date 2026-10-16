@@ -421,13 +421,15 @@ namespace dace
     // Block-collective staging copy of a 1-D to 3-D region between global and shared memory.
     // Wavefront groups take rows of the middle axis, the slowest axis is iterated, and lanes
     // keep a wavefront on one contiguous run of the fastest axis. Extents and strides are plain
-    // arguments (not template parameters) so the emitter's static-shape literals still fold.
+    // arguments (not template parameters) so the emitter's static-shape literals still fold. Strides are 64-bit:
+    // a tile of a level field can span more than 2**31 elements (144 levels x 16M columns).
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
     struct BlockCollective3D {
       static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
 
-      static DACE_DFI void Copy(const T* src, int src_zstride, int src_ystride, int src_xstride, T* dst,
-                                int dst_zstride, int dst_ystride, int dst_xstride, int zlen, int ylen, int xlen) {
+      static DACE_DFI void Copy(const T* src, int64_t src_zstride, int64_t src_ystride, int64_t src_xstride, T* dst,
+                                int64_t dst_zstride, int64_t dst_ystride, int64_t dst_xstride, int zlen, int ylen,
+                                int xlen) {
         const int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
         int lanes = (xlen >= COLLECTIVE_LANE_WIDTH)
@@ -457,6 +459,114 @@ namespace dace
           }
         }
 
+        if (!ASYNC) __syncthreads();
+      }
+    };
+
+    // BlockCollective3D for regions whose rows are contiguous on both sides (unit x stride), moving
+    // the global side in aligned 16-byte words whatever the element type (2 doubles, 4 floats, 8
+    // halves). A row that does not start on a 16-byte boundary is peeled: its head and tail elements
+    // move one at a time, so every word access is aligned and none touches memory outside the row.
+    // The shared side is written (Load) or read (Store) element by element, as it need not share the
+    // global row's alignment.
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
+    struct BlockCollective3DVec {
+      static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
+      static constexpr int WORD_BYTES = 16;
+      static constexpr int PER_WORD = sizeof(T) < WORD_BYTES ? WORD_BYTES / sizeof(T) : 1;
+      static_assert(sizeof(T) >= WORD_BYTES || WORD_BYTES % sizeof(T) == 0,
+                    "BlockCollective3DVec: element size must divide 16 bytes");
+      struct alignas(WORD_BYTES) Word { T e[PER_WORD]; };
+
+      // Lanes per row: a wavefront multiple covering a row's work items, at most the block.
+      static DACE_DFI int RowLanes(int xlen) {
+        const int items = xlen / PER_WORD + 2 * PER_WORD;
+        int lanes = (items >= COLLECTIVE_LANE_WIDTH)
+                        ? ((items + COLLECTIVE_LANE_WIDTH - 1) / COLLECTIVE_LANE_WIDTH) * COLLECTIVE_LANE_WIDTH
+                        : items;
+        if (lanes > BLOCK_SIZE) lanes = BLOCK_SIZE;
+        if (lanes < 1) lanes = 1;
+        return lanes;
+      }
+
+      // Elements before the global row pointer reaches a 16-byte boundary, at most xlen.
+      static DACE_DFI int Head(const T* row, int xlen) {
+        if (PER_WORD == 1) return 0;
+        const int misaligned = static_cast<int>(reinterpret_cast<uintptr_t>(row) & (WORD_BYTES - 1));
+        const int head = misaligned == 0 ? 0 : (WORD_BYTES - misaligned) / static_cast<int>(sizeof(T));
+        return head < xlen ? head : xlen;
+      }
+
+      // Global (src) -> shared (dst).
+      static DACE_DFI void Load(const T* src, int64_t src_zstride, int64_t src_ystride, T* dst, int64_t dst_zstride,
+                                int64_t dst_ystride, int zlen, int ylen, int xlen) {
+        const int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
+        const int lanes = RowLanes(xlen);
+        const int rows_at_once = BLOCK_SIZE / lanes;
+        const int y0 = ltid / lanes;
+        const int x0 = ltid - y0 * lanes;
+        if (y0 < rows_at_once) {
+          for (int z = 0; z < zlen; ++z) {
+            for (int y = y0; y < ylen; y += rows_at_once) {
+              const T* g = src + z * src_zstride + y * src_ystride;
+              T* s = dst + z * dst_zstride + y * dst_ystride;
+              const int head = Head(g, xlen);
+              const int words = (xlen - head) / PER_WORD;
+              const int body_end = head + words * PER_WORD;
+              const int items = head + words + (xlen - body_end);
+              for (int i = x0; i < items; i += lanes) {
+                if (i < head) {
+                  s[i] = g[i];
+                } else if (i < head + words) {
+                  const int at = head + (i - head) * PER_WORD;
+                  const Word w = *reinterpret_cast<const Word*>(g + at);
+#pragma unroll
+                  for (int k = 0; k < PER_WORD; ++k) s[at + k] = w.e[k];
+                } else {
+                  const int at = body_end + (i - head - words);
+                  s[at] = g[at];
+                }
+              }
+            }
+          }
+        }
+        if (!ASYNC) __syncthreads();
+      }
+
+      // Shared (src) -> global (dst).
+      static DACE_DFI void Store(const T* src, int64_t src_zstride, int64_t src_ystride, T* dst, int64_t dst_zstride,
+                                 int64_t dst_ystride, int zlen, int ylen, int xlen) {
+        const int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
+        const int lanes = RowLanes(xlen);
+        const int rows_at_once = BLOCK_SIZE / lanes;
+        const int y0 = ltid / lanes;
+        const int x0 = ltid - y0 * lanes;
+        if (y0 < rows_at_once) {
+          for (int z = 0; z < zlen; ++z) {
+            for (int y = y0; y < ylen; y += rows_at_once) {
+              const T* s = src + z * src_zstride + y * src_ystride;
+              T* g = dst + z * dst_zstride + y * dst_ystride;
+              const int head = Head(g, xlen);
+              const int words = (xlen - head) / PER_WORD;
+              const int body_end = head + words * PER_WORD;
+              const int items = head + words + (xlen - body_end);
+              for (int i = x0; i < items; i += lanes) {
+                if (i < head) {
+                  g[i] = s[i];
+                } else if (i < head + words) {
+                  const int at = head + (i - head) * PER_WORD;
+                  Word w;
+#pragma unroll
+                  for (int k = 0; k < PER_WORD; ++k) w.e[k] = s[at + k];
+                  *reinterpret_cast<Word*>(g + at) = w;
+                } else {
+                  const int at = body_end + (i - head - words);
+                  g[at] = s[at];
+                }
+              }
+            }
+          }
+        }
         if (!ASYNC) __syncthreads();
       }
     };
