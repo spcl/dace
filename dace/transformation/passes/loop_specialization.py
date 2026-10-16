@@ -167,7 +167,6 @@ def specialize_loop_under_relations(
     return specialize_loop_under_condition(loop, condition, declare_then_parallelize, owner_sdfg)
 
 
-__all__ = ["specialize_loop_under_condition", "specialize_loop_under_relations"]
 
 
 __all__ = ["GUARDED", "GUARD_FALLBACK", "label_arms", "specialize_loop_under_condition", "specialize_loop_under_relations"]
