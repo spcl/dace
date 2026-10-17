@@ -56,9 +56,18 @@ def detect (a b : Sym) (body : Expr) : WcrOp :=
   | .sym s => if s = b then .exchange else .custom a b body
   | _ => .custom a b body
 
-/-- Parse a WCR lambda `lambda a, b: body`.  `none` if the text is not a
-two-argument lambda with a parsable body. -/
+/-- Remove enclosing parentheses: DaCe serializes `(lambda a, b: (a + b))`. -/
+private partial def unparen (s : String) : String :=
+  let s := strip s
+  if s.startsWith "(" && s.endsWith ")" && s.length ≥ 2 then
+    let inner := String.ofList (s.toList.drop 1 |>.dropLast)
+    if strip inner |>.startsWith "lambda" then unparen inner else s
+  else s
+
+/-- Parse a WCR lambda `lambda a, b: body` (optionally parenthesized).
+`none` if the text is not a two-argument lambda with a parsable body. -/
 def ofLambda? (lam : String) : Option WcrOp := do
+  let lam := unparen lam
   let colon ← (lam.toList.findIdx? (· = ':'))
   let header := String.ofList (lam.toList.take colon)
   let body := String.ofList (lam.toList.drop (colon + 1))

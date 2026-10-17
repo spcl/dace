@@ -66,6 +66,7 @@ def r : Range := ⟨[{ lo := 0, hi := Expr.sym "N" - 1, step := 3 }, { lo := 1, 
 
 -- WCR lambdas
 #guard WcrOp.ofLambda? "lambda a, b: a + b" == some .sum
+#guard WcrOp.ofLambda? "(lambda x, y: (x + y))" == some .sum
 #guard WcrOp.ofLambda? "lambda x,y: y*x" == some .product
 #guard WcrOp.ofLambda? "lambda a, b: min(a, b)" == some .min
 #guard WcrOp.ofLambda? "lambda a, b: Max(b, a)" == some .max

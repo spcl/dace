@@ -23,9 +23,10 @@ if grep -rln --include='*.lean' -E '^import Mathlib' Dace Tools 2>/dev/null | gr
 fi
 
 echo "== axiom check"
-lake env lean Dace/AxiomCheck.lean | tee /dev/stderr | awk '
-  /depends on axioms/ { inaxioms = 1 }
-  inaxioms && /sorryAx/ { bad = 1 }
-  END { if (bad) { print "error: sorryAx in axiom report" > "/dev/stderr"; exit 1 } }
-'
+report=$(lake env lean Dace/AxiomCheck.lean)
+printf '%s\n' "$report"
+if printf '%s\n' "$report" | grep -q 'sorryAx'; then
+  echo "error: sorryAx in axiom report" >&2
+  exit 1
+fi
 echo "OK"

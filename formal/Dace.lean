@@ -10,6 +10,8 @@ import Dace.Core.Wcr
 import Dace.Core.Merge
 import Dace.Core.Tasklet
 import Dace.Core.Interp
+import Dace.SDFG.Syntax
+import Dace.SDFG.Json
 
 /-!
 # DaCe formal semantics
