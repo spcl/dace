@@ -102,7 +102,11 @@ def bump(loop: LoopRegion, name: str, cond_symbol: str | None):
     if len(edges) != 1 or edges[0] not in loop.edges():
         return None
     edge = edges[0]
-    step = symbolic.pystr_to_symbolic(edge.data.assignments[name]) - symbolic.pystr_to_symbolic(name)
+    value = symbolic.pystr_to_symbolic(edge.data.assignments[name])
+    # A comparison or a truth value (``flag := x != y``) is no count.
+    if value.is_Relational or value.is_Boolean:
+        return None
+    step = value - symbolic.pystr_to_symbolic(name)
     if not (step.is_Integer and step != 0):
         return None
     for block in later_blocks(loop, edge.dst):

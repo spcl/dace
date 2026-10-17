@@ -70,6 +70,14 @@ def doubling(a: dace.float64[N]):
         i = i * 2
 
 
+@dace.program
+def scan_to_sentinel(a: dace.uint16[N], out: dace.int64[1]):
+    i = 0
+    while i < N and int(a[i]) != 65535:
+        i += 1
+    out[0] = i
+
+
 def test_both_loops_of_an_unrolled_body_and_its_remainder_get_a_counter():
     sdfg = unrolled_then_remainder.to_sdfg(simplify=True)
     assert WhileToFor().apply_pass(sdfg, {}) == 2
@@ -124,6 +132,20 @@ def test_a_counter_that_does_not_step_by_a_constant_is_left_alone():
     assert WhileToFor().apply_pass(sdfg, {}) is None
 
 
+def test_a_loop_whose_condition_reads_data_computes_the_reference():
+    """The body assigns a symbol of the condition a comparison (``int(a[i]) != 65535``, gromacs nbnxm's exclusion
+    scan):
+    a truth value is no counter, and canonicalization must not subtract a symbol from it."""
+    sdfg = scan_to_sentinel.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    for a in (np.array([1, 2, 65535, 4]), np.array([1, 2, 3]), np.array([65535]), np.zeros(0)):
+        a = a.astype(np.uint16)
+        out = np.zeros(1, np.int64)
+        sdfg(a=a, out=out, N=a.size)
+        hits = np.flatnonzero(a == 65535)
+        assert out[0] == (hits[0] if hits.size else a.size), (a, out)
+
+
 if __name__ == "__main__":
     test_both_loops_of_an_unrolled_body_and_its_remainder_get_a_counter()
     test_canonical_unrolled_loops_compute_the_reference_and_go_parallel()
@@ -131,3 +153,4 @@ if __name__ == "__main__":
     test_the_counter_ends_at_its_exit_value()
     test_a_counter_read_after_its_bump_is_left_alone()
     test_a_counter_that_does_not_step_by_a_constant_is_left_alone()
+    test_a_loop_whose_condition_reads_data_computes_the_reference()
