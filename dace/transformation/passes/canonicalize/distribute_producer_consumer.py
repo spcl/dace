@@ -130,10 +130,11 @@ def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[
             parent[root(block)] = root(edge.dst)
     # A symbol a block assigns inside itself (kmp's ``q = fail[q - 1]`` in a branch) is read by the next iteration
     # of every block that reads it: assigner and readers carry it together, so they stay in one loop
+    assigns = {b: assigned_in(b) for b in order}
     for block in order:
-        assigned = assigned_in(block)
+        assigned = assigns[block]
         for other in order:
-            if other is not block and assigned & (reads[other] | assigned_in(other)):
+            if other is not block and assigned & (reads[other] | assigns[other]):
                 parent[root(other)] = root(block)
     return parent
 

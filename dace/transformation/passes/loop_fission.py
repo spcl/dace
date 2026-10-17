@@ -699,9 +699,11 @@ class LoopFission(ppl.Pass):
 
         clones: list[LoopRegion] = []
         for gi, idxs in enumerate(keep_idx):
-            clone = copy.deepcopy(loop)
+            # Copy only the blocks this group keeps: the others stand in as themselves until the pruning below
+            # drops them, so a body split n ways is not copied n times whole (CloudSC: 51 groups, 3 min).
+            kept = {required(orig_order)[i] for i in idxs}
+            clone = copy.deepcopy(loop, {id(b): b for b in loop.nodes() if b not in kept})
             clone.label = f"{loop.label}_fis{gi}"
-            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             corder = _linear_blocks(clone, allow_assignments=True)
             keep = [required(corder)[i] for i in idxs]
             # An edge between two blocks that stay adjacent keeps its data (a symbol it assigns feeds the next block).
@@ -713,6 +715,8 @@ class LoopFission(ppl.Pass):
             for a, b in zip(keep, keep[1:]):
                 clone.add_edge(a, b, kept_edges.get((a, b), InterstateEdge()))
             clone.start_block = clone.node_id(keep[0])
+            # Added once pruned, so the stand-ins never join the tree.
+            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             clones.append(clone)
 
         for e in in_edges:

@@ -36,6 +36,7 @@ from typing import Any
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
@@ -405,36 +406,38 @@ class BufferExpansion(ppl.Pass):
         # The loop is not mutated while its buffers are judged, so one dominator table serves all of them.
         dominators = LoopDominators(loop)
         candidates: list[str] = []
-        for name, desc in sdfg.arrays.items():
-            if not isinstance(desc, data.Array) or not desc.transient:
-                continue
-            # A View is a reshape/alias of another array (a ``data.View`` IS a
-            # ``data.Array`` subclass, so the check above does not exclude it), often a
-            # GEMM/MatMul operand slice. Expanding it with a loop dimension corrupts the
-            # shape it presents to its consumer -- scattering_self_energies' 2D
-            # ``Norb x Norb`` matmul-operand view widened to 6D, which the GEMM expansion
-            # then rejects. Never expand a view; expand only real buffers.
-            if isinstance(desc, data.View):
-                continue
-            # Descriptor tests and index lookups before the walks over the loop's states.
-            if desc.lifetime not in _REINDEXABLE_LIFETIMES:
-                continue
-            if len(desc.shape) < 1:
-                continue
-            if not self._is_loop_local(loop_states, name, access_states, interstate_syms):
-                continue
-            # Do not expand a buffer that feeds (or is produced by) a library node. It
-            # is a fixed-shape operand (e.g. a GEMM's 2D ``Norb x Norb`` slice), so
-            # expanding it widens the operand shape the library node's expansion
-            # requires (scattering_self_energies' GEMM -> "matrix-matrix product only
-            # supported on matrices"). It is also pointless: parallelizing a loop whose
-            # body is a library-node call gives no speedup -- a loop of (tiny) BLAS/
-            # cuBLAS GEMMs serializes on one stream / oversubscribes BLAS threads -- so
-            # the loop should stay sequential rather than become a Map of library calls.
-            if self._is_library_node_operand(loop_states, name):
-                continue
-            if self.defined_before_read(loop, name, dominators):
-                candidates.append(name)
+        # Nothing changes while the buffers are judged, so every cover test shares the facts of the SDFG.
+        with memoize_facts():
+            for name, desc in sdfg.arrays.items():
+                if not isinstance(desc, data.Array) or not desc.transient:
+                    continue
+                # A View is a reshape/alias of another array (a ``data.View`` IS a
+                # ``data.Array`` subclass, so the check above does not exclude it), often a
+                # GEMM/MatMul operand slice. Expanding it with a loop dimension corrupts the
+                # shape it presents to its consumer -- scattering_self_energies' 2D
+                # ``Norb x Norb`` matmul-operand view widened to 6D, which the GEMM expansion
+                # then rejects. Never expand a view; expand only real buffers.
+                if isinstance(desc, data.View):
+                    continue
+                # Descriptor tests and index lookups before the walks over the loop's states.
+                if desc.lifetime not in _REINDEXABLE_LIFETIMES:
+                    continue
+                if len(desc.shape) < 1:
+                    continue
+                if not self._is_loop_local(loop_states, name, access_states, interstate_syms):
+                    continue
+                # Do not expand a buffer that feeds (or is produced by) a library node. It
+                # is a fixed-shape operand (e.g. a GEMM's 2D ``Norb x Norb`` slice), so
+                # expanding it widens the operand shape the library node's expansion
+                # requires (scattering_self_energies' GEMM -> "matrix-matrix product only
+                # supported on matrices"). It is also pointless: parallelizing a loop whose
+                # body is a library-node call gives no speedup -- a loop of (tiny) BLAS/
+                # cuBLAS GEMMs serializes on one stream / oversubscribes BLAS threads -- so
+                # the loop should stay sequential rather than become a Map of library calls.
+                if self._is_library_node_operand(loop_states, name):
+                    continue
+                if self.defined_before_read(loop, name, dominators):
+                    candidates.append(name)
         return candidates
 
     @staticmethod
