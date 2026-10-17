@@ -316,6 +316,8 @@ class ParallelizeLoops(ppl.Pass):
         xform._pipeline_results = pipeline_results
         if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
             return False
+        if not proven and self.holds_back(xform, loop):
+            return False
         # A proof of independence replaces the dependence test, not the scale rule: a SMALL loop stays sequential.
         if proven and xform.keep_small_loops_sequential and spans_small_symbols(loop):
             return False
@@ -346,6 +348,14 @@ class ParallelizeLoops(ppl.Pass):
                 # cost stays independent of ``propagate``.
                 propagate_memlets_state(sd, state)
         return True
+
+    def holds_back(self, xform: LoopToMap, loop: LoopRegion) -> bool:
+        """Whether to keep ``loop`` a loop although its probe accepted it; asked only after that probe, which refuses
+        most candidates, so a subclass's own check runs on the few that pass.
+
+        :param xform: the probe that accepted ``loop``, with the shared analysis it was given.
+        """
+        return False
 
     def finish(self, sdfg: SDFG) -> None:
         """The post-lift steps: drop stale nested-SDFG symbol mappings, then propagate memlets if asked."""
