@@ -22,7 +22,7 @@ TILE_GEMM_DESCRIPTION = f"""
 Compute one {TILE}x{TILE} output tile of a single-precision matrix multiplication:
 
     for i in 0..{TILE}, j in 0..{TILE}:
-        _c[i][j] = sum over p in 0..N of _a[i][p] * _b[p][j]
+        _c[i][j] = sum over p in 0..{N} of _a[i][p] * _b[p][j]
 
 Write it as a register-blocked microkernel using AVX2 intrinsics (immintrin.h), accumulating the
 tile in YMM registers across the reduction dimension and storing it once at the end. Use FMA

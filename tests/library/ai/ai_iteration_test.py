@@ -35,8 +35,8 @@ SQUARE_FEEDBACK = f"""
 The result is correct, so do not change what it computes.
 
 Restructure it: move the arithmetic into a helper function named exactly `{HELPER}`, defined at
-file scope in `code_global` with static linkage, and have the tasklet body call that helper instead
-of doing the arithmetic inline.
+file scope in `code_global`, and have the tasklet body call that helper instead of doing the
+arithmetic inline.
 """.strip()
 
 NAIVE_TILE_DESCRIPTION = f"""
