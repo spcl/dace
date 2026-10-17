@@ -101,8 +101,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._boundary_behavior = boundary_behavior
         """How state boundaries that do not require a state transition are converted."""
 
-        self._barriers: list[tuple[SDFGState, set[nodes.Node]]] = []
-        """State boundaries converted into happens-before edges: the state and the nodes that precede the boundary."""
+        self._barriers: list[tuple[SDFGState, set[nodes.Node], nodes.EntryNode | None]] = []
+        """
+        Happens-before barriers: the state, the nodes that precede the barrier, and the entry node of the dataflow
+        scope the barrier is in (None at the top level of the state). State boundaries converted within states and
+        nodes with side effects are such barriers.
+        """
 
         self._frozen_access_nodes: set[int] = set()
         """IDs of access nodes before such a state boundary, which must not be written to after it."""
@@ -569,7 +573,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         merge_state = self._pop_state("merge_state")
         self._current_state = merge_state
 
-    def _insert_nested_sdfg(self, node: tn.ScheduleTreeScope, sdfg: SDFG, scope_body: bool) -> None:
+    def _insert_nested_sdfg(self, node: tn.ScheduleTreeScope, sdfg: SDFG, scope_body: bool) -> nodes.NestedSDFG:
         """
         Converts the children of a scope into a nested SDFG and connects it in the current state.
 
@@ -578,6 +582,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         :param scope_body: True if the nested SDFG is the entire body of the surrounding dataflow scope, in which case
                            it is connected directly to the pass-through connectors of the scope. Otherwise, it is
                            connected to the accessed data containers like any other node.
+        :return: The nested SDFG node.
         """
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
@@ -621,6 +626,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Restore current nested SDFG
         self._known_data_outside_nestedSDFG = outer_known_data
+        return nsdfg
 
     def _connect_nested_sdfg_in_map(self, nsdfg: nodes.NestedSDFG, inner_sdfg: SDFG) -> None:
         """
@@ -680,7 +686,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 to_connect[f"nested_sdfg_{id(nsdfg)}"] = (nsdfg, Memlet())
 
     def visit__NestedSDFGScope(self, node: _NestedSDFGScope, sdfg: SDFG) -> None:
+        # Nested SDFGs with side effects keep their order with respect to the surrounding nodes
+        effectful = _has_side_effects(node, sdfg)
+        if effectful:
+            self._add_barrier()
         self._insert_nested_sdfg(node, sdfg, scope_body=False)
+        if effectful:
+            self._add_barrier()
 
         # Start a new state such that subsequent accesses do not share access nodes with the nested SDFG's outputs.
         # Within dataflow scopes, nested SDFG scopes span the rest of the scope.
@@ -795,6 +807,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         dataflow_stack_size = len(self._dataflow_stack)
         cache_state = self._current_state
         map_entry = entry
+
+        # Scopes with side effects keep their order with respect to the surrounding nodes
+        effectful = _has_side_effects(node, sdfg)
+        if effectful:
+            self._add_barrier()
 
         # scope entry
         # -----------
@@ -999,6 +1016,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._current_state.in_degree(map_exit) == 0:
             self._current_state.add_nedge(map_entry, map_exit, Memlet())
 
+        if effectful:
+            self._add_barrier()
+
     def _local_access_cache(self) -> dict[str, nodes.AccessNode]:
         """Returns the access node cache of the current state and tree scope."""
         cache_key = (self._current_state, id(self._ctx.current_scope))
@@ -1169,6 +1189,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         :param out_memlets: The output memlets per connector, or a set of memlets for connector-less nodes.
         :param sdfg: The SDFG that is currently being built.
         """
+        # Code nodes that may do more than write their outputs (or write nothing at all) keep their order with respect
+        # to the surrounding nodes, which the schedule tree only expresses through the order of its nodes
+        effectful = not out_memlets or code_node.has_side_effects(sdfg)
+        if effectful:
+            self._add_barrier()
+
         self._current_state.add_node(code_node)
         scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
         inputs = in_memlets.items() if isinstance(in_memlets, dict) else [(None, memlet) for memlet in in_memlets]
@@ -1192,6 +1218,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # Add empty memlet if this code node is a sink node
         if isinstance(scope_node, nodes.EntryNode) and not out_memlets:
             to_connect[f"tasklet_{id(code_node)}"] = (code_node, Memlet())
+
+        if effectful:
+            self._add_barrier()
 
     def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
         self._add_code_node(node.node, node.in_memlets, node.out_memlets, sdfg)
@@ -1272,29 +1301,31 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def _add_barrier(self) -> None:
         """
-        Converts a state boundary into happens-before relations within the current state: every node added after this
-        point executes after all nodes that already exist. The empty memlet edges are added in ``connect_barriers``,
-        once all nodes are known.
+        Adds a happens-before barrier within the current state and dataflow scope: every node added after this point
+        executes after all nodes that already exist in the scope. The empty memlet edges are added in
+        ``connect_barriers``, once all nodes are known.
         """
         state = self._current_state
-        self._barriers.append((state, set(state.nodes())))
+        scope_node = self._dataflow_stack[-1][0] if self._dataflow_stack else None
+        scope_entry = scope_node if isinstance(scope_node, nodes.EntryNode) else None
+        self._barriers.append((state, set(state.nodes()), scope_entry))
 
-        # Writes after the boundary must use new access nodes, otherwise they would precede the nodes they follow
+        # Writes after the barrier must use new access nodes, otherwise they would precede the nodes they follow
         self._frozen_access_nodes.update(id(n) for n in state.nodes() if isinstance(n, nodes.AccessNode))
 
     def connect_barriers(self) -> None:
         """
-        Adds empty memlet edges for state boundaries that were converted into happens-before relations, from every
-        top-level sink before a boundary to every top-level source after it. Scopes are represented by their exit node
-        as a sink and by their entry node as a source.
+        Adds empty memlet edges for the happens-before barriers, from every sink of the barrier's scope before the
+        barrier to every source of the scope after it. Nested scopes are represented by their exit node as a sink and
+        by their entry node as a source.
         """
-        # Later boundaries first, such that nodes after a later boundary are no longer sources for an earlier one
-        for state, before in reversed(self._barriers):
+        # Later barriers first, such that nodes after a later barrier are no longer sources for an earlier one
+        for state, before, scope_entry in reversed(self._barriers):
             scope_dict = state.scope_dict()
-            top_level = {n for n in state.nodes() if scope_dict[n] is None}
-            top_level |= {state.exit_node(n) for n in top_level if isinstance(n, nodes.EntryNode)}
-            preceding = top_level & before
-            following = top_level - before
+            in_scope = {n for n in state.nodes() if scope_dict[n] is scope_entry}
+            in_scope |= {state.exit_node(n) for n in in_scope if isinstance(n, nodes.EntryNode)}
+            preceding = in_scope & before
+            following = in_scope - before
 
             sinks = [
                 n
@@ -1426,6 +1457,17 @@ def _code_reference_sets(stree: tn.ScheduleTreeRoot) -> dict[tuple[int, str | in
         ((connector, memlet),) = matches
         result[_code_output_key(ref.src_desc, connector, memlet)] = ref
     return result
+
+
+def _has_side_effects(node: tn.ScheduleTreeNode, sdfg: SDFG) -> bool:
+    """
+    Returns whether a node, or a node in a scope, may do more than write its outputs (e.g., call a stateful library),
+    including code nodes that write nothing at all. Such nodes keep their order with respect to the surrounding nodes.
+    """
+    return any(
+        isinstance(n, (tn.TaskletNode, tn.LibraryCall)) and (not n.out_memlets or n.node.has_side_effects(sdfg))
+        for n in node.preorder_traversal()
+    )
 
 
 def _reads_of(node: tn.ScheduleTreeNode, name: str) -> list[Memlet]:

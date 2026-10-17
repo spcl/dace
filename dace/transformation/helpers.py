@@ -1601,13 +1601,15 @@ def redirect_edge(
 
 def replace_code_to_code_edges(sdfg: SDFG):
     """
-    Adds access nodes between all code->code edges in each state.
+    Adds access nodes between all code->code edges in each state. Empty (dependency) edges are kept as they are.
 
     :param sdfg: The SDFG to process.
     """
     for state in sdfg.states():
         for edge in state.edges():
             if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
+                continue
+            if edge.data.is_empty():
                 continue
             # Add access nodes
             aname = state.add_access(edge.data.data)
