@@ -1005,6 +1005,9 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # lifting phases made since. The inlining below dissolves their nested SDFGs.
     s += [(label, ExpandIndexRemaps())]
     s += [*_inline_single_state(label), (label, StructuralCleanup())]
+    # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
+    # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
+    s += [(label, DeadFillElimination())]
 
     s += [(FUSE, maximal_fusion(target))]
     label = AFTER_FUSION
