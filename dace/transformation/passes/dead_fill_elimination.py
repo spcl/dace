@@ -53,7 +53,9 @@ from dace.transformation.passes.analysis import loop_analysis
 Fixed = dict[int, symbolic.SymbolicType]
 
 
-def covers_every_element(state: SDFGState, written: nodes.AccessNode, desc: data.Array, fixed: Fixed | None = None) -> bool:
+def covers_every_element(
+    state: SDFGState, written: nodes.AccessNode, desc: data.Array, fixed: Fixed | None = None
+) -> bool:
     """Whether ``written``'s only writer is a map storing each element of ``desc`` exactly once, unread.
 
     With ``fixed``, each axis it names holds that one index instead, and the rest is covered once.
@@ -213,7 +215,9 @@ def overwritten_by(block: ControlFlowBlock, name: str, desc: data.Array, fixed: 
     if isinstance(block, ConditionalBlock):
         if name in control_reads(block) or not any(condition is None for condition, _ in block.branches):
             return False
-        return all(overwritten_from(branch, branch.start_block, name, desc, fixed) is True for _, branch in block.branches)
+        return all(
+            overwritten_from(branch, branch.start_block, name, desc, fixed) is True for _, branch in block.branches
+        )
     if isinstance(block, LoopRegion):
         return not fixed and overwritten_by_loop(block, name, desc)
     if isinstance(block, ControlFlowRegion) and block.nodes():
@@ -244,8 +248,9 @@ def overwritten_by_loop(loop: LoopRegion, name: str, desc: data.Array) -> bool:
     return False
 
 
-def overwritten_from(graph: ControlFlowRegion, block: ControlFlowBlock | None, name: str, desc: data.Array,
-                     fixed: Fixed) -> bool | None:
+def overwritten_from(
+    graph: ControlFlowRegion, block: ControlFlowBlock | None, name: str, desc: data.Array, fixed: Fixed
+) -> bool | None:
     """Follow ``graph``'s unconditional chain from ``block`` to the first block touching ``name``.
 
     :returns: whether that block overwrites ``name`` before reading it; ``None`` if the chain ends or

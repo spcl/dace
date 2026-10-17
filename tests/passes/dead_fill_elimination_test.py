@@ -85,7 +85,11 @@ M = dace.symbol("M")
 
 
 def zeroed_then_swept(
-    start: int = 0, read_between: bool = False, guard: str | None = None, with_else: bool = False, fill_guarded: bool = False
+    start: int = 0,
+    read_between: bool = False,
+    guard: str | None = None,
+    with_else: bool = False,
+    fill_guarded: bool = False,
 ) -> dace.SDFG:
     """``tmp = 0`` in its own state, then ``for k in range(start, M): tmp[k, :] = b[k, :]`` (copy), then ``out = tmp``.
 
@@ -102,7 +106,9 @@ def zeroed_then_swept(
     def memset(state: dace.SDFGState) -> None:
         fill = FillLibraryNode("memset_tmp", value=0)
         state.add_node(fill)
-        state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("tmp"), None, dace.Memlet("tmp[0:M, 0:N]"))
+        state.add_edge(
+            fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("tmp"), None, dace.Memlet("tmp[0:M, 0:N]")
+        )
 
     def sweep(region: ControlFlowRegion, label: str) -> LoopRegion:
         loop = LoopRegion(label, "k < M", "k", f"k = {start}", "k = k + 1")

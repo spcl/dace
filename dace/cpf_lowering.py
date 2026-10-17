@@ -192,7 +192,11 @@ class HintDetail(enum.Enum):
 
 
 #: A hint's class prefix (``annotate_loop_kinds.CLASS_PREFIXES``) -> the one word :attr:`HintDetail.KINDS` writes.
-KIND_WORDS: tuple[tuple[str, str], ...] = (("parallel -- ", "par"), ("sequential -- ", "seq"), ("unsure -- ", "unknown"))
+KIND_WORDS: tuple[tuple[str, str], ...] = (
+    ("parallel -- ", "par"),
+    ("sequential -- ", "seq"),
+    ("unsure -- ", "unknown"),
+)
 
 _hint_detail: HintDetail = HintDetail.PROOFS
 
