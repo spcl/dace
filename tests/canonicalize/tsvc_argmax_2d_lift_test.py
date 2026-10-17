@@ -222,5 +222,93 @@ def test_2d_argmax_lifts_when_the_shape_symbol_carries_assumptions():
     assert (int(out[1]), int(out[2])) == (flat // n, flat % n), f"index: got ({out[1]}, {out[2]})"
 
 
+P = dace.symbol("argmax_nd_P")
+Q = dace.symbol("argmax_nd_Q")
+R = dace.symbol("argmax_nd_R")
+S = dace.symbol("argmax_nd_S")
+
+
+@dace.program
+def argmax3d(aa: dace.float64[P, Q, R], out: dace.float64[4]):
+    maxv = aa[0, 0, 0]
+    xindex = 0
+    yindex = 0
+    zindex = 0
+    for i in range(P):
+        for j in range(Q):
+            for k in range(R):
+                if aa[i, j, k] > maxv:
+                    maxv = aa[i, j, k]
+                    xindex = i
+                    yindex = j
+                    zindex = k
+    out[0] = maxv
+    out[1] = float(xindex)
+    out[2] = float(yindex)
+    out[3] = float(zindex)
+
+
+def test_3d_argmax_nest_lifts_to_one_flat_argreduce_and_keeps_the_first_maximum():
+    """The 3-D nest folds into one flat ``ArgReduce`` like the 2-D one, and the flat position decomposes back
+    into all three indices -- ``(m // (Q*R), (m // R) % Q, m % R)`` -- on the FIRST of several equal maxima, as the
+    strict guard keeps it."""
+    sdfg = argmax3d.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
+    assert num_argreduce(sdfg) == 1, "the 3-D nest must lift to exactly one flat ArgReduce"
+    assert residual_loops(sdfg) == [], "no loop of the nest may survive the lift"
+    assert scaling_transients(sdfg) == [], "the lift allocated a problem-sized buffer"
+
+    shape = (3, 4, 5)
+    aa = np.full(shape, -1.0)
+    for position in ((1, 2, 3), (1, 3, 0), (2, 0, 4)):
+        aa[position] = 7.0
+    out = np.zeros(4)
+    sdfg(aa=aa.copy(), out=out, argmax_nd_P=3, argmax_nd_Q=4, argmax_nd_R=5)
+    assert out[0] == 7.0
+    assert tuple(int(v) for v in out[1:]) == np.unravel_index(int(np.argmax(aa)), shape) == (1, 2, 3)
+
+
+def test_4d_argmax_nest_with_a_non_strict_guard_keeps_the_last_maximum():
+    """A 4-D nest under ``>=`` keeps the LAST of equal maxima in row-major order; the lift reverses the flat order
+    and maps the position back, through all four indices."""
+
+    @dace.program
+    def argmax4d_last(aa: dace.float64[P, Q, R, S], out: dace.float64[5]):
+        maxv = aa[0, 0, 0, 0]
+        i0 = 0
+        i1 = 0
+        i2 = 0
+        i3 = 0
+        for i in range(P):
+            for j in range(Q):
+                for k in range(R):
+                    for l in range(S):
+                        if aa[i, j, k, l] >= maxv:
+                            maxv = aa[i, j, k, l]
+                            i0 = i
+                            i1 = j
+                            i2 = k
+                            i3 = l
+        out[0] = maxv
+        out[1] = float(i0)
+        out[2] = float(i1)
+        out[3] = float(i2)
+        out[4] = float(i3)
+
+    sdfg = argmax4d_last.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
+    assert num_argreduce(sdfg) == 1, "the 4-D nest must lift to exactly one flat ArgReduce"
+    assert residual_loops(sdfg) == [], "no loop of the nest may survive the lift"
+
+    shape = (2, 3, 4, 3)
+    aa = np.random.default_rng(4).standard_normal(shape) - 10.0
+    for position in ((0, 1, 2, 0), (1, 0, 3, 2), (1, 2, 0, 1)):
+        aa[position] = 5.0
+    out = np.zeros(5)
+    sdfg(aa=aa.copy(), out=out, argmax_nd_P=2, argmax_nd_Q=3, argmax_nd_R=4, argmax_nd_S=3)
+    assert out[0] == 5.0
+    assert tuple(int(v) for v in out[1:]) == (1, 2, 0, 1)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

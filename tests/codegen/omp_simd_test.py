@@ -184,6 +184,31 @@ def test_minmax_reduction_withholds_the_clause():
     assert " simd" not in sdfg.generate_code()[0].clean_code
 
 
+def test_custom_reduction_withholds_the_clause():
+    """A custom combine -- ``ArgMaxLift``'s NaN-propagating max -- is a compare/branch the vectorizer does not fold
+    either. Over a ``(i, j)`` map reducing ``j`` into ``out[i]`` it would be worse than unfolded: the innermost
+    dimension the clause goes on runs as its own Sequential loop, whose combine is a plain read-modify-write of
+    ``out[i]`` in every lane."""
+    sdfg = dace.SDFG("custom_wcr_map")
+    sdfg.add_array("a", (16, 64), dace.float64)
+    sdfg.add_array("out", (16,), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_mapped_tasklet(
+        "reduce_nanmax",
+        {"i": "0:16", "j": "0:64"},
+        {"inp": dace.Memlet("a[i, j]")},
+        "o = inp",
+        {"o": dace.Memlet("out[i]", wcr="lambda x, y: y if (y != y or y > x) else x")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    sdfg.validate()
+
+    mark(sdfg)
+    assert not any(n.map.omp_simd for state, n in entries(sdfg))
+    assert " simd" not in sdfg.generate_code()[0].clean_code
+
+
 @pytest.mark.parametrize("target", ("hist[i]", "hist[0]"))
 def test_sequential_wcr_withholds_the_clause(target):
     """A Sequential map lowers WCR to a non-atomic read-modify-write in the loop body: a scatter can
@@ -433,6 +458,7 @@ if __name__ == "__main__":
         test_the_marked_multidimensional_map_expands_in_order(map_extents)
     test_outer_map_of_a_nest_is_not_marked()
     test_minmax_reduction_withholds_the_clause()
+    test_custom_reduction_withholds_the_clause()
     for wcr_target in ("hist[i]", "hist[0]"):
         test_sequential_wcr_withholds_the_clause(wcr_target)
     test_multicore_reduction_keeps_the_clause_and_the_value()

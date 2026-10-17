@@ -58,10 +58,19 @@ Two carrier storages are matched, with different capabilities:
   The true-branch states must be empty -- tasklet / AccessNode work there would
   be a side effect the rewrite cannot preserve.
 
-* **2-D contiguous nests** (:class:`_Match2D`) -- ``for i: for j:`` over a
-  contiguous ``aa[i, j]`` carrying a value symbol plus TWO index symbols
-  (``xindex := i`` / ``yindex := j``), TSVC ``s3110`` / ``s13110``. Lifted to one
-  flat arg-reduce; the flat index decomposes back to the two indices.
+* **Contiguous nests of any depth** (:class:`_Match2D`) -- ``for i: for j: ...``
+  over a contiguous ``aa[i, j, ...]`` carrying a value symbol plus one index symbol
+  per loop (``xindex := i`` / ``yindex := j`` / ...), TSVC ``s3110`` / ``s13110`` in
+  2-D. Lifted to one flat arg-reduce; the flat index decomposes back to the indices.
+
+* **Partial reductions of any depth** (:class:`PartialReduction`) -- a perfect
+  nest ``for j1: ... for jn: if guard(src[I(j)], out[K]): out[K] = value`` whose
+  carrier element ``out[K]`` no reduced loop moves, over a box of ``src``. The
+  shape HPCAgent-Bench emits for every ``x.max(axis=...)`` / ``x.any(axis=...)``
+  (velocity_tendencies' CFL section): ``max`` / ``min`` for a strict guard, the
+  NaN-propagating fold ``x != x or x > acc`` with that update as its combine, and
+  ``any`` / ``all`` over booleans. Lifted to one :class:`Reduce` folding into
+  whatever ``out[K]`` holds, so the seed is kept as it is.
 
 * **No else branch.** Only the canonical ``if cond: write; else: nothing``
   shape; an else branch with side effects would need separate handling.
@@ -159,6 +168,8 @@ lift it correctly, so the refusal costs no parallelism ArgMaxLift could have del
 
 import ast
 import copy
+import functools
+import operator
 import re
 from typing import Any, NamedTuple, TypeVar
 
@@ -197,6 +208,44 @@ CompareOp = type[ast.cmpop]
 BlockT = TypeVar("BlockT", bound=ControlFlowBlock)
 
 
+#: The combine of a NaN-propagating fold ``if x != x or x > acc: acc = x`` (``<`` for a min), verbatim: a NaN
+#: element replaces the accumulator, and a NaN accumulator is never replaced by a number (``x > nan`` is false).
+NAN_PROPAGATING_WCR: dict[dtypes.ReductionType, str] = {
+    dtypes.ReductionType.Max: "lambda a, b: b if (b != b or b > a) else a",
+    dtypes.ReductionType.Min: "lambda a, b: b if (b != b or b < a) else a",
+}
+
+#: The combine of a strict fold ``if x > acc: acc = x``: ``max(acc, x)`` keeps the accumulator on a tie and on a
+#: NaN ``x`` (``acc < nan`` is false), exactly as the guard does; likewise ``min`` for ``<``.
+STRICT_WCR: dict[dtypes.ReductionType, str] = {
+    dtypes.ReductionType.Max: "lambda a, b: max(a, b)",
+    dtypes.ReductionType.Min: "lambda a, b: min(a, b)",
+}
+
+
+class PartialReduction(NamedTuple):
+    """A reduction nest of any depth folding into one element ``carrier[K]`` (:meth:`ArgMaxLift.match_partial_reduction`).
+
+    :param loops: The reduced loops, outermost first; ``loops[0]`` is what the rewrite replaces.
+    :param parent: ``loops[0].parent_graph``.
+    :param carrier: The data container the fold writes.
+    :param carrier_subset: The one element of it, invariant in every reduced loop.
+    :param source: The array the fold reads.
+    :param source_subset: The box of ``source`` the nest visits.
+    :param wcr: The combine, which IS the guarded update.
+    :param extents: ``(start, end)`` (inclusive) of every reduced loop, outermost first.
+    """
+
+    loops: list[LoopRegion]
+    parent: ControlFlowRegion
+    carrier: str
+    carrier_subset: subsets.Range
+    source: str
+    source_subset: subsets.Range
+    wcr: str
+    extents: list[tuple[Any, Any]]
+
+
 class _Match(NamedTuple):
     """A matched argmax/argmin loop. Fields are the carrier (``x`` in s314) and input array, the
     loop bounds, the optional index carrier (``index`` in s315, symbol carriers only), the optional
@@ -221,22 +270,21 @@ class _Match(NamedTuple):
 
 
 class _Match2D(NamedTuple):
-    """A matched 2-D contiguous argmax/argmin over ``for i: for j:`` (TSVC s3110 / s13110).
+    """A matched contiguous argmax/argmin over a perfect nest ``for i0: ... for i(n-1):`` of any depth ``n >= 2``
+    (TSVC s3110 / s13110 at ``n = 2``).
 
-    Value carrier plus ``xindex := i`` / ``yindex := j``; the nest becomes one flat arg-reduce over
-    ``aa`` whose index ``m`` decomposes to ``m // ncols`` / ``m % ncols``. ``last_wins`` as in
-    :class:`_Match`, always applicable here.
+    Value carrier plus one index carrier per loop (``xindex := i``, ``yindex := j``, ...); the nest becomes one flat
+    arg-reduce over ``aa`` whose index ``m`` decomposes to ``(m // stride_t) % shape_t`` per loop. ``last_wins`` as
+    in :class:`_Match`, always applicable here.
     """
 
     op: dtypes.ReductionType
-    outer_loop: LoopRegion
-    inner_loop: LoopRegion
+    loops: list[LoopRegion]
     parent: ControlFlowRegion
     carrier_name: str
-    x_idx_name: str
-    y_idx_name: str
+    idx_names: list[str]
     input_array: str
-    ncols: Any
+    shape: list[Any]
     last_wins: bool = False
 
 
@@ -494,12 +542,13 @@ class ArgMaxLift(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
+            replaced: set[int] = set()  # every region under a loop a rewrite removed
             for region in list(sd.all_control_flow_regions()):
                 if not (isinstance(region, LoopRegion) and region.loop_variable):
                     continue
                 # Stale-snapshot guard: a previous rewrite may have removed this
-                # LoopRegion from its parent.
-                if region.parent_graph is None or region not in region.parent_graph.nodes():
+                # LoopRegion from its parent, or the loop around it.
+                if region.parent_graph is None or region not in region.parent_graph.nodes() or id(region) in replaced:
                     continue
                 # Both matchers gate on this skeleton, whose break check walks the whole body.
                 # Neither of them rewrites, so one computation serves both.
@@ -509,16 +558,24 @@ class ArgMaxLift(ppl.Pass):
                     self._rewrite(m, sd)
                     rewritten += 1
                     continue
-                # 2-D contiguous nested argmax (TSVC s3110 / s13110).
+                # Contiguous nested argmax of any depth (TSVC s3110 / s13110 in 2-D).
                 m2 = self._match_2d(region, sd)
                 if m2 is not None:
                     self._rewrite_2d(m2, sd)
+                    replaced.update(id(r) for r in region.all_control_flow_regions())
                     rewritten += 1
                     continue
                 # Predicate-index, no value carrier (TSVC s331).
                 mp = self.match_predicate_index(region, sd, skeleton) if skeleton is not None else None
                 if mp is not None:
                     self.rewrite_predicate_index(mp, sd)
+                    rewritten += 1
+                    continue
+                # A max / min / any / all fold into one element, nested to any depth.
+                mr = self.match_partial_reduction(region, sd)
+                if mr is not None:
+                    self.rewrite_partial_reduction(mr, sd)
+                    replaced.update(id(r) for r in region.all_control_flow_regions())
                     rewritten += 1
         return rewritten or None
 
@@ -785,29 +842,33 @@ class ArgMaxLift(ppl.Pass):
         return start, end
 
     def _match_2d(self, outer_loop: LoopRegion, sdfg: SDFG) -> _Match2D | None:
-        """Match a nested ``for i: for j: if aa[i, j] OP maxv: maxv = aa[i, j];
-        xindex = i; yindex = j`` over the full (contiguous) array. Matched on the
-        OUTER loop; the inner loop and the ConditionalBlock are validated below.
+        """Match a perfect nest ``for i0: ... for i(n-1): if aa[i0, ..., i(n-1)] OP maxv: maxv = aa[...];
+        idx0 = i0; ...; idx(n-1) = i(n-1)`` over the full (contiguous) ``n``-D array, ``n >= 2``. Matched on the
+        OUTER loop; the inner loops and the ConditionalBlock are validated below.
         """
         if not outer_loop.loop_variable:
             return None
         # Nest shape first -- each check is a scan of one region's direct children, while the
         # break walk and the bound parses below cost far more.
-        inner_loop = self._single_child_region(outer_loop, LoopRegion)
-        if inner_loop is None or not inner_loop.loop_variable:
+        loops = [outer_loop]
+        while True:
+            inner = self._single_child_region(loops[-1], LoopRegion)
+            if inner is None:
+                break
+            if not inner.loop_variable:
+                return None
+            loops.append(inner)
+        if len(loops) < 2:
             return None
-        cond_block = self._single_child_region(inner_loop, ConditionalBlock)
+        cond_block = self._single_child_region(loops[-1], ConditionalBlock)
         if cond_block is None:
             return None
         # A break anywhere in the nest makes it an early-exit search, not a
         # reduction over the whole (contiguous) array -- refuse (see :meth:`_match`).
         if self._contains_break(outer_loop):
             return None
-        o_range = self._unit_loop_from_zero(outer_loop)
-        if o_range is None:
-            return None
-        i_range = self._unit_loop_from_zero(inner_loop)
-        if i_range is None:
+        ranges = [self._unit_loop_from_zero(loop) for loop in loops]
+        if any(r is None for r in ranges):
             return None
 
         non_else = [(c, br) for c, br in cond_block.branches if c is not None]
@@ -817,12 +878,12 @@ class ArgMaxLift(ppl.Pass):
         cond_codeblock, true_branch = non_else[0]
         cond_expr_str = cond_codeblock.as_string.strip()
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cond_expr_str):
-            op_ast, gather_sym, carrier_name, transform = self._resolve_tmp_iedge(inner_loop, cond_block, cond_expr_str)
+            op_ast, gather_sym, carrier_name, transform = self._resolve_tmp_iedge(loops[-1], cond_block, cond_expr_str)
         else:
             op_ast, gather_sym, carrier_name, transform = self._parse_comparison(cond_expr_str)
         if op_ast is None or transform is not None or carrier_name is None or gather_sym is None:
-            return None  # transforms (abs) are out of scope for the 2-D path
-        # The 2-D nest always tracks two indices, so the tie rule is always
+            return None  # transforms (abs) are out of scope for the nested path
+        # The nest always tracks one index per loop, so the tie rule is always
         # observable and ``tie_break`` always applies: under the default 'infer'
         # the guard's strictness picks the occurrence -- a non-strict guard
         # (``>=`` / ``<=``) keeps the LAST one in row-major order, which the
@@ -831,52 +892,48 @@ class ArgMaxLift(ppl.Pass):
         last_wins = self._resolve_last_wins(op_ast, True)
         op = CMP_AST_TO_RTYPE[op_ast]
 
-        outer_var, inner_var = outer_loop.loop_variable, inner_loop.loop_variable
-        array = self._resolve_gather_2d(inner_loop, gather_sym, outer_var, inner_var, sdfg)
+        loop_vars = [loop.loop_variable for loop in loops]
+        if len(set(loop_vars)) != len(loop_vars):
+            return None
+        array = self._resolve_gather_2d(loops[-1], gather_sym, loop_vars, sdfg)
         if array is None:
             return None
         # Value carrier must be a symbol; the true-branch must write exactly the
-        # value (from the same gather) plus the two index carriers (i / j).
+        # value (from the same gather) plus one index carrier per loop.
         if carrier_name not in sdfg.symbols:
             return None
-        idx = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, outer_var, inner_var, sdfg)
-        if idx is None:
+        idx_names = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, loop_vars, sdfg)
+        if idx_names is None:
             return None
-        x_idx_name, y_idx_name = idx
 
         # Contiguity: the nested iteration must visit EXACTLY the whole array, in
         # C-contiguous memory order, so a flat 1-D arg-reduce is equivalent.
         desc = sdfg.arrays[array]
-        if len(desc.shape) != 2 or not desc.is_packed_c_strides():
+        if len(desc.shape) != len(loops) or not desc.is_packed_c_strides():
             return None
         # The bounds are reparsed from loop CodeBlocks while the shape carries the declared
         # assumptions, so the same name arrives as two sympy instances that never cancel.
-        o_end, i_end, dim0, dim1 = symbolic.equalize_symbols_across(
-            o_range[1], i_range[1], desc.shape[0], desc.shape[1]
-        )
-        if symbolic.simplify(o_end - (dim0 - 1)) != 0:
+        equalized = symbolic.equalize_symbols_across(*(r[1] for r in ranges), *desc.shape)  # type: ignore[index]
+        ends, dims = equalized[: len(loops)], equalized[len(loops) :]
+        if any(symbolic.simplify(end - (dim - 1)) != 0 for end, dim in zip(ends, dims, strict=True)):
             return None
-        if symbolic.simplify(i_end - (dim1 - 1)) != 0:
-            return None
-        full = subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)])
+        full = subsets.Range([(0, dim - 1, 1) for dim in desc.shape])
         if not full.is_contiguous_subset(desc):
             return None
         return _Match2D(
             op=op,
-            outer_loop=outer_loop,
-            inner_loop=inner_loop,
+            loops=loops,
             parent=outer_loop.parent_graph,
             carrier_name=carrier_name,
-            x_idx_name=x_idx_name,
-            y_idx_name=y_idx_name,
+            idx_names=idx_names,
             input_array=array,
-            ncols=desc.shape[1],
+            shape=list(desc.shape),
             last_wins=last_wins,
         )
 
-    def _parse_2d_gather(self, rhs_str: str, outer_var: str, inner_var: str) -> str | None:
-        """Return the array name iff ``rhs_str`` is exactly ``arr[outer_var,
-        inner_var]`` (a 2-D point access, outer index in dim 0, inner in dim 1)."""
+    def _parse_2d_gather(self, rhs_str: str, loop_vars: list[str]) -> str | None:
+        """Return the array name iff ``rhs_str`` is exactly ``arr[v0, ..., v(n-1)]`` for ``loop_vars`` (a point
+        access, the outermost loop's variable in dimension 0, and so on)."""
         try:
             tree = ast.parse(str(rhs_str), mode="eval").body
         except SyntaxError:
@@ -884,25 +941,22 @@ class ArgMaxLift(ppl.Pass):
         if not isinstance(tree, ast.Subscript) or not isinstance(tree.value, ast.Name):
             return None
         idx = tree.slice
-        if not isinstance(idx, ast.Tuple) or len(idx.elts) != 2:
+        if not isinstance(idx, ast.Tuple) or len(idx.elts) != len(loop_vars):
             return None
-        d0, d1 = idx.elts
-        if not (isinstance(d0, ast.Name) and d0.id == outer_var):
-            return None
-        if not (isinstance(d1, ast.Name) and d1.id == inner_var):
+        if not all(isinstance(d, ast.Name) and d.id == var for d, var in zip(idx.elts, loop_vars, strict=True)):
             return None
         return tree.value.id
 
     def _resolve_gather_2d(
-        self, inner_loop: LoopRegion, gather_sym: str, outer_var: str, inner_var: str, sdfg: SDFG
+        self, inner_loop: LoopRegion, gather_sym: str, loop_vars: list[str], sdfg: SDFG
     ) -> str | None:
-        """Find an iedge binding ``gather_sym := arr[outer_var, inner_var]`` in the
-        inner loop and return ``arr`` (validated against ``sdfg.arrays``)."""
+        """Find an iedge binding ``gather_sym := arr[v0, ..., v(n-1)]`` in the
+        innermost loop and return ``arr`` (validated against ``sdfg.arrays``)."""
         for e in inner_loop.all_interstate_edges():
             rhs = (e.data.assignments or {}).get(gather_sym)
             if rhs is None:
                 continue
-            arr = self._parse_2d_gather(rhs, outer_var, inner_var)
+            arr = self._parse_2d_gather(rhs, loop_vars)
             if arr is not None and arr in sdfg.arrays:
                 return arr
         return None
@@ -913,29 +967,26 @@ class ArgMaxLift(ppl.Pass):
         carrier: str,
         gather_sym: str,
         array: str,
-        outer_var: str,
-        inner_var: str,
+        loop_vars: list[str],
         sdfg: SDFG,
-    ) -> tuple[str, str] | None:
-        """Verify the true-branch binds exactly ``carrier := arr[i, j]`` (or
-        ``:= gather_sym``), ``x := outer_var`` and ``y := inner_var`` via iedges,
-        with empty states and no other writes. Returns ``(x_name, y_name)`` or
-        ``None``."""
+    ) -> list[str] | None:
+        """Verify the true-branch binds exactly ``carrier := arr[v0, ...]`` (or
+        ``:= gather_sym``) and one ``idx_t := v_t`` per loop via iedges, with empty
+        states and no other writes. Returns the index carriers, outermost loop's first,
+        or ``None``."""
         if not isinstance(true_branch, ControlFlowRegion):
             return None
         carrier_seen = False
-        x_idx = y_idx = None
+        idx: dict[str, str] = {}
         for e in true_branch.edges():
             for lhs, rhs in (e.data.assignments or {}).items():
                 rhs_str = str(rhs).strip()
                 if lhs == carrier:
-                    if rhs_str != gather_sym and self._parse_2d_gather(rhs_str, outer_var, inner_var) != array:
+                    if rhs_str != gather_sym and self._parse_2d_gather(rhs_str, loop_vars) != array:
                         return None
                     carrier_seen = True
-                elif rhs_str == outer_var and x_idx is None:
-                    x_idx = lhs
-                elif rhs_str == inner_var and y_idx is None:
-                    y_idx = lhs
+                elif rhs_str in loop_vars and rhs_str not in idx:
+                    idx[rhs_str] = lhs
                 else:
                     return None
         for n in true_branch.nodes():
@@ -943,16 +994,18 @@ class ArgMaxLift(ppl.Pass):
                 return None
             if not isinstance(n, SDFGState):
                 return None  # nested control flow unsupported
-        if not (carrier_seen and x_idx is not None and y_idx is not None):
+        if not carrier_seen or len(idx) != len(loop_vars):
             return None
-        if x_idx not in sdfg.symbols or y_idx not in sdfg.symbols:
+        names = [idx[var] for var in loop_vars]
+        if len(set(names)) != len(names) or any(name not in sdfg.symbols for name in names):
             return None
-        return x_idx, y_idx
+        return names
 
     def _rewrite_2d(self, m: _Match2D, sdfg: SDFG) -> None:
-        """Replace the nested 2-D argmax with a flat :class:`ArgReduce` over the
-        whole (contiguous) array, decomposing the flat index back into the two
-        index carriers (``xindex = mflat // ncols``, ``yindex = mflat % ncols``).
+        """Replace the nested argmax with a flat :class:`ArgReduce` over the
+        whole (contiguous) array, decomposing the flat index back into the index
+        carriers (``idx_t = (mflat // stride_t) % shape_t``, ``stride_t`` the product
+        of the extents inside ``t``; in 2-D ``mflat // ncols`` and ``mflat % ncols``).
 
         Under a non-strict guard (``m.last_wins``) the sequential nest keeps the
         LAST row-major occurrence while the ArgReduce scan keeps the first, so the
@@ -962,51 +1015,50 @@ class ArgMaxLift(ppl.Pass):
         """
         from dace.libraries.standard.nodes import ArgReduce
 
+        outer_loop = m.loops[0]
         desc = sdfg.arrays[m.input_array]
         val_buf, _ = sdfg.add_scalar(
-            f"_argmax2d_val_{m.outer_loop.label}", desc.dtype, transient=True, find_new_name=True
+            f"_argmax2d_val_{outer_loop.label}", desc.dtype, transient=True, find_new_name=True
         )
         idx_buf, _ = sdfg.add_scalar(
-            f"_argmax2d_idx_{m.outer_loop.label}", dtypes.int64, transient=True, find_new_name=True
+            f"_argmax2d_idx_{outer_loop.label}", dtypes.int64, transient=True, find_new_name=True
         )
 
-        nrows, ncols_sym = desc.shape[0], desc.shape[1]
-        total = symbolic.simplify(nrows * ncols_sym)
-        argmax_state = m.parent.add_state(m.outer_loop.label + "_argreduce2d")
+        total = symbolic.simplify(functools.reduce(operator.mul, m.shape))
+        argmax_state = m.parent.add_state(outer_loop.label + "_argreduce2d")
         entry_state = argmax_state
         rev_buf = None
         if m.last_wins:
-            # Reversed flat copy: rev[_i*ncols + _j] = aa[nrows-1-_i, ncols-1-_j],
-            # whose forward flat position is exactly ``total-1 - (_i*ncols+_j)``.
-            # The map is a pure gather (a bijection on the flat index), so the
+            # Reversed flat copy: rev[flat(i)] = aa[shape-1-i], whose forward flat position is exactly
+            # ``total-1 - flat(i)``. The map is a pure gather (a bijection on the flat index), so the
             # materialisation stays fully parallel.
             rev_buf, _ = sdfg.add_array(
-                f"_argmax2d_rev_{m.outer_loop.label}", [total], desc.dtype, transient=True, find_new_name=True
+                f"_argmax2d_rev_{outer_loop.label}", [total], desc.dtype, transient=True, find_new_name=True
             )
-            mat_state = m.parent.add_state(m.outer_loop.label + "_argreduce2d_rev")
+            mat_state = m.parent.add_state(outer_loop.label + "_argreduce2d_rev")
             # Symbolic bounds and subsets, never a rendered string: ``sym2cpp`` spells a symbolic
             # extent as C++ (``dace::math::ipow(R, K)``), and the range parser splits on ':', so
             # the qualified name comes back as bogus tokens.
-            row_sym, col_sym = symbolic.symbol("_i"), symbolic.symbol("_j")
-            rev_i = symbolic.simplify(nrows - 1) - row_sym
-            rev_j = symbolic.simplify(ncols_sym - 1) - col_sym
-            flat = row_sym * ncols_sym + col_sym
+            params = ["_i", "_j"] if len(m.shape) == 2 else [f"_i{t}" for t in range(len(m.shape))]
+            syms = [symbolic.symbol(p) for p in params]
+            rev = [symbolic.simplify(dim - 1) - sym for dim, sym in zip(m.shape, syms, strict=True)]
+            flat = syms[0]
+            for dim, sym in zip(m.shape[1:], syms[1:], strict=True):
+                flat = flat * dim + sym
             mat_state.add_mapped_tasklet(
                 name="reverse_gather2d",
-                map_ranges={"_i": (0, nrows - 1, 1), "_j": (0, ncols_sym - 1, 1)},
-                inputs={
-                    "__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(rev_i, rev_i, 1), (rev_j, rev_j, 1)]))
-                },
+                map_ranges={p: (0, dim - 1, 1) for p, dim in zip(params, m.shape, strict=True)},
+                inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(r, r, 1) for r in rev]))},
                 code="__out = __in",
                 outputs={"__out": mm.Memlet(data=rev_buf, subset=subsets.Range([(flat, flat, 1)]))},
                 external_edges=True,
             )
             entry_state = mat_state
 
-        # Re-route inbound edges, dropping pre-loop seeds of all three carriers.
-        for ie in list(m.parent.in_edges(m.outer_loop)):
+        # Re-route inbound edges, dropping pre-loop seeds of every carrier.
+        for ie in list(m.parent.in_edges(outer_loop)):
             new_assigns = dict(ie.data.assignments or {})
-            for k in (m.carrier_name, m.x_idx_name, m.y_idx_name):
+            for k in (m.carrier_name, *m.idx_names):
                 new_assigns.pop(k, None)
             m.parent.add_edge(
                 ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
@@ -1015,40 +1067,33 @@ class ArgMaxLift(ppl.Pass):
         if m.last_wins:
             m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
 
-        ncols = symbolic.symstr(m.ncols)
         # Forward flat position of the winner: the reduce's own index when the scan
         # ran forward, mirrored through the array when it ran over the reversed copy.
         flat = idx_buf if not m.last_wins else f"(({symbolic.symstr(symbolic.simplify(total - 1))}) - {idx_buf})"
-        bind_state = m.parent.add_state(m.outer_loop.label + "_argreduce2d_bind")
-        m.parent.add_edge(
-            argmax_state,
-            bind_state,
-            dace.InterstateEdge(
-                assignments={
-                    m.carrier_name: val_buf,
-                    m.x_idx_name: f"int_floor({flat}, {ncols})",
-                    m.y_idx_name: f"({flat} % ({ncols}))",
-                }
-            ),
-        )
-        for oe in list(m.parent.out_edges(m.outer_loop)):
+        assignments = {m.carrier_name: val_buf}
+        for t, (name, dim) in enumerate(zip(m.idx_names, m.shape, strict=True)):
+            inside = m.shape[t + 1 :]
+            stride = symbolic.symstr(symbolic.simplify(functools.reduce(operator.mul, inside))) if inside else None
+            position = f"int_floor({flat}, {stride})" if stride is not None else flat
+            assignments[name] = position if t == 0 else f"({position} % ({symbolic.symstr(dim)}))"
+        bind_state = m.parent.add_state(outer_loop.label + "_argreduce2d_bind")
+        m.parent.add_edge(argmax_state, bind_state, dace.InterstateEdge(assignments=assignments))
+        for oe in list(m.parent.out_edges(outer_loop)):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
-        m.parent.remove_node(m.outer_loop)
+        m.parent.remove_node(outer_loop)
 
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
         op = "max" if m.op == dtypes.ReductionType.Max else "min"
-        node = ArgReduce(name=f"{m.outer_loop.label}_argreduce2d", op=op)
+        node = ArgReduce(name=f"{outer_loop.label}_argreduce2d", op=op)
         argmax_state.add_node(node)
         if m.last_wins:
             read = argmax_state.add_read(required(rev_buf))
             in_memlet = mm.Memlet(data=rev_buf, subset=subsets.Range([(0, symbolic.simplify(total - 1), 1)]))
         else:
             read = argmax_state.add_read(m.input_array)
-            in_memlet = mm.Memlet(
-                data=m.input_array, subset=subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)])
-            )
+            in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(0, dim - 1, 1) for dim in desc.shape]))
         argmax_state.add_edge(read, None, node, "_in", in_memlet)
         argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, "_out_idx", wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
@@ -2242,6 +2287,436 @@ class ArgMaxLift(ppl.Pass):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
         m.parent.remove_node(m.loop)
+
+    # Partial reductions: a fold into one element, nested to any depth.
+
+    def match_partial_reduction(self, loop: LoopRegion, sdfg: SDFG) -> PartialReduction | None:
+        """Match a perfect nest of unit-stride loops folding a box of ``source`` into ONE element ``carrier[K]``::
+
+            for j1 in s1..e1:  ...  for jn in sn..en:
+                if <guard>(source[I(j)], carrier[K]): carrier[K] = <value>
+
+        ``K`` names no reduced loop and every reduced loop moves exactly one dimension of ``I`` by itself, so the
+        nest visits a box. The ``(guard, value)`` pairs read:
+
+        * ``x > acc`` / ``x < acc`` (either operand order), ``value = x``: ``max`` / ``min``. A non-strict guard
+          keeps the LAST of equal values -- ``-0.0`` after ``0.0`` -- and is taken on integer data only.
+        * ``x != x or x > acc`` (``<``), ``value = x``: the NaN-propagating fold HPCAgent-Bench emits for
+          ``x.max(axis=...)``; the combine is the update verbatim (:data:`NAN_PROPAGATING_WCR`).
+        * ``x`` / ``not x`` on boolean data, ``value = True`` / ``False``: ``any`` / ``all``.
+
+        A NaN-resetting guard (``not (x <= acc)``) is no reduction -- a NaN accumulator gives way to the next
+        element -- and matches none of these. Whatever ``carrier[K]`` holds before the nest is the seed; the
+        rewrite folds into it, so it is not inspected.
+
+        Matched on the outermost reduced loop; a loop around it whose variable ``K`` names stays a loop.
+        """
+        nest = [loop]
+        while True:
+            inner = self._single_child_region(nest[-1], LoopRegion)
+            if inner is None:
+                break
+            if any(e.data.assignments or not e.data.is_unconditional() for e in nest[-1].edges()):
+                return None
+            nest.append(inner)
+        names = [n.loop_variable for n in nest]
+        if not all(names) or len(set(names)) != len(names):
+            return None
+        skeleton = self.guarded_loop_skeleton(nest[-1])
+        if skeleton is None:
+            return None
+        _, _, _, guard, true_branch = skeleton
+
+        # The binding chain in front of the guard (``x_index := source[...]``, ``acc_index := carrier[K]``).
+        bindings: dict[str, str] = {}
+        for e in nest[-1].edges():
+            if not e.data.is_unconditional():
+                return None
+            for lhs, rhs in (e.data.assignments or {}).items():
+                if lhs in bindings or lhs in names:
+                    return None
+                bindings[lhs] = str(rhs)
+        varying = set(names) | set(bindings)
+
+        extents: list[tuple[Any, Any]] = []
+        for reduced in nest:
+            if reduced.inverted:
+                return None  # a do-while runs its body once even over an empty range
+            start = loop_analysis.get_init_assignment(reduced)
+            end = loop_analysis.get_loop_end(reduced)
+            stride = loop_analysis.get_loop_stride(reduced)
+            if start is None or end is None or stride is None or symbolic.simplify(stride) != 1:
+                return None
+            if self._names_in(start, end) & varying:
+                return None  # not a box: a bound moves with the nest
+            extents.append((start, end))
+
+        written = self.partial_write(true_branch, sdfg)
+        if written is None:
+            return None
+        carrier, carrier_subset, value, scratch = written
+        if any(begin != end_ for begin, end_, _ in carrier_subset.ranges):
+            return None
+        if self._names_in(*(begin for begin, _, _ in carrier_subset.ranges)) & varying:
+            return None
+
+        tree = self.substituted_guard(guard.as_string.strip(), bindings)
+        if tree is None:
+            return None
+        fold = self.partial_fold(tree, value, carrier, carrier_subset, sdfg)
+        if fold is None:
+            return None
+        wcr, gather = fold
+        source = gather.value.id  # type: ignore[attr-defined]  -- partial_fold returns a Name-valued subscript
+        if source == carrier or source not in sdfg.arrays:
+            return None
+        if sdfg.arrays[source].dtype != sdfg.arrays[carrier].dtype:
+            return None  # the guard compares before the store converts; the reduction would convert first
+        if value is not None and not isinstance(value, bool) and not self.same_element(value, gather):
+            return None  # the branch stores another element than the one it compared
+        source_subset = self.visited_box(gather, names, extents, varying)
+        if source_subset is None:
+            return None
+        if self.read_outside(sdfg, nest[0], set(bindings), scratch):
+            return None
+        return PartialReduction(
+            loops=nest,
+            parent=loop.parent_graph,
+            carrier=carrier,
+            carrier_subset=carrier_subset,
+            source=source,
+            source_subset=source_subset,
+            wcr=wcr,
+            extents=extents,
+        )
+
+    @staticmethod
+    def same_element(left: ast.expr, right: ast.expr) -> bool:
+        """Whether two subscripts name the same element: one array, and every index equal (``symbolic.equal``)."""
+        if not (isinstance(left, ast.Subscript) and isinstance(right, ast.Subscript)):
+            return False
+        if (
+            not (isinstance(left.value, ast.Name) and isinstance(right.value, ast.Name))
+            or left.value.id != right.value.id
+        ):
+            return False
+        lidx = left.slice.elts if isinstance(left.slice, ast.Tuple) else [left.slice]
+        ridx = right.slice.elts if isinstance(right.slice, ast.Tuple) else [right.slice]
+        if len(lidx) != len(ridx):
+            return False
+        try:
+            return all(
+                symbolic.equal(
+                    symbolic.pystr_to_symbolic(ast.unparse(a)),
+                    symbolic.pystr_to_symbolic(ast.unparse(b)),
+                    is_length=False,
+                )
+                is True
+                for a, b in zip(lidx, ridx, strict=True)
+            )
+        except (TypeError, ValueError, SyntaxError):
+            return False
+
+    @staticmethod
+    def _names_in(*expressions: Any) -> set[str]:
+        """The free symbol names of ``expressions``."""
+        out: set[str] = set()
+        for expr in expressions:
+            out |= {str(name) for name in symbolic.free_symbols_and_functions(expr)}
+        return out
+
+    def partial_write(
+        self, true_branch: ControlFlowBlock, sdfg: SDFG
+    ) -> tuple[str, subsets.Range, ast.expr | bool | None, set[str]] | None:
+        """``(carrier, element, value, scratch)`` of the one write the true branch makes, or ``None``.
+
+        The branch is one state and nothing else: a constant tasklet ``out = True`` / ``False`` into the carrier
+        (``value`` is the constant), or a copy chain from ``source[I]`` through single-element scratch containers
+        and identity tasklets (``value`` is ``source[I]`` as an expression). ``scratch`` names the containers in
+        between, which the rewrite stops writing.
+        """
+        if not isinstance(true_branch, ControlFlowRegion):
+            return None
+        if any(not isinstance(n, SDFGState) for n in true_branch.nodes()):
+            return None
+        if any(e.data.assignments or not e.data.is_unconditional() for e in true_branch.edges()):
+            return None
+        state = self._extract_singleton_state(true_branch)
+        if state is None:
+            return None
+        sinks = [n for n in state.sink_nodes() if isinstance(n, nodes.AccessNode)]
+        if len(sinks) != 1 or len(state.sink_nodes()) != 1:
+            return None
+        sink = sinks[0]
+        into = state.in_edges(sink)
+        if len(into) != 1 or into[0].data.wcr is not None or into[0].data.is_empty():
+            return None
+        element = into[0].data.get_dst_subset(into[0], state)
+        if not isinstance(element, subsets.Range):
+            return None
+        chain: list[nodes.Node] = [sink]
+        scratch: set[str] = set()
+        node = into[0].src
+        while True:
+            chain.append(node)
+            ins = state.in_edges(node)
+            if isinstance(node, nodes.Tasklet):
+                code = node.code.as_string.strip()
+                if node.side_effects or node.code.language != dtypes.Language.Python or len(node.out_connectors) != 1:
+                    return None
+                out_conn = next(iter(node.out_connectors))
+                if not ins:
+                    constant = re.fullmatch(rf"{re.escape(out_conn)}\s*=\s*(True|False)", code)
+                    if constant is None or len(chain) != 2:
+                        return None
+                    value: ast.expr | bool | None = constant.group(1) == "True"
+                    break
+                if len(ins) != 1 or code != f"{out_conn} = {ins[0].dst_conn}":
+                    return None
+            elif isinstance(node, nodes.AccessNode):
+                if not ins:  # the source
+                    out = state.out_edges(node)
+                    if len(out) != 1:
+                        return None
+                    indices = out[0].data.get_src_subset(out[0], state)
+                    if not isinstance(indices, subsets.Range) or any(b != e for b, e, _ in indices.ranges):
+                        return None
+                    index = ", ".join(symbolic.symstr(b) for b, _, _ in indices.ranges)
+                    value = ast.parse(f"{node.data}[{index}]", mode="eval").body
+                    break
+                desc = node.desc(sdfg)
+                if not desc.transient or desc.total_size != 1 or len(ins) != 1 or len(state.out_edges(node)) != 1:
+                    return None
+                scratch.add(node.data)
+            else:
+                return None
+            if len(ins) != 1 or ins[0].data.wcr is not None:
+                return None
+            node = ins[0].src
+        if len(chain) != len(state.nodes()):
+            return None  # something beside the chain: a second effect the rewrite would drop
+        return sink.data, element, value, scratch
+
+    def substituted_guard(self, guard: str, bindings: dict[str, str]) -> ast.expr | None:
+        """``guard`` parsed, every name the binding chain binds replaced by what it binds (one level: a binding
+        that names another bound name is refused)."""
+
+        class Substitute(ast.NodeTransformer):
+            def __init__(self) -> None:
+                self.ok = True
+
+            def visit_Name(self, node: ast.Name) -> ast.AST:
+                if node.id not in bindings:
+                    return node
+                try:
+                    bound = ast.parse(bindings[node.id], mode="eval").body
+                except SyntaxError:
+                    self.ok = False
+                    return node
+                if any(isinstance(n, ast.Name) and n.id in bindings for n in ast.walk(bound)):
+                    self.ok = False
+                return bound
+
+        try:
+            tree = ast.parse(guard, mode="eval").body
+        except SyntaxError:
+            return None
+        substitute = Substitute()
+        tree = substitute.visit(tree)
+        return tree if substitute.ok else None
+
+    def partial_fold(
+        self,
+        tree: ast.expr,
+        value: ast.expr | bool | None,
+        carrier: str,
+        carrier_subset: subsets.Range,
+        sdfg: SDFG,
+    ) -> tuple[str, ast.Subscript] | None:
+        """``(combine, gather)`` for a guard (with its bindings substituted) and the value the branch writes, or
+        ``None``; see :meth:`match_partial_reduction` for the forms."""
+
+        def is_carrier(node: ast.expr) -> bool:
+            if isinstance(node, ast.Name):
+                return node.id == carrier and sdfg.arrays[carrier].total_size == 1
+            if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == carrier):
+                return False
+            idx = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            if len(idx) != len(carrier_subset.ranges):
+                return False
+            try:
+                return all(
+                    symbolic.equal(symbolic.pystr_to_symbolic(ast.unparse(i)), begin, is_length=False) is True
+                    for i, (begin, _, _) in zip(idx, carrier_subset.ranges, strict=True)
+                )
+            except (TypeError, ValueError, SyntaxError):
+                return False
+
+        def is_gather(node: ast.expr) -> bool:
+            return isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and not is_carrier(node)
+
+        def compare(node: ast.expr) -> tuple[dtypes.ReductionType, bool, ast.Subscript] | None:
+            """``(op, strict, gather)`` of ``gather > carrier`` / ``carrier < gather`` / ... ."""
+            if not (isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1):
+                return None
+            op, left, right = type(node.ops[0]), node.left, node.comparators[0]
+            if op not in CMP_AST_TO_RTYPE:
+                return None
+            if is_gather(left) and is_carrier(right):
+                gather, reduction = left, CMP_AST_TO_RTYPE[op]
+            elif is_carrier(left) and is_gather(right):
+                gather = right
+                reduction = (
+                    dtypes.ReductionType.Min
+                    if CMP_AST_TO_RTYPE[op] == dtypes.ReductionType.Max
+                    else dtypes.ReductionType.Max
+                )
+            else:
+                return None
+            return reduction, op in (ast.Gt, ast.Lt), gather  # type: ignore[return-value]
+
+        if isinstance(value, bool):
+            # ``any`` / ``all`` over boolean data: the guard is the element, or its negation.
+            negated = isinstance(tree, ast.UnaryOp) and isinstance(tree.op, ast.Not)
+            gather = tree.operand if negated else tree  # type: ignore[attr-defined]
+            if not is_gather(gather) or negated == value:
+                return None
+            if sdfg.arrays[gather.value.id].dtype != dtypes.bool_ or sdfg.arrays[carrier].dtype != dtypes.bool_:
+                return None
+            return ("lambda a, b: a and b" if negated else "lambda a, b: a or b"), gather
+        if value is None:
+            return None
+        integral = sdfg.arrays[carrier].dtype.type is not None and np.issubdtype(
+            sdfg.arrays[carrier].dtype.type, np.integer
+        )
+        if isinstance(tree, ast.BoolOp) and isinstance(tree.op, ast.Or) and len(tree.values) == 2:
+            # ``x != x or x > acc``, in either order.
+            for nan_test, comparison in (tree.values, tree.values[::-1]):
+                parsed = compare(comparison)
+                if not (
+                    parsed is not None
+                    and isinstance(nan_test, ast.Compare)
+                    and len(nan_test.ops) == 1
+                    and isinstance(nan_test.ops[0], ast.NotEq)
+                    and self.same_element(nan_test.left, parsed[2])
+                    and self.same_element(nan_test.comparators[0], parsed[2])
+                ):
+                    continue
+                reduction, strict, gather = parsed
+                if not strict and not integral:
+                    return None
+                return NAN_PROPAGATING_WCR[reduction], gather
+            return None
+        parsed = compare(tree)
+        if parsed is None:
+            return None
+        reduction, strict, gather = parsed
+        if not strict and not integral:
+            return None
+        return STRICT_WCR[reduction], gather
+
+    def visited_box(
+        self, gather: ast.Subscript, names: list[str], extents: list[tuple[Any, Any]], varying: set[str]
+    ) -> subsets.Range | None:
+        """The box of the source ``gather`` visits over the nest, or ``None`` unless every reduced loop moves
+        exactly one dimension by itself (``j + c``, ``c`` invariant) and every other dimension stays put."""
+        idx = gather.slice.elts if isinstance(gather.slice, ast.Tuple) else [gather.slice]
+        bounds = dict(zip(names, extents, strict=True))
+        ranges = []
+        moved: set[str] = set()
+        for index in idx:
+            if isinstance(index, ast.Slice):
+                return None
+            text = ast.unparse(index)
+            try:
+                expr = symbolic.pystr_to_symbolic(text)
+            except (TypeError, ValueError, SyntaxError):
+                return None
+            used = self._names_in(expr) & varying
+            if not used:
+                ranges.append((expr, expr, 1))
+                continue
+            if len(used) != 1 or not used <= set(names) or used & moved:
+                return None
+            var = used.pop()
+            offset = symbolic.pystr_to_symbolic(f"({text}) - ({var})")
+            if self._names_in(offset) & varying:
+                return None
+            start, end = bounds[var]
+            ranges.append(
+                (
+                    symbolic.pystr_to_symbolic(f"({symbolic.symstr(start)}) + ({symbolic.symstr(offset)})"),
+                    symbolic.pystr_to_symbolic(f"({symbolic.symstr(end)}) + ({symbolic.symstr(offset)})"),
+                    1,
+                )
+            )
+            moved.add(var)
+        if moved != set(names):
+            return None
+        return subsets.Range(ranges)
+
+    @staticmethod
+    def read_outside(sdfg: SDFG, region: ControlFlowRegion, symbols: set[str], containers: set[str]) -> bool:
+        """Whether anything outside ``region`` reads one of ``symbols`` -- the binding chain the rewrite drops --
+        or accesses one of ``containers``."""
+        if not symbols and not containers:
+            return False
+        inside = {id(b) for b in region.all_control_flow_blocks()} | {id(region)}
+        inside_edges = {id(e) for e in region.all_interstate_edges()}
+        for edge in sdfg.all_interstate_edges():
+            if id(edge) not in inside_edges and edge.data.read_symbols() & (symbols | containers):
+                return True
+        for block in sdfg.all_control_flow_blocks():
+            if id(block) in inside:
+                continue
+            if isinstance(block, SDFGState):
+                if symbols & block.free_symbols or any(n.data in containers for n in block.data_nodes()):
+                    return True
+            elif isinstance(block, LoopRegion):
+                codes = [block.init_statement, block.loop_condition, block.update_statement]
+                if any(c is not None and {str(s) for s in c.get_free_symbols()} & symbols for c in codes):
+                    return True
+            elif isinstance(block, ConditionalBlock):
+                if any(c is not None and {str(s) for s in c.get_free_symbols()} & symbols for c, _ in block.branches):
+                    return True
+        return False
+
+    def rewrite_partial_reduction(self, m: PartialReduction, sdfg: SDFG) -> None:
+        """Replace the nest with one :class:`Reduce` of ``source[box]`` into ``carrier[K]``, ``identity=None``: it
+        folds into what ``carrier[K]`` already holds, the seed the nest started from. Every reduced loop that can
+        run zero times leaves the carrier as it was, so the reduction runs under the guard that every extent is
+        non-empty -- a box with two negative extents would otherwise count as a positive volume."""
+        loop = m.loops[0]
+        state = SDFGState(loop.label + "_reduce", sdfg=sdfg)
+        nonempty = [
+            f"(({symbolic.symstr(end)}) >= ({symbolic.symstr(start)}))"
+            for start, end in m.extents
+            if not (symbolic.issymbolic(end - start) is False and end - start >= 0)
+        ]
+        if nonempty:
+            branch = ControlFlowRegion(loop.label + "_reduce_body", sdfg=sdfg)
+            branch.add_node(state, is_start_block=True)
+            block: ControlFlowBlock = ConditionalBlock(loop.label + "_nonempty", sdfg=sdfg)
+            block.add_branch(properties.CodeBlock(" and ".join(nonempty)), branch)
+        else:
+            block = state
+        m.parent.add_node(block, is_start_block=m.parent.start_block is loop)
+        for edge in list(m.parent.in_edges(loop)):
+            m.parent.add_edge(edge.src, block, edge.data)
+            m.parent.remove_edge(edge)
+        for edge in list(m.parent.out_edges(loop)):
+            m.parent.add_edge(block, edge.dst, edge.data)
+            m.parent.remove_edge(edge)
+        m.parent.remove_node(loop)
+
+        node = Reduce(name=f"{loop.label}_reduce", wcr=m.wcr, axes=None, identity=None)
+        node.add_in_connector("_in")
+        node.add_out_connector("_out")
+        state.add_node(node)
+        state.add_edge(state.add_read(m.source), None, node, "_in", mm.Memlet(data=m.source, subset=m.source_subset))
+        state.add_edge(
+            node, "_out", state.add_write(m.carrier), None, mm.Memlet(data=m.carrier, subset=m.carrier_subset)
+        )
 
 
 __all__ = ["ArgMaxLift"]

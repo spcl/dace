@@ -88,10 +88,12 @@ def body_wcr(state: SDFGState, map_entry: nodes.MapEntry):
 
 def map_has_minmax_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True if a WCR the map body executes reduces with ``min``/``max``, whose NaN-preserving
-    compare/branch combine vectorizers do not reliably fold.
+    compare/branch combine vectorizers do not reliably fold, or with a custom combine, which is no
+    more foldable (``ArgMaxLift``'s NaN-propagating max is a compare/branch too).
     """
     return any(
-        operations.detect_reduction_type(wcr) in (dtypes.ReductionType.Min, dtypes.ReductionType.Max)
+        operations.detect_reduction_type(wcr)
+        in (dtypes.ReductionType.Min, dtypes.ReductionType.Max, dtypes.ReductionType.Custom)
         for wcr in body_wcr(state, map_entry)
     )
 

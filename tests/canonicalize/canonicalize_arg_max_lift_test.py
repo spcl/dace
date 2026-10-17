@@ -1754,5 +1754,284 @@ def test_index_argmax_refuses_a_constant_seed():
     assert out[0] == 0.0 and int(idx[0]) == -1
 
 
+# Partial (kept-axis) max/min/any reduction nests of any depth: HPCAgent-Bench emits every
+# ``x.max(axis=...)`` / ``x.any(axis=...)`` as such a nest (velocity_tendencies' CFL section).
+
+B = dace.symbol("B")
+J = dace.symbol("J")
+K = dace.symbol("K")
+
+
+def _reduced_loops(sdfg, names):
+    """The loop regions of ``sdfg`` whose loop variable is one of ``names``."""
+    return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable in names]
+
+
+def _nan_max_reference(a, out):
+    """``nan_propagating_max_3d``'s loop, run in Python on a copy of ``out``."""
+    ref = out.copy()
+    for k0 in range(a.shape[0]):
+        ref[k0] = a[k0, 0, 0]
+        for j1 in range(a.shape[1]):
+            for j2 in range(a.shape[2]):
+                x = a[k0, j1, j2]
+                if x != x or x > ref[k0]:
+                    ref[k0] = x
+    return ref
+
+
+@dace.program
+def nan_propagating_max_3d(a: dace.float64[B, J, K], out: dace.float64[B]):
+    for k0 in range(B):
+        out[k0] = a[k0, 0, 0]
+        for j1 in range(J):
+            for j2 in range(K):
+                if a[k0, j1, j2] != a[k0, j1, j2] or a[k0, j1, j2] > out[k0]:
+                    out[k0] = a[k0, j1, j2]
+
+
+def _assert_bits_equal(got, want):
+    """Bit-for-bit equality, NaN payloads and signed zeros included."""
+    assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), (got, want)
+
+
+def test_partial_nan_propagating_max_3d_lifts():
+    """``a.max(axis=(1, 2))`` as HPCAgent-Bench emits it: the kept axis ``k0`` seeds ``out[k0]`` from the first
+    element, then a 2-D nest folds ``out[k0]`` with ``x != x or x > out[k0]``, which propagates a NaN. The nest
+    becomes ONE reduction whose combine is that update verbatim, so the result is bit-identical, NaNs, ties and
+    signed zeros included."""
+    sdfg = nan_propagating_max_3d.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert_cfg_list_matches_reset(sdfg)
+    assert not _reduced_loops(sdfg, {"j1", "j2"})
+    assert _num_reduces(sdfg) == 1
+
+    rng = np.random.default_rng(1)
+    a = rng.standard_normal((5, 4, 7))
+    a[1, 2, 3] = np.nan  # a NaN after the maximum: still the result
+    a[2, 0, 0] = np.nan  # a NaN seed
+    a[3] = 0.0
+    a[3, 1, 1] = -0.0  # a tie that must keep the first (positive) zero
+    a[4, 0, 0] = -0.0
+    a[4, 2, 2] = 0.0  # ... and one that must keep the first (negative) zero
+    out = np.zeros(5)
+    sdfg(a=a.copy(), out=out, B=5, J=4, K=7)
+    _assert_bits_equal(out, _nan_max_reference(a, np.zeros(5)))
+
+
+def test_partial_nan_propagating_min_4d_lifts():
+    """Two kept axes and two reduced ones, a mirrored NaN-propagating ``out[i, l] > x`` guard: one reduction."""
+
+    @dace.program
+    def nan_propagating_min_4d(a: dace.float64[B, J, K, B], out: dace.float64[B, B]):
+        for i in range(B):
+            for l in range(B):
+                out[i, l] = a[i, 0, 0, l]
+                for j in range(J):
+                    for k in range(K):
+                        if a[i, j, k, l] != a[i, j, k, l] or out[i, l] > a[i, j, k, l]:
+                            out[i, l] = a[i, j, k, l]
+
+    sdfg = nan_propagating_min_4d.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not _reduced_loops(sdfg, {"j", "k"})
+    rng = np.random.default_rng(2)
+    a = rng.standard_normal((3, 4, 5, 3))
+    a[1, 3, 4, 2] = np.nan
+    out = np.zeros((3, 3))
+    sdfg(a=a.copy(), out=out, B=3, J=4, K=5)
+    want = np.where(np.isnan(a).any(axis=(1, 2)), np.nan, a.min(axis=(1, 2)))
+    _assert_bits_equal(out, want)
+
+
+def test_partial_strict_max_over_three_reduced_axes_lifts():
+    """A plain ``x > out[k0]`` fold over three reduced axes is a ``max`` reduction: ``max(acc, x)`` keeps the
+    accumulator on a tie and on a NaN ``x``, exactly as the strict guard does."""
+
+    @dace.program
+    def strict_max_4d(a: dace.float64[B, J, K, J], out: dace.float64[B]):
+        for k0 in range(B):
+            out[k0] = a[k0, 0, 0, 0]
+            for j1 in range(J):
+                for j2 in range(K):
+                    for j3 in range(J):
+                        if a[k0, j1, j2, j3] > out[k0]:
+                            out[k0] = a[k0, j1, j2, j3]
+
+    sdfg = strict_max_4d.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not _reduced_loops(sdfg, {"j1", "j2", "j3"})
+    rng = np.random.default_rng(3)
+    a = rng.standard_normal((4, 3, 5, 3))
+    a[1, 1, 1, 1] = np.nan  # skipped by the strict guard
+    out = np.zeros(4)
+    sdfg(a=a.copy(), out=out, B=4, J=3, K=5)
+    _assert_bits_equal(out, np.nanmax(a.reshape(4, -1), axis=1))
+
+
+def test_partial_any_3d_lifts():
+    """``a.any(axis=(0, 2))`` as emitted -- ``out[l] = False``, then ``if a[b, l, k]: out[l] = True`` over the
+    other two axes -- is a logical-or reduction; velocity_tendencies' ``levelmask`` stayed a sequential 3-D
+    nest without it."""
+
+    @dace.program
+    def any_3d(a: dace.bool_[B, J, K], out: dace.bool_[J]):
+        for l in range(J):
+            out[l] = False
+            for b in range(B):
+                for k in range(K):
+                    if a[b, l, k]:
+                        out[l] = True
+
+    sdfg = any_3d.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not _reduced_loops(sdfg, {"b", "k"})
+    a = np.random.default_rng(4).random((5, 6, 7)) > 0.98
+    a[:, 0, :] = False
+    out = np.ones(6, dtype=np.bool_)
+    sdfg(a=a.copy(), out=out, B=5, J=6, K=7)
+    assert np.array_equal(out, a.any(axis=(0, 2)))
+
+
+def test_partial_reduction_over_an_empty_range_keeps_the_seed():
+    """A reduced loop that runs zero times leaves ``out[k0]`` as it was, as the nest did -- also when two extents
+    are empty, whose product a box would count as a positive volume."""
+
+    @dace.program
+    def fold_into(a: dace.float64[B, J, K], out: dace.float64[B], lo: dace.int64, hi: dace.int64):
+        for k0 in range(B):
+            for j1 in range(lo, hi):
+                for j2 in range(lo, hi):
+                    if a[k0, j1, j2] != a[k0, j1, j2] or a[k0, j1, j2] > out[k0]:
+                        out[k0] = a[k0, j1, j2]
+
+    sdfg = fold_into.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    a = np.random.default_rng(5).standard_normal((3, 4, 4))
+    for lo, hi in ((0, 0), (3, 1), (1, 3)):
+        out = np.full(3, -7.0)
+        sdfg(a=a.copy(), out=out, lo=lo, hi=hi, B=3, J=4, K=4)
+        want = np.maximum(-7.0, a[:, lo:hi, lo:hi].max(axis=(1, 2))) if hi > lo else np.full(3, -7.0)
+        _assert_bits_equal(out, want)
+
+
+def test_partial_refuses_a_nan_resetting_guard():
+    """``not (x <= out[k0])`` replaces a NaN accumulator with the next element, so the result depends on where
+    the last NaN sits: no reduction computes it. Refused."""
+
+    @dace.program
+    def nan_resetting(a: dace.float64[B, J, K], out: dace.float64[B]):
+        for k0 in range(B):
+            out[k0] = a[k0, 0, 0]
+            for j1 in range(J):
+                for j2 in range(K):
+                    if not (a[k0, j1, j2] <= out[k0]):
+                        out[k0] = a[k0, j1, j2]
+
+    sdfg = nan_resetting.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert len(_reduced_loops(sdfg, {"j1", "j2"})) == 2
+
+
+def test_partial_refuses_a_non_strict_guard_on_floats():
+    """``x >= out[k0]`` keeps the LAST of equal values, ``-0.0`` after ``0.0``; ``max`` keeps the first. Refused
+    on floating-point data, where the two are distinguishable."""
+
+    @dace.program
+    def non_strict(a: dace.float64[B, J, K], out: dace.float64[B]):
+        for k0 in range(B):
+            out[k0] = a[k0, 0, 0]
+            for j1 in range(J):
+                for j2 in range(K):
+                    if a[k0, j1, j2] >= out[k0]:
+                        out[k0] = a[k0, j1, j2]
+
+    sdfg = non_strict.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+
+
+def test_partial_refuses_a_carrier_of_another_type():
+    """A ``float32`` accumulator over ``float64`` data compares before the store rounds; a reduction would round
+    every element first. Refused rather than argued equal."""
+
+    @dace.program
+    def mixed(a: dace.float64[B, J, K], out: dace.float32[B]):
+        for k0 in range(B):
+            for j1 in range(J):
+                for j2 in range(K):
+                    if a[k0, j1, j2] > out[k0]:
+                        out[k0] = a[k0, j1, j2]
+
+    sdfg = mixed.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+
+
+def test_partial_refuses_a_diagonal_gather():
+    """``a[k0, j, j]`` visits a diagonal, not a box of ``a``. Refused."""
+
+    @dace.program
+    def diagonal(a: dace.float64[B, J, J], out: dace.float64[B]):
+        for k0 in range(B):
+            out[k0] = a[k0, 0, 0]
+            for j1 in range(J):
+                for j2 in range(J):
+                    if a[k0, j1, j1] > out[k0]:
+                        out[k0] = a[k0, j1, j1]
+
+    sdfg = diagonal.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+
+
+def test_partial_lifts_only_the_loops_the_carrier_does_not_move_with():
+    """``out[j1]`` moves with ``j1``, so only ``j2`` folds into one element: the ``k0`` and ``j1`` loops stay, and
+    the ``j2`` loop becomes the reduction of a row of ``a`` into ``out[j1]``."""
+
+    @dace.program
+    def moving_carrier(a: dace.float64[B, J, K], out: dace.float64[J]):
+        for k0 in range(B):
+            for j1 in range(J):
+                for j2 in range(K):
+                    if a[k0, j1, j2] > out[j1]:
+                        out[j1] = a[k0, j1, j2]
+
+    sdfg = moving_carrier.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert len(_reduced_loops(sdfg, {"k0", "j1"})) == 2 and not _reduced_loops(sdfg, {"j2"})
+    rng = np.random.default_rng(7)
+    a = rng.standard_normal((3, 4, 5))
+    out = rng.standard_normal(4)
+    want = np.maximum(out, a.max(axis=(0, 2)))
+    sdfg(a=a.copy(), out=out, B=3, J=4, K=5)
+    _assert_bits_equal(out, want)
+
+
+def test_partial_nan_propagating_max_canonicalizes_to_parallel_code():
+    """Through the whole pipeline: the lifted nest compiles to a parallel loop over the kept axis whose combine
+    is never vectorized with ``omp simd`` (a custom combine read-modify-writes one accumulator), and the result
+    stays bit-identical."""
+    from dace.transformation.passes.canonicalize import canonicalize
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+
+    sdfg = nan_propagating_max_3d.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    finalize_for_target(sdfg, "cpu")
+    assert not [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    code = sdfg.generate_code()[0].clean_code
+    assert "#pragma omp parallel for" in code
+    assert "#pragma omp simd" not in code
+    rng = np.random.default_rng(6)
+    a = rng.standard_normal((9, 5, 33))
+    a[4, 2, 7] = np.nan
+    out = np.zeros(9)
+    sdfg(a=a.copy(), out=out, B=9, J=5, K=33)
+    _assert_bits_equal(out, _nan_max_reference(a, np.zeros(9)))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
