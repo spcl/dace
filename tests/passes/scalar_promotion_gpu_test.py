@@ -251,6 +251,25 @@ def test_rule2_transient_purely_internal_not_promoted(non_transient_only: bool):
         assert isinstance(sdfg.arrays["local_s"], data.Scalar)
 
 
+def test_rule2_an_ordering_edge_out_of_a_kernel_is_not_a_write():
+    """An empty memlet from a GPU map's exit to a scalar's access node orders the two; it writes
+    nothing. Counted as a kernel output, it promoted a READ-ONLY signature scalar to a device array
+    while the entry still took it by value, and the launcher's ``const double *`` met the caller's
+    ``double`` (HB ls3df_scf's ``mix``)."""
+    sdfg = dace.SDFG("rule2_ordering_edge")
+    sdfg.add_array("A", shape=(10,), dtype=dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_scalar("mix", dtype=dace.float64, transient=False, storage=dtypes.StorageType.Default)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", ndrange={"i": "0:10"}, schedule=dtypes.ScheduleType.GPU_Device)
+    t = state.add_tasklet("scale", {"a", "w"}, {"b"}, "b = a * w")
+    state.add_memlet_path(state.add_access("A"), me, t, dst_conn="a", memlet=Memlet(data="A", subset="i"))
+    state.add_memlet_path(state.add_access("mix"), me, t, dst_conn="w", memlet=Memlet(data="mix", subset="0"))
+    state.add_memlet_path(t, mx, state.add_access("A"), src_conn="b", memlet=Memlet(data="A", subset="i"))
+    state.add_nedge(mx, state.add_access("mix"), Memlet())
+    _run(sdfg)
+    assert isinstance(sdfg.arrays["mix"], data.Scalar), sdfg.arrays["mix"]
+
+
 # Audit: NSDFG.symbol_mapping value referencing the promoted scalar by name
 # (bare identifier) must be rewritten to ``name[0]``.
 def test_symbol_mapping_value_rewrite():
@@ -336,6 +355,7 @@ if __name__ == "__main__":
     test_rule2_kernel_output_scalar_promoted()
     test_rule2_transient_purely_internal_not_promoted(True)
     test_rule2_transient_purely_internal_not_promoted(False)
+    test_rule2_an_ordering_edge_out_of_a_kernel_is_not_a_write()
     test_symbol_mapping_value_rewrite()
     test_nested_connector_residency_agrees_for_host_copy_endpoint(True)
     test_nested_connector_residency_agrees_for_host_copy_endpoint(False)

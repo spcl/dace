@@ -11,10 +11,11 @@ OFFSET = 2**33
 
 def _map_over_nested_sdfg(mapped_value: str = "i", start: int = 0) -> dace.SDFG:
     """
-    A map over ``start:start + N`` whose body is a nested SDFG writing its undeclared symbol ``n``, which is mapped to
-    ``mapped_value``, to ``A[i - start]``.
+    A map over ``start:start + N`` whose body is a nested SDFG writing its symbol ``n``, which is declared ``int32``
+    and mapped to ``mapped_value``, to ``A[i - start]``.
     """
     inner = dace.SDFG("inner")
+    inner.add_symbol("n", dace.int32)
     inner.add_array("a", [1], dace.int64)
     inner_state = inner.add_state()
     tasklet = inner_state.add_tasklet("write_n", {}, {"o"}, "o = n")
@@ -84,8 +85,8 @@ def test_value_beyond_32_bits_reaches_the_nested_sdfg():
 def test_declared_wider_symbol_is_kept():
     sdfg = _map_over_nested_sdfg()
     inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
-    inner.symbols["n"] = dace.int64
-    sdfg.symbols["N"] = dace.int32
+    inner.symbol_repo.set_type("n", dace.int64)
+    sdfg.symbol_repo.set_type("N", dace.int32)
     infer_types.infer_connector_types(sdfg)
     assert inner.symbols["n"] == dace.int64
 

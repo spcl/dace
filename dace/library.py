@@ -3,10 +3,11 @@ import contextlib
 import inspect
 import sys
 import types
-
-import networkx as nx
+from typing import TypeVar
 
 import dace.properties
+from dace import graphlib as nx
+from dace.ordered import OrderedSet
 from dace.sdfg.nodes import LibraryNode, full_class_path
 from dace.transformation.transformation import ExpandTransformation, PatternTransformation
 
@@ -50,7 +51,8 @@ def register_node(node_cls, library):
         raise TypeError(f"Expected Python module, got: {type(library).__name__}")
     if not hasattr(node_cls, "_dace_library_node"):
         raise ValueError(f"Library node class {node_cls.__name__} must be decorated with @dace.library.node.")
-    if hasattr(node_cls, "_dace_library_name") and node_cls._dace_library_name != library.__name__:
+    # The name of the library the class itself was registered with; a subclass of a node of another library inherits it.
+    if "_dace_library_name" in vars(node_cls) and node_cls._dace_library_name != library.__name__:
         raise ValueError(
             f"Node class {node_cls.__name__} registered with multiple libraries: {node_cls._dace_library_name} and {library.__name__}"
         )
@@ -100,8 +102,12 @@ def register_library(module_name, name):
                 register_transformation(value, module)
 
 
+#: A decorated class: the decorators return the class they were given, so its type is kept.
+T = TypeVar("T")
+
+
 # Use to decorate DaCe library nodes
-def node(n):
+def node(n: T) -> T:
     n = dace.properties.make_properties(n)
     if not issubclass(n, LibraryNode):
         raise TypeError('Library node class "' + n.__name__ + '" must derive from dace.sdfg.nodes.LibraryNode')
@@ -119,7 +125,7 @@ def node(n):
 
 
 # Use to decorate DaCe library expansions
-def expansion(exp):
+def expansion(exp: T) -> T:
     exp = dace.properties.make_properties(exp)
     if not issubclass(exp, ExpandTransformation):
         raise TypeError('Library node expansion "' + exp.__name__ + '" must derive from ExpandTransformation')
@@ -144,7 +150,7 @@ def register_expansion(library_node: LibraryNode, expansion_name: str):
 
 
 # Use to decorate DaCe library environments
-def environment(env):
+def environment(env: T) -> T:
     env = dace.properties.make_properties(env)
     for field in [
         "cmake_minimum_version",
@@ -181,12 +187,13 @@ def get_environments_and_dependencies(names: set[str]) -> list:
     """
 
     # get all environments: add dependencies until no new dependencies are found
-    environments = {get_environment(name) for name in names}
+    # Insertion order is the topological sort's tie-break, and so the emitted header order: keep the request order.
+    environments = OrderedSet(get_environment(name) for name in names)
     while True:
-        added = {dep for env in environments for dep in env.dependencies if dep not in environments}
+        added = OrderedSet(dep for env in environments for dep in env.dependencies if dep not in environments)
         if len(added) == 0:
             break
-        environments = environments.union(added)
+        environments.update(added)
 
     # construct dependency graph
     dep_graph = nx.DiGraph()
@@ -246,5 +253,7 @@ _DACE_REGISTERED_ENVIRONMENTS = {}
 def change_default(library, implementation):
     old_default = library.default_implementation
     library.default_implementation = implementation
-    yield
-    library.default_implementation = old_default
+    try:
+        yield
+    finally:
+        library.default_implementation = old_default

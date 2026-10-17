@@ -14,6 +14,11 @@ def customprog(A: dace.float64[20]):
     return A + 1
 
 
+@dace.program
+def customprog2(A: dace.float64[20]):
+    return A * 2
+
+
 @pytest.fixture
 def unlaunched(monkeypatch):
     """Drop the launcher rank variables the surrounding environment exports.
@@ -173,6 +178,11 @@ class OneRankOfAJob:
     def Barrier(self):
         pass
 
+    @property
+    def folder(self):
+        """The build folder out of the payload, which carries rank 0's error beside it."""
+        return None if self.broadcast is None else self.broadcast[1]
+
 
 def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_path):
     """Only rank 0 builds, so the others must look where it built and not where they would have."""
@@ -189,16 +199,77 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
         loader = OneRankOfAJob(1)
         loader.broadcast = builder.broadcast
         sdfg = customprog.to_sdfg()
-        assert sdfg.build_folder != builder.broadcast, "rank 1 was looking in rank 0's folder regardless"
+        assert sdfg.build_folder != builder.folder, "rank 1 was looking in rank 0's folder regardless"
 
         csdfg = sdfg_utils.distributed_compile(sdfg, loader)
 
-        assert sdfg.build_folder == builder.broadcast
+        assert sdfg.build_folder == builder.folder
         del csdfg
 
         # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
         csdfg = sdfg_utils.distributed_compile(None, loader)
         del csdfg
+
+
+def test_hash_cache_is_stable_across_identical_builds(unlaunched, tmp_path):
+    """`cache: hash` names the build folder from the SDFG's contents, so a rebuild of the SAME
+    program must land in the SAME folder -- otherwise every run is a cache miss and old build
+    folders pile up forever.
+
+    `to_json()` embeds a fresh `uuid4` `guid` on every SDFG/state/node/edge construction
+    (`generate_element_id`, dace/sdfg/graph.py), so two parses of one unchanged program produce
+    two different JSON strings even in the same process with no hash randomization involved --
+    the guids are random regardless of `PYTHONHASHSEED`. `hash_sdfg()` already strips `guid`
+    (and other derived/non-identity keys) before hashing.
+    """
+    unlaunched.setenv("DACE_default_build_folder", str(tmp_path))
+    with dace.config.set_temporary("cache", value="hash"):
+        sdfg1 = customprog.to_sdfg(simplify=False)
+        sdfg2 = customprog.to_sdfg(simplify=False)
+
+        # Confirms the reproducer is actually exercising the instability, not a vacuous check.
+        assert sdfg1.to_json() != sdfg2.to_json(), "guids no longer vary between builds -- update this reproducer"
+        assert sdfg1.hash_sdfg() == sdfg2.hash_sdfg()
+        assert sdfg1.build_folder == sdfg2.build_folder
+
+
+def test_hash_cache_differs_for_a_different_program(unlaunched, tmp_path):
+    """The flip side of the stability check: a cache key that collided across genuinely different
+    SDFGs would serve a stale binary, which is worse than a miss. Names are pinned equal so the
+    only thing left to tell the folders apart is the hash component itself.
+    """
+    unlaunched.setenv("DACE_default_build_folder", str(tmp_path))
+    with dace.config.set_temporary("cache", value="hash"):
+        sdfg1 = customprog.to_sdfg(simplify=False)
+        sdfg2 = customprog2.to_sdfg(simplify=False)
+        sdfg1.name = sdfg2.name = "probe"
+
+        assert sdfg1.hash_sdfg() != sdfg2.hash_sdfg()
+        assert sdfg1.build_folder != sdfg2.build_folder
+
+
+def test_distributed_compile_reraises_rank_0_failure_on_every_rank(unlaunched, tmp_path):
+    """Rank 0's build error rides along with the folder, so the other ranks fail instead of blocking.
+
+    Rank 0 never reaches the broadcast when its build raises, so a payload carrying only the folder
+    leaves every other rank waiting at that collective forever.
+    """
+
+    class FailsToCompile:
+        build_folder = str(tmp_path)
+
+        def compile(self, validate: bool = True):
+            raise ValueError("deliberate build failure")
+
+    builder = OneRankOfAJob(0)
+    with pytest.raises(RuntimeError, match="deliberate build failure"):
+        sdfg_utils.distributed_compile(FailsToCompile(), builder)
+
+    # A rank that only loads reads the same payload, and must raise rather than wait.
+    loader = OneRankOfAJob(1)
+    loader.broadcast = builder.broadcast
+    with pytest.raises(RuntimeError, match="deliberate build failure"):
+        sdfg_utils.distributed_compile(None, loader)
 
 
 if __name__ == "__main__":

@@ -16,10 +16,11 @@ class CopyLibraryNode(nodes.LibraryNode):
     """Library node representing a data copy between two access nodes. Implementations:
     ``MappedTasklet`` (element-wise tasklet, also the rank-mismatch/reshape and large-CPU-copy
     path), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy``),
-    ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
-    (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
-    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
-    optional ``__syncthreads()`` barriers controlled by ``sync``).
+    ``MemcpyCUDA1D``/``2D`` (``gpuMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
+    (Sequential map of ``gpuMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
+    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` for a static 1-D transfer, else
+    ``dace::BlockCollective3D`` for rank 1-3, with a trailing ``__syncthreads()`` controlled
+    by ``sync``).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static
@@ -36,12 +37,24 @@ class CopyLibraryNode(nodes.LibraryNode):
         dtype=bool,
         default=True,
         category="Scheduling",
-        desc="Emit __syncthreads() barriers around the SharedMemoryCollective copy (default True).",
+        desc="Emit the trailing __syncthreads() after the SharedMemoryCollective "
+        "copy (default True). A pass chaining several staged copies clears it on "
+        "all but the last so the chain costs one barrier.",
     )
 
-    def __init__(self, name, *args, sync=True, **kwargs):
+    aligned_words = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="SharedMemoryCollective only: when the rows of the region are contiguous on both sides, move "
+        "the global side in aligned 16-byte words (two doubles, four floats, eight halves), peeling the "
+        "unaligned head and tail of each row (dace::BlockCollective3DVec).",
+    )
+
+    def __init__(self, name, *args, sync=True, aligned_words=False, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
         self.sync = sync
+        self.aligned_words = aligned_words
 
     def src_storage(self, state) -> dtypes.StorageType:
         """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.
@@ -74,7 +87,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     def validate(self, sdfg, state, allow_cross_storage=True):
         """Resolve in/out edges, names, and subsets: ``(inp_name, inp, in_subset, out_name, out,
         out_subset)``. Raises ``ValueError`` if not wired with exactly one input and one output
-        data edge, dtypes mismatch, an extraneous non-reserved input connector wired, or (when
+        data edge, an extraneous non-reserved input connector wired, or (when
         ``allow_cross_storage`` is False) the two storages differ.
 
         :param sdfg: SDFG containing ``state``.
@@ -109,9 +122,6 @@ class CopyLibraryNode(nodes.LibraryNode):
         inp = sdfg.arrays[ie.data.data]
         in_subset = ie.data.subset
         inp_name = ie.dst_conn
-
-        if inp.dtype != out.dtype:
-            raise ValueError(f"Input and output data types must match (got {inp.dtype} vs {out.dtype}).")
 
         # Two host storages differ only in the allocator, so a plain memcpy between them is correct;
         # only a CPU/GPU (or other target-specific) pairing genuinely needs a different expansion.

@@ -10,7 +10,6 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.interstate import GPUTransformSDFG
 
 N = dace.symbol("N")
 
@@ -39,22 +38,24 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     sdfg.name = f"instrumentation_test_{instrumentation.name}"
     sdfg.simplify()
 
-    # Set instrumentation both on the state and the map
+    # Set instrumentation both on the state and the map; GPU events time kernels only, so the map alone
+    kernels_only = instrumentation == dace.InstrumentationType.GPU_Events
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry) and node.map.label == "mult":
             node.map.instrument = instrumentation
-            state.instrument = instrumentation
+            if not kernels_only:
+                state.instrument = instrumentation
 
     if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
-        sdfg.apply_transformations(GPUTransformSDFG)
+        sdfg.apply_gpu_transformations()
 
     with dace.instrument(
         instrumentation,
         filter="*",
         annotate_maps=True,
         annotate_tasklets=False,
-        annotate_states=True,
-        annotate_sdfgs=True,
+        annotate_states=not kernels_only,
+        annotate_sdfgs=not kernels_only,
     ):
         sdfg(A=A, B=B, C=C, N=size)
 
@@ -127,7 +128,7 @@ def test_gpu_tx_markers_with_timer():
             node.map.instrument = dace.InstrumentationType.GPU_TX_MARKERS
             state.instrument = dace.InstrumentationType.Timer
 
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_gpu_transformations()
 
     # Both providers are in use, so the ranges are emitted and the report is kept at either save site
     for each_invocation in (True, False):

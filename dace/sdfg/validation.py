@@ -7,7 +7,7 @@ import itertools
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -70,7 +70,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 region.edge_id(edge),
             )
         references.add(id(edge))
@@ -78,7 +78,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 region.edge_id(edge),
             )
         references.add(id(edge.data))
@@ -109,7 +109,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f"Undefined symbols in edge: {undef_syms}. Add those with "
                 "`sdfg.add_symbol()` or define outside with `dace.symbol()`",
-                sdfg,
+                region,
                 eid,
             )
 
@@ -118,7 +118,7 @@ def validate_control_flow_region(
         if any(not dtypes.validate_name(s) for s in issyms):
             invalid = next(s for s in issyms if not dtypes.validate_name(s))
             eid = region.edge_id(edge)
-            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", sdfg, eid)
+            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", region, eid)
 
         # Ensure accessed data containers in assignments and conditions are accessible in this context
         ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
@@ -138,7 +138,7 @@ def validate_control_flow_region(
                     raise InvalidSDFGInterstateEdgeError(
                         f'Trying to read an inaccessible data container "{container}" '
                         f"(Storage: {sdfg.arrays[container].storage}) in host code interstate edge",
-                        sdfg,
+                        region,
                         eid,
                     )
 
@@ -152,7 +152,7 @@ def validate_control_flow_region(
                     f"Race condition: inter-state assignment {aname} = {aval} uses "
                     f"variables {also_assigned}, which are also modified in the same "
                     "edge.",
-                    sdfg,
+                    region,
                     eid,
                 )
 
@@ -204,7 +204,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 eid,
             )
         references.add(id(edge))
@@ -212,7 +212,7 @@ def validate_control_flow_region(
             raise InvalidSDFGInterstateEdgeError(
                 f'Duplicate inter-state edge object detected: "{edge}". Please '
                 "copy objects rather than using multiple references to the same one",
-                sdfg,
+                region,
                 eid,
             )
         references.add(id(edge.data))
@@ -220,7 +220,7 @@ def validate_control_flow_region(
         issyms = edge.data.assignments.keys()
         if any(not dtypes.validate_name(s) for s in issyms):
             invalid = next(s for s in issyms if not dtypes.validate_name(s))
-            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", sdfg, eid)
+            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", region, eid)
 
         # Ensure accessed data containers in assignments and conditions are accessible in this context
         ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
@@ -239,12 +239,13 @@ def validate_control_flow_region(
                     raise InvalidSDFGInterstateEdgeError(
                         f'Trying to read an inaccessible data container "{container}" '
                         f"(Storage: {sdfg.arrays[container].storage}) in host code interstate edge",
-                        sdfg,
+                        region,
                         eid,
                     )
 
-    # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    # Check for interstate edges that write to scalars or arrays. Per region: this runs once per region, so
+    # passing the SDFG re-checked its edges every time and never checked a nested region's own
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
 def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context: bool):
@@ -263,6 +264,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
     # Avoid import loop
     from dace import data as dt
     from dace.sdfg.scope import is_devicelevel_gpu
+    from dace.sdfg.sdfg import scope_bound_names
     from dace.sdfg.state import ConditionalBlock
 
     references = references or set()
@@ -281,6 +283,8 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
         # SDFG-level checks
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
+        if sdfg.instrument == dtypes.InstrumentationType.GPU_Events:
+            raise InvalidSDFGError(GPU_EVENTS_KERNELS_ONLY, sdfg, None)
 
         for cfg in sdfg.all_control_flow_regions():
             if isinstance(cfg, ConditionalBlock):
@@ -301,6 +305,20 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                 )
             seen_names.update(obj_names)
 
+        sdfg.symbol_repo.validate(sdfg)
+        scoped = sorted(scope_bound_names(sdfg) & sdfg.symbols.keys())
+        if scoped:
+            raise InvalidSDFGError(
+                f"Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols", sdfg, None
+            )
+        # What the SDFG needs from outside must be declared as its parameters; ``__dace`` names are the code
+        # generator's own (e.g. the element count of a consume chunk). A nested SDFG's mapping of a symbol it does not
+        # use is only warned about (see ``NestedSDFG.validate``), so the used symbols are checked, not the free ones.
+        used = sdfg.used_symbols(all_symbols=False)
+        undeclared = sorted(name for name in used - sdfg.symbols.keys() if not name.startswith("__dace"))
+        if undeclared:
+            raise InvalidSDFGError(f"Free symbols {undeclared} are not declared as SDFG symbols", sdfg, None)
+
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
             if const_name in sdfg.arrays:
@@ -318,9 +336,12 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                         f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".'
                     )
 
-        # Test the return value.
+        # Test the return value. Only the top-level SDFG returns: a nested SDFG's ``__return*`` containers are
+        # connectors named after the caller's containers, which may be any subset of its return values.
         tuple_return_args = {n for n in sdfg._arrays if n.startswith("__return_")}
-        if "__return" in sdfg._arrays and tuple_return_args:
+        if sdfg.parent is not None:
+            tuple_return_args = set()
+        elif "__return" in sdfg._arrays and tuple_return_args:
             raise InvalidSDFGError(
                 "Ambiguous return values: an SDFG cannot have both a `__return` (single value) "
                 "and `__return_<i>` (tuple) data descriptor.",
@@ -429,12 +450,9 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
 
         initialized_transients = {"__pystate"}
         initialized_transients.update(sdfg.constants_prop.keys())
-        symbols = copy.deepcopy(sdfg.symbols)
+        symbols = dict(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
-        for desc in sdfg.arrays.values():
-            for sym in desc.free_symbols:
-                symbols[str(sym)] = sym.dtype
 
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
@@ -520,6 +538,39 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
     return True
 
 
+def state_has_reachable_cycle(state: "dace.sdfg.SDFGState") -> bool:
+    """``state.has_cycles()`` without the networkx dispatch: a cycle reachable from the state's source nodes, or
+    anywhere when it has none, found by one colored depth-first walk over the out-edge index."""
+    out_edges = state._nodes
+    sources = [node for node, (in_index, _) in out_edges.items() if not in_index]
+    starts = sources or list(out_edges)
+    on_path = 1
+    finished = 2
+    color: dict[Any, int] = {}
+    for start in starts:
+        if start in color:
+            continue
+        color[start] = on_path
+        stack = [(start, iter(out_edges[start][1]))]
+        while stack:
+            node, successors = stack[-1]
+            advanced = False
+            for edge in successors:
+                target = edge.dst
+                state_of_target = color.get(target)
+                if state_of_target == on_path:
+                    return True
+                if state_of_target is None:
+                    color[target] = on_path
+                    stack.append((target, iter(out_edges[target][1])))
+                    advanced = True
+                    break
+            if not advanced:
+                color[node] = finished
+                stack.pop()
+    return False
+
+
 def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
     """
     Checks that every non-empty memlet tree is rooted at an AccessNode, and that an empty memlet between two code
@@ -556,6 +607,27 @@ def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
                 state_id,
                 eid,
             )
+
+
+#: Why ``GPU_Events`` instrumentation anywhere but on a kernel is invalid.
+GPU_EVENTS_KERNELS_ONLY = (
+    "GPU_Events instrumentation times kernels only: set it on a GPU_Device map entry, never on an SDFG, a state or "
+    "another node (code generation reorganizes those, so their events would time nothing)."
+)
+
+
+def gpu_events_off_kernel(node: Any) -> bool:
+    """Whether ``node`` carries ``GPU_Events`` instrumentation without being a kernel (``GPU_Device`` map) entry."""
+    from dace.sdfg import nodes as nd
+
+    if isinstance(node, (nd.MapEntry, nd.MapExit)):
+        return (
+            node.map.instrument == dtypes.InstrumentationType.GPU_Events
+            and node.map.schedule != dtypes.ScheduleType.GPU_Device
+        )
+    if isinstance(node, (nd.ConsumeEntry, nd.ConsumeExit)):
+        return node.consume.instrument == dtypes.InstrumentationType.GPU_Events
+    return getattr(node, "instrument", None) == dtypes.InstrumentationType.GPU_Events
 
 
 def validate_state(
@@ -609,12 +681,15 @@ def validate_state(
     if state.sdfg != sdfg:
         raise InvalidSDFGError("State does not point to the correct parent", state.parent_graph, state_id)
 
+    if state.instrument == dtypes.InstrumentationType.GPU_Events:
+        raise InvalidSDFGError(GPU_EVENTS_KERNELS_ONLY, state.parent_graph, state_id)
+
     # Unreachable
     ########################################
     if sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0:
         raise InvalidSDFGError("Unreachable state", state.parent_graph, state_id)
 
-    if state.has_cycles():
+    if state_has_reachable_cycle(state):
         raise InvalidSDFGError("State should be acyclic but contains cycles", state.parent_graph, state_id)
 
     scope = state.scope_dict()
@@ -630,6 +705,9 @@ def validate_state(
                 nid,
             )
         references.add(id(node))
+
+        if gpu_events_off_kernel(node):
+            raise InvalidSDFGNodeError(GPU_EVENTS_KERNELS_ONLY, state.parent_graph, state_id, nid)
 
         # Node validation
         try:
@@ -655,10 +733,27 @@ def validate_state(
         ########################################
         if isinstance(node, nd.EntryNode):
             try:
-                state.exit_node(node)
+                exit_node = state.exit_node(node)
             except StopIteration:
                 raise InvalidSDFGNodeError(
                     "Entry node does not have matching exit node",
+                    state.parent_graph,
+                    state_id,
+                    nid,
+                )
+
+            # A scope's entry and exit are two views of one Map/Consume object, and code that pairs them relies on
+            # that identity (CPU codegen keys the map's brace on it). Nodes cloned against separate deepcopy memos
+            # each get their own object, which otherwise first surfaces as unbalanced C++.
+            if isinstance(node, nd.MapEntry):
+                shared_scope = node.map is exit_node.map
+            elif isinstance(node, nd.ConsumeEntry):
+                shared_scope = node.consume is exit_node.consume
+            else:
+                shared_scope = True
+            if not shared_scope:
+                raise InvalidSDFGNodeError(
+                    "Entry and exit nodes do not share the same scope object (copied separately?)",
                     state.parent_graph,
                     state_id,
                     nid,
@@ -718,8 +813,9 @@ def validate_state(
                     arr.transient
                     and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
-                    # Streams do not need to be initialized
+                    # Streams and the GPU stream handles codegen creates do not need to be initialized
                     and not isinstance(arr, dt.Stream)
+                    and arr.dtype != dtypes.gpuStream_t
                 ):
                     if node.setzero == False:
                         warnings.warn(f'WARNING: Use of uninitialized transient "{node.data}" in state "{state.label}"')
@@ -1190,6 +1286,9 @@ def validate_state(
                 raise error
 
     if Config.get_bool("experimental.check_race_conditions"):
+        from dace.sdfg.state import SymbolResolver
+
+        facts = SymbolResolver().facts_at(state)
         node_labels = []
         write_accesses = defaultdict(list)
         read_accesses = defaultdict(list)
@@ -1213,14 +1312,14 @@ def validate_state(
                     )
                     no_wcr = writes[i]["wcr"] is None and writes[j]["wcr"] is None
                     if same_or_unreachable_nodes and no_wcr:
-                        subsets_intersect = subsets.intersects(writes[i]["subset"], writes[j]["subset"])
-                        if subsets_intersect:
+                        if subsets.intersects(writes[i]["subset"], writes[j]["subset"], facts) is symbolic.Truth.TRUE:
                             warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
             # Check read-write data races.
             for write in writes:
                 for read in reads:
-                    if not nx.has_path(state.nx, read["node"], write["node"]) and subsets.intersects(
-                        write["subset"], read["subset"]
+                    if (
+                        not nx.has_path(state.nx, read["node"], write["node"])
+                        and subsets.intersects(write["subset"], read["subset"], facts) is symbolic.Truth.TRUE
                     ):
                         warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 
@@ -1234,7 +1333,7 @@ def validate_state(
 class InvalidSDFGError(Exception):
     """A class of exceptions thrown when SDFG validation fails."""
 
-    def __init__(self, message: str, sdfg: "SDFG", state_id: int):
+    def __init__(self, message: str, sdfg: "SDFG", state_id: int | None):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
@@ -1289,9 +1388,15 @@ class InvalidSDFGError(Exception):
 
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
-    """Exceptions of invalid inter-state edges in an SDFG."""
+    """Exceptions of invalid inter-state edges in an SDFG.
 
-    def __init__(self, message: str, sdfg: "SDFG", edge_id: int):
+    ``sdfg`` is the control flow region that OWNS the edge -- the SDFG only for a top-level edge -- and
+    ``edge_id`` its index among that region's edges, the same convention the state-level errors follow
+    with ``state.parent_graph``. An index into a nested loop's edges looked up in the SDFG's named the
+    wrong edge, or raised ``IndexError`` while the message was being formatted.
+    """
+
+    def __init__(self, message: str, sdfg: "ControlFlowRegion", edge_id: int):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
@@ -1441,6 +1546,6 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: "dace.ControlFlowRe
             if any(key in cfg.sdfg.arrays for key in edge.data.assignments):
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
-                    cfg.sdfg,
+                    cfg,
                     cfg.edge_id(edge),
                 )

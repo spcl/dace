@@ -59,6 +59,7 @@ from dace.data.distributed import DistributedDescriptor, ProcessGrid, SubArray, 
 
 # Descriptor creation and array creation from descriptors
 from dace.data.creation import (
+    add_mask,
     create_datadescriptor,
     make_array_from_descriptor,
     make_reference_from_descriptor,
@@ -107,6 +108,7 @@ __all__ = [
     "SubArray",
     "RedistrArray",
     # Functions
+    "add_mask",
     "create_datadescriptor",
     "make_array_from_descriptor",
     "make_reference_from_descriptor",

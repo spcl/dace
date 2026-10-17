@@ -12,7 +12,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.registry import make_registry
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import graph as gr
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -149,7 +149,7 @@ class TargetCodeGenerator:
         self,
         sdfg: SDFG,
         cfg: ControlFlowRegion,
-        dfg: SDFGState,
+        dfg: StateSubgraphView,
         state_id: int,
         node: nodes.Node,
         function_stream: CodeIOStream,
@@ -175,7 +175,7 @@ class TargetCodeGenerator:
         self,
         sdfg: SDFG,
         cfg: ControlFlowRegion,
-        dfg: SDFGState,
+        dfg: StateSubgraphView,
         state_id: int,
         node: nodes.Node,
         nodedesc: dt.Data,
@@ -202,7 +202,7 @@ class TargetCodeGenerator:
         self,
         sdfg: SDFG,
         cfg: ControlFlowRegion,
-        dfg: SDFGState,
+        dfg: StateSubgraphView,
         state_id: int,
         node: nodes.Node,
         nodedesc: dt.Data,
@@ -232,7 +232,7 @@ class TargetCodeGenerator:
         self,
         sdfg: SDFG,
         cfg: ControlFlowRegion,
-        dfg: SDFGState,
+        dfg: StateSubgraphView,
         state_id: int,
         node: nodes.Node,
         nodedesc: dt.Data,
@@ -260,7 +260,7 @@ class TargetCodeGenerator:
         self,
         sdfg: SDFG,
         cfg: ControlFlowRegion,
-        dfg: SDFGState,
+        dfg: StateSubgraphView,
         state_id: int,
         src_node: nodes.Node,
         dst_node: nodes.Node,

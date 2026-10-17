@@ -28,7 +28,7 @@ def connector_array(sdfg: SDFG, name: str, memlet: dace.Memlet, outer: SDFG) -> 
     shape is the subset's and its strides the container's, scaled by the subset's steps. Returns the shape."""
     desc = outer.arrays[memlet.data]
     shape = memlet.subset.size()
-    strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
+    strides = [stride * dim_range[2] for stride, dim_range in zip(desc.strides, memlet.subset)]
     sdfg.add_array(name, shape, desc.dtype, desc.storage, strides=strides)
     return shape
 
@@ -50,8 +50,8 @@ class ExpandCShiftPure(ExpandTransformation):
         # The direction lives on the node, so this is the one place the sign is chosen
         shift = node.shift if node.direction is ShiftDirection.FORTRAN else -node.shift
         element = [f"__i{d}" for d in range(len(shape))]
-        # ``Modulo`` is Fortran's MODULO: a negative shift wraps into range, where ``%`` would not
-        rotated = [f"Modulo(__i{d} + ({shift}), {shape[d]})" if d == axis else i for d, i in enumerate(element)]
+        # ``FtnModulo`` is Fortran's MODULO: a negative shift wraps into range, where ``%`` would not
+        rotated = [f"FtnModulo(__i{d} + ({shift}), {shape[d]})" if d == axis else i for d, i in enumerate(element)]
         sdfg.add_state().add_mapped_tasklet(
             "cshift",
             {f"__i{d}": f"0:{size}" for d, size in enumerate(shape)},

@@ -1,8 +1,8 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-#include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cuda_runtime.h>
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
@@ -141,7 +141,7 @@ class CublasHandle {
 
   cublasHandle_t& Get() {
     if (!handle_) {
-      auto handle = CreateCublasHandle();
+      cublasHandle_t handle = CreateCublasHandle();
       cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
       handle_ = handle;
     }

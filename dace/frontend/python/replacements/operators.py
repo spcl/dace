@@ -4,8 +4,9 @@ Contains operator replacements (e.g., NumPy Mathematical Functions) for supporte
 """
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from numbers import Number
+from typing import Any
 
 import numpy as np
 import sympy as sp
@@ -31,7 +32,7 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
     """Implements a general element-wise array unary operator."""
     arr1 = sdfg.arrays[op1]
 
-    restype, cast = result_type([arr1], opname)
+    restype, cast = result_type([arr1], opname, symbols=pv.symbol_types())
     tasklet_code = f"__out = {opcode} __in1"
     if cast:
         tasklet_code = tasklet_code.replace("__in1", f"{cast}(__in1)")
@@ -67,7 +68,7 @@ def _makeunop(op, opcode):
     @oprepo.replaces_operator("Scalar", op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
-        restype, _ = result_type([scalar1], op)
+        restype, _ = result_type([scalar1], op, symbols=visitor.symbol_types())
         op2 = visitor.get_target_name()
         op2, scalar2 = sdfg.add_scalar(op2, restype, transient=True, find_new_name=True)
         tasklet = state.add_tasklet(f"_{op}_", {"__in"}, {"__out"}, f"__out = {opcode} __in")
@@ -91,6 +92,11 @@ def _makeunop(op, opcode):
 
     @oprepo.replaces_operator("symbol", op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: symbolic.symbol, op2=None):
+        # ``~`` must fold here: sympy's ``Symbol`` derives from ``Boolean``, so the ``eval('~(op1)')``
+        # fallback below silently returns the LOGICAL ``Not(N)`` instead of a bitwise complement.
+        folded = fold_symbolic_operator(op, (op1,))
+        if folded is not None:
+            return folded
         if opcode in _pyop2symtype.keys():
             try:
                 return _pyop2symtype[opcode](op1)
@@ -135,13 +141,20 @@ def _is_op_boolean(op: str):
 
 
 def result_type(
-    arguments: Sequence[str | Number | symbolic.symbol | sp.Basic], operator: str = None
+    arguments: Sequence[str | Number | symbolic.symbol | sp.Basic],
+    operator: str = None,
+    *,
+    symbols: Mapping[str, dtypes.typeclass],
 ) -> tuple[list[dtypes.typeclass] | dtypes.typeclass | str, ...]:
+    """:param symbols: The type of every symbol name a symbolic argument may read (``ProgramVisitor.symbol_types``)."""
 
     datatypes = []
     dtypes_for_result = []
     dtypes_for_result_np2 = []
+    weak_integer_symbols = {}
     for arg in arguments:
+        if isinstance(arg, sp.logic.boolalg.BooleanAtom):  # a comparison the symbols decide, folded to sympy.true
+            arg = bool(arg)
         if isinstance(arg, (data.Array, data.Stream)):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(arg.dtype.type)
@@ -155,18 +168,39 @@ def result_type(
             dtypes_for_result.append(arg)
             dtypes_for_result_np2.append(arg)
         elif symbolic.issymbolic(arg):
-            datatypes.append(sym_type(arg))
-            dtypes_for_result.append(representative_num(sym_type(arg)))
-            dtypes_for_result_np2.append(sym_type(arg).type)
+            arg_type = sym_type(arg, symbols)
+            datatypes.append(arg_type)
+            dtypes_for_result.append(representative_num(arg_type))
+            # NEP 50: an INTEGER symbol is a *weak* operand -- a scalar index / size,
+            # like a Python ``int`` -- so combined with a float it must take the
+            # FLOAT's type (``float32 * i -> float32``), NOT width-promote it (a
+            # strong ``np.int64`` forces ``np.result_type(float32, int64) == float64``).
+            # Appending the strong type here injected a float64 intermediate into an
+            # otherwise-float32 kernel (azimint's ``r1 = rmax * i / npt``), which then
+            # produced a mixed-dtype ``r1 <= radius`` comparison the K-dim tiler can't
+            # lower. A Python ``int`` makes ``np.result_type`` apply weak (kind-based)
+            # promotion, matching the NumPy reference (where ``i`` is a Python int).
+            # Non-integer symbols keep their strong type, and so does an integer symbol among integers only
+            # (restored below): weakening it there narrows ``j * N`` to a narrower integer operand's type.
+            sym_dtype = arg_type
+            if np.issubdtype(sym_dtype.type, np.integer):
+                weak_integer_symbols[len(dtypes_for_result_np2)] = sym_dtype.type
+                dtypes_for_result_np2.append(1)
+            else:
+                dtypes_for_result_np2.append(sym_dtype.type)
         elif isinstance(arg, dtypes.typeclass):
             datatypes.append(arg)
             dtypes_for_result.append(representative_num(arg))
             dtypes_for_result_np2.append(arg.type)
         else:
             raise TypeError(f"Type {type(arg)} of argument {arg} is not supported")
+    # ``ml_dtypes``' floats (bfloat16, fp8) are numpy kind ``V``, not inexact, but they are floats.
+    if not any(np.issubdtype(dtype.type, np.inexact) or dtype in dtypes.FLOAT_TYPES for dtype in datatypes):
+        for index, strong_type in weak_integer_symbols.items():
+            dtypes_for_result_np2[index] = strong_type
 
     complex_types = {dtypes.complex64, dtypes.complex128, np.complex64, np.complex128}
-    float_types = {dtypes.float16, dtypes.float32, dtypes.float64, np.float16, np.float32, np.float64}
+    float_types = {*dtypes.FLOAT_TYPES, np.float16, np.float32, np.float64}
     signed_types = {dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, np.int8, np.int16, np.int32, np.int64}
     # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
 
@@ -285,7 +319,11 @@ def result_type(
 
             if dtype1 != restype:
                 left_cast = cast_str(restype)
-            if dtype2 != restype:
+            # For ``**`` keep an integer exponent integral: ``base ** int`` is an exact integer power in
+            # both numpy and C++ (each special-cases it), whereas casting the exponent up to a float/complex
+            # base forces the exp/log power path and loses bit-exactness (e.g. ``Z ** 2`` on complex ``Z``
+            # became ``Z ** complex128(2)``).
+            if dtype2 != restype and not (operator == "Pow" and coarse_types[1] < 2):
                 right_cast = cast_str(restype)
 
         elif _is_op_bitwise(operator):
@@ -298,6 +336,13 @@ def result_type(
             if max(type1, type2) > 1:
                 raise TypeError(f"unsupported operand type(s) for {operator}: '{dtype1}' and '{dtype2}'")
             restype = np_result_type(dtypes_for_result)
+            # numpy shifts bools into int8 (``True << True == 2``); the other bitwise ops keep bool.
+            if operator in ("LShift", "RShift") and restype == dtypes.bool_:
+                restype = dtypes.int8
+            # A signed/unsigned mix with no common integer type (e.g. int32 & uint64) promotes to
+            # float64 here, which numpy's bitwise ufuncs reject and C++ cannot express at all.
+            if restype != dtypes.bool_ and not np.issubdtype(restype.type, np.integer):
+                raise TypeError(f"unsupported operand type(s) for {operator}: '{dtype1}' and '{dtype2}'")
             if dtype1 != restype:
                 left_cast = cast_str(restype)
             if dtype2 != restype:
@@ -354,11 +399,15 @@ def result_type(
     else:  # Operators with 3 or more arguments
         restype = np_result_type(dtypes_for_result)
         coarse_result_type = None
-        if result_type in complex_types:
+        # ``restype``, not ``result_type``: the latter is this module's own function, so every test
+        # below compared a function object against a set of dtypes, never matched, and left
+        # coarse_result_type at 0 (unsigned). Every operand of every 3-or-more-argument ufunc was
+        # therefore cast, even when all of them already had the result's dtype.
+        if restype in complex_types:
             coarse_result_type = 3  # complex
-        elif result_type in float_types:
+        elif restype in float_types:
             coarse_result_type = 2  # float
-        elif result_type in signed_types:
+        elif restype in signed_types:
             coarse_result_type = 1  # signed integer, bool
         else:
             coarse_result_type = 0  # unsigned integer
@@ -391,7 +440,7 @@ def _array_array_binop(
     # Implicit Python coversion implemented as casting
     arguments = [left_arr, right_arr]
     tasklet_args = ["__in1", "__in2"]
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -403,7 +452,9 @@ def _array_array_binop(
     left_shape = left_arr.shape
     right_shape = right_arr.shape
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
+        left_shape, right_shape, facts=sdfg.facts()
+    )
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -418,7 +469,7 @@ def _array_array_binop(
             f"_{operator}_",
             {"__in1": None, "__in2": None},
             {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
         )
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
@@ -431,7 +482,7 @@ def _array_array_binop(
             f"_{operator}_",
             all_idx_dict,
             {"__in1": Memlet.simple(left_operand, left_idx), "__in2": Memlet.simple(right_operand, right_idx)},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -473,7 +524,7 @@ def _array_const_binop(
         arguments = [left_operand, right_arr]
         tasklet_args = [f"({str(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -482,7 +533,9 @@ def _array_const_binop(
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace("::", "."), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
+        left_shape, right_shape, facts=sdfg.facts()
+    )
 
     out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, storage)
 
@@ -497,7 +550,7 @@ def _array_const_binop(
             f"_{operator}_",
             inp_conn,
             {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
         )
         n3 = state.add_write(out_operand)
         if left_arr:
@@ -514,7 +567,7 @@ def _array_const_binop(
             f"_{operator}_",
             all_idx_dict,
             inp_memlets,
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -541,13 +594,13 @@ def _array_sym_binop(
         left_shape = left_arr.shape
         storage = left_arr.storage
         right_arr = None
-        right_type = sym_type(right_operand)
+        right_type = sym_type(right_operand, visitor.symbol_types())
         right_shape = [1]
         arguments = [left_arr, right_operand]
         tasklet_args = ["__in1", f"({astutils.unparse(right_operand)})"]
     else:
         left_arr = None
-        left_type = sym_type(left_operand)
+        left_type = sym_type(left_operand, visitor.symbol_types())
         left_shape = [1]
         right_arr = sdfg.arrays[right_operand]
         right_type = right_arr.dtype
@@ -556,7 +609,7 @@ def _array_sym_binop(
         arguments = [left_operand, right_arr]
         tasklet_args = [f"({astutils.unparse(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -565,7 +618,9 @@ def _array_sym_binop(
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace("::", "."), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
+        left_shape, right_shape, facts=sdfg.facts()
+    )
 
     out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, storage)
 
@@ -580,7 +635,7 @@ def _array_sym_binop(
             f"_{operator}_",
             inp_conn,
             {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
         )
         n3 = state.add_write(out_operand)
         if left_arr:
@@ -597,7 +652,7 @@ def _array_sym_binop(
             f"_{operator}_",
             all_idx_dict,
             inp_memlets,
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -627,7 +682,7 @@ def _scalar_scalar_binop(
     # Implicit Python coversion implemented as casting
     arguments = [left_scal, right_scal]
     tasklet_args = ["__in1", "__in2"]
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -645,7 +700,7 @@ def _scalar_scalar_binop(
         f"_{operator}_",
         {"__in1": None, "__in2": None},
         {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
     )
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
@@ -683,7 +738,7 @@ def _scalar_const_binop(
         arguments = [left_operand, right_scal]
         tasklet_args = [f"({str(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -705,7 +760,7 @@ def _scalar_const_binop(
         f"_{operator}_",
         inp_conn,
         {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
     )
     n3 = state.add_write(out_operand)
     if left_scal:
@@ -735,19 +790,19 @@ def _scalar_sym_binop(
         left_type = left_scal.dtype
         storage = left_scal.storage
         right_scal = None
-        right_type = sym_type(right_operand)
+        right_type = sym_type(right_operand, visitor.symbol_types())
         arguments = [left_scal, right_operand]
         tasklet_args = ["__in1", f"({astutils.unparse(right_operand)})"]
     else:
         left_scal = None
-        left_type = sym_type(left_operand)
+        left_type = sym_type(left_operand, visitor.symbol_types())
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
         tasklet_args = [f"({astutils.unparse(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -769,7 +824,7 @@ def _scalar_sym_binop(
         f"_{operator}_",
         inp_conn,
         {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
     )
     n3 = state.add_write(out_operand)
     if left_scal:
@@ -779,6 +834,13 @@ def _scalar_sym_binop(
     state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_scal))
 
     return out_operand
+
+
+def binop_tasklet_code(left: str, opcode: str, right: str) -> str:
+    """Tasklet code for ``left <opcode> right``; Python's ``%`` becomes ``PyMod``."""
+    if opcode == "%":
+        return f"__out = PyMod({left}, {right})"
+    return f"__out = {left} {opcode} {right}"
 
 
 _pyop2symtype = {
@@ -793,9 +855,84 @@ _pyop2symtype = {
     "<=": sp.LessThan,
     ">": sp.StrictGreaterThan,
     "<": sp.StrictLessThan,
-    # Binary ops
-    "//": symbolic.int_floor,
 }
+
+#: Operators whose DaCe symbolic counterpart is an explicit function rather than the plain Python
+#: operator, keyed by the DaCe operator name -- the same key ``result_type`` and the ``ufuncs`` table
+#: use, so the operator spelling (``a & b``) and the NumPy spelling (``np.bitwise_and(a, b)``) fold
+#: through one table and cannot drift.
+#:
+#: ``//`` has always needed an entry because sympy's ``/`` is exact division. The bitwise and shift
+#: operators need one for a blunter reason: a sympy ``Symbol`` has no ``__and__``/``__lshift__``
+#: against an ``int``, so the generic ``eval('l & r')`` fallback raises
+#: ``TypeError: unsupported operand type(s) for &: 'symbol' and 'int'``.
+#:
+#: The BARE classes (not the ``__``-prefixed variants) on purpose. ``symstr(..., cpp_mode=True)``
+#: prints both families as C++ operators, so map ranges and subsets lower to ``(N & 3)`` either way.
+#: But when a symbolic operand is inlined into a tasklet body it goes through ``astutils.unparse``,
+#: which prints the function name -- and only the bare names have a ``dace::math`` helper of the same
+#: name (``dace/runtime/include/dace/math.h``). ``__left_shift`` would fail to compile.
+SYMBOLIC_OPERATORS: dict[str, Callable[..., sp.Basic]] = {
+    "FloorDiv": symbolic.int_floor,
+    "BitAnd": symbolic.bitwise_and,
+    "BitOr": symbolic.bitwise_or,
+    "BitXor": symbolic.bitwise_xor,
+    "Invert": symbolic.bitwise_invert,
+    "LShift": symbolic.left_shift,
+    "RShift": symbolic.right_shift,
+}
+
+
+def is_symbolic_operand(operand: Any) -> bool:
+    """
+    Checks whether an operand carries no data container, i.e. it is a symbol, a symbolic expression
+    or a compile-time constant. Only such operands may be folded into a symbolic expression; anything
+    backed by an array or a scalar has to keep the element-wise data path.
+
+    :param operand: Operand to check.
+    :return: True if the operand is symbolic or constant.
+    """
+    return isinstance(operand, (Number, np.bool_, sp.Basic))
+
+
+def fold_symbolic_operator(operator: str, operands: Sequence[Any]) -> sp.Basic | None:
+    """
+    Folds an operator applied to symbolic or constant operands into a DaCe symbolic expression.
+
+    This is the single junction shared by the Python operator route (``a & b``) and the NumPy ufunc
+    route (``np.bitwise_and(a, b)``), so both spellings produce the same symbolic expression.
+
+    :param operator: DaCe operator name, e.g. ``'BitAnd'``.
+    :param operands: Operands of the operator.
+    :return: The folded symbolic expression, or None if the operator has no symbolic counterpart or
+             any operand is backed by a data container.
+    """
+    func = SYMBOLIC_OPERATORS.get(operator)
+    if func is None:
+        return None
+    if not all(is_symbolic_operand(operand) for operand in operands):
+        return None
+    return func(*operands)
+
+
+def _demote_constant_sympy(value):
+    """A SymPy number carrying no free symbols, as the Python scalar it stands for; anything else unchanged.
+
+    Folding a symbolic expression whose symbols CANCEL (``2.0 / N * N``) leaves a ``sympy.Float`` that is not
+    symbolic -- ``free_symbols`` is empty -- but is also not a key ``dtype_to_typeclass`` holds. The two later
+    gates then disagree about what it is: ``result_type`` takes the ``numbers.Number`` branch, because SymPy
+    registers its numeric atoms in that ABC tower, and asks for a typeclass that does not exist, while
+    ``_visit_assign`` refuses the same value as neither data, constant, nor symbol. Demoting at the site that
+    PRODUCES the value keeps both gates seeing a plain Python number.
+    """
+    if isinstance(value, sp.Basic) and value.is_number and not value.free_symbols:
+        if value.is_Integer:
+            return int(value)
+        if value.is_Boolean:
+            return bool(value)
+        if value.is_real:
+            return float(value)
+    return value
 
 
 def _const_const_binop(
@@ -811,7 +948,7 @@ def _const_const_binop(
     Both operands are Constants or Symbols
     """
 
-    _, casting = result_type([left_operand, right_operand], operator)
+    _, casting = result_type([left_operand, right_operand], operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -826,6 +963,9 @@ def _const_const_binop(
 
     # Support for SymPy expressions
     if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
+        folded = fold_symbolic_operator(operator, (left, right))
+        if folded is not None:
+            return _demote_constant_sympy(folded)
         if opcode in _pyop2symtype.keys():
             try:
                 return _pyop2symtype[opcode](left, right)
@@ -839,7 +979,7 @@ def _const_const_binop(
 
     expr = f"l {opcode} r"
     vars = {"l": left, "r": right}
-    return eval(expr, vars)
+    return _demote_constant_sympy(eval(expr, vars))
 
 
 def _makebinop(op, opcode):

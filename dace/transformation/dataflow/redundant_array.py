@@ -5,13 +5,13 @@ import copy
 import warnings
 from collections.abc import Sequence
 
-import networkx as nx
-from networkx.exception import NetworkXError, NodeNotFound
-
 from dace import data, dtypes, subsets, symbolic
+from dace import graphlib as nx
 from dace import memlet as mm
+from dace.graphlib import NetworkXError, NodeNotFound
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
 
@@ -24,6 +24,16 @@ def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicTy
         (m == a) == True  # SymPy comparison
         for m, a in zip(subset.size(), shape)
     )
+
+
+def squeezed_shape(shape: Sequence[symbolic.SymbolicType]) -> list[symbolic.SymbolicType]:
+    """`shape` without its size-1 dimensions, to compare against a squeezed subset.
+
+    `Range.squeeze` keeps one dimension rather than producing a zero-dimensional subset, so an
+    all-size-1 shape (a Scalar, or an array of shape `(1, 1)`) must keep one too.
+    """
+    squeezed = [size for size in shape if size != 1]
+    return squeezed or [1]
 
 
 def _validate_subsets(
@@ -44,7 +54,8 @@ def _validate_subsets(
     dst_subset = copy.deepcopy(edge.data.dst_subset)
 
     if not src_subset and not dst_subset:
-        # NOTE: This should never happen
+        # Reached only for an empty (happens-before ordering) memlet, which carries no data and is not a
+        # copy candidate -- callers must filter those out before asking for its subsets.
         raise NotImplementedError("Neither source nor destination subsets are defined")
     # NOTE: If any of the subsets is None, it means that we proceed in
     # experimental mode. The base case here is that we just copy the other
@@ -236,14 +247,25 @@ def find_dims_to_pop2(
     return dims_to_pop
 
 
-def pop_dims(subset, dims):
-    popped = []
+#: A dimension removed by ``pop_dims()``: its ``(start, end, step)`` range and its tile size.
+PoppedDim = tuple[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], symbolic.SymbolicType]
+
+
+def pop_dims(subset: subsets.Range, dims: Sequence[int]) -> tuple[subsets.Range, list[PoppedDim]]:
+    """
+    Remove the dimensions listed in ``dims`` from ``subset``.
+
+    Returns:
+        The reduced subset and the removed ``(range, tile_size)`` pairs, in removal order. Feed both,
+        together with the very same ``dims``, into ``compose_and_push_back()`` to restore them.
+
+    :param subset: The subset to remove dimensions from.
+    :param dims: Dimensions to remove, indexing ``subset`` as it is passed in.
+    """
     ranges = copy.deepcopy(subset.ranges)
     tsizes = copy.deepcopy(subset.tile_sizes)
-    for i in dims:
-        r = ranges.pop(i)
-        t = tsizes.pop(i)
-        popped.append((r, t))
+    # `dims` indexes the original subset, so removing low-to-high would shift every later index.
+    popped: list[PoppedDim] = [(ranges.pop(i), tsizes.pop(i)) for i in sorted(dims, reverse=True)]
     new_subset = subsets.Range(ranges)
     new_subset.tile_sizes = tsizes
     return new_subset, popped
@@ -254,7 +276,8 @@ def compose_and_push_back(first, second, dims=None, popped=None):
     if dims and popped and len(dims) == len(popped):
         ranges = subset.ranges
         tsizes = subset.tile_sizes
-        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+        # Exact inverse of `pop_dims()`: it removed high-to-low, so re-insert low-to-high.
+        for d, (r, t) in zip(sorted(dims), reversed(popped)):
             ranges.insert(d, r)
             tsizes.insert(d, t)
         subset = subsets.Range(ranges)
@@ -263,6 +286,142 @@ def compose_and_push_back(first, second, dims=None, popped=None):
 
 
 ##############################################################################
+
+
+def nested_connectors_may_alias(sdfg: SDFG, first: str, second: str) -> bool:
+    """Whether two names of a NESTED SDFG can be two pointers into one outer array.
+
+    Distinct non-transient descriptors are distinct storages at the top level, but inside a nested
+    SDFG they are connectors, and two connectors may address overlapping parts of one container.
+
+    :param sdfg: The SDFG holding both names.
+    :param first: First container name.
+    :param second: Second container name.
+    :returns: ``True`` when the two may alias.
+    """
+    nsdfg_node = sdfg.parent_nsdfg_node
+    if nsdfg_node is None or first == second:
+        return False
+    if sdfg.arrays[first].transient or sdfg.arrays[second].transient:
+        return False
+    outer = sdfg.parent
+    if outer is None:
+        return True  # cannot inspect the call site: assume the worst
+
+    outer_memlets: dict[str, list[mm.Memlet]] = {}
+    for edge in outer.in_edges(nsdfg_node):
+        if edge.dst_conn in (first, second) and edge.data.data is not None:
+            outer_memlets.setdefault(edge.dst_conn, []).append(edge.data)
+    for edge in outer.out_edges(nsdfg_node):
+        if edge.src_conn in (first, second) and edge.data.data is not None:
+            outer_memlets.setdefault(edge.src_conn, []).append(edge.data)
+    if first not in outer_memlets or second not in outer_memlets:
+        return True
+
+    for one in outer_memlets[first]:
+        for other in outer_memlets[second]:
+            if (
+                one.data == other.data
+                and subsets.intersects(one.subset, other.subset, sdfg.facts()) is not symbolic.Truth.FALSE
+            ):
+                return True
+    return False
+
+
+def updates_in_place(
+    state: SDFGState, read: nodes.AccessNode, temp: nodes.AccessNode, temp_subset: subsets.Range, target_subset
+) -> bool:
+    """Whether ``temp``'s only producer is a map whose tasklets read ``read`` exactly at the element they write into
+    ``temp``, once ``temp_subset`` is shifted onto ``target_subset`` (``Q[k:M] = Q[k:M] - X``). Writing such a map
+    straight into the container it reads keeps every iteration on its own element, so it cannot race."""
+    writes = state.in_edges(temp)
+    # An empty memlet out of the map (ls3df_scf's ordering edge) carries no element the map writes
+    if len(writes) != 1 or not isinstance(writes[0].src, nodes.MapExit) or writes[0].src_conn is None:
+        return False
+    exit_node = writes[0].src
+    entry = state.entry_node(exit_node)
+    inner_writes = [e for e in state.in_edges(exit_node) if e.dst_conn == writes[0].src_conn.replace("OUT_", "IN_", 1)]
+    if len(inner_writes) != 1 or not isinstance(inner_writes[0].src, nodes.Tasklet):
+        return False
+    written = copy.deepcopy(inner_writes[0].data.subset)
+    written.offset(temp_subset, True)
+    written.offset(target_subset, False)
+    for edge in state.out_edges(read):
+        if edge.dst is not entry:
+            continue
+        if edge.dst_conn is None:
+            return False
+        for inner in state.out_edges_by_connector(entry, "OUT_" + edge.dst_conn[3:]):
+            if not isinstance(inner.dst, nodes.Tasklet) or inner.data.subset != written:
+                return False
+    return True
+
+
+def converts_element_type(first: data.Data, second: data.Data) -> bool:
+    """Whether a copy between ``first`` and ``second`` converts element types. A view reinterprets on purpose and is
+    not a conversion."""
+    if isinstance(first, data.View) or isinstance(second, data.View):
+        return False
+    return first.dtype != second.dtype
+
+
+def declared_type(dtype: dtypes.typeclass | None) -> dtypes.typeclass | None:
+    """A connector's declared type, ``None`` for an undeclared (``void``) one."""
+    return None if dtype is None or dtype.type is None else dtype
+
+
+def tasklet_value_type(state: SDFGState, tasklet: nodes.Tasklet, connector: str) -> dtypes.typeclass | None:
+    """The type of the value ``tasklet`` assigns to its output ``connector``: the declared type, else the type its
+    Python code computes from its inputs' types. ``None`` when neither is known."""
+    declared = declared_type(tasklet.out_connectors.get(connector))
+    if declared is not None:
+        return declared
+    if tasklet.code.language != dtypes.Language.Python:
+        return None
+    from dace.sdfg import type_inference
+
+    inputs = {}
+    for edge in state.in_edges(tasklet):
+        dtype = declared_type(tasklet.in_connectors.get(edge.dst_conn))
+        if dtype is None and edge.data.data is not None:
+            dtype = state.sdfg.arrays[edge.data.data].dtype
+        if edge.dst_conn is not None and dtype is not None:
+            inputs[edge.dst_conn] = dtype
+    try:
+        return type_inference.infer_types(tasklet.code.code, inputs).get(connector)
+    except Exception:  # noqa: BLE001 -- uninferable code reads as unknown, which refuses the fold
+        return None
+
+
+def conversion_survives_fold(state: SDFGState, node: nodes.AccessNode, dtype: dtypes.typeclass, writers: bool) -> bool:
+    """Whether folding a converting copy away from ``node``, a container of ``dtype``, computes the same values.
+
+    Writers (``writers``): every one is, through any maps, a tasklet whose value already has type ``dtype``, so
+    storing it into ``node`` was exact and the fold only moves the copy's conversion into the tasklet's own store
+    (``out[:] = tmp + bias``: a ``double`` sum into an ``int64`` array). A value narrowed by that store --
+    mixed_precision_ir's ``rhs32 = r``, a ``float32`` rounding of ``float64`` data -- would lose its rounding.
+
+    Readers: every one is a tasklet whose input connector is declared ``dtype``, so it converts on load as the copy
+    did. A reader typed from the memlet would instead compute in the surviving container's type, and a nested SDFG
+    or library node would be handed its bytes.
+    """
+    edges = state.in_edges(node) if writers else state.out_edges(node)
+    for edge in edges:
+        for leaf in state.memlet_tree(edge).leaves():
+            if writers:
+                value = (
+                    tasklet_value_type(state, leaf.src, leaf.src_conn) if isinstance(leaf.src, nodes.Tasklet) else None
+                )
+            else:
+                value = (
+                    declared_type(leaf.dst.in_connectors.get(leaf.dst_conn))
+                    if isinstance(leaf.dst, nodes.Tasklet)
+                    else None
+                )
+            # ``is None`` first: a typeclass compares equal to ``None`` (as ``void``).
+            if value is None or value != dtype:
+                return False
+    return True
 
 
 class RedundantArray(pm.SingleStateTransformation):
@@ -280,12 +439,18 @@ class RedundantArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
+        facts = SymbolResolver().facts_at(graph, in_array)
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
 
         # Ensure out degree is one (only one target, which is out_array)
         if graph.out_degree(in_array) != 1:
+            return False
+
+        if converts_element_type(in_desc, out_desc) and not conversion_survives_fold(
+            graph, in_array, in_desc.dtype, writers=True
+        ):
             return False
 
         # Ensure it is not an isolated copy
@@ -296,12 +461,24 @@ class RedundantArray(pm.SingleStateTransformation):
         if not in_desc.transient:
             return False
 
+        # Removing in_array joins its predecessors straight to out_array; two connectors of a
+        # nested SDFG may be two pointers into one outer array.
+        for pred in graph.in_edges(in_array):
+            if isinstance(pred.src, nodes.AccessNode) and nested_connectors_may_alias(
+                sdfg, pred.src.data, out_array.data
+            ):
+                return False
+
         # Skip structure views
         if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
             return False
 
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
+        # An empty memlet is happens-before ordering, not a copy -- there is no redundancy to remove,
+        # and it carries no subsets for _validate_subsets to read.
+        if e1.data.is_empty():
+            return False
         try:
             a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
         except (NotImplementedError, ValueError) as ex:
@@ -336,7 +513,7 @@ class RedundantArray(pm.SingleStateTransformation):
             # Make sure the memlet covers the removed array
             subset = copy.deepcopy(a1_subset)
             subset.squeeze()
-            shape = [sz for sz in in_desc.shape if sz != 1]
+            shape = squeezed_shape(in_desc.shape)
             if not _subset_has_shape(subset, shape):
                 return False
 
@@ -369,6 +546,27 @@ class RedundantArray(pm.SingleStateTransformation):
                                     if desc is true_out_desc:
                                         return False
 
+            # A second write landing on the same region of out_array is sequenced against this one
+            # only by the copy: the value reaches out_array after in_array's producer completed,
+            # which puts it behind anything that producer's scope already wrote. Folding the copy
+            # away turns both into direct writes of out_array out of one scope, and siblings in a
+            # scope have no relative order -- codegen may replay the superseded value last. Only
+            # provably disjoint regions, and equal WCRs (accumulation commutes), stay safe.
+            if out_array is true_out_array:
+                for e in graph.in_edges(true_out_array):
+                    if e is e1 or e.data.is_empty():
+                        continue
+                    if e.data.wcr is not None and e.data.wcr == e1.data.wcr:
+                        continue
+                    other_subset = e.data.get_dst_subset(e, graph)
+                    if other_subset is None:
+                        return False
+                    if any(
+                        subsets.intersects(oset, other_subset, sdfg.facts()) is not symbolic.Truth.FALSE
+                        for oset in true_out_subsets
+                    ):
+                        return False
+
             # In non-permissive mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
             # write access. Therefore, there might be a RW, WR, or WW dependency.
@@ -386,14 +584,15 @@ class RedundantArray(pm.SingleStateTransformation):
                 for a in accesses:
                     subsets_intersect = False
                     for e in graph.out_edges(a):
+                        if e.data.is_empty():  # ordering edge, carries no subset to race with
+                            continue
                         try:
                             subset, _ = _validate_subsets(e, sdfg.arrays, src_name=a.data)
                         except (NotImplementedError, ValueError) as ex:
                             warnings.warn(f"validate_subsets failed: {ex}")
                             return False
                         for oset in true_out_subsets:
-                            res = subsets.intersects(oset, subset)
-                            if res == True or res is None:
+                            if subsets.intersects(oset, subset, facts) is not symbolic.Truth.FALSE:
                                 subsets_intersect = True
                                 break
                         if subsets_intersect:
@@ -416,7 +615,15 @@ class RedundantArray(pm.SingleStateTransformation):
                     # If there is a backward path then the (true) in_array must
                     # not be a direct successor of a.
                     try:
-                        if has_bward_path and true_in_array in G.successors(a):
+                        if (
+                            has_bward_path
+                            and true_in_array in G.successors(a)
+                            and not (
+                                out_array is true_out_array
+                                and true_in_array is in_array
+                                and updates_in_place(graph, a, in_array, a1_subset, b_subset)
+                            )
+                        ):
                             return False
                     except NetworkXError:
                         # The exception occurs when access a is not in G.
@@ -481,6 +688,11 @@ class RedundantArray(pm.SingleStateTransformation):
 
         # 2. Iterate over the e2 edges
         for e2 in graph.in_edges(in_array):
+            # An ordering edge carries no subset to cover: it constrains order, not data, and the
+            # state-level order the fold preserves already subsumes it. Left unfiltered it reaches
+            # ``_validate_subsets``, which raises, and the fold is refused with a warning.
+            if e2.data.is_empty():
+                continue
             # 2-a. Extract/validate subsets for array A and others
             try:
                 _, a2_subset = _validate_subsets(e2, sdfg.arrays)
@@ -488,7 +700,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 warnings.warn(f"validate_subsets failed: {ex}")
                 return False
             # 2-b. Check whether a2_subset covers a1_subset
-            if not a2_subset.covers(a1_subset):
+            if not a2_subset.covers(a1_subset, facts):
                 return False
             # 2-c. Validate subsets in memlet tree
             # (should not be needed for valid SDGs)
@@ -639,14 +851,18 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
-        # Nested SDFGs writing the removed container write the one behind it, so their connectors follow
-        to_integrate = [
-            e.src
-            for e in graph.in_edges(in_array)
-            if isinstance(e.src, nodes.NestedSDFG)
-            and e.src_conn in e.src.sdfg.arrays
-            and not e.src.sdfg.arrays[e.src_conn].is_equivalent(out_desc)
-        ]
+        # Nested SDFGs writing the removed container write the one behind it, so their connectors follow,
+        # also from inside a map scope
+        to_integrate = list(
+            dict.fromkeys(
+                leaf.src
+                for e in graph.in_edges(in_array)
+                for leaf in graph.memlet_tree(e).leaves()
+                if isinstance(leaf.src, nodes.NestedSDFG)
+                and leaf.src_conn in leaf.src.sdfg.arrays
+                and not leaf.src.sdfg.arrays[leaf.src_conn].is_equivalent(out_desc)
+            )
+        )
 
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
@@ -731,6 +947,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 wcr = e1.data.wcr
                 wcr_nonatomic = e1.data.wcr_nonatomic
                 for e3 in path:
+                    if e3.data.is_empty():
+                        continue  # ordering edge: no subsets to rewrite
                     # 2-a. Extract subsets for array B and others
                     other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                     # 2-b. Modify memlet to match array B.
@@ -746,15 +964,45 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
-            print(f"CREATED VIEW(2): {in_array}")
             return in_array
+
+        # An ordering (empty) in-edge guards the WRITE of in_array, and that write becomes a write
+        # of out_array by in_array's own producers below. Re-attached to out_array it would order
+        # the access node alone and leave the producing scope free to run first -- a silent
+        # write-after-write inversion. The producers are what it has to order.
+        write_guards = []
+        for e in graph.in_edges(in_array):
+            if e.data.is_empty():
+                continue
+            guard = graph.entry_node(e.src) or e.src
+            if guard not in write_guards:
+                write_guards.append(guard)
+
+        # A nested SDFG's connector is its whole container (No-View), so its edge names the image of the WHOLE removed
+        # array: ``integrate_nested_sdfg`` reads that edge as the window the connector becomes a view of.
+        whole_image = None
+        if to_integrate:
+            whole = subsets.Range.from_array(in_desc)
+            whole.offset(a1_subset, negative=True)
+            if a_dims_to_pop:
+                whole, _ = pop_dims(whole, a_dims_to_pop)
+            whole_image = compose_and_push_back(bset, whole, b_dims_to_pop, popped)
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
+            if e2.data.is_empty():
+                guards = [g for g in write_guards if g is not e2.src and not nx.has_path(graph.nx, g, e2.src)]
+                if guards:
+                    graph.remove_edge(e2)
+                    for guard in guards:
+                        graph.add_nedge(e2.src, guard, mm.Memlet())
+                    continue
             path = graph.memlet_tree(e2)
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: no subsets to rewrite
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
@@ -768,6 +1016,8 @@ class RedundantArray(pm.SingleStateTransformation):
                     aset = a3_subset
 
                 dst_subset = compose_and_push_back(bset, aset, b_dims_to_pop, popped)
+                if whole_image is not None and e3.src in to_integrate:
+                    dst_subset = copy.deepcopy(whole_image)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -839,6 +1089,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
+        facts = SymbolResolver().facts_at(graph, out_array)
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -847,9 +1098,21 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         if graph.in_degree(out_array) != 1:
             return False
 
+        if converts_element_type(in_desc, out_desc) and not conversion_survives_fold(
+            graph, out_array, out_desc.dtype, writers=False
+        ):
+            return False
+
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
             return False
+
+        # Mirror of RedundantArray: removing out_array joins in_array to its successors.
+        for succ in graph.out_edges(out_array):
+            if isinstance(succ.dst, nodes.AccessNode) and nested_connectors_may_alias(
+                sdfg, in_array.data, succ.dst.data
+            ):
+                return False
 
         # Skip structure views
         if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
@@ -857,6 +1120,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
+        # An empty memlet is happens-before ordering, not a copy -- there is no redundancy to remove,
+        # and it carries no subsets for _validate_subsets to read.
+        if e1.data.is_empty():
+            return False
         try:
             a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
         except (NotImplementedError, ValueError) as ex:
@@ -902,7 +1169,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 return False
             subset = copy.deepcopy(b1_subset)
             subset.squeeze()
-            shape = [sz for sz in out_desc.shape if sz != 1]
+            shape = squeezed_shape(out_desc.shape)
             if not _subset_has_shape(subset, shape):
                 return False
 
@@ -953,14 +1220,15 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     for a in accesses:
                         subsets_intersect = False
                         for e in graph.in_edges(a):
+                            if e.data.is_empty():  # ordering edge, carries no subset to race with
+                                continue
                             try:
                                 _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
                             except (NotImplementedError, ValueError) as ex:
                                 warnings.warn(f"validate_subsets failed: {ex}")
                                 return False
                             for iset in true_in_subsets:
-                                res = subsets.intersects(iset, subset)
-                                if res == True or res is None:
+                                if subsets.intersects(iset, subset, facts) is not symbolic.Truth.FALSE:
                                     subsets_intersect = True
                                     break
                             if subsets_intersect:
@@ -1038,6 +1306,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # 2. Iterate over the e2 edges
         for e2 in graph.out_edges(out_array):
+            if e2.data.is_empty():  # ordering edge: no subset to cover (see RedundantArray)
+                continue
             # 2-a. Extract/validate subsets for array B and others
             try:
                 b2_subset, _ = _validate_subsets(e2, sdfg.arrays)
@@ -1045,18 +1315,26 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 warnings.warn(f"validate_subsets failed: {ex}")
                 return False
             # 2-b. Check where b1_subset covers b2_subset
-            if not b1_subset.covers(b2_subset):
+            if not b1_subset.covers(b2_subset, facts):
                 return False
             # 2-c. Validate subsets in memlet tree
             # (should not be needed for valid SDGs)
             path = graph.memlet_tree(e2)
             for e3 in path:
-                if e3 is not e2:
-                    try:
-                        _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
-                    except (NotImplementedError, ValueError) as ex:
-                        warnings.warn(f"validate_subsets failed: {ex}")
+                if e3 is e2:
+                    continue
+                if not path.downwards and e3.src is not out_array:
+                    # Above the scope exit the memlet is in the destination array's terms and the scope
+                    # supplies the dimensions out_array lacks, so ``apply`` leaves it alone -- but only
+                    # if it does not still name the array being deleted.
+                    if e3.data.data == out_array.data:
                         return False
+                    continue
+                try:
+                    _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
+                except (NotImplementedError, ValueError) as ex:
+                    warnings.warn(f"validate_subsets failed: {ex}")
+                    return False
 
             # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
             if in_desc.strides != out_desc.strides:
@@ -1196,12 +1474,17 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
+                if not path.downwards and e3.src is not out_array:
+                    # Says nothing about out_array (can_be_applied refuses otherwise), so redirecting
+                    # the innermost edge to A leaves it correct as it stands.
+                    continue
                 # 2-a. Extract subsets for array B and others
                 b3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # 2-b. Modify memlet to match array A. Example:
                 # A -- (0, a:b)/(c:c+b) --> B -- (c+d)/None --> others
                 # A -- (0, a+d)/None --> others
-                e3.data.data = in_array.data
                 # (c+d) - (c:c+b) = (d)
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
@@ -1210,15 +1493,24 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     bset, _ = pop_dims(b3_subset, b_dims_to_pop)
                 else:
                     bset = b3_subset
+                a3_subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
 
-                e3.data.subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
-                # NOTE: This fixes the following case:
-                # A ----> A[subset] ----> ... -----> Tasklet
-                # Tasklet is not data, so it doesn't have an other subset.
-                if isinstance(e3.dst, nodes.AccessNode):
-                    e3.data.other_subset = other_subset
+                if path.downwards:
+                    e3.data.data = in_array.data
+                    e3.data.subset = a3_subset
+                    # NOTE: This fixes the following case:
+                    # A ----> A[subset] ----> ... -----> Tasklet
+                    # Tasklet is not data, so it doesn't have an other subset.
+                    if isinstance(e3.dst, nodes.AccessNode):
+                        e3.data.other_subset = other_subset
+                    else:
+                        e3.data.other_subset = None
                 else:
-                    e3.data.other_subset = None
+                    # out_array is a leaf of an upward tree: only the side of the memlet that reads it
+                    # moves to A. The other side is the index the scope writes and must survive.
+                    if e3.data.data == out_array.data:
+                        e3.data.data = in_array.data
+                    e3.data.src_subset = a3_subset
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -1464,8 +1756,9 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
         # Modify data and subset on all outgoing edges
         for e in state.memlet_tree(vedge):
             e.data.data = out_array.data
-            # Offset subset, then unsqueeze
-            e.data.subset.offset(aedge.data.subset, False)
+            # Only the SQUEEZED subset is rank-aligned with view space; the full one pairs
+            # view dim 0 with array dim 0 (``A[k, 0:N]`` became ``A[k, k:k+N]``).
+            e.data.subset.offset(array_subset, False)
             e.data.subset.unsqueeze(asqdims_mirror)
             for i in asqdims_mirror:
                 e.data.subset.ranges[i] = aedge.data.subset.ranges[i]
@@ -1569,7 +1862,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         # a_subset.size() == v_subset.size() == out_desc.shape
         if not (a_subset and v_subset):
             return False
-        out_shape = [s for s in out_desc.shape if s != 1]
+        out_shape = squeezed_shape(out_desc.shape)
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
@@ -1620,6 +1913,8 @@ class RedundantReadSlice(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                 # Extract subsets for view V and others
                 v3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # Modify memlet to match array A. Example:
@@ -1723,7 +2018,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         # a_subset.size() == v_subset.size() == in_desc.shape
         if not (a_subset and v_subset):
             return False
-        in_shape = [s for s in in_desc.shape if s != 1]
+        in_shape = squeezed_shape(in_desc.shape)
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
@@ -1773,6 +2068,8 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.is_empty():
+                    continue  # ordering edge: nothing to rewrite; 2-c re-attaches it
                 # Extract subsets for view V and others
                 other_subset, v3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # Modify memlet to match array A.
@@ -1908,6 +2205,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if sdutil.map_view_to_array(desc, vdesc, subset) is None:
             return False
 
+        # Ordering edges on the untouched side are re-attached to whatever replaces the view;
+        # with no data edge there is nothing to attach them to.
+        ordering = state.in_edges(self.view) if is_src else state.out_edges(self.view)
+        if any(e.data.is_empty() for e in ordering) and not non_view_edges:
+            return False
+
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
@@ -1938,10 +2241,23 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         mapping, unsqueezed, squeezed = sdutil.map_view_to_array(desc, viewed.desc(sdfg), subset)
 
+        # The rewiring below only touches one side of the view, so an ordering edge on the other
+        # side would die with the node; it is re-attached to what takes the view's place.
+        replacements = [e.dst for e in non_view_edges] if is_src else [e.src for e in non_view_edges]
+        ordering_edges = [
+            e for e in (state.in_edges(self.view) if is_src else state.out_edges(self.view)) if e.data.is_empty()
+        ]
+
         # Update edges
         for edge in non_view_edges:
             # Update all memlets in tree
             for e in state.memlet_tree(edge):
+                if e.data.is_empty():
+                    # Empty memlets carry no data -- they exist only for node/scope
+                    # ordering. Filling in a subset here would turn a legal empty
+                    # ordering edge into a malformed one (subset stays None while
+                    # other_subset gets set).
+                    continue
                 if e.data.data == self.view.data:
                     e.data.data = viewed.data
 
@@ -1971,8 +2287,20 @@ class RemoveSliceView(pm.SingleStateTransformation):
             else:
                 state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
 
+        for edge in ordering_edges:
+            for replacement in replacements:
+                if is_src:
+                    state.add_edge(edge.src, None, replacement, None, mm.Memlet())
+                else:
+                    state.add_edge(replacement, None, edge.dst, None, mm.Memlet())
+
         # Remove view node
         state.remove_node(self.view)
+        # A view nothing reads through (or writes through) held the only edge of the node on its other side, which
+        # would be left isolated.
+        adjacent = view_edge.src if is_src else view_edge.dst
+        if isinstance(adjacent, nodes.AccessNode) and state.degree(adjacent) == 0:
+            state.remove_node(adjacent)
 
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):
@@ -2022,3 +2350,182 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
             for edge in state.edges_between(self.map_exit, exit_node):
                 if edge.data.is_empty():
                     state.remove_edge(edge)
+
+
+def staged_dims(source: subsets.Range, shape) -> list[int] | None:
+    """The dimensions of ``source`` a copy of it into an array of ``shape`` keeps, in order; the rest are single
+    indices the copy drops. ``None`` when ``source`` is not ``shape`` with single indices inserted."""
+    kept = []
+    for dim, (begin, end, step) in enumerate(source.ranges):
+        extent = end - begin + 1
+        if len(kept) < len(shape) and step == 1 and symbolic.simplify(extent - shape[len(kept)]) == 0:
+            kept.append(dim)
+        elif symbolic.simplify(extent - 1) != 0:
+            return None
+    return kept if len(kept) == len(shape) else None
+
+
+def into_source(source: subsets.Range, kept: list[int], subset: subsets.Range) -> subsets.Range:
+    """``subset`` of a staging copy, as the same elements of the container it was copied from."""
+    inner = iter(subset.ranges)
+    ranges = []
+    for dim, bounds in enumerate(source.ranges):
+        begin = bounds[0]
+        if dim in kept:
+            b, e, s = next(inner)
+            ranges.append((begin + b, begin + e, s))
+        else:
+            ranges.append((begin, begin, 1))
+    return subsets.Range(ranges)
+
+
+def index_into_source(source: subsets.Range, kept: list[int], indices: list[str]) -> list[str]:
+    """Python subscripts of a staging copy, as subscripts of the container it was copied from."""
+    inner = iter(indices)
+    return [
+        f"({symbolic.symstr(bounds[0])}) + ({next(inner)})" if dim in kept else symbolic.symstr(bounds[0])
+        for dim, bounds in enumerate(source.ranges)
+    ]
+
+
+def reads_only_through_states_and_assignments(nested: nodes.NestedSDFG, connector: str) -> bool:
+    """Whether ``nested`` only reads ``connector``: from tasklets in its own states, or in interstate assignments,
+    never in a condition, a loop bound, a write, or a deeper nested SDFG."""
+    inner = nested.sdfg
+    for state in inner.states():
+        for n in state.data_nodes():
+            if n.data != connector:
+                continue
+            if state.in_degree(n) > 0:
+                return False
+            for e in state.out_edges(n):
+                if not all(isinstance(leaf.dst, nodes.Tasklet) for leaf in state.memlet_tree(e).leaves()):
+                    return False
+    for e in inner.all_interstate_edges():
+        if connector in e.data.condition.as_string:
+            return False
+    for region in inner.all_control_flow_regions():
+        code = " ".join(c.as_string for c in region.get_meta_codeblocks())
+        if connector in code:
+            return False
+    return True
+
+
+class RedundantMapReadCopy(pm.SingleStateTransformation):
+    """Fold a read-only staging copy made inside a map scope into its readers.
+
+    ``for n: t = src[n, :, :].copy(); ... t[i, j] ...`` (icon_scatter's ``np.add.at`` lowering) copies a slice of
+    ``src`` into a transient per map iteration only to read it. :class:`RedundantArray` and
+    :class:`RedundantSecondArray` match an access-node to access-node copy; this one is fed from the map entry, and
+    its readers sit in nested SDFGs that also read it in interstate assignments. Each reader is pointed at ``src``
+    instead, its subsets and subscripts shifted by the slice, and the transient goes. On a GPU the copy sat in every
+    thread of a block-tiled kernel, one full buffer per thread.
+
+    Sound when the transient is written by that copy alone, its type is the source's, nothing in the state writes
+    the source, and every reader is a tasklet, or a nested SDFG that only reads it (see
+    :func:`reads_only_through_states_and_assignments`).
+    """
+
+    copy = pm.PatternNode(nodes.AccessNode)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.copy)]
+
+    def staging(self, graph: SDFGState, sdfg: SDFG):
+        """``(in edge, source container, source subset, kept dims)`` of a foldable copy, else ``None``."""
+        node = self.copy
+        desc = sdfg.arrays[node.data]
+        if not desc.transient or not isinstance(desc, data.Array) or isinstance(desc, data.View):
+            return None
+        if sum(1 for state in sdfg.states() for n in state.data_nodes() if n.data == node.data) != 1:
+            return None
+        if any(node.data in e.data.free_symbols for e in sdfg.all_interstate_edges()):
+            return None
+        in_edges = graph.in_edges(node)
+        if len(in_edges) != 1 or not isinstance(in_edges[0].src, nodes.MapEntry):
+            return None
+        edge = in_edges[0]
+        memlet = edge.data
+        if memlet.data is None or memlet.wcr is not None or memlet.dynamic:
+            return None
+        root = graph.memlet_path(edge)[0].src
+        if not isinstance(root, nodes.AccessNode) or root.data == node.data:
+            return None
+        source_desc = sdfg.arrays[root.data]
+        if source_desc.dtype != desc.dtype or isinstance(source_desc, data.View):
+            return None
+        # Which side names the copy is not recorded until a memlet round-trips, so read it off the data name.
+        source, written = (
+            (memlet.other_subset, memlet.subset) if memlet.data == node.data else (memlet.subset, memlet.other_subset)
+        )
+        if source is None or (written is not None and written != subsets.Range.from_array(desc)):
+            return None
+        kept = staged_dims(source, desc.shape)
+        if kept is None:
+            return None
+        if any(n.data == root.data and graph.in_degree(n) > 0 for n in graph.data_nodes()):
+            return None
+        for out_edge in graph.out_edges(node):
+            for leaf in graph.memlet_tree(out_edge).leaves():
+                if isinstance(leaf.dst, nodes.NestedSDFG):
+                    if not reads_only_through_states_and_assignments(leaf.dst, leaf.dst_conn):
+                        return None
+                elif not isinstance(leaf.dst, nodes.Tasklet):
+                    return None
+        return edge, root.data, source, kept
+
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
+        return self.staging(graph, sdfg) is not None
+
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        node = self.copy
+        edge, name, source, kept = self.staging(graph, sdfg)
+        for out_edge in list(graph.out_edges(node)):
+            tree = graph.memlet_tree(out_edge)
+            edges = [child.edge for child in tree.traverse_children(include_self=True)]
+            leaves = list(tree.leaves())
+            for e in edges:
+                e.data.data = name
+                e.data.subset = into_source(source, kept, e.data.subset)
+            graph.add_edge(edge.src, edge.src_conn, out_edge.dst, out_edge.dst_conn, out_edge.data)
+            graph.remove_edge(out_edge)
+            for leaf in leaves:
+                if isinstance(leaf.dst, nodes.NestedSDFG):
+                    rebind_nested(sdfg, leaf.dst, leaf.dst_conn, name, source, kept)
+        graph.remove_edge(edge)
+        graph.remove_node(node)
+        del sdfg.arrays[node.data]
+
+
+def rebind_nested(sdfg: SDFG, nested: nodes.NestedSDFG, connector: str, name: str, source, kept) -> None:
+    """Rebind ``connector`` of ``nested`` to the whole of ``name`` and shift every inner access by the slice."""
+    import ast
+
+    inner = nested.sdfg
+    inner.arrays[connector] = copy.deepcopy(sdfg.arrays[name])
+    inner.arrays[connector].transient = False
+    needed = set(map(str, source.free_symbols)) | {str(sym) for sym in inner.arrays[connector].free_symbols}
+    for symbol in sorted(needed):
+        if symbol not in nested.symbol_mapping:
+            nested.symbol_mapping[symbol] = symbolic.pystr_to_symbolic(symbol)
+            if symbol not in inner.symbols:
+                inner.add_symbol(symbol, sdfg.symbols.get(symbol, dtypes.int64))
+    for state in inner.states():
+        for e in state.edges():
+            if e.data.data == connector:
+                e.data.subset = into_source(source, kept, e.data.subset)
+
+    class Shift(ast.NodeTransformer):
+        def visit_Subscript(self, node):
+            self.generic_visit(node)
+            if isinstance(node.value, ast.Name) and node.value.id == connector:
+                elts = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+                shifted = index_into_source(source, kept, [ast.unparse(x) for x in elts])
+                node.slice = ast.parse(", ".join(shifted), mode="eval").body
+            return node
+
+    for e in inner.all_interstate_edges():
+        for key, value in list(e.data.assignments.items()):
+            if connector in value:
+                e.data.assignments[key] = ast.unparse(Shift().visit(ast.parse(value, mode="eval")))

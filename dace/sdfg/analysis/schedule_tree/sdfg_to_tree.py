@@ -5,10 +5,9 @@ import sys
 import time
 from collections import defaultdict
 
-import networkx as nx
-
 import dace
 from dace import data, symbolic, utils
+from dace import graphlib as nx
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
 from dace.memlet import Memlet
@@ -21,7 +20,7 @@ from dace.sdfg.analysis.schedule_tree import passes as stpasses
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.propagation import align_memlet
-from dace.sdfg.sdfg import SDFG, InterstateEdge
+from dace.sdfg.sdfg import SDFG, InterstateEdge, scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -43,7 +42,7 @@ NODE_TO_SCOPE_TYPE = {
 }
 
 
-class _InterstateMemletReplacer(MemletReplacer):
+class InterstateMemletReplacer(MemletReplacer):
     """
     Rewrites reads of nested-SDFG data containers inside inter-state edge code (conditions and assignment values)
     to the corresponding accesses of the parent SDFG, as given by the memlets connected to the nested SDFG node.
@@ -68,7 +67,7 @@ class _InterstateMemletReplacer(MemletReplacer):
         result.data = self.mapping[memlet.data].data
         return result
 
-    def _rename(self, node: ast.Name) -> ast.Name:
+    def rename_name(self, node: ast.Name) -> ast.Name:
         self.replace_count += 1
         return ast.copy_location(ast.Name(id=self.mapping[node.id].data, ctx=node.ctx), node)
 
@@ -77,7 +76,7 @@ class _InterstateMemletReplacer(MemletReplacer):
             return node
         if isinstance(self.arrays[node.id], data.Scalar):
             return self._replace(node)
-        return self._rename(node)
+        return self.rename_name(node)
 
     def visit_Compare(self, node: ast.Compare):
         # ``arr is [not] None`` refers to the container itself and must keep a bare name
@@ -90,15 +89,15 @@ class _InterstateMemletReplacer(MemletReplacer):
             and isinstance(node.left, ast.Name)
         ):
             if node.left.id in self.array_filter:
-                node.left = self._rename(node.left)
+                node.left = self.rename_name(node.left)
             return node
         return self.generic_visit(node)
 
 
-def _replace_interstate_edge_reads(sdfg: SDFG, mapping: dict[str, Memlet]) -> None:
+def replace_interstate_edge_reads(sdfg: SDFG, mapping: dict[str, Memlet]) -> None:
     """
     Replaces all reads of the given data containers in the inter-state edges of an SDFG with the corresponding
-    accesses to the external memlets (see ``_InterstateMemletReplacer``).
+    accesses to the external memlets (see ``InterstateMemletReplacer``).
 
     :param sdfg: The (nested) SDFG whose inter-state edges are rewritten in-place.
     :param mapping: A mapping from internal data container names to external memlets.
@@ -107,11 +106,11 @@ def _replace_interstate_edge_reads(sdfg: SDFG, mapping: dict[str, Memlet]) -> No
         return
     for e in sdfg.all_interstate_edges():
         for k, v in e.data.assignments.items():
-            replacer = _InterstateMemletReplacer(sdfg.arrays, mapping)
+            replacer = InterstateMemletReplacer(sdfg.arrays, mapping)
             vast = replacer.visit(ast.parse(v))
             if replacer.replace_count > 0:
                 e.data.assignments[k] = astutils.unparse(vast)
-        replacer = _InterstateMemletReplacer(sdfg.arrays, mapping)
+        replacer = InterstateMemletReplacer(sdfg.arrays, mapping)
         cond = replacer.visit(ast.parse(e.data.condition.as_string))
         if replacer.replace_count > 0:
             e.data.condition.as_string = astutils.unparse(cond)
@@ -207,7 +206,7 @@ def _replace_memlets(sdfg: SDFG, input_mapping: dict[str, Memlet], output_mappin
 
     # If a container name is both in the input connectors and output connectors with different memlets, this is
     # undefined behavior. Prefer output.
-    _replace_interstate_edge_reads(sdfg, {**input_mapping, **output_mapping})
+    replace_interstate_edge_reads(sdfg, {**input_mapping, **output_mapping})
 
 
 def _remove_name_collisions(sdfg: SDFG) -> None:
@@ -745,16 +744,17 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     :param stree: The tree root in which to make the unified descriptor repository.
     """
     stree.containers = sdfg.arrays
-    stree.symbols = sdfg.symbols
+    stree.symbols = dict(sdfg.symbols)
     stree.constants = sdfg.constants_prop
     stree.callback_mapping = dict(sdfg.callback_mapping)
     stree.arg_names = list(sdfg.arg_names)
 
     # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
-    # the nested SDFGs' descriptor repositories
+    # the nested SDFGs' descriptor repositories. A name a loop or map scope binds is defined by that scope.
+    bound = set().union(*(scope_bound_names(nsdfg) for nsdfg in sdfg.all_sdfgs_recursive()))
     for nsdfg in sdfg.all_sdfgs_recursive():
         transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
-        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols and k not in bound}
         constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
         stree.containers.update(transients)
         stree.symbols.update(symbols)
@@ -798,7 +798,7 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Tru
     _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
     if toplevel:
-        result = tn.ScheduleTreeRoot(name=sdfg.name, children=[])
+        result = tn.ScheduleTreeRoot(name=sdfg.name, children=[], facts=sdfg.facts())
         _create_unified_descriptor_repository(sdfg, result)
         result.add_children(_block_schedule_tree(sdfg))
     else:

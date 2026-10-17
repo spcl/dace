@@ -30,6 +30,11 @@ try:
     from dace.sdfg.utils import distributed_compile
 except ImportError:
     mpi4py = None
+else:
+    # Settle MPI bring-up here, once, rather than at the first communicator call: under a launcher
+    # a process that skipped mpi4py's automatic MPI_Init aborts the whole job the moment anything
+    # touches a communicator, with no Python traceback to say why.
+    preprocessing.ensure_mpi_initialized()
 
 ArgTypes = dict[str, Data]
 
@@ -113,15 +118,44 @@ def infer_symbols_from_datadescriptor(
             desc = sdfg.arrays[arg_name]
             if not hasattr(arg_val, "shape"):
                 continue
-            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
-            given_values = list(arg_val.shape)
+            # Distributed descriptors (process grids, subarrays) have no strides
+            desc_strides = [] if isinstance(desc, data.DistributedDescriptor) else desc.strides
             given_strides = []
             if hasattr(arg_val, "strides"):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, "itemsize", 1)
-                given_strides = [s // factor for s in arg_val.strides]
+                given_strides = [symbolic.int_floor(s, factor) for s in arg_val.strides]
             given_offset = list(arg_val.offset) if hasattr(arg_val, "offset") else []
-            given_values += given_strides + given_offset
+
+            # On a rank mismatch (e.g. a rank-4 view with a length-1 axis passed to a rank-3 nested
+            # descriptor), first drop size-1 axes of the GIVEN argument right-to-left until the
+            # ranks agree -- the only sound way a higher-rank value can map onto the descriptor.
+            given_shape = list(arg_val.shape)
+            if len(given_shape) > len(desc.shape):
+                for i in range(len(given_shape) - 1, -1, -1):
+                    if len(given_shape) == len(desc.shape):
+                        break
+                    if given_shape[i] == 1:
+                        del given_shape[i]
+                        if given_strides:
+                            del given_strides[i]
+                        if given_offset:
+                            del given_offset[i]
+
+            # Equate shape with shape, strides with strides, offset with offset -- and only when a
+            # section's lengths match. A concatenated zip across mismatched sections shifts every
+            # later section by the rank difference, silently solving stride symbols against shape
+            # entries and producing wrong-but-plausible strides (uninitialized reads at runtime).
+            symbolic_values = []
+            given_values = []
+            for sym_part, given_part in (
+                (desc.shape, given_shape),
+                (desc_strides, given_strides),
+                (desc.offset, given_offset),
+            ):
+                if len(sym_part) == len(given_part):
+                    symbolic_values += list(sym_part)
+                    given_values += list(given_part)
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
@@ -137,8 +171,7 @@ def infer_symbols_from_datadescriptor(
                 # ``ipow`` is a codegen-only spelling of ``Pow``; restore ``Pow`` so ``solve`` can
                 # invert the shape. A Function-head rewrite can't ride in ``repldict`` (symbol
                 # rename), so do it here.
-                if isinstance(sym_dim, sympy.Basic):
-                    sym_dim = sym_dim.replace(symbolic.ipow, lambda b, e: b**e)
+                sym_dim = symbolic.relax_ipow(sym_dim)
 
                 # Replace symbols with __SOLVE_ symbols so as to allow
                 # the same symbol in the called SDFG
@@ -146,7 +179,8 @@ def infer_symbols_from_datadescriptor(
                     sym_dim = sym_dim.subs(repldict)
 
                 if symbolic.issymbolic(sym_dim - real_dim):
-                    equations.append(sym_dim - real_dim)
+                    # int_floor is an opaque Function head; solve() cannot invert one.
+                    equations.append(symbolic.relax_int_floor(sym_dim - real_dim))
 
     if len(symbols) == 0:
         return {}
@@ -318,15 +352,16 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             if self._cache.has(cachekey):
                 entry = self._cache.get(cachekey)
-                return entry.sdfg
+                return copy.deepcopy(entry.sdfg)
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
 
         if use_cache:
-            # Add to cache
+            # Add the pristine parsed SDFG to the cache; hand the caller a copy so
+            # any transformations they apply cannot corrupt the cached template.
             self._cache.add(cachekey, sdfg, None)
 
-        return sdfg
+        return copy.deepcopy(sdfg) if use_cache else sdfg
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
@@ -674,6 +709,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             ann = self._evaluate_annotation(sig_arg.annotation)
             if self.ignore_type_hints:
                 ann = inspect._empty
+            elif isinstance(ann, str):
+                # PEP 563 (``from __future__ import annotations``) stringizes every annotation.
+                ann = self._evaluate_annotation(ann)
 
             # Variable-length arguments: obtain from the remainder of given_*
             if sig_arg.kind is sig_arg.VAR_POSITIONAL:
@@ -691,7 +729,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 types.update({f"__arg{j}": create_datadescriptor(varg) for j, varg in enumerate(vargs)})
                 arg_mapping.update({f"__arg{j}": varg for j, varg in enumerate(vargs)})
-                gvar_mapping[aname] = tuple(ast.Name(id=f"__arg{j}") for j in range(len(vargs)))
+                gvar_mapping[aname] = tuple(ast.Name(id=f"__arg{j}", ctx=ast.Load()) for j in range(len(vargs)))
                 specified_args.update(set(gvar_mapping[aname]))
                 # Shift arg_ind to the end
                 arg_ind = len(given_args)
@@ -708,7 +746,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                     )
                 types.update({f"__kwarg_{k}": v for k, v in vargs.items()})
                 arg_mapping.update({f"__kwarg_{k}": given_kwargs[k] for k in vargs.keys()})
-                gvar_mapping[aname] = {k: ast.Name(id=f"__kwarg_{k}") for k in vargs.keys()}
+                gvar_mapping[aname] = {k: ast.Name(id=f"__kwarg_{k}", ctx=ast.Load()) for k in vargs.keys()}
                 specified_args.update({f"__kwarg_{k}" for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
             else:
@@ -990,8 +1028,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         global_vars.update(gvars)
 
         argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        # A symbol is its name: an annotation's free symbol may be a same-named object built elsewhere (SymPy's cache
+        # hands it back), so it names a symbol the program does not declare itself and never replaces its global
         for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
+            for v in argtype.free_symbols:
+                global_vars.setdefault(v.name, v)
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(
@@ -1045,6 +1086,12 @@ class DaceProgram(pycommon.SDFGConvertible):
                     print("VERBOSE: Failed to parse the following program:")
                     print(astutils.unparse(parsed_ast.preprocessed_ast))
                 raise
+
+            # Extents an assignment took as equal are proven by the caller; a top-level program has none.
+            if newast.NESTED_PROGRAM_CALLS.get() == 0:
+                unproven = newast.pop_extent_equalities(sdfg)
+                if unproven:
+                    raise IndexError(newast.extent_mismatch([pair for pair, _ in unproven]))
 
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]

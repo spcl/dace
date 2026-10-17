@@ -29,8 +29,25 @@ def test_an_hptt_call_matches_the_signature_of_its_type(dtype, call):
     assert call in ExpandHPTT.expansion(node, state, sdfg).code.as_string
 
 
+def test_hptt_inside_an_sdfg_that_names_its_output_out_tensor_validates():
+    """TensorDot's TTGT expansion puts a TensorTranspose into an SDFG holding a container ``_out_tensor``; the HPTT
+    expansion renames its pointer connectors so they cannot shadow that container (cp2k_grid_integrate)."""
+    sdfg = dace.SDFG("hptt_out_tensor_name")
+    sdfg.add_array("_inp_tensor", (4, 8), dace.float64)
+    sdfg.add_array("_out_tensor", (8, 4), dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    node = TensorTranspose("_TensorTranspose", axes=[1, 0])
+    node.implementation = "HPTT"
+    state.add_node(node)
+    state.add_edge(state.add_read("_inp_tensor"), None, node, "_inp_tensor", dace.Memlet("_inp_tensor[0:4, 0:8]"))
+    state.add_edge(node, "_out_tensor", state.add_write("_out_tensor"), None, dace.Memlet("_out_tensor[0:8, 0:4]"))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_hptt_call_matches_the_signature_of_its_type(dace.float64, "dTensorTranspose(perm, 2, 1, _inp_tensor")
     test_an_hptt_call_matches_the_signature_of_its_type(
         dace.complex128, "zTensorTranspose(perm, 2, 1, false, _inp_tensor"
     )
+    test_hptt_inside_an_sdfg_that_names_its_output_out_tensor_validates()

@@ -179,6 +179,16 @@ _build/
 
 /*.sdfg
 
+# Serialized SDFGs are build output, never repo content -- including under tests/, which
+# used to be excepted here. A .sdfgz is a compressed JSON snapshot of an internal schema, so
+# a committed one silently rots as the schema moves and then pins nothing: the five removed
+# here had 51 LoopRegions whose start_block index was out of range for their own node list,
+# and no longer deserialized at all. Build fixtures from source instead.
+# (doc/_static/sdfg/*.sdfg are hand-maintained documentation assets and stay tracked.)
+*.sdfgz
+/*.sdfgz
+/*.sdfg
+
 
 .DS_STORE
 .DS_Store
@@ -194,3 +204,74 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+latex-tools/
+.claude/
+_session_scratch/
+
+# Local scratch: one-off probes, repros, harnesses and their output. Patterns, not
+# a list -- this was ~70 hardcoded personal filenames that only ever grew.
+/_*.py
+/_*.sh
+/_*.txt
+*.tsv
+*.log
+report-*.json
+
+# canonicalize perf harness per-kernel result files
+perf_results/
+
+# Local corpus perf sweep outputs
+canon_corpus_perf_job/corpus_perf_results*/
+canon_corpus_perf_job/flow_results/
+
+# Never commit key / secret material anywhere in this repo.
+*.pem
+*.key
+*_key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.ppk
+.ssh/
+*.p12
+*.pfx
+
+# Fortran / flang / object build artifacts (test f2py / -emit-hlfir runs).
+*.mod
+*.smod
+*.hlfir
+*.o
+
+# pytest-xdist per-worker DaCe caches (.dacecache_gw0, ...) and any
+# nested .dacecache* — build artifacts, never committed.
+.dacecache*
+# Stray in-repo-root cmake build output (the bridge builds under
+# dace/frontend/hlfir/build; these only appear from an accidental
+# top-level cmake invocation).
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/Makefile
+/lib*.a
+
+# Local secrets / tokens
+.mtoken
+dace/transformation/layout/cost_model/build/
+
+# cloudsc_variants perf job: cached Phase-A parallelized SDFG (expensive to rebuild)
+performance_regression_jobs/cloudsc_variants/cache/
+
+# Local perf-job trees. These are working files for cluster runs, not repo content --
+# they live outside the checkout so `git add -A` cannot pull them back in.
+/performance_regression_jobs/
+/codegen_buildperf_jobs/
+/cpu_codegen_perf_jobs/
+/local/
+# A/B scratch: job logs plus two live `git worktree` checkouts (wt-base, wt-new). Ignored rather
+# than tidied away because `git add -A` would otherwise commit nested checkouts into the tree.
+/perf_ab/
+issues/
+
+# Core dumps from forked kernel processes (fork isolation is deliberate; the cores are not).
+core_nid*
+core.*

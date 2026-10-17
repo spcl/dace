@@ -45,7 +45,7 @@ def test_numpy_direction_is_roll(dim, shift):
 def test_direction_survives_serialization():
     sdfg = cshift_sdfg((5,), 1, 2, ShiftDirection.NUMPY)
     loaded = dace.SDFG.from_json(sdfg.to_json())
-    (node,) = [n for n, _ in loaded.all_nodes_recursive() if isinstance(n, CShift)]
+    (node,) = [n for n, parent in loaded.all_nodes_recursive() if isinstance(n, CShift)]
     assert node.direction is ShiftDirection.NUMPY
     assert node.shift == 2
 

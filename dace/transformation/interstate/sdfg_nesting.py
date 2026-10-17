@@ -8,15 +8,34 @@ import warnings
 from copy import deepcopy as dc
 from functools import reduce
 
-import networkx as nx
-
 from dace import Memlet, data, dtypes, memlet, symbolic
+from dace import graphlib as nx
+from dace.ordered import OrderedSet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, dealias, nodes, propagation, utils
+from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, transformation
+from dace.utils import find_new_name
+
+
+def remove_emptied_map_scopes(state: SDFGState, entry: nodes.Node | None) -> None:
+    """Remove ``entry``'s map, then each enclosing map, while nothing lies between its entry and its exit.
+
+    Inlining a node-less nested SDFG out of nested maps leaves such a scope. With no path from the entry to the
+    exit every later scope walk fails, so the scope dict cannot be used here: the exit is matched by its map and
+    the enclosing entry is read off the incoming edges.
+    """
+    while isinstance(entry, nodes.MapEntry) and entry in state.nodes() and state.out_degree(entry) == 0:
+        exit_node = next(node for node in state.nodes() if isinstance(node, nodes.MapExit) and node.map is entry.map)
+        if state.in_degree(exit_node) != 0:
+            return
+        parent = next((edge.src for edge in state.in_edges(entry) if isinstance(edge.src, nodes.MapEntry)), None)
+        state.remove_node(entry)
+        state.remove_node(exit_node)
+        entry = parent
 
 
 def _is_view_of(state: SDFGState, node: nodes.Node, viewed: nodes.AccessNode) -> bool:
@@ -113,7 +132,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
     @staticmethod
-    def _shared_connectors(
+    def inlinable_shared_connectors(
         state: SDFGState, sdfg: SDFG, nested_sdfg: nodes.NestedSDFG, candidates: set[str]
     ) -> set[str]:
         """
@@ -159,11 +178,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
         return result
 
     @staticmethod
-    def _can_drop_shared_paths(
+    def can_drop_shared_paths(
         state: SDFGState, nested_sdfg: nodes.NestedSDFG, conn: str, no_source: bool, no_sink: bool
     ) -> bool:
         """
-        Checks whether a shared input/output connector (see ``_shared_connectors``) without a source (or sink) access
+        Checks whether a shared input/output connector (see ``inlinable_shared_connectors``) without a source (or sink) access
         node in the nested SDFG can be inlined. In that case, the outer input (or output) memlet path of the connector
         is removed upon inlining and the inner access nodes become access nodes of the outer container. This is only
         safe if no outer dataflow has to be ordered before (or after) the inlined nodes through that path.
@@ -215,7 +234,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge.src_conn or not edge.data.is_empty():
                 out_connectors.add(edge.src_conn)
 
-        shared_connectors = self._shared_connectors(graph, sdfg, nested_sdfg, in_connectors & out_connectors)
+        shared_connectors = self.inlinable_shared_connectors(graph, sdfg, nested_sdfg, in_connectors & out_connectors)
 
         # Ensure output connectors have no additional outputs (if in a scope),
         # and ensure no two connectors are directly connected to each other
@@ -279,7 +298,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # A shared connector may lack a source or sink access node, if its outer path can be dropped safely
         for conn in shared_connectors & ((in_connectors - valid_inpconns) | (out_connectors - valid_outconns)):
             no_source, no_sink = conn not in valid_inpconns, conn not in valid_outconns
-            if not self._can_drop_shared_paths(graph, nested_sdfg, conn, no_source, no_sink):
+            if not self.can_drop_shared_paths(graph, nested_sdfg, conn, no_source, no_sink):
                 return False
             valid_inpconns.add(conn)
             valid_outconns.add(conn)
@@ -305,6 +324,30 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if graph.in_degree(e.src) > 0:
                         return False
 
+        # Do not inline if an inner/outer connector pair disagrees on vector-ness.
+        # The current memlet reoffset does not scale scalar indices for vector elements,
+        # so inlining would access the wrong memory locations.
+        nsdfg = nested_sdfg.sdfg
+        for edge in graph.in_edges(nested_sdfg):
+            if edge.data.is_empty():
+                continue
+            src = graph.memlet_path(edge)[0].src
+            if not isinstance(src, nodes.AccessNode):
+                continue
+            inner_dtype = nsdfg.arrays[edge.dst_conn].dtype
+            outer_dtype = sdfg.arrays[src.data].dtype
+            if isinstance(inner_dtype, dtypes.vector) != isinstance(outer_dtype, dtypes.vector):
+                return False
+        for edge in graph.out_edges(nested_sdfg):
+            if edge.data.is_empty():
+                continue
+            dst = graph.memlet_path(edge)[-1].dst
+            if not isinstance(dst, nodes.AccessNode):
+                continue
+            inner_dtype = nsdfg.arrays[edge.src_conn].dtype
+            outer_dtype = sdfg.arrays[dst.data].dtype
+            if isinstance(inner_dtype, dtypes.vector) != isinstance(outer_dtype, dtypes.vector):
+                return False
         # Legacy nested SDFGs must first be converted with ``dealias.convert_legacy_nested_sdfgs``
         windowed = dealias.windowed_connectors(nested_sdfg.sdfg)
         if windowed:
@@ -376,6 +419,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 else:  # Reached terminus without breaking, remove external node
                     if pedge is not None:
                         node = pedge.src if reverse else pedge.dst
+
+                        # A scope node that other edges still use is part of the surrounding
+                        # graph: return the connecting edge so the caller can reattach it to
+                        # the inlined subgraph. One left with no edges at all has to go --
+                        # the caller reconnects nothing when the data has no access node
+                        # inside the subgraph, and an isolated node fails validation.
+                        if isinstance(node, (nodes.EntryNode, nodes.ExitNode)) and state.degree(node) > 0:
+                            result.append(pedge)
+                            continue
 
                         # Keep track of edges on the other end of these nodes,
                         # they will be used to reconnect to first/last
@@ -507,14 +559,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if isinstance(root.src, nodes.AccessNode) and root.src.data in inputs:
                         ndesc = nsdfg.arrays[root.src.data]
                         outer_desc = sdfg.arrays[inputs[root.src.data].data.data]
-                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                        if not symbolic.same_value(ndesc.shape, outer_desc.shape) or not symbolic.same_value(
+                            ndesc.strides, outer_desc.strides
+                        ):
                             reshapes.add(root.src.data)
                 for oe in nstate.out_edges(node):
                     root = nstate.memlet_tree(oe).root().edge
                     if isinstance(root.dst, nodes.AccessNode) and root.dst.data in outputs:
                         ndesc = nsdfg.arrays[root.dst.data]
                         outer_desc = sdfg.arrays[outputs[root.dst.data].data.data]
-                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                        if not symbolic.same_value(ndesc.shape, outer_desc.shape) or not symbolic.same_value(
+                            ndesc.strides, outer_desc.strides
+                        ):
                             reshapes.add(root.dst.data)
 
         # All transients become transients of the parent (if data already
@@ -528,6 +584,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     taken.update(node.in_connectors, node.out_connectors)
         # Mapping from nested transient name to top-level name
         transients: dict[str, str] = {}
+        # One connector walk for every name minted below: until the nested nodes move out, this adds
+        # descriptors and constants only, which the view reads live.
+        used_names = sdfg_module._UsedNames(sdfg, include_connectors=True)
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
@@ -536,15 +595,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if new_name in taken:
                         new_name = f"{nsdfg.label}_{node.data}"
 
-                    name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                    # Connector-aware: a nested name like a copy expansion's `_cpy_in` lifted into a
+                    # graph that still holds unexpanded library nodes must dodge their connectors.
+                    new_name = find_new_name(new_name.replace(".", "_"), used_names)
+                    name = sdfg.add_datadesc(new_name, datadesc)
                     transients[node.data] = name
 
         # Collect nodes to add to top-level graph
         new_incoming_edges: dict[nodes.Node, MultiConnectorEdge] = {}
         new_outgoing_edges: dict[nodes.Node, MultiConnectorEdge] = {}
 
-        source_accesses = set()
-        sink_accesses = set()
+        source_accesses = OrderedSet()
+        sink_accesses = OrderedSet()
         for node in nstate.source_nodes():
             if isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes:
                 try:
@@ -562,6 +624,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
+            # The parent's own constant of the same name, type and value is this one: nesting copied it down
+            if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
+                continue
             if cstname in sdfg.constants:
                 if cstname in transients:
                     newname = transients[cstname]
@@ -588,6 +653,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 newname = f"{nsdfg.name}_ret{dname[8:]}"
             else:
                 newname = dname
+            # Connector-aware: a copy expansion's wrapper arrays are named after its connectors
+            # (`_cpy_in`), and a view lifted under that name collides with any still-unexpanded
+            # library node's connector at validation.
+            newname = find_new_name(newname.replace(".", "_"), used_names)
             newname, _ = sdfg.add_view(
                 newname,
                 desc.shape,
@@ -600,7 +669,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 total_size=desc.total_size,
                 alignment=desc.alignment,
                 may_alias=desc.may_alias,
-                find_new_name=True,
             )
             repldict[dname] = newname
 
@@ -698,8 +766,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                             helpers.redirect_edge(state, e, nview)
                         arr, mem = views[node.data]
                         narr = state.add_access(arr)
-                        state.add_nedge(node, narr, dc(mem))
-                        state.add_nedge(narr, nview, dc(mem))
+                        # `views` connectors, not plain copies: a View descriptor yields one pointer per
+                        # state, so an unbound duplicate access node silently rebinds the whole container.
+                        state.add_edge(node, "views", narr, None, dc(mem))
+                        state.add_edge(narr, None, nview, "views", dc(mem))
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
@@ -781,13 +851,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
+        # A node-less body leaves its enclosing maps with nothing between entry and exit
+        remove_emptied_map_scopes(state, nsdfg_scope_entry)
 
         # Remove newly-generated isolated nodes if exist
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
-
-        sdfg._cfg_list = sdfg.reset_cfg_list()
 
     def _modify_access_to_access(
         self,
@@ -1180,6 +1250,12 @@ class NestSDFG(transformation.MultiStateTransformation):
 
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
+                facts = nested_sdfg.facts()
+
+                def nonpositive(size, facts=facts) -> bool:
+                    relation = symbolic.predicate_relation(symbolic.Predicate.NONPOSITIVE, size)
+                    return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
+
                 for node in state.nodes():
                     if (
                         isinstance(node, nodes.AccessNode)
@@ -1235,8 +1311,8 @@ class NestSDFG(transformation.MultiStateTransformation):
                                             newsz_limit = newsz.subs({s: replacement_limit_value})
                                             newsz_initial = newsz.subs({s: replacement_initial_value})
 
-                                            if newsz_limit.is_negative or newsz_limit.is_zero:
-                                                if newsz_initial.is_negative and newsz_initial.is_zero:
+                                            if nonpositive(newsz_limit):
+                                                if nonpositive(newsz_initial):
                                                     raise ValueError(
                                                         f"Can not over-approximate shape for transient{node.data}"
                                                     )
@@ -1318,13 +1394,19 @@ class NestSDFG(transformation.MultiStateTransformation):
         defined_syms |= set(nested_sdfg.constants.keys())
 
         for s in defined_syms:
-            type = outer_sdfg.symbols.pop(s, None)
+            type = outer_sdfg.symbols.get(s)
             if type is not None:
+                outer_sdfg.symbol_repo.remove(s)
                 # update or add the symbol in the nested sdfg
-                nested_sdfg.symbols[s] = type
+                if s in nested_sdfg.symbols:
+                    nested_sdfg.symbol_repo.set_type(s, type)
+                else:
+                    nested_sdfg.symbol_repo.add(s, type)
 
         # Add the nested SDFG to the parent state and connect it
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, set(inputs.values()), set(outputs.values()))
+        nested_node = outer_state.add_nested_sdfg(
+            nested_sdfg, OrderedSet(inputs.values()), OrderedSet(outputs.values())
+        )
 
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)

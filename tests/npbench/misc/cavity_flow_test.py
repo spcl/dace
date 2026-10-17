@@ -40,7 +40,7 @@ def build_up_b(
 
 @dace.program
 def pressure_poisson(p: dace.float64[ny, nx], dx: dace.float64, dy: dace.float64, b: dace.float64[ny, nx]):
-    pn = np.empty_like(p)
+    pn = np.zeros_like(p)
     pn[:] = p.copy()
 
     for q in range(nit):
@@ -68,8 +68,8 @@ def dace_cavity_flow(
     rho: dace.float64,
     nu: dace.float64,
 ):
-    un = np.empty_like(u)
-    vn = np.empty_like(v)
+    un = np.zeros_like(u)
+    vn = np.zeros_like(v)
     b = np.zeros((ny, nx))
 
     for n in range(nt):
@@ -124,7 +124,7 @@ def numpy_cavity_flow(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
         )
 
     def pressure_poisson(nit, p, dx, dy, b):
-        pn = np.empty_like(p)
+        pn = np.zeros_like(p)
         pn = p.copy()
 
         for q in range(nit):
@@ -138,8 +138,8 @@ def numpy_cavity_flow(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
             p[:, 0] = p[:, 1]  # dp/dx = 0 at x = 0
             p[-1, :] = 0  # p = 0 at y = 2
 
-    un = np.empty_like(u)
-    vn = np.empty_like(v)
+    un = np.zeros_like(u)
+    vn = np.zeros_like(v)
     b = np.zeros((ny, nx))
 
     for n in range(nt):
@@ -207,7 +207,7 @@ def jax_build_up_b(b, rho, dt, u, v, dx, dy):
 
 
 def jax_pressure_poisson(jnp, nit, p, dx, dy, b):
-    pn = jnp.empty_like(p)
+    pn = jnp.zeros_like(p)
     pn = p.copy()
 
     for q in range(nit):
@@ -225,8 +225,8 @@ def jax_pressure_poisson(jnp, nit, p, dx, dy, b):
 
 
 def cavity_flow_jax_kernel(jnp, nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
-    un = jnp.empty_like(u)
-    vn = jnp.empty_like(v)
+    un = jnp.zeros_like(u)
+    vn = jnp.zeros_like(v)
     b = jnp.zeros((ny, nx))
 
     for n in range(nt):

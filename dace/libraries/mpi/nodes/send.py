@@ -3,7 +3,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    count_expression,
+    expanded_input_connectors,
+    resolve_comm,
+    validate_integer_descriptor,
+)
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -31,8 +37,9 @@ class ExpandSendMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = "1"
         buffer_offset = 0
+        comm = resolve_comm(node, parent_state)
         code += f"""
-                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), MPI_COMM_WORLD);
+                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm});
                 """
         if ddt is not None:
             code += """// MPI_Type_free(&newtype);
@@ -40,7 +47,7 @@ class ExpandSendMPI(ExpandTransformation):
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
-            node.in_connectors,
+            expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
@@ -61,7 +68,7 @@ class Send(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={}, **kwargs)
+        super().__init__(name, *args, inputs=["_buffer", "_dest", "_tag"], outputs={}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -87,8 +94,7 @@ class Send(MPINode):
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_buffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset.num_elements_exact())
                 # compute buffer offset
                 minelem = data.subset.min_element()
                 dims_data = sdfg.arrays[data.data].strides

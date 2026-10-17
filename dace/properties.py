@@ -7,11 +7,13 @@ import pydoc
 import re
 import warnings
 from collections import OrderedDict
+from collections.abc import Callable
+from functools import lru_cache
 from numbers import Number
-from typing import TYPE_CHECKING, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, TypeVar, Union, overload
 
 import numpy as np
-import sympy as sp
+import sympy
 from packaging.version import parse as parse_version
 
 import dace
@@ -23,7 +25,7 @@ from dace.frontend.python.astutils import TaskletFreeSymbolVisitor, unparse
 from dace.symbolic import pystr_to_symbolic
 
 if TYPE_CHECKING:
-    from dace.data import Data as dData
+    pass
 
 T = TypeVar("T")
 
@@ -36,11 +38,11 @@ def _is_symbolic_converter(converter) -> bool:
 def _is_symbolic_type(tp) -> bool:
     if tp is symbolic.SymExpr:
         return True
-    return isinstance(tp, type) and issubclass(tp, sp.Basic)
+    return isinstance(tp, type) and issubclass(tp, symbolic.SymbolicBasic)
 
 
 def _coerce_symbolic_property_value(value):
-    if isinstance(value, (symbolic.SymExpr, sp.Basic)):
+    if isinstance(value, (symbolic.SymExpr, symbolic.SymbolicBasic)):
         return value
     return pystr_to_symbolic(value, simplify=False)
 
@@ -70,8 +72,15 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or _predates_symbolic_serialization(version):
+    if _predates_symbolic_serialization(version):
+        # A `$`-escape below the wire version proves the stamp lied: no writer that old could emit one.
+        if symbolic.has_serialized_symbol_escape(value):
+            return symbolic.deserialize_symbolic(value)
         return pystr_to_symbolic(value, simplify=False)
+    # A plain decimal literal (most Range steps, tiles and starts) touches no rewrite regex and parses to
+    # ``Constant(int)``, which the wire parser returns as ``sympy.Integer``; skip the parse. "00" stays on the slow path.
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and (value[0] != "0" or value == "0"):
+        return sympy.Integer(int(value))
     return symbolic.deserialize_symbolic(value)
 
 
@@ -121,7 +130,7 @@ class Property(Generic[T]):
         self,
         getter=None,
         setter=None,
-        dtype: type[T] = None,
+        dtype: type[T] | None = None,
         default=None,
         from_json=None,
         to_json=None,
@@ -219,20 +228,22 @@ class Property(Generic[T]):
             # Called on the class rather than an instance, so return the
             # property object itself
             return self
-        # If a custom getter is specified, use it
-        if self.getter:
-            return self.getter(obj)
+        # ``_getter`` directly, not the ``getter`` Python property in front of it: this runs on every
+        # attribute read of every property-bearing object, and the wrapper is a whole frame per read.
+        if self._getter is not None:
+            return self._getter(obj)
         # Otherwise look for attribute prefixed by "_"
         name = self.private_name
         if name is None:
             raise RuntimeError("Attribute name not set")
         return getattr(obj, name)
 
-    def __set__(self, obj, val: T):
-        # If custom setter is specified, use it
-        if self.setter:
-            return self.setter(obj, val)
-        if self.private_name is None:
+    def __set__(self, obj, val):
+        # ``_setter`` directly, for the same reason as ``_getter`` in ``__get__``.
+        if self._setter is not None:
+            return self._setter(obj, val)
+        private_name = self.private_name
+        if private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
@@ -242,31 +253,30 @@ class Property(Generic[T]):
         if isinstance(val, np.number):
             val = val.item()
 
+        # Read once: every ``dtype`` override is a constant, and each read is a frame on every property write.
+        dtype = self.dtype
         # Edge cases for integer and float types
-        if isinstance(val, int) and self.dtype == float:
+        if isinstance(val, int) and dtype == float:
             val = float(val)
-        if isinstance(val, float) and self.dtype == int and val == int(val):
+        if isinstance(val, float) and dtype == int and val == int(val):
             val = int(val)
 
         # Check if type matches before setting
-        if self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none):
+        if dtype is not None and not isinstance(val, dtype) and not (val is None and self.allow_none):
             if isinstance(val, str):
                 raise TypeError(
-                    f"Received str for property {self.attr_name} of type {self.dtype}. Use from_string method of the property."
+                    f"Received str for property {self.attr_name} of type {dtype}. Use from_string method of the property."
                 )
             raise TypeError(
-                f'Invalid type "{type(val).__name__}" for property {self.attr_name}: expected {self.dtype.__name__}'
+                f'Invalid type "{type(val).__name__}" for property {self.attr_name}: expected {dtype.__name__}'
             )
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if (
-            self.choices is not None
-            and isinstance(self.choices, (list, tuple, set))
-            and (val is not None or not self.allow_none)
-        ):
-            if val not in self.choices:
-                raise ValueError(f"Value {val} not present in choices: {self.choices}")
-        setattr(obj, self.private_name, val)
+        choices = self._choices
+        if choices is not None and isinstance(choices, (list, tuple, set)) and (val is not None or not self.allow_none):
+            if val not in choices:
+                raise ValueError(f"Value {val} not present in choices: {choices}")
+        setattr(obj, private_name, val)
 
     # Python Properties of this Property class
 
@@ -376,9 +386,14 @@ class Property(Generic[T]):
 
 
 def _property_generator(instance):
+    # Read the backing attribute (prop.private_name, precomputed) straight from __dict__ on the common
+    # path; only fall back to the descriptor (custom getter / default) when it is absent. Avoids the
+    # per-property hasattr try/except and the "_" + name string rebuild in this hot serialize loop.
+    idict = instance.__dict__
     for name, prop in type(instance).__properties__.items():
-        if hasattr(instance, "_" + name):
-            yield prop, getattr(instance, "_" + name)
+        pname = prop.private_name
+        if pname in idict:
+            yield prop, idict[pname]
         else:
             yield prop, getattr(instance, name)
 
@@ -427,16 +442,20 @@ def make_properties(cls):
                     setattr(obj, name, prop.default)
         # Now call vanilla __init__, which can initialize members
         init(obj, *args, **kwargs)
-        # Assert that all properties have been set
+        # Assert that all properties have been set. A stored backing field is exactly what the
+        # getter-less descriptor would read, so only the rest pay for the read.
+        stored = obj.__dict__
         for name, prop in properties.items():
+            if prop._getter is None and prop.private_name in stored:
+                continue
             try:
                 getattr(obj, name)
             except AttributeError:
                 if not prop.unmapped:
                     raise PropertyError(f"Property {name} is unassigned in __init__ for {cls.__name__}")
         # Assert that there are no fields in the object not captured by properties, unless they are prefixed with "_"
-        for name, prop in obj.__dict__.items():
-            if name not in properties and not name.startswith("_") and name not in dir(type(obj)):
+        for name, prop in stored.items():
+            if not name.startswith("_") and name not in properties and name not in dir(type(obj)):
                 raise PropertyError(
                     f'{str(type(obj))} : Variable {name} is neither a Property nor an internal variable (prefixed with "_")'
                 )
@@ -520,7 +539,13 @@ class OrderedDictProperty(Property):
 class ListProperty(Property[list[T]]):
     """Property type for lists."""
 
-    def __init__(self, element_type: type[T], *args, **kwargs):
+    @overload
+    def __init__(self, element_type: type[T], *args, **kwargs) -> None: ...
+
+    @overload
+    def __init__(self, element_type: Callable[..., T], *args, **kwargs) -> None: ...
+
+    def __init__(self, element_type, *args, **kwargs):
         """
         Create a List property with a uniform element type.
 
@@ -620,7 +645,13 @@ class TransformationHistProperty(Property):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError(f"TransformationHistProperty expects a list input, got {data}")
+            raise TypeError("TransformationHistProperty expects a list input, got %s" % data)
+        # A history entry names its transformation class, and both the serializer registry and
+        # subclass discovery only know classes whose module was imported. Local import because
+        # dace.transformation imports this module.
+        from dace.transformation.transformation import load_builtin_transformations
+
+        load_builtin_transformations()
         return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
@@ -923,6 +954,7 @@ class SetProperty(Property):
 
     Despite its name, the property models a `frozenset`, this means that the set can
     not be modified in place. Instead a new value has to be assigned to the property.
+    The stored value is a `frozenset` (see `__set__`), so it is handed out unprotected.
     """
 
     def __init__(
@@ -982,14 +1014,6 @@ class SetProperty(Property):
         if l is None:
             return None
         return frozenset(l)
-
-    def __get__(self, obj, objtype=None):
-        val = super().__get__(obj, objtype)
-        if val is None:
-            return val
-
-        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
-        return val
 
     def __set__(self, obj, val):
         if val is None:
@@ -1075,6 +1099,16 @@ class CodeBlock:
             raise TypeError("Only strings are supported for languages other than Python")
         else:
             self.code = code
+
+    def __deepcopy__(self, memo):
+        # Same result as the generic ``__reduce_ex__`` copy, without its reconstruct machinery: every
+        # deserialized Tasklet deep-copies three empty C++ defaults.
+        result = object.__new__(type(self))
+        memo[id(self)] = result
+        copied = result.__dict__
+        for name, value in self.__dict__.items():
+            copied[name] = value if dace.serialize.deepcopy_returns_itself(value) else copy.deepcopy(value, memo)
+        return result
 
     def get_free_symbols(self, defined_syms: set[str] = None) -> set[str]:
         """
@@ -1287,9 +1321,11 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str)):
+        if val is not None and not isinstance(val, (symbolic.SymbolicExpr, Number, np.bool_, str)):
             raise TypeError(f"Property {self.attr_name} must be a literal or symbolic expression, got: {type(val)}")
-        if isinstance(val, (Number, str)):
+        # A sympy number is a ``Number`` too, and re-parsing it through ``str`` ROUNDS it to 15
+        # significant digits -- loading an SDFG whose factor is 1/21 stored back a different double.
+        if isinstance(val, (Number, str)) and not isinstance(val, symbolic.SymbolicExpr):
             val = SymbolicProperty.from_string(str(val))
 
         super().__set__(obj, val)
@@ -1448,12 +1484,19 @@ class TypeProperty(Property):
             raise TypeError(f"Cannot parse type from: {obj}")
 
 
-class TypeClassProperty(Property):
+@lru_cache(maxsize=None, typed=True)
+def typeclass_from_name(name: str) -> typeclass:
+    # ``pydoc.locate`` walks the import machinery per call (~150us); a name always resolves to one module global.
+    # A failed lookup raises, so it is never cached.
+    dtype = pydoc.locate(f"dace.dtypes.{name}")
+    if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
+        raise ValueError(f"Not a valid data type: {name}")
+    return dtype
+
+
+class TypeClassProperty(Property[typeclass]):
     """Custom property type for memory as defined in dace.types,
     e.g. `dace.float32`."""
-
-    def __get__(self, obj, objtype=None) -> typeclass:
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):
@@ -1461,10 +1504,7 @@ class TypeClassProperty(Property):
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate(f"dace.dtypes.{s}")
-        if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
-            raise ValueError(f"Not a valid data type: {s}")
-        return dtype
+        return typeclass_from_name(s)
 
     @staticmethod
     def to_string(obj):
@@ -1490,11 +1530,8 @@ class TypeClassProperty(Property):
             raise TypeError(f"Cannot parse type from: {obj}")
 
 
-class NestedDataClassProperty(Property):
+class NestedDataClassProperty(Property["dData"]):
     """Custom property type for nested data."""
-
-    def __get__(self, obj, objtype=None) -> "dData":
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):

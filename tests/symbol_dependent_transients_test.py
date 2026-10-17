@@ -51,8 +51,8 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
         rednode.implementation = "CUDA (device)"
     body2_state.add_node(rednode)
     write_tmp2 = body2_state.add_write("tmp2")
-    body2_state.add_nedge(read_tmp1, rednode, dace.Memlet.from_array("tmp1", tmp1))
-    body2_state.add_nedge(rednode, write_tmp2, dace.Memlet("tmp2[0]"))
+    body2_state.add_edge(read_tmp1, None, rednode, "_in", dace.Memlet.from_array("tmp1", tmp1))
+    body2_state.add_edge(rednode, "_out", write_tmp2, None, dace.Memlet("tmp2[0]"))
 
     read_tmp2 = body3_state.add_read("tmp2")
     write_b = body3_state.add_write("B")
@@ -186,9 +186,6 @@ def test_symbol_dependent_array_in_map():
     sdfg = symbol_dependent_array_in_map.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(interstate.StateFusion)
     sdfg.apply_transformations_repeated(interstate.InlineSDFG)
-    # NOTE: Temporary fix for issue with symbols/free_symbols
-    if "i" in sdfg.free_symbols:
-        sdfg.remove_symbol("i")
     func = sdfg.compile()
     A = np.random.randn(10).astype(np.float32)
     val = func(A=A)
