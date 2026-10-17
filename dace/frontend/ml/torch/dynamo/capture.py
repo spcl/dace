@@ -34,7 +34,9 @@ from .sources import (
     GraphDescription,
     ShapeAssumption,
     SourceRef,
+    Specialization,
     shape_assumptions,
+    specializations,
     symbol_names_from_sources,
 )
 
@@ -68,6 +70,8 @@ class CapturedProgram:
     import_result: ImportResult | None = None  #: The most recent result of :meth:`import_graph`
     #: :attr:`shape_guards` with the location (model line and torch function) that introduced each of them
     assumptions: list[ShapeAssumption] = dataclasses.field(default_factory=list)
+    #: Named dimensions Dynamo specialized to a constant while tracing (legitimate only under ``dynamic_shapes='all'``)
+    specializations: list[Specialization] = dataclasses.field(default_factory=list)
 
     def input_names(self) -> list[str | None]:
         return GraphDescription(self.inputs, self.symbol_names, self.guards).input_names()
@@ -243,6 +247,10 @@ def capture(
             program.owner = fn if isinstance(fn, torch.nn.Module) else None
             program.signature = signature
             program.global_vars = target.__globals__
+            program.specializations = specializations(backend.shape_env, spec, signature)
+            strict = [s for s in program.specializations if s.strict]
+            if strict:
+                raise _specialization_error(strict) from None
             return program
         raise _capture_error(fn, ex, backend, spec, signature) from _without_internal_frames(ex)
     except Exception as ex:
@@ -289,6 +297,23 @@ def without_conv_backend_guards() -> Iterator[None]:
 _DYNAMO_SYMBOL = re.compile(r"\bs\d+\b")
 #: Dynamo appends the user frames and its own hints to the message; they are reported separately
 _DYNAMO_MESSAGE_SUFFIXES = ("\nfrom user code:", "\nSet TORCHDYNAMO_VERBOSE=1")
+
+
+def _specialization_error(specs: Sequence[Specialization]) -> CaptureError:
+    """
+    Builds the error raised when a strictly named ``dynamic_shapes`` dimension was specialized to a constant while
+    tracing (see :class:`.sources.Specialization`). The capture otherwise succeeds, so the message explains what to
+    change rather than reporting a torch failure.
+    """
+    lines = []
+    for spec in specs:
+        where = f" ({spec.origin})" if spec.origin else ""
+        lines.append(
+            f"{spec.name} was specialized to {spec.value} while tracing{where}; the graph is only valid for "
+            f"{spec.name} == {spec.value}. Rewrite the loop/branch as a torch op / enable control_flow=True, or mark "
+            f"the dimension static."
+        )
+    return CaptureError("\n".join(lines))
 
 
 def _capture_error(fn: Callable, ex: BaseException, backend: _CaptureBackend, spec: Any, signature) -> CaptureError:

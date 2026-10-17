@@ -353,6 +353,93 @@ def symbol_names_for_graph(
     return names
 
 
+@dataclasses.dataclass(frozen=True)
+class Specialization:
+    """
+    A dimension the user named in ``dynamic_shapes`` that Dynamo nonetheless specialized to a constant while tracing.
+
+    The captured graph is then only valid for that one value, although the symbol still looks dynamic in
+    :attr:`CapturedProgram.symbol_names` and :attr:`CapturedProgram.symbol_ranges` (Dynamo applies the replacement
+    everywhere else). For a strict ``mark_dynamic`` dimension (:attr:`strict`) this is an error; under ``'all'`` it is
+    legitimate and merely reported.
+    """
+
+    name: str  #: User-facing DaCe name of the dimension
+    symbol: str  #: Dynamo symbol that was specialized (e.g. ``'s10'``)
+    value: int  #: The constant the symbol was specialized to
+    #: The model's line that forced the specialization (``for i in range(...):  # file.py:171 in forward``), or ``""``
+    origin: str = ""
+    #: Whether the user requested the dimension strictly (named it / ``torch.export.Dim``) rather than via ``'all'``
+    strict: bool = True
+
+    def __str__(self) -> str:
+        where = f" ({self.origin})" if self.origin else ""
+        return f"{self.name} was specialized to {self.value} while tracing{where}"
+
+
+def _specialized_value(shape_env, sym) -> int | None:
+    """
+    The constant ``sym`` was specialized to, chasing replacements and unifications (``shape_env.replace`` applies the
+    union-find over :attr:`ShapeEnv.replacements` to a fixed point), or ``None`` if it is still symbolic.
+    """
+    try:
+        replaced = shape_env.replace(sym)
+    except Exception:  # pragma: no cover - defensive: replace must not break capturing
+        return None
+    return int(replaced) if getattr(replaced, "is_number", False) and replaced.is_integer else None
+
+
+def _specialization_origin(shape_env, sym) -> str:
+    """The model line that introduced the replacement of ``sym``, from ``ShapeEnv.replacements_slocs``, or ``""``."""
+    sloc = getattr(shape_env, "replacements_slocs", {}).get(sym)
+    loc = getattr(sloc, "maybe_user_loc", None) if sloc is not None else None
+    return str(loc) if loc else ""
+
+
+def specializations(shape_env, spec: Any, signature: inspect.Signature | None = None) -> list[Specialization]:
+    """
+    Finds the dimensions the ``dynamic_shapes`` specification names (strictly or via ``'all'``) that Dynamo specialized
+    to a constant while tracing, from the shape environment's record of where each symbol came from
+    (``var_to_sources``). Dimensions that were static from the start are not symbols and are ignored.
+
+    :param shape_env: The ``ShapeEnv`` of the compilation.
+    :param spec: A normalized specification (see :func:`.shapes.normalize`).
+    :param signature: Signature of the compiled callable (see :func:`symbol_names_for_graph`).
+    :return: One :class:`Specialization` per named-and-specialized symbol.
+    """
+    if spec is None or shape_env is None:
+        return []
+    found: list[Specialization] = []
+    seen: set[str] = set()
+    resolver = SourceResolver(signature)
+    for sym, sym_sources in shape_env.var_to_sources.items():
+        if str(sym) in seen:
+            continue
+        value = _specialized_value(shape_env, sym)
+        if value is None:
+            continue
+        for source in sym_sources:
+            ref = resolver.resolve(source)
+            if ref.root is None or ref.kind not in ("argument", "size"):
+                continue
+            entry = shapes.spec_for_argument(spec, ref.root)
+            for key in ref.path:
+                entry = shapes.spec_at(entry, key)
+            if entry is None:
+                continue
+            if ref.kind == "size":
+                ds = shapes.dim_spec(entry, ref.dim)
+            else:  # An integer argument
+                ds = shapes.parse_dim(entry) if entry != shapes.ALL else shapes.DimSpec(strict=False)
+            if ds is None:
+                continue
+            name = ds.name or _default_name(ref.root, ref.path, ref.dim)
+            found.append(Specialization(name, str(sym), value, _specialization_origin(shape_env, sym), ds.strict))
+            seen.add(str(sym))
+            break
+    return found
+
+
 def symbol_names_from_sources(shape_env, spec: Any, signature: inspect.Signature | None = None) -> dict[str, str]:
     """
     Maps Dynamo shape symbols to user-facing names from the shape environment's record of where each symbol came from
