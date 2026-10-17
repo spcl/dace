@@ -485,7 +485,8 @@ def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
     assert hints[0][0].startswith("sequential -- carried: RAW on aa["), hints
     # The column index is the element the carry runs along, or the whole row once the parallel column
     # map sits inside the sequential recurrence.
-    assert re.search(r" - 1, (?:_loop_it_\d+|0:N)\]$", hints[0][0]), hints
+    # ... followed by its witness: two consecutive iterations of the carry
+    assert re.search(r" - 1, (?:_loop_it_\d+|0:N)\] \(witness: (\w+)=1 and \1=2\)$", hints[0][0]), hints
     assert hints[0][1].startswith("settled: proven, " + CONFLICT_MEANING["RAW"]), hints
 
 
@@ -506,6 +507,25 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
     # The witness is an execution: the earlier iteration reads the element the next one overwrites
     size, first, second = (int(g) for g in reason.groups()[1:])
     assert second == first + 1 and second < size - 1, hint
+
+
+def test_a_pattern_matched_dependence_names_its_witness_too():
+    """An offset ``K`` that sizes nothing keeps the solver out (a conflict for one chosen ``K`` proves nothing), so
+    the constant distance proves the carry. Its hint still names an execution: the first iteration and the next."""
+    K = dace.symbol("K", dtype=dace.int64)
+
+    @dace.program
+    def offset_recurrence(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(1, N - K):
+            a[i + K] = a[i + K - 1] + b[i]
+
+    sdfg = offset_recurrence.to_sdfg(simplify=True)
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    (hint,) = [loop.specialization_hint for loop in loops_of(sdfg)]
+    reason = re.search(r"carried: (RAW on a\[(.*)\] \(witness: (\w+)=1 and (\w+)=2\))\n", hint)
+    assert reason, hint
+    assert reason.group(3) == reason.group(4)
+    assert hint == SEQUENTIAL_PROVEN.format(reason=reason.group(1), why=CONFLICT_MEANING["RAW"])
 
 
 def test_no_carried_dependence_is_claimed_for_independent_elements():
@@ -691,6 +711,7 @@ if __name__ == "__main__":
     test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering()
     test_a_carried_dependence_behind_a_whole_array_memlet_is_proven()
     test_a_read_ahead_dependence_is_named_war_not_raw()
+    test_a_pattern_matched_dependence_names_its_witness_too()
     test_no_carried_dependence_is_claimed_for_independent_elements()
     test_a_pinned_independent_loop_does_not_read_as_parallel()
     test_writes_the_test_cannot_separate_are_proven_by_a_witness()

@@ -390,8 +390,22 @@ def proven_carrying_access(loop: LoopRegion) -> str | None:
             if distance is None or distance == 0 or distance % stride != 0:
                 continue
             kind = "RAW" if distance / stride > 0 else "WAR"
-            return f"{kind} on {read.array}[{', '.join(str(e) for e in read.index)}]"
+            # The pattern is its own witness: the first iteration and the one ``|distance|`` later
+            witness = pattern_witness(loop, abs(distance / stride))
+            return f"{kind} on {read.array}[{', '.join(str(e) for e in read.index)}]{witness}"
     return None
+
+
+def pattern_witness(loop: LoopRegion, steps: Any) -> str:
+    """`` (witness: i=0 and i=1)``: the first iteration of ``loop`` and the one ``steps`` iterations later, the pair a
+    pattern-matched dependence (a constant distance, a carried symbol) conflicts on whenever the loop runs that far;
+    empty when the loop has no constant-stride counter to name them by."""
+    start, stride = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
+    if not loop.loop_variable or start is None or stride is None or not as_basic(stride).is_Integer:
+        return ""
+    first = symbolic.simplify(as_basic(start))
+    second = symbolic.simplify(first + steps * as_basic(stride))
+    return f" (witness: {loop.loop_variable}={first} and {loop.loop_variable}={second})"
 
 
 class Site(NamedTuple):
@@ -595,7 +609,8 @@ def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
     if access is None and refusal_matches_a_carried_symbol(reason):
-        access = carrying_access(reason)
+        # A symbol one iteration hands to the next: the witness is two consecutive iterations
+        access = carrying_access(reason) + pattern_witness(loop, 1)
     return access
 
 
