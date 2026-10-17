@@ -104,6 +104,10 @@ def specialize_loop_under_condition(
     # a clone kept as sequential fallback. Deep-copy both (not re-host the original) to
     # keep re-parenting simple and leave no stale refs to the removed loop.
     par_loop = copy.deepcopy(loop)
+    # The clone runs only under ``condition``, which is what ``parallelize`` proves the parallel form under: a pin
+    # ``loop`` carries as an earlier specialization's fallback does not hold there (LoopToScan's ``K < 0`` fallback,
+    # versioned again on ``0 <= K`` by BreakAntiDependence)
+    par_loop.pinned_sequential = False
     par_region = ControlFlowRegion(label=f"{loop.label}_par")
     par_region.add_node(par_loop, is_start_block=True, ensure_unique_name=True)
     conditional.add_branch(condition, par_region)
@@ -128,9 +132,41 @@ def specialize_loop_under_condition(
     if is_start:
         parent.start_block = parent.node_id(conditional)
 
+    # Both clones still name the loop's scratch transients: a transient accessed outside the loop is one
+    # LoopToMap cannot privatize, so the fallback gets its own copies (only one branch ever runs)
+    from dace.transformation.passes.scatter_to_guarded_maps import privatize_clone_local_transients
+
+    privatize_clone_local_transients(owner_sdfg, par_loop, seq_loop)
+    give_clone_its_own_iterators(owner_sdfg, conditional, seq_loop)
     parallelize(par_loop, par_region, owner_sdfg)
     label_arms(par_region, seq_region, condition.as_string.strip())
     return conditional
+
+
+def give_clone_its_own_iterators(owner_sdfg: SDFG, conditional: ConditionalBlock, clone: LoopRegion) -> None:
+    """Rename the iterators of ``clone`` (a fallback branch of ``conditional``) to fresh ``_loop_it_<N>`` names.
+
+    The two branches of a specialization bind the same iterator, so the parallel branch's iterator looks read
+    after its loop (in the fallback) and ``LoopToMap`` refuses it. An iterator something after ``conditional``
+    still reads keeps its name, so that reader sees the value the branch that ran left.
+    """
+    from dace.transformation.passes.unique_loop_iterators import (
+        LOOP_ITERATOR_PREFIX,
+        first_free_id,
+        rename_iterator,
+        symbol_readers,
+    )
+
+    loops = [r for r in clone.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    inside = set(conditional.all_control_flow_blocks(recursive=True))
+    readers = symbol_readers(owner_sdfg, {loop.loop_variable for loop in loops})
+    next_id = first_free_id(owner_sdfg)
+    for loop in reversed(loops):  # innermost first: a rename covers the loop's whole subtree
+        old = loop.loop_variable
+        if readers.get(old, set()) - inside:
+            continue
+        rename_iterator(loop, old, f"{LOOP_ITERATOR_PREFIX}{next_id}")
+        next_id += 1
 
 
 def specialize_loop_under_relations(
