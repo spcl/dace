@@ -1044,6 +1044,9 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
         (label, RematerializeDerivedTemporaries()),
     ]
+    # Fusion frees loops the pre-fusion sweep had to keep: a level loop whose body was a fill, a map and a copy of one
+    # scratch plane is a single map after it (velocity_tendencies' nine level loops), so sweep once more and collapse.
+    s += [(label, ParallelizeLoopsHoldingSiblingChains()), (label, PatternApplyOnceEverywhere([MapCollapse()]))]
     return s
 
 

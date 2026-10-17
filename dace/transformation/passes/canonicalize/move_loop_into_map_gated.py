@@ -78,6 +78,7 @@ from dace.transformation import transformation
 from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
+from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, _constant_trip_count
 
 
 def stride_costs(loop: LoopRegion, sdfg: SDFG) -> tuple[tuple[float, float], tuple[float, float]] | None:
@@ -114,6 +115,18 @@ def interchange_lowers_stride(loop: LoopRegion, sdfg: SDFG) -> bool:
     """
     loop_cost, map_cost = stride_costs(loop, sdfg)
     return loop_cost < map_cost
+
+
+def short_constant_trip(loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Whether ``loop`` runs a constant number of trips no larger than the short-loop unroll limit.
+
+    Inside the map, the C compiler unrolls such a loop completely, so the map's axis stays the innermost
+    iterated one and the stride rule has nothing to decide. What the move gains is the carry: a short
+    accumulation sweeping a whole plane per trip (velocity's ``for k in range(6): acc += gather(k) * geofac[:, k]``)
+    becomes one value per map iteration, freeing the enclosing level loop to fuse and parallelize.
+    """
+    trips = _constant_trip_count(loop, sdfg)
+    return trips is not None and trips <= DEFAULT_UNROLL_LIMIT
 
 
 def launches_saved(loop: LoopRegion) -> float:
@@ -221,7 +234,7 @@ class MoveLoopIntoMapGated(ppl.Pass):
                     continue
                 if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
                     continue
-                if not gpu and not interchange_lowers_stride(loop, loop.sdfg):
+                if not gpu and not (short_constant_trip(loop, loop.sdfg) or interchange_lowers_stride(loop, loop.sdfg)):
                     continue
                 MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False)
                 applied += 1
