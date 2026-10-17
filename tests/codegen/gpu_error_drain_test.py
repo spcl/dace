@@ -118,7 +118,7 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
     assert cu.index("__state->gpu_context = new") < cu.index("MemPool_t")
 
     # A literal 0 never fails loudly, it just configures a pool the allocations never touch.
-    assert f"DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device))" in cu
+    assert f"DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&__dace_mempool, __dace_device))" in cu
 
 
 #: The runtime library of each GPU backend, as ``find_library`` names and as sonames to try.
