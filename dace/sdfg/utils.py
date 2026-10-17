@@ -2402,6 +2402,16 @@ def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
     return dst
 
 
+def _encloses(region: AbstractControlFlowRegion, block: ControlFlowBlock) -> bool:
+    """Whether ``block`` lies (at any depth) inside ``region``."""
+    parent = block.parent_graph
+    while parent is not None and not isinstance(parent, SDFG):
+        if parent is region:
+            return True
+        parent = parent.parent_graph
+    return parent is region
+
+
 def get_control_flow_block_dominators(
     sdfg: SDFG,
     idom: dict[ControlFlowBlock, ControlFlowBlock] | None = None,
@@ -2444,6 +2454,8 @@ def get_control_flow_block_dominators(
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
+        # - A region that dominates everything (it is the start block of the SDFG, or of such a region) is its own
+        #   dominator and the root of the dominator tree: the blocks inside it keep it as their dominator.
         for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
                 next_dom = idom[k.parent_graph]
@@ -2457,6 +2469,8 @@ def get_control_flow_block_dominators(
                 if isinstance(v, AbstractControlFlowRegion):
                     if isinstance(v, (LoopRegion, ConditionalBlock)):
                         idom[k] = idom[v]
+                    elif v is k or _encloses(v, k):
+                        continue  # ``v`` is the root: it stays the dominator of the blocks inside it
                     elif v in added_sinks:
                         idom[k] = idom[added_sinks[v]]
                     else:
@@ -2498,7 +2512,7 @@ def get_control_flow_block_dominators(
                 ipostdom.update(immediate_dominators(cfg._nx.reverse(), sink))
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
-        # dominators, but inverse.
+        # dominators, but inverse (a region that postdominates everything is the root of the postdominator tree).
         for k in ipostdom.keys():
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
@@ -2517,6 +2531,8 @@ def get_control_flow_block_dominators(
                 if isinstance(v, AbstractControlFlowRegion):
                     if isinstance(v, (LoopRegion, ConditionalBlock)):
                         ipostdom[k] = ipostdom[v]
+                    elif v is k or _encloses(v, k):
+                        continue  # ``v`` is the root: it stays the postdominator of the blocks inside it
                     else:
                         ipostdom[k] = v.start_block
                     if ipostdom[k] is not v:

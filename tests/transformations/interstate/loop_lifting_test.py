@@ -571,7 +571,41 @@ def test_loop_with_side_exit_keeps_exit(data_dependent):
     assert np.array_equal(result, reference)
 
 
+def test_lift_while_loop_with_two_induction_variables():
+    """
+    A loop that updates two symbols on its back edge has no single iteration variable; it is lifted as a while loop
+    that keeps both assignments (the state machine a compiled chunked loop produces: a counter and an offset).
+    """
+    sdfg = SDFG("two_induction_variables")
+    N = dace.symbol("N")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_symbol("off", dace.int32)
+    sdfg.add_array("A", (N,), dace.int32)
+    start = sdfg.add_state("start", is_start_block=True)
+    guard = sdfg.add_state("guard")
+    body = sdfg.add_state("body")
+    after = sdfg.add_state("after")
+    sdfg.add_edge(start, guard, InterstateEdge(assignments={"i": 0, "off": 0}))
+    sdfg.add_edge(guard, body, InterstateEdge(condition="i < N"))
+    sdfg.add_edge(body, guard, InterstateEdge(assignments={"i": "i + 1", "off": "off + 2"}))
+    sdfg.add_edge(guard, after, InterstateEdge(condition="not (i < N)"))
+    tasklet = body.add_tasklet("t", {}, {"out"}, "out = off")
+    body.add_edge(tasklet, "out", body.add_access("A"), None, Memlet("A[i]"))
+
+    N = 7
+    reference = np.zeros((N,), dtype=np.int32)
+    sdfg(A=reference, N=N)
+    assert list(reference) == [2 * i for i in range(N)]
+
+    assert sdfg.apply_transformations_repeated([LoopLifting]) == 1
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+    result = np.zeros((N,), dtype=np.int32)
+    sdfg(A=result, N=N)
+    assert np.array_equal(result, reference)
+
+
 if __name__ == "__main__":
+    test_lift_while_loop_with_two_induction_variables()
     test_loop_with_side_exit_keeps_exit(False)
     test_loop_with_side_exit_keeps_exit(True)
     test_lift_regular_for_loop()

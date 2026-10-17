@@ -236,10 +236,8 @@ class DetectLoop(transformation.PatternTransformation):
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
                 return None
-            elif len(itvar) == 0:
-                return ""
-            else:
-                return None
+            # No (or no single) iteration variable: a while loop whose assignments all stay on its edges
+            return ""
 
         return next(iter(itvar))
 
@@ -380,10 +378,8 @@ class DetectLoop(transformation.PatternTransformation):
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
                 return None
-            elif len(itvar) == 0:
-                return ""
-            else:
-                return None
+            # No (or no single) iteration variable: a while loop whose assignments all stay on its edges
+            return ""
 
         return next(iter(itvar))
 
@@ -639,10 +635,8 @@ def rotated_loop_find_itvar(
         if not accept_missing_itvar:
             # Either no consistent iteration variable found, or too many consistent iteration variables found
             return None, None
-        elif len(filtered_candidates) == 0:
-            return "", None
-        else:
-            return None, None
+        # No (or no single) iteration variable: a while loop whose assignments all stay on its edges
+        return "", None
     else:
         itvar = next(iter(filtered_candidates))
         if itvar in backedge_incremented:
