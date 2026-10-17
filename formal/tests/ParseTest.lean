@@ -63,3 +63,16 @@ def r : Range := ⟨[{ lo := 0, hi := Expr.sym "N" - 1, step := 3 }, { lo := 1, 
 #guard (Range.ofDims [{ lo := 0, hi := Expr.sym "N" - 1 }, Dim.index 5]).squeeze.ndim == 1
 #guard r.squeeze.ndim == 2
 #guard ((Range.ofIndices [1, 2]).unsqueeze [0, 2]).dims.length == 4
+
+-- WCR lambdas
+#guard WcrOp.ofLambda? "lambda a, b: a + b" == some .sum
+#guard WcrOp.ofLambda? "lambda x,y: y*x" == some .product
+#guard WcrOp.ofLambda? "lambda a, b: min(a, b)" == some .min
+#guard WcrOp.ofLambda? "lambda a, b: Max(b, a)" == some .max
+#guard WcrOp.ofLambda? "lambda a, b: b" == some .exchange
+#guard WcrOp.ofLambda? "lambda a, b: a - b" == some .sub
+#guard WcrOp.ofLambda? "lambda a, b: b - a" == some (.custom "a" "b" (Expr.parse? "b - a").get!)
+#guard WcrOp.ofLambda? "lambda a: a" == none
+#guard (WcrOp.ofLambda? "lambda a, b: a + 2*b").map (fun op => WcrOp.applyConcrete op (.int 1) (.int 3))
+  == some (.int 7)
+#guard WcrOp.applyConcrete .sum (.int 1) (.int 3) == .int 4

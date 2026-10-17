@@ -3,6 +3,13 @@ import Dace.Prelude
 import Dace.Core.Expr
 import Dace.Core.Subset
 import Dace.Core.Parse
+import Dace.Core.Data
+import Dace.Core.Memlet
+import Dace.Core.Memory
+import Dace.Core.Wcr
+import Dace.Core.Merge
+import Dace.Core.Tasklet
+import Dace.Core.Interp
 
 /-!
 # DaCe formal semantics
