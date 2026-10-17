@@ -11,6 +11,8 @@ import Dace.Core.Merge
 import Dace.Core.Tasklet
 import Dace.Core.Interp
 import Dace.SDFG.Syntax
+import Dace.SDFG.Scope
+import Dace.SDFG.WF
 import Dace.SDFG.Json
 
 /-!
