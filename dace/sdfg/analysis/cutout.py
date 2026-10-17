@@ -12,7 +12,7 @@ from typing import Any, Union
 import sympy as sp
 from numpy.typing import ArrayLike
 
-from dace import DataInstrumentationType, data
+from dace import DataInstrumentationType, data, utils
 from dace import graphlib as nx
 from dace.graphlib.algorithms.flow import edmondskarp
 from dace.memlet import Memlet
@@ -872,7 +872,7 @@ def _create_alibi_access_node_for_edge(
     original_edge.data
     access_size = original_edge.data.subset.size_exact()
     container_name = "__cutout_" + str(original_edge.data.data)
-    container_name = data.find_new_name(container_name, target_sdfg._arrays.keys())
+    container_name = utils.find_new_name(container_name, target_sdfg._arrays.keys())
     original_array = original_sdfg._arrays[original_edge.data.data]
     memlet_str = ""
     if original_edge.data.subset.num_elements_exact() > 1:

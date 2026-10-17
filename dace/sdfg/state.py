@@ -30,7 +30,7 @@ import sympy
 import dace
 import dace.serialize
 from dace import data as dt
-from dace import dtypes, serialize, symbolic
+from dace import dtypes, serialize, symbolic, utils
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.python import astutils
@@ -3663,15 +3663,19 @@ class AbstractControlFlowRegion(
                         if isinstance(node, (BreakBlock, ContinueBlock, ReturnBlock)):
                             ends_context.add(node)
 
-            # Add all region edges.
+            # Add all region edges. Edges leaving a break, continue, or return block are never taken.
             for edge in self.edges():
                 src = block_to_state_map[edge.src] if edge.src in block_to_state_map else edge.src
                 dst = block_to_state_map[edge.dst] if edge.dst in block_to_state_map else edge.dst
-                parent.add_edge(src, dst, edge.data)
+                if isinstance(edge.src, (BreakBlock, ContinueBlock, ReturnBlock)):
+                    parent.add_edge(src, dst, dace.InterstateEdge(condition="False"))
+                else:
+                    parent.add_edge(src, dst, edge.data)
 
             # Redirect all edges to the region to the internal start state.
+            start_block = block_to_state_map.get(self.start_block, self.start_block)
             for b_edge in parent.in_edges(self):
-                parent.add_edge(b_edge.src, self.start_block, b_edge.data)
+                parent.add_edge(b_edge.src, start_block, b_edge.data)
                 parent.remove_edge(b_edge)
 
             end_state = None
@@ -3735,7 +3739,7 @@ class AbstractControlFlowRegion(
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
         # Every name ever issued here: ``add_node`` and the ``label`` setter record them. A removed block keeps its
         # name reserved, as an inlined reference may still point at it.
-        return dt.find_new_name(proposed or "block", self._labels)
+        return utils.find_new_name(proposed or "block", self._labels)
 
     def add_node(
         self, node, is_start_block: bool = False, ensure_unique_name: bool = False, *, is_start_state: bool = None
@@ -4347,11 +4351,14 @@ class LoopRegion(ControlFlowRegion):
                     connect_to_latch.add(node)
                 parent.add_node(node, ensure_unique_name=True)
 
-        # Add all internal loop edges.
+        # Add all internal loop edges. Edges leaving a break, continue, or return block are never taken.
         for edge in self.edges():
             src = block_to_state_map[edge.src] if edge.src in block_to_state_map else edge.src
             dst = block_to_state_map[edge.dst] if edge.dst in block_to_state_map else edge.dst
-            parent.add_edge(src, dst, edge.data)
+            if isinstance(edge.src, (BreakBlock, ContinueBlock, ReturnBlock)):
+                parent.add_edge(src, dst, dace.InterstateEdge(condition="False"))
+            else:
+                parent.add_edge(src, dst, edge.data)
 
         # Redirect all edges to the loop to the init state.
         for b_edge in parent.in_edges(self):
@@ -4369,8 +4376,9 @@ class LoopRegion(ControlFlowRegion):
             for stmt in self.init_statement.code:
                 assign: astutils.ast.Assign = stmt
                 init_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
+        start_block = block_to_state_map.get(self.start_block, self.start_block)
         if self.inverted:
-            parent.add_edge(init_state, self.start_block, init_edge)
+            parent.add_edge(init_state, start_block, init_edge)
         else:
             parent.add_edge(init_state, guard_state, init_edge)
 
@@ -4386,7 +4394,7 @@ class LoopRegion(ControlFlowRegion):
         # Add condition checking edges and connect the guard state.
         cond_expr = self.loop_condition.code
         parent.add_edge(guard_state, end_state, dace.InterstateEdge(CodeBlock(astutils.negate_expr(cond_expr)).code))
-        parent.add_edge(guard_state, self.start_block, dace.InterstateEdge(CodeBlock(cond_expr).code))
+        parent.add_edge(guard_state, start_block, dace.InterstateEdge(CodeBlock(cond_expr).code))
 
         # Connect any end states from the loop's internal state machine to the tail state so they end a
         # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.

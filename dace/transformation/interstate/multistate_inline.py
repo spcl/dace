@@ -5,7 +5,7 @@ import itertools
 from copy import deepcopy as dc
 from typing import Any
 
-from dace import Memlet, data, symbolic
+from dace import Memlet, data, symbolic, utils
 from dace.properties import CodeBlock, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -113,7 +113,7 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: set[str]) -> None
             renames: dict[str, str] = {}
             for conn in used:
                 if conn in reserved_names:
-                    renames[conn] = data.find_new_name(conn, reserved_names | used)
+                    renames[conn] = utils.find_new_name(conn, reserved_names | used)
             if not renames:
                 continue
             node.in_connectors = {renames.get(k, k): v for k, v in node.in_connectors.items()}
@@ -377,7 +377,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         identity_names = {str(k) for k in identity_mapping}
         sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
-            newname = data.find_new_name(assign, allnames)
+            newname = utils.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
@@ -420,7 +420,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             or new_name in sdfg.constants
                             or new_name in connectors
                         ):
-                            new_name = data.find_new_name(f"{nsdfg.label}_{node.data}", connectors)
+                            new_name = utils.find_new_name(f"{nsdfg.label}_{node.data}", connectors)
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True, bound_names=bound)
                         transients[node.data] = name
@@ -453,7 +453,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Make unique names for all control-flow blocks
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
-                node_name = data.find_new_name(node.label, node_names)
+                node_name = utils.find_new_name(node.label, node_names)
                 node.label = node_name
             node_names.add(node.label)
 

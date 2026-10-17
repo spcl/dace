@@ -18,6 +18,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, transformation
+from dace.utils import find_new_name
 
 
 def remove_emptied_map_scopes(state: SDFGState, entry: nodes.Node | None) -> None:
@@ -596,7 +597,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
                     # Connector-aware: a nested name like a copy expansion's `_cpy_in` lifted into a
                     # graph that still holds unexpanded library nodes must dodge their connectors.
-                    new_name = data.find_new_name(new_name.replace(".", "_"), used_names)
+                    new_name = find_new_name(new_name.replace(".", "_"), used_names)
                     name = sdfg.add_datadesc(new_name, datadesc)
                     transients[node.data] = name
 
@@ -655,7 +656,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # Connector-aware: a copy expansion's wrapper arrays are named after its connectors
             # (`_cpy_in`), and a view lifted under that name collides with any still-unexpanded
             # library node's connector at validation.
-            newname = data.find_new_name(newname.replace(".", "_"), used_names)
+            newname = find_new_name(newname.replace(".", "_"), used_names)
             newname, _ = sdfg.add_view(
                 newname,
                 desc.shape,

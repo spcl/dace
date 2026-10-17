@@ -34,7 +34,7 @@ import sympy
 import dace
 import dace.serialize
 from dace import data as dt
-from dace import dtypes, hooks, symbolic
+from dace import dtypes, hooks, symbolic, utils
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.config import Config
@@ -1654,7 +1654,7 @@ class SDFG(ControlFlowRegion):
         if not files:
             return None
 
-        return os.path.join(path, sorted(files, reverse=True)[0])
+        return os.path.join(path, max(files))
 
     def get_latest_report(self) -> Optional["InstrumentationReport"]:
         """
@@ -1687,7 +1687,7 @@ class SDFG(ControlFlowRegion):
             reports = self.available_data_reports()
             if not reports:
                 return None
-            timestamp = sorted(reports)[-1]
+            timestamp = max(reports)
 
         folder = os.path.join(self.build_folder, "data", str(timestamp))
         if not os.path.exists(folder):
@@ -2425,7 +2425,7 @@ class SDFG(ControlFlowRegion):
         # ``find_new_name`` only ever tests membership, so the union set never has to be built:
         # a view answering ``in`` from :meth:`is_name_used` costs three dict lookups per probe
         # instead of one set the size of every name in the SDFG per call.
-        return dt.find_new_name(name, _UsedNames(self))
+        return utils.find_new_name(name, _UsedNames(self))
 
     def find_new_name_avoiding_connectors(self, name: str) -> str:
         """Like the private name minter, but also dodges names in use as a tasklet connector.
@@ -2437,7 +2437,7 @@ class SDFG(ControlFlowRegion):
         Costs a walk over every state and every node, so it is separate from the ordinary minter
         rather than folded into it -- the ordinary one runs thousands of times in a single parse.
         """
-        return dt.find_new_name(name, _UsedNames(self, include_connectors=True))
+        return utils.find_new_name(name, _UsedNames(self, include_connectors=True))
 
     def is_name_declared(self, name: str) -> bool:
         """Checks if `name` is a data descriptor, symbol or constant of the SDFG."""
@@ -2825,9 +2825,9 @@ class SDFG(ControlFlowRegion):
             #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
             used = _UsedNames(self)
-            name = dt.find_new_name(name, used).replace(".", "_")
+            name = utils.find_new_name(name, used).replace(".", "_")
             if name in used:
-                name = dt.find_new_name(name, used)
+                name = utils.find_new_name(name, used)
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.

@@ -11,7 +11,7 @@ import numpy as np
 
 import dace
 from dace import data as dt
-from dace import dtypes, nodes, subsets, symbolic
+from dace import dtypes, nodes, subsets, symbolic, utils
 from dace import memlet as mm
 from dace import properties as props
 from dace import sdfg as sd
@@ -549,7 +549,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         node = self.generic_visit(node)
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
-            new_name = dt.find_new_name(node_name, self.connector_names)
+            new_name = utils.find_new_name(node_name, self.connector_names)
             self.connector_names.add(new_name)
 
             subset = self._get_requested_range(node, self.in_edges[node_name].subset)
@@ -560,7 +560,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             else:
                 self.do_not_remove.add(node_name)
         elif node_name in self.out_edges:
-            new_name = dt.find_new_name(node_name, self.connector_names)
+            new_name = utils.find_new_name(node_name, self.connector_names)
             self.connector_names.add(new_name)
 
             subset = self._get_requested_range(node, self.out_edges[node_name].subset)

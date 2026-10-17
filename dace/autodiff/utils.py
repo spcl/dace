@@ -89,7 +89,7 @@ def add_backward_desc(
     :param forward_name: A name for the forward array (doesn't have to match its actual name).
     :return: The name of the newly added gradient array in ``backward_sdfg``.
     """
-    backward_name = dt.find_new_name(forward_name + "_grad", forward_sdfg.arrays)
+    backward_name = dace.utils.find_new_name(forward_name + "_grad", forward_sdfg.arrays)
     new_desc = copy.deepcopy(forward_desc)
     new_desc.transient = False
     return backward_sdfg.add_datadesc(backward_name, new_desc)

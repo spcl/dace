@@ -1659,7 +1659,7 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: dict[str, str]) -> dict[st
     )
     repl_dict: dict[str, str] = {}
     for sym in clashing:
-        new_name = data.find_new_name(sym, taken_names)
+        new_name = utils.find_new_name(sym, taken_names)
         repl_dict[sym] = new_name
         taken_names.add(new_name)
 

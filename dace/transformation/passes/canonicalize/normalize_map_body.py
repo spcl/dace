@@ -21,13 +21,14 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from dace import SDFG, data, nodes, properties
+from dace import SDFG, nodes, properties
 from dace.optionals import required
 from dace.sdfg import InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
+from dace.utils import find_new_name
 
 
 def _map_body_nsdfgs(
@@ -72,7 +73,7 @@ def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> dict[str, 
     drepl = {}
     for name in list(inner.arrays.keys()):
         if name in taken_data:
-            drepl[name] = data.find_new_name(name, dict.fromkeys([*taken_data, *inner.arrays.keys(), *drepl.values()]))
+            drepl[name] = find_new_name(name, dict.fromkeys([*taken_data, *inner.arrays.keys(), *drepl.values()]))
     if drepl:
         replace_datadesc_names(inner, drepl)
     return drepl

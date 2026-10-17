@@ -29,6 +29,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
+from dace.utils import find_new_name
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):
@@ -614,7 +615,7 @@ def move_loop_into_lane_maps(loop: LoopRegion, sdfg: sd.SDFG) -> nodes.MapEntry:
     taken = (
         OrderedSet(sdfg.symbols) | OrderedSet(sdfg.arrays) | OrderedSet(p for _, e in facts.lanes for p in e.map.params)
     )
-    lane_syms = [symbolic.symbol(dt.find_new_name(f"{p}_lane", taken), types[p]) for p in ref_entry.map.params]
+    lane_syms = [symbolic.symbol(find_new_name(f"{p}_lane", taken), types[p]) for p in ref_entry.map.params]
 
     state = helpers.nest_sdfg_subgraph(sdfg, gr.SubgraphView(graph, [loop]), keep_outside=facts.lane_containers)
     nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
@@ -869,7 +870,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         #  duplicate, and ``validate_sdfg`` rejects the SDFG with "Found multiple blocks with
         #  the same name". Rename against the labels actually present rather than the CFG's
         #  cached ``_labels`` set, which a re-parenting like this one leaves stale.
-        body.label = dt.find_new_name(body.label, {block.label for block in graph.nodes()})
+        body.label = find_new_name(body.label, {block.label for block in graph.nodes()})
         graph.add_node(body, is_start_block=(graph.start_block is self.loop), ensure_unique_name=True)
         for ie in graph.in_edges(self.loop):
             graph.add_edge(ie.src, body, ie.data)
