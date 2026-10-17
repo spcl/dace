@@ -197,9 +197,33 @@ class OffloadToAccelerator(ppl.Pass):
         self.offload_host_level_bodies(sdfg)
         self.scalarize_locals_of_removed_trivial_maps(sdfg)
         self.refuse_by_value_scalars_the_device_writes(sdfg)
+        self.fill_device_constants(sdfg)
         register_kernel_local_transients(sdfg)
 
         return self.device_resident(sdfg) or None
+
+    @staticmethod
+    def fill_device_constants(sdfg: SDFG) -> None:
+        """Give a constant placed on the device a host twin that keeps the value, and fill the device copy at entry.
+
+        Code generation emits a constant as a host ``constexpr`` and never allocates it, so a ``GPU_Global`` constant
+        handed a kernel the host address (cp2k_density_matrix_trs4's ``np.arange(3)``, an illegal access on the
+        device). The device copy is allocated for the whole run, so the entry fill reaches every kernel.
+        """
+        for name in list(sdfg.constants_prop):
+            desc = sdfg.arrays.get(name)
+            if type(desc) is not data.Array or desc.storage != dtypes.StorageType.GPU_Global:
+                continue
+            _, value = sdfg.constants_prop.pop(name)
+            host_desc = deepcopy(desc)
+            host_desc.storage = dtypes.StorageType.Default
+            host_desc.transient = True
+            host_name = sdfg.add_datadesc(f"{name}_host", host_desc, find_new_name=True)
+            sdfg.add_constant(host_name, value, host_desc)
+            desc.transient = True
+            desc.lifetime = dtypes.AllocationLifetime.SDFG
+            fill = sdfg.add_state_before(sdfg.start_block, f"fill_{name}", is_start_block=True)
+            fill.add_nedge(fill.add_read(host_name), fill.add_write(name), Memlet.from_array(host_name, host_desc))
 
     def device_resident(self, sdfg: SDFG) -> OrderedSet[str]:
         """Every container this pass left in a GPU storage, qualified by the SDFG that holds it.

@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.sdfg.scope import is_devicelevel_gpu
 
 
 def test_kernel_local_transient_is_thread_private():
@@ -44,17 +43,20 @@ def test_a_constant_array_a_kernel_reads_gets_a_device_copy():
         out[:] = idx[:, None] + np.arange(3, dtype=np.int64)[None, :]
 
     sdfg = offsets.to_sdfg(simplify=True)
-    (name,) = [k for k, v in sdfg.arrays.items() if k.startswith("__g_") and not v.transient]
+    (name,) = [k for k in sdfg.arrays if k.startswith("__g_")]
+    # As HB's CPF cache stores it: a transient whose value lives in ``constants_prop``
+    sdfg.arrays[name].transient = True
     sdfg.add_constant(name, np.arange(3, dtype=np.int64), sdfg.arrays[name])
     canonicalize(sdfg, target="gpu", validate_all=False)
     offload_to_gpu(sdfg)
     finalize_for_target(sdfg, target="gpu")
 
-    assert sdfg.arrays[name].storage != dace.StorageType.GPU_Global
-    for state in sdfg.states():
-        for node in state.data_nodes():
-            if node.data == name:
-                assert not is_devicelevel_gpu(sdfg, state, node), "the kernel reads the host constant"
+    constants = {k for k, (_, v) in sdfg.constants_prop.items() if isinstance(v, np.ndarray)}
+    assert constants and not any(sdfg.arrays[k].storage == dace.StorageType.GPU_Global for k in constants)
+    assert sdfg.arrays[name].storage == dace.StorageType.GPU_Global, "the device copy the kernel reads"
+    code = "\n".join(c.clean_code for c in sdfg.generate_code())
+    launches = [line for line in code.splitlines() if "__dace_runkernel_" in line and "(__state" in line]
+    assert launches and not any(k in line for k in constants for line in launches), "a kernel takes a host constant"
 
 
 if __name__ == "__main__":
