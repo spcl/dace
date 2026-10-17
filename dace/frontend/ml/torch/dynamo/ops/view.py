@@ -6,6 +6,7 @@ All reinterpretations use the output FakeTensor's shape and strides (``node.meta
 these operators when the result is expressible as a strided view of the input storage, so the metadata is exact.
 """
 
+import operator
 from collections.abc import Sequence
 
 import sympy
@@ -306,6 +307,151 @@ def _nonnegative(expr) -> bool:
         return bool(sympy.ask(sympy.Q.nonnegative(expr))) or (expr.is_nonnegative is True)
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------- scatter (in-place slice writes)
+#: ATen operators that return an alias (view) of their tensor input, plus ``getitem`` on tuples of such views. A write
+#: into a container is observable through any of these, so they extend the alias set a scatter must reason about.
+_ALIAS_TARGETS = frozenset(
+    resolve(
+        "aten.slice.Tensor",
+        "aten.select.int",
+        "aten.view.default",
+        "aten._unsafe_view.default",
+        "aten.reshape.default",
+        "aten.permute.default",
+        "aten.transpose.int",
+        "aten.t.default",
+        "aten.unsqueeze.default",
+        "aten.squeeze.default",
+        "aten.squeeze.dim",
+        "aten.squeeze.dims",
+        "aten.expand.default",
+        "aten.alias.default",
+        "aten.detach.default",
+        "aten.narrow.default",
+        "aten.as_strided.default",
+        "aten.split.Tensor",
+        "aten.split_with_sizes.default",
+        "aten.unbind.int",
+    )
+) | {operator.getitem}
+
+
+def _alias_set(arg: torch.fx.Node) -> set[torch.fx.Node]:
+    """The input node and every node that transitively aliases its storage through a pure view/alias op."""
+    alias = {arg}
+    frontier = [arg]
+    while frontier:
+        current = frontier.pop()
+        for user in current.users:
+            if user not in alias and user.target in _ALIAS_TARGETS:
+                alias.add(user)
+                frontier.append(user)
+    return alias
+
+
+def _can_scatter_in_place(ctx: LoweringContext, node, tensor: TensorValue, val: torch.Tensor) -> bool:
+    """
+    Whether the scatter may overwrite ``tensor``'s container in place instead of copying it first.
+
+    The write is sound in the sequential schedule tree iff nothing reads the input's data at or after the scatter in
+    program order. Functionalization expresses ``out[i:i + c] = v`` as ``slice`` / ``aten.copy`` / ``slice_scatter``,
+    so the input often has more than one user even though nothing reads its contents afterwards; a plain user count
+    would always force a copy. Instead the input's *alias set* is built (the input and the transitive views of its
+    storage, see :data:`_ALIAS_TARGETS`) and the write is elided iff every user of every alias-set node -- other than
+    the scatter itself -- precedes the scatter in FX order (so it has already executed) and no alias-set node is
+    returned by the graph. The container must also be a transient nothing else owns (not an input/constant, not a
+    view) and the output's shape, strides and dtype must match the input's.
+
+    When this holds the SDFG performs one strided write per scatter instead of a full-buffer copy plus the write, so
+    the chunked loops functionalization emits (``out[i:i + c] = v`` in a loop) cost O(N) chunk writes rather than
+    O(N^2) whole-buffer copies.
+    """
+    arg = node.args[0]
+    if not isinstance(arg, torch.fx.Node):
+        return False
+    if tensor.is_view or tensor.source in ("input", "const"):
+        return False
+    if not (
+        tuple(tensor.tshape) == tuple(ctx.symtab.shape(val.shape))
+        and tuple(tensor.tstrides) == tuple(ctx.symtab.strides(val.stride()))
+        and tensor.torch_dtype == val.dtype
+    ):
+        return False
+    order = {fx_node: index for index, fx_node in enumerate(node.graph.nodes)}
+    scatter_index = order[node]
+    for member in _alias_set(arg):
+        for user in member.users:
+            if user is node:
+                continue
+            if user.op == "output" or order[user] >= scatter_index:
+                return False
+    return True
+
+
+def _emit_scatter(
+    ctx: LoweringContext, node, tensor: TensorValue, src: TensorValue, dim: int, dim_range
+) -> TensorValue:
+    """
+    Emits ``out = copy(input); out[<slice>] = src`` where ``<slice>`` restricts dimension ``dim`` to ``dim_range``.
+
+    When :func:`_can_scatter_in_place` holds, ``src`` is written straight into the input's container and that same
+    value is returned: the SDFG then performs one strided write per scatter rather than a full-buffer copy plus the
+    write. For the chunked loops functionalization emits (``out[i:i+c] = v`` in a loop) this is O(N) chunk writes
+    instead of O(N^2) whole-buffer copies.
+    """
+    val = _val(node)
+    subset = _scatter_subset(tensor, dim, dim_range)
+    if _can_scatter_in_place(ctx, node, tensor, val):
+        ctx.emit_copy(src, tensor, dst_subset=subset)
+        return tensor
+    out = ctx.add_tensor_like("t_" + node.name, val)
+    ctx.emit_copy(tensor, out)
+    ctx.emit_copy(src, out, dst_subset=subset)
+    return out
+
+
+def _scatter_subset(target: TensorValue, dim: int, dim_range) -> subsets.Range:
+    ranges = [(0, s - 1, 1) for s in target.tshape]
+    ranges[dim] = dim_range
+    return subsets.Range(ranges)
+
+
+@register_lowering(*resolve("aten.slice_scatter.default"))
+def lower_slice_scatter(
+    ctx: LoweringContext, node, tensor: TensorValue, src: TensorValue, dim=0, start=None, end=None, step=1
+):
+    """
+    ``slice_scatter`` replaces ``input[start:end:step]`` along ``dim`` with ``src`` (which already has the slice's
+    shape). ``start`` is clamped exactly as in :func:`lower_slice`; the slice's extent is ``src.tshape[dim]``, which is
+    authoritative and already accounts for the clamping of ``end``, so ``end`` itself is not needed here. The write is
+    elided into the input's container when :func:`_can_scatter_in_place` holds.
+    """
+    dim = _norm_dim(dim, tensor.rank)
+    step = as_sym(step)
+    start = 0 if start is None or (isinstance(start, ConstValue) and start.value is None) else as_sym(start)
+    size = tensor.tshape[dim]
+    if isinstance(start, int) and start < 0:
+        start = start + size
+    elif not isinstance(start, int):
+        start = sympy.Max(sympy.Min(start, size), 0) if not _nonnegative(start) else start
+    length = src.tshape[dim]
+    return _emit_scatter(ctx, node, tensor, src, dim, (start, start + (length - 1) * step, step))
+
+
+@register_lowering(*resolve("aten.select_scatter.default"))
+def lower_select_scatter(ctx: LoweringContext, node, tensor: TensorValue, src: TensorValue, dim, index):
+    """
+    ``select_scatter`` replaces ``input.select(dim, index)`` with ``src`` (one rank lower than ``input``). Negative
+    constant indices count from the end, as in :func:`lower_select`. The write is elided into the input's container
+    when :func:`_can_scatter_in_place` holds.
+    """
+    dim = _norm_dim(dim, tensor.rank)
+    index = as_sym(index)
+    if isinstance(index, int) and index < 0:
+        index = index + tensor.tshape[dim]
+    return _emit_scatter(ctx, node, tensor, src, dim, (index, index, 1))
 
 
 # ---------------------------------------------------------------------- copies

@@ -111,6 +111,8 @@ NATIVE_OPS = [
     "index",
     "_unsafe_index",
     "gather",
+    "slice_scatter",
+    "select_scatter",
     "max_pool2d_with_indices",
     "max_pool1d_with_indices",
     "max_pool3d_with_indices",
