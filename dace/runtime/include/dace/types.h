@@ -48,6 +48,17 @@
 #define DACE_UNROLL
 #endif
 
+// The innermost lane loop of a register tile, which should become SIMD. GCC
+// unrolls a constexpr-bounded loop completely before its loop vectorizer runs,
+// and its SLP vectorizer leaves the unrolled lanes scalar (an int64 index tile
+// ``base + lane`` turns into one scalar store per lane), so GCC host code asks
+// for ``omp simd``; the other compilers unroll.
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__CUDACC__)
+#define DACE_LANE_SIMD DACE_PRAGMA(omp simd)
+#else
+#define DACE_LANE_SIMD DACE_UNROLL
+#endif
+
 // Visual Studio (<=2017) + CUDA support
 #if defined(_MSC_VER) && _MSC_VER <= 1999
 #define DACE_CONSTEXPR

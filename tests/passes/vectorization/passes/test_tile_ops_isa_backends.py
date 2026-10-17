@@ -25,6 +25,7 @@ import pytest
 
 import dace
 from dace import tile_functions
+from dace.libraries.tileops.dispatch import cpu_flags
 from dace.tile_functions import TileFunction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +47,24 @@ UNOP_FLAGS = [("v", False), ("v", True), ("b", True)]
 FMA_FLAGS = [("vvv", False), ("vvv", True), ("bvv", True), ("vbv", True), ("vvb", True), ("bbb", False)]
 ITE_FLAGS = ["vv", "bv", "vb"]
 INTEGER_UNOPS = "n!afc"
+#: (element, operand element) of every conversion the numeric gate runs: the ones with a conversion instruction, and
+#: one without.
+CONVERSIONS = [("f64", "i64"), ("f64", "i32"), ("f32", "i32"), ("f32", "i64"), ("i64", "i32")]
+#: Operands of a conversion beyond the random ones: the extremes, and int64 values a double must round.
+CONVERT_SPECIALS = {
+    "i32": ["0", "-1", "INT32_MAX", "INT32_MIN"],
+    "i64": [
+        "-1",
+        "INT64_MAX",
+        "INT64_MIN",
+        "(INT64_C(1) << 53) + 1",
+        "-(INT64_C(1) << 60) - 3",
+        "(INT64_C(1) << 62) + 255",
+    ],
+}
+#: The CPU features of the conversion instructions past a backend's target attribute (``tile_functions.CONVERT_VECTOR``),
+#: which the numeric gate enables where the host has them, so that the conversions run their instruction.
+CONVERT_FEATURES = {"avx512": ("avx512dq",), "avx2": ("avx512dq", "avx512vl")}
 #: Adversarial operands per element type; ``special(k)`` cycles through them.
 SPECIALS = {
     "f64": [
@@ -96,6 +115,9 @@ def every_function(isa: str) -> list[TileFunction]:
                 TileFunction("ite", isa, code, vlen, "", b, False, c) for c in ("b8", code) for b in ("vv", "bv")
             ]
             functions += [TileFunction("reduce", isa, code, vlen, op) for op in "+*mM"]
+            functions += [
+                TileFunction("cvt", isa, code, vlen, "", "v", m, s) for s in ("i64", "i32") for m in (False, True)
+            ]
             for masked in (False, True):
                 functions += [TileFunction("gather", isa, code, vlen, "", "", masked, i) for i in ("i32", "i64")]
                 functions += [TileFunction(kind, isa, code, vlen, masked=masked) for kind in ("load", "store")]
@@ -326,6 +348,19 @@ def add_special_cases(driver: Driver, code: str, vlen: int) -> None:
             driver.case(TileFunction("reduce", isa, code, vlen, op), ["a"], 7, suffix, prelude)
 
 
+def add_convert_cases(driver: Driver, code: str, vlen: int, salt: int) -> None:
+    """Each conversion to ``code`` over random operands spread across the whole range and the specials."""
+    for source in (source for element, source in CONVERSIONS if element == code):
+        t, specials = element_c(source), CONVERT_SPECIALS[source]
+        prelude = (
+            f"const {t} sp[{len(specials)}] = {{{', '.join(specials)}}};\n    {t} ia[{vlen}];\n    "
+            f"for (int i = 0; i < {vlen}; ++i) ia[i] = (i % 3 == 2) ? sp[i % {len(specials)}] : ({t})mix({salt}ULL + i);\n    "
+        )
+        for masked in (False, True):
+            function = TileFunction("cvt", driver.isa, code, vlen, "", "v", masked, source)
+            driver.case(function, masked_arguments(["out", "ia"], masked), salt + 70000 + masked, "", prelude)
+
+
 def build_driver(isa: str) -> Driver:
     driver = Driver(isa)
     salt = 1
@@ -335,6 +370,7 @@ def build_driver(isa: str) -> Driver:
             add_elementwise_cases(driver, code, vlen, salt)
             add_memory_cases(driver, code, vlen, salt)
             add_special_cases(driver, code, vlen)
+            add_convert_cases(driver, code, vlen, salt)
     for vlen in (8, 17, 5):
         for base, bound in ((0, vlen), (0, vlen // 2), (3, vlen), (vlen, vlen), (-2, vlen - 1)):
             call = driver.call(TileFunction("maskgen", isa, "i64", vlen), ["lanes", str(base), str(bound)])
@@ -348,8 +384,10 @@ def run_driver(isa: str, tmpdir: str) -> dict[str, str]:
     binary = os.path.join(tmpdir, f"driver_{isa}")
     with open(source, "w") as unit:
         unit.write(build_driver(isa).text())
+    features = CONVERT_FEATURES.get(isa, ())
+    flags = [f"-m{feature}" for feature in features] if set(features) <= cpu_flags() else []
     build = subprocess.run(
-        [HOST_CC, "-std=c23", "-O2", "-ffp-contract=off", source, "-o", binary, "-lm"],
+        [HOST_CC, "-std=c23", "-O2", "-ffp-contract=off", *flags, source, "-o", binary, "-lm"],
         capture_output=True,
         text=True,
         check=False,

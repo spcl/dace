@@ -531,7 +531,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
         for state in inner_sdfg.states():
             for node in state.nodes():
                 # Only PYTHON tasklets: a hand-written per-lane C++ body (the lane-id materialiser's
-                # ``DACE_UNROLL for (__l0 ...)``) is already tile-aware by construction and is never
+                # ``DACE_LANE_SIMD for (__l0 ...)``) is already tile-aware by construction and is never
                 # meant to become a lib node.
                 if not isinstance(node, dace.nodes.Tasklet) or node.language is not dace.dtypes.Language.Python:
                     continue

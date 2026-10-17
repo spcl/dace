@@ -4,6 +4,7 @@
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
+from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, detect_host_isa
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
@@ -13,7 +14,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import IsaCall, call_text, template_flag
+from dace.libraries.tileops.isa import IsaCall, call_text, element_code, template_flag
 from dace.libraries.tileops.kinds import SYMBOL, TILE
 from dace.libraries.tileops.lanes import half_disambiguated, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -166,6 +167,16 @@ class TileUnop(TileOp):
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         operands = self.operands()
+        if self.op in CAST_OPS:
+            # A conversion of a tile is a CPU tile function (``tile_cvt_*``); the SVE and CUDA headers have none. The
+            # function converts straight to the output type, so the cast must name it: a cast through another type
+            # would round twice.
+            target = detect_host_isa() if self.target_isa is ISA.AUTO else self.target_isa
+            return (
+                target in FUNCTION_ISAS
+                and self.kind_a == TILE
+                and getattr(dace.dtypes, self.op).ctype == edge_ctype(sdfg, output_edge(state, self, "_c"))
+            )
         return (
             self.op in UNARY_OPS
             and UNARY_OPS[self.op].isa_code is not None
@@ -207,6 +218,13 @@ class TileUnop(TileOp):
         self.validate(sdfg, state)
         operands = self.operands()
         call = IsaCall.of(self, state, sdfg, "_c", backend)
+        if self.op in CAST_OPS:
+            # The operand keeps its element type, which the function converts from.
+            broadcast, pointer = call.operand(operands[0], promote_tile=False)
+            source = element_code(edge_ctype(sdfg, call.in_edges["_a"]))
+            name = TileFunction("cvt", backend, call.element, call.vlen, "", broadcast, self.has_mask, source).name
+            text = call_text(name, [call.output("_c"), pointer, *call.mask(self.has_mask)])
+            return call.tasklet(self, backend, operands, "_c", text, self.has_mask)
         broadcast, pointer = call.operand(operands[0])
         op = UNARY_OPS[self.op].isa_code
         if call.functions:

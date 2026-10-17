@@ -89,6 +89,7 @@ KINDS: dict[str, tuple[dict[str, str], int]] = {
     "binop": (BINARY_NAMES, 2),
     "unop": (UNARY_NAMES, 1),
     "fma": ({}, 3),
+    "cvt": ({}, 1),
     "ite": ({}, 2),
     "reduce": (BINARY_NAMES, 0),
     "gather": ({}, 0),
@@ -106,7 +107,7 @@ class TileFunction(NamedTuple):
     """One signature: ``kind`` over ``vlen`` lanes of ``element`` (a type code) on ``isa``.
 
     ``broadcast`` holds ``v`` (a tile) or ``b`` (one value read for every lane) per value operand, ``aux`` the type
-    code of an ITE condition or a gather index.
+    code of an ITE condition, a gather index or the operand of a conversion.
     """
 
     kind: str
@@ -161,7 +162,7 @@ class TileFunction(NamedTuple):
         return (
             len(self.broadcast) == operands
             and (self.op in ops) == bool(ops)
-            and (self.kind in ("ite", "gather")) == bool(self.aux)
+            and (self.kind in ("ite", "gather", "cvt")) == bool(self.aux)
             and self.vlen > 0
         )
 
@@ -530,6 +531,22 @@ FMA_VECTOR = {
 }
 
 
+#: ``(isa, element, operand element) -> (the conversion of the chunk at {p}, the ``#if`` it needs)``; a missing pair
+#: runs per lane. Each rounds as the scalar cast does (to nearest under the default MXCSR). The int64 conversions
+#: (``vcvtqq2pd``) are AVX-512DQ, and on 256-bit registers AVX-512VL, which the backend flags alone do not enable.
+CONVERT_VECTOR: dict[tuple[str, str, str], tuple[str, str | None]] = {
+    ("avx512", "f64", "i64"): ("_mm512_cvtepi64_pd(_mm512_loadu_si512((const void *)({p})))", "defined(__AVX512DQ__)"),
+    ("avx512", "f64", "i32"): ("_mm512_cvtepi32_pd(_mm256_loadu_si256((const __m256i *)({p})))", None),
+    ("avx512", "f32", "i32"): ("_mm512_cvtepi32_ps(_mm512_loadu_si512((const void *)({p})))", None),
+    ("avx2", "f64", "i64"): (
+        "_mm256_cvtepi64_pd(_mm256_loadu_si256((const __m256i *)({p})))",
+        "defined(__AVX512DQ__) && defined(__AVX512VL__)",
+    ),
+    ("avx2", "f64", "i32"): ("_mm256_cvtepi32_pd(_mm_loadu_si128((const __m128i *)({p})))", None),
+    ("avx2", "f32", "i32"): ("_mm256_cvtepi32_ps(_mm256_loadu_si256((const __m256i *)({p})))", None),
+}
+
+
 def vector_operand(vector: Vector, name: str, flag: str) -> str:
     return vector.splat.format(x=f"{name}[0]") if flag == "b" else vector.load.format(p=f"{name} + i")
 
@@ -587,6 +604,25 @@ def fma_function(function: TileFunction) -> str:
     # The AVX2 FMA needs ``-mfma``; without it the lane loop's ``fma`` computes the same bits.
     guard = "defined(__FMA__)" if function.isa == "avx2" else None
     return elementwise(function, "abc", fused(element, a, b, c), vector, guard)
+
+
+def cvt_function(function: TileFunction) -> str:
+    """The conversion of a tile of ``aux`` elements to ``element``, as the C cast computes it."""
+    element, source = BY_CODE[function.element], BY_CODE[function.aux]
+    value = f"({element.c})({lane('a', function.broadcast)})"
+    statement = f"out[i] = {produced(function, value)};"
+    parameters = value_parameters(function, "")
+    parameters.insert(1, f"const {source.c} *__restrict__ a")
+    head = header(function, "void", parameters)
+    vector = VECTORS.get((function.isa, element.code))
+    converted = CONVERT_VECTOR.get((function.isa, element.code, source.code))
+    if vector is None or converted is None or function.broadcast != "v":
+        # No conversion instruction to call: the lane loop, which the compiler vectorizes where the target has one.
+        return f"{head} {{\n{scalar_loop(function, statement, simd=True)}}}"
+    conversion, guard = converted
+    chunks = chunk_loop(function, vector, conversion.format(p="a + i"))
+    body = "    int64_t i = 0;\n" + (f"#if {guard}\n{chunks}#endif\n" if guard else chunks)
+    return f"{head} {{\n{body}{scalar_loop(function, statement, tail=True)}}}"
 
 
 def ite_function(function: TileFunction) -> str:
@@ -859,6 +895,7 @@ GENERATORS: dict[str, Callable[[TileFunction], str]] = {
     "binop": binop_function,
     "unop": unop_function,
     "fma": fma_function,
+    "cvt": cvt_function,
     "ite": ite_function,
     "reduce": reduce_function,
     "gather": gather_function,

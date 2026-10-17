@@ -61,8 +61,8 @@ def is_vectorizable_tasklet(state: "dace.SDFGState", node: "dace.nodes.Tasklet")
 def lane_loop_code(widths: tuple[int, ...], rhs: str) -> str:
     """C++ body writing ``rhs`` to every lane of the row-major ``_out`` tile of shape ``widths``.
 
-    Each dim is a ``constexpr``-bounded ``DACE_UNROLL`` loop over ``__l<d>``, which the compiler
-    lowers to SIMD.
+    Each dim is a ``constexpr``-bounded loop over ``__l<d>``: the outer ones ``DACE_UNROLL``, the
+    innermost ``DACE_LANE_SIMD``, which the compiler lowers to SIMD.
 
     :param widths: Tile shape, innermost-last.
     :param rhs: C++ expression stored per lane; may reference ``__l<d>``.
@@ -78,7 +78,7 @@ def lane_loop_code(widths: tuple[int, ...], rhs: str) -> str:
     code_lines = []
     for d in range(K):
         code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-        code_lines.append(f"{'    ' * d}DACE_UNROLL")
+        code_lines.append(f"{'    ' * d}{'DACE_LANE_SIMD' if d == K - 1 else 'DACE_UNROLL'}")
         code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
     code_lines.append(f"{'    ' * K}_out[{flat}] = {rhs};")
     code_lines.extend(f"{'    ' * d}}}" for d in reversed(range(K)))
@@ -100,7 +100,7 @@ def materialise_lane_id_index_tile(
     K=1, expr ``"py_mod(ii,K)"`` -> ``_tile[l] = py_mod((ii + l), K)``  (cyclic per-lane index).
     K=2, expr ``"2 * ii + jj"`` -> ``_tile[l0, l1] = 2*(ii+l0) + (jj+l1)``.
 
-    The lane loop is a ``constexpr``-bounded ``DACE_UNROLL`` (compiler lowers to SIMD), NOT a
+    The lane loop is a ``constexpr``-bounded ``DACE_LANE_SIMD`` (compiler lowers to SIMD), NOT a
     data-dependent CPP gather loop -- the sanctioned tile-op index materialisation. Shared by
     :meth:`ConvertTaskletsToTileOps._materialise_lane_id_tile` (lane-id symbol operands) and
     :meth:`InsertTileLoadStore._stage_index_via_tileops` (modular / non-affine gather indices).
