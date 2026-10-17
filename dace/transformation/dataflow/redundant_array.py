@@ -335,7 +335,8 @@ def updates_in_place(
     ``temp``, once ``temp_subset`` is shifted onto ``target_subset`` (``Q[k:M] = Q[k:M] - X``). Writing such a map
     straight into the container it reads keeps every iteration on its own element, so it cannot race."""
     writes = state.in_edges(temp)
-    if len(writes) != 1 or not isinstance(writes[0].src, nodes.MapExit):
+    # An empty memlet out of the map (ls3df_scf's ordering edge) carries no element the map writes
+    if len(writes) != 1 or not isinstance(writes[0].src, nodes.MapExit) or writes[0].src_conn is None:
         return False
     exit_node = writes[0].src
     entry = state.entry_node(exit_node)
@@ -348,6 +349,8 @@ def updates_in_place(
     for edge in state.out_edges(read):
         if edge.dst is not entry:
             continue
+        if edge.dst_conn is None:
+            return False
         for inner in state.out_edges_by_connector(entry, "OUT_" + edge.dst_conn[3:]):
             if not isinstance(inner.dst, nodes.Tasklet) or inner.data.subset != written:
                 return False

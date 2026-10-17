@@ -858,6 +858,28 @@ def test_a_map_reading_the_element_it_writes_updates_in_place(program, in_place)
     assert np.allclose(A, expected)
 
 
+def test_a_map_ordered_before_the_temporary_by_an_empty_memlet_is_not_an_update():
+    """ls3df_scf: the only edge into the temporary is an empty ordering memlet out of a map exit. The map writes no
+    element of it, so it is no in-place update -- and the check must say so instead of raising."""
+    from dace import subsets
+    from dace.transformation.dataflow.redundant_array import updates_in_place
+
+    sdfg = dace.SDFG("empty_memlet_producer")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_transient("tmp", [8], dace.float64)
+    state = sdfg.add_state()
+    read = state.add_read("A")
+    entry, exit_node = state.add_map("m", {"i": "0:8"})
+    tasklet = state.add_tasklet("t", {"x"}, {"y"}, "y = x")
+    state.add_memlet_path(read, entry, tasklet, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    tmp = state.add_access("tmp")
+    state.add_nedge(exit_node, tmp, dace.Memlet())
+    whole = subsets.Range.from_string("0:8")
+    assert not updates_in_place(state, read, tmp, whole, whole)
+
+
 def converting_copy_sdfg(second: bool) -> dace.SDFG:
     """``t = float32(a)`` then ``out = t * 3`` (``second``: the copy feeds a tasklet) or ``out = float32(a)`` through a
     float32 transient written by a tasklet (first)."""
