@@ -149,7 +149,15 @@ def interchange_pays_on_gpu(loop: LoopRegion, sdfg: SDFG) -> bool:
     costs = stride_costs(loop, sdfg)
     if costs is None or launches_saved(loop) <= 0:
         return False
-    return single_iteration_lanes(loop) or not costs[0] < costs[1]
+    if single_iteration_lanes(loop):
+        return True
+    # SMALL lanes are not a thread axis: the loop would run inside a handful of threads (velocity_tendencies'
+    # level loop around maps over its one block, with the contiguous plane axis nested and serial in each).
+    facts = sdfg.facts()
+    extents = [end - begin for _, entry in lane_maps(loop) for begin, end, _ in entry.map.range]
+    if extents and all(symbolic.is_small(extent, facts) for extent in extents):
+        return False
+    return not costs[0] < costs[1]
 
 
 @properties.make_properties

@@ -110,6 +110,41 @@ def test_a_single_launch_loop_is_not_worth_a_kernel_of_its_own():
     assert len(top_level_loops(sdfg)) == 1
 
 
+def loop_over_block_maps(name: str, small: bool) -> dace.SDFG:
+    """A level loop over two maps that span only the blocks, ``0:NB``; ``small`` declares ``NB`` SMALL."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("NB", dace.int64, scale=dace.symbolic.Scale.SMALL if small else None)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", ("K", "NB"), dace.float64)
+    loop = LoopRegion("kloop", "k < K", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    previous = None
+    for m in range(2):
+        state = loop.add_state(f"step{m}", is_start_block=previous is None)
+        state.add_mapped_tasklet(
+            f"step{m}",
+            {"b": "0:NB"},
+            {"__in": dace.Memlet("a[k, b]")},
+            "__out = __in + 1.0",
+            {"__out": dace.Memlet("a[k, b]")},
+            external_edges=True,
+        )
+        if previous is not None:
+            loop.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+    return sdfg
+
+
+@pytest.mark.parametrize("small", [False, True])
+def test_small_lanes_do_not_take_the_loop_inside(small):
+    """A handful of threads would each run the whole loop: velocity_tendencies' level loop around maps over its one
+    block. The same loop over default-scale lanes is interchanged."""
+    sdfg = loop_over_block_maps(f"block_lanes_{small}", small)
+    applied = MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    assert (applied is None) == small
+    assert len(top_level_loops(sdfg)) == int(small)
+
+
 @pytest.mark.gpu
 def test_the_column_form_runs_as_one_kernel_and_matches_numpy():
     import cupy  # Only present on GPU runners.

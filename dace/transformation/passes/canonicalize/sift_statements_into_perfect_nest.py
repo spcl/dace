@@ -39,6 +39,10 @@ value-preserving when:
   reduction accumulator) is fine -- it never indexes the outer iterator.
 * A pre/post block whose feeding interstate-edge assignment LHS is reassigned by the inner
   body is refused (its value at the boundary iteration would be ambiguous).
+* A nest whose pre/post statements accumulate across the outer axis -- read and write a container at
+  elements free of the outer iterator, velocity_tendencies' ``for n: (for b: g[b] = w[idx[b, n]]);
+  acc += c[n] * g`` -- is refused: the outer axis stays sequential either way, and the guarded
+  statement, reading what every inner iteration wrote, would make the inner loop sequential too.
 * A nest whose inner loop carries a container the pre/post statements write -- the
   ``acc = 0; for j: acc += a[i, j]; c[i] = acc`` reduction -- is refused: ``LoopToReduce`` lifts
   it as it stands and the outer axis then parallelizes, while the sifted form keeps the
@@ -163,6 +167,36 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: list[SDFG
     return True
 
 
+def _accumulates_across_outer(
+    outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]
+) -> bool:
+    """Whether a ``pre`` / ``post`` statement updates a container at elements free of ``outer``'s iterator, reading the
+    value an earlier outer iteration left: every outer iteration then updates the same elements, a carry no
+    interchange can parallelize. A temporary the iteration writes before reading it carries nothing."""
+    iv = str(outer.loop_variable)
+    written: set[str] = set()
+    exposed: set[str] = set()
+    updated: set[str] = set()
+    for group in (pre, None, post):
+        if group is None:
+            written |= set(_body_written_names(inner))
+            continue
+        for st in group:
+            for n in st.data_nodes():
+                if st.in_degree(n) == 0 and st.out_degree(n) > 0 and n.data not in written:
+                    exposed.add(n.data)
+            for n in st.data_nodes():
+                for e in st.in_edges(n):
+                    if e.data.is_empty():
+                        continue
+                    subset = e.data.get_dst_subset(e, st)
+                    if subset is not None and iv not in {str(f) for f in subset.free_symbols}:
+                        updated.add(n.data)
+                if st.in_degree(n) > 0:
+                    written.add(n.data)
+    return bool(exposed & updated)
+
+
 def _carries_statement_data(inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
     """Whether ``inner``'s body both reads and writes a container a ``pre`` / ``post`` statement writes."""
     stmt_written = {n.data for st in pre + post for n in st.data_nodes() if st.in_degree(n) > 0}
@@ -221,6 +255,8 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             continue  # need a unique tail to append the post-guard after
         if not _outer_axis_independent(outer, inner, pre, post):  # S7
             continue
+        if _accumulates_across_outer(outer, inner, pre, post):
+            continue  # the outer axis stays sequential; see the module docstring
         if _carries_statement_data(inner, pre, post):
             continue  # a reduction: lifted as it stands, see the module docstring
         # Refuse a sifted interstate assignment whose LHS the body reassigns.

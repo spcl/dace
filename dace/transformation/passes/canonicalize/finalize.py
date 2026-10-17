@@ -52,7 +52,10 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
-from dace.transformation.passes.cpu_specialization.demote_level_maps import demote_strided_level_maps
+from dace.transformation.passes.cpu_specialization.demote_level_maps import (
+    demote_strided_level_maps,
+    demote_uncoalesced_level_maps,
+)
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
@@ -581,6 +584,8 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     recompute_fuse_for_gpu(sdfg)
     # Before the offload reads a map around a small GEMM as a host loop of vendor calls.
     SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {})
+    # Before the offload makes a level map the kernel: its planes, along the contiguous axis, are the threads.
+    demote_uncoalesced_level_maps(sdfg)
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
     sdfg.apply_gpu_transformations(validate=False)

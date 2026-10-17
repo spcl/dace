@@ -16,8 +16,15 @@ moves the planes' outer axis outside the loop whole (one position per tile) and 
 level next, the contiguous plane axis innermost -- the layout order. Sequentializing a map is always legal;
 whether it pays is the stride test (:func:`level_is_more_contiguous`): wherever an access indexes by both, the
 map's parameter must be at a provably smaller stride than the outermost parameter of the plane map.
+
+A GPU wants the opposite order. Offloaded as it is, the level map is the kernel, at most ``nlev`` threads each
+walking whole planes sequentially, uncoalesced (velocity_tendencies at preset M: 18 s against 187 ms on the CPU).
+:func:`demote_uncoalesced_level_maps` demotes a level map whose planes' innermost axis is the more contiguous
+one (:func:`plane_is_more_contiguous`), so the offload launches the plane maps, threads along the contiguous axis,
+once per level.
 """
 
+from collections.abc import Callable
 from typing import NamedTuple
 
 from dace import SDFG, dtypes, symbolic
@@ -142,6 +149,34 @@ def level_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
     return homed
 
 
+def plane_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
+    """Whether the innermost parameter of ``planes`` indexes some access directly, and on every access that indexes an
+    array by both it and ``param``, at a provably smaller stride: the thread axis a GPU wants is the plane's, not the
+    level's (:func:`level_is_more_contiguous` with the roles swapped). Every plane's innermost axis must also be wide:
+    a literal or ``SMALL`` extent (a warp-sized tile) leaves the level map the better grid."""
+    homed = False
+    for owner, state, entry in planes:
+        begin, end, _ = entry.map.range[-1]
+        extent = symbolic.pystr_to_symbolic(end - begin)
+        if not symbolic.issymbolic(extent) or symbolic.is_small(extent, owner.facts()):
+            return False
+        inner = entry.map.params[-1]
+        for edge in state.scope_subgraph(entry, include_entry=True, include_exit=True).edges():
+            scores = score_indexed_strides([edge], owner, [param, inner])
+            level, plane = scores[param][0], scores[inner][0]
+            if plane is NO_HOME_SCORE:
+                continue
+            homed = True
+            if level is NO_HOME_SCORE:
+                continue
+            try:
+                if stride_difference_sign(plane, level) >= 0:
+                    return False
+            except UndecidableStride:
+                return False
+    return homed
+
+
 def spans_every_level(sdfg: SDFG, param: str, plane: Plane) -> bool:
     """Whether ``plane``'s range is the same at every level: free of ``param`` and of any symbol the level's body
     binds itself."""
@@ -203,6 +238,26 @@ def demote_strided_level_maps(sdfg: SDFG) -> int:
     :param sdfg: the SDFG to rewrite.
     :returns: how many maps were demoted.
     """
+    return demote_level_maps(sdfg, level_is_more_contiguous)
+
+
+def demote_uncoalesced_level_maps(sdfg: SDFG) -> int:
+    """Turn every top-level level map of ``sdfg``'s own states whose planes' innermost axis is more contiguous than
+    the level into a sequential loop, the nested SDFGs of its body inlined into the loop, so a GPU offload launches
+    the planes coalesced instead of the level map. Runs before the offload, while the schedules are ``Default``.
+
+    :param sdfg: the SDFG to rewrite.
+    :returns: how many maps were demoted.
+    """
+    return demote_level_maps(sdfg, plane_is_more_contiguous, relift_planeless=True)
+
+
+def demote_level_maps(sdfg: SDFG, pays: Callable[[str, list[Plane]], bool], relift_planeless: bool = False) -> int:
+    """Demote every top-level level map of ``sdfg``'s own states for which ``pays(param, planes)`` holds.
+
+    :param relift_planeless: Lift a group the distribution leaves without plane maps back to a map over the levels.
+                             On a GPU that group would otherwise run on the host, element by element.
+    """
     candidates = []
     for state in sdfg.states():
         for entry in state.scope_children()[None]:
@@ -213,7 +268,7 @@ def demote_strided_level_maps(sdfg: SDFG) -> int:
             if (
                 level is not None
                 and level.planes
-                and level_is_more_contiguous(param, level.planes)
+                and pays(param, level.planes)
                 and some_plane_spans_every_level(sdfg, param, level.planes)
             ):
                 nested = [n for n in state.scope_children()[entry] if isinstance(n, nodes.NestedSDFG)]
@@ -224,5 +279,23 @@ def demote_strided_level_maps(sdfg: SDFG) -> int:
         for node in nested:
             inline_into(node)
         if distribute:
+            parent = loop.parent_graph
+            before = set(parent.nodes())
             LoopFission.fission(loop)
+            if relift_planeless:
+                relift_planeless_groups(sdfg, [b for b in parent.nodes() if b is loop or b not in before])
     return len(candidates)
+
+
+def relift_planeless_groups(sdfg: SDFG, groups: list[ControlFlowBlock]) -> None:
+    """Lift each distributed level loop in ``groups`` that runs no plane map back to a map over the levels.
+
+    Proven: the groups split the body of what was a map over the same levels, so their iterations are independent
+    whether or not the probe can reconstruct it (velocity_tendencies' ``levelmask`` loop sets ``mask[jk]`` under a
+    guard inside a sifted block loop)."""
+    # Avoid import loops
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+
+    for group in groups:
+        if isinstance(group, LoopRegion) and not block_planes(group) and holds_loop_without_planes(group):
+            ParallelizeLoops().parallelize_loop(sdfg, group, proven=True)

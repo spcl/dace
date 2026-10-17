@@ -6,13 +6,19 @@ import numpy as np
 
 import dace
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.cpu_specialization.demote_level_maps import demote_strided_level_maps
+from dace.transformation.passes.cpu_specialization.demote_level_maps import (
+    demote_strided_level_maps,
+    demote_uncoalesced_level_maps,
+)
 
 N = dace.symbol("N")
 K = dace.symbol("K")
 NAT = dace.symbol("NAT")
 G = dace.symbol("G")
 M = dace.symbol("M")
+B = dace.symbol("B")
+L = dace.symbol("L")
+P = dace.symbol("P")
 
 
 @dace.program
@@ -21,6 +27,20 @@ def csr_rows(indptr: dace.int64[N + 1], cols: dace.int64[K], vals: dace.float64[
     for i in range(N):
         for e in range(indptr[i], indptr[i + 1]):
             out[i, cols[e]] = out[i, cols[e]] + vals[e]
+
+
+@dace.program
+def level_planes(w: dace.float64[B, L, P], out: dace.float64[B, L, P]):
+    """velocity_tendencies' shape on a GPU: a map over the levels whose planes sweep ``(b, p)``, ``p`` contiguous."""
+    for jk in dace.map[0:L]:
+        out[:, jk, :] = w[:, jk, :] * 2.0
+
+
+@dace.program
+def column_planes(w: dace.float64[B, L, P], out: dace.float64[B, L, P]):
+    """The map is over the contiguous axis already: its planes over ``(b, jk)`` are strided."""
+    for p in dace.map[0:P]:
+        out[:, :, p] = w[:, :, p] * 2.0
 
 
 def atom_gathers(atom_plane: bool = False) -> dace.SDFG:
@@ -124,7 +144,24 @@ def test_an_atom_map_with_one_per_atom_plane_is_still_demoted():
     assert np.allclose(count, [1.0, 2.0, 3.0])
 
 
+def test_a_level_map_over_contiguous_planes_is_demoted_for_the_gpu():
+    """Offloaded as it is, the level map is the kernel and each thread walks whole planes; demoted, the planes are."""
+    sdfg = level_planes.to_sdfg(simplify=True)
+    assert demote_uncoalesced_level_maps(sdfg) == 1
+    w = np.random.default_rng(0).random((2, 3, 5))
+    out = np.zeros_like(w)
+    sdfg(w=w, out=out, B=2, L=3, P=5)
+    assert np.allclose(out, 2.0 * w)
+
+
+def test_a_map_over_the_contiguous_axis_stays_the_gpu_kernel():
+    sdfg = column_planes.to_sdfg(simplify=True)
+    assert demote_uncoalesced_level_maps(sdfg) == 0
+
+
 if __name__ == "__main__":
     test_a_row_map_over_csr_segments_stays_a_map()
     test_an_atom_map_gathering_its_own_row_is_demoted()
     test_an_atom_map_with_one_per_atom_plane_is_still_demoted()
+    test_a_level_map_over_contiguous_planes_is_demoted_for_the_gpu()
+    test_a_map_over_the_contiguous_axis_stays_the_gpu_kernel()

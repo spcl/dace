@@ -131,6 +131,16 @@ def _outer_carry(a: dace.float64[N, 5], y: dace.float64[N], z: dace.float64[N, 5
         y[i] = z[i, 4]
 
 
+@dace.program
+def _neighbour_accumulate(w: dace.float64[9], idx: dace.int64[4, 9], c: dace.float64[4, 9], acc: dace.float64[9]):
+    # velocity_tendencies' gathers: every neighbour n adds into the same acc, a carry on the outer axis.
+    for n in range(4):
+        g = np.empty((9,), dace.float64)
+        for b in range(9):
+            g[b] = w[idx[n, b]]
+        acc[:] = acc + c[n] * g
+
+
 def _build_interstate_sdfg() -> dace.SDFG:
     """Hand-built imperfect nest whose pre state is fed by an interstate-edge assignment.
 
@@ -361,6 +371,22 @@ def test_refuses_outer_axis_carry():
         exp_y[i] = exp_z[i, 4]
     assert np.array_equal(out_y, exp_y)
     assert np.array_equal(out_z, exp_z)
+
+
+def test_refuses_an_accumulation_across_the_outer_axis():
+    """A post statement reading and writing ``acc`` at elements free of ``n`` is refused: the outer axis stays
+    sequential either way, and the guarded statement would serialize the gather loop it reads."""
+    rng = np.random.default_rng(7)
+    n = 9
+    w, c, acc = rng.random(n), rng.random((4, n)), rng.random(n)
+    idx = rng.integers(0, n, (4, n))
+
+    sdfg = _neighbour_accumulate.to_sdfg(simplify=True)
+    assert sift_imperfect_nests(sdfg) == 0
+    out = acc.copy()
+    sdfg(w=w, idx=idx, c=c, acc=out)
+    expected = acc + sum(c[k] * w[idx[k]] for k in range(4))
+    assert np.allclose(out, expected)
 
 
 def test_new_start_block_set_correctly():
