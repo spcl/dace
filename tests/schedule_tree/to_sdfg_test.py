@@ -17,6 +17,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutils
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -2136,8 +2137,12 @@ def test_trailing_assignment_in_body(scope: str) -> None:
     # Convert without inserting state boundaries after assignments
     sdfg = dace.SDFG("tester")
     sdfg._arrays.update(copy.deepcopy(stree.containers))
-    sdfg.symbols.update(stree.symbols)
+    for name, dtype in stree.symbols.items():
+        sdfg.add_symbol(name, dtype)
     t2s._StreeToSDFG().visit(stree, sdfg=sdfg)
+    # The loop binds its counter; the tree also lists it among its symbols
+    for name in sorted(scope_bound_names(sdfg) & sdfg.symbols.keys()):
+        sdfg.remove_symbol(name)
     sdfg.validate()
 
     # With n=10, the body with the assignment is executed. With n=1, only the else branch is.

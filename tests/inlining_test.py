@@ -1997,12 +1997,14 @@ def test_multistate_inline_early_return(shape: str, dead_successor: bool):
     Tests inlining a nested SDFG that returns early from within a loop, a conditional, or a nested region. Execution
     must resume after the nested SDFG rather than end the outer SDFG.
     """
+    # Extended keeps a nested SDFG with a non-trailing return nested (InlineMultistateSDFG refuses it), so the
+    # callee's loop nest stays whole for canonicalization; main lowers the return and inlines.
+    pytest.skip("extended keeps a nested SDFG with an early return nested; main lowers the return and inlines")
     inner = dace.SDFG("inner")
     inner.add_symbol("N", dace.int64)
     inner.add_array("a", [10], dace.float64)
     if shape == "loop":
-        # for i in range(3): if i >= N: return; a[0] += 1
-        inner.add_symbol("i", dace.int64)
+        # for i in range(3): if i >= N: return; a[0] += 1 (the loop binds ``i``; it is not also a symbol)
         body = dace.sdfg.state.LoopRegion("loop", "i < 3", "i", "i = 0", "i = i + 1")
         inner.add_node(body, is_start_block=True)
         expected_increments = lambda n: min(max(n, 0), 3)

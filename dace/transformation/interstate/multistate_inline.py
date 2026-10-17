@@ -213,7 +213,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # A return spliced into the caller becomes a return OF the caller, killing the code after the
         # call site. `apply` drops a trailing return; any other one stays nested, where code
-        # generation gives the callee its own exit.
+        # generation gives the callee its own exit (and canonicalization keeps the callee's loop nest
+        # whole, which nussinov's wavefront skew needs).
         returns = [blk for blk in nested_sdfg.sdfg.all_control_flow_blocks() if isinstance(blk, ReturnBlock)]
         if returns and set(returns) - set(_trailing_returns(nested_sdfg.sdfg)):
             return False
@@ -357,9 +358,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
-        for b in nsdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion) and b.loop_variable:
-                inner_assignments.add(b.loop_variable)
+        loop_variables = {
+            b.loop_variable for b in nsdfg.all_control_flow_blocks() if isinstance(b, LoopRegion) and b.loop_variable
+        }
+        inner_assignments |= loop_variables
         # The non-identity symbol_mapping keys are lowered below to interstate-edge assignments
         # (``inner_K = outer_expr``) planted on the edge entering the inlined SDFG, i.e. they become
         # symbols *defined* inside the inlined region. Treat them like inner assignments so that, if such a
@@ -379,7 +381,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for assign in assignments_to_replace:
             newname = utils.find_new_name(assign, allnames)
             allnames.add(newname)
-            outer_symbols[newname] = nsdfg.symbols.get(assign, None)
+            # A loop variable stays bound by its loop; declaring its new name too would be invalid
+            if assign not in loop_variables:
+                outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
             # ``assign`` was inner == outer (identity map) but is now renamed to ``newname``; the
             # outer value no longer reaches the inlined region. Re-establish it as a non-identity

@@ -532,8 +532,7 @@ def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
     inner.add_array("X", [1], dace.float64)
     increment = dace.SDFGState("increment")
     if in_loop:
-        # for j in range(3): if j >= N: return; X[0] += 1
-        inner.add_symbol("j", dace.int64)
+        # for j in range(3): if j >= N: return; X[0] += 1 (the loop binds ``j``; it is not also a symbol)
         loop = LoopRegion("loop", "j < 3", "j", "j = 0", "j = j + 1")
         inner.add_node(loop, is_start_block=True)
         loop.add_node(increment)

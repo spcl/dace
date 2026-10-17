@@ -13,7 +13,7 @@ from dace.sdfg import memlet_utils as mmu
 from dace.sdfg import nodes, propagation
 from dace.sdfg.analysis.schedule_tree import passes as stpasses
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
+from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge, scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -1415,6 +1415,11 @@ def from_schedule_tree(
     converter = _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs)
     converter.visit(stree, sdfg=result)
     converter.connect_barriers()
+
+    # A tree declares its loop counters and map parameters among its symbols; in the SDFG the scope binds them.
+    for nested_sdfg in result.all_sdfgs_recursive():
+        for name in sorted(scope_bound_names(nested_sdfg) & nested_sdfg.symbols.keys()):
+            nested_sdfg.remove_symbol(name)
 
     # Memlet directions (src/dst subsets) are determined when edges are added. Scope pass-through edges are
     # connected later than the edges inside the scope, so re-initialize them before propagation.
