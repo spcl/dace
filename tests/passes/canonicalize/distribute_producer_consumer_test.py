@@ -354,6 +354,45 @@ def test_a_producer_split_from_the_middle_of_a_body_runs_before_its_consumer():
     assert np.allclose(got, want)
 
 
+def test_a_nested_sdfg_operand_is_not_expanded_for_a_split():
+    """A shared transient a nested SDFG takes keeps its shape: its connector's inner descriptor must equal the outer
+    one, so ``u[i]`` would need a view. The expansion fallback leaves such a loop whole (cloudsc's ``__tmp135``,
+    read by an inlined ``where`` the frontend kept nested)."""
+    from dace.transformation.passes.buffer_expansion import expand_iteration_private
+
+    m = dace.symbol("M")
+    sdfg = dace.SDFG("nested_operand_split")
+    sdfg.add_array("y", [N], dace.float64)
+    sdfg.add_transient("u", [m], dace.float64)
+    sdfg.add_transient("w", [m], dace.float64)
+    loop = LoopRegion("rows", "i < N", "i", "i = 1", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    produce = loop.add_state("produce", is_start_block=True)
+    consume = loop.add_state_after(produce, "consume")
+
+    produce.add_mapped_tasklet("fill", {"j": "0:M"}, {}, "o = i + j", {"o": dace.Memlet("u[j]")}, external_edges=True)
+
+    inner = dace.SDFG("double")
+    inner.add_array("a", [m], dace.float64)
+    inner.add_array("b", [m], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "dbl", {"j": "0:M"}, {"x": dace.Memlet("a[j]")}, "z = 2 * x", {"z": dace.Memlet("b[j]")}, external_edges=True
+    )
+    call = consume.add_nested_sdfg(inner, {"a"}, {"b"}, symbol_mapping={"M": m})
+    consume.add_edge(consume.add_read("u"), None, call, "a", dace.Memlet("u[0:M]"))
+    w_node = consume.add_access("w")
+    consume.add_edge(call, "b", w_node, None, dace.Memlet("w[0:M]"))
+    tasklet = consume.add_tasklet("acc", {"v", "prev"}, {"out"}, "out = v + prev")
+    consume.add_edge(w_node, None, tasklet, "v", dace.Memlet("w[0]"))
+    consume.add_edge(consume.add_read("y"), None, tasklet, "prev", dace.Memlet("y[i - 1]"))
+    consume.add_edge(tasklet, "out", consume.add_write("y"), None, dace.Memlet("y[i]"))
+    sdfg.validate()
+
+    assert expand_iteration_private(sdfg, loop, {"u"}) is None
+    assert [str(d) for d in sdfg.arrays["u"].shape] == ["M"]
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()
@@ -362,3 +401,4 @@ if __name__ == "__main__":
     test_mask_read_through_an_interstate_edge_refuses()
     test_a_producer_split_from_the_middle_of_a_body_runs_before_its_consumer()
     print("OK")
+    test_a_nested_sdfg_operand_is_not_expanded_for_a_split()

@@ -134,7 +134,16 @@ def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> li
             sdfg.arrays[name] = data.Array(
                 desc.dtype, [1], transient=True, storage=desc.storage, lifetime=desc.lifetime
             )
-    buffers = [name for name in expander._privatizable_buffers(sdfg, loop) if name in only]
+    # A nested SDFG's connector must see a descriptor equal to its own: ``x[i]`` of an expanded ``x`` would need a view
+    nested_operands = {
+        e.data.data
+        for state in loop.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.NestedSDFG)
+        for e in state.all_edges(node)
+        if e.data is not None and e.data.data is not None
+    }
+    buffers = [name for name in expander._privatizable_buffers(sdfg, loop) if name in only - nested_operands]
     for name, desc in replaced.items():
         if name not in buffers:
             sdfg.arrays[name] = desc
