@@ -158,7 +158,10 @@ def test_a_nested_gpu_scalar_expanded_early_runs():
             "cudaDeviceSynchronize();\n"
             "cudaMemcpy(&value, _in, sizeof(double), cudaMemcpyDeviceToHost);\n"
             "value *= 2;\n"
-            "cudaMemcpy(_out, &value, sizeof(double), cudaMemcpyHostToDevice);"
+            "cudaMemcpy(_out, &value, sizeof(double), cudaMemcpyHostToDevice);\n"
+            # A copy from pageable memory can return before it reaches the device, and DaCe copies
+            # the result out on a stream of its own
+            "cudaDeviceSynchronize();"
         ),
     )
     with dace.config.set_temporary("ai", "compile_check", value=False):
