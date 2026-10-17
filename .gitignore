@@ -194,3 +194,10 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+
+# Lean (formal/)
+**/.lake/
+*.olean
+*.ilean
+*.olean.hash
+*.trace

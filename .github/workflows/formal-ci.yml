@@ -1,0 +1,49 @@
+name: Formal Semantics (Lean)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'formal/**'
+      - 'tests/formal/**'
+      - '.github/workflows/formal-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'formal/**'
+      - 'tests/formal/**'
+      - '.github/workflows/formal-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  lean:
+    name: Build and check proofs
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Lean library (with Mathlib cache)
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal
+          use-mathlib-cache: true
+
+      - name: Sorry / axiom / import-isolation checks
+        working-directory: formal
+        run: scripts/check_axioms.sh
+
+      - name: Build executables
+        working-directory: formal
+        run: lake build dace-interp dace-equiv
+
+      - name: Run interpreter on the committed corpus
+        working-directory: formal
+        run: |
+          shopt -s nullglob
+          for f in tests/corpus/*.sdfg.json; do
+            base="${f%.sdfg.json}"
+            if [ -f "$base.inputs.json" ]; then
+              lake exe dace-interp sdfg "$f" "$base.inputs.json" > /dev/null
+            fi
+          done
