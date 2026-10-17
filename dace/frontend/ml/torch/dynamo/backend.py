@@ -67,6 +67,18 @@ class DaceBackendOptions:
     #: Lower ``torch.distributed`` collectives as nonblocking operations, and move independent work between their
     #: start and their wait (see :func:`dace.libraries.comm.schedule.overlap_communication`)
     overlap_communication: bool = True
+    #: Capture Python control flow on tensor data (``if``/``while``), for loops over symbolic ranges and tensors, and
+    #: everything that follows in the frame as a control-flow graph that is compiled into the SDFG, instead of
+    #: leaving it to Dynamo (graph breaks, or unrolled loops specialized to one size). See
+    #: :mod:`dace.frontend.ml.torch.dynamo.cfg`. EXPERIMENTAL.
+    control_flow: bool = False
+    #: With ``control_flow``: also capture branches on symbolic sizes (``if x.shape[0] > 4``) as control flow instead
+    #: of guarding on their outcome (one compilation per outcome)
+    symbolic_branches: bool = False
+    #: With ``control_flow``: ``'symbolic'`` captures for loops whose trip count is symbolic (and loops whose bodies
+    #: branch on data), ``'all'`` also loops over constant ranges and tensors with at least two iterations (which
+    #: Dynamo would unroll)
+    capture_loops: str = "symbolic"
 
 
 class DaceBackend:
@@ -86,6 +98,12 @@ class DaceBackend:
                     setattr(self.options, key, Config.get_bool("frontend", "torch_dynamo", key))
                 except (KeyError, TypeError, ValueError):  # pragma: no cover - missing schema entry
                     pass
+        #: Control-flow capture state (:class:`~.cfg.blocks.ControlFlowCapture`) if the ``control_flow`` option is set
+        self.control_flow = None
+        if self.options.control_flow:
+            from .cfg.blocks import ControlFlowCapture  # Deferred: imports this module
+
+            self.control_flow = ControlFlowCapture(self.options.symbolic_branches, self.options.capture_loops)
         self._decomp_table: dict | None = None
         self.compile_count = 0  #: Number of SDFGs compiled by this backend (test oracle for compile-once behavior)
         self.last_sdfg = None  #: The most recently generated SDFG (before compilation)

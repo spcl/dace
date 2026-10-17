@@ -158,6 +158,10 @@ for _name, _fn in (("sym_sqrt", sympy.sqrt), ("sym_log2", lambda a: sympy.log(a,
         _UNARY[getattr(torch, _name)] = _fn
 
 
+#: Reductions over sequences of symbolic integers (``sum(shape)``, ``torch.sym_sum``)
+_SEQUENCE_REDUCTIONS = tuple(fn for fn in (builtins.sum, getattr(torch, "sym_sum", None)) if fn is not None)
+
+
 def _is_seq(v):
     return isinstance(v, (list, tuple, TupleValue))
 
@@ -166,12 +170,15 @@ def _items(v):
     return list(v.items) if isinstance(v, TupleValue) else list(v)
 
 
-@register_lowering(*_BINARY.keys(), *_UNARY.keys())
+@register_lowering(*_BINARY.keys(), *_UNARY.keys(), *_SEQUENCE_REDUCTIONS)
 def lower_symbolic_arith(ctx, node, *args):
     v = value_from_meta(ctx, node)
     if v is not None:
         return v
     target = node.target
+    if target in _SEQUENCE_REDUCTIONS:  # ``sum([a, b])`` or ``sym_sum(a, b)``
+        terms = _items(args[0]) if len(args) == 1 and _is_seq(args[0]) else list(args)
+        return SymValue(sympy.Add(*[as_sym(a) for a in terms]))
     # Sequence concatenation / repetition (e.g. ``shape + [1]``)
     if target is operator.add and len(args) == 2 and _is_seq(args[0]) and _is_seq(args[1]):
         return TupleValue(_items(args[0]) + _items(args[1]))

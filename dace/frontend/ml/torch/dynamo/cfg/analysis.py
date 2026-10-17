@@ -182,11 +182,11 @@ class CodeInfo:
         ]
 
     def stored_names(self, indices: set[int]) -> set[str]:
-        """Local variables assigned by the instructions."""
+        """Local (and cell) variables assigned by the instructions."""
         return {
             self.instructions[i].argval
             for i in indices
-            if self.instructions[i].opname in ("STORE_FAST", "STORE_FAST_STORE_FAST")
+            if self.instructions[i].opname in ("STORE_FAST", "STORE_FAST_STORE_FAST", "STORE_DEREF")
             and isinstance(self.instructions[i].argval, str)
         }
 
@@ -214,7 +214,10 @@ class CodeInfo:
             inst = self.instructions[i]
             for s in self.successors[i]:
                 jump = inst.target is not None and s == self.indexof[inst.target] and s != i + 1
-                depth = depths[i] + bytecode_analysis.stack_effect(inst.opcode, inst.arg, jump=jump)
+                # Instructions Dynamo synthesizes while cleaning (e.g., the ``LOAD_CONST None`` of a rewritten
+                # ``POP_JUMP_IF_NONE``) have no encoded argument yet; their stack effect does not depend on it
+                arg = inst.arg if inst.arg is not None else (0 if inst.opcode >= dis.HAVE_ARGUMENT else None)
+                depth = depths[i] + bytecode_analysis.stack_effect(inst.opcode, arg, jump=jump)
                 if inst.opname == "GET_ITER" and iterators[i] == depths[i] - 1:
                     count = iterators[i] + 1
                 else:
@@ -233,8 +236,9 @@ class CodeInfo:
 
     def livevars(self, index: int) -> set[str]:
         """
-        Local variables that may be read at or after ``index`` before being written (exact on the control-flow
-        graph; Dynamo's own analysis keeps every variable of a loop body live).
+        Local and cell variables that may be read at or after ``index`` before being written (exact on the
+        control-flow graph; Dynamo's own analysis keeps every variable of a loop body live). A closure created from a
+        cell (``LOAD_CLOSURE``) reads it.
         """
         if self._live is None:
             self._live = self._liveness()
@@ -244,14 +248,14 @@ class CodeInfo:
         uses: dict[int, tuple[set[str], set[str]]] = {}  # Instruction -> (reads before writes, writes)
         for i, inst in enumerate(self.instructions):
             reads, writes = set(), set()
-            if inst.opcode in dis.haslocal:
+            if (inst.opcode in dis.haslocal or inst.opcode in dis.hasfree) and isinstance(inst.argval, (str, tuple)):
                 names = inst.argval if isinstance(inst.argval, tuple) else (inst.argval,)
                 if inst.opname.startswith("STORE_FAST_LOAD_FAST"):  # Store the first, then load the second
                     writes.add(names[0])
                     reads.update(n for n in names[1:] if n != names[0])
-                elif "STORE" in inst.opname:
+                elif "STORE" in inst.opname or inst.opname == "MAKE_CELL":
                     writes.update(names)
-                else:  # LOAD_FAST*, DELETE_FAST
+                else:  # LOAD_FAST*, LOAD_DEREF, LOAD_CLOSURE, DELETE_*
                     reads.update(names)
             uses[i] = (reads, writes)
         live: dict[int, set[str]] = {i: set() for i in range(len(self.instructions))}

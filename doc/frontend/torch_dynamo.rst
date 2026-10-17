@@ -157,13 +157,30 @@ How programs are lowered
 * **Control flow.** The higher-order operators ``torch.cond``, ``torch.while_loop``, ``torch._higher_order_ops.scan``
   and ``map`` are lowered to native DaCe control flow (``ConditionalBlock`` and ``LoopRegion``), including loops with
   symbolic trip counts and nested control flow. Plain Python ``if``/``for``/``while`` on tensor values is handled by
-  Dynamo itself (a graph break, or an error with ``fullgraph=True``). The experimental backend
-  ``dace.frontend.ml.torch.dynamo.cfg.ControlFlowBackend`` instead captures data-dependent ``if``/``while`` and
-  ``for`` loops over symbolic ranges or tensors (with ``break``, ``continue``, ``else`` clauses, and early returns) as a
-  control-flow graph of traced blocks and compiles it into the SDFG. When gradients are required, such graphs are
-  differentiated by DaCe's automatic differentiation into one SDFG with a forward and a backward phase (the forward
-  phase records the branches taken and the values the backward phase needs, which PyTorch keeps between the calls).
-  It reverses branches and counting loops; loops that exit depending on tensor values cannot be differentiated yet.
+  Dynamo itself (a graph break, or an error with ``fullgraph=True``), and a Python ``for`` over a symbolic range is
+  unrolled and specialized to the size seen. With ``control_flow=True`` (``dace.ml.compile``, :func:`dace.ml.to_sdfg`,
+  :func:`~dace.frontend.ml.torch.dynamo.capture`, or ``DaceBackend(control_flow=True)``; experimental), such control
+  flow is captured instead: data-dependent ``if``/``while`` (with ``break``, ``continue``, ``else`` clauses, early
+  returns, and branches on ``.item()`` values), ``for`` loops over symbolic ranges and tensors (including strided
+  chunk loops such as ``for i in range(0, n, chunk)`` with a ragged last chunk, written into a preallocated buffer
+  in place), and, with ``capture_loops='all'``, loops over constant ranges and tensors that Dynamo would unroll
+  (e.g., a fixed number of recycling iterations: the SDFG then holds one iteration instead of all of them). The rest
+  of the frame is traced as a control-flow graph of blocks, each traced once per combination of the Python values
+  it sees; the lowering compiles it into the SDFG with one container per variable, so values passed on unchanged
+  cost nothing. Lists, tuples and dicts of tensors, Python constants, cell variables (locals captured by lambdas and
+  comprehensions) and module objects may be live across blocks; a ``None`` that becomes a tensor in the second
+  iteration (recycling embeddings) is handled by tracing the first iteration separately. ``symbolic_branches=True``
+  also turns branches on sizes (``if x.shape[0] > 4``) into control flow instead of guards. Not captured (Dynamo's
+  stock behaviour applies, i.e., a graph break or unrolling, and the capture reports the reason in
+  ``backend.control_flow.events``): control flow inside ``with`` and ``try`` blocks, loops that grow Python lists or
+  dicts per iteration (``chunks.append(...)`` + ``torch.cat``), loops over lists of modules (``nn.ModuleList``;
+  layer stacking is a separate feature), data-dependent control flow inside a function called from a captured block,
+  generators, conditional expressions whose value stays on the stack (``a if t else b`` as an operand),
+  ``nonlocal`` writes, in-place mutation of tensors reached through objects, and tensors whose shape depends on the
+  loop counter flowing between iterations. When gradients are required, captured graphs are differentiated by DaCe's
+  automatic differentiation into one SDFG with a forward and a backward phase (the forward phase records the branches
+  taken and the values the backward phase needs, which PyTorch keeps between the calls). It reverses branches and
+  counting loops; loops that exit depending on tensor values cannot be differentiated yet.
 * **Outputs.** Output tensors are allocated by torch with the strides torch expects, and the SDFG writes into them
   directly; inputs are passed by pointer without copies.
 * **Training.** When gradients are required, AOTAutograd traces a joint forward and backward graph. By default the

@@ -50,11 +50,18 @@ def _default_name(model: Any) -> str:
 
 
 def _capture_from_descriptors(
-    model: Any, args: tuple, kwargs: dict, dynamic_shapes: Any, simplify: bool, fuse_activations: bool = False
+    model: Any,
+    args: tuple,
+    kwargs: dict,
+    dynamic_shapes: Any,
+    simplify: bool,
+    fuse_activations: bool = False,
+    **capture_options,
 ) -> CapturedProgram:
     """
     Captures ``model`` for arguments that are DaCe data descriptors (``dace.float32[N, 3, 224, 224]``), DaCe symbols or
-    ints (scalar arguments), or torch tensors (metadata only).
+    ints (scalar arguments), or torch tensors (metadata only). ``capture_options`` are passed on to :func:`.capture`
+    (control-flow capture).
 
     The descriptors are turned into fake example tensors and a ``dynamic_shapes`` specification that names the resulting
     Dynamo symbols after the DaCe symbols of the descriptors (:func:`.convertible.example_arguments`), so symbolic sizes
@@ -73,6 +80,7 @@ def _capture_from_descriptors(
         specialize_float=True,
         simplify=simplify,
         fuse_activations=fuse_activations,
+        **capture_options,
         **bound.kwargs,
     )
 
@@ -94,6 +102,9 @@ def to_sdfg(
     name: str | None = None,
     random_seed: int | None = None,
     fuse_activations: bool = False,
+    control_flow: bool = False,
+    symbolic_branches: bool = False,
+    capture_loops: str = "symbolic",
     **kwargs,
 ) -> SDFG:
     """
@@ -118,11 +129,26 @@ def to_sdfg(
     :param fuse_activations: Fold ReLU maps into the convolution nodes feeding them, so that the activation is applied
                              by the convolution (cuDNN/MIOpen fuse it into their kernels where supported). Off by
                              default.
+    :param control_flow: Capture Python control flow on tensor data and ``for`` loops over symbolic ranges and
+                         tensors as control flow of the SDFG (see :func:`dace.frontend.ml.torch.dynamo.compile`).
+    :param symbolic_branches: With ``control_flow``, capture branches on symbolic sizes as control flow.
+    :param capture_loops: With ``control_flow``, ``'symbolic'`` or ``'all'`` (see
+                          :func:`dace.frontend.ml.torch.dynamo.compile`).
     :param kwargs: Keyword argument descriptors.
     :return: The simplified, validated SDFG (not compiled).
     """
     _warn_if_training(model)
-    program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify, fuse_activations)
+    program = _capture_from_descriptors(
+        model,
+        args,
+        kwargs,
+        dynamic_shapes,
+        simplify,
+        fuse_activations,
+        control_flow=control_flow,
+        symbolic_branches=symbolic_branches,
+        capture_loops=capture_loops,
+    )
     _check_inputs(program, model)
     sdfg = program.import_graph(name or _default_name(model), return_arrays=True).sdfg
     _specialize_random_seed(sdfg, random_seed)
@@ -186,6 +212,9 @@ def compile(
     name: str | None = None,
     random_seed: int | None = None,
     fuse_activations: bool = False,
+    control_flow: bool = False,
+    symbolic_branches: bool = False,
+    capture_loops: str = "symbolic",
     **kwargs,
 ) -> CompiledModule:
     """
@@ -194,10 +223,21 @@ def compile(
 
     This is the ahead-of-time overload of :func:`dace.frontend.ml.torch.dynamo.compile`; it is selected when
     descriptor arguments follow the model. ``random_seed`` fixes the seed of random operators and ``fuse_activations``
-    folds ReLUs into convolutions (see :func:`to_sdfg`).
+    folds ReLUs into convolutions (see :func:`to_sdfg`); ``control_flow``, ``symbolic_branches`` and ``capture_loops``
+    select control-flow capture (see :func:`dace.frontend.ml.torch.dynamo.compile`).
     """
     _warn_if_training(model)
-    program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify, fuse_activations)
+    program = _capture_from_descriptors(
+        model,
+        args,
+        kwargs,
+        dynamic_shapes,
+        simplify,
+        fuse_activations,
+        control_flow=control_flow,
+        symbolic_branches=symbolic_branches,
+        capture_loops=capture_loops,
+    )
     _check_inputs(program, model)
     return CompiledModule(program, name or _default_name(model), random_seed)
 

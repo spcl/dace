@@ -30,6 +30,9 @@ def compile(
     native_ops=None,
     save_sdfg: str | None = None,
     random_seed: int | None = None,
+    control_flow: bool = False,
+    symbolic_branches: bool = False,
+    capture_loops: str = "symbolic",
     verbose: bool = False,
     **torch_compile_kwargs,
 ) -> Callable:
@@ -87,6 +90,15 @@ def compile(
     :param save_sdfg: If set, directory in which generated SDFGs are saved (lazy route).
     :param random_seed: Fixes the seed of random operators (dropout) in the exported SDFG, which otherwise draw a fresh
                         seed from torch's generator on every call (ahead-of-time route).
+    :param control_flow: Capture Python control flow on tensor data (``if``/``while``) and ``for`` loops over
+                         symbolic ranges and tensors as control flow of the SDFG, instead of Dynamo's graph breaks
+                         and unrolling (see :mod:`dace.frontend.ml.torch.dynamo.cfg`). Experimental.
+    :param symbolic_branches: With ``control_flow``, also capture branches on symbolic sizes (``if x.shape[0] > 4``)
+                              as control flow instead of guarding on their outcome.
+    :param capture_loops: With ``control_flow``, ``'symbolic'`` captures ``for`` loops whose trip count is symbolic
+                          (and loops whose bodies branch on data); ``'all'`` also loops over constant ranges and
+                          tensors with at least two iterations (e.g., a fixed number of recycling iterations), which
+                          Dynamo would otherwise unroll.
     :param torch_compile_kwargs: Additional keyword arguments for ``torch.compile`` (lazy route).
     :return: The compiled callable, or a :class:`.export.CompiledModule` on the ahead-of-time route.
     """
@@ -101,6 +113,9 @@ def compile(
             name=name or sdfg_name,
             random_seed=random_seed,
             fuse_activations=fuse_activations,
+            control_flow=control_flow,
+            symbolic_branches=symbolic_branches,
+            capture_loops=capture_loops,
         )
 
     options = dict(
@@ -112,6 +127,9 @@ def compile(
         extra_decompositions=extra_decompositions,
         native_ops=native_ops,
         save_sdfg=save_sdfg,
+        control_flow=control_flow,
+        symbolic_branches=symbolic_branches,
+        capture_loops=capture_loops,
         verbose=verbose,
     )
 

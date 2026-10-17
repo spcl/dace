@@ -188,6 +188,9 @@ def capture(
     simplify: bool = True,
     specialize_float: bool = False,
     fuse_activations: bool = False,
+    control_flow: bool = False,
+    symbolic_branches: bool = False,
+    capture_loops: str = "symbolic",
     **kwargs,
 ) -> CapturedProgram:
     """
@@ -214,6 +217,11 @@ def capture(
                              of tracing them as 0-d tensor inputs.
     :param fuse_activations: Fold ReLU maps into the convolution nodes feeding them (see
                              :class:`dace.libraries.ml.FuseConvolutionActivation`).
+    :param control_flow: Capture Python control flow on tensor data and ``for`` loops over symbolic ranges and
+                         tensors as control flow of the graph (see :func:`dace.frontend.ml.torch.dynamo.compile`).
+    :param symbolic_branches: With ``control_flow``, capture branches on symbolic sizes as control flow.
+    :param capture_loops: With ``control_flow``, ``'symbolic'`` or ``'all'`` (see
+                          :func:`dace.frontend.ml.torch.dynamo.compile`).
     :param kwargs: Example keyword arguments.
     :return: The captured program.
     :raises CaptureError: If TorchDynamo or AOTAutograd cannot trace the call.
@@ -230,6 +238,9 @@ def capture(
         native_ops=native_ops,
         simplify=simplify,
         fuse_activations=fuse_activations,
+        control_flow=control_flow,
+        symbolic_branches=symbolic_branches,
+        capture_loops=capture_loops,
     )
     compiled = torch.compile(fn, backend=backend, dynamic=dynamic, fullgraph=True)
     if spec is not None:
