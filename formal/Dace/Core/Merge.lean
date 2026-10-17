@@ -49,13 +49,16 @@ namespace Log
 def empty : Log := {}
 
 /-- Sequential composition of two logs of the *same* execution.  Reads of
-`b` that `a` wrote are not reads of the initial memory; writes and WCR
-contributions of `a` that `b` overwrites are dead.  The resulting log
-satisfies: every location has at most one plain write, and a plain write to a
-location precedes all WCR contributions to it (so `merge` may apply all
-writes before all contributions). -/
+`b` that `a` plainly wrote are not reads of the initial memory (the
+execution owns that value); reads after an own WCR contribution **stay
+logged**, because the generated code performs an ordinary load there and
+other executions' contributions may already be visible (`Decisions.md#D44`).
+Writes and WCR contributions of `a` that `b` overwrites are dead.  The
+resulting log satisfies: every location has at most one plain write, and a
+plain write to a location precedes all WCR contributions to it (so `merge`
+may apply all writes before all contributions). -/
 def seq (a b : Log) : Log :=
-  let aWritten := a.writes.map Prod.fst ++ a.wcrs.map (·.1)
+  let aWritten := a.writes.map Prod.fst
   let bWritten := b.writes.map Prod.fst
   { reads := a.reads ++ b.reads.filter (fun l => !aWritten.contains l)
     writes := a.writes.filter (fun (l, _) => !bWritten.contains l) ++ b.writes

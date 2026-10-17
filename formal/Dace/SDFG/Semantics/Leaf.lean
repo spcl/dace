@@ -278,13 +278,23 @@ def applyOut (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (out
   let st ← out.arrayWrites.foldlM (fun st (c, rel, v) => applyArrayWrite ctx ρ s n st c rel v) st
   out.pushes.foldlM (fun st (c, vs) => applyPush ctx ρ s n st c vs) st
 
+/-- Does the code node have a dynamic WCR out-memlet (a fetch-and-add,
+`Decisions.md#D47`)? -/
+def State.hasDynamicWcrOut (s : State) (n : DNode) : Bool :=
+  (s.outEdges n.id).any fun e => match e.data with
+    | .memlet m => m.dynamic && m.hasWcr
+    | .dep => false
+
 /-- Execute a code node through an uninterpreted body `run`. -/
 def execCode (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St)
-    (run : (Conn → Option ConnIn) → Option TaskletOut) (undefinedErr : ErrReason) : Res St := do
-  let (ins, st) ← bindInputs ctx ρ s n st
-  match run ins with
-  | none => .err undefinedErr
-  | some out => applyOut ctx ρ s n st out
+    (run : (Conn → Option ConnIn) → Option TaskletOut) (undefinedErr : ErrReason) : Res St :=
+  if s.hasDynamicWcrOut n then
+    .err (.malformed s!"dynamic WCR output of '{n.label}' (fetch-and-add) is not modeled")
+  else do
+    let (ins, st) ← bindInputs ctx ρ s n st
+    match run ins with
+    | none => .err undefinedErr
+    | some out => applyOut ctx ρ s n st out
 
 /-! ## Reduce -/
 
