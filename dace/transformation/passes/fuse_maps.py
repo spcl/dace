@@ -7,6 +7,7 @@ from typing import Any
 from dace import SDFG, SDFGState, properties, transformation
 from dace.config import Config
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import forget_all_facts, memoize_facts
 from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg.validation import validate_state
 from dace.transformation import dataflow as dftrans
@@ -382,15 +383,18 @@ class FuseMaps(ppl.Pass):
                 xform.scope_records = scope_records
 
         applied: AppliedMap = collections.defaultdict(list)
-        for _ in range(FUSE_ROUNDS):
-            for cfg in sdfg.all_control_flow_regions(recursive=True):
-                for state_id, state in enumerate(cfg.nodes()):
-                    if not isinstance(state, SDFGState):
-                        continue
-                    if self.align_step_equivalent_maps and align_step_equivalent_candidates(state):
-                        propagated.clear()
-                    for xform, shapes in units:
-                        self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied, propagated)
+        # The probes between two fusions share the facts of each SDFG; ``_drain`` drops them at every fusion.
+        with memoize_facts():
+            for _ in range(FUSE_ROUNDS):
+                for cfg in sdfg.all_control_flow_regions(recursive=True):
+                    for state_id, state in enumerate(cfg.nodes()):
+                        if not isinstance(state, SDFGState):
+                            continue
+                        if self.align_step_equivalent_maps and align_step_equivalent_candidates(state):
+                            forget_all_facts()
+                            propagated.clear()
+                        for xform, shapes in units:
+                            self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied, propagated)
 
         # Nothing fused means the SDFG is the one the caller passed in; validating THAT is the caller's
         #  contract (canonicalize: its own validate / validate_all), not a check of this pass's work.
@@ -449,7 +453,9 @@ class FuseMaps(ppl.Pass):
                     else:
                         # Any other fusion is not known to leave nested SDFGs untouched.
                         propagated.clear()
-                    applied[name].append(xform.apply(state, owner))
+                    with memoize_facts(active=False):
+                        applied[name].append(xform.apply(state, owner))
+                    forget_all_facts()
                     if self.validate_all:
                         validate_state(state, state_id, owner, initialized_transients=set(owner.arrays.keys()))
                     progress = True

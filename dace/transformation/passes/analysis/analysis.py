@@ -18,6 +18,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.graph import Edge
 from dace.sdfg.propagation import align_memlet
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -1157,6 +1158,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
                  and the states they are contained in are mapped to the set of reads and writes (and their states) that
                  are dominated by that write.
         """
+        # An analysis changes nothing, so the facts each must-write test derives for a loop's trip count are shared.
+        with memoize_facts():
+            return self.write_scopes(top_sdfg, pipeline_results)
+
+    def write_scopes(self, top_sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[int, WriteScopeDict]:
+        """:meth:`apply_pass` under one facts memo."""
         top_result: dict[int, WriteScopeDict] = dict()
 
         access_sets: dict[ControlFlowBlock, tuple[OrderedSet[str], OrderedSet[str]]] = pipeline_results[

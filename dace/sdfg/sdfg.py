@@ -256,6 +256,12 @@ def forget_facts(sdfg: "SDFG") -> None:
         _FACTS_MEMO.pop(sdfg, None)
 
 
+def forget_all_facts() -> None:
+    """Drop every memoized fact, after a change whose reach over the SDFG tree the caller does not track."""
+    if _FACTS_MEMO is not None:
+        _FACTS_MEMO.clear()
+
+
 def _replace_dict_keys(d, old, new):
     # Keys are names, but a replacement may be given as a symbolic expression
     old = str(old)
