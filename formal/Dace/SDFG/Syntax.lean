@@ -30,12 +30,13 @@ structure MapNode where
   collapse : Nat := 1
   deriving DecidableEq, Repr, Inhabited
 
-/-- `dace.sdfg.nodes.Consume`. -/
+/-- `dace.sdfg.nodes.Consume`.  The quiescence `condition` is parsed at import
+like interstate conditions (`Decisions.md#D41`); `none` = "stream not empty". -/
 structure ConsumeNode where
   label : String := ""
   peIndex : Sym
   numPes : Expr := 1
-  condition : Option CodeBlock := none
+  condition : Option Expr := none
   chunksize : Nat := 1
   schedule : String := "Default"
   deriving DecidableEq, Repr, Inhabited

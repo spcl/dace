@@ -14,6 +14,7 @@ import Dace.Core.PyTasklet
 import Dace.SDFG.Syntax
 import Dace.SDFG.Scope
 import Dace.SDFG.WF
+import Dace.SDFG.Semantics
 import Dace.SDFG.Json
 
 /-!

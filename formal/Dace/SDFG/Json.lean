@@ -307,7 +307,7 @@ partial def node (j : Json) : P DNode := do
       let peIndex ← strField a "pe_index"
       let numPes ← (exprField? a "num_pes").map (·.getD 1)
       let condition ← match field? a "condition" with
-        | some c => some <$> codeBlock c
+        | some c => some <$> codeExpr c
         | none => pure none
       let chunksize ← (natField? a "chunksize").map (·.getD 1)
       pure (.consumeEntry { label := (strField? a "label").getD label, peIndex, numPes, condition, chunksize,
