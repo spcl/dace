@@ -125,8 +125,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dynamic_scope_inputs: list[tn.DynScopeCopyNode] = []
         """Dynamic scope inputs (e.g., dynamic map ranges) of the next dataflow scope."""
 
-        self._code_reference_sets: dict[tuple[int, str | None], tn.RefSetNode] = {}
-        """Mapping of (id(code node), output connector) -> the reference set node that the output sets."""
+        self._code_reference_sets: dict[tuple[int, str | int], tn.RefSetNode] = {}
+        """Mapping of code node output keys (see ``_code_output_key``) -> the reference set node that the output sets."""
 
         self._consume_streams: dict[int, str] = {}
         """Mapping of id(ConsumeEntry) -> name of the stream it consumes."""
@@ -650,6 +650,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # connect nsdfg output memlets (to be propagated)
         for name in nsdfg.out_connectors:
             to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
+
+        # Add empty memlet to the scope exit if the nested SDFG has no outputs
+        if not nsdfg.out_connectors:
+            to_connect[f"nested_sdfg_{id(nsdfg)}"] = (nsdfg, Memlet())
 
     def _connect_nested_sdfg(self, nsdfg: nodes.NestedSDFG, inner_sdfg: SDFG, sdfg: SDFG) -> None:
         """
@@ -1179,7 +1183,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state.add_nedge(scope_node, code_node, Memlet())
 
         for name, memlet in outputs:
-            reference_set = self._code_reference_sets.get((id(code_node), name))
+            reference_set = self._code_reference_sets.get(_code_output_key(code_node, name, memlet))
             if reference_set is not None:
                 self._set_reference(code_node, name, reference_set, sdfg)
             else:
@@ -1389,12 +1393,21 @@ def from_schedule_tree(
     return result
 
 
-def _code_reference_sets(stree: tn.ScheduleTreeRoot) -> dict[tuple[int, str | None], tn.RefSetNode]:
+def _code_output_key(code_node: nodes.CodeNode, connector: str | None, memlet: Memlet) -> tuple[int, str | int]:
+    """
+    Returns the key that identifies an output of a code node: its connector, or the output memlet itself for
+    connector-less nodes (e.g., library nodes without connectors), whose outputs would otherwise be indistinguishable.
+    """
+    return (id(code_node), connector if connector is not None else id(memlet))
+
+
+def _code_reference_sets(stree: tn.ScheduleTreeRoot) -> dict[tuple[int, str | int], tn.RefSetNode]:
     """
     Finds the outputs of code nodes that set references.
 
     :param stree: The schedule tree.
-    :return: A mapping of (id(code node), output connector) to the reference set node of that output.
+    :return: A mapping of the output keys of code nodes (see ``_code_output_key``) to the reference set node of that
+             output.
     """
     code_nodes = {id(n.node): n for n in stree.preorder_traversal() if isinstance(n, (tn.TaskletNode, tn.LibraryCall))}
     result = {}
@@ -1407,10 +1420,11 @@ def _code_reference_sets(stree: tn.ScheduleTreeRoot) -> dict[tuple[int, str | No
         outputs = (
             code.out_memlets.items() if isinstance(code.out_memlets, dict) else [(None, m) for m in code.out_memlets]
         )
-        connectors = [name for name, memlet in outputs if memlet is ref.memlet or memlet.data == ref.target]
-        if len(connectors) != 1:
+        matches = [(name, memlet) for name, memlet in outputs if memlet is ref.memlet or memlet.data == ref.target]
+        if len(matches) != 1:
             raise ValueError(f"Cannot determine the output of '{ref.src_desc}' that sets reference '{ref.target}'.")
-        result[(id(ref.src_desc), connectors[0])] = ref
+        ((connector, memlet),) = matches
+        result[_code_output_key(ref.src_desc, connector, memlet)] = ref
     return result
 
 

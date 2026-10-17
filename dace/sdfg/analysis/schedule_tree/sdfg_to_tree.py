@@ -509,15 +509,16 @@ def _state_schedule_tree(state: SDFGState) -> list[tn.ScheduleTreeNode]:
             tasklet_node = tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
             result.append(tasklet_node)
         elif isinstance(node, dace.nodes.LibraryNode):
-            # NOTE: LibraryNodes do not necessarily have connectors
+            # NOTE: LibraryNodes do not necessarily have connectors. Empty (dependency) memlets are implied by the
+            # order of the schedule tree and are not part of the memlet sets.
             if node.in_connectors:
                 in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             else:
-                in_memlets = {e.data for e in state.in_edges(node)}
+                in_memlets = {e.data for e in state.in_edges(node) if not e.data.is_empty()}
             if node.out_connectors:
                 out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
             else:
-                out_memlets = {e.data for e in state.out_edges(node)}
+                out_memlets = {e.data for e in state.out_edges(node) if not e.data.is_empty()}
             libnode = tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
             result.append(libnode)
         elif isinstance(node, dace.nodes.AccessNode):
