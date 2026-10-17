@@ -92,11 +92,12 @@ The "Capabilities of this slot" section below tells you which of these apply. It
 fact about where your code will be compiled and run -- read it first, and treat it as binding.
 
 - **`GPU device code: yes`** -- your body is compiled into a CUDA/HIP kernel that DaCe has \
-**already launched**. Every thread of the enclosing thread block executes it, once per iteration \
-of the innermost scope in the outline; the block dimensions are given. `threadIdx`, `blockIdx` and \
-`blockDim` are in scope and are yours to use -- DaCe has not consumed them for the map. All \
-threads of the block reach this body, so `__syncthreads()` and `__shared__` are safe. Do **not** \
-launch a kernel, allocate device memory, or call a host API. `__state` and `state_fields` do not \
+**already launched**. Each iteration of the innermost map in the outline runs on its own thread: \
+DaCe has already used `threadIdx` and `blockIdx` to compute the map indices, and threads past the \
+end of the iteration space skip the body. So do all the work of one iteration in this body, on \
+this one thread: do not split it further with `threadIdx`/`blockDim`, and do not use \
+`__syncthreads()` or other block-wide cooperation, since not every thread of the block reaches \
+this code. Do **not** launch a kernel, allocate device memory, or call a host API. `__state` and `state_fields` do not \
 exist here, and only headers providing `__device__` functions may be included.
 - **`GPU device code: no` with GPU-resident operands** -- your body runs on the **host** while its \
 data sits in GPU memory. Do the work either by calling a GPU library, or by launching a kernel; \
