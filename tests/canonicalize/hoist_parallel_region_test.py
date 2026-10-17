@@ -646,6 +646,104 @@ def test_strip_mine_keeps_a_scratch_a_nested_body_slices_outside_the_tiles():
     matches_at_every_team_size(sdfg, {"a": sweep_reference(a, lambda prev, _: 2.0 * prev + 1.0)}, a=a, N=37)
 
 
+def doubly_nested_sweep_sdfg(name, offset):
+    """``a[it + 1, i] = 2 * a[it, i + offset] + 1`` over ``i in 0:N-1``, the body two nested SDFGs deep -- the
+    shape canonicalize leaves for a gather whose element load is a nested ``loop_body`` inside the map's own
+    nested body (velocity_tendencies' ``p_diag_vt`` accumulation). Each level renames the array and the column
+    symbol (``a``/``b``/``c``, ``i``/``j``/``k``) and passes the whole array, so the boundary memlets are unions
+    and only the innermost tasklet's memlets name the column."""
+    leaf = dace.SDFG(f"{name}_leaf")
+    leaf.add_array("c", [N, N], dace.float64)
+    for symbol in ("k", "row"):
+        leaf.add_symbol(symbol, dace.int64)
+    state = leaf.add_state("double", is_start_block=True)
+    double = state.add_tasklet("double", {"x"}, {"y"}, "y = 2.0 * x + 1.0")
+    state.add_edge(state.add_read("c"), None, double, "x", dace.Memlet(f"c[row, k + {offset}]"))
+    state.add_edge(double, "y", state.add_write("c"), None, dace.Memlet("c[row + 1, k]"))
+
+    middle = dace.SDFG(f"{name}_middle")
+    middle.add_array("b", [N, N], dace.float64)
+    for symbol in ("j", "it"):
+        middle.add_symbol(symbol, dace.int64)
+    state = middle.add_state("call", is_start_block=True)
+    node = state.add_nested_sdfg(leaf, {"c"}, {"c"}, symbol_mapping={"k": "j", "row": "it", "N": "N"})
+    state.add_edge(state.add_read("b"), None, node, "c", dace.Memlet("b[0:N, 0:N]"))
+    state.add_edge(node, "c", state.add_write("b"), None, dace.Memlet("b[0:N, 0:N]"))
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("sweep", is_start_block=True)
+    entry, exit_ = state.add_map("sweep", {"i": "0:N-1"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    node = state.add_nested_sdfg(middle, {"b"}, {"b"}, symbol_mapping={"j": "i", "it": "it", "N": "N"})
+    state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="b", memlet=dace.Memlet("a[0:N, 0:N]"))
+    state.add_memlet_path(node, exit_, state.add_write("a"), src_conn="b", memlet=dace.Memlet("a[0:N, 0:N]"))
+    sdfg.validate()
+    return sdfg
+
+
+def doubly_nested_reference(a, offset):
+    """:func:`doubly_nested_sweep_sdfg`'s result on a copy of ``a``."""
+    cols = a.shape[1] - 1
+    return sweep_reference(a, lambda prev, cur: np.concatenate([2.0 * prev[offset : offset + cols] + 1.0, cur[cols:]]))
+
+
+def test_strip_mine_reads_through_two_nested_sdfg_levels():
+    """A body two nested SDFGs deep is read element by element through both boundaries, translating the array
+    and symbol names level by level: the column the innermost tasklet touches is the tile's own, so the loop
+    tiles (one barrier instead of one per trip) and stays correct."""
+    sdfg = doubly_nested_sweep_sdfg("tile_two_levels", 0)
+    assert tiled(sdfg) == 1
+    a = np.random.default_rng(14).random((37, 37))
+    matches_at_every_team_size(sdfg, {"a": doubly_nested_reference(a, 0)}, a=a, N=37)
+
+
+def test_strip_mine_refuses_a_neighbour_read_two_nested_sdfg_levels_down():
+    """The same body reading ``c[row, k + 1]`` reaches into the neighbouring tile's column, which the per-trip
+    barrier orders; only the translated innermost access says so. The team hoist takes the loop."""
+    sdfg = doubly_nested_sweep_sdfg("tile_two_levels_neighbour", 1)
+    assert tiled(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(15).random((37, 37))
+    matches_at_every_team_size(sdfg, {"a": doubly_nested_reference(a, 1)}, a=a, N=37)
+
+
+def test_strip_mine_refuses_a_column_shifted_by_a_symbol_the_nested_body_assigns():
+    """``s = 1; x = a[it, i + s]; s = 0; a[it + 1, i + s] = 2 * x + 1`` reads the NEIGHBOURING column although
+    read and write spell the same index: ``s`` is assigned inside the nested body, so the spelling says nothing
+    about its value at either access. A symbol defined inside a nested SDFG is read as an axis of its own, never
+    as the cut position, and the loop is refused."""
+    body = dace.SDFG("tile_inner_symbol_body")
+    body.add_array("a", [N, N], dace.float64)
+    body.add_transient("x", [1], dace.float64)
+    for symbol in ("i", "it", "s"):
+        body.add_symbol(symbol, dace.int64)
+    start = body.add_state("start", is_start_block=True)
+    load = body.add_state("load")
+    tasklet = load.add_tasklet("load", {"v"}, {"w"}, "w = v")
+    load.add_edge(load.add_read("a"), None, tasklet, "v", dace.Memlet("a[it, i + s]"))
+    load.add_edge(tasklet, "w", load.add_write("x"), None, dace.Memlet("x[0]"))
+    store = body.add_state("store")
+    tasklet = store.add_tasklet("store", {"v"}, {"w"}, "w = 2.0 * v + 1.0")
+    store.add_edge(store.add_read("x"), None, tasklet, "v", dace.Memlet("x[0]"))
+    store.add_edge(tasklet, "w", store.add_write("a"), None, dace.Memlet("a[it + 1, i + s]"))
+    body.add_edge(start, load, dace.InterstateEdge(assignments={"s": "1"}))
+    body.add_edge(load, store, dace.InterstateEdge(assignments={"s": "0"}))
+
+    sdfg = dace.SDFG("tile_inner_symbol")
+    sdfg.add_array("a", [N, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("sweep", is_start_block=True)
+    entry, exit_ = state.add_map("sweep", {"i": "0:N-1"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    node = state.add_nested_sdfg(body, {"a"}, {"a"}, symbol_mapping={"i": "i", "it": "it", "N": "N"})
+    state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="a", memlet=dace.Memlet("a[0:N, 0:N]"))
+    state.add_memlet_path(node, exit_, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N, 0:N]"))
+    sdfg.validate()
+    assert tiled(sdfg) is None
+    a = np.random.default_rng(16).random((37, 37))
+    matches_at_every_team_size(sdfg, {"a": doubly_nested_reference(a, 1)}, a=a, N=37)
+
+
 def test_strip_mine_runs_a_scalar_statement_in_every_tile():
     """A tasklet beside the maps writing a loop-local scalar is run by every tile on its own copy."""
     sdfg = dace.SDFG("tile_scalar_statement")
@@ -1183,6 +1281,9 @@ if __name__ == "__main__":
     test_strip_mine_reads_two_maps_by_their_offsets()
     test_strip_mine_keeps_a_column_scratch_outside_the_tiles()
     test_strip_mine_keeps_a_scratch_a_nested_body_slices_outside_the_tiles()
+    test_strip_mine_reads_through_two_nested_sdfg_levels()
+    test_strip_mine_refuses_a_neighbour_read_two_nested_sdfg_levels_down()
+    test_strip_mine_refuses_a_column_shifted_by_a_symbol_the_nested_body_assigns()
     test_strip_mine_runs_a_scalar_statement_in_every_tile()
     test_strip_mine_refuses_a_scalar_statement_reading_what_another_tile_writes()
     test_strip_mine_narrows_a_whole_fill_to_what_is_read()

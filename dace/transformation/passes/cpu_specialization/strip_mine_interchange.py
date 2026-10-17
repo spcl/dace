@@ -132,6 +132,11 @@ THREADS_SYMBOL = symbolic.symbol(symbolic.NUM_THREADS_SYMBOL, NUM_THREADS_DTYPE)
 AXIS_PREFIX = "__dace_tile_axis"
 
 
+#: What a symbol a nested SDFG defines itself stands for once its accesses are translated out of it
+#: (:func:`descend_into_nested`): an axis that is never the cut one.
+INNER_SYMBOL = symbolic.symbol(f"{AXIS_PREFIX}_inner", NUM_THREADS_DTYPE)
+
+
 @lru_cache(maxsize=None, typed=True)
 def axis_symbol(position: int):
     """The stand-in for a tiled map's parameter ``position`` places out from its innermost.
@@ -315,14 +320,24 @@ def descend_into_nested(
     allowed: set[str],
     reads: dict[str, list[list[Any]]],
     writes: dict[str, list[list[Any]]],
+    enclosing: dict[str, str] | None = None,
+    substitution: dict[str, Any] | None = None,
 ) -> bool:
-    """Add the accesses inside ``node``, translated into the enclosing graph's names and symbols.
+    """Add the accesses inside ``node``, translated into the names and symbols ``allowed`` is spelled in.
+
+    A nested SDFG inside ``node`` is descended into the same way, one level at a time: the names and symbols
+    of each level are translated into those of the level above, and on through ``enclosing`` and
+    ``substitution`` into the outermost ones (velocity_tendencies' gathers load each element in a nested
+    ``loop_body`` inside the map's own nested body).
 
     :param state: the state holding ``node``.
     :param node: the nested SDFG to descend into.
-    :param allowed: the arrays that cross the enclosing scope boundary.
+    :param allowed: the arrays that cross the outermost scope boundary.
     :param reads: ``name -> [index expression lists]``, extended in place.
     :param writes: ``name -> [index expression lists]``, extended in place.
+    :param enclosing: ``array of state's graph -> outermost name``; ``None`` where ``state`` is outermost.
+    :param substitution: ``symbol of state's graph -> outermost expression``; ``None`` where ``state`` is
+                         outermost.
     :returns: ``False`` if the boundary cannot be translated.
     """
     # A nested graph names its arrays by CONNECTOR, so the edges say which outer array each is.
@@ -333,22 +348,42 @@ def descend_into_nested(
     for edge in state.out_edges(node):
         if edge.src_conn is not None and edge.data is not None and edge.data.data is not None:
             outer_name[edge.src_conn] = edge.data.data
+    if enclosing is not None:
+        outer_name = {inner: enclosing[outer] for inner, outer in outer_name.items() if outer in enclosing}
     # ... and its own symbols, so an inner subset has to be rewritten before it can be compared
     # against an outer map parameter. ``symbol_mapping`` is keyed by NAME, and the rewrite below
     # keys on the symbol instances the expression actually holds -- minting a key from the name
     # here would produce a symbol whose dtype and assumptions need not match the one in the
     # expression, and ``subs`` matches on identity, so the substitution would quietly do nothing
     # and leave inner names to be compared against outer ones.
-    substitution = node.symbol_mapping
+    mapping = {
+        inner: value if substitution is None else rewritten([value], substitution, INNER_SYMBOL)[0]
+        for inner, value in node.symbol_mapping.items()
+    }
+    # A symbol the nested graph defines itself -- a loop variable, a map parameter, an interstate assignment --
+    # is in no ``symbol_mapping``. Its spelling says nothing about its value at one access against another
+    # (``s = 1`` before a read of ``a[i + s]``, ``s = 0`` before a write of it), so it becomes an axis of its
+    # own, which :func:`tile_local` never takes for the cut position.
     allowed_names = {inner: outer for inner, outer in outer_name.items() if outer in allowed}
-    record_control_flow_reads(node.sdfg, allowed_names, reads, substitution)
+    record_control_flow_reads(node.sdfg, allowed_names, reads, mapping, INNER_SYMBOL)
     for inner_state in node.sdfg.states():
         bindings = view_bindings(inner_state)
         if bindings is None:
             return False
         for inner_node in inner_state.nodes():
             if isinstance(inner_node, nodes.NestedSDFG):
-                return False  # one level is what the connector translation above covers
+                # A view handed down would need its binding composed into every access below; refused instead.
+                if any(
+                    edge.data.data in bindings and outer_name.get(bindings[edge.data.data].data) in allowed
+                    for edge in inner_state.all_edges(inner_node)
+                    if not edge.data.is_empty()
+                ):
+                    return False
+                if inner_node.sdfg is None or not descend_into_nested(
+                    inner_state, inner_node, allowed, reads, writes, outer_name, mapping
+                ):
+                    return False
+                continue
             if not isinstance(inner_node, nodes.AccessNode):
                 continue
             viewed = bindings[inner_node.data].data if inner_node.data in bindings else inner_node.data
@@ -361,15 +396,21 @@ def descend_into_nested(
                 if edge.data.data != inner_node.data:
                     return []  # the subset names the other end; read as index-less
                 _, indices = resolved(inner_node.data, index_expressions(edge.data.subset), bindings, node.sdfg)
-                return rewritten(indices, substitution)
+                return rewritten(indices, mapping, INNER_SYMBOL)
 
+            # An edge into or out of a nested SDFG carries its union; the descent above records its accesses
+            # element by element.
             for edge in inner_state.in_edges(inner_node):
                 if edge is not binding_edge and edge.data.subset is not None:
+                    if isinstance(edge.src, nodes.NestedSDFG):
+                        continue
                     writes.setdefault(name, []).append(element(edge))
                     if edge.data.wcr is not None:  # an accumulation reads what it updates
                         reads.setdefault(name, []).append(element(edge))
             for edge in inner_state.out_edges(inner_node):
                 if edge is not binding_edge and edge.data.subset is not None:
+                    if isinstance(edge.dst, nodes.NestedSDFG):
+                        continue
                     reads.setdefault(name, []).append(element(edge))
     return True
 
@@ -385,15 +426,24 @@ def substituted(subset: subsets.Subset | None, substitution: dict[str, Any]) -> 
     return rewritten(index_expressions(subset), substitution)
 
 
-def rewritten(expressions: list[Any], substitution: dict[str, Any]) -> list[Any]:
-    """``expressions`` rewritten through ``substitution``, keyed by NAME; see :func:`substituted`."""
+def rewritten(expressions: list[Any], substitution: dict[str, Any], other: Any = None) -> list[Any]:
+    """``expressions`` rewritten through ``substitution``, keyed by NAME; see :func:`substituted`. A symbol
+    ``substitution`` does not name becomes ``other``, or stays as it is where ``other`` is ``None``.
+
+    The replacement is simultaneous (``xreplace``): ``subs`` with a dict substitutes one key after another, so
+    ``{k: j, j: s}`` would carry ``k`` on into ``s``.
+    """
     out = []
     for expr in expressions:
         if not symbolic.issymbolic(expr):
             out.append(expr)
             continue
-        replacements = {sym: substitution[sym.name] for sym in expr.free_symbols if sym.name in substitution}
-        out.append(expr.subs(replacements) if replacements else expr)
+        replacements = {
+            sym: substitution[sym.name] if sym.name in substitution else other
+            for sym in expr.free_symbols
+            if sym.name in substitution or other is not None
+        }
+        out.append(expr.xreplace(replacements) if replacements else expr)
     return out
 
 
@@ -572,15 +622,17 @@ def record_control_flow_reads(
     outer_name: dict[str, str],
     reads: dict[str, list[list[Any]]],
     substitution: dict[str, Any] | None = None,
+    other: Any = None,
 ) -> None:
     """Add what the control flow of ``region`` reads (:func:`control_flow_reads`) to ``reads``, under its
     enclosing name (``outer_name``) and in the enclosing symbols (``substitution``, a nested SDFG's
-    ``symbol_mapping``). Every tile takes a branch or derives a symbol itself, which is the same as taking it
-    once only while no other tile writes what it reads: ``s275``'s ``aa[0, i]`` guard reads its own column;
-    an index-less read matches no write in :func:`tile_local`."""
+    ``symbol_mapping``; a symbol it does not name becomes ``other``, see :func:`rewritten`). Every tile takes a
+    branch or derives a symbol itself, which is the same as taking it once only while no other tile writes what
+    it reads: ``s275``'s ``aa[0, i]`` guard reads its own column; an index-less read matches no write in
+    :func:`tile_local`."""
     for name, indices in control_flow_reads(region):
         if name in outer_name:
-            reads.setdefault(outer_name[name], []).append(rewritten(indices, substitution or {}))
+            reads.setdefault(outer_name[name], []).append(rewritten(indices, substitution or {}, other))
 
 
 def inner_nests(state: SDFGState, entry: nodes.MapEntry) -> list[InnerNest] | None:
