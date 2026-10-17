@@ -227,6 +227,22 @@ def test_a_positive_size_stays_positive():
     assert all(g.symbol_repo.params.predicates["P"] == positive for g in sdfg.all_sdfgs_recursive())
 
 
+def test_a_symbol_declared_positive_is_trapped_at_zero():
+    """A size declared ``positive=True`` lets canonicalization drop empty-range guards (a kernel's ``grid <= 0``
+    check), so zero must abort at the entry, not only a negative value (cegterg's ``nkb = 0``)."""
+    P = dace.symbol("P", dtype=dace.int64, positive=True)
+
+    @dace.program
+    def scale(x: dace.float64[P]):
+        for i in dace.map[0:P]:
+            x[i] = 2.0 * x[i]
+
+    sdfg = scale.to_sdfg(simplify=True)
+    assert insert_symbol_nonnegative_guard(sdfg) == 1
+    (trap,) = _trap_tasklets(sdfg)
+    assert "P <= 0" in trap.code.as_string, trap.code.as_string
+
+
 def test_guard_leads_the_block_list_on_every_canonicalize():
     """The guard is the start block, and it must also be block 0 of the list ``nodes()``
     reports. That list is insertion order, so the guard -- emitted by the terminal stage --
@@ -363,6 +379,7 @@ if __name__ == "__main__":
     test_map_bounds_keep_the_assumption_across_a_second_canonicalize()
     test_a_reparsed_map_bound_keeps_the_assumption()
     test_a_positive_size_stays_positive()
+    test_a_symbol_declared_positive_is_trapped_at_zero()
     test_guard_leads_the_block_list_on_every_canonicalize()
     test_repositioning_alone_is_reported_as_a_change()
     test_guard_aborts_on_negative_symbol()

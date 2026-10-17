@@ -278,7 +278,8 @@ def collect_assumptions(sdfg: SDFG) -> list[symbolic.SymbolicType]:
 
     * **Auto-collected from the symbols** -- every signed-integer argument symbol that sizes or
       indexes something is assumed nonnegative (``s >= 0``), the offset-sign contract
-      canonicalization reasons under (see [[feedback_symbols_nonnegative_canonicalization]]).
+      canonicalization reasons under (see [[feedback_symbols_nonnegative_canonicalization]]);
+      one declared positive is assumed ``s > 0``.
     * **Recorded by the passes** -- every relation a rewrite stashed via
       :func:`~dace.transformation.passes.canonicalize.tracked_assumptions.record_assumption`,
       kept only when all of its symbols are argument symbols so it is evaluable at
@@ -288,7 +289,15 @@ def collect_assumptions(sdfg: SDFG) -> list[symbolic.SymbolicType]:
       assumption here, so only genuine no-fallback preconditions reach the trap.
     """
     free = dict.fromkeys(sdfg.used_symbols(all_symbols=False))
-    assumptions: list = [as_expr(symbolic.pystr_to_symbolic(s)) >= 0 for s in _signed_integer_free_symbols(sdfg)]
+    # A symbol declared positive is reasoned about as ``> 0`` (an empty-range guard is dropped for it), so zero
+    # violates its contract as much as a negative value does
+    predicates = root_of(sdfg).symbol_repo.params.predicates
+    assumptions: list = [
+        as_expr(symbolic.pystr_to_symbolic(s)) > 0
+        if symbolic.Predicate.POSITIVE in predicates.get(s, frozenset())
+        else as_expr(symbolic.pystr_to_symbolic(s)) >= 0
+        for s in _signed_integer_free_symbols(sdfg)
+    ]
     for relation in tracked_assumptions(sdfg):
         if all(s.name in free for s in as_basic(relation).free_symbols) and relation not in assumptions:
             assumptions.append(relation)
