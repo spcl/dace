@@ -153,12 +153,16 @@ def plane_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
     """Whether the innermost parameter of ``planes`` indexes some access directly, and on every access that indexes an
     array by both it and ``param``, at a provably smaller stride: the thread axis a GPU wants is the plane's, not the
     level's (:func:`level_is_more_contiguous` with the roles swapped). Every plane's innermost axis must also be wide:
-    a literal or ``SMALL`` extent (a warp-sized tile) leaves the level map the better grid."""
+    a literal or ``SMALL`` extent (a warp-sized tile) leaves the level map the better grid. And every plane must write
+    a plane (:func:`writes_its_plane`): a map reducing into the level's own element is a block reduction, its level map
+    the kernel it belongs to."""
     homed = False
     for owner, state, entry in planes:
         begin, end, _ = entry.map.range[-1]
         extent = symbolic.pystr_to_symbolic(end - begin)
         if not symbolic.issymbolic(extent) or symbolic.is_small(extent, owner.facts()):
+            return False
+        if not writes_its_plane(state, entry):
             return False
         inner = entry.map.params[-1]
         for edge in state.scope_subgraph(entry, include_entry=True, include_exit=True).edges():
@@ -175,6 +179,17 @@ def plane_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
             except UndecidableStride:
                 return False
     return homed
+
+
+def writes_its_plane(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether every write leaving the map of ``entry`` is a plain store indexed by its innermost parameter: velocity's
+    ``z[b, jk, p] = ...`` per level. A write-conflict resolution or an output free of that parameter reduces the map
+    into fewer elements (``b[i] += A[i, j] * x[j]``)."""
+    inner = entry.map.params[-1]
+    writes = [edge for edge in state.in_edges(state.exit_node(entry)) if not edge.data.is_empty()]
+    return bool(writes) and all(
+        edge.data.wcr is None and inner in {str(s) for s in edge.data.subset.free_symbols} for edge in writes
+    )
 
 
 def spans_every_level(sdfg: SDFG, param: str, plane: Plane) -> bool:

@@ -43,6 +43,14 @@ def column_planes(w: dace.float64[B, L, P], out: dace.float64[B, L, P]):
         out[:, :, p] = w[:, :, p] * 2.0
 
 
+@dace.program
+def row_reductions(a: dace.float64[B, P], out: dace.float64[B]):
+    """A row map reducing over the contiguous axis into its own element: a block reduction, not a level of planes."""
+    for i in dace.map[0:B]:
+        for j in dace.map[0:P]:
+            out[i] += a[i, j]
+
+
 def atom_gathers(atom_plane: bool = False) -> dace.SDFG:
     """newdxx_g's shape: a map over atoms whose nested body sweeps planes over every G-vector, gathering from the
     atom's own row of ``table`` (the level alone) into the atom's slice of ``out`` at an offset the body is handed
@@ -159,9 +167,15 @@ def test_a_map_over_the_contiguous_axis_stays_the_gpu_kernel():
     assert demote_uncoalesced_level_maps(sdfg) == 0
 
 
+def test_a_row_map_reducing_into_its_own_element_stays_the_gpu_kernel():
+    sdfg = row_reductions.to_sdfg(simplify=True)
+    assert demote_uncoalesced_level_maps(sdfg) == 0
+
+
 if __name__ == "__main__":
     test_a_row_map_over_csr_segments_stays_a_map()
     test_an_atom_map_gathering_its_own_row_is_demoted()
     test_an_atom_map_with_one_per_atom_plane_is_still_demoted()
     test_a_level_map_over_contiguous_planes_is_demoted_for_the_gpu()
     test_a_map_over_the_contiguous_axis_stays_the_gpu_kernel()
+    test_a_row_map_reducing_into_its_own_element_stays_the_gpu_kernel()
