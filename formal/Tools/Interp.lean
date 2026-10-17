@@ -4,22 +4,27 @@ import Dace
 /-!
 # `lake exe dace-interp`
 
-Run an SDFG on concrete inputs with the executable interpreter
-(`Dace.SDFG.Interp`, interpretation `Interp.executable`):
+Run an SDFG or a schedule tree on concrete inputs with the executable
+interpreters (`Dace.SDFG.Interp` / `Dace.STree.Interp`, interpretation
+`Interp.executable`):
 
 ```
 lake exe dace-interp sdfg <sdfg.json> <inputs.json> [--fuel N]
+lake exe dace-interp stree <stree.json> <inputs.json> [--fuel N]
 ```
 
 The inputs file has the format produced by `scripts/difftest.py --record`
 (`symbols`, `containers` with `dtype`/`shape`/row-major `data`).  On success
 the tool prints `{"containers": {...}}` with every non-transient container of
-the SDFG and exits with `0`; a semantic error prints `{"error": "..."}` and
+the program and exits with `0`; a semantic error prints `{"error": "..."}` and
 exits with `1`; usage errors and unsupported IR kinds exit with `2`.
 
 Containers are laid out in memory exactly as the semantics addresses them:
 element `idx` of container `n` lives at `Loc.elem n o` with `o` computed by
-`Ctx.elemOffset` from the descriptor's strides and start offset.
+`Ctx.elemOffset` from the descriptor's strides and start offset.  For an SDFG
+the descriptors are its `arrays`; for a schedule tree they are the tree's
+descriptor repository, through the same context the semantics uses
+(`TCtx.ofTree`, i.e. `STree.toSDFG`).
 -/
 
 open Dace
@@ -256,31 +261,43 @@ def parseOptions : List String → Except String Options
   | opt :: _ => throw s!"unknown option '{opt}'"
 
 def usage : String :=
-  "usage: dace-interp sdfg <sdfg.json> <inputs.json> [--fuel N]"
+  "usage: dace-interp (sdfg <sdfg.json> | stree <stree.json>) <inputs.json> [--fuel N]"
 
 def errorExit (msg : String) : IO UInt32 := do
   IO.println ("{\"error\": " ++ jstr msg ++ "}")
   return 1
 
-def runSDFG (sdfgPath inputsPath : String) (opts : Options) : IO UInt32 := do
-  let g ← match ← SDFG.Json.readSDFG sdfgPath with
-    | .ok g => pure g
-    | .error e => return ← errorExit s!"cannot import SDFG: {e}"
+/-- Shared driver of both IR kinds: read the inputs, lay them out in memory
+over the containers of `ctx`, run the program with `run` and print the
+non-transient containers. -/
+def runProgram (ctx : Ctx) (inputsPath : String) (opts : Options)
+    (run : Valuation → Mem → Nat → Option (Res Mem)) : IO UInt32 := do
   let ins ← match parseInputs (← IO.FS.readFile inputsPath) with
     | .ok i => pure i
     | .error e => IO.eprintln s!"dace-interp: cannot read inputs: {e}"; return 2
   let ρ₀ : Valuation := fun x => (ins.symbols.find? (·.1 = x)).map (·.2)
-  let ctx : Ctx := { I := Interp.executable, g, pfx := "" }
   let m₀ ← match buildMem ctx ρ₀ ins with
     | .ok m => pure m
     | .error e => IO.eprintln s!"dace-interp: cannot build memory: {e}"; return 2
-  match SDFG.run Interp.executable g ρ₀ m₀ opts.fuel with
+  match run ρ₀ m₀ opts.fuel with
   | none => errorExit "out of fuel (or no outcome exists)"
   | some (.err e) => errorExit (toString e)
   | some (.ok m) =>
     match renderContainers ctx ρ₀ ins m with
     | .ok out => IO.println out; return 0
     | .error e => errorExit s!"cannot read back results: {e}"
+
+def runSDFG (sdfgPath inputsPath : String) (opts : Options) : IO UInt32 := do
+  match ← SDFG.Json.readSDFG sdfgPath with
+  | .error e => errorExit s!"cannot import SDFG: {e}"
+  | .ok g => runProgram { I := Interp.executable, g, pfx := "" } inputsPath opts (SDFG.run Interp.executable g)
+
+/-- The schedule tree runs in the context of its own descriptor repository
+(`TCtx.ofTree`), exactly as `STree.Exec` does. -/
+def runSTree (streePath inputsPath : String) (opts : Options) : IO UInt32 := do
+  match ← readSTree streePath with
+  | .error e => errorExit s!"cannot import schedule tree: {e}"
+  | .ok t => runProgram (TCtx.ofTree Interp.executable t).ctx inputsPath opts (STree.run Interp.executable t)
 
 end DaceInterp
 
@@ -291,6 +308,13 @@ def main (args : List String) : IO UInt32 := do
     match parseOptions rest with
     | .ok opts => runSDFG sdfgPath inputsPath opts
     | .error e => IO.eprintln s!"dace-interp: {e}\n{usage}"; return 2
+  | "stree" :: streePath :: inputsPath :: rest =>
+    match parseOptions rest with
+    | .ok opts => runSTree streePath inputsPath opts
+    | .error e => IO.eprintln s!"dace-interp: {e}\n{usage}"; return 2
+  | "sdfg" :: _ | "stree" :: _ =>
+    IO.eprintln s!"dace-interp: missing arguments\n{usage}"
+    return 2
   | kind :: _ =>
     IO.eprintln s!"dace-interp: unsupported IR kind '{kind}'\n{usage}"
     return 2

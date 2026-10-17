@@ -14,3 +14,9 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.execSDFG_sound
 #print axioms Dace.SDFG.run_sound
 #print axioms Dace.SDFG.run_ok_sound
+
+-- M4: soundness of the schedule tree interpreter with respect to the relational semantics.
+#print axioms Dace.STree.sound
+#print axioms Dace.STree.execList_sound
+#print axioms Dace.STree.run_sound
+#print axioms Dace.STree.run_ok_sound

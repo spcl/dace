@@ -25,6 +25,8 @@ import Dace.STree.Semantics.Basic
 import Dace.STree.Semantics.Leaf
 import Dace.STree.Semantics.Exec
 import Dace.STree.Semantics
+import Dace.STree.Interp
+import Dace.STree.Soundness
 
 /-!
 # DaCe formal semantics

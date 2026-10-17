@@ -9,7 +9,8 @@ representations:
   of stateful dataflow multigraphs.
 - `Dace/STree`: the same for schedule trees (`Syntax` with DaCe's
   `as_string` pretty-printer, `Json` importer for `.stree.json`, `WF`,
-  relational `Semantics`); `tests/ImportStreeCorpus.lean` imports the
+  relational `Semantics`, the executable `Interp` and its `Soundness`
+  proof); `tests/ImportStreeCorpus.lean` imports the
   corpus trees, checks them and compares the pretty-printer with DaCe.
 - `Dace/Equiv`: observational equivalence and the verified pair checker
   (`lake exe dace-equiv`).
@@ -89,8 +90,11 @@ indentation and a trailing newline. (As with `.sdfg.json`, the per-element
 `difftest.py --check --ir stree` runs `lake exe dace-interp stree
 <name>.stree.json <inputs.json>` and compares against the same
 `<name>.expected.json` (the schedule tree of an SDFG must compute the same
-outputs); `--ir sdfg` (the default) is unchanged. The Lean schedule-tree
-interpreter does not exist yet, so exit 2 → SKIP for now.
+outputs); `--ir sdfg` (the default) is unchanged. The schedule-tree
+interpreter (`Dace/STree/Interp.lean`, `STree.run`) mirrors the relational
+semantics function by function and is proven sound against it
+(`Dace/STree/Soundness.lean`, `STree.run_sound`); the containers are laid out
+over the tree's own descriptor repository (`TCtx.ofTree`).
 
 ## Conventions
 
