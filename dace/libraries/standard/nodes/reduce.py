@@ -13,7 +13,7 @@ import dace
 import dace.library
 import dace.serialize
 from dace import dtypes, subsets
-from dace.codegen.common import global_code_id
+from dace.codegen.common import global_code_id, sym2cpp
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.libraries.standard import reduction_planner as red_planner
@@ -803,12 +803,12 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                 state_id,
                 node_id,
             )
-            reduce_op = ", __reduce_" + idstr + "(), " + symstr(node.identity)
+            reduce_op = ", __reduce_" + idstr + "(), " + sym2cpp(node.identity)
         elif redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES:
             reduce_op = ""
         else:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-            reduce_op = (f", dace::_wcr_fixed<{credtype}, {output_type}>()") + ", " + symstr(node.identity)
+            reduce_op = (f", dace::_wcr_fixed<{credtype}, {output_type}>()") + ", " + sym2cpp(node.identity)
 
         # Obtain some SDFG-related information
         input_memlet = input_edge.data
@@ -1203,7 +1203,7 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
             count_expr=symstr(count),
             element_expr=f"__brin[__bri * ({symstr(stride)})]",
             redop=redop,
-            identity=f"static_cast<{ctype}>({symstr(identity)})",
+            identity=f"static_cast<{ctype}>({sym2cpp(identity)})",
             out_expr="__brout[0]",
         )
 

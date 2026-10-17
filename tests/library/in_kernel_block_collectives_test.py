@@ -137,6 +137,31 @@ def test_row_find_first_in_a_kernel_matches_numpy():
     assert idx.get().tolist() == [0, 257, 999, n]
 
 
+def test_a_complex_block_reduce_starts_from_a_cpp_identity():
+    """A complex row sum lowers to a block reduction whose accumulator starts at the identity spelled in C++:
+    Python's ``0j`` is a GNU ``_Complex int`` literal there, which HIP refuses to convert (vexx_k)."""
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    n = dace.symbol("n", dtype=dace.int64, positive=True)
+
+    @dace.program
+    def row_sums(a: dace.complex128[n, n], out: dace.complex128[n]):
+        for i in range(n):
+            s = 0j
+            for j in range(n):
+                s = s + a[i, j]
+            out[i] = s
+
+    sdfg = row_sums.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu", validate_all=False)
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, target="gpu")
+    code = "\n".join(c.clean_code for c in sdfg.generate_code())
+    assert "BlockReduce" in code or "block_reduce" in code.lower()
+    assert "(0j)" not in code
+
+
 if __name__ == "__main__":
     for build in (argmax_kernel, find_first_kernel):
         test_an_in_kernel_node_lowers_to_one_block_collective_by_default(build)
@@ -145,3 +170,4 @@ if __name__ == "__main__":
     test_a_node_in_thread_level_code_keeps_its_per_thread_lowering()
     test_row_argmax_in_a_kernel_matches_numpy_with_ties()
     test_row_find_first_in_a_kernel_matches_numpy()
+    test_a_complex_block_reduce_starts_from_a_cpp_identity()

@@ -474,7 +474,7 @@ def _chain_seed_expr(
     if init_edge is not None:
         return init_connector(chain)
     if node.identity is not None or node.op in (ScanOp.SUM, ScanOp.PRODUCT):
-        return f"static_cast<{ctype}>({node.identity if node.identity is not None else _OP_TO_IDENTITY_CPP[node.op]})"
+        return f"static_cast<{ctype}>({sym2cpp(node.identity) if node.identity is not None else _OP_TO_IDENTITY_CPP[node.op]})"
     if node.exclusive:
         raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
     return unseeded if unseeded is not None else f"{in_connector(chain)}[0]"
