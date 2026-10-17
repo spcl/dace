@@ -6,10 +6,13 @@ For every ``formal/tests/corpus/<base>[.variant].sdfg.json`` this script either
 * ``--record``  loads the SDFG from the JSON file, takes the inputs from the base
   program's argument factory in :mod:`corpus_programs`, compiles and runs the
   SDFG, and writes ``<name>.inputs.json`` and ``<name>.expected.json``; or
-* ``--check`` (alias ``--lean``) runs ``lake exe dace-interp sdfg <sdfg.json>
+* ``--check`` (alias ``--lean``) runs ``lake exe dace-interp <ir> <ir.json>
   <inputs.json>`` inside ``formal/``, parses its stdout as JSON and compares the
   resulting containers against ``<name>.expected.json`` with dtype-aware
-  tolerances.
+  tolerances.  ``--ir`` selects the intermediate representation: ``sdfg``
+  (default, uses ``<name>.sdfg.json``) or ``stree`` (uses ``<name>.stree.json``,
+  the schedule tree of the same SDFG).  Both must compute the same outputs, so
+  they are compared against the same ``<name>.expected.json``.
 
 When neither mode is given, the script records if any expected file is missing
 and checks otherwise.
@@ -243,7 +246,7 @@ def compare_containers(got: dict, expected: dict, tol_scale: float):
     return problems
 
 
-def check(corpus: str, only, tol_scale: float) -> int:
+def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
     if not have_lake():
         print("SKIP all: `lake` not found on PATH; cannot run the Lean interpreter.")
         return 0
@@ -254,14 +257,25 @@ def check(corpus: str, only, tol_scale: float) -> int:
         if not (os.path.exists(inputs_path) and os.path.exists(expected_path)):
             print(f"SKIP   {name}: no recorded inputs/expected (run --record first)")
             continue
+
+        # Select the IR file and the matching ``dace-interp`` subcommand. Both the SDFG and its schedule tree must
+        # compute the same outputs, so they are checked against the same ``<name>.expected.json``.
+        if ir == "stree":
+            ir_path = os.path.join(corpus, f"{name}.stree.json")
+            if not os.path.exists(ir_path):
+                print(f"SKIP   {name}: no schedule tree ({name}.stree.json); run dump_corpus.py first")
+                continue
+        else:
+            ir_path = sdfg_path
+
         proc = subprocess.run(
-            ["lake", "exe", "dace-interp", "sdfg", os.path.abspath(sdfg_path), os.path.abspath(inputs_path)],
+            ["lake", "exe", "dace-interp", ir, os.path.abspath(ir_path), os.path.abspath(inputs_path)],
             cwd=FORMAL_DIR,
             capture_output=True,
             text=True,
         )
         if proc.returncode == 2:
-            print(f"SKIP   {name}: dace-interp not implemented (exit 2)")
+            print(f"SKIP   {name}: dace-interp {ir} not implemented (exit 2)")
             continue
         if proc.returncode != 0:
             print(f"FAIL   {name}: dace-interp exit {proc.returncode}: {proc.stderr.strip()[:200]}")
@@ -304,6 +318,12 @@ def main() -> None:
     parser.add_argument("--only", nargs="*", default=None, help="subset of corpus names or program bases")
     parser.add_argument("--corpus", default=DEFAULT_CORPUS, help="corpus directory (default: formal/tests/corpus)")
     parser.add_argument("--tol-scale", type=float, default=1.0, help="multiply all rtol tolerances in --check")
+    parser.add_argument(
+        "--ir",
+        choices=["sdfg", "stree"],
+        default="sdfg",
+        help="intermediate representation to check: 'sdfg' (default) or 'stree' (schedule tree)",
+    )
     args = parser.parse_args()
 
     corpus = os.path.abspath(args.corpus)
@@ -322,7 +342,7 @@ def main() -> None:
         ]
         do_record = bool(missing)
 
-    rc = record(corpus, only) if do_record else check(corpus, only, args.tol_scale)
+    rc = record(corpus, only) if do_record else check(corpus, only, args.tol_scale, args.ir)
     sys.exit(rc)
 
 

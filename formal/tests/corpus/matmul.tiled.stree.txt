@@ -1,0 +1,3 @@
+  map tile_i, tile_j, tile_k in [0:M:2, 0:N:2, 0:K:3]:
+    map i, j, k in [tile_i:Min(M - 1, tile_i + 1) + 1, tile_j:Min(N - 1, tile_j + 1) + 1, tile_k:Min(K - 1, tile_k + 2) + 1]:
+      C[i, j] (CR: Sum) = tasklet(A[i, k], B[k, j])

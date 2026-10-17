@@ -1,0 +1,4 @@
+  map i in [0:N]:
+    A_index = copy A[i]
+    A_slice_times_2_0[0] = tasklet(A_index[0])
+    B[i] (CR: Sum) = tasklet(A_slice_times_2_0[0])

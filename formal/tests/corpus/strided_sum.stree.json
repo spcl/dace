@@ -1,0 +1,212 @@
+{
+  "arg_names": [
+    "A",
+    "out"
+  ],
+  "callback_mapping": {},
+  "children": [
+    {
+      "children": [
+        {
+          "in_memlets": {
+            "items": [
+              [
+                "a",
+                {
+                  "attributes": {
+                    "data": "A",
+                    "dst_subset": null,
+                    "guid": "29120761-cba3-4b4a-b395-513fb5ec6c67",
+                    "is_data_src": true,
+                    "num_accesses": "1",
+                    "src_subset": {
+                      "ranges": [
+                        {
+                          "end": "$i",
+                          "start": "$i",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "subset": {
+                      "ranges": [
+                        {
+                          "end": "$i",
+                          "start": "$i",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "volume": "1"
+                  },
+                  "type": "Memlet"
+                }
+              ]
+            ],
+            "kind": "dict"
+          },
+          "node": {
+            "attributes": {
+              "code": {
+                "language": "Python",
+                "string_data": "o = a"
+              },
+              "debuginfo": {
+                "end_column": 12,
+                "end_line": 56,
+                "file_index": 0,
+                "start_column": 8,
+                "start_line": 53,
+                "type": "DebugInfo"
+              },
+              "guid": "fbcc4341-c078-4d0a-b3e4-118942978450",
+              "in_connectors": {
+                "a": null
+              },
+              "label": "corpus_programs_53",
+              "out_connectors": {
+                "o": null
+              }
+            },
+            "label": "corpus_programs_53",
+            "type": "Tasklet"
+          },
+          "out_memlets": {
+            "items": [
+              [
+                "o",
+                {
+                  "attributes": {
+                    "data": "out",
+                    "dst_subset": {
+                      "ranges": [
+                        {
+                          "end": "0",
+                          "start": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "guid": "2f70aeaf-61ac-441a-ad82-5ea4e67a8736",
+                    "is_data_src": false,
+                    "num_accesses": "1",
+                    "src_subset": null,
+                    "subset": {
+                      "ranges": [
+                        {
+                          "end": "0",
+                          "start": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "volume": "1",
+                    "wcr": "(lambda x, y: (x + y))"
+                  },
+                  "type": "Memlet"
+                }
+              ]
+            ],
+            "kind": "dict"
+          },
+          "type": "TaskletNode"
+        }
+      ],
+      "node": {
+        "attributes": {
+          "debuginfo": {
+            "file_index": 0,
+            "start_column": 4,
+            "start_line": 52,
+            "type": "DebugInfo"
+          },
+          "label": "corpus_programs_strided_sum_52",
+          "params": [
+            "i"
+          ],
+          "range": {
+            "ranges": [
+              {
+                "end": "-1 + $N",
+                "start": "0",
+                "step": "2",
+                "tile": "1"
+              }
+            ],
+            "type": "Range"
+          }
+        },
+        "type": "Map"
+      },
+      "type": "MapScope"
+    }
+  ],
+  "constants": {},
+  "containers": {
+    "A": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0"
+        ],
+        "optional": false,
+        "shape": [
+          "$N"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "$N"
+      },
+      "type": "Array"
+    },
+    "out": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0"
+        ],
+        "optional": false,
+        "shape": [
+          "1"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "1"
+      },
+      "type": "Array"
+    }
+  },
+  "exit_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "global_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "init_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "name": "corpus_programs_strided_sum",
+  "symbols": {
+    "N": "int32"
+  },
+  "type": "ScheduleTreeRoot"
+}

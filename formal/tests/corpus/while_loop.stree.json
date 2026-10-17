@@ -1,0 +1,296 @@
+{
+  "arg_names": [
+    "A",
+    "out"
+  ],
+  "callback_mapping": {},
+  "children": [
+    {
+      "edge": {
+        "attributes": {
+          "assignments": {
+            "i": "0"
+          },
+          "guid": "23eb6abb-7b2f-4404-9938-6f66974845f6"
+        },
+        "type": "InterstateEdge"
+      },
+      "name": "i",
+      "type": "AssignNode",
+      "value": {
+        "language": "Python",
+        "string_data": "0"
+      }
+    },
+    {
+      "edge": {
+        "attributes": {
+          "assignments": {
+            "count": "0"
+          },
+          "guid": "ce5f13e9-60f9-434b-84b5-dd6c90f07117"
+        },
+        "type": "InterstateEdge"
+      },
+      "name": "count",
+      "type": "AssignNode",
+      "value": {
+        "language": "Python",
+        "string_data": "0"
+      }
+    },
+    {
+      "edge": {
+        "attributes": {
+          "assignments": {
+            "A_index": "(A[0])"
+          },
+          "guid": "71b8e7f3-df41-43c2-b941-f77ed038f779"
+        },
+        "type": "InterstateEdge"
+      },
+      "name": "A_index",
+      "type": "AssignNode",
+      "value": {
+        "language": "Python",
+        "string_data": "A[0]"
+      }
+    },
+    {
+      "edge": {
+        "attributes": {
+          "assignments": {
+            "__tmp2": "(((0 < N) and (A_index >= 0.0)))"
+          },
+          "guid": "02631d4d-80f2-4105-a102-a5adc04d6626"
+        },
+        "type": "InterstateEdge"
+      },
+      "name": "__tmp2",
+      "type": "AssignNode",
+      "value": {
+        "language": "Python",
+        "string_data": "((0 < N) and (A_index >= 0.0))"
+      }
+    },
+    {
+      "children": [
+        {
+          "edge": {
+            "attributes": {
+              "assignments": {
+                "count": "(count + 1)"
+              },
+              "guid": "d0dec175-5b9d-4be9-b8b4-7aa0a2cba9e3"
+            },
+            "type": "InterstateEdge"
+          },
+          "name": "count",
+          "type": "AssignNode",
+          "value": {
+            "language": "Python",
+            "string_data": "(count + 1)"
+          }
+        },
+        {
+          "edge": {
+            "attributes": {
+              "assignments": {
+                "i": "(i + 1)"
+              },
+              "guid": "b033bd5b-538a-48fc-b30a-7bcaa4cf2164"
+            },
+            "type": "InterstateEdge"
+          },
+          "name": "i",
+          "type": "AssignNode",
+          "value": {
+            "language": "Python",
+            "string_data": "(i + 1)"
+          }
+        },
+        {
+          "edge": {
+            "attributes": {
+              "assignments": {
+                "A_index": "(A[i])"
+              },
+              "guid": "7a4631fd-6155-4dc5-9222-053bc79b79af"
+            },
+            "type": "InterstateEdge"
+          },
+          "name": "A_index",
+          "type": "AssignNode",
+          "value": {
+            "language": "Python",
+            "string_data": "A[i]"
+          }
+        },
+        {
+          "edge": {
+            "attributes": {
+              "assignments": {
+                "__tmp2": "(((i < N) and (A_index >= 0.0)))"
+              },
+              "guid": "947462d5-6e43-4db9-a7e7-c268c89e77b7"
+            },
+            "type": "InterstateEdge"
+          },
+          "name": "__tmp2",
+          "type": "AssignNode",
+          "value": {
+            "language": "Python",
+            "string_data": "((i < N) and (A_index >= 0.0))"
+          }
+        }
+      ],
+      "loop": {
+        "init_statement": null,
+        "inverted": false,
+        "label": "while_96",
+        "loop_condition": {
+          "language": "Python",
+          "string_data": "__tmp2"
+        },
+        "loop_variable": "",
+        "unroll": false,
+        "unroll_factor": 0,
+        "update_before_condition": true,
+        "update_statement": null
+      },
+      "type": "WhileScope"
+    },
+    {
+      "in_memlets": {
+        "items": [],
+        "kind": "dict"
+      },
+      "node": {
+        "attributes": {
+          "code": {
+            "language": "Python",
+            "string_data": "__out = count"
+          },
+          "debuginfo": {
+            "file_index": 0,
+            "start_column": 8,
+            "start_line": 99,
+            "type": "DebugInfo"
+          },
+          "guid": "e62eb5f0-4e78-405e-a1dc-49105092bb42",
+          "label": "assign_99_4",
+          "out_connectors": {
+            "__out": null
+          }
+        },
+        "label": "assign_99_4",
+        "type": "Tasklet"
+      },
+      "out_memlets": {
+        "items": [
+          [
+            "__out",
+            {
+              "attributes": {
+                "data": "out",
+                "dst_subset": {
+                  "ranges": [
+                    {
+                      "end": "0",
+                      "start": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ],
+                  "type": "Range"
+                },
+                "guid": "ef0dc06d-3f70-4f7f-9a95-40f2c9b2bbbd",
+                "is_data_src": false,
+                "num_accesses": "1",
+                "src_subset": null,
+                "subset": {
+                  "ranges": [
+                    {
+                      "end": "0",
+                      "start": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ],
+                  "type": "Range"
+                },
+                "volume": "1"
+              },
+              "type": "Memlet"
+            }
+          ]
+        ],
+        "kind": "dict"
+      },
+      "type": "TaskletNode"
+    }
+  ],
+  "constants": {},
+  "containers": {
+    "A": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0"
+        ],
+        "optional": false,
+        "shape": [
+          "$N"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "$N"
+      },
+      "type": "Array"
+    },
+    "out": {
+      "attributes": {
+        "offset": [
+          "0"
+        ],
+        "optional": false,
+        "shape": [
+          "1"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "1"
+      },
+      "type": "Array"
+    }
+  },
+  "exit_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "global_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "init_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "name": "corpus_programs_while_loop",
+  "symbols": {
+    "A_index": "float64",
+    "N": "int32",
+    "__tmp2": "bool",
+    "count": "int64",
+    "i": "int64"
+  },
+  "type": "ScheduleTreeRoot"
+}

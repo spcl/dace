@@ -1,0 +1,1 @@
+  out[0:M] = library Reduce[axes=[1], wcr=lambda x, y: x + y, identity=0](A[0:M, 0:N])

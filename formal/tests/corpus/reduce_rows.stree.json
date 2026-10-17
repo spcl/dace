@@ -1,0 +1,185 @@
+{
+  "arg_names": [
+    "A",
+    "out"
+  ],
+  "callback_mapping": {},
+  "children": [
+    {
+      "in_memlets": {
+        "items": [
+          {
+            "attributes": {
+              "data": "A",
+              "dst_subset": null,
+              "guid": "ea01b84d-bab9-491e-ab0b-78e7a3b9a4cc",
+              "is_data_src": true,
+              "num_accesses": "$M*$N",
+              "src_subset": {
+                "ranges": [
+                  {
+                    "end": "-1 + $M",
+                    "start": "0",
+                    "step": "1",
+                    "tile": "1"
+                  },
+                  {
+                    "end": "-1 + $N",
+                    "start": "0",
+                    "step": "1",
+                    "tile": "1"
+                  }
+                ],
+                "type": "Range"
+              },
+              "subset": {
+                "ranges": [
+                  {
+                    "end": "-1 + $M",
+                    "start": "0",
+                    "step": "1",
+                    "tile": "1"
+                  },
+                  {
+                    "end": "-1 + $N",
+                    "start": "0",
+                    "step": "1",
+                    "tile": "1"
+                  }
+                ],
+                "type": "Range"
+              },
+              "volume": "$M*$N"
+            },
+            "type": "Memlet"
+          }
+        ],
+        "kind": "set"
+      },
+      "node": {
+        "attributes": {
+          "axes": [
+            1
+          ],
+          "debuginfo": {
+            "file_index": 0,
+            "start_column": 28,
+            "start_line": 61,
+            "type": "DebugInfo"
+          },
+          "guid": "2ab861f8-5aee-46e0-9cf1-b867762003ca",
+          "identity": "0",
+          "label": "Reduce",
+          "name": "Reduce",
+          "wcr": "(lambda x, y: (x + y))"
+        },
+        "classpath": "dace.libraries.standard.nodes.reduce.Reduce",
+        "label": "Reduce",
+        "type": "LibraryNode"
+      },
+      "out_memlets": {
+        "items": [
+          {
+            "attributes": {
+              "data": "out",
+              "dst_subset": {
+                "ranges": [
+                  {
+                    "end": "-1 + $M",
+                    "start": "0",
+                    "step": "1",
+                    "tile": "1"
+                  }
+                ],
+                "type": "Range"
+              },
+              "guid": "010138f3-11d9-4ae0-b121-f515ce00de08",
+              "is_data_src": false,
+              "num_accesses": "$M",
+              "src_subset": null,
+              "subset": {
+                "ranges": [
+                  {
+                    "end": "-1 + $M",
+                    "start": "0",
+                    "step": "1",
+                    "tile": "1"
+                  }
+                ],
+                "type": "Range"
+              },
+              "volume": "$M"
+            },
+            "type": "Memlet"
+          }
+        ],
+        "kind": "set"
+      },
+      "type": "LibraryCall"
+    }
+  ],
+  "constants": {},
+  "containers": {
+    "A": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0",
+          "0"
+        ],
+        "optional": false,
+        "shape": [
+          "$M",
+          "$N"
+        ],
+        "strides": [
+          "$N",
+          "1"
+        ],
+        "total_size": "$M*$N"
+      },
+      "type": "Array"
+    },
+    "out": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0"
+        ],
+        "optional": false,
+        "shape": [
+          "$M"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "$M"
+      },
+      "type": "Array"
+    }
+  },
+  "exit_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "global_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "init_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "name": "corpus_programs_reduce_rows",
+  "symbols": {
+    "M": "int32",
+    "N": "int32"
+  },
+  "type": "ScheduleTreeRoot"
+}

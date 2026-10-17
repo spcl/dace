@@ -1,0 +1,5 @@
+  for i = 0; (i < M); i = (i + 1):
+    scalar[0] = tasklet()
+    map __i0 in [0:N]:
+      x_slice[__i0] = tasklet(A[i, __i0], scalar[0])
+    A[i, 0:N] = copy x_slice[0:N]

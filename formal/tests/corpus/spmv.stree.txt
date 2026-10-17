@@ -1,0 +1,6 @@
+  map i in [0:H]:
+    __map_73_b0 = dscopy A_row[i]
+    __map_73_e1 = dscopy A_row[i + 1]
+    map j in [__map_73_b0:__map_73_e1]:
+      __xval_value[0] = tasklet(x(1) [0:W], A_col[j])
+      b[i] (CR: Sum) = tasklet(__xval_value[0], A_val[j])

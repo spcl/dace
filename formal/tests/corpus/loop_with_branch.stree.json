@@ -1,0 +1,874 @@
+{
+  "arg_names": [
+    "A",
+    "out"
+  ],
+  "callback_mapping": {},
+  "children": [
+    {
+      "in_memlets": {
+        "items": [],
+        "kind": "dict"
+      },
+      "node": {
+        "attributes": {
+          "code": {
+            "language": "Python",
+            "string_data": "__out = 0.0"
+          },
+          "debuginfo": {
+            "file_index": 0,
+            "start_column": 8,
+            "start_line": 83,
+            "type": "DebugInfo"
+          },
+          "guid": "fd0494ff-d3bb-4d9e-87fd-0d40bab41157",
+          "label": "assign_83_4",
+          "out_connectors": {
+            "__out": null
+          }
+        },
+        "label": "assign_83_4",
+        "type": "Tasklet"
+      },
+      "out_memlets": {
+        "items": [
+          [
+            "__out",
+            {
+              "attributes": {
+                "data": "s",
+                "dst_subset": {
+                  "ranges": [
+                    {
+                      "end": "0",
+                      "start": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ],
+                  "type": "Range"
+                },
+                "guid": "e14d3974-b723-4482-9a45-5d4b1edd030d",
+                "is_data_src": false,
+                "num_accesses": "1",
+                "src_subset": null,
+                "subset": {
+                  "ranges": [
+                    {
+                      "end": "0",
+                      "start": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ],
+                  "type": "Range"
+                },
+                "volume": "1"
+              },
+              "type": "Memlet"
+            }
+          ]
+        ],
+        "kind": "dict"
+      },
+      "type": "TaskletNode"
+    },
+    {
+      "children": [
+        {
+          "edge": {
+            "attributes": {
+              "assignments": {
+                "A_index": "(A[i])"
+              },
+              "guid": "55fd860f-b6a3-430c-85b9-fc48c8d46464"
+            },
+            "type": "InterstateEdge"
+          },
+          "name": "A_index",
+          "type": "AssignNode",
+          "value": {
+            "language": "Python",
+            "string_data": "A[i]"
+          }
+        },
+        {
+          "children": [
+            {
+              "memlet": {
+                "attributes": {
+                  "data": "A",
+                  "dst_subset": {
+                    "ranges": [
+                      {
+                        "end": "0",
+                        "start": "0",
+                        "step": "1",
+                        "tile": "1"
+                      }
+                    ],
+                    "type": "Range"
+                  },
+                  "guid": "7ee5ee32-6bc1-48c5-b072-bb1c3e76d040",
+                  "is_data_src": true,
+                  "num_accesses": "1",
+                  "other_subset": {
+                    "ranges": [
+                      {
+                        "end": "0",
+                        "start": "0",
+                        "step": "1",
+                        "tile": "1"
+                      }
+                    ],
+                    "type": "Range"
+                  },
+                  "src_subset": {
+                    "ranges": [
+                      {
+                        "end": "$i",
+                        "start": "$i",
+                        "step": "1",
+                        "tile": "1"
+                      }
+                    ],
+                    "type": "Range"
+                  },
+                  "subset": {
+                    "ranges": [
+                      {
+                        "end": "$i",
+                        "start": "$i",
+                        "step": "1",
+                        "tile": "1"
+                      }
+                    ],
+                    "type": "Range"
+                  },
+                  "volume": "1"
+                },
+                "type": "Memlet"
+              },
+              "target": "A_index_0",
+              "type": "CopyNode"
+            },
+            {
+              "in_memlets": {
+                "items": [
+                  [
+                    "__in1",
+                    {
+                      "attributes": {
+                        "data": "s",
+                        "dst_subset": null,
+                        "guid": "dfcf5fac-7f36-46e5-a6db-3d3c74d12810",
+                        "is_data_src": true,
+                        "num_accesses": "1",
+                        "src_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ],
+                  [
+                    "__in2",
+                    {
+                      "attributes": {
+                        "data": "A_index_0",
+                        "dst_subset": null,
+                        "guid": "c37ee950-9aa0-4f88-82a3-e0e74169e28f",
+                        "is_data_src": true,
+                        "num_accesses": "1",
+                        "src_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "node": {
+                "attributes": {
+                  "code": {
+                    "language": "Python",
+                    "string_data": "__out = (__in1 + __in2)"
+                  },
+                  "debuginfo": {
+                    "file_index": 0,
+                    "start_column": 22,
+                    "start_line": 86,
+                    "type": "DebugInfo"
+                  },
+                  "guid": "1fc71934-537d-447b-aab6-0afc511176c6",
+                  "in_connectors": {
+                    "__in1": null,
+                    "__in2": null
+                  },
+                  "label": "_Add_",
+                  "out_connectors": {
+                    "__out": null
+                  }
+                },
+                "label": "_Add_",
+                "type": "Tasklet"
+              },
+              "out_memlets": {
+                "items": [
+                  [
+                    "__out",
+                    {
+                      "attributes": {
+                        "data": "s_plus_A_slice",
+                        "dst_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "guid": "6420f8c7-2ce3-45d0-86d8-196c76bd647e",
+                        "is_data_src": false,
+                        "num_accesses": "1",
+                        "src_subset": null,
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "type": "TaskletNode"
+            },
+            {
+              "in_memlets": {
+                "items": [
+                  [
+                    "__inp",
+                    {
+                      "attributes": {
+                        "data": "s_plus_A_slice",
+                        "dst_subset": null,
+                        "guid": "8dcc76e4-9bc6-42a1-9d17-2f1f64afd6be",
+                        "is_data_src": true,
+                        "num_accesses": "1",
+                        "src_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "node": {
+                "attributes": {
+                  "code": {
+                    "language": "Python",
+                    "string_data": "__out = __inp"
+                  },
+                  "debuginfo": {
+                    "file_index": 0,
+                    "start_column": 22,
+                    "start_line": 86,
+                    "type": "DebugInfo"
+                  },
+                  "guid": "86e2a80f-69e9-4410-969c-833a25bc5830",
+                  "in_connectors": {
+                    "__inp": null
+                  },
+                  "label": "assign_86_12",
+                  "out_connectors": {
+                    "__out": null
+                  }
+                },
+                "label": "assign_86_12",
+                "type": "Tasklet"
+              },
+              "out_memlets": {
+                "items": [
+                  [
+                    "__out",
+                    {
+                      "attributes": {
+                        "data": "s",
+                        "dst_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "guid": "517ba451-e951-45ba-b69e-fb01dc9e8d44",
+                        "is_data_src": false,
+                        "num_accesses": "1",
+                        "src_subset": null,
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "type": "TaskletNode"
+            }
+          ],
+          "condition": {
+            "language": "Python",
+            "string_data": "(A_index > 0.0)"
+          },
+          "type": "IfScope"
+        },
+        {
+          "children": [
+            {
+              "in_memlets": {
+                "items": [
+                  [
+                    "__in1",
+                    {
+                      "attributes": {
+                        "data": "s",
+                        "dst_subset": null,
+                        "guid": "35d4e019-1049-4de5-bac4-a61a41e71554",
+                        "is_data_src": true,
+                        "num_accesses": "1",
+                        "src_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "node": {
+                "attributes": {
+                  "code": {
+                    "language": "Python",
+                    "string_data": "__out = (__in1 - 1.0)"
+                  },
+                  "debuginfo": {
+                    "file_index": 0,
+                    "start_column": 20,
+                    "start_line": 88,
+                    "type": "DebugInfo"
+                  },
+                  "guid": "aefb70c2-9870-42c4-bd15-4f37b9c2d5ca",
+                  "in_connectors": {
+                    "__in1": null
+                  },
+                  "label": "_Sub_",
+                  "out_connectors": {
+                    "__out": null
+                  }
+                },
+                "label": "_Sub_",
+                "type": "Tasklet"
+              },
+              "out_memlets": {
+                "items": [
+                  [
+                    "__out",
+                    {
+                      "attributes": {
+                        "data": "s_minus_1_0",
+                        "dst_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "guid": "7857d947-3658-48c7-9163-3b21d7cf1cac",
+                        "is_data_src": false,
+                        "num_accesses": "1",
+                        "src_subset": null,
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "type": "TaskletNode"
+            },
+            {
+              "in_memlets": {
+                "items": [
+                  [
+                    "__inp",
+                    {
+                      "attributes": {
+                        "data": "s_minus_1_0",
+                        "dst_subset": null,
+                        "guid": "ae132143-3a0a-41a6-92a3-9e66244eed5e",
+                        "is_data_src": true,
+                        "num_accesses": "1",
+                        "src_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "node": {
+                "attributes": {
+                  "code": {
+                    "language": "Python",
+                    "string_data": "__out = __inp"
+                  },
+                  "debuginfo": {
+                    "file_index": 0,
+                    "start_column": 20,
+                    "start_line": 88,
+                    "type": "DebugInfo"
+                  },
+                  "guid": "bc1ce646-fc83-434e-a82e-da96c7524ff3",
+                  "in_connectors": {
+                    "__inp": null
+                  },
+                  "label": "assign_88_12",
+                  "out_connectors": {
+                    "__out": null
+                  }
+                },
+                "label": "assign_88_12",
+                "type": "Tasklet"
+              },
+              "out_memlets": {
+                "items": [
+                  [
+                    "__out",
+                    {
+                      "attributes": {
+                        "data": "s",
+                        "dst_subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "guid": "caba142c-d6f8-4152-92a5-4b5ad8a0d3e9",
+                        "is_data_src": false,
+                        "num_accesses": "1",
+                        "src_subset": null,
+                        "subset": {
+                          "ranges": [
+                            {
+                              "end": "0",
+                              "start": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ],
+                          "type": "Range"
+                        },
+                        "volume": "1"
+                      },
+                      "type": "Memlet"
+                    }
+                  ]
+                ],
+                "kind": "dict"
+              },
+              "type": "TaskletNode"
+            }
+          ],
+          "type": "ElseScope"
+        },
+        {
+          "in_memlets": {
+            "items": [
+              [
+                "__inp",
+                {
+                  "attributes": {
+                    "data": "s",
+                    "dst_subset": null,
+                    "guid": "634c9f48-e4ce-41a4-a0a1-a1168f0dd418",
+                    "is_data_src": true,
+                    "num_accesses": "1",
+                    "src_subset": {
+                      "ranges": [
+                        {
+                          "end": "0",
+                          "start": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "subset": {
+                      "ranges": [
+                        {
+                          "end": "0",
+                          "start": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "volume": "1"
+                  },
+                  "type": "Memlet"
+                }
+              ]
+            ],
+            "kind": "dict"
+          },
+          "node": {
+            "attributes": {
+              "code": {
+                "language": "Python",
+                "string_data": "__out = __inp"
+              },
+              "debuginfo": {
+                "file_index": 0,
+                "start_column": 12,
+                "start_line": 89,
+                "type": "DebugInfo"
+              },
+              "guid": "45d3d887-9ab3-4259-b72a-f6edc0d0ad13",
+              "in_connectors": {
+                "__inp": null
+              },
+              "label": "assign_89_8",
+              "out_connectors": {
+                "__out": null
+              }
+            },
+            "label": "assign_89_8",
+            "type": "Tasklet"
+          },
+          "out_memlets": {
+            "items": [
+              [
+                "__out",
+                {
+                  "attributes": {
+                    "data": "out",
+                    "dst_subset": {
+                      "ranges": [
+                        {
+                          "end": "$i",
+                          "start": "$i",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "guid": "f04eac2c-7eae-4ecc-929b-879dcca7f219",
+                    "is_data_src": false,
+                    "num_accesses": "1",
+                    "src_subset": null,
+                    "subset": {
+                      "ranges": [
+                        {
+                          "end": "$i",
+                          "start": "$i",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ],
+                      "type": "Range"
+                    },
+                    "volume": "1"
+                  },
+                  "type": "Memlet"
+                }
+              ]
+            ],
+            "kind": "dict"
+          },
+          "type": "TaskletNode"
+        }
+      ],
+      "loop": {
+        "init_statement": {
+          "language": "Python",
+          "string_data": "i = 0"
+        },
+        "inverted": false,
+        "label": "for_84",
+        "loop_condition": {
+          "language": "Python",
+          "string_data": "(i < N)"
+        },
+        "loop_variable": "i",
+        "unroll": false,
+        "unroll_factor": 0,
+        "update_before_condition": true,
+        "update_statement": {
+          "language": "Python",
+          "string_data": "i = (i + 1)"
+        }
+      },
+      "type": "ForScope"
+    }
+  ],
+  "constants": {},
+  "containers": {
+    "A": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0"
+        ],
+        "shape": [
+          "$N"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "$N"
+      },
+      "type": "Array"
+    },
+    "A_index_0": {
+      "attributes": {
+        "dtype": "float64",
+        "shape": [
+          "1"
+        ],
+        "transient": true
+      },
+      "type": "Scalar"
+    },
+    "out": {
+      "attributes": {
+        "dtype": "float64",
+        "offset": [
+          "0"
+        ],
+        "shape": [
+          "$N"
+        ],
+        "strides": [
+          "1"
+        ],
+        "total_size": "$N"
+      },
+      "type": "Array"
+    },
+    "s": {
+      "attributes": {
+        "dtype": "float64",
+        "shape": [
+          "1"
+        ],
+        "transient": true
+      },
+      "type": "Scalar"
+    },
+    "s_minus_1_0": {
+      "attributes": {
+        "dtype": "float64",
+        "shape": [
+          "1"
+        ],
+        "transient": true
+      },
+      "type": "Scalar"
+    },
+    "s_plus_A_slice": {
+      "attributes": {
+        "dtype": "float64",
+        "shape": [
+          "1"
+        ],
+        "transient": true
+      },
+      "type": "Scalar"
+    }
+  },
+  "exit_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "global_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "init_code": {
+    "frame": {
+      "language": "CPP",
+      "string_data": ""
+    }
+  },
+  "name": "corpus_programs_loop_with_branch",
+  "symbols": {
+    "A_index": "float64",
+    "N": "int32",
+    "i": "int32"
+  },
+  "type": "ScheduleTreeRoot"
+}

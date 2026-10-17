@@ -1,0 +1,2 @@
+  map i, j, k in [0:M, 0:N, 0:K]:
+    C[i, j] (CR: Sum) = tasklet(A[i, k], B[k, j])

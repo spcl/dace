@@ -1,0 +1,4 @@
+  map _o0 in [0:M]:
+    out[_o0] = tasklet()
+  map _o0, _i0 in [0:M, 0:N]:
+    out[_o0] (CR: Sum) = tasklet(A[_o0, _i0])

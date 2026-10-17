@@ -63,6 +63,32 @@ descriptors use `shape: []` with a one-element `data`; dtype strings are NumPy
 names. `symbols` is the SDFG's free symbols plus explicit symbol args.
 `expected.json` has the same shape but only `program`/`sdfg`/`containers`.
 
+## Schedule tree JSON
+
+Alongside each `<name>.sdfg.json`, `scripts/dump_corpus.py` writes the schedule
+tree of the same SDFG as `<name>.stree.json` (machine-readable) and
+`<name>.stree.txt` (`as_string()`, for human review and Lean pretty-printer
+checks). The JSON is produced by `dace.sdfg.analysis.schedule_tree.serialize`
+(`to_json`/`from_json`/`save`/`load`).
+
+Every node is `{"type": "<ClassName>", …fields…}`; scopes carry a `"children"`
+list. Dataclass fields are serialized by name, and embedded DaCe objects
+(memlets, data descriptors, `Map`/`Consume`/`Tasklet`/`LibraryNode`, `CodeBlock`,
+loop metadata, symbolic expressions and dtypes) use the same encodings as
+`.sdfg` files, so the Lean importer can reuse its parsers. The root
+(`ScheduleTreeRoot`) additionally carries `name`, `containers` (`{name:
+descriptor}`), `symbols` (`{name: dtype}`), `constants`, `arg_names`,
+`callback_mapping` and `global`/`init`/`exit_code`. Parent pointers are not
+stored; they are restored on load. Files are written with sorted keys, two-space
+indentation and a trailing newline. (As with `.sdfg.json`, the per-element
+`guid`s are random, so regenerating the corpus is not byte-reproducible.)
+
+`difftest.py --check --ir stree` runs `lake exe dace-interp stree
+<name>.stree.json <inputs.json>` and compares against the same
+`<name>.expected.json` (the schedule tree of an SDFG must compute the same
+outputs); `--ir sdfg` (the default) is unchanged. The Lean schedule-tree
+interpreter does not exist yet, so exit 2 → SKIP for now.
+
 ## Conventions
 
 - Only `Dace/Prelude.lean` imports Mathlib.

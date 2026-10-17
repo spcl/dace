@@ -1,0 +1,5 @@
+  map __i0 in [0:N]:
+    a_times_x[__i0] = tasklet(a[0], x[__i0])
+  map __i0 in [0:N]:
+    y_slice[__i0] = tasklet(a_times_x[__i0], y[__i0])
+  y = copy y_slice[0:N]

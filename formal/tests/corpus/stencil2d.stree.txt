@@ -1,0 +1,2 @@
+  map i, j in [1:H - 1, 1:W - 1]:
+    B[i, j] = tasklet(A[i, j], A[i - 1, j], A[i + 1, j], A[i, j - 1], A[i, j + 1])
