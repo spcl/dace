@@ -3,6 +3,8 @@
 
 import os
 import pathlib
+import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -282,6 +284,34 @@ def test_the_prompt_separates_checked_from_unchecked_environments(monkeypatch):
     assert "includes: unchecked.h" in unchecked
 
 
+#: Prints the environment listing, then compiles a program and prints it again.
+LISTING_SCRIPT = """
+import dace
+from dace.libraries.ai import context
+
+def listing():
+    installed, unchecked = context.collect_available_environments(False)
+    return [env.path for env in installed + unchecked]
+
+before = listing()
+sdfg = dace.SDFG("ai_env_listing_probe")
+sdfg.add_array("A", [1], dace.float64)
+state = sdfg.add_state()
+tasklet = state.add_tasklet("one", {}, {"out"}, "out = 1")
+state.add_edge(tasklet, "out", state.add_write("A"), None, dace.Memlet("A[0]"))
+sdfg.compile()
+import dace.libraries.fft
+print(before == listing())
+"""
+
+
+def test_the_environment_listing_does_not_depend_on_earlier_imports():
+    # In a fresh interpreter: code generation and library imports register environments on first
+    # use, and the listing (part of the answer cache key) must not change when they do
+    result = subprocess.run([sys.executable, "-c", LISTING_SCRIPT], capture_output=True, text=True, check=True)
+    assert result.stdout.strip().splitlines()[-1] == "True"
+
+
 if __name__ == "__main__":
     with offline():
         test_render_produces_every_required_field()
@@ -297,3 +327,4 @@ if __name__ == "__main__":
         test_an_existing_environment_can_be_named_instead_of_described(pathlib.Path(tempfile.mkdtemp()))
         test_an_unknown_environment_reference_is_reported()
         test_reused_environments_reach_the_tasklet(pathlib.Path(tempfile.mkdtemp()))
+        test_the_environment_listing_does_not_depend_on_earlier_imports()

@@ -11,6 +11,14 @@ import platform
 from dataclasses import dataclass, field
 from typing import Any
 
+# The next five imports register the environments that DaCe otherwise registers on first use. The
+# environment listing, and so the answer cache key, must not depend on what the program imported
+# or compiled before.
+import dace.codegen.instrumentation  # noqa: F401
+import dace.libraries.fft  # noqa: F401
+import dace.libraries.mpi  # noqa: F401
+import dace.libraries.pblas  # noqa: F401
+import dace.libraries.sparse  # noqa: F401
 import dace.library
 from dace import data as dt
 from dace import dtypes
