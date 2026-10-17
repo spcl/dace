@@ -3336,11 +3336,12 @@ def gpu_runtime_code(
     pool_header = ""
     if has_pool:
         poolcfg = int(Config.get("compiler", "cuda", "mempool_release_threshold"))
+        # Reserved names: the init function's parameters are the program's symbols (cp2k's ``threshold``)
         pool_header = """
-    {backend}MemPool_t mempool;
-    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
-    uint64_t threshold = {poolcfg_threshold};
-    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
+    {backend}MemPool_t __dace_mempool;
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&__dace_mempool, __dace_device));
+    uint64_t __dace_mempool_release_threshold = {poolcfg_threshold};
+    DACE_GPU_CHECK({backend}MemPoolSetAttribute(__dace_mempool, {backend}MemPoolAttrReleaseThreshold, &__dace_mempool_release_threshold));
 """.format(backend=backend, poolcfg_threshold=("UINT64_MAX" if poolcfg == -1 else poolcfg))
 
     return """

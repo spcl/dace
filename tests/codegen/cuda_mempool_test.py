@@ -278,6 +278,34 @@ def test_pooled_array_is_freed_once(lifetime):
         assert frees[0] > code.index("__dace_exit_"), "a persistent pooled array is released before exit"
 
 
+@pytest.mark.gpu
+def test_memory_pool_setup_leaves_the_program_names_free():
+    """The pool setup in the GPU init function shares its scope with the program's symbols: a parameter named
+    ``threshold`` or ``mempool`` must not be redeclared there (cp2k_density_matrix_trs4's ``threshold``)."""
+    sdfg = dace.SDFG("mempool_names")
+    sdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient("tmp", [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.arrays["tmp"].pool = True
+    sdfg.add_symbol("threshold", dace.int64)
+    sdfg.add_symbol("mempool", dace.int64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "fill",
+        {"i": "0:20"},
+        {},
+        "t = threshold + mempool",
+        {"t": dace.Memlet("tmp[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    tmp = next(n for n in state.data_nodes() if n.data == "tmp")
+    state.add_nedge(tmp, state.add_write("A"), dace.Memlet("A[0:20]"))
+
+    gpu_code = "\n".join(c.clean_code for c in sdfg.generate_code())
+    assert "MemPoolSetAttribute" in gpu_code
+    assert not re.search(r"\b(?:uint64_t|\w+MemPool_t)\s+(?:threshold|mempool)\b", gpu_code)
+
+
 if __name__ == "__main__":
     for lifetime in [dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent]:
         test_pooled_array_is_freed_once(lifetime)
@@ -287,3 +315,4 @@ if __name__ == "__main__":
     test_memory_pool_multistate()
     for cnd in [0, 1]:
         test_memory_pool_if_states(cnd)
+    test_memory_pool_setup_leaves_the_program_names_free()
