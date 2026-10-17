@@ -29,6 +29,7 @@ from dace.codegen.cpf import render as render_sdfg
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp, in_connector, out_connector
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    declare_nonnegative_symbols,
     insert_assumption_guards,
     set_symbol_nonnegative_assumptions,
 )
@@ -884,6 +885,8 @@ def assumption_guard_sdfg(name: str) -> dace.SDFG:
     tasklet = state.add_tasklet("t", {"x"}, {"y"}, "y = x * 2.0")
     state.add_memlet_path(state.add_read("a"), entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(tasklet, exit_node, state.add_write("out"), src_conn="y", memlet=dace.Memlet("out[i]"))
+    # Canonicalization assumes only what the caller declares nonnegative
+    declare_nonnegative_symbols(sdfg, {"N"})
     set_symbol_nonnegative_assumptions(sdfg)
     insert_assumption_guards(sdfg)
     return sdfg

@@ -32,7 +32,7 @@ from dace.codegen.targets.experimental_cpu import map_hint
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     CONFLICT_MEANING,
     MAP_DIMENSIONS,
@@ -628,9 +628,10 @@ def test_a_guarded_loop_names_its_guard_on_both_arms():
     assert any(re.match(r"sequential -- fallback arm, runs when not \(.*inc.*\)$", line) for line in loops), loops
 
 
-def test_a_map_resting_on_an_entry_trap_names_the_assumption():
-    """``a[i] = a[i + K] + b[i]`` is parallel after the snapshot only for ``K >= 0``, which an entry trap checks. The
-    map's label names that assumption, so a reader sees what the independence rests on."""
+def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
+    """``a[i] = a[i + K] + b[i]`` is parallel after the snapshot only for ``K >= 0``. Nothing declares ``K``
+    nonnegative, so canonicalization versions the loop on the sign instead of assuming it: the parallel map runs
+    under a ``0 <= K`` branch, and the other signs keep a version of their own."""
 
     @dace.program
     def shift_sym(a: dace.float64[N], b: dace.float64[N]):
@@ -642,12 +643,15 @@ def test_a_map_resting_on_an_entry_trap_names_the_assumption():
     maps = [
         n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
     ]
-    assert any(
-        line.startswith("parallel -- the iterations are independent; assumes ")
-        and "K >= 0" in line
-        and line.endswith(", trapped at entry")
-        for line in maps
-    ), maps
+    assert "parallel -- the iterations are independent" in maps, maps
+    branches = [
+        cond.as_string
+        for region in sdfg.all_control_flow_regions()
+        if isinstance(region, ConditionalBlock)
+        for cond, _ in region.branches
+        if cond is not None
+    ]
+    assert "(0 <= K)" in branches, branches
 
 
 def test_a_map_resting_on_no_trap_assumes_nothing():
