@@ -449,6 +449,43 @@ def in_program() -> bool:
     return False
 
 
+def ai(description: str, *inputs, **kwargs):
+    """
+    Adds an :class:`~dace.libraries.ai.nodes.ai_node.AINode`, a library node described in natural
+    language, whose tasklet a language model writes when the program is compiled::
+
+        @dace.program
+        def matmul(A: dace.float32[N, N], B: dace.float32[N, N]):
+            return dace.ai('Write _out[i][j] = sum over k of _a[i][k] * _b[k][j] '
+                           'using AVX2 FMA intrinsics.', a=A, b=B)
+
+    The connectors are named after the call: ``a=A`` becomes ``_a``, positional inputs become
+    ``_in0``, ``_in1``, ..., and the output is ``_out`` (``_out0``, ``_out1``, ... for several).
+    Program symbols such as ``N`` are in scope by name. The model is configured by the ``ai``
+    configuration entries; see also :func:`dace.libraries.ai.refine`.
+
+    :param description: What the node computes, including any required technique.
+    :param inputs: Data containers to read, connected as ``_in0``, ``_in1``, ...
+    :param out: Data container to write to, or a sequence of them. If not given, one is allocated
+                and returned. To write into part of a container, assign the result instead
+                (``C[0:8, 0:8] = dace.ai(...)``).
+    :param shape: Shape of the allocated output. Defaults to the shape of the first input.
+    :param dtype: Data type of the allocated output. Defaults to the type of the first input.
+    :param storage: Storage type of the allocated output. Defaults to that of the first input.
+    :param name: Name of the node, which must be unique in the program.
+    :param schedule: Schedule of the node, which determines its default device mapping.
+    :param kwargs: Any other keyword argument is a data container to read, connected under a
+                   connector named after the keyword (``a=A`` is read as ``_a``).
+    :return: The container written to, or a tuple of them if ``out`` named several.
+    :note: Only available in a ``@dace.program``. In the SDFG API, use
+           :class:`~dace.libraries.ai.nodes.ai_node.AINode`.
+    """
+    raise NotImplementedError(
+        "dace.ai can only be called inside a DaCe program. To describe a node in an "
+        "SDFG built with the SDFG API, add a dace.libraries.ai.AINode to a state."
+    )
+
+
 class named:
     """
     Creates a `NamedRegion` with the given label.

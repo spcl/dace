@@ -1640,6 +1640,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
+    #: ``generate_node`` dispatches on the exact class name; an AI-generated tasklet is generated as a tasklet
+    _generate_AITasklet = _generate_Tasklet
+
     def unparse_tasklet(
         self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth, toplevel_schedule
     ):
