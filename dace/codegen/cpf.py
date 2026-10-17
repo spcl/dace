@@ -443,6 +443,8 @@ VENDOR_UNTYPED_FLOATS: frozenset = frozenset(dtypes.FLOAT_TYPES) - {dtypes.float
 
 def narrow_float_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether ``node`` reads or writes a floating type no vendor library takes (:data:`VENDOR_UNTYPED_FLOATS`)."""
+    if state.sdfg is None:  # A detached state carries no operands
+        return False
     arrays = state.sdfg.arrays
     return any(
         arrays[edge.data.data].dtype in VENDOR_UNTYPED_FLOATS
