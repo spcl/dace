@@ -3567,9 +3567,7 @@ def record_pool_releases(
         # Arrays no state reachable from this one accesses are released in this one. A state in a loop reaches
         # itself, so an array its body uses is not released inside the loop, where the next iteration needs it.
         last_state_arrays = OrderedSet(
-            s
-            for s in access_sets
-            if s in pooled and state in access_sets[s] and not access_sets[s] & reachable[state]
+            s for s in access_sets if s in pooled and state in access_sets[s] and not access_sets[s] & reachable[state]
         )
         for aname in last_state_arrays:
             pool_release[(sdfg, aname)] = release_point(state, aname, tag)
