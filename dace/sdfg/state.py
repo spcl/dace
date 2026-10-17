@@ -8,6 +8,8 @@ import copy
 import inspect
 import itertools
 import re
+import sys
+import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from typing import (
@@ -48,6 +50,7 @@ from dace.sdfg.graph import (
     OrderedDiGraph,
     OrderedMultiDiConnectorGraph,
     SubgraphView,
+    frozen_node_ids,
     generate_element_id,
 )
 from dace.sdfg.replace import replace_in_codeblock
@@ -78,10 +81,24 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
-        return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+        lineno, filename = caller_position(sys._getframe(2))
+        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
 
     return None
+
+
+#: ``(code, instruction offset) -> (line, file)`` per resolved call site; ``getframeinfo`` stats the file each call.
+CALLER_POSITIONS: dict[tuple[types.CodeType, int], tuple[int, str]] = {}
+
+
+def caller_position(frame: types.FrameType) -> tuple[int, str]:
+    """``(lineno, filename)`` as ``inspect.getframeinfo(frame, context=0)`` reports them, once per call site."""
+    key = (frame.f_code, frame.f_lasti)
+    position = CALLER_POSITIONS.get(key)
+    if position is None:
+        info = inspect.getframeinfo(frame, context=0)
+        position = CALLER_POSITIONS[key] = (info.lineno, info.filename)
+    return position
 
 
 def _make_iterators(ndrange):
@@ -1400,6 +1417,9 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @label.setter
     def label(self, label: str):
         self._label = label
+        # An in-place rename reserves the new name in the parent region too
+        if self._parent_graph is not None:
+            self._parent_graph._labels.add(label)
 
     @property
     def name(self) -> str:
@@ -2772,26 +2792,30 @@ class SymbolResolver:
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
     around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
-    data descriptors, is genuinely per SDFG and is reused as such. A resolver is only valid while
+    data descriptors, is genuinely per SDFG and is reused as such. Only the state asked about last is
+    kept per SDFG: one entry per state costs gigabytes on large SDFGs. A resolver is only valid while
     the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
     """
 
     def __init__(self) -> None:
         self._per_sdfg: dict[SDFG, dict[str, dtypes.typeclass]] = {}
-        self._per_state: dict[SDFGState, dict[str, dtypes.typeclass]] = {}
+        self._per_state: dict[SDFG, tuple[SDFGState, dict[str, dtypes.typeclass]]] = {}
         self._region_updates: dict[
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
-        state_symbols = self._per_state.get(state)
-        if state_symbols is None:
+        last = self._per_state.get(state.sdfg)
+        if last is not None and last[0] is state:
+            state_symbols = last[1]
+        else:
             sdfg_symbols = self._per_sdfg.get(state.sdfg)
             if sdfg_symbols is None:
                 sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
-            state_symbols = self._per_state[state] = state.symbols_defined_at_state(
+            state_symbols = state.symbols_defined_at_state(
                 sdfg_symbols=sdfg_symbols, region_updates=self._region_updates
             )
+            self._per_state[state.sdfg] = (state, state_symbols)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
     def forget(self, sdfg: "SDFG") -> None:
@@ -2801,7 +2825,7 @@ class SymbolResolver:
         """
         if self._per_sdfg.pop(sdfg, None) is None:
             return
-        self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}
+        self._per_state.pop(sdfg, None)
 
 
 @make_properties
@@ -2994,9 +3018,12 @@ class AbstractControlFlowRegion(
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
-        for g in cfg_list:
-            if g not in sub_cfg_list:
-                sub_cfg_list.append(g)
+        if cfg_list is not sub_cfg_list:
+            present = {id(g) for g in sub_cfg_list}
+            for g in cfg_list:
+                if id(g) not in present:
+                    present.add(id(g))
+                    sub_cfg_list.append(g)
         ptarget = None
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
             ptarget = self.parent_sdfg
@@ -3093,7 +3120,6 @@ class AbstractControlFlowRegion(
     def add_return(self, label=None) -> ReturnBlock:
         label = self._ensure_unique_block_name(label)
         block = ReturnBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
@@ -3115,9 +3141,7 @@ class AbstractControlFlowRegion(
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
-        # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
-        # count guard rots.
-        self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
+        # ``add_node`` and the ``label`` setter record every name; a removed block keeps its name reserved
         return dt.find_new_name(proposed or "block", self._labels)
 
     def add_node(
@@ -3146,6 +3170,7 @@ class AbstractControlFlowRegion(
         if ensure_unique_name:
             node.label = self._ensure_unique_block_name(node.label)
 
+        self._labels.add(node.label)
         super().add_node(node)
         self._cached_start_block = None
         node.parent_graph = self
@@ -3176,10 +3201,12 @@ class AbstractControlFlowRegion(
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # Deserialization can leave it out of range on entry
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         super().remove_node(node)
         self._cached_start_block = None
         if start_block is node:
@@ -3190,7 +3217,6 @@ class AbstractControlFlowRegion(
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool | None = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
-        self._labels.add(label)
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn("is_start_state is deprecated, use is_start_block instead", DeprecationWarning)
@@ -3262,7 +3288,8 @@ class AbstractControlFlowRegion(
     ) -> Iterator["AbstractControlFlowRegion"]:
         """Iterate over this and all nested control flow regions."""
         if parent_first:
-            yield self
+            yield from self.control_flow_regions_preorder(recursive, load_ext)
+            return
         for block in self.nodes():
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
@@ -3282,6 +3309,30 @@ class AbstractControlFlowRegion(
                 )
         if not parent_first:
             yield self
+
+    def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator["AbstractControlFlowRegion"]:
+        """``all_control_flow_regions(parent_first=True)`` with an explicit stack instead of one generator per level."""
+        yield self
+        # (remaining items, their state, or None for a region's blocks)
+        stack: list[tuple[Iterator[Any], SDFGState | None]] = [(iter(self.nodes()), None)]
+        while stack:
+            items, owner = stack[-1]
+            item = next(items, None)
+            if item is None:
+                stack.pop()
+            elif owner is not None:
+                if isinstance(item, nd.NestedSDFG):
+                    if not item.sdfg and load_ext:
+                        item.load_external(owner)
+                    if item.sdfg:
+                        yield item.sdfg
+                        stack.append((iter(item.sdfg.nodes()), None))
+            elif isinstance(item, SDFGState):
+                if recursive:
+                    stack.append((iter(item.nodes()), item))
+            elif isinstance(item, AbstractControlFlowRegion):
+                yield item
+                stack.append((iter(item.nodes()), None))
 
     def all_sdfgs_recursive(self, load_ext=False) -> Iterator["SDFG"]:
         """Iterate over this and all nested SDFGs."""
@@ -3386,7 +3437,8 @@ class AbstractControlFlowRegion(
         return free_syms, defined_syms, used_before_assignment
 
     def to_json(self, parent=None):
-        graph_json = OrderedDiGraph.to_json(self)
+        with frozen_node_ids():
+            graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
 
@@ -4140,14 +4192,12 @@ class LoopRegion(ControlFlowRegion):
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
         block = BreakBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
     def add_continue(self, label=None) -> ContinueBlock:
         label = self._ensure_unique_block_name(label)
         block = ContinueBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
@@ -4209,6 +4259,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         if condition is not None and not isinstance(condition, CodeBlock):
             condition = CodeBlock(condition)
         self._branches.append([condition, branch])
+        self._labels.add(branch.label)
         branch.parent_graph = self
         branch.sdfg = self.sdfg
         # A branch is reached only through this list, never through ``nodes()``, so the generic

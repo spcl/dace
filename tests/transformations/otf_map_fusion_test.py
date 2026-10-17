@@ -713,6 +713,8 @@ def hdiff(
 
 def test_hdiff():
     sdfg = hdiff.to_sdfg()
+    # np.where is a Merge library node, a map only once expanded
+    sdfg.expand_library_nodes()
     sdfg.simplify()
     assert count_maps(sdfg) == 20
 

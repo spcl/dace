@@ -1,9 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import dtypes, library
+from dace import data, dtypes, library
 from dace.libraries.mpi import environments, utils
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    count_expression,
+    expanded_input_connectors,
+    input_descriptor_name,
+    resolve_comm,
+)
 from dace.sdfg import nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.utils import prod as _prod
 
@@ -23,14 +28,25 @@ class ExpandGatherMPI(ExpandTransformation):
         if root.dtype.base_type != dtypes.int32:
             raise ValueError("Gather root must be an integer!")
 
+        comm = resolve_comm(node, parent_state)
+
+        # A scalar send buffer is a value in the tasklet, not a pointer; take its address.
+        in_ref = "&" if isinstance(inbuffer, data.Scalar) else ""
+
         code = f"""
             int _commsize;
-            MPI_Comm_size(MPI_COMM_WORLD, &_commsize);
-            MPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
+            MPI_Comm_size({comm}, &_commsize);
+            MPI_Gather({in_ref}_inbuffer, {in_count_str}, {in_mpi_dtype_str},
                        _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str},
-                       _root, MPI_COMM_WORLD);
+                       _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -43,7 +59,7 @@ class Gather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inbuffer", "_root"], outputs=["_outbuffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -66,14 +82,12 @@ class Gather(MPINode):
 
         in_count_str = "XXX"
         out_count_str = "XXX"
-        for _, src_conn, _, _, data in state.out_edges(self):
+        for _, src_conn, _, _, memlet in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
-        for _, _, _, dst_conn, data in state.in_edges(self):
+                out_count_str = count_expression(memlet.subset.num_elements_exact())
+        for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(memlet.subset.num_elements_exact())
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root
 
@@ -101,16 +115,16 @@ class ExpandBlockGatherMPI(ExpandTransformation):
         if reduce_grid:
             code = f"""
                 if (__state->{gather_grid}_valid) {{
-                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, _reduce_grid);
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
+                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, _reduce_grid);
+                    MPI_Gatherv(_inp_buffer, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }} else if (__state->{reduce_grid}_valid) {{
-                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, _reduce_grid);
+                    MPI_Reduce(_inp_buffer, nullptr, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, _reduce_grid);
                 }}
             """
         else:
             code = f"""
                 if (__state->{gather_grid}_valid) {{
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
+                    MPI_Gatherv(_inp_buffer, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }}
             """
 
@@ -133,7 +147,7 @@ class BlockGather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inp_buffer"], outputs=["_out_buffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """

@@ -6,8 +6,9 @@ from dace import dtypes
 from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import (
     MPINode,
+    count_expression,
     expanded_input_connectors,
-    input_descriptor_name,
+    resolve_comm,
     validate_integer_descriptor,
 )
 from dace.transformation.transformation import ExpandTransformation
@@ -25,10 +26,7 @@ class ExpandIsendMPI(ExpandTransformation):
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
 
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, "_grid")
-        if grid:
-            comm = "_grid"
+        comm = resolve_comm(node, parent_state)
 
         code = ""
 
@@ -84,7 +82,7 @@ class Isend(MPINode):
     )
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)
+        super().__init__(name, *args, inputs=["_buffer", "_dest", "_tag"], outputs=["_request"], **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -109,8 +107,7 @@ class Isend(MPINode):
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_buffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset.num_elements_exact())
                 # compute buffer offset
                 minelem = data.subset.min_element()
                 dims_data = sdfg.arrays[data.data].strides

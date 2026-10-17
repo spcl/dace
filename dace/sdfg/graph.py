@@ -5,6 +5,8 @@ import itertools
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Generic, TypeVar
 
 import networkx as nx
@@ -25,6 +27,21 @@ class EdgeNotFoundError(Exception):
 T = TypeVar("T")
 NodeT = TypeVar("NodeT")
 EdgeT = TypeVar("EdgeT")
+
+# ``id(graph) -> (graph, {id(node): index})`` while frozen; the graph is kept to pin its id
+FROZEN_NODE_IDS: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar("FROZEN_NODE_IDS", default=None)
+
+
+@contextmanager
+def frozen_node_ids() -> Iterator[None]:
+    """Answers ``OrderedDiGraph.node_id`` from an index built once per graph. Only for spans that add or
+    remove no nodes, e.g. serialization, where a linear scan per edge endpoint is quadratic."""
+    token = FROZEN_NODE_IDS.set({}) if FROZEN_NODE_IDS.get() is None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            FROZEN_NODE_IDS.reset(token)
 
 
 @dace.serialize.serializable
@@ -464,7 +481,13 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         # Is there an inherent reason why the nodes are in the same relative order than
         #  in their source graph. If there is no reason we can even drop the `sorted()`
         #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
-        self._subgraph_nodes = dict.fromkeys(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
+        if isinstance(graph, OrderedDiGraph):
+            members = dict.fromkeys(subgraph_nodes)
+            self._subgraph_nodes = {n: None for n in graph.nodes() if n in members}
+            if len(self._subgraph_nodes) != len(members):
+                raise NodeNotFoundError(next(n for n in members if n not in self._subgraph_nodes))
+        else:
+            self._subgraph_nodes = dict.fromkeys(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
 
     def nodes(self) -> list[NodeT]:
         # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
@@ -672,6 +695,15 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise NodeNotFoundError
 
     def node_id(self, node: NodeT) -> int:
+        frozen = FROZEN_NODE_IDS.get()
+        if frozen is not None:
+            entry = frozen.get(id(self))
+            if entry is None:
+                entry = frozen[id(self)] = (self, {id(n): i for i, n in enumerate(self._nodes.keys())})
+            try:
+                return entry[1][id(node)]
+            except KeyError:
+                raise NodeNotFoundError(node)
         try:
             return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
         except StopIteration:
