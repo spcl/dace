@@ -21,6 +21,20 @@ def _check(backend, fn, inputs_per_call, expected_compiles=1):
 
 
 @pytest.mark.torch
+def test_cat_promotes_dtypes(backend):
+    """``cat`` type-promotes its inputs: an int64 input of a float32 result must be cast, not copied bitwise."""
+
+    def f(x, idx):
+        return torch.cat([x, idx.unsqueeze(-1).expand(-1, x.shape[1], 2), x * 2], dim=-1)
+
+    inputs = [
+        (torch.randn(3, 5, 4), torch.arange(3).unsqueeze(-1) * 10),
+        (torch.randn(4, 6, 2), torch.arange(4).unsqueeze(-1)),
+    ]
+    _check(backend, f, inputs)
+
+
+@pytest.mark.torch
 def test_amax_amin_identity(backend):
     """
     The output of a max/min reduction must be initialized: all-negative inputs expose a zero-initialized output, and

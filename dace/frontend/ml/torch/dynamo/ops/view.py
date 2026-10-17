@@ -464,12 +464,23 @@ def lower_clone(ctx: LoweringContext, node, tensor: TensorValue, *, memory_forma
 
 @register_lowering(aten.cat.default)
 def lower_cat(ctx: LoweringContext, node, tensors: Sequence[TensorValue], dim=0):
+    """
+    ``cat`` copies every input into its slice of the result. Inputs whose dtype differs from the (type-promoted)
+    result are cast first, since a plain copy between containers of different types is not a memcpy.
+    """
+    from .pointwise import emit_elementwise
+
     tensors = [t for t in tensors if not (t.rank == 1 and t.tshape[0] == 0)]
     val = _val(node)
     out = ctx.add_tensor_like("t_" + node.name, val)
     dim = _norm_dim(dim, out.rank)
     offset = 0
     for t in tensors:
+        if t.torch_dtype != out.torch_dtype:
+            cast = ctx.add_array(f"t_{node.name}_cast", t.tshape, out.torch_dtype, device=t.device)
+            params = [f"__i{k}" for k in range(cast.rank)]
+            emit_elementwise(ctx, f"{node.name}_cast", cast, [(t, params)], "__out = __in0", params)
+            t = cast
         extent = t.tshape[dim]
         dst_ranges = [(0, s - 1, 1) for s in out.tshape]
         dst_ranges[dim] = (offset, offset + extent - 1, 1)
