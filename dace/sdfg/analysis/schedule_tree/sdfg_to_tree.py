@@ -405,23 +405,17 @@ def _prepare_schedule_tree_edges(
             if not isinstance(dst, (dace.nodes.AccessNode, dace.nodes.EntryNode)):
                 continue
 
-            # If the edge destination is the innermost node, it is a downward-pointing path
-            is_target_dst = e.dst is dst
-
-            innermost_node = dst if is_target_dst else src
-            outermost_node = src if is_target_dst else dst
-
-            # Normalize memlets to their innermost node, or source->destination if it is a same-scope edge
-            if e.src is src and e.dst is dst:
-                outermost_node = src
-                innermost_node = dst
-
             if isinstance(dst, dace.nodes.EntryNode):
                 # Special case: dynamic map range has no data
                 result[e] = tn.DynScopeCopyNode(target=e.dst_conn, memlet=e.data)
             else:
-                target_name = innermost_node.data
-                new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
+                # A copy always writes into the destination container (``dst``) and reads from the source container
+                # (``src``). The schedule-tree ``CopyNode`` names the destination as its ``target`` and normalizes the
+                # memlet to the source, with ``other_subset`` holding the destination subset. This holds regardless of
+                # direction: inward (outer array -> inner node), outward (inner node -> scope exit -> outer array), and
+                # same-scope (node -> node) edges.
+                target_name = dst.data
+                new_memlet = normalize_memlet(sdfg, state, e, src.data)
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
             scope = state.entry_node(e.dst if mtree.downwards else e.src)
