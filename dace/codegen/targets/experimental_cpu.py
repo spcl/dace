@@ -610,6 +610,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_tasklet_body_block(self, callsite_stream, cfg, state_id, node, inner_body, postamble, has_locals) -> None:
         self.emit_provenance(node, cfg, state_id, callsite_stream)
+        # The label is a DaCe name, not a verdict: the kinds rendering carries none
+        label = "" if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.KINDS else "  // %s" % node.label
         # A connector-free single-statement tasklet collapses onto one brace-free line; anything with
         # locals keeps its own ``{ }`` so a declaration cannot leak into the map body.
         if not has_locals and self._single_statement_body(node):
@@ -620,10 +622,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 line = self.explicit_store_conversion(cfg, state_id, node, line)
                 line = self.fuse_pending_decl(node, line)
                 self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
-                callsite_stream.write("%s  // %s\n" % (line, node.label), cfg, state_id, node)
+                callsite_stream.write("%s%s\n" % (line, label), cfg, state_id, node)
                 return
         self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
-        callsite_stream.write("{  // %s" % node.label, cfg, state_id, node)
+        callsite_stream.write("{%s" % label, cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
         callsite_stream.write("}", cfg, state_id, node)

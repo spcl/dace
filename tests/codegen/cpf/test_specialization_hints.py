@@ -727,6 +727,19 @@ def test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else():
     assert any("witness" in line for line in proofs), proofs
 
 
+def test_the_kinds_rendering_carries_no_tasklet_or_scope_label():
+    """A tasklet's label (``_Add_``, ``for_696_scan_op``) is a DaCe name, not a verdict: the kinds rendering drops
+    it from the statement and from the brace, the proofs rendering keeps it."""
+    kinds, proofs = kinds_and_proofs("cpf_kinds_no_label")
+    trailing = lambda code: [
+        line
+        for line in code.splitlines()
+        if "//" in line and line.split("//")[0].strip() and not line.lstrip().startswith("#")
+    ]
+    assert not trailing(kinds), trailing(kinds)
+    assert any("// _Add_" in line for line in trailing(proofs)), proofs
+
+
 def test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes():
     """Same graph, same verdicts: each classed comment block of the proofs rendering is one word of the kinds
     rendering, the class of the block's first classed line, in the same order."""
@@ -739,7 +752,8 @@ def test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes():
 def test_the_two_variants_render_the_same_code():
     sdfg = carried_sdfg("cpf_kinds_code")
     AnnotateLoopKinds().apply_pass(sdfg, {})
-    strip = lambda code: [line for line in code.splitlines() if not line.strip().startswith("//")]
+    # Comments aside, whole-line and trailing alike
+    strip = lambda code: [line.split("  //")[0] for line in code.splitlines() if not line.strip().startswith("//")]
     assert strip(render(sdfg, hints="kinds").code) == strip(render(sdfg, hints="proofs").code)
 
 
@@ -786,6 +800,7 @@ if __name__ == "__main__":
     test_a_map_resting_on_an_entry_trap_names_the_assumption()
     test_a_map_resting_on_no_trap_assumes_nothing()
     test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else()
+    test_the_kinds_rendering_carries_no_tasklet_or_scope_label()
     test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes()
     test_the_two_variants_render_the_same_code()
     test_an_unknown_hint_detail_is_refused()
