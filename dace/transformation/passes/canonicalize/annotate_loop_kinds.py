@@ -582,14 +582,21 @@ def loop_hint(loop: LoopRegion) -> str:
 
 
 def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
-    """The access that proves ``loop`` carries a dependence, or ``None``: a constant distance, a carried symbol
-    ``LoopToMap`` named, or a solver witness, cheapest first."""
+    """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance
+    or a carried symbol ``LoopToMap`` named.
+
+    The witness comes first because it names an execution as well as the access: two iterations and the sizes under
+    which they touch one element. The other two prove accesses the solver cannot encode.
+    """
+    witnessed = witnessed_carrying_access(loop)
+    if witnessed is not None:
+        return witnessed
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
     if access is None and refusal_matches_a_carried_symbol(reason):
         access = carrying_access(reason)
-    return access if access is not None else witnessed_carrying_access(loop)
+    return access
 
 
 #: Refusals whose pattern IS a carried dependence: a symbol the body updates from itself, or reads before it assigns.

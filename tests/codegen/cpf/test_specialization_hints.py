@@ -499,9 +499,13 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
 
     sdfg = ahead.to_sdfg(simplify=True)
     AnnotateLoopKinds().apply_pass(sdfg, {})
-    assert [loop.specialization_hint for loop in loops_of(sdfg)] == [
-        SEQUENTIAL_PROVEN.format(reason="WAR on a[i + 1]", why=CONFLICT_MEANING["WAR"])
-    ]
+    (hint,) = [loop.specialization_hint for loop in loops_of(sdfg)]
+    reason = re.search(r"carried: (WAR on a\[i \+ 1\] \(witness: N=(\d+), i=(\d+) and i=(\d+)\))\n", hint)
+    assert reason, hint
+    assert hint == SEQUENTIAL_PROVEN.format(reason=reason.group(1), why=CONFLICT_MEANING["WAR"])
+    # The witness is an execution: the earlier iteration reads the element the next one overwrites
+    size, first, second = (int(g) for g in reason.groups()[1:])
+    assert second == first + 1 and second < size - 1, hint
 
 
 def test_no_carried_dependence_is_claimed_for_independent_elements():
