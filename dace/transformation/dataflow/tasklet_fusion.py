@@ -67,74 +67,8 @@ class CPPInliner:
 @make_properties
 class TaskletFusion(pm.SingleStateTransformation):
     """
-    Fuses two connected Tasklets.
-
-    The transformation always fuses the second Tasklet (`t2`) to the first one (`t1`), removing any AccessNode (`data`)
-    that may be between the two and is not used anywhere else.
-
-    In the following examples, the pre- and post-transformation subgraphs are described with the following syntax:
-    - Tasklets <name: inputs, ouputs, code>
-    - Edges <name: src, src_conn, dst, dst_conn, memlet>
-
-    Names and memlets in [square brackets] are not part of the subgraph.
-
-    Example 1:
-    Pre-transformation Subgraph
-    `t1: {'__in1', '__in2'}, {'__out'}, "__out = __in1 + __in2"`
-    `t2: {'__in1', '__in2'}, {'__out'}, "__out = __in1 * __in2"`
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e3: t1, '__out', t2, '__in1', Memlet()`
-    `e4: [s3], [sc3], t2, '__in2', [m3]`
-    `e5: t2, '__out', [d1], [dc1], [m4]`
-    Post-transformation Subgraph
-    ```
-    t1: {'__in1', '__in2', '__in3'}, {'__out_0'},
-        "__out = __in1 + __in2\n__out_0 = __out * __in3"
-    ```
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e4: [s3], [sc3], t1, '__in3', [m3]`
-    `e5: t1, '__out_0', [d1], [dc1], [m4]`
-
-    Example 2:
-    Pre-transformation Subgraph
-    ```
-    t1: {'__in1', '__in2'}, {'__out', __out1},
-        "__out = __in1 + __in2\n__out1 = __out"
-    ```
-    `t2: {'__in1', '__in2'}, {'__out'}, "__out = __in1 * __in2"`
-    `t3: {'__in1', '__in2'}, {'__out'}, "__out = __in1 - __in2"`
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e3: t1, '__out', t2, '__in1', Memlet()`
-    `e4: t1, '__out1', t3, '__in1', Memlet()`
-    `e5: [s3], [sc3], t2, '__in2', [m3]`
-    `e6: [s4], [sc4], t3, '__in2', [m4]`
-    `e7: t3, '__out', [d1], [dc1], [m5]`
-    Post-first-transformation Subgraph
-    ```
-    t1: {'__in1', '__in2', '__in3'}, {'__out1', '__out_0'},
-        "__out = __in1 + __in2\n__out1 = __out\n__out_0 = __out * __in3"
-    ```
-    `t3: {'__in1', '__in2'}, {'__out'}, "__out = __in1 - __in2"`
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e4: t1, '__out1', t3, '__in1', Memlet()`
-    `e5: [s3], [sc3], t1, '__in3', [m3]`
-    `e6: [s4], [sc4], t3, '__in2', [m4]`
-    `e7: t3, '__out', [d1], [dc1], [m5]`
-    Post-second-transformation Sugraph (`t3` fused to `t1`)
-    ```
-    t1: {'__in1', '__in2', '__in3', '__in4'}, {'__out_1'},
-        "__out = __in1 + __in2\n__out1 = __out\n__out_0 = __out * __in3\n"
-        "__out_1 = __out1 - __in4"
-    ```
-    `e1: [s1], [sc1], t1, '__in1', [m1]`
-    `e2: [s2], [sc2], t1, '__in2', [m2]`
-    `e5: [s3], [sc3], t1, '__in3', [m3]`
-    `e6: [s4], [sc4], t1, '__in4', [m4]`
-    `e7: t1, '__out_1', [d1], [dc1], [m5]`
+    Fuses a Tasklet into the Tasklet that writes its input through a scalar AccessNode, removing the AccessNode if
+    nothing else uses it.
     """
 
     t1 = pm.PatternNode(nodes.Tasklet)
@@ -151,30 +85,28 @@ class TaskletFusion(pm.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.t1, cls.data, cls.t2), sdutil.node_path_graph(cls.t1, cls.t2)]
+        return [sdutil.node_path_graph(cls.t1, cls.data, cls.t2)]
 
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
         t1 = self.t1
-        data = self.data if self.expr_index == 0 else None
+        data = self.data
         t2 = self.t2
 
         # Both Tasklets must have the same language.
         if t1.language != t2.language:
             return False
 
-        # If there is an AccessNode between the Tasklets, ensure it is a scalar.
-        if data is not None and data.desc(sdfg).total_size != 1:
+        # The AccessNode between the Tasklets must be a scalar.
+        if data.desc(sdfg).total_size != 1:
             return False
 
-        # The first Tasklet must not be used anywhere else. If the Tasklet leads into an AccessNode, that AccessNode in
-        # turn cannot be used anywhere else.
-        if graph.out_degree(t1) != 1 or (data is not None and graph.out_degree(data) != 1):
+        # Neither the first Tasklet nor the AccessNode may be used anywhere else.
+        if graph.out_degree(t1) != 1 or graph.out_degree(data) != 1:
             return False
-        if data is not None:
-            access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
-            access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
-            if access_node_count > 1:
-                return False
+        access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
+        access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
+        if access_node_count > 1:
+            return False
 
         # Try to parse the code to check that there is not more than one assignment.
         try:
@@ -193,11 +125,11 @@ class TaskletFusion(pm.SingleStateTransformation):
 
     def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         t1 = self.t1
-        data = self.data if self.expr_index == 0 else None
+        data = self.data
         t2 = self.t2
 
         # Determine the edge leading to the second Tasklet.
-        t2_in_edge = graph.out_edges(data if data is not None else t1)[0]
+        t2_in_edge = graph.out_edges(data)[0]
 
         # Remove the connector from the second Tasklet.
         inputs = {k: v for k, v in t2.in_connectors.items() if k != t2_in_edge.dst_conn}
@@ -310,8 +242,7 @@ class TaskletFusion(pm.SingleStateTransformation):
             graph.add_edge(new_tasklet, out_edge.src_conn, out_edge.dst, out_edge.dst_conn, out_edge.data)
 
         graph.remove_node(t1)
-        if data is not None:
-            graph.remove_node(data)
+        graph.remove_node(data)
 
         graph.remove_node(t2)
 
