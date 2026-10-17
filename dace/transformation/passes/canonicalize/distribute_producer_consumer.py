@@ -34,6 +34,7 @@ those needs subset-disjointness reasoning and is out of scope for this pass.
 """
 
 import functools
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -60,14 +61,15 @@ def _interstate_reads(block: ControlFlowBlock) -> list[str]:
     arrays = block.sdfg.arrays
     found: dict[str, None] = {}
     for edge in block.all_interstate_edges(recursive=True):
-        found.update(dict.fromkeys(name for name in edge.data.free_symbols if name in arrays))
+        # Sorted: free symbols are a set, and their hash order would order the reads the grouping visits.
+        found.update(dict.fromkeys(sorted(name for name in edge.data.free_symbols if name in arrays)))
     for region in block.all_control_flow_regions(recursive=True):
         if not isinstance(region, ConditionalBlock):
             continue
         for condition, _ in region.branches:
             if condition is None:
                 continue
-            found.update(dict.fromkeys(name for name in condition.get_free_symbols() if name in arrays))
+            found.update(dict.fromkeys(sorted(name for name in condition.get_free_symbols() if name in arrays)))
     return list(found)
 
 
@@ -246,7 +248,9 @@ class DistributeProducerConsumerLoop(ppl.Pass):
         # Function-local: ``perfect_loop_nesting`` imports this module.
         from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops, groups_with_expansion
 
-        return distribute_loops(sdfg, grouping=functools.partial(groups_with_expansion, tried=set())) or None
+        return (
+            distribute_loops(sdfg, grouping=functools.partial(groups_with_expansion, tried=weakref.WeakSet())) or None
+        )
 
 
 __all__ = ["DistributeProducerConsumerLoop", "_forward_flow_groups"]

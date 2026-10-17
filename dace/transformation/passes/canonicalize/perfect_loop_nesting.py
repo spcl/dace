@@ -90,6 +90,7 @@ A no-op when the body is a single block, when a body edge carries an assignment
 the loop would increment once per clone), or when the groups do not separate.
 """
 
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -268,16 +269,19 @@ def distribute_loops(
     return count
 
 
-def groups_with_expansion(loop: LoopRegion, tried: set[int]) -> list[list[ControlFlowBlock]] | None:
+def groups_with_expansion(
+    loop: LoopRegion, tried: "weakref.WeakSet[LoopRegion]"
+) -> list[list[ControlFlowBlock]] | None:
     """:func:`_forward_flow_groups`, falling back once per loop to :func:`split_after_expansion`.
 
-    :param tried: Ids of the loops already offered the expansion in this run; a refusal does not change on a
-                  second visit, and the probe it costs is ``LoopToMap``'s.
+    :param tried: The loops already offered the expansion in this run; a refusal does not change on a second
+                  visit, and the probe it costs is ``LoopToMap``'s. Held weakly, not by ``id``: a fission frees
+                  the loop it splits, and a clone allocated at its address would pass as tried.
     """
     groups = _forward_flow_groups(loop)
-    if groups is not None or id(loop) in tried:
+    if groups is not None or loop in tried:
         return groups
-    tried.add(id(loop))
+    tried.add(loop)
     return split_after_expansion(loop)
 
 
