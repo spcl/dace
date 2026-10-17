@@ -10,6 +10,7 @@ import Dace.Core.Wcr
 import Dace.Core.Merge
 import Dace.Core.Tasklet
 import Dace.Core.Interp
+import Dace.Core.PyTasklet
 import Dace.SDFG.Syntax
 import Dace.SDFG.Scope
 import Dace.SDFG.WF

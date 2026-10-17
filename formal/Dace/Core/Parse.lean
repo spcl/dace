@@ -173,7 +173,27 @@ def mkCall (f : String) (args : List Expr) : Expr :=
   | "Piecewise", _ => .app f args
   | _, _ => .app f args
 
+/-- Dotted name of an attribute chain (`math.sqrt`, `dace.float64`), used to
+turn method/qualified calls into opaque `app` nodes. -/
+def dottedName? : Expr → Option String
+  | .sym s => some s
+  | .attr b f => (dottedName? b).map (· ++ "." ++ f)
+  | _ => none
+
 mutual
+
+/-- Python conditional expression `a if c else b` (lowest precedence). -/
+partial def parseTernary : P Expr := do
+  let a ← parseOr
+  if ← peekKw "if" then
+    advance
+    let c ← parseOr
+    if ← peekKw "else" then
+      advance
+      let b ← parseTernary
+      pure (.ite c a b)
+    else failure
+  else pure a
 
 /-- `or` -/
 partial def parseOr : P Expr := do
@@ -347,7 +367,16 @@ partial def parsePostfix : P Expr := do
     | .dot =>
       advance
       match ← peek with
-      | .ident f => advance; e := .attr e f
+      | .ident f =>
+        advance
+        if (← peek) = .lparen then
+          -- qualified / method call `base.f(args)` → opaque `app "base.f" args`
+          advance
+          let args ← parseArgs .rparen
+          match dottedName? e with
+          | some base => e := .app (base ++ "." ++ f) args
+          | none => failure
+        else e := .attr e f
       | _ => failure
     | _ => break
   pure e
@@ -358,7 +387,7 @@ partial def parseArgs (close : Token) : P (List Expr) := do
   else
     let mut args : List Expr := []
     repeat
-      let a ← parseOr
+      let a ← parseTernary
       args := args ++ [a]
       match ← peek with
       | .comma => advance
@@ -380,7 +409,7 @@ partial def parseAtom : P Expr := do
     else pure (.sym f)
   | .lparen =>
     advance
-    let e ← parseOr
+    let e ← parseTernary
     expect .rparen
     pure e
   | _ => failure
@@ -390,7 +419,14 @@ end
 /-- Parse a DaCe symbolic-expression string. -/
 def parseExpr (s : String) : Option Expr := do
   let toks ← tokenize s
-  let (e, st) ← (parseOr).run { toks := toks.toArray }
+  let (e, st) ← (parseTernary).run { toks := toks.toArray }
+  if st.toks.getD st.pos .eof = .eof then some e else none
+
+/-- Parse an expression from a token list (a slice of a tokenized statement).
+A single `Token.eof` is appended so the precedence parser terminates. -/
+def parseFromToks (toks : List Token) : Option Expr := do
+  let toks := (toks.filter (· != Token.eof)) ++ [Token.eof]
+  let (e, st) ← (parseTernary).run { toks := toks.toArray }
   if st.toks.getD st.pos .eof = .eof then some e else none
 
 /-- Parse a single assignment statement `name = expr` (loop init/update
@@ -399,7 +435,7 @@ def parseAssign (s : String) : Option (Sym × Expr) := do
   let toks ← tokenize s
   match toks with
   | .ident name :: .op "=" :: rest =>
-    let (e, st) ← (parseOr).run { toks := rest.toArray }
+    let (e, st) ← (parseTernary).run { toks := rest.toArray }
     if st.toks.getD st.pos .eof = .eof then some (name, e) else none
   | _ => none
 
