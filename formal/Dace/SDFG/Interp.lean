@@ -8,7 +8,7 @@ A fuel-based executable mirror of the relational semantics
 (`Dace.SDFG.Semantics.Exec`).  There is one total function per relation, with
 the same arguments, the same helper functions and the same premises, so that
 the soundness statement `run … = some r → Exec … r` can be proven constructor
-by constructor.  `none` means the fuel ran out (or, in the two situations the
+by constructor.  `none` means the fuel ran out (or, in the situations the
 relation leaves without any derivation, that no outcome exists:
 `Decisions.md#D8`).
 
@@ -16,8 +16,12 @@ The relations are nondeterministic in three places; the interpreter resolves
 each deterministically, as a refinement:
 
 * **Scope body / component order** (`OrderedExec.run`, `Decisions.md#D43`):
-  `State.topoOrder all` (Kahn's algorithm, ties broken by node order).  A
-  cyclic body, for which the relation has no derivation, yields `malformed`.
+  `State.topoOrder all` (Kahn's algorithm, ties broken by node order).  The
+  computed order is re-checked with `State.isTopologicalOrder` (the premise
+  of `OrderedExec.run`) so that soundness does not depend on the internals
+  of `topoOrder`.  A cyclic body, or an `all` the check rejects (duplicate
+  node ids, self-loop edges), has no derivation in the relation and yields
+  `none`.
 * **Interstate edge** (`RegionAt.step`, `Decisions.md#D2`): the first true
   edge in `Region.outEdges` order, as the code generator does.
 * **Consume processing element** (`ConsumeTasks.step`, `Decisions.md#D38`):
@@ -92,8 +96,10 @@ def execOrdered (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (all direc
     | .err e => some (.err e)
     | .ok st₁ =>
       match s.topoOrder all with
-      | none => some (.err (.malformed "cyclic scope body"))
-      | some order => execSeq fuel ctx ρ s (order.filter direct.contains) st₁
+      | none => none
+      | some order =>
+        if s.isTopologicalOrder all order then execSeq fuel ctx ρ s (order.filter direct.contains) st₁
+        else none
 
 /-- Mirror of `IterExec`. -/
 def execIter (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (entry : NodeId) (params : List Sym)

@@ -8,3 +8,9 @@ Axiom audit: every trusted theorem of the development is listed here so that
 
 -- Theorems are appended here as they are proven, e.g.
 -- #print axioms Dace.Equiv.corr_sound
+
+-- M3: soundness of the SDFG interpreter with respect to the relational semantics.
+#print axioms Dace.sound
+#print axioms Dace.execSDFG_sound
+#print axioms Dace.SDFG.run_sound
+#print axioms Dace.SDFG.run_ok_sound

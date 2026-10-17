@@ -16,6 +16,7 @@ import Dace.SDFG.Scope
 import Dace.SDFG.WF
 import Dace.SDFG.Semantics
 import Dace.SDFG.Interp
+import Dace.SDFG.Soundness
 import Dace.SDFG.Json
 
 /-!
