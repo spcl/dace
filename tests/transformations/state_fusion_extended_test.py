@@ -1401,6 +1401,76 @@ def test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read():
             assert nx.has_path(state.nx, tasklets["rd"], tasklets["w"])
 
 
+def test_extended_fusion_orders_a_fanned_out_read_before_an_in_place_write():
+    """``s1`` reads ``A[k]`` in two tasklets; ``s2`` does ``A[k] = A[k] + 1``. The fusion orders every first-state
+    reader of ``A`` before the overwrite, so both copies still see the old value."""
+    sdfg = SDFG("state_fusion_war_ordering")
+    sdfg.add_array("A", [8], dtypes.float64)
+    sdfg.add_array("B", [8], dtypes.float64)
+    sdfg.add_array("C", [8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+
+    s1 = sdfg.add_state("read_A", is_start_block=True)
+    s2 = sdfg.add_state("increment_A")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    ar_b = s1.add_read("A")
+    bw = s1.add_write("B")
+    tb = s1.add_tasklet("rb", {"_in"}, {"_out"}, "_out = _in")
+    s1.add_edge(ar_b, None, tb, "_in", Memlet("A[k]"))
+    s1.add_edge(tb, "_out", bw, None, Memlet("B[k]"))
+
+    ar_c = s1.add_read("A")
+    cw = s1.add_write("C")
+    tc = s1.add_tasklet("rc", {"_in"}, {"_out"}, "_out = _in")
+    s1.add_edge(ar_c, None, tc, "_in", Memlet("A[k]"))
+    s1.add_edge(tc, "_out", cw, None, Memlet("C[k]"))
+
+    ar2 = s2.add_read("A")
+    aw2 = s2.add_write("A")
+    ti = s2.add_tasklet("inc", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    s2.add_edge(ar2, None, ti, "_in", Memlet("A[k]"))
+    s2.add_edge(ti, "_out", aw2, None, Memlet("A[k]"))
+    sdfg.validate()
+
+    a = np.arange(8, dtype=np.float64) + 1.0
+    ref = _run(sdfg, "ref", A=a, B=np.zeros(8), C=np.zeros(8))
+    assert ref["B"][K] == ref["C"][K] == K + 1.0 and ref["A"][K] == K + 2.0
+    _assert_fusion_preserves_semantics(sdfg, 1, A=a, B=np.zeros(8), C=np.zeros(8))
+
+
+def test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs():
+    """The first state fills ``A``; the second rewrites it from ``X``, which also feeds ``C``. The rewrite's
+    source reaches a sink other than ``A``, which must not stop the first write being ordered before it."""
+    sdfg = SDFG("extended_fusion_rewrite_with_fan_out")
+    for name in ("A", "C", "X"):
+        sdfg.add_array(name, [10], dtypes.float64)
+    first = sdfg.add_state("first")
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, InterstateEdge())
+
+    first.add_mapped_tasklet("fill", {"i": "0:10"}, {}, "a = 0", {"a": Memlet("A[i]")}, external_edges=True)
+    second.add_mapped_tasklet(
+        "rewrite",
+        {"i": "0:10"},
+        {"x": Memlet("X[i]")},
+        "a = x\nc = x",
+        {"a": Memlet("A[i]"), "c": Memlet("C[i]")},
+        external_edges=True,
+    )
+    first_a = next(n for n in first.data_nodes() if n.data == "A")
+    second_a = next(n for n in second.data_nodes() if n.data == "A")
+
+    assert sdfg.apply_transformations(StateFusionExtended) == 1
+    (fused,) = sdfg.states()
+    assert nx.has_path(fused.nx, first_a, second_a)
+
+    x = np.arange(10, dtype=np.float64) + 1
+    a, c = np.full(10, -1.0), np.zeros(10)
+    sdfg(A=a, C=c, X=x)
+    assert np.array_equal(a, x) and np.array_equal(c, x)
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
@@ -1432,3 +1502,5 @@ if __name__ == "__main__":
     test_extended_fusion_compares_a_copy_at_its_destination()
     test_extended_fusion_orders_a_writer_its_ordered_sibling_does_not_cover()
     test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read()
+    test_extended_fusion_orders_a_fanned_out_read_before_an_in_place_write()
+    test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs()
