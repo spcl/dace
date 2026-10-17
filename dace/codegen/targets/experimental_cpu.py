@@ -374,9 +374,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_provenance(self, node, cfg, state_id, callsite_stream) -> None:
         """Write the ``// <original library node>`` line CPF recorded for an expansion, once per
-        description per unit. A no-op outside standalone rendering."""
+        description per unit. A no-op outside standalone rendering, and under ``HintDetail.KINDS``."""
         record = cpf_lowering.describe(node.guid)
-        if record is None:
+        if record is None or cpf_lowering.hint_detail() is cpf_lowering.HintDetail.KINDS:
             return
         origin, description = record
         if origin in self._emitted_provenance:

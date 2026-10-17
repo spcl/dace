@@ -182,6 +182,47 @@ def describe(guid: str) -> tuple[str, str] | None:
     return _provenance.get(guid)
 
 
+class HintDetail(enum.Enum):
+    """How much of a ``specialization_hint`` a standalone rendering writes."""
+
+    #: The whole hint: the class, the reason, the proof or its witness, the advice.
+    PROOFS = "proofs"
+    #: The class alone, one word: ``par``, ``seq`` or ``unknown``. Nothing else is written as a comment.
+    KINDS = "kinds"
+
+
+#: A hint's class prefix (``annotate_loop_kinds.CLASS_PREFIXES``) -> the one word :attr:`HintDetail.KINDS` writes.
+KIND_WORDS: tuple[tuple[str, str], ...] = (("parallel -- ", "par"), ("sequential -- ", "seq"), ("unsure -- ", "unknown"))
+
+_hint_detail: HintDetail = HintDetail.PROOFS
+
+
+def hint_detail() -> HintDetail:
+    """The hint detail currently in force (see :func:`hint_detail_scope`)."""
+    return _hint_detail
+
+
+@contextlib.contextmanager
+def hint_detail_scope(detail: HintDetail):
+    """Make ``detail`` the ambient hint detail for the duration of the block."""
+    global _hint_detail
+    previous = _hint_detail
+    _hint_detail = detail
+    try:
+        yield detail
+    finally:
+        _hint_detail = previous
+
+
+def kind_word(hint: str) -> str | None:
+    """The class word of ``hint``'s first classed line, or ``None`` if no line names a class."""
+    for line in str(hint).splitlines():
+        for prefix, word in KIND_WORDS:
+            if line.startswith(prefix):
+                return word
+    return None
+
+
 def hint_comment(hint: str | None, indent: str = "") -> str:
     """Render a ``specialization_hint`` as a comment block, or ``''`` when there is none.
 
@@ -189,11 +230,16 @@ def hint_comment(hint: str | None, indent: str = "") -> str:
     parallel form -- a specializing pass, or a person -- and the ordinary build has a target
     already, so emitting it there would be noise in code nobody reads.
 
+    Under :attr:`HintDetail.KINDS` only the class word is written, and a hint naming no class writes nothing.
+
     Multi-line hints stay multi-line. The alternatives a hint describes are per-device and do not
     read as one sentence: ``CPU: ... / GPU: ...`` is the shape, one line each.
     """
     if not hint or not standalone():
         return ""
+    if _hint_detail is HintDetail.KINDS:
+        word = kind_word(hint)
+        return f"{indent}// {word}\n" if word else ""
     return "".join(f"{indent}// {line}\n" for line in str(hint).splitlines() if line.strip())
 
 

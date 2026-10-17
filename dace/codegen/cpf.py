@@ -1226,7 +1226,9 @@ def preamble(
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
     vendors = cpf_lowering.vendor_libraries(environments, code)
-    lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."] + CONTRACT_LINES
+    lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."]
+    if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
+        lines += CONTRACT_LINES
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
         header
@@ -1513,6 +1515,7 @@ def render(
     signature: EntrySignature | None = None,
     check_compiles: bool = True,
     isa: ISA = ISA.AUTO,
+    hints: str = cpf_lowering.HintDetail.PROOFS.value,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
@@ -1535,13 +1538,25 @@ def render(
                            result itself.
     :param isa: the ISA whose tile functions the tile nodes call (:func:`target_tile_functions`);
                 ``AUTO`` is the widest one the host executes.
+    :param hints: ``'proofs'`` (the default) comments every loop and map with its whole hint -- class, reason,
+                  proof or witness, advice -- and every expansion with the library node it came from;
+                  ``'kinds'`` writes one ``// par``, ``// seq`` or ``// unknown`` per loop and map and nothing else.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
     :raises RuntimeError: if a finished unit is not self-contained, or does not compile.
-    :raises ValueError: if ``language`` is neither, or if ``signature`` does not fit the entry
+    :raises ValueError: if ``language`` is neither, if ``hints`` is neither ``'proofs'`` nor ``'kinds'``, or if
+                        ``signature`` does not fit the entry
                         (see :class:`EntrySignature`).
     """
+    with cpf_lowering.hint_detail_scope(cpf_lowering.HintDetail(hints)):
+        return render_unit(sdfg, validate, language, signature, check_compiles, isa)
+
+
+def render_unit(
+    sdfg: SDFG, validate: bool, language: str, signature: EntrySignature | None, check_compiles: bool, isa: ISA
+) -> Rendering:
+    """:func:`render` under the hint detail already in force."""
     dialect = dialect_for(language)
     prepared = copy.deepcopy(sdfg)
     if signature is not None and signature.workspace is not None and signature.workspace_size is not None:
@@ -1675,7 +1690,8 @@ def cpf(
               ``void <sdfg.name>(<arglist>)`` in C, whose ABI is the same.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
                                  message names the construct.
-    :raises ValueError: if ``language`` is neither, or if ``signature`` does not fit the entry
+    :raises ValueError: if ``language`` is neither, if ``hints`` is neither ``'proofs'`` nor ``'kinds'``, or if
+                        ``signature`` does not fit the entry
                         (see :class:`EntrySignature`).
     """
     if dialect_for(language) in cpf_lowering.DEVICE_DIALECTS:

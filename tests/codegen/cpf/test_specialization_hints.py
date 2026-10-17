@@ -684,6 +684,70 @@ def test_a_map_resting_on_no_trap_assumes_nothing():
     assert "// " + PARALLEL.splitlines()[0] in rendered
 
 
+def kinds_and_proofs(name: str) -> tuple[str, str]:
+    """One canonicalized graph -- a parallel axis, a carried one, an open one -- rendered with ``hints='kinds'`` and
+    with ``hints='proofs'``."""
+
+    @dace.program
+    def three_kinds(a: dace.float64[N, N], c: dace.float64[N], k: dace.int64):
+        for i in range(1, N):
+            for j in range(N):
+                a[i, j] = a[i - 1, j] + 1.0
+        for i in range(N):
+            c[i] = c[i - k] + 1.0
+
+    sdfg = three_kinds.to_sdfg(simplify=True)
+    sdfg.name = name
+    canonicalize(sdfg)
+    return render(sdfg, hints="kinds").code, render(sdfg, hints="proofs").code
+
+
+def comment_blocks(code: str) -> list[list[str]]:
+    """The runs of consecutive comment lines of ``code``, each without its ``// ``."""
+    blocks: list[list[str]] = [[]]
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            blocks[-1].append(stripped[2:].strip())
+        elif blocks[-1]:
+            blocks.append([])
+    return [block for block in blocks if block]
+
+
+def test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else():
+    """The bare variant: one word per loop and map -- no proof, no witness, no advice, no header contract, no
+    library-node provenance."""
+    kinds, proofs = (comment_lines(code)[1:] for code in kinds_and_proofs("cpf_kinds_only"))
+    words = [line for line in kinds if line in ("// par", "// seq", "// unknown")]
+    assert {"// par", "// seq"} <= set(words), kinds
+    # What is left is the unit's own section labels, which the proofs rendering carries word for word.
+    assert all(line in proofs for line in kinds if line not in words), kinds
+    reasoning = ("--", "witness", "settled", "open:", "proven", "carried", "assumes", "CPU:", "GPU:")
+    assert not [line for line in kinds if any(term in line for term in reasoning)], kinds
+    assert any("witness" in line for line in proofs), proofs
+
+
+def test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes():
+    """Same graph, same verdicts: each classed comment block of the proofs rendering is one word of the kinds
+    rendering, the class of the block's first classed line, in the same order."""
+    kinds, proofs = kinds_and_proofs("cpf_kinds_match")
+    classes = [next(filter(None, map(cpf_lowering.kind_word, block)), None) for block in comment_blocks(proofs)]
+    words = [word for block in comment_blocks(kinds) for word in block if word in ("par", "seq", "unknown")]
+    assert words == [word for word in classes if word], (words, classes)
+
+
+def test_the_two_variants_render_the_same_code():
+    sdfg = carried_sdfg("cpf_kinds_code")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    strip = lambda code: [line for line in code.splitlines() if not line.strip().startswith("//")]
+    assert strip(render(sdfg, hints="kinds").code) == strip(render(sdfg, hints="proofs").code)
+
+
+def test_an_unknown_hint_detail_is_refused():
+    with pytest.raises(ValueError):
+        render(scaling_sdfg("cpf_kinds_refused"), hints="some")
+
+
 if __name__ == "__main__":
     test_the_rendering_states_which_verdicts_are_settled_and_which_are_open()
     test_a_map_hint_is_rendered_one_comment_line_per_line()
@@ -721,3 +785,7 @@ if __name__ == "__main__":
     test_a_guarded_loop_names_its_guard_on_both_arms()
     test_a_map_resting_on_an_entry_trap_names_the_assumption()
     test_a_map_resting_on_no_trap_assumes_nothing()
+    test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else()
+    test_the_kinds_rendering_names_the_loops_the_proofs_rendering_classes()
+    test_the_two_variants_render_the_same_code()
+    test_an_unknown_hint_detail_is_refused()
