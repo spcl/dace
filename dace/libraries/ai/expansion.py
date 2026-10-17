@@ -102,9 +102,7 @@ class ExpandAI(ExpandTransformation):
                 entry = record.begin_attempt(attempt + 1, prompt)
                 detail("user prompt" if attempt == 0 else "repair prompt", prompt)
 
-                # A new round without feedback must not get the previous round's cached answer
-                salt = str(record.number) if not feedback and record.number > 1 else ""
-                cache_key = ai_cache.key(system, messages, salt=salt)
+                cache_key = ai_cache.key(system, messages)
                 spec = None if response is not None else ai_cache.lookup(cache_key)
                 cached = spec is not None
                 if response is not None:

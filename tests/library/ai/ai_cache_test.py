@@ -68,6 +68,18 @@ def test_an_identical_prompt_is_not_asked_twice(tmp_path):
     assert tasklet.code.as_string.strip() == CODE
 
 
+def test_a_rerun_with_sessions_is_answered_from_the_cache(tmp_path):
+    """A second run of a program continues the node's session and must still hit the cache."""
+    spec = TaskletSpec(code=CODE)
+    with caching(tmp_path):
+        with dace.config.set_temporary("ai", "sessions", value=True):
+            for expected_calls in (1, 0):
+                _, state, node = _sdfg_and_node()
+                with stub_provider(spec) as provider:
+                    node.expand(state, "ai")
+                assert len(provider.calls) == expected_calls
+
+
 def test_a_cached_answer_round_trips_every_field(tmp_path):
     spec = TaskletSpec(
         code=CODE,
@@ -178,6 +190,7 @@ def test_an_unreadable_entry_is_ignored(tmp_path):
 if __name__ == "__main__":
     with offline():
         test_an_identical_prompt_is_not_asked_twice(pathlib.Path(tempfile.mkdtemp()))
+        test_a_rerun_with_sessions_is_answered_from_the_cache(pathlib.Path(tempfile.mkdtemp()))
         test_a_cached_answer_round_trips_every_field(pathlib.Path(tempfile.mkdtemp()))
         test_the_key_covers_the_model_and_the_prompt(pathlib.Path(tempfile.mkdtemp()))
         test_a_different_context_is_asked_separately(pathlib.Path(tempfile.mkdtemp()))

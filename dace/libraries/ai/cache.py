@@ -48,18 +48,16 @@ def cache_dir(create: bool = False) -> str:
     return storage_dir("cache", create)
 
 
-def key(system: str, messages: list[dict[str, str]], salt: str = "") -> str:
+def key(system: str, messages: list[dict[str, str]]) -> str:
     """
     Computes the cache key of one request.
 
     :param system: The system prompt.
     :param messages: The conversation being sent.
-    :param salt: Added to the key to ask an already asked question again, e.g. for a new round
-                 without feedback.
     :return: A hexadecimal key.
     """
     material = json.dumps(
-        {**backend.request_settings(), "system": system, "messages": messages, "salt": salt},
+        {**backend.request_settings(), "system": system, "messages": messages},
         sort_keys=True,
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
