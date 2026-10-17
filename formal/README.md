@@ -24,6 +24,45 @@ lake build
 scripts/check_axioms.sh   # build + sorry/axiom/import-isolation checks
 ```
 
+## Differential testing
+
+`scripts/difftest.py` cross-checks the Lean interpreter against DaCe on the
+corpus under `tests/corpus`:
+
+- `--record` loads each `<base>[.variant].sdfg.json` with `dace.SDFG.from_file`,
+  takes inputs from the base program's factory in `scripts/corpus_programs.py`,
+  compiles and runs the SDFG, and writes `<name>.inputs.json` and
+  `<name>.expected.json`. A few programs (axpy, matmul, reduce_rows) are also
+  cross-checked against a NumPy reference.
+- `--check` (alias `--lean`) runs `lake exe dace-interp sdfg <sdfg.json>
+  <inputs.json>` per file, parses its stdout (`{"containers": …}` on success,
+  `{"error": …}` on a semantic error) and compares to `<name>.expected.json`
+  with dtype-aware tolerances (float32 rtol 1e-5, float64 1e-9, exact for
+  int/bool). Exit 2 from the tool means "not implemented" → SKIP; a missing
+  `lake` skips everything. The run exits non-zero if any file FAILs.
+
+With no mode flag it records when any expected file is missing, else checks.
+Options: `--only name…`, `--corpus DIR`, `--tol-scale`.
+
+The input/expected JSON format (the Lean reader is written against it):
+
+```json
+{
+  "program": "matmul",
+  "sdfg": "matmul.tiled.sdfg.json",
+  "symbols": {"M": 4, "K": 6, "N": 5},
+  "containers": {
+    "A": {"dtype": "float64", "shape": [4, 6], "data": [ "…row-major flat…" ]},
+    "a": {"dtype": "float64", "shape": [], "data": [2.0]}
+  }
+}
+```
+
+`containers` holds every non-transient array plus any `__return*`. DaCe `Scalar`
+descriptors use `shape: []` with a one-element `data`; dtype strings are NumPy
+names. `symbols` is the SDFG's free symbols plus explicit symbol args.
+`expected.json` has the same shape but only `program`/`sdfg`/`containers`.
+
 ## Conventions
 
 - Only `Dace/Prelude.lean` imports Mathlib.
