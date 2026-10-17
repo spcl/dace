@@ -45,7 +45,13 @@ def ev (s : String) : Option Val := (Expr.parse? s) >>= fun e => e.eval ExprInte
 #guard ev "IfExpr(i > N, 1, 0)" == some (.int 0)
 #guard ev "a > b > c" == none  -- unbound symbols
 #guard ev "2 ** 10" == some (.int 1024)
-#guard ev "N / 4" == some (.float 2.5)
+#guard ev "N / 4" == some (.rat (5 / 2))
+#guard ev "N / 5" == some (.int 2)
+#guard ev "ceiling(1/2*N)" == some (.int 5)
+#guard ev "ceiling(1/3*N)" == some (.int 4)
+#guard (Expr.parse? "-1 + $N").map Expr.toPy == some "(-1) + N"
+#guard (Expr.parse? "SymExpr(Min(-1 + $K, 2 + $tile_k), 2 + $tile_k)").isSome
+#guard Expr.parseAssign? "i = (i + 1)" == some ("i", Expr.parse? "i + 1" |>.get!)
 #guard ev "i << 2" == some (.int 12)
 
 -- Ranges

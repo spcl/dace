@@ -33,9 +33,11 @@ inductive Dtype where
   | opaque (name : String)
   deriving DecidableEq, Repr, Inhabited
 
-/-- Runtime values. -/
+/-- Runtime values.  Rationals arise from SymPy's exact division in symbolic
+expressions (`1/2*N`); floats from float literals and tasklet arithmetic. -/
 inductive Val where
   | int (v : Int)
+  | rat (q : ℚ)
   | float (f : Float)
   | bool (b : Bool)
   deriving Inhabited, Repr
@@ -45,24 +47,38 @@ namespace Val
 /-- Floats are compared bitwise so that `Val` has a lawful boolean equality. -/
 def beq : Val → Val → Bool
   | int a, int b => a == b
+  | rat a, rat b => a == b
   | float a, float b => a.toBits == b.toBits
   | bool a, bool b => a == b
   | _, _ => false
 
 instance : BEq Val := ⟨beq⟩
 
-/-- Integer coercion used for indices: floats and booleans are rejected. -/
+/-- Normalize a rational with denominator one to an integer. -/
+def ofRat (q : ℚ) : Val := if q.den = 1 then int q.num else rat q
+
+/-- Integer coercion used for indices: integral rationals are accepted,
+floats and booleans are rejected. -/
 def toInt? : Val → Option Int
   | int v => some v
+  | rat q => if q.den = 1 then some q.num else none
   | _ => none
 
 def toBool? : Val → Option Bool
   | bool b => some b
   | int v => some (v != 0)
+  | rat q => some (q != 0)
   | float f => some (f != 0.0)
+
+def toRat? : Val → Option ℚ
+  | int v => some v
+  | rat q => some q
+  | bool b => some (if b then 1 else 0)
+  | float _ => none
 
 def toFloat : Val → Float
   | int v => Float.ofInt v
+  | rat q => Float.ofInt q.num / Float.ofNat q.den
   | float f => f
   | bool b => if b then 1.0 else 0.0
 
@@ -94,6 +110,7 @@ end Lit
 
 inductive UnOp where
   | neg | not | bitNot | abs
+  | floor | ceil                 -- SymPy `floor`, `ceiling`
   deriving DecidableEq, Repr, Inhabited
 
 inductive BinOp where
@@ -121,6 +138,9 @@ inductive Expr where
   | subscript (data : Name) (idx : Exprs)
   /-- Structure member access `a.b`. -/
   | attr (base : Expr) (field : String)
+  /-- DaCe `SymExpr(exact, approx)`: an exact expression paired with an
+      over-approximation used by memlet propagation.  Evaluates as `exact`. -/
+  | approx (exact upper : Expr)
   deriving Inhabited, Repr
 
 /-- Argument lists. -/
@@ -182,6 +202,7 @@ def freeSyms : Expr → List Sym
   | app _ args => freeSymsList args
   | subscript _ idx => freeSymsList idx
   | attr b _ => b.freeSyms
+  | approx a o => a.freeSyms ++ o.freeSyms
 
 def freeSymsList : Exprs → List Sym
   | .nil => []
@@ -198,6 +219,7 @@ def readData : Expr → List Name
   | app _ args => readDataList args
   | subscript d idx => d :: readDataList idx
   | attr b _ => b.readData
+  | approx a o => a.readData ++ o.readData
 
 def readDataList : Exprs → List Name
   | .nil => []
@@ -215,6 +237,7 @@ def subst (σ : Sym → Option Expr) : Expr → Expr
   | app f args => app f (substList σ args)
   | subscript d idx => subscript d (substList σ idx)
   | attr b f => attr (b.subst σ) f
+  | approx a o => approx (a.subst σ) (o.subst σ)
 
 def substList (σ : Sym → Option Expr) : Exprs → Exprs
   | .nil => .nil
@@ -255,12 +278,12 @@ def intArith (op : BinOp) (a b : Int) : Option Val :=
   | .add => some (.int (a + b))
   | .sub => some (.int (a - b))
   | .mul => some (.int (a * b))
-  | .div => if b = 0 then none else some (.float (Float.ofInt a / Float.ofInt b))
+  | .div => if b = 0 then none else some (Val.ofRat ((a : ℚ) / b))
   | .intFloor => (intFloor a b).map .int
   | .intCeil => (intCeil a b).map .int
   | .mod => (pyMod a b).map .int
   | .pow =>
-    if b < 0 then (if a = 0 then none else some (.float (Float.ofInt a ^ Float.ofInt b)))
+    if b < 0 then (if a = 0 then none else some (Val.ofRat ((a : ℚ) ^ b)))
     else some (.int (a ^ b.toNat))
   | .min => some (.int (Min.min a b))
   | .max => some (.int (Max.max a b))
@@ -277,6 +300,33 @@ def intArith (op : BinOp) (a b : Int) : Option Val :=
   | .ge => some (.bool (decide (a ≥ b)))
   | .and => some (.bool (a != 0 && b != 0))
   | .or => some (.bool (a != 0 || b != 0))
+
+/-- Exact rational arithmetic (SymPy semantics for symbolic expressions). -/
+def ratArith (op : BinOp) (a b : ℚ) : Option Val :=
+  match op with
+  | .add => some (Val.ofRat (a + b))
+  | .sub => some (Val.ofRat (a - b))
+  | .mul => some (Val.ofRat (a * b))
+  | .div => if b = 0 then none else some (Val.ofRat (a / b))
+  | .intFloor => if b = 0 then none else some (.int ⌊a / b⌋)
+  | .intCeil => if b = 0 then none else some (.int ⌈a / b⌉)
+  | .mod => if b = 0 then none else some (Val.ofRat (a - b * ⌊a / b⌋))
+  | .pow =>
+    if b.den = 1 then
+      if b.num < 0 then (if a = 0 then none else some (Val.ofRat (a ^ b.num)))
+      else some (Val.ofRat (a ^ b.num.toNat))
+    else none
+  | .min => some (Val.ofRat (Min.min a b))
+  | .max => some (Val.ofRat (Max.max a b))
+  | .eq => some (.bool (a == b))
+  | .ne => some (.bool (a != b))
+  | .lt => some (.bool (decide (a < b)))
+  | .le => some (.bool (decide (a ≤ b)))
+  | .gt => some (.bool (decide (a > b)))
+  | .ge => some (.bool (decide (a ≥ b)))
+  | .and => some (.bool (a != 0 && b != 0))
+  | .or => some (.bool (a != 0 || b != 0))
+  | .bitAnd | .bitOr | .bitXor | .shl | .shr => none
 
 /-- Floating-point (or mixed) arithmetic. -/
 def floatArith (op : BinOp) (a b : Float) : Option Val :=
@@ -316,7 +366,11 @@ def arith (op : BinOp) (x y : Val) : Option Val :=
     | _ => intArith op (if a then 1 else 0) (if b then 1 else 0)
   | .bool a, .int b => intArith op (if a then 1 else 0) b
   | .int a, .bool b => intArith op a (if b then 1 else 0)
-  | _, _ => floatArith op x.toFloat y.toFloat
+  | .float _, _ | _, .float _ => floatArith op x.toFloat y.toFloat
+  | _, _ =>
+    match x.toRat?, y.toRat? with
+    | some a, some b => ratArith op a b
+    | _, _ => none
 
 def unary (op : UnOp) : Val → Option Val
   | .int a =>
@@ -325,18 +379,29 @@ def unary (op : UnOp) : Val → Option Val
     | .not => some (.bool (a == 0))
     | .bitNot => some (.int (Int.not a))
     | .abs => some (.int (Int.natAbs a))
+    | .floor | .ceil => some (.int a)
+  | .rat q =>
+    match op with
+    | .neg => some (Val.ofRat (-q))
+    | .not => some (.bool (q == 0))
+    | .bitNot => none
+    | .abs => some (Val.ofRat |q|)
+    | .floor => some (.int ⌊q⌋)
+    | .ceil => some (.int ⌈q⌉)
   | .float f =>
     match op with
     | .neg => some (.float (-f))
     | .not => some (.bool (f == 0.0))
     | .bitNot => none
     | .abs => some (.float (Float.abs f))
+    | .floor => some (.float (Float.floor f))
+    | .ceil => some (.float (Float.ceil f))
   | .bool b =>
     match op with
     | .neg => some (.int (if b then -1 else 0))
     | .not => some (.bool (!b))
     | .bitNot => some (.bool (!b))
-    | .abs => some (.int (if b then 1 else 0))
+    | .abs | .floor | .ceil => some (.int (if b then 1 else 0))
 
 end Eval
 
@@ -362,6 +427,7 @@ def eval (I : ExprInterp) (ρ : Valuation) : Expr → Option Val
     let is ← vs.mapM Val.toInt?
     I.readData d is
   | attr b f => do I.readAttr (← b.eval I ρ) f
+  | approx a _ => a.eval I ρ
 
 def evalList (I : ExprInterp) (ρ : Valuation) : Exprs → Option (List Val)
   | .nil => some []

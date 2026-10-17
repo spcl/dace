@@ -10,7 +10,7 @@ DaCe sources at the time of writing.
 
 | Id | Topic | DaCe evidence | Model chosen |
 |----|-------|---------------|--------------|
-| D1 | Integer arithmetic | Codegen emits native C ints (default `int32`, `dace/symbolic.py:26`), wrapping and truncating `/`, `%` | Idealized `ℤ`; `int_floor` = floor division, `int_ceil` = ceiling division, `Mod` = Euclidean modulo. Overflow is out of scope (assumption). |
+| D1 | Integer arithmetic | Codegen emits native C ints (default `int32`, `dace/symbolic.py:26`), wrapping and truncating `/`, `%`; SymPy expressions use exact rationals (`1/2*N`) | Idealized `ℤ` with exact rationals `ℚ` for symbolic division; `int_floor` = floor division (Python `//`), `int_ceil` = ceiling division, `Mod` = Python modulo (sign of divisor). Overflow and C truncation are out of scope (assumption; codegen's `int_floor` truncates for negative operands). |
 | D2 | Multiple true interstate conditions | Doc: undefined (`doc/sdfg/ir.rst:151-152`); codegen takes the first true edge in out-edge order (`dace/codegen/control_flow.py:304-328`) | Nondeterministic choice among true edges. Codegen order is a refinement. |
 | D3 | Map schedules | Maps are parallel scopes (`doc/sdfg/ir.rst:446-471`); `Sequential` lowers to ordered `for` loops (`cpu.py:2132-2148`) | `schedule` is semantically inert: every map is a parallel scope; iteration logs are merged, conflicts are an `error race`. Sequential execution is a refinement. |
 | D4 | Concurrent components in a state | Parallel only under `openmp_sections` (`framecode.py:558-574`), else emitted sequentially | Components run in parallel (permission); each component in some topological order; logs merged. |
@@ -31,6 +31,6 @@ DaCe sources at the time of writing.
 | D19 | `StateBoundaryNode` | Conversion artifact of tree→SDFG | No stree syntax; appears only in the correspondence relation. |
 | D20 | Stree sibling order | SDFG→tree serializes a state by one topological order | Sibling order is one valid schedule; the correspondence accepts any topological order. |
 | D21 | Structures / ContainerArrays | Member access `a.b` lowered to `a->b` | Full syntax and the generic `Loc` memory model; no theorems in this phase. |
-| D22 | Symbolic expression parsing | DaCe stores sympy expressions as Python-syntax strings | Parsed by `Core/Parse`; unknown function calls become opaque `app` nodes. |
+| D22 | Symbolic expression parsing | DaCe stores sympy expressions as Python-syntax strings; serialized symbols carry a `$` prefix; `SymExpr(exact, approx)` pairs an expression with an over-approximation | Parsed by `Core/Parse` (both `$`-prefixed and bare symbols); `SymExpr` becomes `Expr.approx` and evaluates as its exact part; unknown function calls become opaque `app` nodes. |
 | D23 | Floating point | Tasklets and symbolic expressions may use floats | Floats are an abstract sort interpreted by `Interp`; no IEEE semantics. |
 | D24 | Custom WCR lambdas | Commutativity/associativity checked symbolically, may be indeterminate (`dace/frontend/operations.py:201-250`) | Assumed commutative and associative (hypothesis of `Interp`). |

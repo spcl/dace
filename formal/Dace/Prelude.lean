@@ -6,6 +6,7 @@ import Mathlib.Data.Finset.Basic
 import Mathlib.Data.Finsupp.Basic
 import Mathlib.Data.Int.Basic
 import Mathlib.Data.Int.Bitwise
+import Mathlib.Data.Rat.Floor
 import Mathlib.Logic.Function.Basic
 import Mathlib.Order.Basic
 import Mathlib.Tactic

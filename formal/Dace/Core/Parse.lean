@@ -29,7 +29,7 @@ inductive Token where
   | eof
   deriving DecidableEq, Repr, Inhabited
 
-private def isIdentStart (c : Char) : Bool := c.isAlpha || c = '_'
+private def isIdentStart (c : Char) : Bool := c.isAlpha || c = '_' || c = '$'
 private def isIdentChar (c : Char) : Bool := c.isAlphanum || c = '_'
 
 /-- Character array view of the input; `cs.getD i ' '` is safe past the end. -/
@@ -88,8 +88,11 @@ partial def tokenize (s : String) : Option (List Token) :=
         let (t, j) := lexNumber cs i
         go j (t :: acc)
       else if isIdentStart c then
-        let j := identEnd cs (i + 1)
-        go j (Token.ident (String.ofList (cs.extract i j).toList) :: acc)
+        -- serialized symbols carry a `$` prefix (`dace.symbolic.serialize_symbolic`)
+        let start := if c = '$' then i + 1 else i
+        let j := identEnd cs start
+        if j = start then none
+        else go j (Token.ident (String.ofList (cs.extract start j).toList) :: acc)
       else
         let two := String.ofList [c, at? cs (i + 1)]
         if two ∈ ["**", "//", "==", "!=", "<=", ">=", "<<", ">>"] then
@@ -102,7 +105,7 @@ partial def tokenize (s : String) : Option (List Token) :=
           | ']' => go (i + 1) (Token.rbracket :: acc)
           | ',' => go (i + 1) (Token.comma :: acc)
           | '.' => go (i + 1) (Token.dot :: acc)
-          | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '&' | '|' | '^' | '~' =>
+          | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '&' | '|' | '^' | '~' | '=' =>
             go (i + 1) (Token.op c.toString :: acc)
           | _ => none
     else some (Token.eof :: acc).reverse
@@ -147,6 +150,10 @@ def mkCall (f : String) (args : List Expr) : Expr :=
   | "max", _ => (foldBin .max args).getD (.app f args)
   | "Abs", [a] => .un .abs a
   | "abs", [a] => .un .abs a
+  | "floor", [a] => .un .floor a
+  | "ceiling", [a] => .un .ceil a
+  | "ceil", [a] => .un .ceil a
+  | "SymExpr", [a, b] => .approx a b
   | "int_floor", [a, b] => .bin .intFloor a b
   | "int_ceil", [a, b] => .bin .intCeil a b
   | "Mod", [a, b] => .bin .mod a b
@@ -386,6 +393,16 @@ def parseExpr (s : String) : Option Expr := do
   let (e, st) ← (parseOr).run { toks := toks.toArray }
   if st.toks.getD st.pos .eof = .eof then some e else none
 
+/-- Parse a single assignment statement `name = expr` (loop init/update
+statements, interstate assignments). -/
+def parseAssign (s : String) : Option (Sym × Expr) := do
+  let toks ← tokenize s
+  match toks with
+  | .ident name :: .op "=" :: rest =>
+    let (e, st) ← (parseOr).run { toks := rest.toArray }
+    if st.toks.getD st.pos .eof = .eof then some (name, e) else none
+  | _ => none
+
 /-! ## Printing -/
 
 /-- Precedence levels (higher binds tighter), following Python. -/
@@ -436,6 +453,9 @@ partial def toPy : Expr → String
   | .un .bitNot a => s!"~{wrap 11 a}"
   | .un .not a => s!"not {wrap 3 a}"
   | .un .abs a => s!"Abs({toPy a})"
+  | .un .floor a => s!"floor({toPy a})"
+  | .un .ceil a => s!"ceiling({toPy a})"
+  | .approx a o => s!"SymExpr({toPy a}, {toPy o})"
   | e@(.bin op a b) =>
     match binSym op with
     | some s =>
@@ -463,6 +483,9 @@ namespace Dace.Expr
 
 /-- Parse from DaCe's string syntax. -/
 def parse? (s : String) : Option Expr := Dace.Parse.parseExpr s
+
+/-- Parse an assignment statement `name = expr`. -/
+def parseAssign? (s : String) : Option (Sym × Expr) := Dace.Parse.parseAssign s
 
 /-- Print in DaCe's string syntax. -/
 def toPy (e : Expr) : String := Dace.Parse.toPy e
