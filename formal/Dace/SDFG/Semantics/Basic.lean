@@ -50,6 +50,19 @@ inductive ErrReason where
   | malformed (msg : String)
   deriving Inhabited
 
+/-- Human-readable rendering (for tools and test output). -/
+def ErrReason.toString : ErrReason → String
+  | .race e => s!"data race: {repr e}"
+  | .stuckPop l => s!"pop from an empty queue at {repr l}"
+  | .undefinedExpr e => s!"undefined expression '{e}'"
+  | .undefinedSubset sub => s!"undefined subset {repr sub}"
+  | .unsetRef n => s!"reference '{n}' accessed before it was set"
+  | .taskletUndefined label => s!"tasklet '{label}' is undefined for its inputs"
+  | .libraryUnsupported classpath => s!"unsupported library node '{classpath}'"
+  | .malformed msg => s!"malformed SDFG: {msg}"
+
+instance : ToString ErrReason := ⟨ErrReason.toString⟩
+
 /-- Outcome of an execution: a result or an error. -/
 inductive Res (α : Type) where
   | ok (a : α)

@@ -15,6 +15,7 @@ import Dace.SDFG.Syntax
 import Dace.SDFG.Scope
 import Dace.SDFG.WF
 import Dace.SDFG.Semantics
+import Dace.SDFG.Interp
 import Dace.SDFG.Json
 
 /-!

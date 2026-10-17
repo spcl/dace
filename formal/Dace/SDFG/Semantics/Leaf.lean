@@ -405,7 +405,7 @@ def DNode.isSimple (n : DNode) : Bool :=
 def execSimple (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) : Res St :=
   match n.kind with
   | .access _ | .mapExit | .consumeExit => execCopiesInto ctx ρ s n st
-  | .tasklet t => execCode ctx ρ s n st (ctx.I.tasklet t) (.taskletUndefined t.label)
+  | .tasklet t => execCode ctx ρ s n st (ctx.I.tasklet t ρ) (.taskletUndefined t.label)
   | .library l =>
     match l.reduce with
     | some props => execReduce ctx ρ s n props st

@@ -23,11 +23,12 @@ statements (`if`/`for`/…) are reported as **unsupported** (the whole body
 yields `none`); conditional *expressions* `a if c else b` are supported by the
 expression parser.
 
-Reading semantics (`Decisions.md#D13`, `#D14`):
+Reading semantics (`Decisions.md#D13`, `#D14`, `#D46`):
 * a local variable reads its last value; a scalar input connector reads its
   bound value; a subscript `a[i]` into a pointer connector reads the element at
   the relative index; each read of a stream input connector pops one available
-  value (counted in `pops`), undefined when exhausted;
+  value (counted in `pops`), undefined when exhausted; a bare name that is
+  neither a local nor a connector reads the symbol of that name;
 * assigning a plain name that is an output connector records a scalar write
   (last assignment wins); a subscript on an output connector records an element
   write; `conn.push(e)` records a stream push.
@@ -204,6 +205,8 @@ def parseStmts (code : String) : Option (List Stmt) :=
 /-- Mutable state threaded through a tasklet execution. -/
 structure RunState where
   I : ExprInterp
+  /-- Symbols visible to the tasklet (`Decisions.md#D46`). -/
+  ρ : Valuation
   ins : Conn → Option ConnIn
   outDtypes : List (Conn × Option Dtype)
   locals : List (Conn × Val) := []
@@ -251,7 +254,8 @@ def pushStream (s : Conn) (v : Val) : M Unit := do
     | _ => v
   set { st with pushes := appendPush st.pushes s v' }
 
-/-- Read a bare name: local, previously written output scalar, or input. -/
+/-- Read a bare name: local, previously written output scalar, input
+connector, or symbol (`Decisions.md#D46`). -/
 def readName (s : Conn) : M Val := do
   let st ← get
   match st.locals.find? (·.1 == s) with
@@ -263,7 +267,8 @@ def readName (s : Conn) : M Val := do
       match st.ins s with
       | some (.scalar v) => pure v
       | some (.stream _) => popStream s
-      | _ => ofOpt none
+      | some (.array _) => ofOpt none
+      | none => ofOpt (st.ρ s)
 
 /-- Read a subscript `conn[idx]`. -/
 def readSub (conn : Name) (idx : Idx) : M Val := do
@@ -366,14 +371,15 @@ def buildOut (st : RunState) : TaskletOut :=
   { scalars := st.scalars, arrayWrites := st.arrayWrites,
     pushes := st.pushes, pops := st.pops }
 
-/-- Run a Python tasklet under the expression interpretation `I`.  Non-Python
-tasklets and unsupported bodies yield `none`. -/
-def run (I : ExprInterp) : TaskletSem := fun t ins =>
+/-- Run a Python tasklet under the expression interpretation `I` and the
+symbol valuation `ρ`.  Non-Python tasklets and unsupported bodies yield
+`none`. -/
+def run (I : ExprInterp) : TaskletSem := fun t ρ ins =>
   match t.code.language with
   | .python => do
     let stmts ← parseStmts t.code.code
     let init : RunState :=
-      { I, ins, outDtypes := t.outConns,
+      { I, ρ, ins, outDtypes := t.outConns,
         streams := t.inConns.filterMap fun (c, _) =>
           match ins c with
           | some (.stream avail) => some (c, avail)

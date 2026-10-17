@@ -386,7 +386,17 @@ partial def regionBody (arrays : List (Name × DataDesc)) (j : Json) (kind : Reg
   let edgesJ ← ((field? j "edges").getD (Json.arr #[])).getArr?
   let blocks ← blocksJ.toList.mapM (block arrays)
   let edges ← edgesJ.toList.mapM iedge
-  let start ← (natField? j "start_block").map (·.getD 0)
+  -- `ControlFlowRegion.start_block` (`dace/sdfg/state.py:3459-3476`): the unique
+  -- source block if there is one, else the explicitly stored `start_block`
+  -- (`Decisions.md#D45`).
+  let explicit ← natField? j "start_block"
+  let sources := (List.range blocks.length).filter fun b => edges.all (·.dst ≠ b)
+  let start ← match sources, explicit with
+    | [s], _ => pure s
+    | _, some s => pure s
+    | _, none =>
+      if blocks.isEmpty then pure 0
+      else throw s!"ambiguous or undefined start block of region '{label}'"
   pure { label, kind, blocks, start, edges }
 
 partial def block (arrays : List (Name × DataDesc)) (j : Json) : P Block := do

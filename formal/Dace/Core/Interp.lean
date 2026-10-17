@@ -30,7 +30,7 @@ namespace Interp
 def uninterpreted : Interp where
   expr := ExprInterp.pure
   wcr := WcrOp.applyConcrete
-  tasklet := fun _ _ => none
+  tasklet := fun _ _ _ => none
   library := fun _ _ => none
 
 /-- Lawfulness: the WCR semantics is commutative and associative. -/

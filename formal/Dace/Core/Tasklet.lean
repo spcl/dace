@@ -56,7 +56,10 @@ structure TaskletOut where
   pops : List (Conn × Nat) := []
   deriving Inhabited
 
-/-- Tasklet semantics: deterministic, `none` = undefined behaviour. -/
-abbrev TaskletSem := Tasklet → (Conn → Option ConnIn) → Option TaskletOut
+/-- Tasklet semantics: deterministic, `none` = undefined behaviour.  Besides
+its connector bindings a tasklet sees the current symbol valuation (SDFG
+symbols, map parameters, dynamic scope inputs), as its code does in the
+generated program (`Decisions.md#D46`). -/
+abbrev TaskletSem := Tasklet → Valuation → (Conn → Option ConnIn) → Option TaskletOut
 
 end Dace

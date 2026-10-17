@@ -15,7 +15,7 @@ def scalarIns (m : List (Conn × Val)) : Conn → Option ConnIn :=
   fun c => (m.find? (·.1 = c)).map (fun p => .scalar p.2)
 
 def runT (t : Tasklet) (ins : Conn → Option ConnIn) : Option TaskletOut :=
-  PyTasklet.run PyTasklet.exprInterp t ins
+  PyTasklet.run PyTasklet.exprInterp t (fun _ => none) ins
 
 /-- Scalar outputs of a run. -/
 def runScalars (t : Tasklet) (ins : Conn → Option ConnIn) : Option (List (Conn × Val)) :=
@@ -108,7 +108,17 @@ def streamIns : Conn → Option ConnIn := fun c =>
 -- popping an exhausted stream is undefined
 #guard (runT (mkT "o.push(s)\no.push(s)\no.push(s)" [("s", none)] [("o", none)]) streamIns).isNone
 
+-- symbols are visible by name (D46); connectors shadow them
+#guard (PyTasklet.run PyTasklet.exprInterp (mkT "out = (a * k)" [("a", some fl)] [("out", some fl)])
+  (fun s => if s = "k" then some (.int 3) else none)
+  (scalarIns [("a", .float 2.0)])).map (·.scalars) == some [("out", .float 6.0)]
+#guard (PyTasklet.run PyTasklet.exprInterp (mkT "out = a" [("a", some fl)] [("out", some fl)])
+  (fun s => if s = "a" then some (.int 3) else none)
+  (scalarIns [("a", .float 2.0)])).map (·.scalars) == some [("out", .float 2.0)]
+-- an unbound name is undefined
+#guard (runT (mkT "out = k" [] [("out", some fl)]) (fun _ => none)).isNone
+
 -- non-Python tasklets and unsupported code yield none
 #guard (PyTasklet.run PyTasklet.exprInterp
-  { code := { code := "x = 1", language := .cpp } } (fun _ => none)).isNone
+  { code := { code := "x = 1", language := .cpp } } (fun _ => none) (fun _ => none)).isNone
 #guard (runT (mkT "while x:\n  pass" [] []) (fun _ => none)).isNone
