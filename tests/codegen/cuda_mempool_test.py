@@ -5,6 +5,8 @@ import pytest
 
 import dace
 from dace.codegen import common
+from dace.codegen.targets.cuda import compute_pool_release
+from dace.sdfg.state import LoopRegion
 
 
 def count_frees_on_stream_zero(code: str, name: str) -> int:
@@ -306,7 +308,42 @@ def test_memory_pool_setup_leaves_the_program_names_free():
     assert not re.search(r"\b(?:uint64_t|\w+MemPool_t)\s+(?:threshold|mempool)\b", gpu_code)
 
 
+def test_a_pooled_array_used_in_a_loop_is_not_released_inside_it():
+    """A program-long pooled array allocated once and used in every iteration of a loop must outlive the loop:
+    released at the end of the body, the next iteration writes into freed memory the pool hands out again
+    (cloudsc on the GPU at M, wrong from level 68 down)."""
+    sdfg = dace.SDFG("pool_in_loop")
+    sdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient(
+        "tmp", [20], dace.float64, storage=dace.StorageType.GPU_Global, lifetime=dace.AllocationLifetime.Global
+    )
+    sdfg.arrays["tmp"].pool = True
+    start = sdfg.add_state("start", is_start_block=True)
+    loop = LoopRegion("sweep", "k < 5", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(start, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    body.add_mapped_tasklet(
+        "inc",
+        {"i": "0:20"},
+        {"a": dace.Memlet("A[i]")},
+        "t = a + 1",
+        {"t": dace.Memlet("tmp[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    tmp = next(n for n in body.data_nodes() if n.data == "tmp")
+    body.add_nedge(tmp, body.add_write("A"), dace.Memlet("A[0:20]"))
+    sdfg.add_state_after(loop, "done")
+
+    release: dict = {}
+    compute_pool_release(sdfg, release)
+    state, _ = release[(sdfg, "tmp")]
+    assert state is not body, "released at the end of the loop body, so every later iteration uses freed memory"
+
+
 if __name__ == "__main__":
+    test_a_pooled_array_used_in_a_loop_is_not_released_inside_it()
     for lifetime in [dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent]:
         test_pooled_array_is_freed_once(lifetime)
     test_memory_pool()

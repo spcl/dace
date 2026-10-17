@@ -3564,11 +3564,12 @@ def record_pool_releases(
 ) -> None:
     """Release every array of ``pooled`` after the last state that accesses it, or else at the end of ``sdfg``."""
     for state in sdfg.states():
-        # Arrays no reachable later state accesses are released in this one
+        # Arrays no state reachable from this one accesses are released in this one. A state in a loop reaches
+        # itself, so an array its body uses is not released inside the loop, where the next iteration needs it.
         last_state_arrays = OrderedSet(
             s
             for s in access_sets
-            if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state}
+            if s in pooled and state in access_sets[s] and not access_sets[s] & reachable[state]
         )
         for aname in last_state_arrays:
             pool_release[(sdfg, aname)] = release_point(state, aname, tag)
