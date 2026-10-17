@@ -846,10 +846,11 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
     scatter_accum_dup, tsvc s3110/s316/s318) were unoffloadable for exactly this reason.
 
     Scalars stay on the host: they are passed by value, so there is no buffer to place, and a device
-    map that writes one gets a GPU transient and a copy back from the offload pass.
+    map that writes one gets a GPU transient and a copy back from the offload pass. So does an SDFG constant
+    (``constants_prop``): it is a host ``constexpr`` array no caller passes in, so a kernel reads a device copy.
     """
-    for desc in sdfg.arrays.values():
-        if isinstance(desc, dt.Scalar):
+    for name, desc in sdfg.arrays.items():
+        if isinstance(desc, dt.Scalar) or name in sdfg.constants_prop:
             continue
         if not desc.transient and desc.storage == dtypes.StorageType.Default:
             desc.storage = dtypes.StorageType.GPU_Global

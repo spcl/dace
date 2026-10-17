@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 def test_kernel_local_transient_is_thread_private():
@@ -28,5 +29,34 @@ def test_kernel_local_transient_is_thread_private():
     sdfg.generate_code()
 
 
+def test_a_constant_array_a_kernel_reads_gets_a_device_copy():
+    """A closure array the caller stores as an SDFG constant is a host ``constexpr`` no caller passes in: a kernel
+    reading it needs a device copy, not the host address (cp2k_density_matrix_trs4's ``np.arange(3)``)."""
+    import numpy as np
+
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    n = dace.symbol("n", dtype=dace.int64, positive=True)
+
+    @dace.program
+    def offsets(idx: dace.int64[n], out: dace.int64[n, 3]):
+        out[:] = idx[:, None] + np.arange(3, dtype=np.int64)[None, :]
+
+    sdfg = offsets.to_sdfg(simplify=True)
+    (name,) = [k for k, v in sdfg.arrays.items() if k.startswith("__g_") and not v.transient]
+    sdfg.add_constant(name, np.arange(3, dtype=np.int64), sdfg.arrays[name])
+    canonicalize(sdfg, target="gpu", validate_all=False)
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, target="gpu")
+
+    assert sdfg.arrays[name].storage != dace.StorageType.GPU_Global
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data == name:
+                assert not is_devicelevel_gpu(sdfg, state, node), "the kernel reads the host constant"
+
+
 if __name__ == "__main__":
     test_kernel_local_transient_is_thread_private()
+    test_a_constant_array_a_kernel_reads_gets_a_device_copy()
