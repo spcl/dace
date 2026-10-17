@@ -744,6 +744,32 @@ def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.
             expansion.add_out_connector(conn, dtype=ctype)
 
 
+def share_out_no_small_axis(expansion: SDFG) -> None:
+    """Move the ``SMALL`` axes of the ``CPU_Multicore`` maps a library expansion just made into an inner
+    sequential map, as
+    :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` does
+    for the maps that exist before code generation. A library node expands at code generation, after that
+    pass: velocity_tendencies at one block filled each ``(nblks, nlev, nproma)`` temporary in a map shared out
+    over ``nblks``, on one thread. Nothing changes unless a ``SMALL`` symbol is declared.
+
+    :param expansion: the nested SDFG of an expansion, already in its parent and with its schedules inferred.
+    """
+    # Avoid import loop
+    from dace.transformation.helpers import isolate_small_map_axes
+
+    resolver = st.SymbolResolver()
+    candidates = [
+        (node, state)
+        for state in expansion.states()
+        for node in state.nodes()
+        if isinstance(node, nd.MapEntry) and node.map.schedule == ScheduleType.CPU_Multicore
+    ]
+    if not candidates or not resolver.facts_at(candidates[0][1]).small:
+        return
+    for entry, state in candidates:
+        isolate_small_map_axes(state, entry, resolver)
+
+
 @make_properties
 class ExpandTransformation(PatternTransformation):
     """
@@ -831,6 +857,7 @@ class ExpandTransformation(PatternTransformation):
         if isinstance(expansion, nd.NestedSDFG):
             dealias.integrate_nested_sdfg(expansion.sdfg)
             infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [*enclosing, node.schedule], True)
+            share_out_no_small_axis(expansion.sdfg)
 
         type(self).postprocessing(sdfg, state, expansion)
 

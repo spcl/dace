@@ -11,7 +11,8 @@ import numpy as np
 
 import dace
 from dace import dtypes
-from dace.sdfg import nodes
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.sdfg import infer_types, nodes
 from dace.symbolic import Scale
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
@@ -141,6 +142,41 @@ def test_cpu_specialize_never_shares_out_a_block_axis():
         check_values(sdfg)
 
 
+def expanded_fill_maps(small: bool) -> list[tuple[list[str], dtypes.ScheduleType]]:
+    """Expand a whole-array fill of ``B`` into its element map and return that map nest, outermost first."""
+    sdfg = blocked_sdfg("cpu_expanded_fill_small" if small else "cpu_expanded_fill", small)
+    state = sdfg.add_state("compute")
+    fill = FillLibraryNode("fill", value=0.0)
+    fill.implementation = "pure"
+    state.add_node(fill)
+    state.add_edge(
+        fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, dace.Memlet("B[0:nblks, 0:nproma]")
+    )
+    sdfg.validate()
+    # As finalization leaves it for code generation: the top-level node scheduled on the device.
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    fill.expand(state)
+    nested = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    inner = next(iter(nested.sdfg.states()))
+    scopes = inner.scope_dict()
+    entries = [n for n in inner.nodes() if isinstance(n, nodes.MapEntry)]
+    entries.sort(key=lambda e: scopes[e] is not None)
+    B = np.ones((NBLKS, NPROMA))
+    sdfg(A=np.zeros((NBLKS, NPROMA)), B=B, nblks=NBLKS, nproma=NPROMA)
+    np.testing.assert_allclose(B, 0.0)
+    return [(e.map.params, e.map.schedule) for e in entries]
+
+
+def test_a_library_expansion_never_shares_out_a_block_axis():
+    """A library node expands at code generation, after ``SequentializeSmallAxes``: a whole-array fill of a
+    ``(nblks, nproma)`` temporary was one map shared out over ``nblks`` -- velocity_tendencies at one block
+    filled five ``(nblks, nlev, nproma)`` temporaries per call on one thread each."""
+    nest = expanded_fill_maps(small=True)
+    assert nest[0][1] == PAR and nest[0][0] == ["__i1"], nest
+    assert nest[1] == (["__i0"], SEQ), nest
+    assert expanded_fill_maps(small=False) == [(["__i0", "__i1"], PAR)]
+
+
 if __name__ == "__main__":
     test_a_block_axis_moves_into_an_inner_sequential_map()
     test_a_block_map_around_a_row_map_shares_out_the_rows()
@@ -148,3 +184,4 @@ if __name__ == "__main__":
     test_a_block_map_without_a_large_axis_is_left_alone()
     test_without_small_symbols_nothing_changes()
     test_cpu_specialize_never_shares_out_a_block_axis()
+    test_a_library_expansion_never_shares_out_a_block_axis()
