@@ -83,6 +83,20 @@ end State
 
 /-! ## Reading single values -/
 
+/-- The scalar at a single-element subset of container `d`: one popped
+element for a stream, the element itself otherwise. -/
+def readScalarData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (st : St) : Res (Option Val × St) := do
+  let pts ← ctx.pointsOf ρ st.mem d sub
+  match pts with
+  | [p] =>
+    if ctx.isStream d then do
+      let (vs, st) ← st.popN ctx ρ d p 1
+      pure (vs.head?, st)
+    else do
+      let (v, st) ← st.read ctx ρ d p
+      pure (some v, st)
+  | _ => .err (.malformed s!"scalar read of '{d}' is not a single element")
+
 /-- The scalar flowing along a leaf edge into a scope entry or code node
 (`Decisions.md#D42`): a single element of a container, one popped element
 of a stream, a code value, or the first chunk element.  `none` = no value
@@ -91,17 +105,7 @@ def readEdgeScalar (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St
   match s.srcEndpoint e with
   | .code key => .ok (st.val? key, st)
   | .chunk entry => .ok ((st.mem.chunkVals (chunkName ctx entry)).head?, st)
-  | .data d sub => do
-    let pts ← ctx.pointsOf ρ st.mem d sub
-    match pts with
-    | [p] =>
-      if ctx.isStream d then do
-        let (vs, st) ← st.popN ctx ρ d p 1
-        pure (vs.head?, st)
-      else do
-        let (v, st) ← st.read ctx ρ d p
-        pure (some v, st)
-    | _ => .err (.malformed s!"scalar read of '{d}' is not a single element")
+  | .data d sub => readScalarData ctx ρ d sub st
   | .invalid => .err (.malformed "leaf edge without a valid source")
 
 /-- Location of the (first) element of a stream endpoint. -/
@@ -111,86 +115,104 @@ def streamPoint (ctx : Ctx) (ρ : Valuation) (m : Mem) (d : Name) (sub : Option 
 
 /-! ## Copies -/
 
-/-- Execute a leaf copy edge (`Decisions.md#D7`, `#D10`): elementwise over
-the zipped point lists; a stream source pops as many elements as the
-destination has points, a stream destination receives all source elements
-in order; the consume chunk copies like an array source. -/
+/-- Copy between two container endpoints (`Decisions.md#D7`, `#D10`):
+elementwise over the zipped point lists; a stream source pops as many
+elements as the destination has points, a stream destination receives all
+source elements in order. -/
+def copyData (ctx : Ctx) (ρ : Valuation) (st : St) (sd : Name) (ssub : Option Subset) (dd : Name)
+    (dsub : Option Subset) (wcr : Option WcrOp) : Res St :=
+  match ctx.isStream sd, ctx.isStream dd with
+  | true, true => .err (.malformed "stream-to-stream copy")
+  | true, false => do
+    let dpts ← ctx.pointsOf ρ st.mem dd dsub
+    let sp ← streamPoint ctx ρ st.mem sd ssub
+    let (vs, st) ← st.popN ctx ρ sd sp dpts.length
+    (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q wcr v) st
+  | false, true => do
+    let spts ← ctx.pointsOf ρ st.mem sd ssub
+    let dp ← streamPoint ctx ρ st.mem dd dsub
+    let (vs, st) ← st.readMany ctx ρ sd spts
+    st.push ctx ρ dd dp vs
+  | false, false => do
+    let spts ← ctx.pointsOf ρ st.mem sd ssub
+    let dpts ← ctx.pointsOf ρ st.mem dd dsub
+    (spts.zip dpts).foldlM (fun st (p, q) => do
+      let (v, st) ← st.read ctx ρ sd p
+      st.store ctx ρ dd q wcr v) st
+
+/-- Copy the consumed chunk `vs` into a container endpoint (like an array
+source). -/
+def copyChunk (ctx : Ctx) (ρ : Valuation) (st : St) (vs : List Val) (dd : Name) (dsub : Option Subset)
+    (wcr : Option WcrOp) : Res St :=
+  if ctx.isStream dd then do
+    let dp ← streamPoint ctx ρ st.mem dd dsub
+    st.push ctx ρ dd dp vs
+  else do
+    let dpts ← ctx.pointsOf ρ st.mem dd dsub
+    (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q wcr v) st
+
+/-- Execute a leaf copy edge (`Decisions.md#D7`, `#D10`): `copyData` between
+the structural endpoints; the consume chunk copies like an array source. -/
 def execCopy (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res St :=
   match e.data with
   | .dep => .ok st
   | .memlet m =>
     match s.srcEndpoint e, s.dstEndpoint e with
-    | .data sd ssub, .data dd dsub =>
-      match ctx.isStream sd, ctx.isStream dd with
-      | true, true => .err (.malformed "stream-to-stream copy")
-      | true, false => do
-        let dpts ← ctx.pointsOf ρ st.mem dd dsub
-        let sp ← streamPoint ctx ρ st.mem sd ssub
-        let (vs, st) ← st.popN ctx ρ sd sp dpts.length
-        (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q m.wcr v) st
-      | false, true => do
-        let spts ← ctx.pointsOf ρ st.mem sd ssub
-        let dp ← streamPoint ctx ρ st.mem dd dsub
-        let (vs, st) ← st.readMany ctx ρ sd spts
-        st.push ctx ρ dd dp vs
-      | false, false => do
-        let spts ← ctx.pointsOf ρ st.mem sd ssub
-        let dpts ← ctx.pointsOf ρ st.mem dd dsub
-        (spts.zip dpts).foldlM (fun st (p, q) => do
-          let (v, st) ← st.read ctx ρ sd p
-          st.store ctx ρ dd q m.wcr v) st
-    | .chunk entry, .data dd dsub => do
-      let vs := st.mem.chunkVals (chunkName ctx entry)
-      if ctx.isStream dd then do
-        let dp ← streamPoint ctx ρ st.mem dd dsub
-        st.push ctx ρ dd dp vs
-      else do
-        let dpts ← ctx.pointsOf ρ st.mem dd dsub
-        (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q m.wcr v) st
+    | .data sd ssub, .data dd dsub => copyData ctx ρ st sd ssub dd dsub m.wcr
+    | .chunk entry, .data dd dsub => copyChunk ctx ρ st (st.mem.chunkVals (chunkName ctx entry)) dd dsub m.wcr
     | _, _ => .err (.malformed "copy between non-container endpoints")
 
 /-! ## Code nodes (tasklets and library nodes) -/
 
-/-- Bind one input connector (`Decisions.md#D40`): a single-point subset is
-a scalar, a multi-point subset a pointer connector addressed relative to the
-subset's lower corner (its whole footprint is logged as read), a stream
-connector sees the current queue; code values come from `St.vals`. -/
+/-- The consumed chunk as a connector value: a scalar for one element, else
+a pointer connector over the chunk. -/
+def bindInChunk (vs : List Val) : ConnIn :=
+  match vs with
+  | [v] => .scalar v
+  | _ => .array fun rel =>
+      match rel with
+      | [k] => if 0 ≤ k then vs[k.toNat]? else none
+      | _ => none
+
+/-- Bind a container endpoint to an input connector (`Decisions.md#D40`): a
+single-point subset is a scalar, a multi-point subset a pointer connector
+addressed relative to the subset's lower corner (its whole footprint is
+logged as read), a stream connector sees the current queue. -/
+def bindInData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (st : St) : Res (ConnIn × St) :=
+  if ctx.isStream d then do
+    let p ← streamPoint ctx ρ st.mem d sub
+    let q ← st.queue ctx ρ d p
+    pure (.stream q, st)
+  else do
+    let pts ← ctx.pointsOf ρ st.mem d sub
+    match pts with
+    | [] => .err (.malformed s!"empty input subset of '{d}'")
+    | [p] => do
+      let (v, st) ← st.read ctx ρ d p
+      pure (.scalar v, st)
+    | lo :: _ => do
+      let (_, st) ← st.readMany ctx ρ d pts
+      let m := st.mem
+      let get : Idx → Option Val := fun rel =>
+        if rel.length = lo.length then
+          let abs := List.zipWith (· + ·) lo rel
+          if pts.contains abs then
+            match ctx.loc ρ m d abs with
+            | .ok l => some (m.read l)
+            | .err _ => none
+          else none
+        else none
+      pure (.array get, st)
+
+/-- Bind one input connector of a code node from its leaf edge; code values
+come from `St.vals`. -/
 def bindIn (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res (Option ConnIn × St) :=
   match s.srcEndpoint e with
   | .code key => .ok ((st.val? key).map .scalar, st)
-  | .chunk entry =>
-    let vs := st.mem.chunkVals (chunkName ctx entry)
-    match vs with
-    | [v] => .ok (some (.scalar v), st)
-    | _ => .ok (some (.array fun rel =>
-        match rel with
-        | [k] => if 0 ≤ k then vs[k.toNat]? else none
-        | _ => none), st)
-  | .data d sub =>
-    if ctx.isStream d then do
-      let p ← streamPoint ctx ρ st.mem d sub
-      let q ← st.queue ctx ρ d p
-      pure (some (.stream q), st)
-    else do
-      let pts ← ctx.pointsOf ρ st.mem d sub
-      match pts with
-      | [] => .err (.malformed s!"empty input subset of '{d}'")
-      | [p] => do
-        let (v, st) ← st.read ctx ρ d p
-        pure (some (.scalar v), st)
-      | lo :: _ => do
-        let (_, st) ← st.readMany ctx ρ d pts
-        let m := st.mem
-        let get : Idx → Option Val := fun rel =>
-          if rel.length = lo.length then
-            let abs := List.zipWith (· + ·) lo rel
-            if pts.contains abs then
-              match ctx.loc ρ m d abs with
-              | .ok l => some (m.read l)
-              | .err _ => none
-            else none
-          else none
-        pure (some (.array get), st)
+  | .chunk entry => .ok (some (bindInChunk (st.mem.chunkVals (chunkName ctx entry))), st)
+  | .data d sub => do
+    let (c, st) ← bindInData ctx ρ d sub st
+    pure (some c, st)
   | .invalid => .err (.malformed "input edge without a valid source")
 
 /-- Bind all input connectors of a code node. -/
@@ -206,8 +228,22 @@ def bindInputs (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) :
         | none => pure (acc, st)) (([] : List (Conn × ConnIn)), st)
   pure (fun c => (bs.find? (·.1 = c)).map (·.2), st)
 
-/-- Deliver a scalar output: a plain/WCR write of a single element, a push
-to a stream, or a code value for a code/entry consumer. -/
+/-- Deliver a scalar output to a container endpoint: a plain/WCR write of
+a single element, or a push to a stream. -/
+def storeScalar (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (wcr : Option WcrOp)
+    (v : Val) : Res St :=
+  if ctx.isStream d then do
+    let p ← streamPoint ctx ρ st.mem d sub
+    st.push ctx ρ d p [v]
+  else do
+    let pts ← ctx.pointsOf ρ st.mem d sub
+    match pts with
+    | [p] => st.store ctx ρ d p wcr v
+    | [] => .err (.malformed s!"scalar output to an empty subset of '{d}'")
+    | _ => .err (.malformed s!"scalar output to several elements of '{d}'")
+
+/-- Deliver a scalar output: `storeScalar` for containers, or a code value
+for a code/entry consumer. -/
 def applyScalar (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (c : Conn) (v : Val) : Res St :=
   (s.outEdgesOn n c).foldlM (fun st e =>
     match e.data with
@@ -215,20 +251,21 @@ def applyScalar (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (
     | .memlet m =>
       match s.dstEndpoint e with
       | .code key => pure (st.setVal key v)
-      | .data d sub => do
-        if ctx.isStream d then do
-          let p ← streamPoint ctx ρ st.mem d sub
-          st.push ctx ρ d p [v]
-        else do
-          let pts ← ctx.pointsOf ρ st.mem d sub
-          match pts with
-          | [p] => st.store ctx ρ d p m.wcr v
-          | [] => .err (.malformed s!"scalar output to an empty subset of '{d}'")
-          | _ => .err (.malformed s!"scalar output to several elements of '{d}'")
+      | .data d sub => storeScalar ctx ρ st d sub m.wcr v
       | _ => .err (.malformed s!"output connector '{c}' without a valid destination")) st
 
-/-- Deliver an element write through a pointer output connector, relative
-to the lower corner of the destination subset. -/
+/-- Deliver an element write through a pointer output connector to a
+container endpoint, relative to the lower corner of the subset. -/
+def storeArrayWrite (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (wcr : Option WcrOp)
+    (rel : Idx) (v : Val) : Res St :=
+  if ctx.isStream d then .err (.malformed s!"array write to stream '{d}'")
+  else do
+    let pts ← ctx.pointsOf ρ st.mem d sub
+    let lo ← Res.ofOption pts.head? (.malformed s!"array write to an empty subset of '{d}'")
+    if rel.length = lo.length then st.store ctx ρ d (List.zipWith (· + ·) lo rel) wcr v
+    else .err (.malformed s!"array write index rank mismatch on '{d}'")
+
+/-- Deliver an element write through a pointer output connector. -/
 def applyArrayWrite (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (c : Conn) (rel : Idx) (v : Val) :
     Res St :=
   (s.outEdgesOn n c).foldlM (fun st e =>
@@ -236,25 +273,30 @@ def applyArrayWrite (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : S
     | .dep => pure st
     | .memlet m =>
       match s.dstEndpoint e with
-      | .data d sub =>
-        if ctx.isStream d then .err (.malformed s!"array write to stream '{d}'")
-        else do
-          let pts ← ctx.pointsOf ρ st.mem d sub
-          let lo ← Res.ofOption pts.head? (.malformed s!"array write to an empty subset of '{d}'")
-          if rel.length = lo.length then st.store ctx ρ d (List.zipWith (· + ·) lo rel) m.wcr v
-          else .err (.malformed s!"array write index rank mismatch on '{d}'")
+      | .data d sub => storeArrayWrite ctx ρ st d sub m.wcr rel v
       | _ => .err (.malformed s!"array write through connector '{c}' to a non-container")) st
+
+/-- Push values to a stream endpoint. -/
+def pushTo (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (vs : List Val) : Res St :=
+  if ctx.isStream d then do
+    let p ← streamPoint ctx ρ st.mem d sub
+    st.push ctx ρ d p vs
+  else .err (.malformed s!"push to non-stream '{d}'")
 
 /-- Deliver pushes through a stream output connector. -/
 def applyPush (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (c : Conn) (vs : List Val) : Res St :=
   (s.outEdgesOn n c).foldlM (fun st e =>
     match s.dstEndpoint e with
-    | .data d sub =>
-      if ctx.isStream d then do
-        let p ← streamPoint ctx ρ st.mem d sub
-        st.push ctx ρ d p vs
-      else .err (.malformed s!"push to non-stream '{d}'")
+    | .data d sub => pushTo ctx ρ st d sub vs
     | _ => .err (.malformed s!"push through connector '{c}' to a non-container")) st
+
+/-- Pop `k` elements from a stream endpoint. -/
+def popFrom (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (k : Nat) : Res St :=
+  if ctx.isStream d then do
+    let p ← streamPoint ctx ρ st.mem d sub
+    let (_, st) ← st.popN ctx ρ d p k
+    pure st
+  else .err (.malformed s!"pop from non-stream '{d}'")
 
 /-- Pop `k` elements from the stream behind an input connector (`Decisions.md#D14`). -/
 def applyPop (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (c : Conn) (k : Nat) : Res St :=
@@ -262,12 +304,7 @@ def applyPop (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (c :
   | none => .err (.malformed s!"pop through unknown connector '{c}'")
   | some e =>
     match s.srcEndpoint e with
-    | .data d sub =>
-      if ctx.isStream d then do
-        let p ← streamPoint ctx ρ st.mem d sub
-        let (_, st) ← st.popN ctx ρ d p k
-        pure st
-      else .err (.malformed s!"pop from non-stream '{d}'")
+    | .data d sub => popFrom ctx ρ st d sub k
     | _ => .err (.malformed s!"pop through connector '{c}' from a non-container")
 
 /-- Apply the effects of one code-node execution: pops, then scalar outputs,
@@ -302,41 +339,47 @@ def execCode (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St)
 def reduceKeep (axes : List Nat) (p : Idx) : Idx :=
   p.zipIdx.filterMap fun (x, k) => if axes.contains k then none else some x
 
-/-- Direct semantics of the `Reduce` library node (`Decisions.md#D37`,
-mirroring `ExpandReducePure`, `dace/libraries/standard/nodes/reduce.py:35-166`):
-input points are grouped by their non-reduced coordinates, in the order of
-the output points; with an `identity` the fold starts there and the result
-is written (plainly, or through the out-memlet's WCR); without one the fold
-of the group is contributed to the existing output through the reduction
-operator (the pure expansion has no initialization state). -/
+/-- Direct semantics of `Reduce` between two container endpoints
+(`Decisions.md#D37`, mirroring `ExpandReducePure`,
+`dace/libraries/standard/nodes/reduce.py:35-166`): input points are grouped
+by their non-reduced coordinates, in the order of the output points; with an
+`identity` the fold starts there and the result is written (plainly, or
+through the out-memlet's WCR); without one the fold of the group is
+contributed to the existing output through the reduction operator (the pure
+expansion has no initialization state). -/
+def reduceData (ctx : Ctx) (ρ : Valuation) (st : St) (props : ReduceProps) (sd : Name) (ssub : Option Subset)
+    (dd : Name) (dsub : Option Subset) (outWcr : Option WcrOp) : Res St :=
+  if ctx.isStream sd || ctx.isStream dd then .err (.malformed "reduce over a stream")
+  else do
+    let spts ← ctx.pointsOf ρ st.mem sd ssub
+    let dpts ← ctx.pointsOf ρ st.mem dd dsub
+    let ndim := (spts.head?.map List.length).getD 0
+    let axes := props.axes.getD (List.range ndim)
+    let groups := (spts.map (reduceKeep axes)).eraseDups
+    if groups.length ≠ dpts.length then .err (.malformed "reduce output shape mismatch")
+    else do
+      let (vals, st) ← st.readMany ctx ρ sd spts
+      let pairs := spts.zip vals
+      (groups.zip dpts).foldlM (fun st (g, q) =>
+        let gv := (pairs.filter fun (p, _) => reduceKeep axes p = g).map (·.2)
+        match props.identity with
+        | some ide => do
+          let i ← ctx.evalR ρ st.mem ide
+          st.store ctx ρ dd q outWcr (gv.foldl (ctx.I.wcr props.wcr) i)
+        | none =>
+          match gv with
+          | [] => pure st
+          | v :: rest => st.wcr ctx ρ dd q (outWcr.getD props.wcr) (rest.foldl (ctx.I.wcr props.wcr) v)) st
+
+/-- The `Reduce` library node: `reduceData` between its single input and
+output endpoints. -/
 def execReduce (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (props : ReduceProps) (st : St) : Res St :=
   let ins := (s.inEdges n.id).filter fun e => e.data matches .memlet _
   let outs := (s.outEdges n.id).filter fun e => e.data matches .memlet _
   match ins, outs with
   | [ie], [oe] =>
     match s.srcEndpoint ie, s.dstEndpoint oe, oe.data.memlet? with
-    | .data sd ssub, .data dd dsub, some om =>
-      if ctx.isStream sd || ctx.isStream dd then .err (.malformed "reduce over a stream")
-      else do
-        let spts ← ctx.pointsOf ρ st.mem sd ssub
-        let dpts ← ctx.pointsOf ρ st.mem dd dsub
-        let ndim := (spts.head?.map List.length).getD 0
-        let axes := props.axes.getD (List.range ndim)
-        let groups := (spts.map (reduceKeep axes)).eraseDups
-        if groups.length ≠ dpts.length then .err (.malformed "reduce output shape mismatch")
-        else do
-          let (vals, st) ← st.readMany ctx ρ sd spts
-          let pairs := spts.zip vals
-          (groups.zip dpts).foldlM (fun st (g, q) =>
-            let gv := (pairs.filter fun (p, _) => reduceKeep axes p = g).map (·.2)
-            match props.identity with
-            | some ide => do
-              let i ← ctx.evalR ρ st.mem ide
-              st.store ctx ρ dd q om.wcr (gv.foldl (ctx.I.wcr props.wcr) i)
-            | none =>
-              match gv with
-              | [] => pure st
-              | v :: rest => st.wcr ctx ρ dd q (om.wcr.getD props.wcr) (rest.foldl (ctx.I.wcr props.wcr) v)) st
+    | .data sd ssub, .data dd dsub, some om => reduceData ctx ρ st props sd ssub dd dsub om.wcr
     | _, _, _ => .err (.malformed "reduce node not between containers")
   | _, _ => .err (.malformed "reduce node must have exactly one input and one output")
 

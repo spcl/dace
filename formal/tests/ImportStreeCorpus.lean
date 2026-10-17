@@ -1,0 +1,60 @@
+-- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import Dace
+
+/-! Import every `.stree.json` of the corpus, count the node types, run the
+well-formedness checker and compare the pretty-printer with DaCe's
+`as_string()` output (`.stree.txt`).  Run with
+`lake env lean tests/ImportStreeCorpus.lean` from `formal/`. -/
+
+open Dace
+
+/-- Node counts per class name, in first-occurrence order. -/
+def countTypes (t : STree) : List (String × Nat) :=
+  t.preorder.foldl (fun acc n =>
+    match acc.find? (·.1 = n.typeName) with
+    | some _ => acc.map fun (k, c) => if k = n.typeName then (k, c + 1) else (k, c)
+    | none => acc ++ [(n.typeName, 1)]) []
+
+def stripTrailing (s : String) : String :=
+  String.ofList ((s.toList.reverse.dropWhile Char.isWhitespace).reverse)
+
+def main : IO Unit := do
+  let dir : System.FilePath := "tests/corpus"
+  let entries ← dir.readDir
+  let files := (entries.map (·.path)).qsort (fun a b => a.toString < b.toString)
+  let mut bad := 0
+  let mut mismatches := 0
+  for f in files do
+    let name := f.toString
+    if name.endsWith ".stree.json" then
+      match ← readSTree f with
+      | .error e =>
+        IO.println s!"IMPORT FAIL {f.fileName.getD ""}: {e}"
+        bad := bad + 1
+      | .ok t =>
+        let counts := ", ".intercalate ((countTypes t).map fun (k, c) => s!"{k}={c}")
+        IO.println s!"{f.fileName.getD ""}: {t.containers.length} containers, {t.symbols.length} symbols, {counts}"
+        let r := t.check
+        IO.println s!"  check: {r.errors.length} errors, {r.warnings.length} warnings"
+        for e in r.errors do IO.println s!"  ERROR {e}"
+        for w in r.warnings do IO.println s!"  warn  {w}"
+        if !r.ok then bad := bad + 1
+        -- pretty-printer against DaCe's as_string()
+        let base := String.ofList (name.toList.take (name.length - 5))
+        let txt ← IO.FS.readFile (base ++ ".txt")
+        let got := t.prettyPrint
+        let exp := stripTrailing txt
+        if got = exp then IO.println s!"  as_string: identical"
+        else
+          mismatches := mismatches + 1
+          let gl := got.splitOn "\n"
+          let el := exp.splitOn "\n"
+          let diffs := ((gl.zip el).filter fun (g, e) => g ≠ e).length + (gl.length - el.length) + (el.length - gl.length)
+          IO.println s!"  as_string: {diffs} differing lines ({gl.length} vs {el.length})"
+          for (g, e) in gl.zip el do
+            if g ≠ e then
+              IO.println s!"    expected: {e}"
+              IO.println s!"    got:      {g}"
+  IO.println s!"{bad} files with problems, {mismatches} pretty-print mismatches"
+
+#eval main

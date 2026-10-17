@@ -277,6 +277,43 @@ def reduceProps (a : Json) : P ReduceProps := do
   let identity ← exprField? a "identity"
   pure { axes, wcr, identity }
 
+/-! The node payloads below are shared with the schedule-tree importer
+(`Dace.STree.Json`), where they appear without an enclosing graph. -/
+
+/-- A `Tasklet` from its label, attributes and connector tables. -/
+def taskletOf (label : String) (a : Json) (inC outC : Conns) : P Tasklet := do
+  let code ← match field? a "code" with
+    | some c => codeBlock c
+    | none => pure { code := "" }
+  let se := (field? a "side_effects").bind fun v => v.getBool?.toOption
+  pure { label, code, inConns := inC, outConns := outC, sideEffects := se }
+
+/-- A `Map` from its attributes (`nodes.Map` / `MapEntry`). -/
+def mapOf (label : String) (a : Json) : P MapNode := do
+  let params ← (← field a "params").getArr? >>= fun ps => ps.toList.mapM str
+  let rng ← range (← field a "range")
+  let collapse ← (natField? a "collapse").map (·.getD 1)
+  pure { label := (strField? a "label").getD label, params, range := rng,
+         schedule := (strField? a "schedule").getD "Default", unroll := boolField a "unroll", collapse }
+
+/-- A `Consume` from its attributes (`nodes.Consume` / `ConsumeEntry`). -/
+def consumeOf (label : String) (a : Json) : P ConsumeNode := do
+  let peIndex ← strField a "pe_index"
+  let numPes ← (exprField? a "num_pes").map (·.getD 1)
+  let condition ← match field? a "condition" with
+    | some c => some <$> codeExpr c
+    | none => pure none
+  let chunksize ← (natField? a "chunksize").map (·.getD 1)
+  pure { label := (strField? a "label").getD label, peIndex, numPes, condition, chunksize,
+         schedule := (strField? a "schedule").getD "Default" }
+
+/-- A `LibraryNode` from its JSON object (`classpath` at the top level). -/
+def libNodeOf (j : Json) (label : String) : P LibNode := do
+  let a := attrs j
+  let classpath := (strField? j "classpath").getD ""
+  let reduce ← if classpath.endsWith ".Reduce" then some <$> reduceProps a else pure none
+  pure { classpath, label, implementation := strField? a "implementation", reduce }
+
 mutual
 
 partial def node (j : Json) : P DNode := do
@@ -289,29 +326,10 @@ partial def node (j : Json) : P DNode := do
   let se ← scopeEntry? j
   let kind ← match t with
     | "AccessNode" => NodeKind.access <$> strField a "data"
-    | "Tasklet" => do
-      let code ← match field? a "code" with
-        | some c => codeBlock c
-        | none => pure { code := "" }
-      let se := (field? a "side_effects").bind fun v => v.getBool?.toOption
-      pure (.tasklet { label, code, inConns := inC, outConns := outC, sideEffects := se })
-    | "MapEntry" => do
-      let params ← (← field a "params").getArr? >>= fun ps => ps.toList.mapM str
-      let rng ← range (← field a "range")
-      let collapse ← (natField? a "collapse").map (·.getD 1)
-      pure (.mapEntry { label := (strField? a "label").getD label, params, range := rng,
-                        schedule := (strField? a "schedule").getD "Default",
-                        unroll := boolField a "unroll", collapse })
+    | "Tasklet" => NodeKind.tasklet <$> taskletOf label a inC outC
+    | "MapEntry" => NodeKind.mapEntry <$> mapOf label a
     | "MapExit" => pure .mapExit
-    | "ConsumeEntry" => do
-      let peIndex ← strField a "pe_index"
-      let numPes ← (exprField? a "num_pes").map (·.getD 1)
-      let condition ← match field? a "condition" with
-        | some c => some <$> codeExpr c
-        | none => pure none
-      let chunksize ← (natField? a "chunksize").map (·.getD 1)
-      pure (.consumeEntry { label := (strField? a "label").getD label, peIndex, numPes, condition, chunksize,
-                            schedule := (strField? a "schedule").getD "Default" })
+    | "ConsumeEntry" => NodeKind.consumeEntry <$> consumeOf label a
     | "ConsumeExit" => pure .consumeExit
     | "NestedSDFG" => do
       let inner ← sdfg (← field a "sdfg")
@@ -321,10 +339,7 @@ partial def node (j : Json) : P DNode := do
           let es ← entries m
           es.mapM fun (k, v) => do pure (k, ← expr v)
       pure (.nested inner sm (boolField a "no_inline"))
-    | "LibraryNode" => do
-      let classpath := (strField? j "classpath").getD ""
-      let reduce ← if classpath.endsWith ".Reduce" then some <$> reduceProps a else pure none
-      pure (.library { classpath, label, implementation := strField? a "implementation", reduce })
+    | "LibraryNode" => NodeKind.library <$> libNodeOf j label
     | other => throw s!"unknown node type '{other}'"
   pure { id, label, inConns := inC, outConns := outC, scopeEntry := se, kind }
 

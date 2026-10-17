@@ -18,6 +18,13 @@ import Dace.SDFG.Semantics
 import Dace.SDFG.Interp
 import Dace.SDFG.Soundness
 import Dace.SDFG.Json
+import Dace.STree.Syntax
+import Dace.STree.Json
+import Dace.STree.WF
+import Dace.STree.Semantics.Basic
+import Dace.STree.Semantics.Leaf
+import Dace.STree.Semantics.Exec
+import Dace.STree.Semantics
 
 /-!
 # DaCe formal semantics

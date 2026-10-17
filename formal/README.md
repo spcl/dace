@@ -7,7 +7,10 @@ representations:
   descriptors, memlets, memory, access logs and their parallel merge, tasklets).
 - `Dace/SDFG`: syntax, well-formedness, semantics, interpreter and JSON import
   of stateful dataflow multigraphs.
-- `Dace/STree`: the same for schedule trees.
+- `Dace/STree`: the same for schedule trees (`Syntax` with DaCe's
+  `as_string` pretty-printer, `Json` importer for `.stree.json`, `WF`,
+  relational `Semantics`); `tests/ImportStreeCorpus.lean` imports the
+  corpus trees, checks them and compares the pretty-printer with DaCe.
 - `Dace/Equiv`: observational equivalence and the verified pair checker
   (`lake exe dace-equiv`).
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
