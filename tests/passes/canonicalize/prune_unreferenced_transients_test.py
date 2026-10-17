@@ -153,5 +153,28 @@ def test_the_pipeline_leaves_no_unreferenced_transient():
         assert not stale, f"{sd.label} still carries unreferenced transients: {stale}"
 
 
+def test_a_name_a_branch_condition_uses_is_kept():
+    """A Python condition is stored as an AST; printing it hides every nested name as ``Name(...)``, so the scalar
+    a two-level comparison reads was pruned (cp2k_density_matrix_trs4's ``frob_x_sq``)."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+    sdfg = dace.SDFG("branch_condition_reads")
+    sdfg.add_scalar("x", dtypes.float64, transient=True)
+    sdfg.add_scalar("y", dtypes.float64, transient=True)
+    sdfg.add_symbol("t", dtypes.float64)
+    sdfg.add_state("start", is_start_block=True)
+    cond = ConditionalBlock("branch")
+    arm = ControlFlowRegion("arm")
+    arm.add_state("body", is_start_block=True)
+    cond.add_branch(CodeBlock("(x < (t * y)) and (t < 0.5)"), arm)
+    sdfg.add_node(cond)
+    sdfg.add_edge(sdfg.start_block, cond, dace.InterstateEdge())
+
+    PruneUnreferencedTransients().apply_pass(sdfg, {})
+    assert "x" in sdfg.arrays and "y" in sdfg.arrays
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+    test_a_name_a_branch_condition_uses_is_kept()

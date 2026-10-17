@@ -21,7 +21,10 @@ def code_text(block: Any) -> str:
     """
     if block is None:
         return ""
-    code = block.code if isinstance(block, properties.CodeBlock) else block
+    if isinstance(block, properties.CodeBlock):
+        # A Python block holds an AST, whose ``str`` abbreviates every nested name to ``Name(...)``
+        return block.as_string
+    code = block
     if isinstance(code, str):
         return code
     if isinstance(code, (list, tuple)):
