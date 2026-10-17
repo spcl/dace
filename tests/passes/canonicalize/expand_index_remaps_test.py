@@ -107,7 +107,25 @@ def test_a_where_chain_fuses_into_one_map_without_temporaries():
     assert np.allclose(z, expected)
 
 
+def test_rolls_and_wheres_are_maps_from_the_ingest_on():
+    """The remaps and selects are expanded in ingest, before the first normalization pass, so no later pass meets
+    an opaque ``CShift`` or ``MergeLibraryNode``: their nested SDFGs are already inlined by ingest's simplify."""
+    from dace.transformation.passes.canonicalize.pipeline import ingest
+
+    for prog in (rolled_stencil, cfl_clip):
+        sdfg = prog.to_sdfg(simplify=True)
+        assert any(isinstance(n, (CShift, MergeLibraryNode)) for n, _ in sdfg.all_nodes_recursive())
+        for _, unit in ingest("cpu"):
+            unit.apply_pass(sdfg, {})
+        left = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (CShift, MergeLibraryNode))]
+        assert not left, f"{prog.name}: library nodes survived ingest: {left}"
+        nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+        assert not nested, f"{prog.name}: an expansion's nested SDFG survived ingest: {nested}"
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_rolled_stencil_canonicalizes_to_one_map_and_no_shift_copies()
     test_a_broadcast_fuses_into_its_consumer()
     test_a_where_chain_fuses_into_one_map_without_temporaries()
+    test_rolls_and_wheres_are_maps_from_the_ingest_on()

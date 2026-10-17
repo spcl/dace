@@ -777,6 +777,9 @@ def ingest(target: str) -> Stages:
         (CLEANUP, unique_iterators()),
         (CLEANUP, ContinueToCondition()),
         (CLEANUP, SupplyNumThreads()),
+        # np.roll / broadcast_to / np.where as their pure maps from the start, so every normalization below sees a map
+        # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
+        (CLEANUP, ExpandIndexRemaps()),
         (CLEANUP, SimplifyPass()),
         # A while loop that counts gets its counter here, so every later pass sees a counted loop.
         (CLEANUP, WhileToFor()),
@@ -997,8 +1000,9 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, EmptyLoopElimination()),
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
     ]
-    # Index remaps (np.roll, broadcast_to) as gather maps, so fusion inlines them instead of keeping a full-size
-    # transient per call (laplacian_stencil_3d's 24 rolls); the inlining below dissolves their nested SDFGs.
+    # Index remaps (np.roll, broadcast_to, np.where) as gather maps, so fusion inlines them instead of keeping a full-size
+    # transient per call (laplacian_stencil_3d's 24 rolls); ingest expands them already, this catches the ones the
+    # lifting phases made since. The inlining below dissolves their nested SDFGs.
     s += [(label, ExpandIndexRemaps())]
     s += [*_inline_single_state(label), (label, StructuralCleanup())]
 
