@@ -6,8 +6,18 @@ import re
 import pytest
 
 import dace
+from dace.codegen.common import get_gpu_backend
 from dace.sdfg import nodes as dace_nodes
 from dace.transformation.auto import auto_optimize
+
+
+def _assert_strided_device_copy(code: str) -> None:
+    """A strided device-side copy is one ``cudaMemcpy2DAsync`` on CUDA. HIP refuses pitched copies of pooled
+    memory whose rows end at the pitch, so there it is a copy kernel and no ``hipMemcpy2DAsync``."""
+    if get_gpu_backend() == "hip":
+        assert re.search(r"hipMemcpy2DAsync\b", code) is None
+    else:
+        assert re.search(r"cudaMemcpy2DAsync\b", code) is not None
 
 
 def count_node(sdfg: dace.SDFG, node_type, ignore_gpustream_nodes=True):
@@ -84,8 +94,7 @@ def test_2d_gpu_copy(c_order: bool):
     # Ensure that the correct call was issued.
     #  We have to look at the CPU code and not at the GPU.
     code = sdfg.generate_code()[0].clean_code
-    m = re.search(r"(cuda|hip)Memcpy2DAsync\b", code)
-    assert m is not None
+    _assert_strided_device_copy(code)
 
     # Generate input data.
     ref = {
@@ -169,8 +178,7 @@ def test_1d_gpu_copy(
         assert m is not None
     else:
         code = sdfg.generate_code()[0].clean_code
-        m = re.search(r"(cuda|hip)Memcpy2DAsync\b", code)
-        assert m is not None
+        _assert_strided_device_copy(code)
 
     # Generate input data.
     ref = {
@@ -430,8 +438,7 @@ def test_gpu_strided_2D_copy():
     assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
 
     code = sdfg.generate_code()[0].clean_code
-    m = re.search(r"(cuda|hip)Memcpy2DAsync\b", code)
-    assert m is not None
+    _assert_strided_device_copy(code)
 
     # Now run the sdfg.
     ref = {

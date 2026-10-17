@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import dtypes, symbolic
+from dace.codegen.common import get_gpu_backend
 from dace.libraries.standard.helper import (
     CPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
@@ -176,6 +177,12 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
         and not _packed_orders_differ(inp, out)
     ):
         return None
+
+    # HIP refuses a pitched copy out of stream-ordered (pooled) memory whose rows end exactly at the pitch,
+    # e.g. the last level of a (species, level, column) array, with "invalid argument". A device-side
+    # strided copy needs no gpuMemcpy at all: a copy kernel moves it, as CuPy does for strided device copies.
+    if get_gpu_backend() == "hip" and not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
+        return "MappedTasklet"
 
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)

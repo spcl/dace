@@ -1033,6 +1033,29 @@ def test_copy_padded_multirow_cross_storage_uses_pitched():
         assert select_copy_implementation(node, state) == "MemcpyCUDA2D"
 
 
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_pitched_copy_out_of_a_level_slab(backend):
+    """A device-side copy of one level out of ``(5, L, N)`` is a checked pitched copy on CUDA and a kernel on HIP.
+
+    HIP refuses a pitched copy out of stream-ordered (pooled) memory whose rows end exactly at the pitch, as
+    the last level's do, with "invalid argument"; the unchecked call let the copy drop silently.
+    """
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[5, 7, 32], storage=dace.dtypes.StorageType.GPU_Global, subset="0:5, 6, 0:32", name="A"),
+        _ArraySpec(shape=[5, 32], storage=dace.dtypes.StorageType.GPU_Global, name="B"),
+        name="copy_level_slab",
+        libnode_name="cp_level",
+    )
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
+        impl = select_copy_implementation(node, sdfg.start_state)
+        if backend == "hip":
+            assert impl == "MappedTasklet"
+            return
+        assert impl == "MemcpyCUDA2D"
+        tasklet = type(node).implementations[impl].expansion(node, sdfg.start_state, sdfg)
+    assert tasklet.code.as_string.startswith("DACE_GPU_CHECK(cudaMemcpy2DAsync(")
+
+
 @pytest.mark.gpu
 def test_copy_padded_unit_dim_cross_storage_gpu():
     """Cross CPU->GPU copy of a padded (1, N) array expands to a pitched copy and is numerically exact."""
@@ -2711,6 +2734,8 @@ if __name__ == "__main__":
     test_copy_padded_unit_dim_same_storage_cpu()
     test_copy_padded_unit_dim_cross_storage_selection()
     test_copy_padded_multirow_cross_storage_uses_pitched()
+    test_pitched_copy_out_of_a_level_slab("cuda")
+    test_pitched_copy_out_of_a_level_slab("hip")
     test_register_copy_expands_with_register_storage()
     test_direct_assignment_cpu_same_storage()
     test_direct_assignment_register_to_register()
