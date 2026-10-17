@@ -313,6 +313,18 @@ def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | No
         for record in applied:
             record.undo()
         return None
+    # Only a container two groups share needs a slot per iteration. One the split leaves inside a single group
+    # gets its old shape back: expanded, it is no longer a scalar a tile can keep private (CloudSC's
+    # ``zldifdt_slice``, which kept the jk loop from being strip-mined)
+    groups_of: dict[str, set[int]] = {}
+    for index, group in enumerate(groups):
+        for block in group:
+            writes, reads = _rw_subsets(block, loop.loop_variable)
+            for name in (*writes, *reads):
+                groups_of.setdefault(name, set()).add(index)
+    for record in applied:
+        if len(groups_of.get(record.name, ())) < 2:
+            record.undo()
     return groups
 
 

@@ -88,12 +88,16 @@ def _insert_index(subset: subsets.Range, index, axis: int) -> subsets.Range:
 class _Expansion:
     """An applied buffer expansion, with the information needed to undo it.
 
+    :param name: The expanded container.
     :param desc: The expanded array descriptor.
     :param shape: The descriptor's pre-expansion shape/strides/total_size/offset.
     :param edits: The memlet subset edits as ``(memlet, attribute_name, old_subset)`` triples.
     """
 
-    def __init__(self, desc: data.Array, shape, strides, total_size, offset, edits: list[tuple[Any, str, Any]]):
+    def __init__(
+        self, name: str, desc: data.Array, shape, strides, total_size, offset, edits: list[tuple[Any, str, Any]]
+    ):
+        self.name = name
         self.desc = desc
         self._shape = shape
         self._strides = strides
@@ -681,7 +685,7 @@ class BufferExpansion(ppl.Pass):
                     rewrote = True
                 if rewrote:
                     seen.add(id(edge))
-        return _Expansion(desc, old[0], old[1], old[2], old[3], edits)
+        return _Expansion(name, desc, old[0], old[1], old[2], old[3], edits)
 
     @staticmethod
     def _touches(edge, name: str) -> bool:

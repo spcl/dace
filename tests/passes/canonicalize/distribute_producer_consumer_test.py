@@ -328,6 +328,50 @@ def test_private_accumulator_is_expanded_to_split_a_reduction_from_a_recurrence(
 
 
 @dace.program
+def csr_recurrence_with_a_coupled_temporary(
+    row_ptr: dace.int64[N + 1], col: dace.int64[NNZ], val: dace.float64[NNZ], x: dace.float64[N], y: dace.float64[N + 1]
+):
+    for i in range(N):
+        s = 0.0
+        for k in range(row_ptr[i], row_ptr[i + 1]):
+            s += val[k] * x[col[k]]
+        d = y[i] * 0.5
+        if i < K:
+            y[i + 1] = s + d
+        else:
+            y[i + 1] = s - d
+
+
+def test_only_a_container_two_groups_share_is_expanded():
+    """``s`` couples the split-off row sum to the recurrence and gets one slot per row. ``d`` couples two blocks
+    that the ``y[i + 1]`` recurrence keeps in one group, so it stays a scalar the remaining loop privatizes."""
+    sdfg = _to_loops(csr_recurrence_with_a_coupled_temporary)
+    before = {name: tuple(desc.shape) for name, desc in sdfg.arrays.items() if desc.transient}
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
+    grown = sorted(
+        name
+        for name, desc in sdfg.arrays.items()
+        if name in before and desc.transient and len(desc.shape) > len(before[name])
+    )
+    assert len(grown) == 1, f"only the row sum needs a slot per row, expanded: {grown}"
+
+    rng = np.random.default_rng(3)
+    n, k = 40, 6
+    row_ptr = np.concatenate([[0], np.cumsum(rng.integers(0, 6, n))]).astype(np.int64)
+    nnz = max(int(row_ptr[-1]), 1)
+    col = rng.integers(0, n, nnz).astype(np.int64)
+    val = rng.random(nnz)
+    x = rng.random(n)
+    want = rng.random(n + 1)
+    got = want.copy()
+    for i in range(n):
+        row = sum(val[kk] * x[col[kk]] for kk in range(row_ptr[i], row_ptr[i + 1]))
+        want[i + 1] = row + want[i] * 0.5 if i < k else row - want[i] * 0.5
+    sdfg(row_ptr=row_ptr, col=col, val=val, x=x, y=got, N=n, NNZ=nnz, K=k)
+    assert np.allclose(got, want)
+
+
+@dace.program
 def producer_between_coupled_statements(a: dace.float64[M, N], c: dace.float64[M, N]):
     """``t[i]`` splits off between the two ``c`` statements, which stay together; the ``t`` loop must run first."""
     t = np.zeros([M, N], dtype=np.float64)
@@ -402,3 +446,4 @@ if __name__ == "__main__":
     test_a_producer_split_from_the_middle_of_a_body_runs_before_its_consumer()
     print("OK")
     test_a_nested_sdfg_operand_is_not_expanded_for_a_split()
+    test_only_a_container_two_groups_share_is_expanded()
