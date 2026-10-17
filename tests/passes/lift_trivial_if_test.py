@@ -525,6 +525,31 @@ def test_should_reapply_only_on_block_count_change():
     assert not p.should_reapply(ppl.Modifies.Symbols | ppl.Modifies.Memlets)
 
 
+def test_trivial_ifs_are_spliced_in_graph_order():
+    """Conditionals spliced in one sweep take their unique labels in the order the region holds them, not in the
+    address order of a set: canonicalize gave the same input different graphs from run to run."""
+    sdfg = dace.SDFG("lift_trivial_if_order")
+    prev = sdfg.add_state("entry", is_start_block=True)
+    for _ in range(12):
+        cfb = ConditionalBlock("cond", sdfg=sdfg)
+        branch = ControlFlowRegion("branch", sdfg=sdfg, parent=cfb)
+        branch.add_state("body", is_start_block=True)
+        cfb.add_branch(CodeBlock("True"), branch)
+        sdfg.add_node(cfb)
+        sdfg.add_edge(prev, cfb, InterstateEdge())
+        prev = cfb
+    sdfg.add_edge(prev, sdfg.add_state("exit"), InterstateEdge())
+
+    LiftTrivialIf().apply_pass(sdfg, {})
+
+    order, block = [], sdfg.start_block
+    while sdfg.out_edges(block):
+        block = sdfg.out_edges(block)[0].dst
+        if block.label.startswith("body"):
+            order.append(block.label)
+    assert order == ["body"] + [f"body_{i}" for i in range(11)]
+
+
 if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
@@ -540,3 +565,4 @@ if __name__ == "__main__":
     test_trivial_if_with_nested_sdfg_reparents_correctly()
     test_trivial_cond_check_is_cached()
     test_should_reapply_only_on_block_count_change()
+    test_trivial_ifs_are_spliced_in_graph_order()

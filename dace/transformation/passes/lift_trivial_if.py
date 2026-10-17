@@ -348,7 +348,9 @@ class LiftTrivialIf(ppl.Pass):
         :param graph: Region or SDFG whose top-level conditionals are simplified.
         :returns: Number of branches/conditionals removed.
         """
-        cfb_to_rm_cfg_to_keep = set()
+        # Ordered, not a set: a set of blocks iterates by address, so the splice order -- and the labels the moved
+        # blocks are made unique with -- changed from run to run.
+        cfb_to_rm_cfg_to_keep: dict[tuple[ConditionalBlock, ControlFlowRegion], None] = {}
         rmed_count = 0
         for cfb in graph.nodes():
             if isinstance(cfb, ConditionalBlock):
@@ -377,12 +379,12 @@ class LiftTrivialIf(ppl.Pass):
                 if len(conditions_and_cfgs) == 1:
                     cond, cfg = conditions_and_cfgs[0]
                     if self._trivially_true(cond, cfb):
-                        cfb_to_rm_cfg_to_keep.add((cfb, cfg))
+                        cfb_to_rm_cfg_to_keep[(cfb, cfg)] = None
                     elif self._trivially_false(cond, cfb):
                         _cfg = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
                         _cfg.add_state(label="empty_placholder", is_start_block=True)
                         cfb.add_branch(condition=None, branch=_cfg)
-                        cfb_to_rm_cfg_to_keep.add((cfb, _cfg))
+                        cfb_to_rm_cfg_to_keep[(cfb, _cfg)] = None
                 elif len(conditions_and_cfgs) == 2:
                     cond1, cfg1 = conditions_and_cfgs[0]
                     cond2, cfg2 = conditions_and_cfgs[1]
@@ -394,9 +396,9 @@ class LiftTrivialIf(ppl.Pass):
                     )
 
                     if self._trivially_true(not_none_cond, cfb):  # 2.1
-                        cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
+                        cfb_to_rm_cfg_to_keep[(cfb, not_none_cfg)] = None
                     elif self._trivially_false(not_none_cond, cfb):  # 2.2
-                        cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
+                        cfb_to_rm_cfg_to_keep[(cfb, none_cfg)] = None
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
             existing = {n.label for n in graph.nodes()}
