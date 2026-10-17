@@ -353,6 +353,70 @@ def test_ordering_edge_of_a_third_map_is_not_dropped():
     _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
 
 
+def rebound_read_view_three_statements() -> SDFG:
+    """ICON velocity's CFL band in miniature. Every statement binds its own read view ``V = H[1:N+1]``, as the
+    frontend emits one view chain per statement:
+
+        s1: ``T[i] = 2 * V[i]``    s2: ``U[i] = V[i] + X[i]``    s3: ``B[i] = T[i] * U[i]``
+
+    ``T`` and ``U`` are scratch arrays that only the Maps exchange."""
+    sdfg = SDFG("rebound_read_view_three_statements")
+    sdfg.add_array("H", [N + 2], dtypes.float64)
+    for arr in ("X", "B"):
+        sdfg.add_array(arr, [N], dtypes.float64)
+    for arr in ("T", "U"):
+        sdfg.add_transient(arr, [N], dtypes.float64)
+    sdfg.add_view("V", [N], dtypes.float64)
+    states = [sdfg.add_state(label, is_start_block=(label == "s1")) for label in ("s1", "s2", "s3")]
+    for first, second in zip(states, states[1:]):
+        sdfg.add_edge(first, second, InterstateEdge())
+
+    def statement(state, label: str, inputs: list[str], output: str, code: str):
+        entry, exit_ = state.add_map(label, {"i": f"0:{N}"})
+        tasklet = state.add_tasklet(label + "_body", {f"_{name}": None for name in inputs}, {"_o": None}, code)
+        for name in inputs:
+            if name == "V":
+                source = state.add_access("V")
+                state.add_edge(state.add_read("H"), None, source, "views", Memlet(f"H[1:{N + 1}]"))
+            else:
+                source = state.add_read(name)
+            state.add_memlet_path(source, entry, tasklet, dst_conn=f"_{name}", memlet=Memlet(f"{name}[i]"))
+        state.add_memlet_path(tasklet, exit_, state.add_write(output), src_conn="_o", memlet=Memlet(f"{output}[i]"))
+
+    statement(states[0], "m_twice", ["V"], "T", "_o = 2.0 * _V")
+    statement(states[1], "m_shift", ["V", "X"], "U", "_o = _V + _X")
+    statement(states[2], "m_product", ["T", "U"], "B", "_o = _T * _U")
+    sdfg.validate()
+    return sdfg
+
+
+def test_rebound_read_view_does_not_block_map_fusion():
+    """Re-binding a read view writes nothing, so state fusion must add no ordering edge for it. It used to record a
+    WAR (``m_twice`` exit -> the second ``H`` source) and a WAW per rebound view; the WAR edge hung ``m_twice``'s
+    exit on a read-only source of the Map it feeds, and MapFusionVertical refused every pair through it -- which
+    is what kept ICON velocity's ``clip`` / ``vcfl`` / ``expr_times_h`` scratch arrays full size."""
+    sdfg = rebound_read_view_three_statements()
+    arrays = {
+        "H": np.arange(N + 2, dtype=np.float64) + 1.0,
+        "X": np.arange(N, dtype=np.float64) * 0.5,
+        "B": np.zeros(N, dtype=np.float64),
+    }
+    ref = _run(sdfg, "ref", **arrays)
+
+    state_fused = _state_fuse(sdfg)
+    assert state_fused.number_of_nodes() == 1, "the three statements should fuse into one state"
+    assert _count_empty_edges(state_fused) == 0, "re-binding a read view is no hazard and needs no ordering edge"
+    _assert_matches(ref, _run(state_fused, "sf", **arrays), "after state fusion")
+
+    map_fused = copy.deepcopy(state_fused)
+    map_fused.apply_transformations_repeated(MapFusionVertical)
+    map_fused.validate()
+    assert _count_maps(map_fused) == 1, "the producer Maps must fuse into the consumer"
+    full_size = [name for name in ("T", "U") if name in map_fused.arrays and map_fused.arrays[name].total_size == N]
+    assert not full_size, f"scratch arrays {full_size} were not reduced by MapFusionVertical"
+    _assert_matches(ref, _run(map_fused, "mf", **arrays), "after MapFusion")
+
+
 def test_war_from_dace_program_fuses_and_matches_reference():
     """The same element-wise WAR, but built by the frontend rather than by hand, so the
     Memlet/scope shapes are the ones the pipeline really sees."""
@@ -383,4 +447,5 @@ if __name__ == "__main__":
     test_two_dimensional_elementwise_war_fuses()
     test_war_with_unpinned_map_parameter_is_not_fused()
     test_ordering_edge_of_a_third_map_is_not_dropped()
+    test_rebound_read_view_does_not_block_map_fusion()
     test_war_from_dace_program_fuses_and_matches_reference()

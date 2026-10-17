@@ -72,6 +72,22 @@ def in_state_order(state: SDFGState, node_iter, order: dict[nodes.Node, int] | N
     return sorted(node_iter, key=order.__getitem__)
 
 
+def is_read_view_binding(state: SDFGState, owner_sdfg: sdfg.SDFG, node: nodes.Node) -> bool:
+    """Whether ``node`` is a View whose only incoming data edge binds it to the data it views.
+
+    That edge makes the View point into the viewed container; it writes nothing. Such a node is
+    therefore no write: not an output of its state, not a WAR/WAW endpoint, and not a RAW producer
+    either (``apply`` never merges Views). The frontend binds a fresh read view per statement (ICON
+    velocity's ``h = ddqz_z_half[:, band, :]``), so counting the binding as a write recorded a false
+    WAR and WAW between every two statements that read through the same view name. A View that is
+    written through (``producer -> W -> A``) has a second, real in-edge and is kept.
+    """
+    if not isinstance(node, nodes.AccessNode) or not isinstance(owner_sdfg.arrays.get(node.data), dt.View):
+        return False
+    data_in = [e for e in state.in_edges(node) if not e.data.is_empty()]
+    return len(data_in) == 1 and sdutil.get_view_edge(state, node) is data_in[0]
+
+
 def read_consumers(state: SDFGState, owner_sdfg: sdfg.SDFG, node: nodes.AccessNode) -> list[nodes.Node]:
     """The nodes reading ``node`` in ``state``. A View is a pointer, so its read happens where the view is consumed."""
     consumers: list[nodes.Node] = []
@@ -578,6 +594,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             )
 
             # Find source/sink (data) nodes, again in state order rather than in `set` order.
+            # A read view's binding edge is not a write, so such a View is no output of its state,
+            # see ``is_read_view_binding``.
             top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
             first_input = in_state_order(
                 first_state, [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)], first_order
@@ -585,7 +603,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             first_input_set = set(first_input)
             first_output = in_state_order(
                 first_state,
-                [n for n in top1 if isinstance(n, nodes.AccessNode) and n not in first_input_set],
+                [
+                    n
+                    for n in top1
+                    if isinstance(n, nodes.AccessNode)
+                    and n not in first_input_set
+                    and not is_read_view_binding(first_state, sdfg, n)
+                ],
                 first_order,
             )
             first_output_set = set(first_output)
@@ -595,7 +619,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             second_input_set = set(second_input)
             second_output = in_state_order(
                 second_state,
-                [n for n in top2 if isinstance(n, nodes.AccessNode) and n not in second_input_set],
+                [
+                    n
+                    for n in top2
+                    if isinstance(n, nodes.AccessNode)
+                    and n not in second_input_set
+                    and not is_read_view_binding(second_state, sdfg, n)
+                ],
                 second_order,
             )
             second_output_set = set(second_output)

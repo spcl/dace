@@ -1110,6 +1110,81 @@ def test_war_read_through_a_view_orders_the_copy_out_of_the_view():
     )
 
 
+def rebound_read_view(write_through_view: bool) -> SDFG:
+    """Two statements that each bind their own read view ``V = H[1:9]``, as the frontend emits one view chain per
+    statement (ICON velocity's ``h = ddqz_z_half[:, band, :]``): s1 ``T[i] = 2 * V[i]``, s2 ``B[i] = T[i] + V[i]``.
+
+    With ``write_through_view`` s2 instead computes ``B[i] = T[i] + 1`` and overwrites ``H[1:9] = 7`` through a write
+    view ``W`` -- a real overwrite of what s1 read, which must stay ordered."""
+    sdfg = SDFG(f"rebound_read_view_{'write' if write_through_view else 'read'}")
+    sdfg.add_array("H", [10], dtypes.float64)
+    sdfg.add_array("B", [8], dtypes.float64)
+    sdfg.add_transient("T", [8], dtypes.float64)
+    sdfg.add_view("V", [8], dtypes.float64)
+    sdfg.add_view("W", [8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("produce", is_start_block=True)
+    s2 = sdfg.add_state("consume")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    view1 = s1.add_access("V")
+    s1.add_edge(s1.add_read("H"), None, view1, "views", Memlet("H[1:9]"))
+    me, mx = s1.add_map("m_produce", {"i": "0:8"})
+    t1 = s1.add_tasklet("x2", {"_v": None}, {"_o": None}, "_o = 2.0 * _v")
+    s1.add_memlet_path(view1, me, t1, dst_conn="_v", memlet=Memlet("V[i]"))
+    s1.add_memlet_path(t1, mx, s1.add_write("T"), src_conn="_o", memlet=Memlet("T[i]"))
+
+    me2, mx2 = s2.add_map("m_consume", {"i": "0:8"})
+    if write_through_view:
+        t2 = s2.add_tasklet("add", {"_t": None}, {"_o": None}, "_o = _t + 1.0")
+    else:
+        t2 = s2.add_tasklet("add", {"_t": None, "_v": None}, {"_o": None}, "_o = _t + _v")
+        view2 = s2.add_access("V")
+        s2.add_edge(s2.add_read("H"), None, view2, "views", Memlet("H[1:9]"))
+        s2.add_memlet_path(view2, me2, t2, dst_conn="_v", memlet=Memlet("V[i]"))
+    s2.add_memlet_path(s2.add_read("T"), me2, t2, dst_conn="_t", memlet=Memlet("T[i]"))
+    s2.add_memlet_path(t2, mx2, s2.add_write("B"), src_conn="_o", memlet=Memlet("B[i]"))
+    if write_through_view:
+        wview = s2.add_access("W")
+        me3, mx3 = s2.add_map("m_overwrite", {"i": "0:8"})
+        t3 = s2.add_tasklet("set", {}, {"_o": None}, "_o = 7.0")
+        s2.add_memlet_path(me3, t3, memlet=Memlet())
+        s2.add_memlet_path(t3, mx3, wview, src_conn="_o", memlet=Memlet("W[i]"))
+        s2.add_edge(wview, "views", s2.add_write("H"), None, Memlet("H[1:9]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_rebinding_a_read_view_is_neither_a_write_nor_a_hazard():
+    """Each statement re-binds the read view ``V``. The binding edge ``H -> V`` is a pointer, not a write, so the
+    two states share no WAR/WAW hazard: the fusion must add no ordering edge. ICON velocity got two WAR edges
+    (first reader -> the second ``H`` source) and two WAW edges per rebound view, which hung the first Map's exit
+    on a read-only source of the second Map and kept MapFusion from fusing the pair."""
+    sdfg = rebound_read_view(write_through_view=False)
+    fused, st = _fuse(sdfg)
+    assert st is not None, "the two states should fuse"
+    empty = [(e.src, e.dst) for e in st.edges() if e.data.is_empty() and e.src_conn is None and e.dst_conn is None]
+    assert not empty, f"rebinding a read view is no hazard, yet ordering edges were added: {empty}"
+
+    h = np.arange(10, dtype=np.float64) + 1.0
+    _assert_fusion_preserves_semantics(sdfg, 1, H=h, B=np.zeros(8))
+
+
+def test_writing_through_a_view_still_orders_the_overwrite_after_the_read():
+    """Control for the test above: the second state also overwrites ``H[1:9]`` through a WRITE view. That is a
+    real WAR against the first state's read of ``V`` and must stay ordered after it."""
+    sdfg = rebound_read_view(write_through_view=True)
+    fused, st = _fuse(sdfg)
+    if st is not None:
+        x2 = next(n for n in st.nodes() if isinstance(n, dnodes.Tasklet) and n.label == "x2")
+        h_writes = [n for n in _node_by(st, "H", want_write=True) if st.in_degree(n) > 0]
+        assert len(h_writes) == 1
+        _assert_ordered_before(st, x2, h_writes[0], "WAR through a write view")
+
+    h = np.arange(10, dtype=np.float64) + 1.0
+    _assert_fusion_preserves_semantics(sdfg, fused.number_of_nodes(), H=h, B=np.zeros(8))
+
+
 # Determinism. The pass reads several decisions out of `set`s -- of AccessNodes, which
 # hash by ``id()``, and of data names, whose hash is salted per process. Both iterate in a
 # different order on a different run, so the same SDFG used to fuse on one run and not on
@@ -1496,6 +1571,8 @@ if __name__ == "__main__":
     test_war_survives_downstream_simplify()
     test_war_from_dace_program_matches_reference()
     test_war_read_through_a_view_orders_the_copy_out_of_the_view()
+    test_rebinding_a_read_view_is_neither_a_write_nor_a_hazard()
+    test_writing_through_a_view_still_orders_the_overwrite_after_the_read()
     test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it()
     test_extended_fusion_orders_a_reused_transient()
     test_extended_fusion_orders_a_transient_with_two_producers()
