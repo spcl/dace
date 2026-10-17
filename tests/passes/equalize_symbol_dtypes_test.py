@@ -6,6 +6,7 @@ never cancel. The tests build graphs where one name is spelled at two dtypes in 
 declared one afterwards.
 """
 
+import pytest
 import sympy
 
 import dace
@@ -15,6 +16,13 @@ from dace.sdfg.state import LoopRegion, sdfg_scope_symbols
 from dace.transformation.passes.equalize_symbol_dtypes import equalize, equalized
 
 N = dace.symbol("N", dtype=dace.int64)
+
+
+@pytest.fixture(autouse=True)
+def empty_sympy_cache():
+    """Symbols of one name compare equal whatever their dtype, so SymPy's global cache can hand back an ``N - 1`` an
+    earlier test built from an ``int`` ``N``; start every test from an empty cache so only the pass's spelling counts."""
+    sympy.core.cache.clear_cache()
 
 
 def bound_symbols(expr) -> set[symbolic.symbol]:
