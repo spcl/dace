@@ -7,7 +7,7 @@ renders the :class:`~dace.libraries.ai.context.ExpansionContext` of one library 
 import textwrap
 
 from dace.config import Config
-from dace.libraries.ai.context import ConnectorInfo, ExpansionContext, NestingFrame
+from dace.libraries.ai.context import ConnectorInfo, EnvironmentInfo, ExpansionContext, NestingFrame
 
 SYSTEM_PROMPT = """\
 You write the body of a DaCe *tasklet*: a small block of code that replaces a library node inside \
@@ -81,7 +81,12 @@ initialization. `__state` is in scope here.
 `code_init` acquired.
 - `state_fields` -- raw C++ member declarations spliced into the program's state struct (e.g. \
 `"fftw_plan plan_0;"`). Access them as `__state->plan_0`. Use these for handles and plans whose \
-lifetime must span calls; create them in `code_init` and destroy them in `code_exit`.
+lifetime must span calls; create them in `code_init` and destroy them in `code_exit`. The state \
+struct is emitted **before** `code_global`, so the type of a field must be built in or come from \
+the headers of an environment (named in `use_environments` or described in `environments`); \
+an `#include` in `code_global` comes too late. For a type you define in `code_global`, declare \
+the field as a pointer with the `struct` keyword (`"struct my_plan_0 *plan_0;"`), which compiles \
+before the definition, allocate it with `new` in `code_init`, and `delete` it in `code_exit`.
 
 `code_init` and `code_exit` always run on the **host**, even when the tasklet body itself is GPU \
 device code.
@@ -134,7 +139,8 @@ to ask, and they are not interchangeable:
 machine. They are listed in the context under "DaCe environments already available on this \
 machine"; copy a path from that list exactly. This is the preferred route: those environments \
 already carry working package names, libraries and flags, so naming one cannot get them wrong. \
-Note the headers each brings in are its own -- consult it rather than re-declaring its includes.
+Each is listed with the headers it includes in the file of your code and the fields it adds to \
+the state struct; once you name it, both are available to your code.
 - **`environments`** -- a full description of a library that is *not* in that list. Only use this \
 when nothing listed provides what you need, and only for a library you are confident is installed \
 here; a wrong CMake package name turns into a build failure much later, in a place that no longer \
@@ -230,6 +236,21 @@ def _render_nesting(frames: list[NestingFrame]) -> str:
     return "\n".join(lines)
 
 
+def _render_environment(env: EnvironmentInfo) -> str:
+    """
+    Renders one available environment with what it brings into the generated code.
+
+    :param env: The environment to render.
+    :return: The rendered entry.
+    """
+    lines = [f"  {env.path}"]
+    if env.headers:
+        lines.append(f"      includes: {', '.join(env.headers)}")
+    if env.state_fields:
+        lines.append(f"      state fields: {' '.join(env.state_fields)}")
+    return "\n".join(lines)
+
+
 def build_user_prompt(ctx: ExpansionContext) -> str:
     """
     Renders an expansion context into the user half of the prompt.
@@ -266,7 +287,6 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
             "# Capabilities of this slot",
             "",
             f"GPU device code: {'yes' if caps.device_level else 'no'}",
-            f"Effective schedule: {caps.effective_schedule}",
             f"__state available in the body: {'yes' if caps.state_available else 'no'}",
             f"__dace_current_stream in scope: {'yes' if caps.current_stream_available else 'no'}",
             f"Environments allowed: {caps.environments_allowed}",
@@ -275,8 +295,6 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
         # it is a fact about the machine, and belongs in the target section instead.
         if caps.gpu_backend and (caps.device_level or caps.current_stream_available):
             caps_lines.append(f"GPU backend: {caps.gpu_backend}")
-        if caps.block_size:
-            caps_lines.append(f"Enclosing thread-block size: {caps.block_size}")
         not_deref = [name for name, ok in caps.dereferenceable.items() if not ok]
         if not_deref:
             space = "host memory" if caps.device_level else "GPU memory"
@@ -324,11 +342,13 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
             "the same library again in `environments`. Reuse one whenever it provides what you need."
         )
         if ctx.available_environments:
-            section += "\n\nChecked and installed:\n\n" + "\n".join(f"  {e}" for e in ctx.available_environments)
+            section += "\n\nChecked and installed:\n\n" + "\n".join(
+                _render_environment(e) for e in ctx.available_environments
+            )
         if ctx.unchecked_environments:
             section += (
                 "\n\nRegistered, but without an installation check, so the library may be missing "
-                "from this machine:\n\n" + "\n".join(f"  {e}" for e in ctx.unchecked_environments)
+                "from this machine:\n\n" + "\n".join(_render_environment(e) for e in ctx.unchecked_environments)
             )
         sections.append(section)
 

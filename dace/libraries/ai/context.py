@@ -19,7 +19,7 @@ from dace.codegen.targets.cpp import cpp_offset_expr, sym2cpp
 from dace.config import Config
 from dace.libraries.ai.nodes import AINode
 from dace.sdfg import SDFG, SDFGState, infer_types, nodes
-from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_devicelevel_gpu
+from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 
@@ -77,11 +77,9 @@ class Capabilities:
     """What the generated code may do where the node is, e.g. in a GPU kernel or on the host."""
 
     device_level: bool
-    effective_schedule: str
     gpu_backend: str | None = None
     state_available: bool = True
     current_stream_available: bool = False
-    block_size: str | None = None
     environments_allowed: str = "full"  #: ``full`` or ``device-headers-only``
     #: Per connector, whether the code may dereference the pointer where it runs
     dereferenceable: dict[str, bool] = field(default_factory=dict)
@@ -122,6 +120,15 @@ class TargetInfo:
 
 
 @dataclass
+class EnvironmentInfo:
+    """A registered DaCe environment that the generated code may use."""
+
+    path: str  #: The full class path
+    headers: list[str]  #: The headers it includes in the file of the generated code
+    state_fields: list[str]  #: The fields it adds to the state struct
+
+
+@dataclass
 class ExpansionContext:
     """The context given to the model for one library node."""
 
@@ -135,9 +142,9 @@ class ExpansionContext:
     capabilities: Capabilities | None = None
     symbols: dict[str, str] = field(default_factory=dict)
     target: TargetInfo | None = None
-    available_environments: list[str] = field(default_factory=list)
+    available_environments: list[EnvironmentInfo] = field(default_factory=list)
     #: Registered environments that define no installation check.
-    unchecked_environments: list[str] = field(default_factory=list)
+    unchecked_environments: list[EnvironmentInfo] = field(default_factory=list)
 
 
 def _scope_frame(
@@ -413,7 +420,6 @@ def collect_capabilities(
     state: SDFGState,
     sdfg: SDFG,
     connectors: list[ConnectorInfo],
-    defaults: ResolvedDefaults | None = None,
 ) -> Capabilities:
     """
     Determines what the generated code is allowed to do at this point in the SDFG.
@@ -422,7 +428,6 @@ def collect_capabilities(
     :param state: The state containing the node.
     :param sdfg: The SDFG containing the state.
     :param connectors: The already-collected connector information.
-    :param defaults: Resolved schedules and storage, from :func:`infer_defaults`.
     :return: The capability block for this expansion.
     """
     device_level = is_devicelevel_gpu(sdfg, state, node)
@@ -444,23 +449,11 @@ def collect_capabilities(
     except RuntimeError:
         backend = None
 
-    block_size = None
-    if device_level:
-        try:
-            bs = devicelevel_block_size(sdfg, state, node)
-            block_size = ", ".join(str(b) for b in bs) if bs else None
-        except Exception:
-            block_size = None
-
-    schedule = (defaults.schedules if defaults else {}).get(node.guid) or get_node_schedule(sdfg, state, node)
-
     return Capabilities(
         device_level=device_level,
-        effective_schedule=schedule.name,
         gpu_backend=backend,
         state_available=not device_level,
         current_stream_available=not device_level and touches_gpu_memory,
-        block_size=block_size,
         environments_allowed="device-headers-only" if device_level else "full",
         dereferenceable={c.name: c.dereferenceable for c in connectors},
     )
@@ -616,25 +609,30 @@ def _resolved_schedule(
     return _annotate_resolved(declared, (defaults.schedules if defaults else {}).get(node.guid))
 
 
-def collect_available_environments() -> tuple[list[str], list[str]]:
+def collect_available_environments(device_level: bool) -> tuple[list[EnvironmentInfo], list[EnvironmentInfo]]:
     """
     Lists the registered DaCe library environments.
 
-    :return: The full class paths of environments whose ``is_installed`` check passes, and of those
-             that define no check.
+    :param device_level: Whether the code is GPU device code, which is compiled in the GPU code file
+                         and gets that file's headers.
+    :return: The environments whose ``is_installed`` check passes, and those that define no check,
+             each sorted by class path.
     """
+    backend = "cuda" if device_level else "frame"
     installed, unchecked = [], []
-    for path, env in dace.library._DACE_REGISTERED_ENVIRONMENTS.items():
+    for path, env in sorted(dace.library._DACE_REGISTERED_ENVIRONMENTS.items()):
         check = getattr(env, "is_installed", None)  # Optional in the environment protocol
-        if check is None:
-            unchecked.append(path)
-            continue
-        try:
-            if check():
-                installed.append(path)
-        except Exception:  # A failing check means not installed
-            continue
-    return sorted(installed), sorted(unchecked)
+        if check is not None:
+            try:
+                if not check():
+                    continue
+            except Exception:  # A failing check means not installed
+                continue
+        # A list of headers is included in the host code file only (see the frame code generator)
+        headers = env.headers if isinstance(env.headers, dict) else {"frame": env.headers}
+        info = EnvironmentInfo(path, list(headers.get(backend, [])), list(env.state_fields))
+        (unchecked if check is None else installed).append(info)
+    return installed, unchecked
 
 
 def collect_class_docstring(node: nodes.LibraryNode) -> str:
@@ -675,7 +673,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
     # Inference copies the whole SDFG, so it only runs when needed
     defaults = infer_defaults(sdfg) if has_unresolved_defaults(node, state, sdfg) else ResolvedDefaults()
     connectors = collect_connectors(node, state, sdfg, defaults)
-    capabilities = collect_capabilities(node, state, sdfg, connectors, defaults)
+    capabilities = collect_capabilities(node, state, sdfg, connectors)
     nesting = collect_nesting(node, state, sdfg, defaults)
 
     # Properties about the node's place in the graph, which are reported separately
@@ -700,7 +698,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         properties[prop.attr_name] = str(value)
 
     description = node.description.strip() if isinstance(node, AINode) else ""
-    installed, unchecked = collect_available_environments()
+    installed, unchecked = collect_available_environments(capabilities.device_level)
     return ExpansionContext(
         node_type=type(node).__name__,
         node_name=node.name,

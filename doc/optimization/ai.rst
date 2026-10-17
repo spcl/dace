@@ -119,12 +119,12 @@ The prompt contains:
 * **The node**: its type, class docstring, properties and description.
 * **The connectors**: their C++ types, the containers behind them with shape and strides, the
   memlet subset, the offset of the pointer, and how to index it.
-* **What the code may do**: whether it runs in a GPU kernel (and with which block size), whether
-  ``__state`` and a GPU stream are in scope, and which pointers it may not dereference.
+* **What the code may do**: whether it runs in a GPU kernel, whether ``__state`` and a GPU stream
+  are in scope, and which pointers it may not dereference.
 * **The enclosing scopes**: maps, loops, regions and nested SDFGs, with their resolved schedules.
 * **The target**: platform, CPU and ISA extensions, GPU architecture, compiler and flags.
-* **The DaCe environments** registered on the machine, split into those whose installation check
-  passes and those without a check.
+* **The DaCe environments** registered on the machine, with their headers and state fields, split
+  into those whose installation check passes and those without a check.
 
 When to expand
 ~~~~~~~~~~~~~~

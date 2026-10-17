@@ -94,6 +94,10 @@ def test_capabilities_differ_by_context():
     device_node, device_state = slots["device"]
     device_prompt = build_user_prompt(collect_context(device_node, device_state, sdfg))
     assert "Pointers you must NOT dereference" not in device_prompt
+    # A node in a kernel resolves to a thread-block schedule, but its tasklet runs on one thread, so
+    # the prompt shows only the schedules of the enclosing scopes
+    assert "GPU_ThreadBlock" not in device_prompt
+    assert "grid" in device_prompt and "GPU_Device" in device_prompt
 
 
 def test_storage_reaches_the_connectors():

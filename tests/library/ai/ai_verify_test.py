@@ -3,6 +3,7 @@
 
 import shutil
 
+import numpy as np
 import pytest
 
 import dace
@@ -24,13 +25,14 @@ GOOD = "_out = 2.0 * _in;"
 BAD = "_out = this_symbol_does_not_exist(_in);"
 
 
-def _sdfg_and_node():
+def _sdfg_and_node(name: str = "ai_verify"):
     """
     Builds a one-element SDFG around an :class:`AINode`.
 
+    :param name: Name of the SDFG.
     :return: A tuple of (SDFG, state, node).
     """
-    sdfg = dace.SDFG("ai_verify")
+    sdfg = dace.SDFG(name)
     sdfg.add_array("A", [1], dace.float64)
     sdfg.add_array("B", [1], dace.float64)
     state = sdfg.add_state()
@@ -76,6 +78,27 @@ def test_check_builds_global_code_and_state_fields(tmp_path):
     )
     result = _check(spec, sdfg, state, node, tmp_path)
     assert result.ok and not result.skipped, result.skipped
+
+
+def test_a_state_field_can_point_to_a_type_from_global_code():
+    # The state struct is emitted before code_global, so a field of a type defined there is a
+    # pointer declared with the struct keyword
+    sdfg, state, node = _sdfg_and_node("ai_state_field_pointer")
+    spec = TaskletSpec(
+        code="__state->scale_0->calls += 1;\n_out = __state->scale_0->factor * _in;",
+        code_global="struct ai_scale_0 {\n    double factor;\n    int calls;\n};",
+        code_init="__state->scale_0 = new ai_scale_0{2.0, 0};",
+        code_exit="delete __state->scale_0;",
+        state_fields=["struct ai_scale_0 *scale_0;"],
+    )
+    with stub_provider(spec) as provider:
+        node.expand(state, "ai")
+    assert len(provider.calls) == 1, "the compile check rejected the code"
+
+    A = np.array([3.0])
+    B = np.zeros(1)
+    sdfg(A=A, B=B)
+    assert B[0] == 6.0
 
 
 def test_check_defines_map_symbols(tmp_path):
@@ -184,6 +207,7 @@ def test_connector_types_match_codegen(shape):
 
 if __name__ == "__main__":
     with offline():
+        test_a_state_field_can_point_to_a_type_from_global_code()
         test_repair_loop_recovers_from_a_compile_error()
         test_repair_loop_gives_up_after_the_configured_attempts()
         test_the_compile_check_can_be_disabled()

@@ -248,13 +248,18 @@ def test_reused_environments_reach_the_tasklet(tmp_path):
 
 def test_the_prompt_separates_checked_from_unchecked_environments(monkeypatch):
     class Installed:
+        headers = {"frame": ["installed_host.h"], "cuda": ["installed_device.h"]}
+        state_fields = ["installed_handle handle;"]
         is_installed = staticmethod(lambda: True)
 
     class Missing:
+        headers = []
+        state_fields = []
         is_installed = staticmethod(lambda: False)
 
     class Unchecked:
-        pass
+        headers = ["unchecked.h"]
+        state_fields = []
 
     registry = {"x.Installed": Installed, "x.Missing": Missing, "x.Unchecked": Unchecked}
     monkeypatch.setattr(dace.library, "_DACE_REGISTERED_ENVIRONMENTS", registry)
@@ -271,6 +276,10 @@ def test_the_prompt_separates_checked_from_unchecked_environments(monkeypatch):
     checked, _, unchecked = prompt.partition("without an installation check")
     assert "x.Installed" in checked and "x.Unchecked" in unchecked
     assert "x.Missing" not in prompt
+    # Host code gets the headers of the host code file, and the state fields are listed
+    assert "includes: installed_host.h" in checked and "installed_device.h" not in prompt
+    assert "state fields: installed_handle handle;" in checked
+    assert "includes: unchecked.h" in unchecked
 
 
 if __name__ == "__main__":
