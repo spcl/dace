@@ -156,10 +156,11 @@ def compile_check(
         check = check_sdfg(tasklet, node, state, sdfg, ctx)
         check.build_folder = build_folder
         # The output goes into the exception only without debugprint, and one build job keeps the
-        # diagnostics of different files from interleaving
+        # diagnostics of different files from interleaving. The library is not loaded: loading it
+        # would register its GPU code with the CUDA runtime of this process until it is collected.
         with set_temporary("debugprint", value=False):
             with set_temporary("compiler", "build_jobs", value=1):
-                check.compile()
+                check.compile(return_program_handle=False)
     except (cgx.CompilationError, cgx.CompilerConfigurationError) as e:
         sources = _sources(build_folder)
         return CheckResult(ok=False, diagnostics=_diagnostics(str(e), sources), sources=sources)

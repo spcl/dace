@@ -8,6 +8,7 @@ import pytest
 
 import dace
 from dace import dtypes, nodes
+from dace.codegen import compiler
 from dace.libraries.ai import verify
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.context import collect_context
@@ -59,6 +60,18 @@ def test_check_accepts_valid_code(tmp_path):
     result = _check(TaskletSpec(code=GOOD), sdfg, state, node, tmp_path)
     assert result.ok and not result.skipped
     assert any(GOOD in source for source in result.sources.values())
+
+
+def test_the_compile_check_does_not_load_the_program(tmp_path, monkeypatch):
+    # Unloading a loaded check program with GPU code broke the later kernels of the process: their
+    # launches hung or failed with an invalid kernel image
+    def load(*args, **kwargs):
+        raise AssertionError("the compile check loaded the program it built")
+
+    monkeypatch.setattr(compiler, "load_precompiled_sdfg", load)
+    sdfg, state, node = _sdfg_and_node()
+    result = _check(TaskletSpec(code=GOOD), sdfg, state, node, tmp_path)
+    assert result.ok and not result.skipped, result.skipped
 
 
 def test_check_rejects_invalid_code_with_diagnostics(tmp_path):
