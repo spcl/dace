@@ -910,6 +910,9 @@ def reduce_connector(
         passed = set(map(str, new_desc.free_symbols))
         if offset is not None:
             passed |= set(map(str, offset.free_symbols))
+        # A name this SDFG binds itself -- an inner map's ``__i0`` beside the outer map parameter ``__i0`` the
+        # reduced buffer is offset by -- would capture the parent's symbol once the memlets move in.
+        remove_symbol_aliases(nsdfg, {sym: sym for sym in passed if sym not in nsdfg.arrays})
         for sym in passed:
             if sym in nsdfg.arrays or sym in nsdfg.constants_prop:
                 continue
