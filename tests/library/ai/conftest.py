@@ -3,7 +3,10 @@
 
 import pytest
 
-from tests.library.ai.ai_test_utils import offline
+# The AI library needs the ``dace[agent]`` extras; without pydantic, skip this directory instead of failing collection
+pytest.importorskip("pydantic", reason="the DaCe AI library needs pydantic (pip install 'dace[agent]')")
+
+from tests.library.ai.ai_test_utils import offline  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

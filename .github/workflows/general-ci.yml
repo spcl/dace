@@ -48,7 +48,7 @@ jobs:
 
     - name: Test dependencies
       run: |
-        uv run --group testing papi_avail
+        uv run --group testing --extra agent papi_avail
 
     - name: Test with pytest
       run: |
@@ -63,7 +63,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        uv run  --group testing pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential and not ai"
+        uv run --group testing --extra agent pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential and not ai"
         ./codecov
 
     - name: Test OpenBLAS LAPACK
@@ -79,7 +79,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        uv run --group testing --extra agent pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
         ./codecov
 
     - name: Run sequential tests
@@ -95,7 +95,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        uv run --group testing --extra agent pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
 
     - name: Run other tests
@@ -105,12 +105,12 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
-        export PYTHON_BINARY="uv run --group testing coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="uv run --group testing --extra agent coverage run --source=dace --parallel-mode"
         ./tests/polybench_test.sh
         ./tests/xform_test.sh
-        uv run --group testing coverage combine .
-        uv run --group testing coverage report
-        uv run --group testing coverage xml
+        uv run --group testing --extra agent coverage combine .
+        uv run --group testing --extra agent coverage report
+        uv run --group testing --extra agent coverage xml
 
     - uses: codecov/codecov-action@v6
       with:
