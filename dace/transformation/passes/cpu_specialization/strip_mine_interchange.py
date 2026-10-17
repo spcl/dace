@@ -103,7 +103,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import memlets_in_ast
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE as NUM_THREADS_DTYPE
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import (
@@ -639,7 +639,7 @@ def targets_for(shape: Shape, size: Any) -> list[Target] | None:
     ]
 
 
-def axis_choices(shapes: list[Shape]) -> list[tuple[Any, bool]]:
+def axis_choices(shapes: list[Shape], facts: symbolic.Facts | None = None) -> list[tuple[Any, bool]]:
     """The extents to try cutting, best first, each with whether it is innermost in every statement.
 
     A candidate is an extent every statement can be narrowed along (:func:`targets_for`). Extents not
@@ -647,21 +647,33 @@ def axis_choices(shapes: list[Shape]) -> list[tuple[Any, bool]]:
     innermost (CLOUDSC's monolith: ``nblocks`` over ``klon``). An innermost one is cut into tiles instead, so
     the contiguous remainder stays inside (the column axis of CLOUDSC); the deepest of those comes first. An
     innermost extent too small for two tiles is no candidate: one tile runs the whole nest on one thread.
+
+    A ``SMALL`` extent (``nblks``: a handful, under ``facts``) is never a candidate: its tiles could not
+    occupy the team. Nor does it hide the axis it sits under from being innermost:
+    :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
+    moves ``SMALL`` axes into an inner sequential map, so ``velocity_tendencies``' ``(nproma)`` maps each hold
+    an ``(nblks)`` one, and reading ``nblks`` as the innermost axis moved ``nproma`` outside the carry WHOLE
+    -- one column per tile, every level of it at stride ``nproma``.
     """
     if not shapes:
         return []
+
+    def small(size: Any) -> bool:
+        return facts is not None and symbolic.issymbolic(size) and symbolic.is_small(size, facts)
+
     first = shapes[0]
     seen = [size for _, _, size in first.axes] + [size for inner in first.inner or [] for _, _, size in inner.axes]
     candidates = []
     for size in seen:
-        if any(same_extent(size, other) for other in candidates):
+        if small(size) or any(same_extent(size, other) for other in candidates):
             continue
         if all(targets_for(shape, size) is not None for shape in shapes):
             candidates.append(size)
 
     def innermost(shape: Shape, size: Any) -> bool:
         nests = [shape.axes] if count_axis(shape.axes, size) else [inner.axes for inner in shape.inner or []]
-        return all(axes and same_extent(axes[-1][2], size) for axes in nests)
+        unsmall = [[axis for axis in axes if not small(axis[2])] for axes in nests]
+        return all(axes and same_extent(axes[-1][2], size) for axes in unsmall)
 
     outer = [(size, False) for size in candidates if not all(innermost(shape, size) for shape in shapes)]
     inner = [
@@ -996,7 +1008,7 @@ def tileable_maps(loop: LoopRegion, sdfg: SDFG) -> Cut | None:
             nest = map_nest(node, children)
             shapes.append(Shape(block, node, map_exit, nest, nest_axes(nest), inner_nests(block, node)))
     defined = loop_defined_symbols(loop)
-    for size, innermost in axis_choices(shapes):
+    for size, innermost in axis_choices(shapes, SymbolResolver().facts_at(loop)):
         # The tile count is the team map's range, evaluated before the loop runs: an extent naming a symbol the
         # loop assigns (a CSR row's bounds, read per trip) has no value there.
         if {str(name) for name in symbolic.free_symbols_and_functions(size)} & defined:

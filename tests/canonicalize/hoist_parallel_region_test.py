@@ -888,6 +888,41 @@ def test_strip_mine_interchanges_an_outer_axis_whole():
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
+def test_strip_mine_cuts_the_columns_above_an_inner_small_axis():
+    """``a[it + 1, b, i]`` as ``SequentializeSmallAxes`` leaves it: a parallel map over the columns ``i`` around a
+    sequential one over the ``SMALL`` blocks ``b``. The columns are the contiguous axis, so they are strip-mined
+    into tiles; reading the inner ``b`` as the innermost axis moved them outside the carry whole, one column per
+    tile and every trip of it at stride ``N`` (velocity_tendencies at one block: 13 teams over ``0:nproma``)."""
+    sdfg = dace.SDFG("tile_columns_over_small_blocks")
+    sdfg.add_symbol("nblks", dace.int64, scale=dace.symbolic.Scale.SMALL)
+    sdfg.add_array("a", [N, "nblks", N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("sweep", is_start_block=True)
+    columns_entry, columns_exit = state.add_map("columns", {"i": "0:N"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    blocks_entry, blocks_exit = state.add_map("blocks", {"b": "0:nblks"}, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("step", {"x"}, {"y"}, "y = x * 2.0")
+    state.add_memlet_path(
+        state.add_read("a"), columns_entry, blocks_entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[it, b, i]")
+    )
+    state.add_memlet_path(
+        tasklet, blocks_exit, columns_exit, state.add_write("a"), src_conn="y", memlet=dace.Memlet("a[it + 1, b, i]")
+    )
+    sdfg.validate()
+    assert tiled(sdfg) == 1
+    entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
+    team = next(n for n in entries if n.map.params == ["__dace_tile"])
+    assert str(team.map.range) != "0:N", "one column per tile: the columns were moved outside the carry whole"
+    columns = next(n for n in entries if n.map.params == ["i"])
+    assert "Min" in str(columns.map.range), f"the column map is not cut into tiles: {columns.map.range}"
+    blocks = next(n for n in entries if n.map.params == ["b"])
+    assert str(blocks.map.range) == "0:nblks", "the SMALL axis inside the tile is narrowed"
+    a = np.random.default_rng(21).random((37, 2, 37))
+    ref = a.copy()
+    for it in range(36):
+        ref[it + 1] = 2.0 * ref[it]
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37, nblks=2)
+
+
 @pytest.mark.parametrize(
     "size, threads, expected",
     [
@@ -1158,6 +1193,7 @@ if __name__ == "__main__":
     test_strip_mine_takes_a_map_inside_a_conditional()
     test_strip_mine_refuses_a_branch_on_what_a_tile_writes()
     test_strip_mine_interchanges_an_outer_axis_whole()
+    test_strip_mine_cuts_the_columns_above_an_inner_small_axis()
     for case in [(768, 12, 64), (4096, 12, 176), (37, 24, 16), (100000, 24, 256)]:
         test_tile_size_is_the_cache_tile_evened_out_over_the_threads(pytest.MonkeyPatch(), *case)
     test_strip_mine_reads_through_a_view_as_the_array_it_views(0)
