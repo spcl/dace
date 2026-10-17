@@ -649,6 +649,60 @@ def test_copy_cuda_4d_strided_host_to_device():
     cp.testing.assert_array_equal(B, cp.asarray(expected))
 
 
+def _interior_copy_sdfg(host_to_device: bool, pool: bool = False) -> tuple[dace.SDFG, CopyLibraryNode]:
+    """Copy the interior ``1:N-1`` of a host ``(N, N, N)`` array to/from a device ``(N-2, N-2, N-2)`` one."""
+    host = _ArraySpec(shape=(9, 9, 9), storage=dace.dtypes.StorageType.CPU_Heap, subset="1:8, 1:8, 1:8", name="H")
+    device = _ArraySpec(shape=(7, 7, 7), storage=dace.dtypes.StorageType.GPU_Global, name="D", transient=pool)
+    src, dst = (host, device) if host_to_device else (device, host)
+    sdfg, node = _make_copy_sdfg(src, dst, name=f"copy_interior_{int(host_to_device)}", libnode_name="cp_interior")
+    if pool:
+        sdfg.arrays["D"].pool = True
+    return sdfg, node
+
+
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_interior_copy_across_the_boundary_is_one_pitched_copy(backend):
+    """A 3D interior crossing the CPU/GPU boundary is one ``Memcpy3DAsync``, not one ``gpuMemcpyAsync`` per row.
+
+    A pooled device operand on HIP keeps the per-row form: HIP refuses pitched copies of pooled memory whose
+    rows end at the pitch.
+    """
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
+        sdfg, node = _interior_copy_sdfg(host_to_device=True)
+        assert select_copy_implementation(node, sdfg.start_state) == "MemcpyCUDANDStrided"
+        sdfg.expand_library_nodes()
+        codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+        assert len(codes) == 1 and f"{backend}Memcpy3DAsync(" in codes[0]
+        assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+
+        pooled, _ = _interior_copy_sdfg(host_to_device=True, pool=True)
+        pooled.expand_library_nodes()
+        codes = [n.code.as_string for n, _ in pooled.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+        assert ("Memcpy3DAsync(" in codes[0]) == (backend == "cuda")
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("host_to_device", [True, False])
+def test_interior_copy_across_the_boundary_gpu(host_to_device):
+    """The pitched 3D interior copy moves exactly the interior, in both directions."""
+    import cupy as cp
+
+    sdfg, _ = _interior_copy_sdfg(host_to_device)
+    sdfg.expand_library_nodes()
+    exe = _compile_no_copynd(sdfg)
+    full = np.arange(9 * 9 * 9, dtype=np.float64).reshape(9, 9, 9)
+    if host_to_device:
+        D = cp.zeros((7, 7, 7), dtype=cp.float64)
+        exe(H=full, D=D)
+        cp.testing.assert_array_equal(D, cp.asarray(full[1:8, 1:8, 1:8]))
+    else:
+        H = np.zeros((9, 9, 9), dtype=np.float64)
+        exe(H=H, D=cp.asarray(full[1:8, 1:8, 1:8]))
+        expected = np.zeros((9, 9, 9))
+        expected[1:8, 1:8, 1:8] = full[1:8, 1:8, 1:8]
+        np.testing.assert_array_equal(H, expected)
+
+
 def test_copy_fortran_packed_cpu_default_pure():
     """A same-side CPU copy of a Fortran-packed array expands and produces correct output."""
     shape = (4, 5, 6)
@@ -2787,6 +2841,10 @@ if __name__ == "__main__":
     test_copy_cuda_host_to_device()
     test_copy_cuda_device_to_host()
     test_copy_cuda_4d_strided_host_to_device()
+    test_interior_copy_across_the_boundary_is_one_pitched_copy("cuda")
+    test_interior_copy_across_the_boundary_is_one_pitched_copy("hip")
+    test_interior_copy_across_the_boundary_gpu(True)
+    test_interior_copy_across_the_boundary_gpu(False)
     test_copy_fortran_packed_gpu_falls_back_to_pure()
     test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk()
     test_copy_padded_unit_dim_cross_storage_gpu()
