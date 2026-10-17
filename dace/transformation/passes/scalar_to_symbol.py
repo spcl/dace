@@ -152,11 +152,18 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             if candidate not in candidates:
                 continue
 
-            # If candidate is read by a library node, skip
+            # If candidate is read by a library node or viewed by a View, skip
             removed = False
             for oe in state.out_edges(node):
                 for e in state.memlet_tree(oe):
                     if isinstance(e.dst, nodes.LibraryNode):
+                        candidates.remove(candidate)
+                        removed = True
+                        break
+                    if isinstance(e.dst, nodes.AccessNode) and isinstance(
+                        sdfg.arrays[e.dst.data], (dt.View, dt.StructureView)
+                    ):
+                        # A View of the candidate would have nothing to view after the promotion
                         candidates.remove(candidate)
                         removed = True
                         break
@@ -203,8 +210,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 if sdfg.arrays[edge.src.data].storage != sdfg.arrays[candidate].storage:
                     candidates.remove(candidate)
                     continue
-                # If input is array, ensure it is not a stream
-                if isinstance(sdfg.arrays[edge.src.data], dt.Stream):
+                # If input is array, ensure it is not a stream or a view (a symbol cannot be viewed)
+                if isinstance(sdfg.arrays[edge.src.data], (dt.Stream, dt.View, dt.StructureView)):
                     candidates.remove(candidate)
                     continue
                 # Ensure no inputs exist to the array

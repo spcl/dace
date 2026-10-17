@@ -882,6 +882,34 @@ def test_promote_widened_loop_index():
     assert np.allclose(b, expected)
 
 
+def test_do_not_promote_viewed_scalar():
+    """A scalar that a View points to is not promoted: the View would have nothing to view after the promotion."""
+    sdfg = dace.SDFG("viewed_scalar")
+    sdfg.add_array("A", [20], dace.int64)
+    sdfg.add_array("B", [20], dace.int64)
+    sdfg.add_transient("s", [1], dace.int64)
+    sdfg.add_view("v", [1], dace.int64)
+    state = sdfg.add_state()
+    s = state.add_access("s")
+    state.add_edge(state.add_tasklet("set", {}, {"out"}, "out = 5"), "out", s, None, dace.Memlet("s[0]"))
+    v = state.add_access("v")
+    state.add_edge(s, None, v, "views", dace.Memlet("s[0]"))
+    me, mx = state.add_map("m", {"i": "0:20"})
+    tasklet = state.add_tasklet("add", {"a", "offset"}, {"b"}, "b = a + offset")
+    state.add_memlet_path(v, me, tasklet, dst_conn="offset", memlet=dace.Memlet("v[0]"))
+    state.add_memlet_path(state.add_read("A"), me, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    assert "s" not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    sdfg.simplify()
+    sdfg.validate()
+    A = np.arange(20, dtype=np.int64)
+    B = np.zeros(20, dtype=np.int64)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A + 5)
+
+
 if __name__ == "__main__":
     test_find_promotable()
     test_promote_simple()
