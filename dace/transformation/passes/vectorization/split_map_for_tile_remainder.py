@@ -264,7 +264,9 @@ class SplitMapForTileRemainder(ppl.Pass):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
             return True
         # A dim provably shorter than its width leaves no interior: the whole map is the remainder.
-        if any(self._trip_class(lb, ub, W) == "below" for (lb, ub, _), W in zip(map_entry.map.range[-K:], widths)):
+        if any(
+            self.trip_class(lb, ub, W, facts) == "below" for (lb, ub, _), W in zip(map_entry.map.range[-K:], widths)
+        ):
             self._mark_tail(map_entry)
             return True
         for d, W in zip(tiled_dims, widths):
