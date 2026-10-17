@@ -106,17 +106,27 @@ class ExpandHPTT(ExpandTransformation):
         beta = sym2cpp(node.beta)
         # The complex entry points take whether to conjugate A right after alpha
         conj_a = "false, " if dchar in ("c", "z") else ""
+        # A tasklet's connectors may not share a name with a container or symbol of its SDFG, and TensorDot's TTGT
+        # expansion puts this node into an SDFG holding its own ``_out_tensor``: rename a clashing connector.
+        inp = parent_sdfg._find_new_name("_inp_tensor")
+        out = parent_sdfg._find_new_name("_out_tensor")
+        for edge in parent_state.in_edges_by_connector(node, "_inp_tensor"):
+            edge.dst_conn = inp
+        for edge in parent_state.out_edges_by_connector(node, "_out_tensor"):
+            edge.src_conn = out
         code = f"""
             int perm[{len(inp_shape)}] = {{{axes}}};
             int size[{len(inp_shape)}] = {{{shape}}};
-            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}_inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
+            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}{inp}, size, NULL, {beta}, {out}, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
-        tasklet = nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        return nodes.Tasklet(
+            node.name,
+            {inp: node.in_connectors["_inp_tensor"]},
+            {out: node.out_connectors["_out_tensor"]},
+            code,
+            language=dace.dtypes.Language.CPP,
         )
-
-        return tasklet
 
 
 @library.expansion
