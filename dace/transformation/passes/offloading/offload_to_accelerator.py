@@ -1317,12 +1317,22 @@ class OffloadToAccelerator(ppl.Pass):
                 continue
             connector = edge.dst_conn if edge.dst is node else edge.src_conn
             name = edge.data.data
-            if connector is None or name not in sdfg.arrays or not is_array(name, sdfg):
+            if connector is None or name not in sdfg.arrays:
+                continue
+            # A view bound to the body (a slice ``inp[:M]`` passed in) places the array it aliases: the
+            # view only re-derives its storage from that array, so the array has to reach the device.
+            if is_view(name, sdfg) and edge.dst is node and isinstance(edge.src, nodes.AccessNode):
+                names = get_data_used_by_incoming_access_nodes(sdfg, state, edge.src)
+            elif is_view(name, sdfg) and edge.src is node and isinstance(edge.dst, nodes.AccessNode):
+                names = get_data_used_by_outgoing_access_nodes(sdfg, state, edge.dst)
+            elif is_array(name, sdfg):
+                names = OrderedSet([name])
+            else:
                 continue
             if connector in inner_gpu:
-                gpu_set.add(name)
+                gpu_set |= names
             elif connector in inner_cpu:
-                cpu_set.add(name)
+                cpu_set |= names
         return gpu_set, cpu_set
 
     def get_data_locations_of_state(self, sdfg: SDFG, state: SDFGState) -> tuple[OrderedSet[str], OrderedSet[str]]:

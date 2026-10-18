@@ -230,9 +230,52 @@ def test_a_device_element_bound_through_a_taskloop_computes_what_numpy_computes(
     np.testing.assert_allclose(out.get(), np.full((4, 8), 10.0))
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def _double(x: dace.float64[M], y: dace.float64[M]):
+    for i in dace.map[0:M]:
+        y[i] = x[i] * 2.0
+
+
+@dace.program
+def _double_a_prefix(inp: dace.float64[N], out: dace.float64[M]):
+    _double(inp[:M], out)
+
+
+def test_a_view_bound_to_a_nested_body_places_the_array_it_aliases():
+    """``inp[:M]`` reaches the body through a view; the body's kernel reads it, so ``inp`` itself goes to the device.
+
+    Only the view was placed: it took the device storage while the array it aliases stayed on the host,
+    and the kernel read host memory through it -- an illegal access where the device cannot reach the host.
+    """
+    sdfg = _double_a_prefix.to_sdfg(simplify=False)
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if not isinstance(sdfg.arrays[node.data], dace.data.View):
+                continue
+            viewed = dace.sdfg.utils.get_view_node(state, node)
+            assert sdfg.arrays[viewed.data].storage == dtypes.StorageType.GPU_Global, viewed.data
+
+
+@pytest.mark.gpu
+def test_a_view_bound_to_a_nested_body_runs_on_the_device():
+    sdfg = _double_a_prefix.to_sdfg(simplify=False)
+    sdfg.apply_gpu_transformations()
+    inp = np.arange(16, dtype=np.float64)
+    out = np.zeros(8)
+    sdfg(inp=inp, out=out, N=16, M=8)
+    np.testing.assert_allclose(out, inp[:8] * 2.0)
+
+
 if __name__ == "__main__":
     test_a_map_around_a_host_issued_library_call_launches_it_from_the_host()
     test_a_map_around_an_in_kernel_reduce_is_the_kernel()
     test_a_nested_sdfg_at_the_top_level_is_a_host_level_of_its_own()
     test_a_device_element_a_body_reads_on_the_host_is_staged_on_the_host()
     test_a_device_element_bound_through_a_taskloop_is_staged_once_outside_it()
+    test_a_view_bound_to_a_nested_body_places_the_array_it_aliases()
+    test_a_view_bound_to_a_nested_body_runs_on_the_device()
