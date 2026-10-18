@@ -300,6 +300,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Helper name -> C++ definition, for ``<array>_idx`` and ``<array>_size`` helpers.
         self._index_functions: dict[str, str] = {}
         self._size_functions: dict[str, str] = {}
+        #: File-scope pointer of a persistent buffer -> its descriptor (_register_persistent_holder)
+        self._persistent_holders: dict[str, dt.Data] = {}
         # Output-file key -> helper names already flushed into that file (see _flush_generated_functions).
         self._emitted_functions: dict[int | str, set[str]] = {}
         # Stream -> the output-file key of its first flush (see _flush_generated_functions).
@@ -936,15 +938,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 count = "%s(%s)" % (fnname, ", ".join(call_args))
         if not cpf_lowering.standalone():
             return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
-        # A persistent transient without a workspace lives in a ``static`` pointer: allocated by the first call,
-        # reallocated only by a call that needs more, never freed -- one buffer across calls, as the state struct
-        # of the ordinary generators keeps it.
+        # A persistent transient without a workspace lives in a file-scope ``static`` pointer: allocated by the first
+        # call, reallocated only by a call that needs more -- one buffer across calls, as the state struct of the
+        # ordinary generators keeps it -- and freed when the program exits or the library is unloaded.
         holder = cpf_lowering.persistent_static(data_name, nodedesc)
         if holder is not None:
-            null = "NULL" if cpf_lowering.standalone_c() else "nullptr"
+            holder = self._register_persistent_holder(holder, ctype, nodedesc)
             return (
-                f"static {ctype} *{holder} = {null};\n"
-                f"static size_t {holder}_count = 0;\n"
                 f"if ({holder}_count < (size_t)({count})) {{\n"
                 f"{self.standalone_heap_free_stmt(holder, True, nodedesc)}"
                 f"{self.standalone_heap_alloc_stmt(holder, ctype, count, nodedesc)}"
@@ -953,6 +953,35 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 f"{alloc_name} = {holder};\n"
             )
         return self.standalone_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
+
+    def _register_persistent_holder(self, holder: str, ctype: str, nodedesc: dt.Data) -> str:
+        """Define the file-scope pointer ``holder`` (and its ``_count``) of a persistent buffer, with its release at exit:
+        the destructor of a ``static`` guard in C++, a ``destructor`` function in C. A name another buffer already
+        holds in this file gets a suffix."""
+        name, suffix = holder, 0
+        while name in self._persistent_holders and self._persistent_holders[name] is not nodedesc:
+            suffix += 1
+            name = f"{holder}_{suffix}"
+        if name in self._persistent_holders:
+            return name
+        self._persistent_holders[name] = nodedesc
+        release = self.standalone_heap_free_stmt(name, True, nodedesc)
+        if cpf_lowering.standalone_c():
+            defn = (
+                f"static {ctype} *{name} = NULL;\n"
+                f"static size_t {name}_count = 0;\n"
+                f"__attribute__((destructor)) static void {name}_release(void) {{\n{release}}}"
+            )
+        else:
+            defn = (
+                f"static {ctype} *{name} = nullptr;\n"
+                f"static size_t {name}_count = 0;\n"
+                f"static struct {name}_release_t {{\n"
+                f"~{name}_release_t() {{\n{release}}}\n"
+                f"}} {name}_release;"
+            )
+        self._size_functions[name] = defn
+        return name
 
     @staticmethod
     def standalone_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: dt.Data | None) -> str:

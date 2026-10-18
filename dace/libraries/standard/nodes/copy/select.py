@@ -13,11 +13,21 @@ from dace.libraries.standard.helper import (
     is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
 )
-from dace.libraries.standard.nodes.copy.common import _both_packed_same_layout, _is_cross_cpu_gpu, cuda2d_pitch_params
+from dace.libraries.standard.nodes.copy.common import (
+    _both_packed_same_layout,
+    _is_cross_cpu_gpu,
+    cuda2d_pitch_params,
+    strided_copy_calls,
+)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+
+
+# More gpuMemcpy calls than this for one strided host/device copy, or a count known only at run time, and the copy is
+# staged through a packed buffer: one transfer plus one copy on the device or host side.
+STAGED_COPY_MIN_CALLS = 5
 
 
 def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> str:
@@ -155,17 +165,17 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
       collapsed rank 2, 2D pitched layout matches    -> ``MemcpyCUDA2D``
       collapsed rank 1, both sides equal length      -> ``MemcpyCUDA2D`` (degenerate ``(1, N)``)
       same-side (no CPU/GPU boundary)                -> ``MappedTasklet`` (per-element loop nest)
-      cross CPU/GPU, same rank, common stride-1 axis -> ``MemcpyCUDANDStrided`` (seq gpuMemcpyAsync/chunk)
-      cross CPU/GPU, no common stride-1 axis         -> raise (no ``gpuMemcpy*`` lowering exists;
-                                                         host can't issue gpuMemcpyAsync for
-                                                         non-contiguous regions, device code can't
-                                                         issue it at all)
+      cross CPU/GPU, no common stride-1 axis, or
+        a symbolic number of memcpy calls, or > 5
+        calls host to device or per-row (pooled HIP) -> ``MemcpyCUDAStaged`` (one memcpy, a GPU filter map)
+      cross CPU/GPU, same rank, common stride-1 axis -> ``MemcpyCUDANDStrided`` (one pitched 2D/3D call)
+      cross CPU/GPU, rank or shape mismatch          -> raise
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
     :returns: the refined impl name, or ``None`` when both subsets are contiguous (keeps
         ``MemcpyCUDA1D``).
-    :raises ValueError: cross-CPU/GPU strided pattern with no common stride-1 axis.
+    :raises ValueError: cross-CPU/GPU strided pattern whose sides differ in rank or shape.
     """
     _, inp, in_subset, _, out, out_subset = node.validate(parent_state.sdfg, parent_state, allow_cross_storage=True)
 
@@ -184,10 +194,33 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     if get_gpu_backend() == "hip" and not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         return "MappedTasklet"
 
+    # ``MemcpyCUDAHull`` is never chosen here: it is correct only where nothing reads the destination between the rows,
+    # which canonicalization proves and pins (``pin_span_copies``).
+    crosses_boundary = _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state)
+
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
+    # A strided copy that would take a loop of more than STAGED_COPY_MIN_CALLS gpuMemcpy calls -- or a number known only
+    # at run time -- moves as a packed buffer instead: one gpuMemcpyAsync and one copy on the strided side. HIP refuses
+    # pitched copies of pooled memory whose rows end at the pitch, so there a pooled operand counts one call per row.
+    # Device to host, the filter runs on the host: a known loop of pitched calls outruns it, so only a symbolic count
+    # or one call per row is staged there.
+    pooled_hip = get_gpu_backend() == "hip" and (getattr(inp, "pool", False) or getattr(out, "pool", False))
     src_rank, dst_rank = len(in_shape_collapsed), len(out_shape_collapsed)
+    same_shape = src_rank == dst_rank and all(
+        symbolic.equal(a, b) is True for a, b in zip(in_shape_collapsed, out_shape_collapsed)
+    )
+    if crosses_boundary and same_shape:
+        calls = dace.symbolic.pystr_to_symbolic(
+            strided_copy_calls(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed, pitched=not pooled_hip)
+        )
+        common_row = any(a == 1 and b == 1 for a, b in zip(in_strides_collapsed, out_strides_collapsed))
+        many_calls = not calls.is_number or int(calls) > STAGED_COPY_MIN_CALLS
+        to_device = out.storage == dace.dtypes.StorageType.GPU_Global
+        if not common_row or not calls.is_number or (many_calls and (to_device or pooled_hip)):
+            return "MemcpyCUDAStaged"
+
     if src_rank == 2 and dst_rank == 2:
         # Shared with the expander so selector and expander cannot disagree.
         if cuda2d_pitch_params(in_shape_collapsed, in_strides_collapsed, out_strides_collapsed) is not None:
@@ -198,7 +231,7 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
         if not symbolic.inequal_symbols(in_shape_collapsed[0], out_shape_collapsed[0]):
             return "MemcpyCUDA2D"
 
-    if not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
+    if not crosses_boundary:
         return "MappedTasklet"
 
     if (

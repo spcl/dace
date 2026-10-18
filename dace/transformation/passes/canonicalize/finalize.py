@@ -717,6 +717,50 @@ def explicit_accumulating_copies(sdfg: SDFG) -> None:
                         written.data.wcr = wcr
 
 
+def pin_span_copies(sdfg: SDFG) -> int:
+    """Pin every strided host/device copy whose span may be moved whole to ``MemcpyCUDAHull``.
+
+    One ``gpuMemcpyAsync`` of the span from a region's first element to its last overwrites the destination between
+    the rows, so the copy-node selector never picks it; this proves where nothing reads those elements
+    (:func:`~dace.libraries.standard.nodes.copy.common.hull_copy_is_safe`: same layout on both sides, a transient
+    destination read only inside the region, a span at most twice the region). The strided copy edges are lifted to
+    copy nodes here for that, as codegen would lift them; a copy the proof rejects keeps the selector's choice
+    (``MemcpyCUDAStaged`` for a loop of calls).
+
+    :param sdfg: an offloaded SDFG, nested SDFGs included.
+    :returns: how many copies were pinned.
+    """
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.copy.common import _is_cross_cpu_gpu, hull_copy_is_safe
+    from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, _derive_matching_dst_subset
+
+    gpu = dtypes.StorageType.GPU_Global
+
+    def strided_transfer(state: SDFGState, edge) -> bool:
+        src, dst = edge.src.desc(state.sdfg), edge.dst.desc(state.sdfg)
+        if (src.storage == gpu) == (dst.storage == gpu):
+            return False
+        src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+        if src_subset is None and dst_subset is None:
+            return False
+        # An omitted side is the other side's region over its own array, as copy lifting reads it
+        src_subset = src_subset or _derive_matching_dst_subset(dst_subset, src)
+        dst_subset = dst_subset or _derive_matching_dst_subset(src_subset, dst)
+        return not (src_subset.is_contiguous_subset(src) and dst_subset.is_contiguous_subset(dst))
+
+    InsertExplicitCopies(only=strided_transfer).apply_pass(sdfg, {})
+    pinned = 0
+    for node, state in sdfg.all_nodes_recursive():
+        if not isinstance(node, CopyLibraryNode) or node.implementation not in (None, "Auto"):
+            continue
+        if not _is_cross_cpu_gpu(node.src_storage(state), node.dst_storage(state), node, state):
+            continue
+        if hull_copy_is_safe(node, state):
+            node.implementation = "MemcpyCUDAHull"
+            pinned += 1
+    return pinned
+
+
 def finalize_for_target(
     sdfg: SDFG, target: str = "cpu", validate: bool = True, break_anti_dependence: bool = True
 ) -> SDFG:
@@ -787,6 +831,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
         cpu_specialize(sdfg, break_anti_dependence=break_anti_dependence, validate=False)
 
     canonicalize_set_fast_implementations(sdfg, device)
+    if device == dtypes.DeviceType.GPU:
+        pin_span_copies(sdfg)
     # Select the fast implementation per library node but DO NOT expand here: a library
     # node is expanded exactly once, at codegen (``compile()`` auto-expands using the
     # ``implementation`` chosen above). Expanding in canonicalization would re-introduce

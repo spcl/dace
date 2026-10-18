@@ -2,6 +2,7 @@
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
 
 import copy
+from collections.abc import Callable
 from typing import Any
 
 from dace import data, dtypes, nodes, properties, subsets, symbolic
@@ -163,6 +164,11 @@ class InsertExplicitCopies(ppl.Pass):
         CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
     )
 
+    def __init__(self, only: Callable[[SDFGState, Any], bool] | None = None):
+        """:param only: lift just the direct copy edges this accepts (``(state, edge)``), and no staging copy."""
+        super().__init__()
+        self._only = only
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
 
@@ -185,7 +191,8 @@ class InsertExplicitCopies(ppl.Pass):
             inserted = 0
             for state in nsdfg.states():
                 inserted += self._replace_direct_copies(state)
-                inserted += self._replace_map_staging_copies(state)
+                if self._only is None:
+                    inserted += self._replace_map_staging_copies(state)
             if inserted:
                 self.free_copy_connector_names(nsdfg)
             count += inserted
@@ -246,6 +253,9 @@ class InsertExplicitCopies(ppl.Pass):
             memlet: Memlet = edge.data
 
             if memlet.is_empty():
+                continue
+
+            if self._only is not None and not self._only(state, edge):
                 continue
 
             # WCR edges aren't copies.

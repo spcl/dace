@@ -131,6 +131,110 @@ def cuda2d_pitch_params(
     return None
 
 
+def _divides(outer, inner) -> bool:
+    """Whether stride ``outer`` is a whole multiple of stride ``inner``, provably."""
+    if inner == 0:
+        return False
+    _, denominator = symbolic.simplify(outer / inner).as_numer_denom()
+    return denominator == 1
+
+
+def pitched_axes(src_strides, dst_strides) -> int:
+    """How many innermost axes (stride 1 last on both sides) one pitched copy covers: 3 when each side's
+    slice stride is a whole number of its rows, else 2."""
+    if len(src_strides) >= 3 and all(_divides(st[-3], st[-2]) for st in (src_strides, dst_strides)):
+        return 3
+    return 2
+
+
+def strided_copy_calls(
+    shape: list[symbolic.SymExpr],
+    src_strides: list[symbolic.SymExpr],
+    dst_strides: list[symbolic.SymExpr],
+    pitched: bool = True,
+) -> symbolic.SymExpr:
+    """How many ``gpuMemcpy*`` calls ``MemcpyCUDA2D`` / ``MemcpyCUDANDStrided`` issue for a collapsed region: one
+    pitched call per box of the innermost axes, or, without ``pitched`` (HIP, pooled operand), one call per row."""
+    if len(shape) <= 1:
+        return 1
+    rows = [d for d in range(len(shape)) if src_strides[d] == 1 and dst_strides[d] == 1]
+    if pitched and len(shape) == 2 and cuda2d_pitch_params(shape, src_strides, dst_strides) is not None:
+        return 1
+    if pitched and rows and rows[-1] == len(shape) - 1:
+        return functools.reduce(operator.mul, shape[: len(shape) - pitched_axes(src_strides, dst_strides)], 1)
+    chunk = rows[-1] if rows else len(shape) - 1
+    return functools.reduce(operator.mul, (n for d, n in enumerate(shape) if d != chunk), 1)
+
+
+def hull_elements(shape: list[symbolic.SymExpr], strides: list[symbolic.SymExpr]) -> symbolic.SymExpr:
+    """Elements from the first element of a ``shape`` box laid out with nonnegative ``strides`` to its last."""
+    return 1 + sum((n - 1) * s for n, s in zip(shape, strides))
+
+
+def span_is_bounded(shape: list[symbolic.SymExpr], strides: list[symbolic.SymExpr], facts: symbolic.Facts) -> bool:
+    """Whether the span a region occupies (:func:`hull_elements`) is provably at most twice the region, so moving the
+    span costs at most twice the region's bytes."""
+    if not all(symbolic.provably_nonnegative(s, facts) for s in strides):
+        return False
+    count = functools.reduce(operator.mul, shape, 1)
+    return symbolic.provably_le(hull_elements(shape, strides), 2 * count, facts)
+
+
+def hull_copy_is_safe(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> bool:
+    """Whether one flat copy of the span the region occupies (``MemcpyCUDAHull``) has the effect of the copy.
+
+    It does when:
+
+    * both sides lay the region out alike (equal collapsed shapes and nonnegative strides), so every element of the
+      region lands in its own slot;
+    * nothing observes the destination elements between the rows: it is a transient of this SDFG, no view aliases
+      it, and every read of it -- memlets, write-conflict resolutions, interstate and control flow code -- lies in
+      the copied region. The source's elements in between are read, which is harmless: the span lies inside its
+      allocation;
+    * the span is at most twice the region, from the facts of the SDFG, so the extra bytes cannot outweigh the calls
+      a strided copy needs.
+    """
+    sdfg = parent_state.sdfg
+    _, inp, in_subset, _, out, out_subset = node.validate(sdfg, parent_state, allow_cross_storage=True)
+    out_name = next(e.dst.data for e in parent_state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+    in_shape, in_strides = collapse_shape_and_strides(in_subset, inp.strides)
+    out_shape, out_strides = collapse_shape_and_strides(out_subset, out.strides)
+    facts = sdfg.facts()
+    if len(in_shape) != len(out_shape) or len(in_shape) < 2:
+        return False
+    if not all(symbolic.equal(a, b) is True for a, b in zip(in_shape + in_strides, out_shape + out_strides)):
+        return False
+    if not span_is_bounded(in_shape, in_strides, facts):
+        return False
+    if not out.transient or isinstance(out, data.View):
+        return False
+    for state in sdfg.states():
+        for access in state.data_nodes():
+            if access.data != out_name:
+                continue
+            for edge in state.all_edges(access):
+                other = edge.dst if edge.src is access else edge.src
+                if isinstance(other, nodes.AccessNode) and isinstance(sdfg.arrays[other.data], data.View):
+                    return False
+            reads = [(e, e.data.get_src_subset(e, state)) for e in state.out_edges(access)]
+            reads += [(e, e.data.get_dst_subset(e, state)) for e in state.in_edges(access) if e.data.wcr is not None]
+            for edge, subset in reads:
+                if edge.data.is_empty():
+                    continue
+                if subset is None or not out_subset.covers_precise(subset, facts):
+                    return False
+    for edge in sdfg.all_interstate_edges(recursive=False):
+        if out_name in edge.data.free_symbols:
+            return False
+    for block in sdfg.all_control_flow_blocks(recursive=False):
+        if isinstance(block, dace.SDFGState):
+            continue
+        for code in block.get_meta_codeblocks():
+            if out_name in code.get_free_symbols():
+                return False
+    return True
+
+
 def _make_expansion_sdfg(
     node: "CopyLibraryNode", parent_state: dace.SDFGState, allow_cross_storage: bool = False
 ) -> CopyExpansion:

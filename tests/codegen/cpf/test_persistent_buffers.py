@@ -4,7 +4,8 @@
 CPF has no state struct, and demoting the lifetime made the nested function allocate and free a private copy on
 every call: cloudsc's column tiles each allocated 29 full-size buffers inside the ``omp parallel for`` and used
 one tile of them. :func:`dace.codegen.cpf.lift_persistent_transients` moves the buffer to the entry. Without a
-workspace the entry keeps it in a ``static`` pointer that lives across calls and only grows; with one, the
+workspace the entry keeps it in a file-scope ``static`` pointer that lives across calls, only grows, and is freed when
+the program exits or the library is unloaded; with one, the
 workspace holds it (:func:`dace.codegen.cpf.plan_workspace`).
 """
 
@@ -61,7 +62,10 @@ def test_without_a_workspace_the_buffer_is_one_static_allocation(language):
         body = function_body(result.code, nested)
         assert not re.search(r"aligned_alloc|= new\b|free\(|delete\[\]", body), body
     entry = function_body(result.code, name)
-    assert "static double *__cpf_persistent_buf" in entry
+    # A file-scope pointer, released when the program exits or the library is unloaded: no leak
+    assert "static double *__cpf_persistent_buf" in result.code and "__cpf_persistent_buf" in entry
+    release = "__cpf_persistent_buf_release(void)" if language == "c" else "~__cpf_persistent_buf_release_t()"
+    assert release in result.code
     assert "free(buf)" not in entry and "delete[](buf" not in entry
     library = build_standalone(result.code, name, language=language)
     # A larger call grows the buffer, a smaller one reuses it.

@@ -13,6 +13,7 @@ from dace.libraries.standard.nodes.copy.common import (
     OUTPUT_CONNECTOR_NAME,
     _make_expansion_sdfg,
     _memcpy_kind,
+    pitched_axes,
 )
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.transformation.transformation import ExpandTransformation
@@ -82,7 +83,7 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         # outer axes: a 3D interior is one call, not one per row. HIP refuses a pitched copy out of pooled
         # memory whose rows end exactly at the pitch, so a pooled operand keeps one gpuMemcpyAsync per row.
         pooled = backend == "hip" and (getattr(inp, "pool", False) or getattr(out, "pool", False))
-        pitched = 0 if pooled or chunk_dim != ndims - 1 else _pitched_axes(in_strides_collapsed, out_strides_collapsed)
+        pitched = 0 if pooled or chunk_dim != ndims - 1 else pitched_axes(in_strides_collapsed, out_strides_collapsed)
         if pitched:
             map_axes = list(range(ndims - pitched))
         else:
@@ -149,22 +150,6 @@ class ExpandMemcpyCUDANDStrided(ExpandTransformation):
         inner_tasklet.out_connectors[inner_out] = dace.dtypes.pointer(out.dtype)
 
         return ctx.sdfg
-
-
-def _divides(outer, inner) -> bool:
-    """Whether stride ``outer`` is a whole multiple of stride ``inner``, provably."""
-    if inner == 0:
-        return False
-    _, denominator = symbolic.simplify(outer / inner).as_numer_denom()
-    return denominator == 1
-
-
-def _pitched_axes(src_strides, dst_strides) -> int:
-    """How many innermost axes (stride 1 last on both sides) one pitched copy covers: 3 when each side's
-    slice stride is a whole number of its rows, else 2."""
-    if len(src_strides) >= 3 and all(_divides(st[-3], st[-2]) for st in (src_strides, dst_strides)):
-        return 3
-    return 2
 
 
 def _pitched_copy_code(backend, dst, src, shape, src_strides, dst_strides, ctype, kind) -> str:
