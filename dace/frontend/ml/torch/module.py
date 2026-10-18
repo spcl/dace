@@ -32,9 +32,8 @@ except ImportError:
     onnx = None
     ONNX_AVAILABLE = False
 
-from dace import config, data
+from dace import config, data, utils
 from dace.codegen import compiled_sdfg
-from dace.data import find_new_name
 from dace.frontend.python import common as pycommon
 from dace.sdfg import SDFG, nodes
 
@@ -235,7 +234,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         f"Warning: Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!"
                     )
-            name = find_new_name(name, self.post_onnx_hooks)
+            name = utils.find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
             self.post_onnx_hooks.move_to_end(name, last=False)
 
@@ -252,7 +251,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         f"Warning: Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!"
                     )
-            name = find_new_name(name, self.post_onnx_hooks)
+            name = utils.find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
 
         def prepend_post_autodiff_hook(self, name: str, func: Callable[[SDFG, SDFG], None]) -> None:
@@ -268,7 +267,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         f"Warning: Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!"
                     )
-            name = find_new_name(name, self.post_autodiff_hooks)
+            name = utils.find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
             self.post_autodiff_hooks.move_to_end(name, last=False)
 
@@ -285,7 +284,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         f"Warning: Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!"
                     )
-            name = find_new_name(name, self.post_autodiff_hooks)
+            name = utils.find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
 
         def prepend_post_compile_hook(self, name: str, func: Callable[[compiled_sdfg.CompiledSDFG], None]) -> None:
@@ -301,7 +300,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         f"Warning: Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!"
                     )
-            name = find_new_name(name, self.post_compile_hooks)
+            name = utils.find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
             self.post_compile_hooks.move_to_end(name, last=False)
 
@@ -318,7 +317,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         f"Warning: Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!"
                     )
-            name = find_new_name(name, self.post_compile_hooks)
+            name = utils.find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
 
         def _initialize_sdfg(self, dummy_inputs):

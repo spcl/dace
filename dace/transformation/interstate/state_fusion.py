@@ -35,6 +35,15 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+def read_only_data_nodes(state: SDFGState) -> set[nodes.AccessNode]:
+    """Top-level access nodes nothing writes; an empty in-edge only orders, it carries no write."""
+    return {
+        node
+        for node in state.scope_children()[None]
+        if isinstance(node, nodes.AccessNode) and all(e.data.is_empty() for e in state.in_edges(node))
+    }
+
+
 @transformation.explicit_cf_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """Implements the state-fusion transformation.
@@ -106,9 +115,16 @@ class StateFusion(transformation.MultiStateTransformation):
         :param inputs_b: If True, checks inputs of the second group.
         :return: True if subsets intersect or result is indeterminate.
         """
-        # Set traversal functions
-        src_subset = lambda e: e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset
-        dst_subset = lambda e: e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset
+
+        def endpoint_subset(e, graph, source: bool):
+            # A copy without ``other_subset`` accesses the same shape at index zero, not the other container's indices
+            subset = e.data.get_src_subset(e, graph) if source else e.data.get_dst_subset(e, graph)
+            if subset is None and e.data.subset is not None:
+                subset = subsets.Range([(0, size - 1, 1) for size in e.data.subset.size()])
+            return subset
+
+        src_subset = lambda e, graph: endpoint_subset(e, graph, True)
+        dst_subset = lambda e, graph: endpoint_subset(e, graph, False)
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
             subset_a = src_subset
@@ -125,7 +141,11 @@ class StateFusion(transformation.MultiStateTransformation):
         # Simple all-pairs check
         for ea in edges_a:
             for eb in edges_b:
-                result = subsets.intersects(subset_a(ea), subset_b(eb))
+                sa, sb = subset_a(ea, graph_a), subset_b(eb, graph_b)
+                # ``intersects`` does not decide a SubsetUnion: indeterminate
+                if isinstance(sa, subsets.SubsetUnion) or isinstance(sb, subsets.SubsetUnion):
+                    return True
+                result = subsets.intersects(sa, sb)
                 if result is True or result is None:
                     return True
         return False
@@ -154,13 +174,19 @@ class StateFusion(transformation.MultiStateTransformation):
         first_read: bool,
         second_read: bool,
     ) -> bool:
-        for node_a in nodes_first:
-            succ_a = first_state.successors(node_a)
-            for node_b in nodes_second:
-                if all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a):
-                    return True
-        # Path not found, check memlets
-        if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second, second_read):
+        # Every first-state node needs its own path to every second-state node
+        unordered = [
+            node_a
+            for node_a in nodes_first
+            if not all(
+                self.has_path(first_state, second_state, match_nodes, sa, node_b)
+                for node_b in nodes_second
+                for sa in first_state.successors(node_a)
+            )
+        ]
+        if unordered and StateFusion.memlets_intersect(
+            first_state, unordered, first_read, second_state, nodes_second, second_read
+        ):
             return False
         return True
 
@@ -176,13 +202,13 @@ class StateFusion(transformation.MultiStateTransformation):
         second_read: bool,
     ) -> bool:
         fail = False
-        path_found = False
+        ordered = set()  # One ordered node must not exempt its unordered siblings
         for match in match_nodes:
             for node in nodes_first:
                 path_to = nx.has_path(first_state._nx, node, match)
                 if not path_to:
                     continue
-                path_found |= True
+                ordered.add(node)
                 node2 = next(n for n in second_input if n.data == match.data)
                 if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
                     fail = True
@@ -194,11 +220,11 @@ class StateFusion(transformation.MultiStateTransformation):
                 break
 
         # Check for intersection (if None, fusion is ok)
-        if fail or not path_found:
-            if StateFusion.memlets_intersect(
-                first_state, nodes_first, first_read, second_state, nodes_second, second_read
-            ):
-                return False
+        unordered = list(nodes_first) if fail else [node for node in nodes_first if node not in ordered]
+        if unordered and StateFusion.memlets_intersect(
+            first_state, unordered, first_read, second_state, nodes_second, second_read
+        ):
+            return False
         return True
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -287,13 +313,13 @@ class StateFusion(transformation.MultiStateTransformation):
             second_cc = list(nx.weakly_connected_components(second_state._nx))
 
             # Find source/sink (data) nodes
-            first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
+            first_input = read_only_data_nodes(first_state)
             first_output = {
                 node
                 for node in first_state.scope_children()[None]
                 if isinstance(node, nodes.AccessNode) and node not in first_input
             }
-            second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
+            second_input = read_only_data_nodes(second_state)
             second_output = {
                 node
                 for node in second_state.scope_children()[None]

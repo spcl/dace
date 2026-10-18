@@ -24,7 +24,7 @@ import sympy
 import dace
 import dace.serialize
 from dace import data as dt
-from dace import dtypes, serialize, symbolic
+from dace import dtypes, serialize, symbolic, utils
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.python import astutils
@@ -949,8 +949,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             elif edge.data.data not in descs:
                 # The edge reads data from the outside, and the Memlet is directly indicating what is read.
-                if isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode):
-                    continue  # Ignore code->code edges.
                 additional_descs = {edge.data.data: sdfg.arrays[edge.data.data]}
 
             elif isinstance(edge.dst, (nd.AccessNode, nd.CodeNode)) and isinstance(edge.src, nd.EntryNode):
@@ -3052,15 +3050,19 @@ class AbstractControlFlowRegion(
                         if isinstance(node, (BreakBlock, ContinueBlock, ReturnBlock)):
                             ends_context.add(node)
 
-            # Add all region edges.
+            # Add all region edges. Edges leaving a break, continue, or return block are never taken.
             for edge in self.edges():
                 src = block_to_state_map[edge.src] if edge.src in block_to_state_map else edge.src
                 dst = block_to_state_map[edge.dst] if edge.dst in block_to_state_map else edge.dst
-                parent.add_edge(src, dst, edge.data)
+                if isinstance(edge.src, (BreakBlock, ContinueBlock, ReturnBlock)):
+                    parent.add_edge(src, dst, dace.InterstateEdge(condition="False"))
+                else:
+                    parent.add_edge(src, dst, edge.data)
 
             # Redirect all edges to the region to the internal start state.
+            start_block = block_to_state_map.get(self.start_block, self.start_block)
             for b_edge in parent.in_edges(self):
-                parent.add_edge(b_edge.src, self.start_block, b_edge.data)
+                parent.add_edge(b_edge.src, start_block, b_edge.data)
                 parent.remove_edge(b_edge)
 
             end_state = None
@@ -3123,7 +3125,7 @@ class AbstractControlFlowRegion(
         # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
         # count guard rots.
         self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
-        return dt.find_new_name(proposed or "block", self._labels)
+        return utils.find_new_name(proposed or "block", self._labels)
 
     def add_node(
         self,
@@ -3294,13 +3296,18 @@ class AbstractControlFlowRegion(
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
-    def all_states(self) -> Iterator[SDFGState]:
-        """Iterate over all states in this control flow graph."""
+    def states(self) -> Iterator[SDFGState]:
+        """Iterate over all states in this control flow graph, recursing into nested control flow regions."""
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
             elif isinstance(block, AbstractControlFlowRegion):
-                yield from block.all_states()
+                yield from block.states()
+
+    def num_states(self) -> int:
+        """The number of states in this control flow graph, nested control flow regions included."""
+        # ``len(list(self.states()))`` would build a list of every state only to count it
+        return sum(1 for _ in self.states())
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """Iterate over all control flow blocks in this control flow graph."""
@@ -3675,11 +3682,14 @@ class LoopRegion(ControlFlowRegion):
                     connect_to_latch.add(node)
                 parent.add_node(node, ensure_unique_name=True)
 
-        # Add all internal loop edges.
+        # Add all internal loop edges. Edges leaving a break, continue, or return block are never taken.
         for edge in self.edges():
             src = block_to_state_map[edge.src] if edge.src in block_to_state_map else edge.src
             dst = block_to_state_map[edge.dst] if edge.dst in block_to_state_map else edge.dst
-            parent.add_edge(src, dst, edge.data)
+            if isinstance(edge.src, (BreakBlock, ContinueBlock, ReturnBlock)):
+                parent.add_edge(src, dst, dace.InterstateEdge(condition="False"))
+            else:
+                parent.add_edge(src, dst, edge.data)
 
         # Redirect all edges to the loop to the init state.
         for b_edge in parent.in_edges(self):
@@ -3697,8 +3707,9 @@ class LoopRegion(ControlFlowRegion):
             for stmt in self.init_statement.code:
                 assign: astutils.ast.Assign = stmt
                 init_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
+        start_block = block_to_state_map.get(self.start_block, self.start_block)
         if self.inverted:
-            parent.add_edge(init_state, self.start_block, init_edge)
+            parent.add_edge(init_state, start_block, init_edge)
         else:
             parent.add_edge(init_state, guard_state, init_edge)
 
@@ -3714,7 +3725,7 @@ class LoopRegion(ControlFlowRegion):
         # Add condition checking edges and connect the guard state.
         cond_expr = self.loop_condition.code
         parent.add_edge(guard_state, end_state, dace.InterstateEdge(CodeBlock(astutils.negate_expr(cond_expr)).code))
-        parent.add_edge(guard_state, self.start_block, dace.InterstateEdge(CodeBlock(cond_expr).code))
+        parent.add_edge(guard_state, start_block, dace.InterstateEdge(CodeBlock(cond_expr).code))
 
         # Connect any end states from the loop's internal state machine to the tail state so they end a
         # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.
@@ -4339,9 +4350,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 replace_in_codeblock(cond, repl)
 
     def to_json(self, parent=None):
-        json = super().to_json(parent)
-        del json["nodes"]
-        del json["edges"]
+        # Not ``super().to_json``: its nodes are the branches, so every nested conditional would serialize them twice
+        json = {"type": type(self).__name__, "attributes": None, **ControlFlowBlock.to_json(self, parent)}
+        json["cfg_list_id"] = int(self.cfg_id)
+        json["start_block"] = self._start_block
         json["branches"] = [
             (condition.to_json() if condition is not None else None, cfg.to_json()) for condition, cfg in self._branches
         ]

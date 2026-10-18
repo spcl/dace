@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, AnyStr, BinaryIO, Optional, Union
 import dace
 import dace.serialize
 from dace import data as dt
-from dace import dtypes, hooks, symbolic
+from dace import dtypes, hooks, symbolic, utils
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.config import Config
@@ -1316,7 +1316,7 @@ class SDFG(ControlFlowRegion):
         if not files:
             return None
 
-        return os.path.join(path, sorted(files, reverse=True)[0])
+        return os.path.join(path, max(files))
 
     def get_latest_report(self) -> Optional["InstrumentationReport"]:
         """
@@ -1349,7 +1349,7 @@ class SDFG(ControlFlowRegion):
             reports = self.available_data_reports()
             if not reports:
                 return None
-            timestamp = sorted(reports)[-1]
+            timestamp = max(reports)
 
         folder = os.path.join(self.build_folder, "data", str(timestamp))
         if not os.path.exists(folder):
@@ -1565,10 +1565,6 @@ class SDFG(ControlFlowRegion):
         if node is self._cached_start_block:
             self._cached_start_block = None
         return super().remove_node(node)
-
-    def states(self):
-        """Returns the states in this SDFG, recursing into state scope blocks."""
-        return list(self.all_states())
 
     def arrays_recursive(self, include_nested_data: bool = False):
         """Iterate over all arrays in this SDFG, including arrays within
@@ -2014,7 +2010,7 @@ class SDFG(ControlFlowRegion):
         # ``find_new_name`` only ever tests membership, so the union set never has to be built:
         # a view answering ``in`` from :meth:`is_name_used` costs three dict lookups per probe
         # instead of one set the size of every name in the SDFG per call.
-        return dt.find_new_name(name, _UsedNames(self))
+        return utils.find_new_name(name, _UsedNames(self))
 
     def is_name_used(self, name: str) -> bool:
         """Checks if `name` is already used inside the SDFG."""

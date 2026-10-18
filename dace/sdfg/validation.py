@@ -500,7 +500,7 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
     else:
         src_conntype = None
     dst_conn = memlet_path[-1].dst_conn
-    if dst_conn and dst_conn in memlet_path[0].dst.in_connectors:
+    if dst_conn and dst_conn in memlet_path[-1].dst.in_connectors:
         dst_conntype = memlet_path[-1].dst.in_connectors[dst_conn]
     else:
         dst_conntype = None
@@ -518,6 +518,44 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
 
     # Otherwise, we can assume this is a scalar
     return True
+
+
+def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
+    """
+    Checks that every non-empty memlet tree is rooted at an AccessNode, and that an empty memlet between two code
+    nodes uses no connector.
+
+    :param state: The state to check.
+    :param state_id: The index of the state, for error reporting.
+    """
+    from dace.sdfg import nodes as nd
+
+    for eid, e in enumerate(state.edges()):
+        if e.data.is_empty():
+            if (e.src_conn or e.dst_conn) and isinstance(e.src, nd.CodeNode) and isinstance(e.dst, nd.CodeNode):
+                raise InvalidSDFGEdgeError(
+                    f'The empty memlet from "{e.src}" to "{e.dst}" names a connector; route data through an AccessNode',
+                    state.parent_graph,
+                    state_id,
+                    eid,
+                )
+            continue
+        if isinstance(e.dst, nd.EntryNode) and not isinstance(e.src, nd.EntryNode):
+            ends = (e.src,)
+        elif isinstance(e.src, nd.ExitNode) and not isinstance(e.dst, nd.ExitNode):
+            ends = (e.dst,)
+        elif not isinstance(e.src, nd.EntryNode) and not isinstance(e.dst, nd.ExitNode):
+            ends = (e.src, e.dst)
+        else:
+            continue
+        if not any(isinstance(n, nd.AccessNode) for n in ends):
+            raise InvalidSDFGEdgeError(
+                f'The memlet tree of "{e.data.data}" from "{e.src}" to "{e.dst}" must be rooted at an AccessNode; '
+                f"route the data through an AccessNode",
+                state.parent_graph,
+                state_id,
+                eid,
+            )
 
 
 def validate_state(
@@ -817,6 +855,8 @@ def validate_state(
                 )
         ########################################
 
+    _validate_memlet_tree_roots(state, state_id)
+
     for eid, e in enumerate(state.edges()):
         # Reference check
         if id(e) in references:
@@ -892,17 +932,6 @@ def validate_state(
         path = state.memlet_path(e)
         src_node = path[0].src
         dst_node = path[-1].dst
-
-        # NestedSDFGs must connect to AccessNodes
-        if not e.data.is_empty():
-            if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG source nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
-            if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG destination nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
 
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)

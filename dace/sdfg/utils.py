@@ -1044,6 +1044,8 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     # Special case: stream can be represented as a view of an array
     if (len(all_source_paths) > 0 and len(sink_paths) == 1) or (len(all_sink_paths) > 0 and len(source_paths) == 1):
         # TODO: What about a source path?
+        if not sink_paths:
+            return False  # E.g., a stream that is filled from an array and consumed by code in the same state
         arrnode = sink_paths[0]
         # Only works if the stream itself is not an array of streams
         if list(node.desc(sdfg).shape) == [1]:
@@ -1245,7 +1247,7 @@ def convert_to_view(sdfg: SDFG, name: str, viewed: str, subset: sbs.Subset) -> d
     view = dt.View.view(sdfg.arrays[name])
     sdfg.arrays[name] = view
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
             _attach_view_edges(state, node, viewed, subset)
 
@@ -2266,7 +2268,7 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                     for e in state.in_edges(node):
                         if not e.dst_conn.startswith("IN_"):
                             if e.dst_conn in dynamic_map_inputs:
-                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                new_name = dace.utils.find_new_name(e.dst_conn, dynamic_map_inputs)
                                 dynamic_map_inputs.add(new_name)
                                 repl_dict[e.dst_conn] = new_name
                                 e._dst_conn = new_name
@@ -2499,7 +2501,7 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
     Sets the parent_sdfg attribute for all NestedSDFGs recursively.
     """
     sdfg.reset_cfg_list()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
@@ -2736,7 +2738,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalar_name: s
 
     nsdfgs = set()
     c = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         # Check dynamic inputs
         for e in state.edges():
             if e not in state.edges():
