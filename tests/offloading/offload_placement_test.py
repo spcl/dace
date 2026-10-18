@@ -925,7 +925,11 @@ def host_tasklets_on_both_sides_of_a_kernel() -> dace.SDFG:
     sdfg.add_array("OUT", [2], dace.float64)
     sdfg.add_transient("factor", [1], dace.float64)
     sdfg.add_transient("total", [1], dace.float64)
-    state = sdfg.add_state("mixed")
+    # The kernel accumulates into ``total``, so it starts at zero; device memory is not zeroed for it.
+    init = sdfg.add_state("zero_total", is_start_block=True)
+    zero = init.add_tasklet("zero", set(), {"z": None}, "z = 0.0")
+    init.add_edge(zero, "z", init.add_write("total"), None, dace.Memlet("total[0]"))
+    state = sdfg.add_state_after(init, "mixed")
     c = state.add_read("C")
     scale = state.add_tasklet("scale", {"c": None}, {"f": None}, "f = 2.0 * c")
     factor = state.add_access("factor")

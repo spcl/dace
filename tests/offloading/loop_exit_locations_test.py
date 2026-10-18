@@ -45,8 +45,7 @@ def test_an_enclosing_loop_does_not_copy_back_what_the_inner_loop_already_did():
 
 @pytest.mark.gpu
 def test_the_nest_still_computes_the_reference():
-    import cupy
-
+    """``A`` stays a host argument: the offloading stages its device copy itself."""
     n, steps = 17, 3
     a = np.random.default_rng(0).random((n, n))
     expected = a.copy()
@@ -55,9 +54,9 @@ def test_the_nest_still_computes_the_reference():
             expected[i, :] = expected[i, :] + expected[i - 1, :]
             for j in range(1, n):
                 expected[i, j] = expected[i, j] + expected[i, j - 1]
-    got = cupy.asarray(a)
+    got = a.copy()
     offloaded()(A=got, T=steps, N=n)
-    assert np.allclose(cupy.asnumpy(got), expected)
+    assert np.allclose(got, expected)
 
 
 if __name__ == "__main__":
