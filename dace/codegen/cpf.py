@@ -51,6 +51,7 @@ from dace import cpf_lowering, dtypes, symbolic, tile_functions
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.common import sym2cpp
 from dace.config import Config, set_temporary
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.fft.environments import fftw3
@@ -1151,9 +1152,10 @@ class EntrySignature:
     ``order`` names every parameter exactly once, in the order the caller passes them; it is
     applied by :func:`reorder_entry_parameters`, so each parameter keeps CPF's type and qualifiers.
     ``workspace`` / ``workspace_size`` add a caller-owned scratch buffer: a non-transient ``uint8_t``
-    array of ``workspace_size`` (``int64_t``) bytes, which ``order`` must name too. It exists only so the
-    entry matches the caller's prototype: the body never touches it, and it stays a writable
-    ``uint8_t *`` as the caller declares it.
+    array of ``workspace_size`` (``int64_t``) bytes, which ``order`` must name too, a writable
+    ``uint8_t *`` as the caller declares it. A host unit places its heap transients in it
+    (:func:`plan_workspace`) rather than allocating them, so all its memory is the caller's; it needs
+    :attr:`Rendering.workspace_bytes` bytes, 64-byte aligned.
     """
 
     order: Sequence[str]
@@ -1183,6 +1185,48 @@ def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
         dtypes.uint8,
         storage=dtypes.StorageType.GPU_Global if on_device else dtypes.StorageType.Default,
     )
+
+
+#: Each array a unit places in the workspace starts on this boundary, the alignment its own allocation had.
+WORKSPACE_ALIGNMENT = 64
+
+
+def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data, str]], str]:
+    """Lay ``sdfg``'s heap transients out in the workspace: ``(carve, workspace_bytes)``.
+
+    ``carve`` maps each placed array to its descriptor and its C byte offset; ``workspace_bytes`` is an
+    arithmetic expression over the entry's scalar arguments, an upper bound on the bytes the layout needs
+    (``'0'`` when nothing is placed). An array is placed when the host allocates it once per use at its
+    own level: a top-level host array (``CPU_Heap``, or ``Default``, which the host generator puts there) no
+    map touches, sized by the arguments alone; one the generator keeps on the stack leaves its slot unused. One inside a
+    map is allocated per thread and keeps its allocation, and so does every array of a nested SDFG.
+    """
+    if sdfg.arrays[workspace].storage is not dtypes.StorageType.Default:
+        return {}, "0"
+    arguments = set(sdfg.arglist())
+    in_maps = {
+        node.data
+        for state in sdfg.states()
+        for node, scope in state.scope_dict().items()
+        if isinstance(node, nodes.AccessNode) and scope is not None
+    }
+    carve: dict[str, tuple[dt.Data, str]] = {}
+    offset: list[str] = []
+    bound: list[symbolic.SymExpr] = []
+    for name, desc in sorted(sdfg.arrays.items()):
+        if (
+            not desc.transient
+            or type(desc) is not dt.Array
+            or desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
+            or name in in_maps
+            or not {str(s) for s in symbolic.symlist(desc.total_size)} <= arguments
+        ):
+            continue
+        carve[name] = (desc, " + ".join(offset) or "0")
+        nbytes = f"sizeof({desc.dtype.ctype}) * (size_t)({sym2cpp(desc.total_size)})"
+        offset.append(f"(({nbytes} + {WORKSPACE_ALIGNMENT - 1}) / {WORKSPACE_ALIGNMENT}) * {WORKSPACE_ALIGNMENT}")
+        bound.append(desc.total_size * desc.dtype.bytes + WORKSPACE_ALIGNMENT)
+    return carve, str(sum(bound)) if bound else "0"
 
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
@@ -1506,6 +1550,9 @@ class Rendering(NamedTuple):
     #: ``cusolver``, ``cufft``, ``rocblas``, ``rocsolver``, ``hipfft``): what a caller that loads libraries by
     #: name has to load for :attr:`link` to resolve (:func:`~dace.cpf_lowering.vendor_families`).
     libraries: tuple[str, ...] = ()
+    #: The bytes the unit needs in its workspace, as an arithmetic expression over the entry's scalar
+    #: arguments (:func:`plan_workspace`); ``'0'`` without a workspace or with nothing placed in it.
+    workspace_bytes: str = "0"
 
 
 def render(
@@ -1594,7 +1641,14 @@ def render_unit(
             with cpf_lowering.provenance_scope(provenance):
                 # Same reasoning as the prepare() call above: codegen's own lowering passes (copy
                 # lifting, library expansion) add nodes whose debuginfo nothing here reads.
-                with set_temporary("compiler", "lineinfo", value="none"), fftw3.single_threaded_planner():
+                carve, workspace_bytes = {}, "0"
+                if signature is not None and signature.workspace is not None:
+                    carve, workspace_bytes = plan_workspace(prepared, signature.workspace)
+                with (
+                    set_temporary("compiler", "lineinfo", value="none"),
+                    fftw3.single_threaded_planner(),
+                    cpf_lowering.workspace_carve_scope(signature.workspace if carve else "", carve),
+                ):
                     objects = codegen.generate_code(prepared, validate=validate)
                 frame, device = split_units(objects, sdfg.name)
                 body = frame.clean_code
@@ -1641,6 +1695,7 @@ def render_unit(
         device_code,
         link_libraries(frame, dialect, code + device_code),
         cpf_lowering.vendor_families(code + device_code),
+        workspace_bytes,
     )
 
 

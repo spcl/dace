@@ -922,6 +922,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         nodedesc: dt.Data | None = None,
         data_name: str | None = None,
     ) -> str:
+        # A rendering that places its heap transients in the caller's workspace points into it instead.
+        slot = cpf_lowering.workspace_slot(data_name, nodedesc)
+        if slot is not None:
+            return "%s = (%s *)(%s);\n" % (alloc_name, ctype, slot)
         # The base aligned ``operator new[]``, with the count through an ``<array>_size`` helper when one
         # is worthwhile (_register_size_function).
         count = arrsize
@@ -942,6 +946,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: dt.Data | None = None) -> str:
         """The matching free: ``free`` for both allocation shapes in C."""
+        if nodedesc is not None and cpf_lowering.carved_from_workspace(nodedesc):
+            return ""
         if cpf_lowering.standalone_c():
             return "free(%s);\n" % alloc_name
         # A CPF unit includes no DaCe header, so it spells the aligned delete paired with its aligned ``new``

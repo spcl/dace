@@ -41,7 +41,7 @@ import functools
 import os
 import re
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from dace import tile_functions
 from dace.optionals import required
@@ -257,6 +257,42 @@ def provenance_scope(provenance: dict[str, tuple[str, str]]):
         yield provenance
     finally:
         _provenance = previous
+
+
+#: The heap transients a standalone rendering places in the caller's workspace instead of allocating, as data
+#: name -> (descriptor, C byte offset), and the workspace's name; empty outside :func:`workspace_carve_scope`.
+_workspace_carve: dict[str, tuple[Any, str]] = {}
+_workspace_name: str = ""
+
+
+@contextlib.contextmanager
+def workspace_carve_scope(workspace: str, carve: dict[str, tuple[Any, str]]):
+    """Make ``carve`` the ambient workspace layout for the duration of the block (:func:`workspace_slot`)."""
+    global _workspace_carve, _workspace_name
+    previous = _workspace_carve, _workspace_name
+    _workspace_carve, _workspace_name = carve, workspace
+    try:
+        yield carve
+    finally:
+        _workspace_carve, _workspace_name = previous
+
+
+def workspace_slot(name: str | None, desc: Any) -> str | None:
+    """``<workspace> + <offset>`` for a heap transient the rendering carves out of the workspace, else ``None``.
+
+    Matched on the descriptor itself, so a nested SDFG's array of the same name keeps its own allocation.
+    """
+    if not standalone() or name is None:
+        return None
+    slot = _workspace_carve.get(name)
+    if slot is None or slot[0] is not desc:
+        return None
+    return f"{_workspace_name} + {slot[1]}"
+
+
+def carved_from_workspace(desc: Any) -> bool:
+    """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
+    return standalone() and any(slot[0] is desc for slot in _workspace_carve.values())
 
 
 #: Runtime function -> the ``std`` function with identical semantics and arity.

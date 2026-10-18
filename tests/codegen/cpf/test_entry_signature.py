@@ -8,6 +8,8 @@ pointer behind the scalars -- is an order no name sort reaches, so the caller st
 unit must BUILD and RUN when called that way, and a signature that does not fit is refused.
 """
 
+import re
+
 import numpy as np
 import pytest
 
@@ -42,6 +44,15 @@ def cpf_sig_rowsum(A: dace.float64[M, N], out: dace.float64[M]):
 @dace.program
 def cpf_sig_axpy(x: dace.int64[N], y: dace.int64[N], a: dace.int64):
     y[:] = a * x + y
+
+
+@dace.program
+def cpf_sig_reverse(src: dace.float64[N], dst: dace.float64[N]):
+    tmp = np.empty(N, dtype=np.float64)
+    for i in dace.map[0:N]:
+        tmp[i] = src[i] * 2.0
+    for i in dace.map[0:N]:
+        dst[i] = tmp[N - 1 - i] + 1.0
 
 
 def rendered(program, name: str, language: str = "c++", signature: EntrySignature | None = None):
@@ -103,9 +114,15 @@ CASES = {
 }
 
 
-def arguments_for(case: str, rng: np.random.Generator) -> tuple[dict, dict]:
-    """``(arguments, expected outputs)`` for one case, the workspace a real buffer the body ignores."""
-    workspace = np.full(32, 0xA5, dtype=np.uint8)
+def aligned_workspace(nbytes: int) -> np.ndarray:
+    """``nbytes`` of 64-byte-aligned scratch, as the caller hands it over."""
+    backing = np.full(nbytes + 64, 0xA5, dtype=np.uint8)
+    start = (-backing.ctypes.data) % 64
+    return backing[start : start + nbytes]
+
+
+def arguments_for(case: str, rng: np.random.Generator, workspace_bytes: str) -> tuple[dict, dict]:
+    """``(arguments, expected outputs)`` for one case, with the workspace the rendering asks for."""
     if case == "scale":
         src = rng.random(64)
         args = {"src": src, "dst": np.zeros(64), "N": 64, "factor": 2.5}
@@ -118,6 +135,7 @@ def arguments_for(case: str, rng: np.random.Generator) -> tuple[dict, dict]:
         x, y = rng.integers(-50, 50, 40), rng.integers(-50, 50, 40)
         args = {"x": x, "y": y.copy(), "a": -3, "N": 40}
         expected = {"y": -3 * x + y}
+    workspace = aligned_workspace(max(32, int(eval(workspace_bytes, dict(args)))))  # noqa: S307 -- the renderer's expression
     args |= {"workspace": workspace, "workspace_size": workspace.size}
     return args, expected
 
@@ -130,11 +148,10 @@ def test_a_unit_called_in_the_asked_order_reproduces_the_numbers(case, language)
     result = rendered(program, name, language, signature)
     assert entry_names(result.code, name) == tuple(signature.order)
     library = build_standalone(result.code, name, language=language)
-    args, expected = arguments_for(case, np.random.default_rng(0))
+    args, expected = arguments_for(case, np.random.default_rng(0), result.workspace_bytes)
     call_standalone(library, result.sdfg, args, order=result.arguments)
     for output, value in expected.items():
         np.testing.assert_allclose(args[output], value, rtol=1e-12, atol=0.0)
-    np.testing.assert_array_equal(args["workspace"], np.full(32, 0xA5, dtype=np.uint8))
 
 
 def test_the_device_entry_takes_the_order_and_a_device_workspace():
@@ -169,6 +186,37 @@ def test_a_workspace_name_the_sdfg_already_uses_is_refused():
         )
 
 
+def heap_allocations(code: str) -> list[str]:
+    return [
+        line.strip()
+        for line in code.splitlines()
+        if re.search(r"\b(aligned_alloc|malloc|free)\(|= new\b|delete\[\]", line)
+    ]
+
+
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_a_heap_transient_lives_in_the_workspace(language):
+    """The unit allocates nothing: ``tmp`` is placed in the caller's workspace, which ``workspace_bytes`` sizes."""
+    name = f"cpf_sig_carve_{'cpp' if language == 'c++' else 'c'}"
+    result = rendered(cpf_sig_reverse, name, language, with_workspace("dst", "src", "N"))
+    assert heap_allocations(result.code) == []
+    assert "tmp = (double *)(workspace + 0);" in result.code
+    n = 50
+    needed = int(eval(result.workspace_bytes, {"N": n}))  # noqa: S307 -- an expression the renderer wrote
+    assert needed >= 8 * n
+    workspace = aligned_workspace(needed)
+    src = np.random.default_rng(0).random(n)
+    args = {"src": src, "dst": np.zeros(n), "N": n, "workspace": workspace, "workspace_size": needed}
+    call_standalone(build_standalone(result.code, name, language=language), result.sdfg, args, order=result.arguments)
+    np.testing.assert_allclose(args["dst"], src[::-1] * 2.0 + 1.0, rtol=1e-12, atol=0.0)
+
+
+def test_without_a_workspace_the_heap_transient_is_allocated():
+    result = rendered(cpf_sig_reverse, "cpf_sig_no_carve")
+    assert result.workspace_bytes == "0"
+    assert any("tmp" in line for line in heap_allocations(result.code))
+
+
 if __name__ == "__main__":
     test_no_signature_keeps_the_arglist_order()
     test_the_arglist_order_as_a_signature_is_byte_identical_to_none()
@@ -185,3 +233,6 @@ if __name__ == "__main__":
     test_the_device_entry_takes_the_order_and_a_device_workspace()
     test_a_signature_that_does_not_fit_is_refused()
     test_a_workspace_name_the_sdfg_already_uses_is_refused()
+    test_a_heap_transient_lives_in_the_workspace("c++")
+    test_a_heap_transient_lives_in_the_workspace("c")
+    test_without_a_workspace_the_heap_transient_is_allocated()
