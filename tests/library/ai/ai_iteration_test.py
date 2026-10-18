@@ -135,7 +135,7 @@ def test_feedback_revises_a_working_tasklet():
     A second round restructures a correct kernel as asked; both rounds are correct and in one session.
     """
     sdfg = _square_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, AINode))
 
     node.expand(state, "ai")
@@ -197,7 +197,7 @@ def test_a_performance_complaint_gets_a_vectorized_rewrite():
     working code rather than a first attempt that happens to be vectorized.
     """
     sdfg = _tile_gemm_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, AINode))
 
     node.expand(state, "ai")

@@ -99,7 +99,7 @@ def test_registering_ai_raises():
 
 def test_unknown_implementation_lists_ai():
     sdfg = _doubler_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, DoublerNode))
 
     with pytest.raises(KeyError, match="ai"):
@@ -108,7 +108,7 @@ def test_unknown_implementation_lists_ai():
 
 def test_expand_with_ai_produces_a_working_tasklet():
     sdfg = _doubler_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, DoublerNode))
 
     spec = TaskletSpec(code="_out = 2.0 * _inp;", language="CPP", notes="doubling")
@@ -128,7 +128,7 @@ def test_expand_with_ai_produces_a_working_tasklet():
 
 def test_expand_via_state_helper():
     sdfg = _doubler_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, DoublerNode))
 
     with stub_provider(TaskletSpec(code="_out = _inp;")):
@@ -138,7 +138,7 @@ def test_expand_via_state_helper():
 
 def test_default_implementation_selects_ai():
     sdfg = _doubler_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, DoublerNode))
 
     # No explicit implementation: falls through to DoublerNode.default_implementation

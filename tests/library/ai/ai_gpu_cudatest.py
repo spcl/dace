@@ -46,7 +46,7 @@ def _device_sdfg() -> dace.SDFG:
 @pytest.mark.ai
 def test_gpu_microkernel():
     sdfg = _device_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, AINode))
     node.expand(state, "ai")
 

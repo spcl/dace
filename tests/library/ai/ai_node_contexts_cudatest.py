@@ -70,7 +70,7 @@ def _expand(sdfg: dace.SDFG) -> nodes.Tasklet:
     :param sdfg: The SDFG to expand.
     :return: The generated tasklet.
     """
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, AINode))
     node.expand(state, "ai")
     return next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))

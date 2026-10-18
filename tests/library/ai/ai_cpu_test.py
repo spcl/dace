@@ -77,7 +77,7 @@ def _tile_gemm_sdfg(description: str) -> dace.SDFG:
 )
 def test_vectorized_tile_in_a_multicore_map():
     sdfg = _tile_gemm_sdfg(TILE_GEMM_DESCRIPTION)
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, AINode))
     node.expand(state, "ai")
 

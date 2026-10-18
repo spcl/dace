@@ -222,7 +222,7 @@ def run(name: str) -> int:
     :return: A process exit code.
     """
     sdfg, check = SCENARIOS[name]()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node = next(n for n in state.nodes() if isinstance(n, nodes.LibraryNode))
 
     node.expand(state, "ai")
