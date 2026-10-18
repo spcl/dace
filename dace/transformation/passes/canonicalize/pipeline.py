@@ -33,7 +33,6 @@ from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy 
 )
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.buffer_expansion import BufferExpansion
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     AssumeSymbolConstraints,
@@ -1045,7 +1044,6 @@ def finish() -> Stages:
         (FINISH, InlineControlFlowRegions()),
         (FINISH, AssumeSymbolConstraints()),
         (FINISH, NormalizeFloorDivision()),
-        (FINISH, AnnotateLoopKinds()),
         # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),

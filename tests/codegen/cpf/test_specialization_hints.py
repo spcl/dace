@@ -480,6 +480,7 @@ def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
 
     sdfg = guarded_columns.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert hints[0][0].startswith("sequential -- carried: RAW on aa["), hints
@@ -627,6 +628,7 @@ def test_a_triangular_solve_is_proven_through_its_row_copy():
 
     sdfg = trisolv.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
     hints = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
     assert re.match(r"sequential -- carried: RAW on x\[0:\w+\] \(witness: N=\d+, \w+=0 and \w+=1\)$", hints[0]), hints
@@ -664,6 +666,7 @@ def test_a_map_resting_on_an_unknown_sign_is_versioned_on_it():
 
     sdfg = shift_sym.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
     maps = [
         n.specialization_hint.splitlines()[0] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
     ]
@@ -797,7 +800,7 @@ if __name__ == "__main__":
     test_a_conflict_only_under_a_branch_is_not_witnessed()
     test_a_triangular_solve_is_proven_through_its_row_copy()
     test_a_guarded_loop_names_its_guard_on_both_arms()
-    test_a_map_resting_on_an_entry_trap_names_the_assumption()
+    test_a_map_resting_on_an_unknown_sign_is_versioned_on_it()
     test_a_map_resting_on_no_trap_assumes_nothing()
     test_the_kinds_rendering_says_par_seq_or_unknown_and_nothing_else()
     test_the_kinds_rendering_carries_no_tasklet_or_scope_label()

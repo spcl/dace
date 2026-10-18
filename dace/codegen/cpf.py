@@ -827,7 +827,8 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     # scalar connector the promotion has to see (gramschmidt, durbin, trmm, addusxx_g).
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
-    # Canonicalize labelled the loops it left; specialization and the expansions above made more.
+    # Only here, once canonicalization and specialization are over: the kinds and their proofs are CPF facts, and
+    # no pass before rendering reads them.
     AnnotateLoopKinds().apply_pass(sdfg, {})
     # Before the demotion: a buffer every call shares must reach the entry first.
     lift_persistent_transients(sdfg)
