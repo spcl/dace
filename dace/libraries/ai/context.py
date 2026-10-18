@@ -26,7 +26,8 @@ from dace.codegen import common, compiler, compiler_family
 from dace.codegen.targets.cpp import cpp_offset_expr, sym2cpp
 from dace.config import Config
 from dace.libraries.ai.nodes import AINode
-from dace.sdfg import SDFG, SDFGState, infer_types, nodes
+from dace.sdfg import SDFG, SDFGState, infer_types
+from dace.sdfg import nodes as nd
 from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 
@@ -105,7 +106,7 @@ class ResolvedDefaults:
     #: (SDFG guid, container name) -> resolved storage
     storage: dict[tuple[str, str], dtypes.StorageType] = field(default_factory=dict)
     #: Node guid -> the node and its state in the resolved copy.
-    nodes: dict[str, tuple[nodes.Node, SDFGState]] = field(default_factory=dict)
+    nodes: dict[str, tuple[nd.Node, SDFGState]] = field(default_factory=dict)
 
 
 @dataclass
@@ -156,7 +157,7 @@ class ExpansionContext:
 
 
 def _scope_frame(
-    entry: nodes.EntryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
+    entry: nd.EntryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
 ) -> NestingFrame:
     """
     Builds a nesting frame for a dataflow scope (map, consume or general scope).
@@ -167,7 +168,7 @@ def _scope_frame(
     :param defaults: Resolved schedules and storage, from :func:`infer_defaults`.
     :return: The corresponding nesting frame.
     """
-    if isinstance(entry, nodes.MapEntry):
+    if isinstance(entry, nd.MapEntry):
         params = ", ".join(entry.map.params)
         detail = f"{params} = {entry.map.range}"
         block_size = None
@@ -185,7 +186,7 @@ def _scope_frame(
             unroll=entry.map.unroll,
             block_size=block_size,
         )
-    if isinstance(entry, nodes.ConsumeEntry):
+    if isinstance(entry, nd.ConsumeEntry):
         return NestingFrame(
             kind="consume",
             label=entry.consume.label,
@@ -221,7 +222,7 @@ def _region_frame(region: Any) -> NestingFrame:
 
 
 def collect_nesting(
-    node: nodes.Node, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
+    node: nd.Node, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
 ) -> list[NestingFrame]:
     """
     Lists the scopes enclosing a node: dataflow scopes, control flow regions and nested SDFGs.
@@ -233,7 +234,7 @@ def collect_nesting(
              SDFG.
     """
     frames: list[NestingFrame] = []
-    cur_node: nodes.Node = node
+    cur_node: nd.Node = node
     cur_state: SDFGState = state
     cur_sdfg: SDFG = sdfg
 
@@ -300,7 +301,7 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
 
 
 def _infer_conntype(
-    node: nodes.LibraryNode,
+    node: nd.LibraryNode,
     name: str,
     direction: str,
     state: SDFGState,
@@ -400,7 +401,7 @@ def _connector_info(
 
 
 def collect_connectors(
-    node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
+    node: nd.LibraryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
 ) -> list[ConnectorInfo]:
     """
     Describes every connector of a library node and the data behind it.
@@ -424,7 +425,7 @@ def collect_connectors(
 
 
 def collect_capabilities(
-    node: nodes.LibraryNode,
+    node: nd.LibraryNode,
     state: SDFGState,
     sdfg: SDFG,
     connectors: list[ConnectorInfo],
@@ -520,7 +521,7 @@ def collect_target_info(device_level: bool) -> TargetInfo:
     return info
 
 
-def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+def has_unresolved_defaults(node: nd.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """
     Checks whether a schedule or storage relevant to a node is unresolved, which is the case when
     it is expanded before compilation.
@@ -544,7 +545,7 @@ def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDF
 
     if node.schedule is dtypes.ScheduleType.Default:
         return True
-    cur_node: nodes.Node = node
+    cur_node: nd.Node = node
     cur_state: SDFGState = state
     cur_sdfg: SDFG = sdfg
     while cur_state is not None:
@@ -585,7 +586,7 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
     for node, parent in copied.all_nodes_recursive():
         if isinstance(parent, SDFGState):
             resolved.nodes[node.guid] = (node, parent)
-            if isinstance(node, (nodes.MapEntry, nodes.ConsumeEntry, nodes.LibraryNode)):
+            if isinstance(node, (nd.MapEntry, nd.ConsumeEntry, nd.LibraryNode)):
                 resolved.schedules[node.guid] = node.schedule
     return resolved
 
@@ -603,9 +604,7 @@ def _annotate_resolved(declared: Any, inferred: Any) -> str:
     return f"{inferred.name} (resolved from {declared.name})"
 
 
-def _resolved_schedule(
-    node: nodes.MapEntry | nodes.ConsumeEntry | nodes.LibraryNode, defaults: ResolvedDefaults | None
-) -> str:
+def _resolved_schedule(node: nd.MapEntry | nd.ConsumeEntry | nd.LibraryNode, defaults: ResolvedDefaults | None) -> str:
     """
     Renders one node's schedule, noting when it was resolved from ``Default``.
 
@@ -643,7 +642,7 @@ def collect_available_environments(device_level: bool) -> tuple[list[Environment
     return installed, unchecked
 
 
-def collect_class_docstring(node: nodes.LibraryNode) -> str:
+def collect_class_docstring(node: nd.LibraryNode) -> str:
     """
     Returns the docstring of a library node's class or of a base class below
     :class:`~dace.sdfg.nodes.LibraryNode`.
@@ -652,7 +651,7 @@ def collect_class_docstring(node: nodes.LibraryNode) -> str:
     :return: The documentation, cleaned of indentation, or an empty string.
     """
     for cls in type(node).__mro__:
-        if cls is nodes.LibraryNode:
+        if cls is nd.LibraryNode:
             break
         doc = cls.__dict__.get("__doc__")
         if doc and doc.strip():
@@ -660,7 +659,7 @@ def collect_class_docstring(node: nodes.LibraryNode) -> str:
     return ""
 
 
-def collect_symbols(node: nodes.LibraryNode, state: SDFGState) -> dict[str, str]:
+def collect_symbols(node: nd.LibraryNode, state: SDFGState) -> dict[str, str]:
     """
     :param node: The library node being expanded.
     :param state: The state containing the node.
@@ -669,7 +668,7 @@ def collect_symbols(node: nodes.LibraryNode, state: SDFGState) -> dict[str, str]
     return {name: stype.ctype for name, stype in state.symbols_defined_at(node).items()}
 
 
-def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> ExpansionContext:
+def collect_context(node: nd.LibraryNode, state: SDFGState, sdfg: SDFG) -> ExpansionContext:
     """
     Gathers the context of a library node.
 
