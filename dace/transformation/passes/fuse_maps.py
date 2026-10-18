@@ -14,6 +14,7 @@ from dace.transformation import dataflow as dftrans
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.transformation.dataflow.map_partial_reduce_fusion import MapPartialReduceFusion, MapReduceFusionUnlessPartial
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.iteration_domain import align_maps_to_unit_step
 
@@ -188,6 +189,12 @@ class FuseMaps(ppl.Pass):
         desc="If `True`, the default, then allow vertical Map fusion: `MapReduceFusion` for a Map "
         "feeding a Reduce, then `MapFusionVertical` for a Map feeding a Map.",
     )
+    partial_reduce_fusion = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True`, a Map feeding a partial Reduce whose result a Map over the kept axes reads elementwise is "
+        "fused first by `MapPartialReduceFusion`, so the result fuses on into that Map instead of staying an array.",
+    )
     perform_horizontal_map_fusion = properties.Property(
         dtype=bool,
         default=True,
@@ -242,9 +249,12 @@ class FuseMaps(ppl.Pass):
         never_consolidate_edges: bool | None = None,
         validate: bool | None = None,
         validate_all: bool | None = None,
+        partial_reduce_fusion: bool | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        if partial_reduce_fusion is not None:
+            self.partial_reduce_fusion = partial_reduce_fusion
         if only_toplevel_maps is not None:
             self.only_toplevel_maps = only_toplevel_maps
         if only_inner_maps is not None:
@@ -328,7 +338,9 @@ class FuseMaps(ppl.Pass):
             # First in the vertical phase: the Map feeding the Reduce is this pattern's first node,
             # so folding it into a neighbour leaves the reduction reading a materialized array that
             # nothing removes afterwards.
-            fusion_transforms.append(dftrans.MapReduceFusion())
+            fusion_transforms.append(
+                MapReduceFusionUnlessPartial() if self.partial_reduce_fusion else dftrans.MapReduceFusion()
+            )
 
             # The single-use data reaches `can_be_applied` through `pipeline_results`, installed
             #  on the match before every probe -- not threaded in at construction (issue#1911).
@@ -345,6 +357,10 @@ class FuseMaps(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                 )
             )
+
+            if self.partial_reduce_fusion:
+                # Last: the Maps producing the reduced operand have fused into the Map feeding the Reduce by now.
+                fusion_transforms.append(MapPartialReduceFusion())
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical

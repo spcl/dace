@@ -542,6 +542,37 @@ def test_each_distinct_trip_count_is_asked_once():
     assert schedules(sdfg) == {f"m{i}_map": seq if e == BELOW_BREAK_EVEN else par for i, e in enumerate(extents)}
 
 
+def short_map_over_a_pinned_inner_map(name, inner_end):
+    """``map b in 0:BELOW { map (Sequential) j in 0:inner_end { a[b, j] = 1 } }``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [BELOW_BREAK_EVEN, inner_end], dace.float64)
+    state = sdfg.add_state()
+    oe, ox = state.add_map("outer", {"b": f"0:{BELOW_BREAK_EVEN}"})
+    ie, ix = state.add_map("inner", {"j": f"0:{inner_end}"}, schedule=dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("one", {}, {"out": None}, "out = 1.0")
+    state.add_nedge(oe, ie, dace.Memlet())
+    state.add_nedge(ie, t, dace.Memlet())
+    state.add_memlet_path(t, ix, ox, state.add_write("a"), src_conn="out", memlet=dace.Memlet("a[b, j]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_short_map_over_a_pinned_inner_map_counts_the_whole_nest():
+    """The inner map is already ``Sequential`` (a reduction axis split off), so no release gives its work to
+    another region: the outer map's fork pays for ``BELOW * N`` iterations, not ``BELOW`` (gem's tail points)."""
+    sdfg = short_map_over_a_pinned_inner_map("short_over_pinned_big", "N")
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["outer"] == dtypes.ScheduleType.Default
+
+
+def test_a_short_map_over_a_short_pinned_inner_map_goes_sequential():
+    sdfg = short_map_over_a_pinned_inner_map("short_over_pinned_small", 2)
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["outer"] == dtypes.ScheduleType.Sequential
+
+
 if __name__ == "__main__":
     test_map_of_at_most_one_trip_by_the_sdfg_facts_is_released()
     test_map_below_break_even_goes_sequential()
@@ -572,3 +603,5 @@ if __name__ == "__main__":
     test_strided_re_entered_copy_is_sequential_but_not_memcpy()
     test_converting_re_entered_copy_is_not_memcpy()
     test_each_distinct_trip_count_is_asked_once()
+    test_a_short_map_over_a_pinned_inner_map_counts_the_whole_nest()
+    test_a_short_map_over_a_short_pinned_inner_map_goes_sequential()

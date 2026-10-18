@@ -47,6 +47,7 @@ from typing import Any
 from dace import SDFG, Memlet, SDFGState, config, dtypes, properties, subsets, symbolic
 from dace import data as dt
 from dace.frontend.python import astutils
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes as nd
@@ -644,6 +645,17 @@ class RemoveViews(ppl.Pass):
         return False
 
     @staticmethod
+    def _is_reduce_output_slice(sdfg: SDFG, state: SDFGState, vnode: nd.AccessNode, viewed_node: nd.AccessNode) -> bool:
+        """True if ``vnode`` is only the output of Reduce nodes and views a slice of the same rank: a Reduce reads its
+        output extent off the memlet, so writing the slice directly reshapes nothing. Kept, the View blocks
+        ``MapReduceFusion``, which cannot initialize a View, and the reduced operand stays a full-size transient."""
+        if any(isinstance(e.dst, nd.LibraryNode) for e in state.out_edges(vnode)):
+            return False
+        if not all(isinstance(e.src, Reduce) for e in state.in_edges(vnode) if isinstance(e.src, nd.LibraryNode)):
+            return False
+        return len(sdfg.arrays[vnode.data].shape) == len(sdfg.arrays[viewed_node.data].shape)
+
+    @staticmethod
     def _binds_nested_sdfg(state: SDFGState, vnode: nd.AccessNode, is_viewed_src: bool) -> bool:
         """True if a memlet tree from ``vnode`` away from the viewed array ends at a nested SDFG connector."""
         edges = state.out_edges(vnode) if is_viewed_src else state.in_edges(vnode)
@@ -685,7 +697,9 @@ class RemoveViews(ppl.Pass):
             # and the library node's expansion -- which requires exactly 2D operands --
             # then rejects it (scattering_self_energies: ``G[k, E-w, neigh] @ dH[a, b, i]``).
             # The View is a no-op reshape that must survive until the node is expanded.
-            if self._is_library_node_operand(state, vnode):
+            if self._is_library_node_operand(state, vnode) and not self._is_reduce_output_slice(
+                sdfg, state, vnode, viewed_node
+            ):
                 if _DEBUGPRINT:
                     print(f'[{_PASS}]   "{vnode.data}": library-node operand -- skipping')
                 continue

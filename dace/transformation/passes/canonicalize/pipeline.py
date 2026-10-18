@@ -963,7 +963,7 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
         return [
             PatternApplyOnceEverywhere([MapCollapse()]),
             PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]),
-            ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True)]),
+            ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True)]),
             PatternApplyOnceEverywhere([MapReduceFusion(), MapWCRFusion()]),
             *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
             StructuralCleanup(),

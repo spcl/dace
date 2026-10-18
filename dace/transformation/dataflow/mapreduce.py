@@ -35,17 +35,21 @@ class MapReduceFusion(pm.SingleStateTransformation):
     reduce = pm.PatternNode(stdlib.Reduce)
 
     out_array = pm.PatternNode(nodes.AccessNode)
+    # ``InlineSDFG`` drops the access node between a Reduce and an enclosing scope's exit.
+    out_exit = pm.PatternNode(nodes.MapExit)
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.tasklet, cls.tmap_exit, cls.in_array, cls.reduce, cls.out_array)]
+        return [
+            sdutil.node_path_graph(cls.tasklet, cls.tmap_exit, cls.in_array, cls.reduce, cls.out_array),
+            sdutil.node_path_graph(cls.tasklet, cls.tmap_exit, cls.in_array, cls.reduce, cls.out_exit),
+        ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         tmap_exit = self.tmap_exit
         in_array = self.in_array
         reduce_node = self.reduce
-        tasklet = self.tasklet
-        out_array = self.out_array
+        out_data = graph.out_edges(reduce_node)[0].data.data
 
         # `shared_transients()` below only ever reports transients, so a non-transient `in_array`
         # passes every remaining check and silently loses the producer this fusion deletes.
@@ -54,7 +58,7 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # The init state below cannot write a View: the edge binding it to the viewed data lives in
         # this state, and its subset may name symbols that only this state's scopes define.
-        if reduce_node.identity is not None and not self.no_init and isinstance(sdfg.arrays[out_array.data], dt.View):
+        if reduce_node.identity is not None and not self.no_init and isinstance(sdfg.arrays[out_data], dt.View):
             return False
 
         # Make sure that the array is only accessed by the map and the reduce
@@ -100,7 +104,6 @@ class MapReduceFusion(pm.SingleStateTransformation):
         tmap_exit = self.tmap_exit
         in_array = self.in_array
         reduce_node = self.reduce
-        out_array = self.out_array
 
         # Set nodes to remove according to the expression index
         nodes_to_remove = [in_array]
@@ -136,9 +139,15 @@ class MapReduceFusion(pm.SingleStateTransformation):
         filtered_subset = [dim for i, dim in enumerate(memlet_edge.data.subset) if i not in axes]
         if len(filtered_subset) == 0:  # Output is a scalar
             filtered_subset = [(0, 0, 1)]
+        else:
+            # The kept dimensions index the intermediate; the output may write them at an offset (``out[4*b:4*b+4]``).
+            kept_in = [dim for i, dim in enumerate(input_edge.data.subset) if i not in axes]
+            if len(kept_in) == len(array_edge.data.subset):
+                offsets = [o[0] - k[0] for o, k in zip(array_edge.data.subset, kept_in)]
+                filtered_subset = [(b + d, e + d, st) for (b, e, st), d in zip(filtered_subset, offsets)]
 
         # Modify edge from tasklet to map exit
-        memlet_edge.data.data = out_array.data
+        memlet_edge.data.data = array_edge.data.data
         memlet_edge.data.wcr = reduce_node.wcr
         memlet_edge.data.subset = type(memlet_edge.data.subset)(filtered_subset)
 

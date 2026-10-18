@@ -368,8 +368,8 @@ def test_a_second_body_tasklet_does_not_break_the_match():
     state.add_memlet_path(scale, mx, tmp, src_conn="o", memlet=dace.Memlet("tmp[i]"))
 
     red = state.add_reduce("lambda a, b: a + b", None, identity=0)
-    state.add_edge(tmp, None, red, "_in", dace.Memlet("tmp[0:N]"))
-    state.add_edge(red, "_out", state.add_write("out"), None, dace.Memlet("out[0]"))
+    state.add_edge(tmp, None, red, None, dace.Memlet("tmp[0:N]"))
+    state.add_edge(red, None, state.add_write("out"), None, dace.Memlet("out[0]"))
     sdfg.validate()
 
     with contextlib.redirect_stdout(io.StringIO()) as captured:
@@ -422,6 +422,70 @@ def test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration(
     assert np.allclose(out, (a * a).sum(axis=1)), out
 
 
+def test_a_reduction_written_straight_into_the_outer_map_exit_fuses():
+    """``InlineSDFG`` drops the access node between a Reduce and the scope exit, so a per-block
+    ``out[4b:4b+4] = (A[4b:4b+4] * A[4b:4b+4]).sum(1)`` reaches fusion as ``Reduce -> MapExit``.
+    It fuses all the same: unfused, the (4, M) operand is a full-size transient per block (gem's
+    per-block sums, two (1024, natoms) stack arrays per thread)."""
+    n, m = 8, 5
+    sdfg = dace.SDFG("reduce_into_outer_exit")
+    sdfg.add_array("a", (n, M), dace.float64)
+    sdfg.add_array("out", (n,), dace.float64)
+    sdfg.add_transient("sq", (4, M), dace.float64)
+
+    state = sdfg.add_state()
+    ome, omx = state.add_map("blocks", dict(b="0:2"))
+    ime, imx = state.add_map("elems", dict(i="0:4", j="0:M"))
+    square = state.add_tasklet("square", {"inp"}, {"o"}, "o = inp * inp")
+    state.add_memlet_path(state.add_read("a"), ome, ime, square, dst_conn="inp", memlet=dace.Memlet("a[4*b + i, j]"))
+    sq = state.add_access("sq")
+    state.add_memlet_path(square, imx, sq, src_conn="o", memlet=dace.Memlet("sq[i, j]"))
+    red = state.add_reduce("lambda x, y: x + y", axes=[1], identity=0)
+    state.add_edge(sq, None, red, None, dace.Memlet("sq[0:4, 0:M]"))
+    state.add_memlet_path(red, omx, state.add_write("out"), memlet=dace.Memlet("out[4*b:4*b + 4]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    sdfg.validate()
+    assert "sq" not in sdfg.arrays
+
+    a = np.random.default_rng(20261018).random((n, m))
+    out = np.zeros(n)
+    sdfg(a=a.copy(), out=out, M=m)
+    assert np.allclose(out, (a * a).sum(axis=1)), out
+
+
+def test_a_reduction_into_an_offset_slice_keeps_the_offset():
+    """``out[2:6] = (a * a).sum(1)``: the fused write indexes ``out`` at ``2 + i``, not at the intermediate's ``i``."""
+    sdfg = dace.SDFG("reduce_into_offset_slice")
+    sdfg.add_array("a", (4, M), dace.float64)
+    sdfg.add_array("out", (8,), dace.float64)
+    sdfg.add_transient("sq", (4, M), dace.float64)
+    state = sdfg.add_state()
+    sq = state.add_access("sq")
+    state.add_mapped_tasklet(
+        "square",
+        dict(i="0:4", j="0:M"),
+        dict(inp=dace.Memlet("a[i, j]")),
+        "o = inp * inp",
+        dict(o=dace.Memlet("sq[i, j]")),
+        output_nodes={"sq": sq},
+        external_edges=True,
+    )
+    red = state.add_reduce("lambda x, y: x + y", axes=[1], identity=0)
+    state.add_edge(sq, None, red, None, dace.Memlet("sq[0:4, 0:M]"))
+    state.add_edge(red, None, state.add_write("out"), None, dace.Memlet("out[2:6]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+    a = np.random.default_rng(7).random((4, 5))
+    out = np.zeros(8)
+    sdfg(a=a.copy(), out=out, M=5)
+    ref = np.zeros(8)
+    ref[2:6] = (a * a).sum(axis=1)
+    assert np.allclose(out, ref), out
+
+
 if __name__ == "__main__":
     test_basic()
     test_mmm()
@@ -433,3 +497,5 @@ if __name__ == "__main__":
     test_fuse_maps_removes_the_reduced_intermediate()
     test_a_second_body_tasklet_does_not_break_the_match()
     test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration()
+    test_a_reduction_written_straight_into_the_outer_map_exit_fuses()
+    test_a_reduction_into_an_offset_slice_keeps_the_offset()

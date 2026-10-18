@@ -1076,6 +1076,46 @@ def test_view_named_in_a_condition_keeps_the_view():
     assert guard.condition.as_string == condition_before, "RemoveViews rewrote a condition"
 
 
+def _reduce_into_view(view_shape, view_subset, out_shape):
+    """``A[4, 5] -> Reduce(axis 1) -> V -> out[view_subset]``: a sum written through a View of ``out``."""
+    sdfg = dace.SDFG("reduce_into_view")
+    sdfg.add_array("A", [4, 5], dace.float64)
+    sdfg.add_array("out", out_shape, dace.float64)
+    sdfg.add_view("V", view_shape, dace.float64)
+    state = sdfg.add_state()
+    red = state.add_reduce("lambda a, b: a + b", axes=[1], identity=0)
+    v = state.add_access("V")
+    state.add_edge(state.add_read("A"), None, red, None, Memlet("A[0:4, 0:5]"))
+    state.add_edge(red, None, v, None, Memlet(data="V", subset=",".join(f"0:{n}" for n in view_shape)))
+    state.add_edge(v, "views", state.add_write("out"), None, Memlet(data="out", subset=view_subset))
+    sdfg.validate()
+    return sdfg
+
+
+def test_reduce_output_slice_view_is_removed():
+    """A Reduce writing a same-rank slice of an array through a View writes the slice directly: the View
+    reshapes nothing, and a Reduce reads its output extent off the memlet. Kept, it blocks MapReduceFusion
+    (which cannot initialize a View), so the reduced operand stays a full-size transient (gem's per-block sum)."""
+    sdfg = _reduce_into_view([4], "2:6", [8])
+    A = np.random.default_rng(0).random((4, 5))
+    ref = np.zeros(8)
+    ref[2:6] = A.sum(axis=1)
+
+    assert RemoveViews().apply_pass(sdfg, {}) == {"V"}
+    assert _count_views(sdfg) == 0
+    sdfg.validate()
+    out = np.zeros(8)
+    sdfg(A=A.copy(), out=out)
+    np.testing.assert_allclose(out, ref)
+
+
+def test_reduce_output_squeeze_view_is_kept():
+    """A View that drops a dimension of the viewed array still supplies the Reduce its output rank."""
+    sdfg = _reduce_into_view([4], "1, 0:4", [2, 4])
+    assert RemoveViews().apply_pass(sdfg, {}) is None
+    assert _count_views(sdfg) == 1
+
+
 if __name__ == "__main__":
     test_view_array_array()
     test_view_slice_detect_simple()
@@ -1102,3 +1142,5 @@ if __name__ == "__main__":
     test_view_with_ordering_edge_and_no_reader_is_kept()
     test_interstate_edge_table_is_rebuilt_per_run()
     test_view_named_in_a_condition_keeps_the_view()
+    test_reduce_output_slice_view_is_removed()
+    test_reduce_output_squeeze_view_is_kept()

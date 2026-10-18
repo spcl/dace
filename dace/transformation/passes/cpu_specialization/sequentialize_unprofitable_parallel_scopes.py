@@ -87,6 +87,18 @@ DATA_SEGMENT_REASON = (
 )
 
 
+def pinned_inner_trips(entry: nodes.MapEntry, children: dict[Any, list[nodes.Node]]) -> Any:
+    """The iterations of the deepest chain of already ``Sequential`` maps in ``entry``'s body. No release can give
+    their work a region of its own (a reduction axis split off by ``SequentializeReductionAxes``), so the region
+    ``entry`` opens pays for them; the own-count rule assumes inner maps are released instead."""
+    trips = [
+        child.map.range.num_elements() * pinned_inner_trips(child, children)
+        for child in children[entry]
+        if isinstance(child, nodes.MapEntry) and child.map.schedule == dtypes.ScheduleType.Sequential
+    ]
+    return trips[0] if len(trips) == 1 else 1
+
+
 def note_sequential(entry: nodes.MapEntry, reason: str) -> None:
     """Make ``entry``'s map ``Sequential`` and add the reason under its class line."""
     from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
@@ -303,7 +315,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
 
         for node in children[entry]:
             if isinstance(node, nodes.MapEntry):
-                self.visit_scope(state, children, node, self.decide_map(state, node, in_parallel))
+                self.visit_scope(state, children, node, self.decide_map(state, node, in_parallel, children))
             elif isinstance(node, nodes.LibraryNode):
                 # A node whose work per entry is the chunk an enclosing loop hands it (FindFirst) opts out of
                 # the loop half of the re-entry rule; an enclosing parallel map still serializes it.
@@ -338,12 +350,19 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         """
         return self.threshold <= 0 or self.fewer_than_threshold(count, facts) is not symbolic.Truth.TRUE
 
-    def decide_map(self, state: SDFGState, node: nodes.MapEntry, in_parallel: bool) -> bool:
+    def decide_map(
+        self,
+        state: SDFGState,
+        node: nodes.MapEntry,
+        in_parallel: bool,
+        children: dict[Any, list[nodes.Node]] | None = None,
+    ) -> bool:
         """Set ``node``'s schedule and report whether its body runs inside a parallel map.
 
         :param state: the state holding ``node``.
         :param node: the map entry to decide.
         :param in_parallel: whether a device-parallel map encloses this map.
+        :param children: ``state.scope_children()``, to count the pinned inner maps the region pays for.
         :returns: whether the map's body is enclosed by a parallel map.
         """
         if node.map.schedule not in CPU_PARALLEL_SCHEDULES:
@@ -353,7 +372,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
                 note_sequential(node, NESTED_REASON)
                 self.pinned += 1
             return True
-        count = node.map.range.num_elements()
+        count = node.map.range.num_elements() * pinned_inner_trips(node, children or state.scope_children())
         if not self.worth_forking(count, SymbolResolver().facts_at(state, node)):
             note_sequential(node, BELOW_BREAK_EVEN_REASON.format(count=count))
         elif in_sequential_loop(state) and (segment := data_segment(state, node)) is not None:
