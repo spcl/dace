@@ -854,7 +854,9 @@ def reanchor_stranded_read(state: SDFGState, outer: Node, anchor: Node) -> bool:
     return True
 
 
-def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.ExitNode) -> int:
+def consolidate_edges_scope(
+    state: SDFGState, scope_node: nd.EntryNode | nd.ExitNode, symbols: Optional["SymbolResolver"] = None
+) -> int:
     """
     Union scope-entering memlets relating to the same data node in a scope.
     This effectively reduces the number of connectors and allows more
@@ -863,6 +865,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
 
     :param state: The SDFG state in which the scope to consolidate resides.
     :param scope_node: The scope node whose edges will be consolidated.
+    :param symbols: The ``SymbolResolver`` of the ongoing consolidation, one is made if not given.
     :return: Number of edges removed.
     """
     if scope_node is None:
@@ -934,7 +937,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
     merged_write_subsets: dict[str, list[sbs.Subset]] = collections.defaultdict(list)
 
     # The outer side of the scope
-    facts = SymbolResolver().facts_at(
+    facts = (symbols if symbols is not None else SymbolResolver()).facts_at(
         state, scope_node if isinstance(scope_node, nd.EntryNode) else state.entry_node(scope_node)
     )
     for conn in connectors_to_remove:
@@ -1111,7 +1114,7 @@ def consolidate_edges(
     # a scope and propagation rewrites memlet subsets, so neither adds a symbol, a descriptor or an
     # interstate edge. Rebuilding it per scope walked every descriptor again -- 93% of this
     # function's time on CloudSC.
-    resolver = SymbolResolver(sdfg, sdfg_scope_symbols(sdfg)) if propagate else None
+    resolver = SymbolResolver(sdfg, sdfg_scope_symbols(sdfg)) if propagate else SymbolResolver()
 
     total_consolidated = 0
     for state in sdfg.states():
@@ -1123,8 +1126,8 @@ def consolidate_edges(
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
-                entry_consolidated = consolidate_edges_scope(state, scope.entry)
-                exit_consolidated = consolidate_edges_scope(state, scope.exit)
+                entry_consolidated = consolidate_edges_scope(state, scope.entry, resolver)
+                exit_consolidated = consolidate_edges_scope(state, scope.exit, resolver)
                 total_consolidated += entry_consolidated + exit_consolidated
 
                 # Repropagate memlets

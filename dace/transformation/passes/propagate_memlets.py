@@ -5,6 +5,8 @@ from typing import Any
 
 from dace.sdfg import SDFG
 from dace.sdfg.propagation import propagate_memlets_scope
+from dace.sdfg.sdfg import memoize_facts
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -50,7 +52,10 @@ class PropagateMemlets(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        for nested in sdfg.all_sdfgs_recursive():
-            for state in nested.states():
-                propagate_memlets_scope(nested, state, state.scope_leaves())
+        # Propagation rewrites derived memlets only: one resolver and one facts memo serve the whole walk
+        symbols = SymbolResolver()
+        with memoize_facts():
+            for nested in sdfg.all_sdfgs_recursive():
+                for state in nested.states():
+                    propagate_memlets_scope(nested, state, state.scope_leaves(), symbols=symbols)
         return 1

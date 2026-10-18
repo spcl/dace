@@ -673,8 +673,9 @@ def dominated_through_region(
     return False
 
 
-#: Reachable sets :class:`StateFlow` keeps, one per (source state, avoided state) pair.
-REACH_MEMO = 64
+#: Reachable sets :class:`StateFlow` keeps, one per (source state, avoided state) pair, a byte per flow node each.
+#: CloudSC asks ~129k reachability queries in one write-scope analysis.
+REACH_MEMO = 1024
 
 
 class StateFlow:
