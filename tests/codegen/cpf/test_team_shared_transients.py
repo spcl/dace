@@ -7,7 +7,7 @@ the ordinary generators keep them in the state struct, one buffer shared by the 
 an allocation on entry of the declaring function, which for the outlined body meant one private copy per thread:
 each thread filled its own ``omp for`` share and read the rest uninitialized. bfs is that shape (``frontier``,
 ``reach``, ``nxt`` per level); here a mirrored read makes every thread read another's share.
-:func:`dace.codegen.cpf.lift_team_shared_transients` moves such buffers to the entry.
+:func:`dace.codegen.cpf.lift_persistent_transients` moves such buffers to the entry.
 """
 
 import numpy as np

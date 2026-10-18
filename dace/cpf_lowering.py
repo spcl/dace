@@ -290,6 +290,35 @@ def workspace_slot(name: str | None, desc: Any) -> str | None:
     return f"{_workspace_name} + {slot[1]}"
 
 
+#: The entry's persistent transients a standalone rendering keeps in ``static`` pointers, which survive the call
+#: and grow only when a call needs more: data name -> descriptor. Empty outside :func:`persistent_static_scope`.
+_persistent_static: dict[str, Any] = {}
+
+
+@contextlib.contextmanager
+def persistent_static_scope(persistent: dict[str, Any]):
+    """Make ``persistent`` the ambient set of static persistent buffers for the block (:func:`persistent_static`)."""
+    global _persistent_static
+    previous = _persistent_static
+    _persistent_static = persistent
+    try:
+        yield persistent
+    finally:
+        _persistent_static = previous
+
+
+def persistent_static(name: str | None, desc: Any) -> str | None:
+    """The ``static`` pointer that holds a persistent transient across calls, else ``None``."""
+    if not standalone() or name is None or _persistent_static.get(name) is not desc:
+        return None
+    return f"__cpf_persistent_{name}"
+
+
+def persistent_static_desc(desc: Any) -> bool:
+    """Whether ``desc`` lives in a persistent ``static`` pointer, so freeing it at the end of a call frees nothing."""
+    return standalone() and any(held is desc for held in _persistent_static.values())
+
+
 def carved_from_workspace(desc: Any) -> bool:
     """Whether ``desc`` lives in the workspace, so freeing it frees nothing."""
     return standalone() and any(slot[0] is desc for slot in _workspace_carve.values())

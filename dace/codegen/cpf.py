@@ -784,7 +784,7 @@ def widen_narrow_scalar_arguments(sdfg: SDFG) -> list[str]:
     return widened
 
 
-def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> None:
+def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> tuple[str, ...]:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
     Six things happen: every library node is pointed at the best implementation a standalone unit
@@ -804,6 +804,8 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     :param sdfg: the SDFG to prepare. Call on a COPY -- :func:`cpf` does.
     :param provenance: filled in with the library-node descriptions the rendering will comment
                        with (see :func:`force_renderable_expansions`).
+    :returns: the entry's transients that were ``Persistent`` or ``Global``, its own and the ones lifted to it
+              (:func:`lift_persistent_transients`), which outlive a call (:func:`plan_persistent`).
     :raises NotImplementedError: if the SDFG needs a device compiler, holds a stream or a consume
                                  scope (:func:`refuse_runtime_scopes`), or carries a return container
                                  the entry signature cannot pass back (:func:`refuse_by_value_returns`).
@@ -827,54 +829,30 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     refuse_by_value_returns(sdfg)
     # Canonicalize labelled the loops it left; specialization and the expansions above made more.
     AnnotateLoopKinds().apply_pass(sdfg, {})
-    # Before the demotion: a buffer every thread of a team shares must reach the entry first.
-    lift_team_shared_transients(sdfg)
+    # Before the demotion: a buffer every call shares must reach the entry first.
+    lift_persistent_transients(sdfg)
+    persistent = tuple(
+        name for name, desc in sdfg.arrays.items() if desc.transient and desc.lifetime in LIFETIME_DEMOTIONS
+    )
     for _, _, desc in sdfg.arrays_recursive():
         demoted = LIFETIME_DEMOTIONS.get(desc.lifetime)
         if demoted is not None:
             desc.lifetime = demoted
+    return persistent
 
 
-def team_called(node: nodes.NestedSDFG, state: SDFGState) -> bool:
-    """Whether every thread of a persistent team calls ``node``'s function: a ``CPU_Persistent`` map scope (the
-    ``#pragma omp parallel`` a hoisted loop runs in) encloses it, in its own state or around the nested SDFG that
-    holds it.
+def lift_persistent_transients(sdfg: SDFG) -> int:
+    """Move every ``Persistent`` and ``Global`` transient of a nested SDFG into the SDFG that calls it, wired
+    through the nested node's connectors, innermost first so a buffer climbs to the entry.
 
-    :param node: the nested SDFG node.
-    :param state: the state holding ``node``.
-    :returns: ``True`` if a team calls it.
-    """
-    scope = state.entry_node(node)
-    while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.CPU_Persistent:
-            return True
-        scope = state.entry_node(scope)
-    outer = state.sdfg
-    caller = (
-        next(
-            (
-                (candidate, holder)
-                for candidate, holder in outer.parent_sdfg.all_nodes_recursive()
-                if isinstance(candidate, nodes.NestedSDFG) and candidate.sdfg is outer
-            ),
-            None,
-        )
-        if outer.parent_sdfg is not None
-        else None
-    )
-    return caller is not None and team_called(*caller)
-
-
-def lift_team_shared_transients(sdfg: SDFG) -> int:
-    """Move every ``Persistent`` and ``Global`` transient of a nested SDFG a team calls into the SDFG that calls
-    it, wired through the nested node's connectors, innermost first so a buffer climbs to the entry.
-
-    The ordinary generators allocate such a buffer ONCE, in the state struct, shared by every thread of the
-    team. :data:`LIFETIME_DEMOTIONS` turns it into an allocation on entry of the function that declares it,
-    which is right for the entry and wrong for a nested function every thread of an ``omp parallel`` region
-    calls: each thread then allocated a private copy, filled only its own ``omp for`` share of it, and read
-    the rest uninitialized (bfs's ``frontier``). A buffer whose extent names a symbol the enclosing scopes
-    define per iteration stays where it is.
+    The ordinary generators allocate such a buffer ONCE, in the state struct, shared by every call of the
+    nested function. :data:`LIFETIME_DEMOTIONS` turns it into an allocation on entry of the function that
+    declares it, which is right for the entry and wrong for a nested function a map or a team calls: every
+    call allocated, and freed, a private copy. Under a team each thread then filled only its own ``omp for``
+    share and read the rest uninitialized (bfs's ``frontier``); under a parallel map over tiles each tile
+    allocated full-size buffers it used one tile of (cloudsc: 29 per tile). At the entry the buffer is one
+    allocation again (:func:`plan_workspace`, :func:`dace.cpf_lowering.persistent_static`). A buffer whose
+    extent names a symbol the enclosing scopes define per iteration stays where it is.
 
     :param sdfg: the SDFG to rewrite in place.
     :returns: how many buffers were lifted, counting each level of a climb.
@@ -885,7 +863,8 @@ def lift_team_shared_transients(sdfg: SDFG) -> int:
     calls = [(node, state) for node, state in sdfg.all_nodes_recursive() if isinstance(node, nodes.NestedSDFG)]
     for node, state in reversed(calls):
         inner = node.sdfg
-        if inner is None or not team_called(node, state):
+        # Inside a kernel a buffer is the device's to place (``MoveArrayOutOfKernel``), not a host allocation.
+        if inner is None or is_devicelevel_gpu(state.sdfg, state, node):
             continue
         outer = state.sdfg
         scopes = []
@@ -1196,10 +1175,12 @@ def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data,
 
     ``carve`` maps each placed array to its descriptor and its C byte offset; ``workspace_bytes`` is an
     arithmetic expression over the entry's scalar arguments, an upper bound on the bytes the layout needs
-    (``'0'`` when nothing is placed). An array is placed when the host allocates it once per use at its
-    own level: a top-level host array (``CPU_Heap``, or ``Default``, which the host generator puts there) no
-    map touches, sized by the arguments alone; one the generator keeps on the stack leaves its slot unused. One inside a
-    map is allocated per thread and keeps its allocation, and so does every array of a nested SDFG.
+    (``'0'`` when nothing is placed). An array is placed when the host allocates it once per use, at the
+    entry's level: a top-level host array (``CPU_Heap``, or ``Default``, which the host generator puts
+    there) sized by the arguments alone, unless its lifetime is ``Scope`` and a map touches it -- that one
+    is allocated per iteration, per thread, and keeps its allocation. One the generator keeps on the stack
+    leaves its slot unused. The persistent buffers of nested SDFGs are at the entry by now
+    (:func:`lift_persistent_transients`); the rest of a nested SDFG's arrays keep their allocations.
     """
     if sdfg.arrays[workspace].storage is not dtypes.StorageType.Default:
         return {}, "0"
@@ -1218,7 +1199,7 @@ def plan_workspace(sdfg: SDFG, workspace: str) -> tuple[dict[str, tuple[dt.Data,
             not desc.transient
             or type(desc) is not dt.Array
             or desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default)
-            or name in in_maps
+            or (desc.lifetime is dtypes.AllocationLifetime.Scope and name in in_maps)
             or not {str(s) for s in symbolic.symlist(desc.total_size)} <= arguments
         ):
             continue
@@ -1625,7 +1606,7 @@ def render_unit(
             set_temporary("store_history", value=False),
             fftw3.single_threaded_planner(),
         ):
-            prepare(prepared, provenance)
+            persistent = prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
     # ``dace::CopyND`` and state-struct accesses that no dialect switch can take back. Refuse.
@@ -1644,10 +1625,13 @@ def render_unit(
                 carve, workspace_bytes = {}, "0"
                 if signature is not None and signature.workspace is not None:
                     carve, workspace_bytes = plan_workspace(prepared, signature.workspace)
+                # What the workspace does not hold of the persistent buffers stays allocated across calls.
+                held = {name: prepared.arrays[name] for name in persistent if name not in carve}
                 with (
                     set_temporary("compiler", "lineinfo", value="none"),
                     fftw3.single_threaded_planner(),
                     cpf_lowering.workspace_carve_scope(signature.workspace if carve else "", carve),
+                    cpf_lowering.persistent_static_scope(held),
                 ):
                     objects = codegen.generate_code(prepared, validate=validate)
                 frame, device = split_units(objects, sdfg.name)

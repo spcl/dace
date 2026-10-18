@@ -934,33 +934,63 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if registered is not None:
                 fnname, call_args = registered
                 count = "%s(%s)" % (fnname, ", ".join(call_args))
-        if cpf_lowering.standalone_c():
-            return c_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
         if not cpf_lowering.standalone():
             return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
-        # A CPF unit includes no DaCe header, so it spells the aligned ``new`` itself.
+        # A persistent transient without a workspace lives in a ``static`` pointer: allocated by the first call,
+        # reallocated only by a call that needs more, never freed -- one buffer across calls, as the state struct
+        # of the ordinary generators keeps it.
+        holder = cpf_lowering.persistent_static(data_name, nodedesc)
+        if holder is not None:
+            null = "NULL" if cpf_lowering.standalone_c() else "nullptr"
+            return (
+                f"static {ctype} *{holder} = {null};\n"
+                f"static size_t {holder}_count = 0;\n"
+                f"if ({holder}_count < (size_t)({count})) {{\n"
+                f"{self.standalone_heap_free_stmt(holder, True, nodedesc)}"
+                f"{self.standalone_heap_alloc_stmt(holder, ctype, count, nodedesc)}"
+                f"{holder}_count = (size_t)({count});\n"
+                f"}}\n"
+                f"{alloc_name} = {holder};\n"
+            )
+        return self.standalone_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
+
+    @staticmethod
+    def standalone_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: dt.Data | None) -> str:
+        """A CPF unit's heap allocation: ``aligned_alloc`` in C, the aligned ``new`` in C++ (no DaCe header)."""
+        if cpf_lowering.standalone_c():
+            return c_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
         placement = ""
         if nodedesc is not None and use_aligned_operator_new(nodedesc):
             placement = " (std::align_val_t(%d))" % aligned_new_value(nodedesc)
         return "%s = new%s %s[%s];\n" % (alloc_name, placement, ctype, count)
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: dt.Data | None = None) -> str:
-        """The matching free: ``free`` for both allocation shapes in C."""
-        if nodedesc is not None and cpf_lowering.carved_from_workspace(nodedesc):
+        """The matching free: ``free`` for both allocation shapes in C. Nothing for an array in the workspace or
+        in a persistent ``static`` pointer."""
+        if nodedesc is not None and (
+            cpf_lowering.carved_from_workspace(nodedesc) or cpf_lowering.persistent_static_desc(nodedesc)
+        ):
             return ""
+        if cpf_lowering.standalone():
+            return self.standalone_heap_free_stmt(alloc_name, is_array, nodedesc)
+        return super().heap_free_stmt(alloc_name, is_array, nodedesc)
+
+    @staticmethod
+    def standalone_heap_free_stmt(alloc_name: str, is_array: bool, nodedesc: dt.Data | None) -> str:
+        """The free paired with :meth:`standalone_heap_alloc_stmt`."""
         if cpf_lowering.standalone_c():
             return "free(%s);\n" % alloc_name
         # A CPF unit includes no DaCe header, so it spells the aligned delete paired with its aligned ``new``
         # itself. The direct operator call skips destructors and relies on the new-expression emitting no array
         # cookie -- both only hold for trivially destructible element types.
-        if cpf_lowering.standalone() and is_array and nodedesc is not None and use_aligned_operator_new(nodedesc):
+        if is_array and nodedesc is not None and use_aligned_operator_new(nodedesc):
             return (
                 "static_assert(std::is_trivially_destructible<%s>::value, "
                 '"aligned heap deallocation skips destructors");\n'
                 "::operator delete[](%s, std::align_val_t(%d));\n"
                 % (nodedesc.dtype.ctype, alloc_name, aligned_new_value(nodedesc))
             )
-        return super().heap_free_stmt(alloc_name, is_array, nodedesc)
+        return "delete[] %s;\n" % alloc_name if is_array else "delete %s;\n" % alloc_name
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered helper once per output file, since many streams feed one unit. Host code
