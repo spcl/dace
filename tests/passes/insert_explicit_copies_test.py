@@ -1629,7 +1629,36 @@ def test_freeing_a_copy_connector_name_renames_the_nested_connector_too():
     assert np.allclose(b, 2 * a)
 
 
+def test_a_self_copy_naming_one_side_moves_nothing():
+    """``a[i] -> a`` between two nodes of the same container names one side; the other is the same cells. It was
+    widened to the whole array (``a[0:N] -> a[i:i + N]``, writing past the end) because ``1 == N`` is unprovable."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("self_copy_one_side")
+    sdfg.add_array("a", [N], dace.float64)
+    state = sdfg.add_state()
+    _, me, mx = state.add_mapped_tasklet(
+        "double", {"i": "0:N"}, {"inp": Memlet("a[i]")}, "out = 2 * inp", {"out": Memlet("a[i]")}, external_edges=True
+    )
+    # An inner access node of ``a`` between the tasklet and the exit, as an inlined body leaves it
+    (write_edge,) = state.in_edges(mx)
+    tasklet = write_edge.src
+    inner = state.add_access("a")
+    state.remove_edge(write_edge)
+    state.add_edge(tasklet, "out", inner, None, Memlet("a[i]"))
+    state.add_edge(inner, None, mx, write_edge.dst_conn, Memlet("a[i]"))
+    from dace.transformation.helpers import nest_state_subgraph
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(me, include_entry=False, include_exit=False))
+    sdfg.validate()
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)]
+    a = np.arange(7.0)
+    sdfg(a=a, N=7)
+    assert np.allclose(a, 2 * np.arange(7.0))
+
+
 if __name__ == "__main__":
+    test_a_self_copy_naming_one_side_moves_nothing()
     test_a_copy_lifted_beside_a_view_named_like_its_connector_validates()
     test_insert_cpu_to_cpu_1d()
     test_insert_cpu_to_cpu_2d_slice()

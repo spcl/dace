@@ -293,6 +293,17 @@ class InsertExplicitCopies(ppl.Pass):
             src_subset = memlet.get_src_subset(edge, state)
             dst_subset = memlet.get_dst_subset(edge, state)
 
+            if src_name == dst_name:
+                # A self-copy naming one side is an identity: the other side is the same cells, not the whole
+                # array (an inlined body's write leaving its scope, ``a[i] -> a``). Cells copied onto themselves
+                # move nothing; only the ordering the edge carries remains.
+                src_subset = src_subset or dst_subset
+                dst_subset = dst_subset or src_subset
+                if src_subset is not None and src_subset == dst_subset:
+                    state.remove_edge(edge)
+                    state.add_nedge(src_node, dst_node, Memlet())
+                    continue
+
             # Derive any side the memlet omitted from the array shape (same-volume, different-shape).
             if src_subset is None:
                 src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
