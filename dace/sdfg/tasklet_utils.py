@@ -8,6 +8,7 @@ and constants involved. It also provides utilities furhter manipulate and analyz
 """
 
 import ast
+import functools
 import re
 import typing
 from enum import Enum
@@ -269,44 +270,53 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
 
     # Python tasklet case
     if tasklet.code.language == dace.dtypes.Language.Python:
-        try:
-            # Split into LHS and RHS (single assignment inside Python tasklet)
-            lhs, rhs = tasklet.code.as_string.split("=", 1)
-            lhs = lhs.strip()
-            rhs = rhs.strip()
-
-            # Direct match: symbol is LHS variable
-            if symbol_str == lhs:
-                return True
-
-            # Parse symbolic expression
-            sym_expr = dace.symbolic.SymExpr(rhs)
-
-            # Collect ALL symbols we find
-            found = set()
-
-            # 1. Free symbols (simple variables like a, b, i, N, etc.)
-            found |= {str(s) for s in as_basic(sym_expr).free_symbols}
-
-            # 2. Function names + symbols inside arguments
-            for func in as_basic(sym_expr).atoms(sympy.Function):
-                # Add function name
-                found.add(str(func.func))
-
-                # Add all symbols appearing in function arguments
-                for arg in func.args:
-                    # All symbols within this argument expression
-                    found |= {str(s) for s in arg.free_symbols}
-
-            return symbol_str in found
-
-        except Exception:
+        lhs, found = python_assignment_names(code)
+        # Direct match: symbol is LHS variable
+        if lhs is not None and symbol_str == lhs:
+            return True
+        if found is None:
             # Fallback to token-based match if symbolic parsing fails
             return token_match(code, symbol_str)
+        return symbol_str in found
 
     # Non-Python tasklet (e.g., C++)
     else:
         return token_match(code, symbol_str)
+
+
+@functools.lru_cache(maxsize=4096, typed=True)
+def python_assignment_names(code: str) -> tuple[str | None, frozenset[str] | None]:
+    """The names :func:`tasklet_has_symbol` finds in the single assignment ``code``: its stripped LHS, and every free
+    symbol, function name and function-argument symbol of its parsed RHS. ``None`` for a part that cannot be read
+    (no ``=``, or an RHS SymPy cannot parse). A function of the text alone, so it is cached on it: a pass that asks
+    about several symbols re-reads the same tasklets once per symbol."""
+    try:
+        # Split into LHS and RHS (single assignment inside Python tasklet)
+        lhs, rhs = code.split("=", 1)
+    except ValueError:
+        return None, None
+    lhs = lhs.strip()
+    rhs = rhs.strip()
+    try:
+        # Parse symbolic expression
+        sym_expr = as_basic(dace.symbolic.SymExpr(rhs))
+
+        # Collect ALL symbols we find
+        # 1. Free symbols (simple variables like a, b, i, N, etc.)
+        found = {str(s) for s in sym_expr.free_symbols}
+
+        # 2. Function names + symbols inside arguments
+        for func in sym_expr.atoms(sympy.Function):
+            # Add function name
+            found.add(str(func.func))
+
+            # Add all symbols appearing in function arguments
+            for arg in func.args:
+                # All symbols within this argument expression
+                found |= {str(s) for s in arg.free_symbols}
+    except Exception:
+        return lhs, None
+    return lhs, frozenset(found)
 
 
 def replace_code(

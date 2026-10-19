@@ -44,18 +44,21 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
 
-def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> list[int | None] | None:
+def access_coefficients(
+    state: SDFGState, entry: nodes.MapEntry, param: str, symbols: SymbolResolver | None = None
+) -> list[int | None] | None:
     """Sign of ``param``'s coefficient in every data access inside ``entry``'s scope.
 
     ``None`` when any access uses the parameter non-affinely (a modulo, a call, an indirection):
     the direction of such an access is not a property this pass can read, so the map is left alone
     rather than guessed at.
 
+    :param symbols: the resolver to read the facts at ``entry`` from, if the caller asks about several parameters.
     :returns: one entry per (edge, dimension) the parameter appears in -- ``1``/``-1`` for an
         ascending/descending access, or ``None`` for the whole map if any use is non-affine.
     """
     sym = symbolic.pystr_to_symbolic(param)
-    facts = SymbolResolver().facts_at(state, entry)
+    facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, entry)
     signs: list[int | None] = []
     for edge in state.scope_subgraph(entry).edges():
         if edge.data is None or edge.data.is_empty():
@@ -99,11 +102,14 @@ def reverse_descending_maps(sdfg: SDFG) -> int | None:
     for g in sdfg.all_sdfgs_recursive():
         for state in g.states():
             for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+                # The facts at ``entry`` hold around it; a flip rewrites only what lies inside, so one resolver
+                # serves every parameter of the map.
+                symbols = SymbolResolver()
                 for dim, param in enumerate(entry.map.params):
                     begin, end, step = entry.map.range[dim]
                     if symbolic.simplify(step - 1) != 0:
                         continue  # lo + hi - p only re-covers the range at unit stride
-                    signs = access_coefficients(state, entry, param)
+                    signs = access_coefficients(state, entry, param, symbols)
                     if not signs or any(required(s) > 0 for s in signs):
                         continue
                     state.scope_subgraph(entry).replace(param, f"({begin} + {end} - {param})")

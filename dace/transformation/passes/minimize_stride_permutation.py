@@ -120,7 +120,12 @@ def score_indexed_strides(edges, sdfg, var_names) -> dict[str, tuple[object, obj
                 if sympy.Abs(coeff) == 1:
                     total_stride[vname] = total_stride[vname] + stride_val
                     prev = min_stride[vname]
-                    min_stride[vname] = stride_val if prev is NO_HOME_SCORE else sympy.Min(prev, stride_val)
+                    if prev is NO_HOME_SCORE:
+                        min_stride[vname] = stride_val
+                    # A stride the minimum already holds leaves it as it is; rebuilding the ``Min`` re-compares
+                    # every argument, and a nest's accesses repeat the same few strides.
+                    elif stride_val != prev and not (isinstance(prev, sympy.Min) and stride_val in prev.args):
+                        min_stride[vname] = sympy.Min(prev, stride_val)
     return {v: (min_stride[v], total_stride[v], offset_sum[v]) for v in var_set}
 
 

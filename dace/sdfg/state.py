@@ -2511,6 +2511,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         scope_connector=None,
         internal_connector=None,
         external_connector=None,
+        symbols: Optional["SymbolResolver"] = None,
     ):
         """Adds two edges around a scope node (e.g., map entry, consume
         exit).
@@ -2538,6 +2539,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                    connect to.
         :param external_connector: The connector on external_node to
                                    connect to.
+        :param symbols: The ``SymbolResolver`` to propagate with, for a caller adding many edge pairs
+                        while the SDFG's symbols, descriptors and control flow stay unchanged.
         :return: A 2-tuple representing the (internal, external) edges.
         """
         if not isinstance(scope_node, (nd.EntryNode, nd.ExitNode)):
@@ -2584,7 +2587,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Add external edge
         if external_memlet is None:
             # If undefined, propagate
-            external_memlet = sdprop.propagate_memlet(self, internal_memlet, scope_node, True)
+            external_memlet = sdprop.propagate_memlet(self, internal_memlet, scope_node, True, symbols=symbols)
 
         if isinstance(scope_node, nd.EntryNode):
             eedge = self.add_edge(

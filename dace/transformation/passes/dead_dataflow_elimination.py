@@ -144,8 +144,14 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 descendants = reachable[state]
                 # A union has no order, so a deferred reach set is read off its bitset, not laid out.
                 members = descendants.unordered() if isinstance(descendants, ReachSet) else descendants
-                descendant_reads = set().union(*(access_sets[succ][0] for succ in members))
-                no_longer_used: set[str] = {data for data in writes if data not in descendant_reads}
+                # Only whether a descendant reads each written container matters, so the walk stops once every one
+                # of them is read somewhere below, instead of uniting every descendant's reads.
+                unread = set(writes)
+                for succ in members:
+                    if not unread:
+                        break
+                    unread -= access_sets[succ][0]
+                no_longer_used: set[str] = {data for data in writes if data in unread}
 
                 # Compute dead nodes
                 dead_nodes: list[nodes.Node] = []

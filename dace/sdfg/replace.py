@@ -120,6 +120,9 @@ def _replsym(symlist, symrepl):
 
 def symbolic_replacements(repl: dict[str, Any], symbols: dict[str, "dace.dtypes.typeclass"]) -> dict:
     """``repl`` as symbolic expressions, each name taking its dtype from ``symbols`` (its declaring SDFG)."""
+    if not repl:
+        # Nothing to parse: callers re-ask per node for an empty mapping, and the authority below is not free.
+        return {}
     with symbolic.serialization_symbol_dtypes(symbols, inherit=True):
         return {
             symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(v, str) else v
