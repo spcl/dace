@@ -1041,6 +1041,16 @@ required:
                             a specified overall larger block size. Default value is derived from hardware
                             limits on common GPUs.
 
+                    block_min_lanes:
+                        type: int
+                        title: Fewest threads on the coalesced axis of a domain-matched block
+                        default: 32
+                        description: >
+                            A multi-dimensional GPU kernel's domain-matched thread block (``SelectGPUDeviceBlockSize``)
+                            starts its coalesced axis (the one indexing the most accesses at unit stride) at this many
+                            threads, rounded up to a power of two, or the axis' extent if smaller. 32 is half a CDNA
+                            wavefront and a whole NVIDIA warp. 1 gives the plain square / cube.
+
                     block_size_lastdim_limit:
                         type: int
                         title: Maximum last dimension thread-block size in code generation

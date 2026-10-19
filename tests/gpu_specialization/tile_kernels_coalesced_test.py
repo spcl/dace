@@ -57,8 +57,8 @@ def test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(prog
         maps[dtypes.ScheduleType.GPU_ThreadBlock],
         maps[dtypes.ScheduleType.Sequential],
     )
-    # The domain-matched block the offload chose for a 2-D map: a 256-thread square, x on the coalesced axis.
-    assert list(grid.map.gpu_block_size) == [16, 16, 1]
+    # The domain-matched block the offload chose for a 2-D map: 256 threads, 32 lanes on the coalesced axis.
+    assert list(grid.map.gpu_block_size) == [32, 8, 1]
     assert block.map.params[-1].endswith(coalesced) and block.map.params[-2].endswith(outer), block.map.params
     assert thread.map.params == [outer, coalesced] and str(thread.map.range.size()[0]) != "1"
     sdfg.validate()

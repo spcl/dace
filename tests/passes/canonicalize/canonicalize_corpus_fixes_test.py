@@ -423,8 +423,8 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
         if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
     assert gpu_maps, "offload_to_gpu should move the loop nest to a GPU_Device map"
-    # Both extents are symbolic, so the domain counts as square and takes the square of 256.
-    want = [16, 16, 1]
+    # Both extents are symbolic, so the domain counts as square: 256 threads, 32 lanes on the contiguous axis.
+    want = [32, 8, 1]
     assert any(n.map.gpu_block_size == want for n in gpu_maps), (
         f"N x N map should get a {want[0]}x{want[1]} block, got {[n.map.gpu_block_size for n in gpu_maps]}"
     )

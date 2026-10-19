@@ -16,12 +16,19 @@ from dace.transformation.passes.gpu_block_size_selection import (
 N = dace.symbol("N")
 M = dace.symbol("M")
 
-#: The expected shapes: a line of 512, a square of 256, rectangles following a skewed domain.
+#: The expected shapes: a line of 512, 256 threads with 32 lanes on the coalesced axis.
 BLOCK_1D = [512, 1, 1]
+BLOCK_2D = [32, 8, 1]
+#: Without the lane floor (``compiler.cuda.block_min_lanes`` 1): a square of 256, rectangles following a skewed domain.
 BLOCK_2D_SQUARE = [16, 16, 1]
 #: ``i`` over 256, ``j`` (contiguous, ``x``) over 1024: four times as wide on ``x``.
 BLOCK_2D_WIDE_X = [32, 8, 1]
 BLOCK_2D_WIDE_Y = [8, 32, 1]
+
+
+def without_lane_floor():
+    """The plain domain-matched shape: no axis starts wider than one thread."""
+    return dace.config.set_temporary("compiler", "cuda", "block_min_lanes", value=1)
 
 
 def make_device_map(params, ranges):
@@ -37,12 +44,14 @@ def test_pick_block_size_1d():
 def test_pick_block_size_2d_square_symbolic():
     # Symbolic extents are assumed large and roughly equal -> square block.
     m = make_device_map(["i", "j"], [(0, N - 1, 1), (0, M - 1, 1)])
-    assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
+    with without_lane_floor():
+        assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
 
 
 def test_pick_block_size_2d_square_constant():
     m = make_device_map(["i", "j"], [(0, 1023, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
+    with without_lane_floor():
+        assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
 
 
 def test_pick_block_size_2d_skewed_last_dim_wide():
@@ -54,7 +63,8 @@ def test_pick_block_size_2d_skewed_last_dim_wide():
 def test_pick_block_size_2d_skewed_outer_dim_wide():
     # Outer (threadIdx.y) dimension is 4x larger -> 32 on y.
     m = make_device_map(["i", "j"], [(0, 1023, 1), (0, 255, 1)])
-    assert pick_gpu_block_size(m) == BLOCK_2D_WIDE_Y
+    with without_lane_floor():
+        assert pick_gpu_block_size(m) == BLOCK_2D_WIDE_Y
 
 
 def make_wcr_reduction_sdfg():
@@ -104,15 +114,30 @@ def test_experimental_codegen_gets_deep_block_with_the_flag_off():
 
 
 def test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis():
-    m = make_device_map(["i", "j"], [(0, 599, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == [16, 16, 1]
-    m = make_device_map(["i", "j"], [(0, 299, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == [32, 8, 1]
+    with without_lane_floor():
+        m = make_device_map(["i", "j"], [(0, 599, 1), (0, 1023, 1)])
+        assert pick_gpu_block_size(m) == [16, 16, 1]
+        m = make_device_map(["i", "j"], [(0, 299, 1), (0, 1023, 1)])
+        assert pick_gpu_block_size(m) == [32, 8, 1]
 
 
 def test_pick_block_size_3d_is_a_cube():
     m = make_device_map(["i", "j", "k"], [(0, N - 1, 1), (0, N - 1, 1), (0, N - 1, 1)])
-    assert pick_gpu_block_size(m) == [8, 8, 8]
+    with without_lane_floor():
+        assert pick_gpu_block_size(m) == [8, 8, 8]
+
+
+def test_the_coalesced_axis_starts_at_32_lanes():
+    """Half a CDNA wavefront (a whole NVIDIA warp) of contiguous elements per load, wherever the domain is wider; the
+    rest of the block still follows the domain."""
+    assert pick_gpu_block_size(make_device_map(["i", "j"], [(0, N - 1, 1), (0, M - 1, 1)])) == BLOCK_2D
+    assert pick_gpu_block_size(make_device_map(["i", "j"], [(0, 1023, 1), (0, 255, 1)])) == [32, 8, 1]
+    assert pick_gpu_block_size(make_device_map(["i", "j", "k"], [(0, N - 1, 1)] * 3)) == [32, 4, 4]
+    # The unit-stride axis takes the lanes, not ``x``; an axis narrower than the floor keeps its extent.
+    assert domain_matched_block([N, N], [0, 1]) == [8, 32, 1]
+    assert domain_matched_block([8, N]) == [8, 32, 1]
+    with dace.config.set_temporary("compiler", "cuda", "block_min_lanes", value=64):
+        assert domain_matched_block([N, N]) == [64, 4, 1]
 
 
 def test_pick_block_size_4d_leaves_default():
@@ -173,8 +198,8 @@ def device_maps(sdfg):
 def test_pass_assigns_2d_square():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     assigned = select_gpu_device_block_size(sdfg)
-    assert assigned == {"kernel_map": BLOCK_2D_SQUARE}
-    assert device_maps(sdfg)[0].gpu_block_size == BLOCK_2D_SQUARE
+    assert assigned == {"kernel_map": BLOCK_2D}
+    assert device_maps(sdfg)[0].gpu_block_size == BLOCK_2D
 
 
 def test_pass_does_not_override_user_block_size():
@@ -202,7 +227,7 @@ def test_gpu_transform_end_to_end():
     assert len(dmaps) == 1
     assert dmaps[0].gpu_block_size is None  # transform leaves it unset
     select_gpu_device_block_size(sdfg)
-    assert dmaps[0].gpu_block_size == BLOCK_2D_SQUARE
+    assert dmaps[0].gpu_block_size == BLOCK_2D
 
 
 def test_gpu_transform_1d_end_to_end():
@@ -304,7 +329,7 @@ def test_pass_is_idempotent():
     select_gpu_device_block_size(sdfg)
     # Re-running assigns nothing (already set) and preserves the value.
     assert select_gpu_device_block_size(sdfg) == {}
-    assert device_maps(sdfg)[0].gpu_block_size == BLOCK_2D_SQUARE
+    assert device_maps(sdfg)[0].gpu_block_size == BLOCK_2D
 
 
 if __name__ == "__main__":
@@ -315,6 +340,7 @@ if __name__ == "__main__":
     test_pick_block_size_2d_skewed_outer_dim_wide()
     test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis()
     test_pick_block_size_3d_is_a_cube()
+    test_the_coalesced_axis_starts_at_32_lanes()
     test_pick_block_size_4d_leaves_default()
     test_a_small_axis_hands_its_threads_to_the_unit_stride_axis()
     test_a_domain_smaller_than_the_block_keeps_only_the_threads_it_uses()

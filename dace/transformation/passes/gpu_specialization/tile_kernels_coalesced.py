@@ -16,7 +16,7 @@ instead::
 outermost other parameter (``threadIdx.y``); each thread walks ``factor`` consecutive points of it, so the block
 reuses what neighbouring points of ``o`` read (a stencil's rows). The block keeps the domain-matched shape
 :mod:`~dace.transformation.passes.gpu_block_size_selection` chose (``x`` on ``c``, ``y`` on ``o``, ``z`` on the
-next parameter); without one it is ``LANES x 256 / LANES``.
+next parameter); without one it is ``block_min_lanes x block_threads / block_min_lanes``.
 
 A one-parameter kernel is not coarsened (folding a streaming map measured no gain on MI300A, see
 :mod:`~dace.transformation.passes.gpu_specialization.grid_stride_kernels`): it only gets a ``block_threads``-wide
@@ -25,34 +25,22 @@ block, which ``AddThreadBlockMaps`` then makes explicit.
 
 from typing import Any
 
-from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
+from dace import SDFG, SDFGState, dtypes, properties, subsets
+from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
+from dace.transformation.passes.gpu_block_size_selection import unit_stride_counts
 from dace.transformation.passes.gpu_specialization.block_tile_kernels import is_kernel
 
-#: Threads along the coalesced axis of a multi-dimensional kernel: one MI300A wavefront.
-LANES = 64
-
-
 def coalesced_param(state: SDFGState, entry: nodes.MapEntry, sdfg: SDFG) -> str:
-    """The parameter of ``entry`` that indexes the unit-stride dimension of the most accesses in its scope; the last
-    parameter on a tie (the order the frontend and canonicalization already chose)."""
-    params = entry.map.params
-    counts = dict.fromkeys(params, 0)
-    for edge in state.scope_subgraph(entry, include_entry=False, include_exit=False).edges():
-        memlet = edge.data
-        desc = sdfg.arrays.get(memlet.data) if memlet.data else None
-        if not isinstance(desc, data.Array) or memlet.subset is None or len(desc.strides) == 0:
-            continue
-        unit = [d for d, stride in enumerate(desc.strides) if symbolic.issymbolic(stride) is False and stride == 1]
-        for dim in unit:
-            begin = memlet.subset.ndrange()[dim][0]
-            for name in {str(s) for s in symbolic.pystr_to_symbolic(begin).free_symbols} & set(params):
-                counts[name] += 1
-    best = max(counts.values())
-    return [p for p in params if counts[p] == best][-1]
+    """The parameter of ``entry`` that indexes the unit-stride dimension of the most accesses in its scope (counted
+    as :func:`~dace.transformation.passes.gpu_block_size_selection.unit_stride_counts` counts them for the block
+    shape); the last parameter on a tie (the order the frontend and canonicalization already chose)."""
+    counts = unit_stride_counts(sdfg, state, entry)[::-1]
+    best = max(counts)
+    return [p for p, count in zip(entry.map.params, counts) if count == best][-1]
 
 
 @properties.make_properties
@@ -102,7 +90,8 @@ class TileKernelsCoalesced(ppl.Pass):
         sequential loop of ``factor`` points of ``outer`` per thread."""
         # threadIdx.x is the last parameter of the thread-block map, .y the one before it.
         rest = [p for p in kernel.map.params if p not in (coalesced, outer)]
-        bx, by, bz = [int(b) for b in (kernel.map.gpu_block_size or [LANES, max(1, self.block_threads // LANES), 1])]
+        lanes = Config.get("compiler", "cuda", "block_min_lanes")
+        bx, by, bz = [int(b) for b in (kernel.map.gpu_block_size or [lanes, max(1, self.block_threads // lanes), 1])]
         perm = [kernel.map.params.index(p) for p in rest + [outer, coalesced]]
         ranges = kernel.map.range.ranges
         kernel.map.params = [kernel.map.params[i] for i in perm]
