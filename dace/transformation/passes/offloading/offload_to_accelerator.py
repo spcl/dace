@@ -1027,6 +1027,10 @@ class OffloadToAccelerator(ppl.Pass):
         def walk(state: SDFGState, entry, host_level: bool) -> None:
             for node in self.cached_scope_children[state].get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
+                    if host_level and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                        # Offloaded before (a partial or repeated offload): its interior is resolved already,
+                        # thread-block maps included, so it is left as it is.
+                        continue
                     pinned = node in self._host_pinned
                     is_kernel = self.is_kernel(node, host_level)
                     self.set_schedule(

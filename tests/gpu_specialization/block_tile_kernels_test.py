@@ -259,7 +259,8 @@ def test_a_small_block_axis_is_not_strided_across_the_lanes():
     offload_to_gpu(sdfg)
     finalize_for_target(sdfg, "gpu")
     assert maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
-    assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+    lanes = [p for e in maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock) for p in e.map.params]
+    assert not [p for p in lanes if p.endswith("jb")], lanes
 
 
 @pytest.mark.gpu

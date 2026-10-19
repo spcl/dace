@@ -143,13 +143,14 @@ required:
 
                     gpu_coarsen_factor:
                         type: int
-                        default: 1
+                        default: 4
                         title: GPU thread coarsening factor
                         description: >
                             Points of an outer axis each thread of a multi-dimensional GPU kernel computes,
                             under an explicit thread block whose lanes walk the coalesced axis
                             (``TileKernelsCoalesced``); a one-dimensional kernel gets a 256-thread block and
-                            no coarsening. 1 disables.
+                            no coarsening. 1 disables. MI300A, 20 2-D / 3-D LLR kernels at M with 64-lane
+                            blocks: 4 is 1.05x geomean over 1 (stencils up to 1.25x).
     compiler:
         type: dict
         title: Compiler

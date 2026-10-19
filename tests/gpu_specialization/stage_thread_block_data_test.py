@@ -35,7 +35,9 @@ def canonical_gpu(name: str, dtype: dace.typeclass = dace.float64) -> dace.SDFG:
     sdfg.name = name
     canonicalize(sdfg, target="gpu")
     offload_to_gpu(sdfg)
-    finalize_for_target(sdfg, "gpu")
+    # The pass under test takes the kernel as the offload leaves it, without the coalesced tiling.
+    with dace.config.set_temporary("optimizer", "canonicalization", "gpu_coarsen_factor", value=1):
+        finalize_for_target(sdfg, "gpu")
     return sdfg
 
 
