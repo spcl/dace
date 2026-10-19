@@ -156,7 +156,10 @@ def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> li
         return None
     index, size = ix
     order = expander._ambient_order(sdfg)
-    applied: list[Any] = [expander._expand(sdfg, loop, name, index, size, order) for name in buffers]
+    touching = expander._edges_by_name(loop)
+    applied: list[Any] = [
+        expander._expand(sdfg, loop, name, index, size, order, touching.get(name, ())) for name in buffers
+    ]
     applied += [ScalarRestore(sdfg, name, desc) for name, desc in replaced.items() if name in buffers]
     return applied
 
@@ -267,7 +270,8 @@ class BufferExpansion(ppl.Pass):
             if order is None:
                 order = self._ambient_order(sdfg)
             index, size = ix
-            applied = [self._expand(sdfg, loop, arr, index, size, order) for arr in buffers]
+            touching = self._edges_by_name(loop)
+            applied = [self._expand(sdfg, loop, arr, index, size, order, touching.get(arr, ())) for arr in buffers]
             before = lift_context[:]
             lift_context.clear()
             if self._loop_mappable(sdfg, loop):
@@ -665,8 +669,32 @@ class BufferExpansion(ppl.Pass):
 
     # expansion
 
-    def _expand(self, sdfg: SDFG, loop: LoopRegion, name: str, index, size, ambient: str) -> _Expansion:
-        """Add the loop-indexed dimension to ``name``'s descriptor and every access in ``loop``."""
+    @staticmethod
+    def _edges_by_name(loop: LoopRegion) -> dict[str, list[Any]]:
+        """The edges of ``loop``'s states, in state and edge order, under every name :meth:`_expand` can rewrite
+        them for: their memlet's container and the container of each access-node endpoint."""
+        touching: dict[str, list[Any]] = {}
+        for state in loop.states():
+            for edge in state.edges():
+                if edge.data is None:
+                    continue
+                names = {edge.data.data}
+                for node in (edge.src, edge.dst):
+                    if isinstance(node, nodes.AccessNode):
+                        names.add(node.data)
+                for name in names:
+                    touching.setdefault(name, []).append(edge)
+        return touching
+
+    def _expand(
+        self, sdfg: SDFG, loop: LoopRegion, name: str, index, size, ambient: str, touching: Any = None
+    ) -> _Expansion:
+        """Add the loop-indexed dimension to ``name``'s descriptor and every access in ``loop``.
+
+        :param touching: ``name``'s entry of :meth:`_edges_by_name`, built before the first of a batch of
+                         expansions; an expansion rewrites subsets only, so it stays exact for the batch. ``None``
+                         walks every edge of ``loop``.
+        """
         desc = sdfg.arrays[name]
         old = (list(desc.shape), list(desc.strides), desc.total_size, list(desc.offset))
 
@@ -685,31 +713,32 @@ class BufferExpansion(ppl.Pass):
 
         edits: list[tuple[Any, str, Any]] = []
         seen: set[int] = set()
-        for state in loop.states():
-            for edge in state.edges():
-                if id(edge) in seen or edge.data is None:
-                    continue
-                memlet = edge.data
-                # ``subset`` addresses ``memlet.data``, ``other_subset`` the opposite endpoint. On a
-                # self-copy ``A -> A`` BOTH sides address ``name``, so both must gain the new index;
-                # an if/elif keyed on the data name rewrites one and leaves the other at the old rank.
-                self_copy = (
-                    isinstance(edge.src, nodes.AccessNode)
-                    and isinstance(edge.dst, nodes.AccessNode)
-                    and edge.src.data == name
-                    and edge.dst.data == name
-                )
-                rewrote = False
-                if memlet.data == name and memlet.subset is not None:
-                    edits.append((memlet, "subset", memlet.subset))
-                    memlet.subset = _insert_index(memlet.subset, index, axis)
-                    rewrote = True
-                if memlet.other_subset is not None and self._touches(edge, name) and (self_copy or not rewrote):
-                    edits.append((memlet, "other_subset", memlet.other_subset))
-                    memlet.other_subset = _insert_index(memlet.other_subset, index, axis)
-                    rewrote = True
-                if rewrote:
-                    seen.add(id(edge))
+        if touching is None:
+            touching = [edge for state in loop.states() for edge in state.edges()]
+        for edge in touching:
+            if id(edge) in seen or edge.data is None:
+                continue
+            memlet = edge.data
+            # ``subset`` addresses ``memlet.data``, ``other_subset`` the opposite endpoint. On a
+            # self-copy ``A -> A`` BOTH sides address ``name``, so both must gain the new index;
+            # an if/elif keyed on the data name rewrites one and leaves the other at the old rank.
+            self_copy = (
+                isinstance(edge.src, nodes.AccessNode)
+                and isinstance(edge.dst, nodes.AccessNode)
+                and edge.src.data == name
+                and edge.dst.data == name
+            )
+            rewrote = False
+            if memlet.data == name and memlet.subset is not None:
+                edits.append((memlet, "subset", memlet.subset))
+                memlet.subset = _insert_index(memlet.subset, index, axis)
+                rewrote = True
+            if memlet.other_subset is not None and self._touches(edge, name) and (self_copy or not rewrote):
+                edits.append((memlet, "other_subset", memlet.other_subset))
+                memlet.other_subset = _insert_index(memlet.other_subset, index, axis)
+                rewrote = True
+            if rewrote:
+                seen.add(id(edge))
         return _Expansion(name, desc, old[0], old[1], old[2], old[3], edits)
 
     @staticmethod
