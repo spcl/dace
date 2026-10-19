@@ -249,12 +249,13 @@ class ExpandFindFirstAuto(ExpandTransformation):
 
 
 def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> list[tuple[str, str]]:
-    """``(connector, C++ declaration)`` per in-connector, sorted by connector name.
+    """``(name, C++ declaration)`` per in-connector and per symbol the predicate reads, sorted by name.
 
     An array read is a pointer the predicate subscripts; a loop-invariant scalar is passed by
-    value. The one list drives the functor's members, the wrapper's parameters and the call site,
-    so those three cannot drift apart, and sorting keeps the emitted text independent of edge
-    insertion order."""
+    value, and so is a symbol of :attr:`FindFirst.symbols`: the functor lives in the device
+    translation unit, where the host's symbols are not in scope (compile-time constants are). The
+    one list drives the functor's members, the wrapper's parameters and the call site, so those
+    three cannot drift apart, and sorting keeps the emitted text independent of edge insertion order."""
     out: list[tuple[str, str]] = []
     for edge in state.in_edges(node):
         if edge.dst_conn is None:
@@ -264,6 +265,13 @@ def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SD
             out.append((edge.dst_conn, f"{desc.dtype.ctype} {edge.dst_conn}"))
         else:
             out.append((edge.dst_conn, f"const {desc.dtype.ctype} *{edge.dst_conn}"))
+    passed = {name for name, _ in out}
+    symbols = [name for name in node.symbols if name not in passed and name not in sdfg.constants]
+    if symbols:
+        defined = state.symbols_defined_at(node)
+        for name in symbols:
+            dtype = defined.get(name, sdfg.symbols.get(name, dace.dtypes.int64))
+            out.append((name, f"{dtype.ctype} {name}"))
     return sorted(out)
 
 
