@@ -1119,7 +1119,7 @@ def same_value(a: Any, b: Any) -> bool:
     return bool(plain[0] == plain[1])
 
 
-def evaluate(expr: sympy.Basic | int | float, symbols: dict[symbol | str, int | float]) -> int | float | numpy.number:
+def evaluate(expr: SymbolicType | int | float, symbols: dict[symbol | str, int | float]) -> int | float | numpy.number:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.

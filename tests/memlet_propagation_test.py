@@ -340,6 +340,33 @@ def test_a_strided_range_keeps_the_dtype_of_its_bound_symbols():
     sdfg.validate()
 
 
+def test_a_nested_symbol_named_like_an_outer_one_widens_the_border_memlet():
+    """The nest assigns its own ``k``; the parent's ``k`` (assigned before the nest) never reaches it, because the
+    nest maps no symbols. The border memlet must not name ``k``: it covers the whole array."""
+    inner = dace.SDFG("writes_at_own_k")
+    inner.add_array("a", [10], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    first = inner.add_state("first", is_start_block=True)
+    write = inner.add_state("write")
+    inner.add_edge(first, write, dace.InterstateEdge(assignments={"k": "3"}))
+    tasklet = write.add_tasklet("one", {}, {"o": None}, "o = 1.0")
+    write.add_edge(tasklet, "o", write.add_write("a"), None, dace.Memlet("a[k]"))
+
+    sdfg = dace.SDFG("outer_k")
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    host = sdfg.add_state("host")
+    sdfg.add_edge(start, host, dace.InterstateEdge(assignments={"k": "5"}))
+    nest = host.add_nested_sdfg(inner, {}, {"a": None}, symbol_mapping={})
+    host.add_edge(nest, "a", host.add_write("a"), None, dace.Memlet("a[0:10]"))
+
+    propagate_memlets_sdfg(sdfg)
+
+    (border,) = host.out_edges(nest)
+    assert border.data.subset == dace.subsets.Range([(0, 9, 1)])
+
+
 def test_undefined_symbol_propagation():
     """A subset over a symbol undefined outside the scope (e.g. one a nested scope assigns) propagates to the whole
     array, whether the undefined name is given as a string or as a symbol; a defined one propagates exactly (#2293)."""

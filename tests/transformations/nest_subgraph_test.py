@@ -833,11 +833,6 @@ def test_a_symbol_the_start_block_resets_is_bound_inside_not_an_argument():
     assert b[0] == 4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="SDFG.free_symbols drops a symbol the SDFG assigns anywhere, even one read before the assignment, "
-    "so the nest warns that it maps an unused k",
-)
 def test_a_symbol_the_start_block_reads_before_the_reset_stays_mapped():
     """The start block reads ``k`` before ``k = 0`` runs, so the parent's ``k`` is live and must cross the boundary."""
     sdfg, blocks = symbol_reset_then_loop(start_reads_k=True)

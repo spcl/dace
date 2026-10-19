@@ -32,7 +32,7 @@ from dace.subsets import Range, union
 
 
 def nest_sdfg_subgraph(
-    sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | None = None, keep_outside: Collection[str] = ()
+    sdfg: SDFG, subgraph: SubgraphView, start: ControlFlowBlock | None = None, keep_outside: Collection[str] = ()
 ) -> SDFGState:
     """
     Nests an SDFG subgraph (SDFGStates and InterstateEdges).
