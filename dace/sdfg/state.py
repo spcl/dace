@@ -86,10 +86,14 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def conditions_are_exhaustive(conditions: tuple[str, ...]) -> bool:
-    """Whether at least one of ``conditions`` always holds; a condition SymPy cannot parse makes the answer False."""
+def last_condition_negates_the_others(conditions: tuple[str, ...]) -> bool:
+    """Whether the last of ``conditions`` is the negation of all earlier ones, the test ControlFlowRaising uses to emit
+    an else arm; a condition SymPy cannot parse makes the answer False."""
+    if len(conditions) < 2:
+        return False
     try:
-        return sympy.Or(*(symbolic.pystr_to_symbolic(condition) for condition in conditions)).simplify() is sympy.true
+        parsed = [symbolic.pystr_to_symbolic(condition) for condition in conditions]
+        return parsed[-1] == sympy.Not(sympy.Or(*parsed[:-1]))
     except (TypeError, ValueError, SyntaxError):
         return False
 
@@ -4341,7 +4345,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         entry_defined, entry_partial = set(defined_syms), set(partially_defined)
         # Assigned on every path through the block; without an else arm, also on the path that skips every branch
         conditions = tuple(condition.as_string for condition, _ in self._branches if condition is not None)
-        has_else = len(conditions) < len(self._branches) or conditions_are_exhaustive(conditions)
+        has_else = len(conditions) < len(self._branches) or last_condition_negates_the_others(conditions)
         must_defined: set[str] | None = None if has_else else entry_defined - entry_partial
         for condition, region in self._branches:
             branch_defined, branch_partial = set(entry_defined), set(entry_partial)

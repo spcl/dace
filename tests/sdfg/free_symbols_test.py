@@ -281,22 +281,37 @@ def test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free():
     assert "k" in sdfg.free_symbols
 
 
-def test_a_symbol_assigned_by_branches_whose_conditions_cover_every_case_is_not_free():
-    """``a[0] > 0`` and ``a[0] <= 0`` leave no path past the block, so both arms assign ``k`` before the join reads it."""
-    sdfg = symbol_sdfg("exhaustive_branch_assignment")
+def branch_assignments(name: str, conditions: tuple[str, ...]) -> dace.SDFG:
+    """Each of ``conditions`` guards a branch that assigns ``k``; a state after the block reads ``k``."""
+    sdfg = symbol_sdfg(name)
     block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
-    for label, condition in (("then", "a[0] > 0"), ("other", "a[0] <= 0")):
-        arm = dace.sdfg.state.ControlFlowRegion(label, sdfg=sdfg, parent=block)
+    for index, condition in enumerate(conditions):
+        arm = dace.sdfg.state.ControlFlowRegion(f"arm_{index}", sdfg=sdfg, parent=block)
         arm.add_edge(
-            arm.add_state(f"{label}_first", is_start_block=True),
-            arm.add_state(f"{label}_second"),
+            arm.add_state(f"arm_{index}_first", is_start_block=True),
+            arm.add_state(f"arm_{index}_second"),
             dace.InterstateEdge(assignments={"k": "1"}),
         )
         block.add_branch(dace.sdfg.state.CodeBlock(condition), arm)
     sdfg.add_node(block, is_start_block=True)
     sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
+    return sdfg
+
+
+def test_a_symbol_assigned_by_branches_whose_last_condition_negates_the_others_is_not_free():
+    """``a[0] <= 0`` is the negation of ``a[0] > 0``, the else arm ControlFlowRaising would emit, so no path skips both
+    assignments."""
+    sdfg = branch_assignments("complement_branch_assignment", ("a[0] > 0", "a[0] <= 0"))
 
     assert "k" not in sdfg.free_symbols
+
+
+def test_a_symbol_assigned_by_branches_whose_conditions_are_not_a_negation_stays_free():
+    """``a[0] > 1`` and ``a[0] < 3`` cover every integer, but neither is the negation of the other, so the block keeps
+    a path that skips both assignments."""
+    sdfg = branch_assignments("overlapping_branch_assignment", ("a[0] > 1", "a[0] < 3"))
+
+    assert "k" in sdfg.free_symbols
 
 
 def test_a_symbol_assigned_on_every_path_before_its_read_is_not_free():
