@@ -27,26 +27,41 @@ def _is_carried_reduction_accumulator(sdfg, name: str) -> bool:
     :param name: The data descriptor name to classify.
     :returns: ``True`` if ``name`` is a cross-state WCR accumulator.
     """
-    desc = sdfg.arrays.get(name)
-    if desc is None or not desc.transient:
+    return _any_carried_reduction_accumulator(sdfg, (name,))
+
+
+def _any_carried_reduction_accumulator(sdfg, names) -> bool:
+    """Whether one of ``names`` is a :func:`_is_carried_reduction_accumulator`, in ONE walk of the SDFG tree."""
+    candidates = set()
+    for name in names:
+        desc = sdfg.arrays.get(name)
+        if desc is None or not desc.transient:
+            continue
+        if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and desc.total_size == 1):
+            candidates.add(name)
+    if not candidates:
         return False
-    if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and desc.total_size == 1)):
-        return False
-    seen_states = 0
-    is_wcr_target = False
+    seen_states = dict.fromkeys(candidates, 0)
+    is_wcr_target = dict.fromkeys(candidates, False)
     for sub in sdfg.all_sdfgs_recursive():
-        if name not in sub.arrays:
+        here = candidates & sub.arrays.keys()
+        if not here:
             continue
         for state in sub.states():
-            nodes_here = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == name]
-            if not nodes_here:
-                continue
-            seen_states += 1
-            if not is_wcr_target:
-                is_wcr_target = any(
-                    e.data is not None and e.data.wcr is not None for n in nodes_here for e in state.in_edges(n)
-                )
-    return seen_states > 1 and is_wcr_target
+            nodes_here: dict[str, list[nodes.AccessNode]] = {}
+            for n in state.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data in here:
+                    nodes_here.setdefault(n.data, []).append(n)
+            for name, accesses in nodes_here.items():
+                seen_states[name] += 1
+                if not is_wcr_target[name]:
+                    is_wcr_target[name] = any(
+                        e.data is not None and e.data.wcr is not None for n in accesses for e in state.in_edges(n)
+                    )
+                # Both counts only grow, so the verdict is final once reached
+                if seen_states[name] > 1 and is_wcr_target[name]:
+                    return True
+    return False
 
 
 @make_properties
@@ -135,9 +150,7 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         # staged from an array, reduced via WCR, and written back) must survive:
         # eliminating it splices the array element straight onto the WCR-written
         # scalar and drops the accumulator's carry (ludcmp's LU update -> zero).
-        if _is_carried_reduction_accumulator(sdfg, read_memlet.data) or _is_carried_reduction_accumulator(
-            sdfg, write_memlet.data
-        ):
+        if _any_carried_reduction_accumulator(sdfg, (read_memlet.data, write_memlet.data)):
             return False
 
         return True
