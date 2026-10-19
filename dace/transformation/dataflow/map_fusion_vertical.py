@@ -454,12 +454,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Tests for read write conflicts of the two maps, this is only checking
         #  the data that goes through the scope nodes. `has_inner_read_write_dependency()`
         #  if used to check if there are internal dependencies.
+        # Both tests below compare subsets at the facts inside the first Map; one resolver derives them once.
+        symbols = SymbolResolver()
         if self.has_read_write_dependency(
             first_map_entry=first_map_entry,
             second_map_entry=second_map_entry,
             param_repl=param_repl,
             state=graph,
             sdfg=sdfg,
+            symbols=symbols,
         ):
             return False
 
@@ -472,6 +475,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             first_map_exit=first_map_exit,
             second_map_entry=second_map_entry,
             param_repl=param_repl,
+            symbols=symbols,
         )
         if output_partition is None:
             return False
@@ -755,6 +759,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         first_map_exit: nodes.MapExit,
         second_map_entry: nodes.MapEntry,
         param_repl: dict[str, str],
+        symbols: SymbolResolver | None = None,
     ) -> (
         tuple[
             OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
@@ -794,6 +799,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param second_map_entry: The entry node of the second Map.
         :param param_repl: Use this Map to rename the parameter of the second Map, such
             that they match the one of the first Map.
+        :param symbols: The resolver of a probe asking several questions of the unchanged state, if any.
 
         :note: The output of this function is affected by the value of `self.assume_always_shared`,
             `require_all_intermediates` and by `self.require_exclusive_intermediates`.
@@ -807,7 +813,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         processed_inter_nodes: OrderedSet[nodes.Node] = OrderedSet()
 
         # The producer subsets, and the consumer subsets once renamed, are written in the first Map's parameters
-        facts = SymbolResolver().facts_at(state, first_map_exit)
+        facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, first_map_exit)
 
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(first_map_exit):
@@ -1723,6 +1729,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         param_repl: dict[str, str],
         state: dace.SDFGState,
         sdfg: SDFG,
+        symbols: SymbolResolver | None = None,
     ) -> bool:
         """Test if there is a read write dependency between the two maps to be fused.
 
@@ -1750,13 +1757,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param param_repl: Dict that describes how to rename the parameters of the second Map.
         :param state: The state on which we operate.
         :param sdfg: The SDFG on which we operate.
+        :param symbols: The resolver of a probe asking several questions of the unchanged state, if any.
         """
         first_map_exit: nodes.MapExit | None = mfhelper.safe_exit_node(state, first_map_entry)
         second_map_exit: nodes.MapExit | None = mfhelper.safe_exit_node(state, second_map_entry)
         if first_map_exit is None or second_map_exit is None:
             return True
         # Every subset compared is written in the first Map's parameters
-        facts = SymbolResolver().facts_at(state, first_map_exit)
+        facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, first_map_exit)
 
         # Get the read and write sets of the different maps, note that Views
         #  are not resolved yet.
