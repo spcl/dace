@@ -13,8 +13,11 @@ metadata) use the `.sdfg` encodings, so the parsers of `Dace.SDFG.Json` are
 reused.
 
 Rejected at import (`Decisions.md#D48`): `StateBoundaryNode`s (`#D19`),
-empty memlets attached to code nodes or copies, unknown node types, and
-conditions / assignment values the expression parser does not accept.
+unknown node types, conditions / assignment values the expression parser does
+not accept, and empty memlets where a node needs data (views, reference sets,
+dynamic-scope copies).  Empty memlets of code nodes and copies are dropped
+(`#D57`): a code node keeps its other memlets, a `CopyNode` with an empty
+memlet moves no data and is dropped altogether.
 
 This module is executable tooling: it is not reasoned about.
 -/
@@ -46,17 +49,20 @@ def memletOf (j : Json) : P Memlet := do
   | some m => pure m
   | none => throw "empty memlet where a data memlet is required"
 
-/-- `in_memlets` / `out_memlets`: `{"kind": "dict"|"set", "items": [...]}`. -/
+/-- `in_memlets` / `out_memlets`: `{"kind": "dict"|"set", "items": [...]}`.
+Empty memlets are dropped (`Decisions.md#D57`): in a sequential sibling list
+they carry no ordering beyond the list's own. -/
 def memletMap (j : Json) : P MemletMap := do
   let kind ← strField j "kind"
   let items ← (← field j "items").getArr?
   match kind with
   | "dict" =>
-    MemletMap.dict <$> items.toList.mapM fun it => do
+    let entries ← items.toList.mapM fun it => do
       match (← it.getArr?).toList with
-      | [c, m] => do pure (← str c, ← memletOf m)
+      | [c, m] => do pure ((← str c, ·) <$> (← memlet? m))
       | _ => throw "malformed memlet dictionary entry"
-  | "set" => MemletMap.set <$> items.toList.mapM memletOf
+    pure (.dict entries.reduceOption)
+  | "set" => do pure (.set (← items.toList.mapM memlet?).reduceOption)
   | other => throw s!"unknown memlet mapping kind '{other}'"
 
 /-- Loop metadata (`serialize._loop_to_json`). -/
@@ -79,52 +85,19 @@ def singleDesc (name : String) (j : Json) : P DataDesc := do
   | some (_, d) => pure d
   | none => throw s!"empty data descriptor for '{name}'"
 
-/-- Render a JSON value as Python would print the property (for
-`LibraryCall.as_string`). -/
-partial def pyRepr (j : Json) : String :=
-  match j with
-  | .null => "None"
-  | .bool b => if b then "True" else "False"
-  | .num n => if n.exponent = 0 then toString n.mantissa else toString n
-  | .str s => s
-  | .arr a => s!"[{", ".intercalate (a.toList.map pyRepr)}]"
-  | .obj _ => j.compress
-
-/-- Strip surrounding whitespace. -/
-def strip (s : String) : String :=
-  String.ofList ((s.toList.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace).reverse
-
-/-- `LambdaProperty.to_string` re-prints a lambda through Python's AST
-(`unparse(ast.parse(text))`), which drops redundant parentheses:
-`(lambda x, y: (x + y))` becomes `lambda x, y: x + y`.  Reproduced for
-two-argument lambdas whose body the expression parser accepts; other text is
-kept verbatim. -/
-def lambdaRepr (text : String) : String :=
-  let s := strip text
-  let s := if s.startsWith "(" && s.endsWith ")" && (strip (String.ofList (s.toList.drop 1))).startsWith "lambda"
-           then strip (String.ofList (s.toList.drop 1 |>.dropLast)) else s
-  match s.toList.findIdx? (· = ':') with
-  | none => text
-  | some colon =>
-    let header := strip (String.ofList (s.toList.take colon))
-    let body := String.ofList (s.toList.drop (colon + 1))
-    if !header.startsWith "lambda" then text
-    else
-      let params := ((String.ofList (header.toList.drop "lambda".length)).splitOn ",").map strip
-      match Expr.parse? body with
-      | some e => s!"lambda {", ".intercalate params}: {e.toPy}"
-      | none => text
-
-/-- The node's own properties for printing (`Decisions.md#D56`): known for
-`Reduce` (`axes`, `wcr`, `identity`, in declaration order), empty otherwise. -/
-def libraryProps (classpath : String) (a : Json) : List (String × String) :=
-  if classpath.endsWith ".Reduce" then
-    ["axes", "wcr", "identity"].map fun k =>
-      let v := (a.getObjVal? k).toOption.getD .null
-      match k, v with
-      | "wcr", .str lam => (k, lambdaRepr lam)
-      | _, _ => (k, pyRepr v)
-  else []
+/-- The library node's own properties as DaCe prints them
+(`LibraryCall.own_properties`, `Decisions.md#D56`): `[name, text]` pairs in
+declaration order, stored by `serialize.py` next to the node because the
+node's attributes omit default values and JSON objects lose the declaration
+order.  Kept as source text only; the semantics reads the node's attributes. -/
+def libraryProps (j : Json) : P (List (String × String)) := do
+  match field? j "own_properties" with
+  | none => pure []
+  | some ps =>
+    (← ps.getArr?).toList.mapM fun p => do
+      match (← p.getArr?).toList with
+      | [k, v] => do pure (← str k, ← str v)
+      | _ => throw "malformed library node property"
 
 /-- Guids and class names of all code nodes (for `RefSetNode` sources). -/
 partial def codeNodeGuids (j : Json) : List (String × String) :=
@@ -139,13 +112,18 @@ partial def codeNodeGuids (j : Json) : List (String × String) :=
     | _ => []
   own ++ children
 
-partial def node (guids : List (String × String)) (j : Json) : P SNode := do
+/-- Import one node; `none` for a node that is dropped (a `CopyNode` with an
+empty memlet, `Decisions.md#D57`). -/
+partial def node (guids : List (String × String)) (j : Json) : P (Option SNode) := do
   let t ← strField j "type"
+  if t = "CopyNode" then
+    let target ← strField j "target"
+    return (← memlet? (← field j "memlet")).map (SNode.copyNode target)
   let children ← match field? j "children" with
-    | some (.arr cs) => cs.toList.mapM (node guids)
+    | some (.arr cs) => List.reduceOption <$> cs.toList.mapM (node guids)
     | some _ => throw "children is not a list"
     | none => pure []
-  match t with
+  some <$> match t with
   | "NamedRegionScope" => pure (.namedRegion ((strField? j "label").getD "") children)
   | "GBlock" => pure (.gblock children)
   | "StateLabel" => SNode.stateLabel <$> strField j "state"
@@ -175,9 +153,8 @@ partial def node (guids : List (String × String)) (j : Json) : P SNode := do
   | "LibraryCall" => do
     let n ← field j "node"
     let lib ← libNodeOf n ((strField? n "label").getD "")
-    pure (.libraryCall lib (libraryProps lib.classpath (attrs n))
+    pure (.libraryCall lib (← libraryProps j)
             (← memletMap (← field j "in_memlets")) (← memletMap (← field j "out_memlets")))
-  | "CopyNode" => do pure (.copyNode (← strField j "target") (← memletOf (← field j "memlet")))
   | "DynScopeCopyNode" => do pure (.dynScopeCopy (← strField j "target") (← memletOf (← field j "memlet")))
   | "ViewNode" => do
     let target ← strField j "target"
@@ -231,7 +208,7 @@ def root (j : Json) : P STree := do
       es.mapM fun (k, v) => do pure (k, ← str v)
   let guids := codeNodeGuids j
   let children ← match field? j "children" with
-    | some (.arr cs) => cs.toList.mapM (node guids)
+    | some (.arr cs) => List.reduceOption <$> cs.toList.mapM (node guids)
     | some _ => throw "children is not a list"
     | none => pure []
   pure { name, containers := containers.flatten, symbols, constants, argNames, callbackMapping, children }

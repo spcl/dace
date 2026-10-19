@@ -143,8 +143,9 @@ inductive SNode where
   | mapScope (map : MapNode) (children : List SNode)
   | consumeScope (consume : ConsumeNode) (children : List SNode)
   | taskletNode (t : Tasklet) (ins outs : MemletMap)
-  /-- `LibraryCall`; `props` are the node's own properties rendered as
-      `name=value` text for printing only. -/
+  /-- `LibraryCall`; `props` are the node's own properties as `(name, text)`
+      pairs in declaration order (`LibraryCall.own_properties`), for printing
+      only (`Decisions.md#D56`). -/
   | libraryCall (l : LibNode) (props : List (String × String)) (ins outs : MemletMap)
   /-- `CopyNode`: `target[other_subset] = memlet.data[memlet.subset]`. -/
   | copyNode (target : Name) (memlet : Memlet)
@@ -525,7 +526,11 @@ def wcrStr : WcrOp → String
   | .sub => "Sub" | .div => "Div" | .exchange => "Exchange"
   | .custom _ _ body => body.toPy
 
-/-- `Memlet.__str__` (`dace/memlet.py:_label`). -/
+/-- `Memlet.__str__` (`dace/memlet.py:_label`).  With an `other_subset` the
+arrow runs from the memlet's source to its destination; `data` (with its
+subset) is printed on its own side, decided by `isDataSrc` (DaCe's
+`_is_data_src`, `None` read as `True` like `Memlet.src_subset`;
+`Decisions.md#D56`). -/
 def memletStr (m : Memlet) : String :=
   match m.dataSubset with
   | none => m.data
@@ -541,7 +546,10 @@ def memletStr (m : Memlet) : String :=
       | some op => base ++ s!" (CR: {wcrStr op})"
       | none => base
     match m.otherSubset with
-    | some o => if m.isDataSrc then base ++ s!" -> [{subsetStr o}]" else s!"[{subsetStr o}] -> " ++ base
+    | some o =>
+      let other := s!"[{subsetStr o}]"
+      let (src, dst) := if m.isDataSrc then (base, other) else (other, base)
+      s!"{src} -> {dst}"
     | none => base
 
 def memletMapStr (mm : MemletMap) : String := ", ".intercalate (mm.memlets.map memletStr)

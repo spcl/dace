@@ -62,8 +62,10 @@ same for the Python scripts).
   <inputs.json>` per file, parses its stdout (`{"containers": …}` on success,
   `{"error": …}` on a semantic error) and compares to `<name>.expected.json`
   with dtype-aware tolerances (float32 rtol 1e-5, float64 1e-9, exact for
-  int/bool). Exit 2 from the tool means "not implemented" → SKIP; a missing
-  `lake` skips everything. The run exits non-zero if any file FAILs.
+  int/bool). Exit 2 from the tool means "not implemented" → SKIP, as does an
+  `unsupported library node` error (a library node without a model, e.g.
+  `matmul_lib`'s `MatMul`); a missing `lake` skips everything. The run exits
+  non-zero if any file FAILs.
 
 With no mode flag it records when any expected file is missing, else checks.
 Options: `--only name…`, `--corpus DIR`, `--seed S` (record), `--tol-scale` (check).

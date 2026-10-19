@@ -258,3 +258,20 @@ PROGRAMS = [
     ("two_states", two_states, args_two_states),
     ("nested_maps_transient", nested_maps_transient, args_nested_maps_transient),
 ]
+
+
+# Programs added later are appended below so that the source lines of the programs above (recorded in the SDFGs'
+# debug information) stay stable.
+
+
+@dace.program
+def matmul_lib(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
+    C[:] = A @ B
+
+
+def args_matmul_lib(seed: int = 0) -> dict:
+    r = _rng(14, seed)
+    return dict(A=r.random((4, 6)), B=r.random((6, 5)), C=np.zeros((4, 5)), M=4, K=6, N=5)
+
+
+PROGRAMS.append(("matmul_lib", matmul_lib, args_matmul_lib))

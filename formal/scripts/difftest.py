@@ -13,7 +13,9 @@ For every ``formal/tests/corpus/<base>[.variant].sdfg.json`` this script either
   tolerances.  ``--ir`` selects the intermediate representation: ``sdfg``
   (default, uses ``<name>.sdfg.json``) or ``stree`` (uses ``<name>.stree.json``,
   the schedule tree of the same SDFG).  Both must compute the same outputs, so
-  they are compared against the same ``<name>.expected.json``.
+  they are compared against the same ``<name>.expected.json``.  A program the
+  Lean interpreter does not model (exit 2, or a library node without a model:
+  ``{"error": "unsupported library node '...'"}``) is reported as SKIP.
 
 When neither mode is given, the script records if any expected file is missing
 and checks otherwise.
@@ -141,7 +143,7 @@ def sanity_reference(base: str, args: dict):
     """Return {container: expected_np} for programs we can cheaply cross-check."""
     if base == "axpy":
         return {"y": args["a"] * np.asarray(args["x"]) + np.asarray(args["y"])}
-    if base == "matmul":
+    if base in ("matmul", "matmul_lib"):
         return {"C": np.asarray(args["A"]) @ np.asarray(args["B"])}
     if base == "reduce_rows":
         return {"out": np.sum(np.asarray(args["A"]), axis=1)}
@@ -220,6 +222,22 @@ def have_lake() -> bool:
         return False
 
 
+def unsupported_library(stdout: str) -> str | None:
+    """Return the interpreter's error message if it rejected the program for an unmodeled library node.
+
+    :param stdout: The standard output of ``dace-interp``.
+    :return: The error message, or ``None`` for any other output.
+    """
+    try:
+        result = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    message = result.get("error") if isinstance(result, dict) else None
+    if isinstance(message, str) and message.startswith("unsupported library node "):
+        return message
+    return None
+
+
 def compare_containers(got: dict, expected: dict, tol_scale: float):
     """Return a list of human-readable mismatch descriptions (empty == PASS)."""
     problems = []
@@ -288,6 +306,10 @@ def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
         )
         if proc.returncode == 2:
             print(f"SKIP   {name}: dace-interp {ir} not implemented (exit 2)")
+            continue
+        unsupported = unsupported_library(proc.stdout) if proc.returncode == 1 else None
+        if unsupported is not None:
+            print(f"SKIP   {name}: {unsupported} (no model in the Lean interpreter)")
             continue
         if proc.returncode != 0:
             print(f"FAIL   {name}: dace-interp exit {proc.returncode}: {proc.stderr.strip()[:200]}")
