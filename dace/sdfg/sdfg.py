@@ -225,6 +225,23 @@ def scope_bound_names(sdfg: "SDFG") -> set[str]:
     return names
 
 
+def is_scope_bound_name(sdfg: "SDFG", name: str) -> bool:
+    """Whether ``name in scope_bound_names(sdfg)``, walking only up to the first scope that binds it."""
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable == name and region.init_statement is not None:
+            return True
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                if name in node.map.params:
+                    return True
+            elif isinstance(node, nd.ConsumeEntry) and node.consume.pe_index == name:
+                return True
+            if isinstance(node, nd.EntryNode) and name in node.in_connectors and not name.startswith("IN_"):
+                return True
+    return False
+
+
 def interstate_bound_names(sdfg: "SDFG") -> set[str]:
     """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
     return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
@@ -1320,6 +1337,8 @@ class SDFG(ControlFlowRegion):
         find_new_name: bool = False,
         predicates: frozenset[symbolic.Predicate] = frozenset(),
         scale: symbolic.Scale = symbolic.Scale.DEFAULT,
+        *,
+        scope_bound: AbstractSet[str] | None = None,
     ):
         """Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
@@ -1328,6 +1347,7 @@ class SDFG(ControlFlowRegion):
         :param find_new_name: Find a new name.
         :param predicates: Sign predicates assumed for the symbol.
         :param scale: ``Scale.SMALL`` makes the symbol much smaller than every default one; see ``set_symbol_scale``.
+        :param scope_bound: ``scope_bound_names(self)``, when the caller already holds it (it walks every node).
         :raise NameCollisionError: If the name is used by a data descriptor.
         :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
                                              predicates contradict the SDFG's facts.
@@ -1347,7 +1367,7 @@ class SDFG(ControlFlowRegion):
         elif name in self.arrays:
             # Data constants are not checked, as they are linked to the data descriptors.
             raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        elif name not in self.symbols and name in scope_bound_names(self):
+        elif name not in self.symbols and name in (scope_bound if scope_bound is not None else scope_bound_names(self)):
             raise NameCollisionError(
                 f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
             )

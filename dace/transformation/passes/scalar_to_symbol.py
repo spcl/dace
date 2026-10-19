@@ -20,7 +20,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
-from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.sdfg import InterstateEdge, scope_bound_names
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible
@@ -1008,13 +1008,17 @@ class ScalarToSymbolPromotion(passes.Pass):
             state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
         # Step 5: Data descriptor management
+        # Removing descriptors and adding symbols binds no loop or map name: the scope-bound names are read once.
+        scope_bound = None
         for scalar in to_promote:
             desc = sdfg.arrays[scalar]
             sdfg.remove_data(scalar, validate=False)
             # If the scalar is already a symbol (e.g., as part of an array size),
             # do not re-add the symbol
             if scalar not in sdfg.symbols:
-                sdfg.add_symbol(scalar, desc.dtype)
+                if scope_bound is None:
+                    scope_bound = scope_bound_names(sdfg)
+                sdfg.add_symbol(scalar, desc.dtype, scope_bound=scope_bound)
 
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(rf"\b{re.escape(s)}\[.*?\]") for s in to_promote}

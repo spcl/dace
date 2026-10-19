@@ -100,6 +100,9 @@ class DaCeCodeGenerator:
         self._symbols_and_constants: dict[int, set[str]] = {}
         # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
         self._symbol_resolver = SymbolResolver()
+        # Per SDFG, the scope resolved last and the symbols every node directly inside it sees: the nodes of one
+        # scope are generated together, and each would otherwise re-type every enclosing map's parameters.
+        self._per_scope: dict[SDFG, tuple[SDFGState, nodes.Node, dict[str, dtypes.typeclass]]] = {}
         self._struct_types: dict[SDFG, dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
@@ -173,7 +176,20 @@ class DaCeCodeGenerator:
         :param node: The node.
         :return: A dictionary mapping symbol names to their types, which the caller may modify.
         """
-        return self._symbol_resolver.defined_at(state, node)
+        # What a node sees depends only on its innermost scope: the walk adds every enclosing scope's symbols, outermost
+        # first. The cached scope dict is read in place, as ``scope_dict()`` copies it per call.
+        sdict = state._scope_dict_toparent_cached
+        if sdict is None:
+            sdict = state.scope_dict()
+        scope = sdict.get(node)
+        if scope is None:
+            return self._symbol_resolver.defined_at(state, node)
+        last = self._per_scope.get(state.sdfg)
+        if last is not None and last[0] is state and last[1] is scope:
+            return collections.OrderedDict(last[2])
+        symbols = self._symbol_resolver.defined_at(state, node)
+        self._per_scope[state.sdfg] = (state, scope, collections.OrderedDict(symbols))
+        return symbols
 
     def struct_types(self, sdfg: SDFG) -> dict[str, dtypes.struct]:
         """

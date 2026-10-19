@@ -153,7 +153,7 @@ class MapExpansion(pm.SingleStateTransformation):
         if graph.in_degree(map_entry) == 0 or all(
             e.dst_conn is None or not e.dst_conn.startswith("IN_") for e in graph.in_edges(map_entry)
         ):
-            graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
+            graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet(), propagate=False)
         else:
             for edge in graph.in_edges(map_entry):
                 if edge.dst_conn is None:
@@ -165,7 +165,12 @@ class MapExpansion(pm.SingleStateTransformation):
                 out_conn = "OUT_" + in_conn[3:]
                 if in_conn not in entries[-1].in_connectors:
                     graph.add_memlet_path(
-                        map_entry, *entries, memlet=copy.deepcopy(edge.data), src_conn=out_conn, dst_conn=in_conn
+                        map_entry,
+                        *entries,
+                        memlet=copy.deepcopy(edge.data),
+                        src_conn=out_conn,
+                        dst_conn=in_conn,
+                        propagate=False,
                     )
 
         # Modify dynamic map ranges
@@ -188,7 +193,13 @@ class MapExpansion(pm.SingleStateTransformation):
         for edge in graph.in_edges(map_exit):
             graph.remove_edge(edge)
             graph.add_memlet_path(
-                edge.src, *exits[::-1], map_exit, memlet=edge.data, src_conn=edge.src_conn, dst_conn=edge.dst_conn
+                edge.src,
+                *exits[::-1],
+                map_exit,
+                memlet=edge.data,
+                src_conn=edge.src_conn,
+                dst_conn=edge.dst_conn,
+                propagate=False,
             )
 
         from dace.sdfg.scope import ScopeTree
@@ -205,6 +216,8 @@ class MapExpansion(pm.SingleStateTransformation):
         else:
             raise ValueError("Cannot find scope in state")
 
+        # The one propagation: it rewrites every external edge from the innermost new scope outwards, so the paths
+        # above are built from the unpropagated memlets rather than propagated once more on the way.
         propagate_memlets_scope(sdfg, state=graph, scopes=scope)
         consolidate_edges(sdfg, scope)
 

@@ -580,10 +580,10 @@ class UntileLoops(ppl.Pass):
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-        applied = count_applied(PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {}))
+        applied = count_applied(PatternMatchAndApplyRepeated([MapExpansion()], validate=False).apply_pass(sdfg, {}))
         lower_maps = MapToForLoop()
         lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
-        applied += count_applied(PatternMatchAndApplyRepeated([lower_maps]).apply_pass(sdfg, {}))
+        applied += count_applied(PatternMatchAndApplyRepeated([lower_maps], validate=False).apply_pass(sdfg, {}))
         # Sweep up any NSDFG wrappers that survived MapToForLoop's
         # inline_after step because they were Map-scoped at the time.
         # After all Maps are lifted they are no longer scoped, so a
@@ -591,8 +591,12 @@ class UntileLoops(ppl.Pass):
         # Carried over: nothing runs between one round's ``after`` and the next round's ``before``.
         before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
         for _ in range(16):
-            applied += count_applied(PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {}))
-            applied += count_applied(PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {}))
+            applied += count_applied(
+                PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()], validate=False).apply_pass(sdfg, {})
+            )
+            applied += count_applied(
+                PatternMatchAndApplyRepeated([InlineMultistateSDFG()], validate=False).apply_pass(sdfg, {})
+            )
             after = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
             if after >= before:
                 break
@@ -607,7 +611,7 @@ class UntileLoops(ppl.Pass):
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
         applied = ParallelizeLoops().apply_pass(sdfg, {}) or 0
-        applied += count_applied(PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {}))
+        applied += count_applied(PatternMatchAndApplyRepeated([MapCollapse()], validate=False).apply_pass(sdfg, {}))
         return applied
 
     def untile_sweep(self, sdfg: SDFG) -> int:

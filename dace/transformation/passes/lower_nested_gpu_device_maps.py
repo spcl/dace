@@ -64,6 +64,13 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
     Bounds must be evaluable where the kernel is launched.
     """
 
+    validate = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Validate the SDFG once after the pass changed it. Canonicalization turns it off and validates its own "
+        "result once, when asked.",
+    )
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges
 
@@ -207,5 +214,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                     # Each layer's bodies become NestedSDFGs holding the next layer.
                     while absorbed := self.absorb(state, kernel):
                         lowered += absorbed
-        sdfg.validate()
+        if lowered and self.validate:
+            sdfg.validate()
         return lowered or None

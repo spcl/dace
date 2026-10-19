@@ -503,7 +503,9 @@ def expand_gathered_dots(sdfg: SDFG) -> int:
             for nested in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]:
                 InlineSDFG.apply_to(state.sdfg, nested_sdfg=nested, verify=False, save=False)
     if count:
-        FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True).apply_pass(sdfg, {})
+        FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True, validate=False).apply_pass(
+            sdfg, {}
+        )
         sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray], validate=False)
     return count
 
@@ -533,7 +535,7 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     return sdfg.apply_transformations_repeated(OTFMapFusion, validate=False, validate_all=False)
 
 
-def offload_to_gpu(sdfg: SDFG) -> None:
+def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     """Move a canonicalized SDFG onto the GPU, in place: recompute-fuse, device offload, block size.
 
     A SEPARATE step from :func:`finalize_for_target`, not part of canonicalization: the device move
@@ -576,6 +578,8 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     removes that failure mode -- the correctness floor canon-GPU needs before any stream
     concurrency is layered back in. Set on the process Config here so the subsequent codegen
     (which reads the value) emits the single-stream form.
+
+    :param validate: Validate the SDFG once at the end.
     """
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
     run_structural_cleanup(sdfg)
@@ -589,7 +593,9 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     demote_uncoalesced_level_maps(sdfg)
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
-    sdfg.apply_gpu_transformations(validate=False)
+    # Its own ``simplify`` would validate: simplified here instead, without validation.
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.simplify(validate=False)
     # Between the offload and the block-size choice, and it has to be exactly here. The offload
     # assigns every nested scope ``Sequential``, so a map tagged ``is_warp_tile`` cannot become a
     # thread block before this point; and ``select_gpu_device_block_size`` skips a kernel that
@@ -597,7 +603,8 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     # BOTH a declared block size and a thread-block map -- which is the conflict codegen refuses.
     PromoteWarpTiles().apply_pass(sdfg, {})
     select_gpu_device_block_size(sdfg)
-    sdfg.validate()
+    if validate:
+        sdfg.validate()
 
 
 def assert_offloaded(sdfg: SDFG) -> None:
@@ -763,7 +770,7 @@ def pin_span_copies(sdfg: SDFG) -> int:
 
 
 def finalize_for_target(
-    sdfg: SDFG, target: str = "cpu", validate: bool = True, break_anti_dependence: bool = True
+    sdfg: SDFG, target: str = "cpu", validate: bool = False, break_anti_dependence: bool = True
 ) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 

@@ -44,7 +44,7 @@ from dace.sdfg.propagation import (
     propagate_subset,
 )
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
+from dace.sdfg.sdfg import interstate_bound_names, is_scope_bound_name, scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -896,7 +896,7 @@ def add_indirection_subgraph(
 def declare_program_symbol(sdfg: SDFG, declared: symbolic.symbol) -> None:
     """Declares a symbol of the program itself (one of its globals) with what it was declared with, unless the SDFG
     declares it already or a loop or map scope binds it."""
-    if declared.name not in sdfg.symbols and declared.name not in scope_bound_names(sdfg):
+    if declared.name not in sdfg.symbols and not is_scope_bound_name(sdfg, declared.name):
         sdfg.add_symbol(declared)
 
 
@@ -914,7 +914,7 @@ def defined_type(defined: Any) -> dtypes.typeclass:
 
 def declare_read_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
     """Declares a symbol the program reads on the SDFG, unless a loop, map or interstate edge of the SDFG binds it."""
-    if name not in sdfg.symbols and name not in scope_bound_names(sdfg) and name not in interstate_bound_names(sdfg):
+    if name not in sdfg.symbols and not is_scope_bound_name(sdfg, name) and name not in interstate_bound_names(sdfg):
         sdfg.add_symbol(name, dtype)
 
 
@@ -1526,9 +1526,31 @@ class ProgramVisitor(ExtNodeVisitor):
         """The type of every symbol name the program can read here: the SDFG's declared symbols, and the declarations
         of the program's own symbol objects (its globals, loop and map iterators, and the names it assigns on interstate
         edges) the SDFG does not declare."""
-        types = {k: v.declaration.dtype for k, v in self.defined_dict().items() if isinstance(v, symbolic.symbol)}
+        # The symbols of ``defined_dict()`` without building it (it copies every descriptor, per operator parsed):
+        # only the globals and the edge-bound names hold symbols there, and a later source -- every one of which
+        # holds a descriptor or a type -- overwrites such a name exactly when one of the tests below holds.
+        candidates = {k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)}
+        candidates.update(self.edge_bound_symbols())
+        arrays, scope_vars, variables = self.sdfg.arrays, self.scope_vars, self.variables
+        types = {
+            k: v.declaration.dtype
+            for k, v in candidates.items()
+            if k not in arrays
+            and not (k in scope_vars and (scope_vars[k] in arrays or scope_vars[k] in self.scope_arrays))
+            and not (k in variables and (variables[k] in arrays or variables[k] in self.sdfg.symbols))
+            and not self._is_mpi_comm(self.globals.get(k))
+        }
         types.update(self.sdfg.symbols)
         return types
+
+    @staticmethod
+    def _is_mpi_comm(value: Any) -> bool:
+        """Whether ``defined_dict`` adds ``value``, a global, as an MPI communicator."""
+        if value is None or not preprocessing.mpi4py_is_usable():
+            return False
+        from mpi4py import MPI
+
+        return isinstance(value, MPI.Comm)
 
     def edge_bound_symbols(self) -> dict[str, symbolic.symbol]:
         """The symbols the program assigns on interstate edges, which no SDFG declaration types."""

@@ -249,8 +249,8 @@ class BufferExpansion(ppl.Pass):
 
         kept: dict[str, list[str]] = {}
         # The first probe of every loop asks the graph as it stands, so those probes share one ``LiftContext`` (block
-        # order, access index, per-block free symbols) the way ``ParallelizeLoops`` shares it; an expansion, kept or
-        # undone, drops it. The probe after an expansion builds its own, as before.
+        # order, access index, per-block free symbols) the way ``ParallelizeLoops`` shares it; a kept expansion drops
+        # it, an undone one restores it. The probe after an expansion builds its own, as before.
         lift_context: list[Any] = []
         for loop in loops:
             ix = self._loop_index(loop)
@@ -268,12 +268,16 @@ class BufferExpansion(ppl.Pass):
                 order = self._ambient_order(sdfg)
             index, size = ix
             applied = [self._expand(sdfg, loop, arr, index, size, order) for arr in buffers]
+            before = lift_context[:]
             lift_context.clear()
             if self._loop_mappable(sdfg, loop):
                 kept[loop.label] = list(buffers)
             else:
                 for exp in applied:
                     exp.undo()
+                # The undo puts back every descriptor shape and memlet subset the expansion changed, so the graph is
+                # the one the context from before the expansion describes again; the next probe reuses it.
+                lift_context[:] = before
         return kept
 
     @staticmethod

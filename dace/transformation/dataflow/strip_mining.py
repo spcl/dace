@@ -166,25 +166,32 @@ class StripMining(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG) -> nodes.Map:
         # Strip-mine selected dimension. The new bounds are parsed from strings, so name the symbols at the dtype
         # the scope declares them.
-        scope = dict(graph.symbols_defined_at(self.map_entry))
+        defined = graph.symbols_defined_at(self.map_entry)
+        scope = dict(defined)
         scope.update(self.map_entry.new_symbols(sdfg, graph, scope))
-        with symbolic.serialization_symbol_dtypes(scope, inherit=True):
-            _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
+        # ``_find_new_dim`` reads the same table before the graph changes; resolving it again walks every scope.
+        self._entry_symbols = (self.map_entry, defined)
+        try:
+            with symbolic.serialization_symbol_dtypes(scope, inherit=True):
+                _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
+        finally:
+            self._entry_symbols = None
         return new_map
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
         """Finds a variable that is not already defined in scope."""
-        stree = state.scope_tree()
         if len(prefix) == 0:
             return target_dim
         candidate = f"{prefix}_{target_dim}"
         index = 1
-        defined_vars = {str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys())}
+        cached = getattr(self, "_entry_symbols", None)
+        defined_at = cached[1] if cached is not None and cached[0] is entry else state.symbols_defined_at(entry)
+        defined_vars = {str(s) for s in (defined_at.keys() | sdfg.symbols.keys())}
         while candidate in defined_vars:
             candidate = "%s%d_%s" % (prefix, index, target_dim)
             index += 1
         # The tile iterates the same domain as the dimension it tiles, so it is declared at that dimension's dtype.
-        declared = entry.new_symbols(sdfg, state, state.symbols_defined_at(entry))
+        declared = entry.new_symbols(sdfg, state, defined_at)
         symbolic.declare_symbol_dtype(candidate, declared[target_dim])
         return candidate
 

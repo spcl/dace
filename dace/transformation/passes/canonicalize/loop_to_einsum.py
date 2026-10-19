@@ -349,7 +349,7 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     SimplifyPass().apply_pass(probe, {})
     probe.apply_transformations_repeated(MapCollapse, validate=False, validate_all=False)
     _splice_scope_scalars(probe)
-    PatternMatchAndApplyRepeated([LiftEinsum()]).apply_pass(probe, {})
+    PatternMatchAndApplyRepeated([LiftEinsum()], validate=False).apply_pass(probe, {})
 
 
 def _probe_compute_nodes(

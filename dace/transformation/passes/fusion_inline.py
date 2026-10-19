@@ -8,6 +8,7 @@ from typing import Any
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion, UnstructuredControlFlow
 from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
@@ -49,7 +50,11 @@ class FuseStates(ppl.Pass):
 
         :return: The total number of states fused, or None if did not apply.
         """
-        fused = fuse_states(sdfg, self.permissive, self.progress)
+        # The probes resolve ``SDFG.facts()`` (a walk of every interstate edge and descriptor) per candidate pair. A
+        # fusion leaves them as they are: it touches no symbol or descriptor, and it moves the assignments of the
+        # fused edge onto the edges into the first block (which must exist), so every SDFG assigns the same names.
+        with memoize_facts():
+            fused = fuse_states(sdfg, self.permissive, self.progress)
         return fused or None
 
     def report(self, pass_retval: int) -> str:

@@ -87,6 +87,18 @@ def comparison_relation(condition: sympy.Basic) -> Relation | None:
     return None
 
 
+@functools.lru_cache(maxsize=1 << 16, typed=True)
+def _relation_order_text(kind: RelationKind, lhs: sympy.Expr, rhs: sympy.Expr) -> tuple[str, str, str]:
+    """``relation_order`` of the relation ``lhs <kind> rhs``: its text, a pure function of the (immutable) sides."""
+    return kind.name, str(lhs), str(rhs)
+
+
+def _relation_order(relation: Relation) -> tuple[str, str, str]:
+    """The canonical sort key of a relation. Printing the sides is the cost of building ``Facts``, and the same
+    relations are given again and again (every derivation of the facts of a scope), so the text is cached."""
+    return _relation_order_text(relation.kind, relation.lhs, relation.rhs)
+
+
 class Facts:
     """
     Relations that may be assumed, and which symbol names are integers (from their dtypes). Passed explicitly to every
@@ -131,12 +143,7 @@ class Facts:
         assumed: OrderedSet[Relation] | None = None,
     ) -> None:
         # A canonical order, so that what is proven does not depend on the order the facts were given in
-        self.relations = tuple(
-            sorted(
-                dict.fromkeys(relations),
-                key=lambda relation: (relation.kind.name, str(relation.lhs), str(relation.rhs)),
-            )
-        )
+        self.relations = tuple(sorted(dict.fromkeys(relations), key=_relation_order))
         self.integers = integers
         self.small = small
         self.parameters = parameters

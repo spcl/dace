@@ -121,10 +121,13 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
+        # The code generator validates the lowered SDFG when asked; the pass would validate it again.
+        lower_nested_maps = NestedGPUDeviceMapLowering()
+        lower_nested_maps.validate = False
         super().__init__(
             [
                 InferDefaultSchedulesAndStorages(),
-                NestedGPUDeviceMapLowering(),
+                lower_nested_maps,
                 scalar_promotion,
                 MoveArrayOutOfKernel(),
                 InsertExplicitCopies(),

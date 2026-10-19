@@ -151,6 +151,36 @@ class ArrayElimination(ppl.Pass):
             state_order = list(cfg.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=True))
         except KeyError:
             return None
+        # The SDFG-wide facts (``SDFG.facts()``, a walk of every interstate edge and descriptor) each redundant-copy
+        # probe resolves are shared by the whole sweep: merging access nodes touches no symbol, descriptor or
+        # interstate edge, and every applied transformation drops them (``_apply_forgetting_facts``).
+        with memoize_facts():
+            self._eliminate_in_states(sdfg, state_order, access_sets, reachable, result)
+
+        # If node is completely removed from graph, erase data descriptor
+        for aname, desc in list(sdfg.arrays.items()):
+            if isinstance(desc, data.DistributedDescriptor):
+                continue
+            if not desc.transient or isinstance(desc, data.Scalar):
+                continue
+            if aname not in access_sets or not access_sets[aname]:
+                desc = sdfg.arrays[aname]
+                if isinstance(desc, data.Structure) and len(desc.members) > 0:
+                    continue
+                sdfg.remove_data(aname, validate=False)
+                result.add(aname)
+
+        return result or None
+
+    def _eliminate_in_states(
+        self,
+        sdfg: SDFG,
+        state_order: list[SDFGState],
+        access_sets: dict[str, set[SDFGState]],
+        reachable: dict[SDFGState, set[SDFGState]],
+        result: set[str],
+    ) -> None:
+        """The per-state sweep of :meth:`apply_pass`, under its facts memo."""
         # The containers each state accesses, in ``access_sets`` order: a state scans only its own instead of
         # every container. Membership only shrinks, and only for the state being processed.
         containers_by_state: dict[SDFGState, list[str]] = defaultdict(list)
@@ -186,7 +216,7 @@ class ArrayElimination(ppl.Pass):
             removed_nodes |= self.remove_redundant_views(sdfg, state, access_nodes)
 
             # Remove redundant copies and views
-            removed_nodes |= self.remove_redundant_copies(sdfg, state, removable_data, access_nodes)
+            removed_nodes |= self._remove_redundant_copies(sdfg, state, removable_data, access_nodes)
 
             # Update access set if all nodes were removed
             for aname, anodes in access_nodes.items():
@@ -195,21 +225,6 @@ class ArrayElimination(ppl.Pass):
 
             if removed_nodes:
                 result.update({n.data for n in removed_nodes})
-
-        # If node is completely removed from graph, erase data descriptor
-        for aname, desc in list(sdfg.arrays.items()):
-            if isinstance(desc, data.DistributedDescriptor):
-                continue
-            if not desc.transient or isinstance(desc, data.Scalar):
-                continue
-            if aname not in access_sets or not access_sets[aname]:
-                desc = sdfg.arrays[aname]
-                if isinstance(desc, data.Structure) and len(desc.members) > 0:
-                    continue
-                sdfg.remove_data(aname, validate=False)
-                result.add(aname)
-
-        return result or None
 
     def report(self, pass_retval: set[str]) -> str:
         return f"Eliminated {len(pass_retval)} arrays: {pass_retval}."
@@ -368,7 +383,7 @@ class ArrayElimination(ppl.Pass):
 
                     # Try to apply
                     if xform.can_be_applied(state, 0, sdfg):
-                        xform.apply(state, sdfg)
+                        self._apply_forgetting_facts(xform, state, sdfg)
                         removed_nodes.add(anode)
                         nodeset.remove(anode)
         return removed_nodes

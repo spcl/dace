@@ -79,6 +79,9 @@ class NormalizeWCRSource(ppl.Pass):
     consumer so that all WCR-bearing edges originate at an AccessNode.
     """
 
+    #: Validate the SDFG after a rewrite. Canonicalization turns it off and validates its own result once, when asked.
+    validate: bool = True
+
     CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
@@ -548,5 +551,6 @@ class NormalizeWCRSource(ppl.Pass):
         n = self._apply(sdfg)
         if n == 0:
             return None
-        sdfg.validate()
+        if self.validate:
+            sdfg.validate()
         return {"normalized_wcr_edges": {str(n)}}

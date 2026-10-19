@@ -489,8 +489,18 @@ class BestEffortLoopPeeling(ppl.Pass):
         "worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).",
     )
 
-    def __init__(self, peel_limit: int = DEFAULT_PEEL_LIMIT, segments: list[LoopRegion] | None = None):
+    validate = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Validate the SDFG once after the pass rewrote it. The candidate copies the searches probe are not "
+        "validated: a whole-SDFG walk per candidate was the largest single cost of the pass.",
+    )
+
+    def __init__(
+        self, peel_limit: int = DEFAULT_PEEL_LIMIT, segments: list[LoopRegion] | None = None, validate: bool = False
+    ):
         self.peel_limit = peel_limit
+        self.validate = validate
         # When given, receives every loop a rewrite left behind, so a later pass can revisit only those.
         self._segments = segments
 
@@ -593,7 +603,6 @@ class BestEffortLoopPeeling(ppl.Pass):
                 serialize.to_json(loop), context={"sdfg": mini, "version": dace.__version__}
             )
             mini.add_node(mini_loop, is_start_block=True)
-            mini.validate()
             return mini, mini_loop
         except Exception:
             return None, None
@@ -1288,7 +1297,6 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if mappable_count_upper_bound(cand, verdicts) <= best_count:
                     continue
                 try:
-                    cand.validate()
                     n_mappable = self._mappable_loop_count(cand, dict(verdicts))
                 except Exception:
                     continue
@@ -1676,7 +1684,6 @@ class BestEffortLoopPeeling(ppl.Pass):
                     continue
                 self._clean_peeled_remainder(cand)
                 try:
-                    cand.validate()
                     if any(self._has_wrapping_modulo(l) for l in _loops(cand)):
                         continue  # a wrapping modulo still survives -> C ``%`` remains
                 except Exception:
@@ -1717,7 +1724,6 @@ class BestEffortLoopPeeling(ppl.Pass):
             relations: set = set()
             self._clean_peeled_remainder(cand, collect=relations)  # capture the branch condition
             try:
-                cand.validate()
                 if any(self._has_wrapping_modulo(l) for l in _loops(cand)):
                     continue  # a wrapping modulo still survives -> C ``%`` remains
             except Exception:
@@ -1953,6 +1959,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             # New loops, and a rewritten loop that survives as one of its own segments.
             kept = {id(loop) for loop in rewritten}
             self._segments.extend(loop for loop in _loops(sdfg) if id(loop) not in before or id(loop) in kept)
+        if applied and self.validate:
+            sdfg.validate()
         return applied or None
 
     def _specialize_modulo_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:
