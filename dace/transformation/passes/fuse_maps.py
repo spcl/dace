@@ -226,7 +226,7 @@ class FuseMaps(ppl.Pass):
     )
     validate = properties.Property(
         dtype=bool,
-        default=False,
+        default=True,
         desc="If True, validates the SDFG after all transformations have been applied, when at least one applied.",
     )
     validate_all = properties.Property(

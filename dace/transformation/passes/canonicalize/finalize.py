@@ -502,7 +502,9 @@ def expand_gathered_dots(sdfg: SDFG) -> int:
             for nested in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]:
                 InlineSDFG.apply_to(state.sdfg, nested_sdfg=nested, verify=False, save=False)
     if count:
-        FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True).apply_pass(sdfg, {})
+        FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True, validate=False).apply_pass(
+            sdfg, {}
+        )
         sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray], validate=False)
     return count
 
@@ -590,7 +592,9 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     demote_uncoalesced_level_maps(sdfg)
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
-    sdfg.apply_gpu_transformations(validate=False)
+    # Its own ``simplify`` would validate: simplified here instead, without validation.
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.simplify(validate=False)
     # Between the offload and the block-size choice, and it has to be exactly here. The offload
     # assigns every nested scope ``Sequential``, so a map tagged ``is_warp_tile`` cannot become a
     # thread block before this point; and ``select_gpu_device_block_size`` skips a kernel that

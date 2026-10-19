@@ -163,7 +163,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = False) -> None:
+def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
     """Flatten the nested SDFGs the CPU target emits, leaving device-level nests where they are.
 
     ``compiler.cpu.implementation`` selects a *CPU* code generator, so its readability sweeps may only
@@ -337,11 +337,13 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # of this SDFG, and the failure it causes is a silent wrong number much later.
     warn_if_cxx_miscompiles_inline_selects()
 
-    # ``validate`` checks the lowered SDFG once, at the end of lowering (below; for the Python backend, in ``prepare``).
+    if validate:
+        sdfg.validate()
+
     if Config.get("compiler", "backend") == "python":
         from dace.codegen.python import PythonTarget, emit, prepare
 
-        prepare.prepare(sdfg, validate=validate)
+        prepare.prepare(sdfg)
         return [CodeObject(sdfg.name, emit.generate(sdfg), "py", PythonTarget, "Frame", linkable=False, sdfg=sdfg)]
 
     if Config.get_bool("testing", "serialization"):

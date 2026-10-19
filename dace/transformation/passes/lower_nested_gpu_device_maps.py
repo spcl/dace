@@ -66,8 +66,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
     validate = properties.Property(
         dtype=bool,
-        default=False,
-        desc="Validate the SDFG once after the pass changed it. Off by default: the caller validates its result.",
+        default=True,
+        desc="Validate the SDFG once after the pass changed it. Canonicalization turns it off and validates its own "
+        "result once, when asked.",
     )
 
     def modifies(self) -> ppl.Modifies:

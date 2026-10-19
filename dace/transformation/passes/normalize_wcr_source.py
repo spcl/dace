@@ -79,8 +79,8 @@ class NormalizeWCRSource(ppl.Pass):
     consumer so that all WCR-bearing edges originate at an AccessNode.
     """
 
-    #: Validate the SDFG after a rewrite. Off by default: the caller validates its result, once, when asked.
-    validate: bool = False
+    #: Validate the SDFG after a rewrite. Canonicalization turns it off and validates its own result once, when asked.
+    validate: bool = True
 
     CATEGORY: str = "Simplification"
 

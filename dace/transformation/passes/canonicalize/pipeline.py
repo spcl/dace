@@ -1138,6 +1138,8 @@ def disable_unit_validation(unit: ppl.Pass) -> None:
     if isinstance(unit, (PatternMatchAndApply, FuseMaps)):
         unit.validate = False
         unit.validate_all = False
+    if isinstance(unit, (NormalizeWCR, NormalizeWCRSource)):
+        unit.validate = False
     if isinstance(unit, ppl.Pipeline):
         for member in unit.passes:
             disable_unit_validation(member)

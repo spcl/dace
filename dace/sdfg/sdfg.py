@@ -3472,7 +3472,7 @@ class SDFG(ControlFlowRegion):
         warnings.warn("SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.", DeprecationWarning)
         return self.simplify(validate, validate_all)
 
-    def simplify(self, validate=False, validate_all=False, verbose=False, skip: set[str] | None = None, options=None):
+    def simplify(self, validate=True, validate_all=False, verbose=False, skip: set[str] | None = None, options=None):
         """Applies safe transformations (that will surely increase the
         performance) on the SDFG. For example, this fuses redundant states
         (safely) and removes redundant arrays.
@@ -3725,9 +3725,7 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(
-        self, states=None, validate=False, validate_all=False, simplify=True, host_maps=False
-    ):
+    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True, host_maps=False):
         """Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
         :param states: unused; kept so a caller passing it keeps working.
@@ -3752,7 +3750,7 @@ class SDFG(ControlFlowRegion):
         # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
         # unfused, so a caller that asked for a simplified graph has to get one.
         if simplify:
-            self.simplify(validate=False)
+            self.simplify()
         if validate or validate_all:
             self.validate()
         return placed
