@@ -223,6 +223,21 @@ def test_descriptor_free_symbols_follow_a_reassigned_extent():
     assert array.free_symbols == {K}
 
 
+def test_a_state_reading_a_symbol_before_an_edge_assigns_it_keeps_it_free():
+    """``first`` reads ``k`` before any edge assigns it, so the caller must pass ``k``; a later reassignment does not
+    make that read defined."""
+    sdfg = dace.SDFG("read_before_assignment")
+    sdfg.add_array("a", [1], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    tasklet = first.add_tasklet("t", {}, {"o"}, "o = k")
+    first.add_edge(tasklet, "o", first.add_write("a"), None, dace.Memlet("a[0]"))
+    second = sdfg.add_state_after(first, "second", assignments={"k": "0"})
+    sdfg.add_state_after(second, "third", assignments={"k": "1"})
+
+    assert "k" in sdfg.free_symbols
+
+
 if __name__ == "__main__":
     test_single_state()
     test_state_subgraph()
@@ -234,3 +249,4 @@ if __name__ == "__main__":
     test_used_array_keeps_symbolic_extent()
     test_array_used_only_in_a_guard_keeps_its_stride_symbol()
     test_descriptor_free_symbols_follow_a_reassigned_extent()
+    test_a_state_reading_a_symbol_before_an_edge_assigns_it_keeps_it_free()

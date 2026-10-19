@@ -3356,6 +3356,8 @@ class AbstractControlFlowRegion(
                 else:
                     state_symbols = block.used_symbols(all_symbols, keep_defined_in_mapping, with_contents)
                     free_syms |= state_symbols
+                    # A block reading a symbol nothing has assigned yet needs the caller's value
+                    used_before_assignment.update(state_symbols - defined_syms)
 
                 # Add free inter-state symbols
                 for e in self.out_edges(block):
