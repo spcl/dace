@@ -411,8 +411,13 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
         if sdfg.arrays[candidate].dtype.as_numpy_dtype().kind == "c":
             candidates.discard(candidate)
 
+    # A by-value argument that only memlet subsets name (``a[inc + i]``) has no access node: the caller passes the
+    # index, so it is a symbol as exact as one an access node reads.
+    subset_names = {str(s) for state in sdfg.states() for e in state.edges() for s in e.data.free_symbols}
+    arguments = {c for c in candidates if not sdfg.arrays[c].transient}
+
     # Only keep candidates that were found in SDFG.
-    candidates &= candidates_seen | interstate_symbols
+    candidates &= candidates_seen | interstate_symbols | (subset_names & arguments)
 
     # A promotable TRANSIENT must have a definition: a data write in some state (``candidates_seen``)
     # or an existing inter-state assignment. A never-written transient that only appears in

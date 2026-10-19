@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 
 import dace
+from dace import symbolic
 from dace.codegen.exceptions import CodegenError
+from dace.codegen.python.emit import PRELUDE, generate
+from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N")
 
@@ -170,6 +173,10 @@ def test_a_nested_sdfg_binds_its_row_in_place():
 
     assert np.array_equal(a, 2 * np.arange(12.0).reshape(3, 4))
     assert "row = A" in function_source(nested_sdfg())
+
+
+def test_an_in_out_connector_of_a_nested_sdfg_binds_once():
+    assert function_source(nested_sdfg()).count("row = A") == 1
 
 
 def one_tasklet_sdfg(code: str) -> dace.SDFG:
@@ -347,3 +354,115 @@ def test_python_modulo_floors_and_c_modulo_truncates_a_negative_dividend():
         modulo_family_sdfg()(out=out, n=3)
 
     assert out.tolist() == [1, -4, -4]
+
+
+def modulo_bounded_loops_sdfg() -> dace.SDFG:
+    """Two counting loops, bounded by the floored and by C's truncating modulo of the negative ``n - 7``."""
+    n = dace.symbol("n", dace.int64)
+    sdfg = dace.SDFG("modulo_bounded_loops")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("out", [2], dace.int64)
+    previous = None
+    for k, bound in enumerate([symbolic.PyMod(n - 7, 5), symbolic.CMod(n - 7, 5) + 5]):
+        loop = LoopRegion(f"count{k}", f"i{k} < {symbolic.symstr(bound)}", f"i{k}", f"i{k} = 0", f"i{k} = i{k} + 1")
+        sdfg.add_node(loop, is_start_block=previous is None)
+        state = loop.add_state(f"step{k}", is_start_block=True)
+        tasklet = state.add_tasklet(f"inc{k}", {"c"}, {"o"}, "o = c + 1")
+        state.add_edge(state.add_read("out"), None, tasklet, "c", dace.Memlet(f"out[{k}]"))
+        state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet(f"out[{k}]"))
+        if previous is not None:
+            sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        previous = loop
+    return sdfg
+
+
+def test_a_symbolic_modulo_bound_keeps_its_rounding():
+    """``Mod(-4, 5)`` is 1 and C's ``-4 % 5`` is -4: one trip each, where Python's ``%`` would give six."""
+    out = np.zeros(2, dtype=np.int64)
+
+    with python_backend():
+        modulo_bounded_loops_sdfg()(out=out, n=3)
+
+    assert out.tolist() == [1, 1]
+
+
+def percent_sdfg() -> dace.SDFG:
+    """``%`` of a negative dividend, once in an interstate assignment and once in a tasklet body."""
+    sdfg = dace.SDFG("percent_modulos")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("x", [1], dace.int64)
+    sdfg.add_array("out", [2], dace.int64)
+    first, second = sdfg.add_state(), sdfg.add_state()
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"r": "(n - 9) % 4"}))
+    tasklet = second.add_tasklet("t", {"a": dace.int64}, {"b": dace.int64, "c": dace.int64}, "b = r\nc = a % 4")
+    second.add_edge(second.add_read("x"), None, tasklet, "a", dace.Memlet("x[0]"))
+    out = second.add_write("out")
+    second.add_edge(tasklet, "b", out, None, dace.Memlet("out[0]"))
+    second.add_edge(tasklet, "c", out, None, dace.Memlet("out[1]"))
+    return sdfg
+
+
+def test_a_percent_in_interstate_code_and_in_a_tasklet_truncates_as_in_c():
+    out = np.zeros(2, dtype=np.int64)
+
+    with python_backend():
+        percent_sdfg()(x=np.array([-5]), out=out, n=4)
+
+    assert out.tolist() == [-1, -1]
+
+
+def test_the_c_modulo_of_two_integers_is_an_exact_integer():
+    """A host symbol stays a Python int, which a tile kernel launch takes and a float would round."""
+    namespace: dict = {}
+    exec(PRELUDE, namespace)
+
+    remainder = namespace["c_mod"](-(10**20) - 3, 10)
+
+    assert type(remainder) is int and remainder == -3
+
+
+def test_an_infinite_constant_seeds_a_tasklet():
+    sdfg = dace.SDFG("infinite_seed")
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_constant("SEED", np.float64(-np.inf))
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {}, {"o": dace.float64}, "o = SEED")
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    out = np.zeros(1)
+
+    with python_backend():
+        sdfg(out=out)
+
+    assert out[0] == -np.inf
+
+
+def doubler_sdfg(label: str) -> dace.SDFG:
+    """``_y = 2 * _x`` over four elements, under connector names every instance shares."""
+    inner = dace.SDFG(label)
+    inner.add_array("_x", [4], dace.float64)
+    inner.add_array("_y", [4], dace.float64)
+    state = inner.add_state()
+    entry, exit_node = state.add_map("double", {"k": "0:4"})
+    tasklet = state.add_tasklet("twice", {"a"}, {"b"}, "b = a * 2")
+    state.add_memlet_path(state.add_read("_x"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("_x[k]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("_y"), src_conn="b", memlet=dace.Memlet("_y[k]"))
+    return inner
+
+
+def test_two_nested_sdfgs_with_one_connector_name_each_bind_their_own_arrays():
+    """Emitted as they are, not inlined, as a tile kernel emits them: the second binds ``_x`` and ``_y`` anew."""
+    sdfg = dace.SDFG("two_doublers")
+    for name in "pqrs":
+        sdfg.add_array(name, [4], dace.float64)
+    state = sdfg.add_state()
+    for source, target, label in (("p", "q", "first"), ("r", "s", "second")):
+        nested = state.add_nested_sdfg(doubler_sdfg(label), {"_x"}, {"_y"})
+        state.add_edge(state.add_read(source), None, nested, "_x", dace.Memlet(f"{source}[0:4]"))
+        state.add_edge(nested, "_y", state.add_write(target), None, dace.Memlet(f"{target}[0:4]"))
+    namespace: dict = {}
+    exec(compile(generate(sdfg), "two_doublers", "exec"), namespace)
+    p, r, q, s = np.arange(4.0), np.arange(10.0, 14.0), np.zeros(4), np.zeros(4)
+
+    namespace["two_doublers"](p=p, q=q, r=r, s=s)
+
+    assert q.tolist() == [0.0, 2.0, 4.0, 6.0] and s.tolist() == [20.0, 22.0, 24.0, 26.0]

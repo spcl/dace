@@ -30,7 +30,7 @@ from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
 from dace.libraries.fft.environments import fftw3
-from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
@@ -202,6 +202,7 @@ def canonicalize_set_fast_implementations(
             block = in_kernel_block_implementation(node, state)
             if block is not None:
                 node.implementation = block
+                release_kernel_block_size(node, state)
                 continue
 
         # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.

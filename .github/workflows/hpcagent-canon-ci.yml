@@ -112,12 +112,12 @@ jobs:
         set +e
         timeout --kill-after=60 30m \
           python -m hpcagent_bench.cli run-framework \
-          -b all@npbench -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          -b all@npbench -f dace_cpu_canon -p S -r 1 -t 900 \
           --canon-db canon_cpu_npbench.db
         [ $? -eq 124 ] && echo "::error::the npbench leg hit its 30m cap and was killed; the DB holds only the kernels that finished before it"
         timeout --kill-after=60 15m \
           python -m hpcagent_bench.cli run-framework \
-          -b all@llr40 -f dace_cpu_canonicalize -p S -r 1 -t 900 \
+          -b all@llr40 -f dace_cpu_canon -p S -r 1 -t 900 \
           --canon-db canon_cpu_llr40.db
         [ $? -eq 124 ] && echo "::error::the llr40 leg hit its 15m cap and was killed; the DB holds only the kernels that finished before it"
         exit 0

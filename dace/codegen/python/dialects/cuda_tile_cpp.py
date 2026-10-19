@@ -57,6 +57,10 @@ __tile__ inline auto py_mod(A a, B b) {
     return (remainder != 0 && ((remainder < 0) != (b < 0))) ? remainder + b : remainder;
 }
 template <typename A, typename B>
+__tile__ inline auto c_mod(A a, B b) {
+    return a % b;
+}
+template <typename A, typename B>
 __tile__ inline auto int_ceil(A a, B b) {
     return -py_floor(-a, b);
 }
@@ -64,7 +68,7 @@ __tile__ inline auto int_ceil(A a, B b) {
 #endif
 """
 #: The integer helpers ``cppunparse`` and SymPy name, which tile code calls from the prelude.
-SCALAR_HELPERS = re.compile(r"(?<![\w:.])(py_floor|py_mod|int_ceil)\(")
+SCALAR_HELPERS = re.compile(r"(?<![\w:.])(py_floor|py_mod|c_mod|int_ceil)\(")
 #: The C++ element type of each DaCe type, spelled so a Python parser takes it (``std.int64_t``).
 CPP_TYPES = {
     dtypes.float32: "float",
@@ -214,6 +218,8 @@ class CudaTileCpp(Dialect):
         "ipow": "ct.pow",
         "int_floor": "py_floor",
         "int_ceil": "int_ceil",
+        "py_mod": "py_mod",
+        "c_mod": "c_mod",
     }
 
     @property

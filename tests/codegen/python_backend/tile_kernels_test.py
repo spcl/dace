@@ -13,6 +13,7 @@ from dace.codegen.exceptions import CodegenError
 from dace.libraries.tileops.dispatch import TileGroup
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
@@ -264,6 +265,29 @@ def gather_doubled(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
 
 
 @dace.program
+def rows_gathered(x: dace.float64[8, 12], idx: dace.int64[8], y: dace.float64[8, 12]):
+    for i, j in dace.map[0:8, 0:12]:
+        y[i, j] = x[idx[i], j] * 2.0
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_row_gather_over_a_two_dim_tile_reads_every_indexed_row(dialect: str):
+    """The index tile varies over the row dim only: its shape is ``(4, ONE)``, the marker one lane wide."""
+    import cupy
+
+    sdfg = rows_gathered.to_sdfg(simplify=True)
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4, 4), tile_programs=True)).apply_pass(sdfg, {})
+    rng = np.random.default_rng(9)
+    permutation, x, y = rng.permutation(8), rng.random((8, 12)), cupy.zeros((8, 12))
+
+    with tile_backend(dialect):
+        sdfg.compile()(x=cupy.asarray(x), idx=cupy.asarray(permutation), y=y)
+
+    assert np.array_equal(y.get(), 2.0 * x[permutation])
+
+
+@dace.program
 def scatter_incremented(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
     for i in dace.map[0:N]:
         y[idx[i]] = x[i] + 1.0
@@ -395,3 +419,58 @@ def test_a_kernel_reduction_keeps_block_tiles_when_a_program_runs_each_tile(dial
 
     assert np.isclose(s.get()[0], np.dot(x, x))
     assert all(n.group is TileGroup.BLOCK for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileOp))
+
+
+@dace.program
+def indirect_reversed(b: dace.float64[N], c: dace.float64[N], ip: dace.int32[N], a: dace.float64[N]):
+    for i in range(N):
+        k = ip[i]
+        a[i] = b[i] + c[N - k - 1]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_an_index_a_kernel_assigns_between_states_is_read_from_its_global_array(dialect: str):
+    import cupy
+
+    rng = np.random.default_rng(10)
+    permutation, b, c = rng.permutation(1000).astype(np.int32), rng.random(1000), rng.random(1000)
+    a = cupy.zeros(1000)
+
+    with tile_backend(dialect):
+        compiled = vectorized_gpu_sdfg(indirect_reversed).compile()
+        compiled(b=cupy.asarray(b), c=cupy.asarray(c), ip=cupy.asarray(permutation), a=a, N=1000)
+
+    assert np.array_equal(a.get(), b + c[999 - permutation])
+
+
+@dace.program
+def offset_gathered_sum(
+    a: dace.float64[N],
+    aa: dace.float64[N, N],
+    ip: dace.int32[N],
+    j: dace.int32,
+    inc: dace.int32,
+    out: dace.float64[1],
+):
+    s = 0.0
+    for i in range(N - 1):
+        s = s + a[inc + i] * aa[j - 1, ip[i]]
+    out[0] = s
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_scalar_index_argument_reaches_a_tile_kernel_as_a_symbol(dialect: str):
+    import cupy
+
+    sdfg = offset_gathered_sum.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=True)).apply_pass(sdfg, {})
+    rng = np.random.default_rng(5)
+    a, aa, permutation = rng.random(600), rng.random((600, 600)), rng.permutation(600).astype(np.int32)
+    out = cupy.zeros(1)
+
+    with tile_backend(dialect):
+        sdfg.compile()(a=cupy.asarray(a), aa=cupy.asarray(aa), ip=cupy.asarray(permutation), j=4, inc=1, out=out, N=600)
+
+    assert np.isclose(out.get()[0], np.dot(a[1:600], aa[3, permutation[:599]]))

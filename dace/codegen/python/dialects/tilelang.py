@@ -10,10 +10,17 @@ write to global memory outside one runs in ``T.Parallel(1)``, on one thread.
 import ast
 import re
 
-from dace import data, dtypes
+from dace import data, dtypes, symbolic
 from dace.codegen.exceptions import CodegenError
-from dace.codegen.python.emit import expr
-from dace.codegen.python.kernel import Dialect, Element, KernelEmitter, TileStatement, accumulates, is_register
+from dace.codegen.python.kernel import (
+    Dialect,
+    Element,
+    KernelEmitter,
+    TileStatement,
+    accumulates,
+    is_register,
+    tile_extent,
+)
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.tileops.nodes import MaskedCopyLibraryNode, TileMMA, TileReduce, TileScan
 
@@ -76,7 +83,8 @@ class TileLangEmitter(KernelEmitter):
             self.allocations.append(f'{name} = T.alloc_var("{dtype_name(desc.dtype)}")')
             return
         kind = "shared" if name in self.shared else "fragment"
-        shape = ", ".join(expr(s) for s in desc.shape)
+        # A register has no ``ONE`` dim: the copy filling an index tile writes only the dims it varies over
+        shape = ", ".join([str(tile_extent(s)) for s in desc.shape if not symbolic.has_one_marker(s)] or ["1"])
         self.allocations.append(f'{name} = T.alloc_{kind}(({shape},), "{dtype_name(desc.dtype)}")')
 
     def copy(self, sdfg, state, edge) -> None:
@@ -107,7 +115,9 @@ class TileLangStatement(TileStatement):
             def visit_Name(self, node: ast.Name) -> ast.AST:
                 if node.id not in tiles:
                     return node
-                at = [lane if extent != 1 else "0" for lane, extent in zip(lanes(widths), tiles[node.id])]
+                # A ``ONE`` dim is not allocated (``allocate``); a literal extent 1 is, and reads lane 0
+                kept = [(lane, e) for lane, e in zip(lanes(widths), tiles[node.id]) if not symbolic.has_one_marker(e)]
+                at = [lane if extent != 1 else "0" for lane, extent in kept] or ["0"]
                 index = ast.parse(", ".join(at), mode="eval").body
                 return ast.Subscript(value=node, slice=index, ctx=node.ctx)
 
@@ -222,6 +232,8 @@ class TileLang(Dialect):
     body_depth = 2
     functions = {
         "int_floor": "T.floordiv",
+        "py_mod": "T.floormod",
+        "c_mod": "T.truncmod",
         "int_ceil": "T.ceildiv",
         "Min": "T.min",
         "Max": "T.max",
@@ -242,6 +254,10 @@ class TileLang(Dialect):
 
     def program_id(self, axis: int) -> str:
         return BLOCK_IDS[axis]
+
+    def index_tile(self, name: str, shape: list[int], widths: list[int]) -> str:
+        # Read lane by lane: ``indexed`` takes lane 0 on the dims the index tile does not vary over
+        return name
 
     def lane(self, widths: list[int], dim: int) -> str:
         return f"lane{dim}"

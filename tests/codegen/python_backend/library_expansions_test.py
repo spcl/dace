@@ -6,14 +6,17 @@ from collections.abc import Iterator
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
+from dace.codegen.python.emit import generate
 from dace.libraries.blas.nodes.axpy import Axpy
 from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.einsum import Einsum
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.ger import Ger
 from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+from dace.libraries.python_expansions import Operands, register
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -449,6 +452,26 @@ def test_an_exclusive_sum_scan_starts_from_zero():
     assert y.tolist() == [0.0, 1.0, 3.0, 6.0, 10.0]
 
 
+@pytest.mark.parametrize(
+    "identity, dtype, values, expected",
+    [
+        (str(np.iinfo(np.int64).max), np.int64, [2**62, 5, 7], [np.iinfo(np.int64).max, 2**62, 5]),
+        (sympy.oo, np.float64, [3.0, 1.0, 2.0], [np.inf, 3.0, 1.0]),
+    ],
+    ids=["int64_max_string", "sympy_infinity"],
+)
+def test_an_exclusive_min_scan_starts_from_its_identity_exactly(identity, dtype, values, expected):
+    node = Scan("scan", op=ScanOp.MIN, exclusive=True, identity=identity)
+    element = dace.dtypes.typeclass(dtype)
+    sdfg = wired_sdfg(node, {"x": ([3], element), "y": ([3], element)}, {"_scan_in": "x[0:3]"}, {"_scan_out": "y[0:3]"})
+    y = np.zeros(3, dtype)
+
+    with python_backend():
+        sdfg(x=np.array(values, dtype), y=y)
+
+    assert y.tolist() == expected
+
+
 def affine_scan_sdfg(storage: dace.StorageType) -> dace.SDFG:
     """``y[k] = c[k] * y[k-1] + d[k]`` from ``y[-1] = s[0]``."""
     node = Scan("scan", op=ScanOp.AFFINE)
@@ -538,6 +561,24 @@ def test_a_search_returns_the_first_index_in_range_where_the_predicate_holds(val
     assert i[0] == expected
 
 
+@pytest.mark.parametrize(
+    "predicate, expected",
+    [("0.5 < _a[__i] < 2.0", 2), ("(_a[__i] > 1.0) if __i > 2 else False", 3)],
+    ids=["chained_comparison", "conditional_expression"],
+)
+def test_a_search_predicate_holds_lane_by_lane(predicate: str, expected: int):
+    search = FindFirst("lanes", predicate=predicate, begin=0, end=5)
+    search.add_in_connector("_a")
+    arrays = {"a": ([5], dace.float64), "i": ([1], dace.int64)}
+    sdfg = wired_sdfg(search, arrays, {"_a": "a[0:5]"}, {"_out_idx": "i[0]"})
+    i = np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        sdfg(a=np.array([0.1, 3.0, 1.0, 5.0, 1.0]), i=i)
+
+    assert i[0] == expected
+
+
 @pytest.mark.gpu
 def test_a_search_over_a_gpu_array_leaves_its_answer_on_the_host():
     import cupy
@@ -548,3 +589,132 @@ def test_a_search_over_a_gpu_array_leaves_its_answer_on_the_host():
         find_first_sdfg(dace.StorageType.GPU_Global)(a=cupy.array([1.0, 1, 0, 3, 0, 1, 1, 0, 0]), i=i)
 
     assert i[0] == 5
+
+
+def emitted(sdfg: dace.SDFG) -> dict:
+    """The namespace of ``sdfg`` expanded to its CuPy tasklets and emitted as it is, with no connector inlined."""
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.LibraryNode):
+            node.implementation = "CuPy"
+    sdfg.expand_library_nodes()
+    namespace: dict = {}
+    exec(compile(generate(sdfg), sdfg.name, "exec"), namespace)
+    return namespace
+
+
+def test_a_reduction_without_identity_reads_what_its_output_holds_through_a_connector():
+    node = Reduce("reduce", wcr="lambda a, b: max(a, b)", axes=None, identity=None)
+    sdfg = single_node_sdfg(node, {node.INPUT_CONNECTOR_NAME: ("A", [3, 4])}, {})
+    sdfg.add_array("m", [1], dace.float64)
+    state = next(iter(sdfg.states()))
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, state.add_write("m"), None, dace.Memlet("m[0]"))
+    a, m = rng_matrix(3, 4), np.array([100.0])
+
+    emitted(sdfg)[sdfg.name](A=a, m=m)
+
+    assert m[0] == 100.0
+
+
+def single_search_sdfg(predicate: str, size: int) -> dace.SDFG:
+    search = FindFirst("first", predicate=predicate, begin=0, end=size)
+    search.add_in_connector("_a")
+    arrays = {"a": ([size], dace.int64), "i": ([1], dace.int64)}
+    return wired_sdfg(search, arrays, {"_a": f"a[0:{size}]"}, {"_out_idx": "i[0]"})
+
+
+@pytest.mark.parametrize(
+    "predicate, values, expected",
+    [("_a[__i]", [0, 1, 5], 1), ("not _a[__i]", [-1, 0, 4], 1)],
+    ids=["truthy", "negated"],
+)
+def test_a_search_takes_the_truth_of_a_non_boolean_predicate(predicate: str, values: list[int], expected: int):
+    i = np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        single_search_sdfg(predicate, len(values))(a=np.array(values), i=i)
+
+    assert i[0] == expected
+
+
+def test_a_guard_in_a_search_predicate_still_protects_the_read_it_guards():
+    """At the last index ``_a[__i + 1]`` is past the end; the sequential search never reads it."""
+    i = np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        single_search_sdfg("__i + 1 < 6 and _a[__i + 1] > 0", 6)(a=np.zeros(6, dtype=np.int64), i=i)
+
+    assert i[0] == 6
+
+
+@dace.library.node
+class InPlaceProbe(dace.nodes.LibraryNode):
+    """A node reading and writing ``_buf``, whose CuPy body refuses."""
+
+    implementations: dict = {}
+    default_implementation = None
+
+    def __init__(self, name: str):
+        super().__init__(name, inputs={"_buf"}, outputs={"_buf"})
+
+
+def refuse(o) -> str:
+    raise NotImplementedError("refused")
+
+
+register(InPlaceProbe, refuse, Operands)
+
+
+def test_a_refused_expansion_leaves_the_node_wired_as_it_was():
+    node = InPlaceProbe("probe")
+    sdfg = wired_sdfg(node, {"b": ([4], dace.float64)}, {"_buf": "b[0:4]"}, {"_buf": "b[0:4]"})
+    state = next(iter(sdfg.states()))
+    node.implementation = "CuPy"
+
+    with pytest.raises(NotImplementedError):
+        node.expand(state)
+
+    assert [e.dst_conn for e in state.in_edges(node)] == ["_buf"]
+
+
+def test_a_transpose_of_an_operand_with_an_extent_one_dim_permutes_every_named_axis():
+    node = TensorTranspose("transpose", axes=[0, 2, 1])
+    arrays = {"a": ([2, 3, 4], dace.float64), "b": ([1, 4, 3], dace.float64)}
+    sdfg = wired_sdfg(node, arrays, {"_inp_tensor": "a[1:2, 0:3, 0:4]"}, {"_out_tensor": "b[0:1, 0:4, 0:3]"})
+    a, b = rng_matrix(2, 3, 4), np.zeros((1, 4, 3))
+
+    with python_backend():
+        sdfg(a=a, b=b)
+
+    assert np.array_equal(b, a[1:2].transpose(0, 2, 1))
+
+
+@pytest.mark.parametrize(
+    "op, identity, expected",
+    [(ScanOp.MIN, float("inf"), [np.inf, 3.0, 1.0, 1.0]), (ScanOp.AFFINE, 5.0, [3.0, 7.0, 15.0, 31.0])],
+    ids=["exclusive_min_from_infinity", "affine_ignores_the_identity"],
+)
+def test_a_scan_starts_from_the_value_the_cpp_expansions_start_from(op: ScanOp, identity: float, expected: list):
+    """An exclusive scan starts from its identity, ``inf`` included; an affine one from zero whatever it holds."""
+    node = Scan("scan", op=op, exclusive=op is ScanOp.MIN, identity=identity)
+    reads = {"_scan_in": "d[0:4]"} | ({"_scan_coef": "c[0:4]"} if op is ScanOp.AFFINE else {})
+    arrays = {"d": ([4], dace.float64), "c": ([4], dace.float64), "y": ([4], dace.float64)}
+    sdfg = wired_sdfg(node, arrays, reads, {"_scan_out": "y[0:4]"})
+    y = np.zeros(4)
+
+    with python_backend():
+        sdfg(d=np.array([3.0, 1.0, 1.0, 1.0]), c=np.full(4, 2.0), y=y)
+
+    assert y.tolist() == expected
+
+
+def test_a_scan_of_one_element_is_that_element():
+    node = Scan("scan", op=ScanOp.MAX)
+    sdfg = wired_sdfg(
+        node, {"x": ([1], dace.float64), "y": ([1], dace.float64)}, {"_scan_in": "x[0]"}, {"_scan_out": "y[0]"}
+    )
+    y = np.zeros(1)
+
+    with python_backend():
+        sdfg(x=np.array([4.0]), y=y)
+
+    assert y[0] == 4.0
