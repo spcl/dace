@@ -15,11 +15,12 @@ Conventions (`Decisions.md#D50`, `#D53`, `#D55`, `#D57`):
 
 * a code node's `in_memlets` bind its connectors like leaf in-edges
   (`#D40`); `out_memlets` receive scalar outputs, element writes and pushes;
-  a dynamic WCR output is `malformed` (`#D47`);
+  a dynamic WCR output (fetch-and-add) is `unsupported` (`#D47`, `#D59`);
 * a `CopyNode` reads `memlet.data[memlet.subset]` and writes
   `target[other_subset]` (full range when absent, `#D9`), elementwise;
 * inside a consume scope, the consumed stream read through a memlet is the
-  chunk; pushes to it are deferred as in `#D38`;
+  chunk container `consumeChunkName` (whole range, `TCtx.inData`); pushes to
+  it are deferred as in `#D38`;
 * `AssignNode`s are sequential symbol assignments (`#D49`).
 -/
 
@@ -29,11 +30,11 @@ namespace Dace
 
 /-! ## Memlet endpoints -/
 
-/-- Bind an input memlet to a connector value: the consumed chunk, or a
-container endpoint (`bindInData`). -/
+/-- Bind an input memlet to a connector value (`bindInData` on `TCtx.inData`:
+the chunk container for the consumed stream). -/
 def bindMemletIn (tc : TCtx) (ρ : Valuation) (m : Memlet) (st : St) : Res (ConnIn × St) :=
-  if tc.isChunk m.data then .ok (bindInChunk (st.mem.chunkVals (tc.chunkName m.data)), st)
-  else bindInData tc.ctx ρ m.data m.dataSubset st
+  let (d, sub) := tc.inData m
+  bindInData tc.ctx ρ d sub st
 
 /-- Bind all input connectors of a code node, in memlet order. -/
 def bindInputsT (tc : TCtx) (ρ : Valuation) (ins : MemletMap) (st : St) : Res ((Conn → Option ConnIn) × St) := do
@@ -49,7 +50,7 @@ def applyOutT (tc : TCtx) (ρ : Valuation) (ins outs : MemletMap) (st : St) (out
   let st ← out.pops.foldlM (fun st (c, k) =>
     match ins.on c with
     | [] => .err (.malformed s!"pop through unknown connector '{c}'")
-    | ms => ms.foldlM (fun st m => popFrom tc.ctx ρ st m.data m.dataSubset k) st) st
+    | ms => ms.foldlM (fun st m => let (d, sub) := tc.inData m; popFrom tc.ctx ρ st d sub k) st) st
   let st ← out.scalars.foldlM (fun st (c, v) =>
     (outs.on c).foldlM (fun st m => storeScalar tc.ctx ρ st m.data m.dataSubset m.wcr v) st) st
   let st ← out.arrayWrites.foldlM (fun st (c, rel, v) =>
@@ -64,7 +65,7 @@ def MemletMap.hasDynamicWcr (mm : MemletMap) : Bool := mm.memlets.any fun m => m
 def execCodeT (tc : TCtx) (ρ : Valuation) (label : String) (ins outs : MemletMap) (st : St)
     (run : (Conn → Option ConnIn) → Option TaskletOut) (undefinedErr : ErrReason) : Res St :=
   if outs.hasDynamicWcr then
-    .err (.malformed s!"dynamic WCR output of '{label}' (fetch-and-add) is not modeled")
+    .err (.unsupported s!"dynamic WCR output of '{label}' (fetch-and-add, Decisions.md#D47)")
   else do
     let (b, st) ← bindInputsT tc ρ ins st
     match run b with
@@ -76,20 +77,20 @@ def execCodeT (tc : TCtx) (ρ : Valuation) (label : String) (ins outs : MemletMa
 def execReduceT (tc : TCtx) (ρ : Valuation) (props : ReduceProps) (ins outs : MemletMap) (st : St) : Res St :=
   match ins.memlets, outs.memlets with
   | [im], [om] =>
-    if tc.isChunk im.data then .err (.malformed "reduce over the consumed chunk")
-    else reduceData tc.ctx ρ st props im.data im.dataSubset om.data om.dataSubset om.wcr
+    let (d, sub) := tc.inData im
+    reduceData tc.ctx ρ st props d sub om.data om.dataSubset om.wcr
   | _, _ => .err (.malformed "reduce node must have exactly one input and one output")
 
 /-- A `LibraryCall`: `Reduce` directly, everything else through `Interp.library`. -/
 def execLibraryT (tc : TCtx) (ρ : Valuation) (l : LibNode) (ins outs : MemletMap) (st : St) : Res St :=
   match l.reduce with
   | some props => execReduceT tc ρ props ins outs st
-  | none => execCodeT tc ρ l.label ins outs st (tc.ctx.I.library l.classpath) (.libraryUnsupported l.classpath)
+  | none => execCodeT tc ρ l.label ins outs st (tc.ctx.I.library l.classpath) (.libraryUndefined l.classpath)
 
 /-- A `CopyNode` (`Decisions.md#D53`): `target[other_subset] = data[subset]`. -/
 def execCopyT (tc : TCtx) (ρ : Valuation) (target : Name) (m : Memlet) (st : St) : Res St :=
-  if tc.isChunk m.data then copyChunk tc.ctx ρ st (st.mem.chunkVals (tc.chunkName m.data)) target m.otherSubset m.wcr
-  else copyData tc.ctx ρ st m.data m.dataSubset target m.otherSubset m.wcr
+  let (d, sub) := tc.inData m
+  copyData tc.ctx ρ st d sub target m.otherSubset m.wcr
 
 /-- A `ViewNode`: alias `target` to the lower corner of the viewed subset of
 `source` (`Decisions.md#D31`, `#D55`). -/
@@ -102,7 +103,7 @@ node source is not modeled. -/
 def execRefSetT (tc : TCtx) (ρ : Valuation) (target : Name) (m : Memlet) (src : RefSetSource) (st : St) : Res St :=
   match src with
   | .data _ => aliasTo tc.ctx ρ st target m.data m.dataSubset
-  | .codeNode _ cls => .err (.malformed s!"reference '{target}' set from a {cls} is not modeled")
+  | .codeNode _ cls => .err (.unsupported s!"reference set of '{target}' from a {cls} (Decisions.md#D55)")
 
 /-- A `DynScopeCopyNode` (`Decisions.md#D50`): the `IN_stream` of a consume
 scope designates the stream (and is not popped); any other target reads one
@@ -116,9 +117,8 @@ def execDynScopeCopy (tc : TCtx) (ρ : Valuation) (p : Pending) (target : Sym) (
       pure ({ p with stream := some (m.data, pt) }, st)
     else .err (.malformed s!"IN_stream of non-stream '{m.data}'")
   else do
-    let (v?, st) ←
-      if tc.isChunk m.data then pure ((st.mem.chunkVals (tc.chunkName m.data)).head?, st)
-      else readScalarData tc.ctx ρ m.data m.dataSubset st
+    let (d, sub) := tc.inData m
+    let (v?, st) ← readScalarData tc.ctx ρ d sub st
     match v? with
     | some v => pure ({ p with syms := p.syms ++ [(target, v)] }, st)
     | none => pure (p, st)
@@ -161,9 +161,9 @@ def consumeSetupT (tc : TCtx) (sc : SibCtx) (c : ConsumeNode) (cst : CSt) : Res 
     pure (ρ', d, cst.mem.resolve l, np)
 
 /-- Initial state of a consume task (`Decisions.md#D38`): the queue advanced
-past the chunk, the chunk written to its pseudo-container. -/
+past the chunk, the chunk written to its container (`taskStart`). -/
 def taskStartT (tc : TCtx) (d : Name) (c : ConsumeNode) (l : Loc) (pre : CSt) (ρ : Valuation) (q : List Val) : CSt :=
-  { ρ, mem := (pre.mem.setQueue l (q.drop c.chunksize)).writeChunk (tc.chunkName d) (q.take c.chunksize),
+  { ρ, mem := (pre.mem.setQueue l (q.drop c.chunksize)).writeChunk (tc.chunkMemName d) (q.take c.chunksize),
     log := Log.empty }
 
 /-- The log and deferred pushes contributed by one consume task. -/

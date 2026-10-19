@@ -275,3 +275,92 @@ def args_matmul_lib(seed: int = 0) -> dict:
 
 
 PROGRAMS.append(("matmul_lib", matmul_lib, args_matmul_lib))
+
+
+class _BuiltProgram:
+    """A corpus entry built with the SDFG API (for shapes the Python frontend does not produce).
+
+    :param name: The SDFG name.
+    :param build: Function returning the (unsimplified) SDFG.
+    """
+
+    def __init__(self, name: str, build):
+        self.name = name
+        self._build = build
+
+    def to_sdfg(self, simplify: bool = True) -> dace.SDFG:
+        """Build the SDFG; ``simplify`` is ignored so that the built structure is kept as is.
+
+        :param simplify: Ignored.
+        :return: The SDFG.
+        """
+        return self._build()
+
+
+def _build_private_stage_out() -> dace.SDFG:
+    """``map i in 0:N { b[i] = 2 * X[i]; A[i] = b[i] }`` with ``b`` a scope-lifetime transient.
+
+    The copy ``b[i] -> A[i]`` is staged out through the map exit (``b -> exit -> A``); it executes per iteration at
+    its leaf edge ``b -> exit``, while the routing edge ``exit -> A`` carries no copy of its own (``Decisions.md#D30``).
+    """
+    sdfg = dace.SDFG("private_stage_out")
+    sdfg.add_array("X", [N], dace.float64)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_transient("b", [N], dace.float64)
+    state = sdfg.add_state("main")
+    x = state.add_read("X")
+    a = state.add_write("A")
+    me, mx = state.add_map("stage", dict(i="0:N"))
+    t = state.add_tasklet("scale", {"x"}, {"y"}, "y = 2 * x")
+    b = state.add_access("b")
+    state.add_memlet_path(x, me, t, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_edge(t, "y", b, None, dace.Memlet("b[i]"))
+    state.add_memlet_path(b, mx, a, memlet=dace.Memlet(data="b", subset="i", other_subset="i"))
+    return sdfg
+
+
+def args_private_stage_out(seed: int = 0) -> dict:
+    r = _rng(15, seed)
+    return dict(X=r.random(5), A=np.zeros(5), N=5)
+
+
+PROGRAMS.append(
+    ("private_stage_out", _BuiltProgram("private_stage_out", _build_private_stage_out), args_private_stage_out)
+)
+
+
+def _build_consume_sum() -> dace.SDFG:
+    """Fill a stream from ``X`` in one state, consume it element by element in the next: ``R[0] += 2 * s``.
+
+    Exercises the consume chunk container (``Decisions.md#D38``) and WCR merging across consume tasks.
+    """
+    sdfg = dace.SDFG("consume_sum")
+    sdfg.add_array("X", [N], dace.float64)
+    sdfg.add_array("R", [1], dace.float64)
+    sdfg.add_stream("S", dace.float64, transient=True)
+    fill = sdfg.add_state("fill")
+    fill.add_mapped_tasklet(
+        "push",
+        dict(i="0:N"),
+        dict(x=dace.Memlet("X[i]")),
+        "o = x",
+        dict(o=dace.Memlet("S[0]", dynamic=True)),
+        external_edges=True,
+    )
+    cons = sdfg.add_state_after(fill, "consume")
+    stream = cons.add_read("S")
+    out = cons.add_write("R")
+    entry, exit_ = cons.add_consume("cons", ("p", "4"))
+    t = cons.add_tasklet("twice", {"s"}, {"o"}, "o = 2 * s")
+    cons.add_edge(stream, None, entry, "IN_stream", dace.Memlet.from_array("S", sdfg.arrays["S"]))
+    cons.add_edge(entry, "OUT_stream", t, "s", dace.Memlet.from_array("S", sdfg.arrays["S"]))
+    cons.add_memlet_path(t, exit_, out, src_conn="o", memlet=dace.Memlet("R[0]", wcr="lambda a, b: a + b"))
+    return sdfg
+
+
+def args_consume_sum(seed: int = 0) -> dict:
+    r = _rng(16, seed)
+    return dict(X=r.random(6), R=np.zeros(1), N=6)
+
+
+PROGRAMS.append(("consume_sum", _BuiltProgram("consume_sum", _build_consume_sum), args_consume_sum))

@@ -72,6 +72,10 @@ def ofDims (ds : List Dim) : Range := ⟨ds⟩
 /-- Number of dimensions. -/
 def ndim (r : Range) : Nat := r.dims.length
 
+/-- Does any bound or step of the range mention container `n` (`Expr.mentions`)? -/
+def mentions (r : Range) (n : Name) : Bool :=
+  r.dims.any fun d => d.lo.mentions n || d.hi.mentions n || d.step.mentions n || d.tile.mentions n
+
 /-- The range `[i₀, i₁, …]` of a single point. -/
 def ofIndices (is : List Expr) : Range := ⟨is.map Dim.index⟩
 

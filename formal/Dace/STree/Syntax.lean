@@ -273,33 +273,36 @@ end
 /-- Pre-order list of all nodes of a tree. -/
 def STree.preorder (t : STree) : List SNode := SNodes.preorder t.children
 
-/-- Names of data containers mentioned by a node itself (memlets, copy and
-view targets, data read by its expressions, `Decisions.md#D33`); used to
-determine the private transients of a scope (`Decisions.md#D54`). -/
-def SNode.ownDataNames : SNode → List Name
-  | .assign _ v => v.expr.readData
+/-- Does a node itself (not its children) mention container `t`
+(`Decisions.md#D54`, the tree analogue of `#D39`): memlets, copy, view and
+reference targets and sources, expressions naming it by subscript or as a
+bare name (`Expr.mentions`, `#D33`), or tasklet code naming it other than
+through a connector (`Tasklet.namesInCode`). -/
+def SNode.mentions (t : Name) : SNode → Bool
+  | .assign _ v => v.expr.mentions t
   | .loopScope l _ | .forScope l _ | .whileScope l _ | .doWhileScope l _ =>
-    l.cond.expr.readData ++ (l.init.map (·.rhs.readData)).getD [] ++ (l.update.map (·.rhs.readData)).getD []
-  | .ifScope c _ | .stateIfScope c _ | .elifScope c _ => c.expr.readData
-  | .mapScope mp _ => mp.range.dims.flatMap fun d => d.lo.readData ++ d.hi.readData ++ d.step.readData
-  | .consumeScope c _ => c.numPes.readData ++ (c.condition.map Expr.readData).getD []
-  | .taskletNode _ ins outs => (ins.memlets ++ outs.memlets).map (·.data)
-  | .libraryCall _ _ ins outs => (ins.memlets ++ outs.memlets).map (·.data)
-  | .copyNode target m => [m.data, target]
-  | .dynScopeCopy _ m => [m.data]
-  | .viewNode target source m _ _ => [target, source, m.data]
-  | .refSetNode target m _ _ => [target, m.data]
-  | _ => []
+    l.cond.expr.mentions t || l.init.any (·.rhs.mentions t) || l.update.any (·.rhs.mentions t)
+  | .ifScope c _ | .stateIfScope c _ | .elifScope c _ => c.expr.mentions t
+  | .mapScope mp _ => mp.range.mentions t
+  | .consumeScope c _ => c.numPes.mentions t || c.condition.any (·.mentions t)
+  | .taskletNode tk ins outs => tk.namesInCode t || (ins.memlets ++ outs.memlets).any (·.data = t)
+  | .libraryCall _ _ ins outs => (ins.memlets ++ outs.memlets).any (·.data = t)
+  | .copyNode target m => m.data = t || target = t
+  | .dynScopeCopy _ m => m.data = t
+  | .viewNode target source m _ _ => target = t || source = t || m.data = t
+  | .refSetNode target m _ _ => target = t || m.data = t
+  | _ => false
 
 mutual
 
-/-- Number of mentions of container `t` in a node and its descendants. -/
+/-- Number of nodes mentioning container `t` (`SNode.mentions`) among a node
+and its descendants. -/
 def SNode.countData (t : Name) : SNode → Nat
   | n@(.namedRegion _ cs) | n@(.gblock cs) | n@(.loopScope _ cs) | n@(.forScope _ cs) | n@(.whileScope _ cs)
   | n@(.doWhileScope _ cs) | n@(.ifScope _ cs) | n@(.stateIfScope _ cs) | n@(.elifScope _ cs)
   | n@(.elseScope cs) | n@(.mapScope _ cs) | n@(.consumeScope _ cs) =>
-    (n.ownDataNames.filter (· = t)).length + SNodes.countData t cs
-  | n => (n.ownDataNames.filter (· = t)).length
+    (if n.mentions t then 1 else 0) + SNodes.countData t cs
+  | n => if n.mentions t then 1 else 0
 
 def SNodes.countData (t : Name) : List SNode → Nat
   | [] => 0

@@ -33,6 +33,23 @@ structure Tasklet where
   sideEffects : Option Bool := none
   deriving DecidableEq, Repr, Inhabited
 
+/-- Identifier tokens of a code string: the maximal runs of letters, digits
+and `_` (a conservative over-approximation of the names it uses: names in
+comments and string literals count as well). -/
+def codeIdents (code : String) : List String :=
+  let (toks, cur) := code.toList.foldl (fun (acc : List String × List Char) c =>
+    if c.isAlphanum || c == '_' then (acc.1, c :: acc.2)
+    else if acc.2.isEmpty then acc
+    else (String.ofList acc.2.reverse :: acc.1, [])) ([], [])
+  (if cur.isEmpty then toks else String.ofList cur.reverse :: toks).reverse
+
+/-- Does the tasklet's code name container `n` other than through one of its
+connectors (`Tasklet.free_symbols` ignores connector names,
+`dace/sdfg/nodes.py:602-606`)?  Used for the private transients of a scope
+(`Decisions.md#D39`). -/
+def Tasklet.namesInCode (t : Tasklet) (n : Name) : Bool :=
+  !(t.inConns.any (·.1 = n)) && !(t.outConns.any (·.1 = n)) && (codeIdents t.code.code).contains n
+
 /-- Value bound to an input connector when a tasklet runs. -/
 inductive ConnIn where
   /-- A scalar connector (single-element memlet). -/

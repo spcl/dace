@@ -14,8 +14,10 @@ For every ``formal/tests/corpus/<base>[.variant].sdfg.json`` this script either
   (default, uses ``<name>.sdfg.json``) or ``stree`` (uses ``<name>.stree.json``,
   the schedule tree of the same SDFG).  Both must compute the same outputs, so
   they are compared against the same ``<name>.expected.json``.  A program the
-  Lean interpreter does not model (exit 2, or a library node without a model:
-  ``{"error": "unsupported library node '...'"}``) is reported as SKIP.
+  Lean interpreter does not model (exit 2, or an ``unsupported`` error such as a
+  library node without a model:
+  ``{"error": "unsupported library node '...'", "kind": "unsupported"}``) is
+  reported as SKIP.
 
 When neither mode is given, the script records if any expected file is missing
 and checks otherwise.
@@ -222,8 +224,8 @@ def have_lake() -> bool:
         return False
 
 
-def unsupported_library(stdout: str) -> str | None:
-    """Return the interpreter's error message if it rejected the program for an unmodeled library node.
+def unsupported_error(stdout: str) -> str | None:
+    """Return the interpreter's error message if it rejected the program as unsupported (not modeled).
 
     :param stdout: The standard output of ``dace-interp``.
     :return: The error message, or ``None`` for any other output.
@@ -232,8 +234,10 @@ def unsupported_library(stdout: str) -> str | None:
         result = json.loads(stdout)
     except json.JSONDecodeError:
         return None
-    message = result.get("error") if isinstance(result, dict) else None
-    if isinstance(message, str) and message.startswith("unsupported library node "):
+    if not isinstance(result, dict):
+        return None
+    message = result.get("error")
+    if isinstance(message, str) and result.get("kind") in ("unsupported", "uninterpreted"):
         return message
     return None
 
@@ -307,7 +311,7 @@ def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
         if proc.returncode == 2:
             print(f"SKIP   {name}: dace-interp {ir} not implemented (exit 2)")
             continue
-        unsupported = unsupported_library(proc.stdout) if proc.returncode == 1 else None
+        unsupported = unsupported_error(proc.stdout) if proc.returncode == 1 else None
         if unsupported is not None:
             print(f"SKIP   {name}: {unsupported} (no model in the Lean interpreter)")
             continue

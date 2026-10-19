@@ -17,8 +17,9 @@ Conventions (`Decisions.md#D29`–`#D32`, `#D38`, `#D40`):
 * a **copy** executes at its destination node (access node or scope exit);
   a code node reads its in-edges and writes its out-edges when it executes;
 * every element access goes through `Ctx.loc` and is logged resolved;
-* the consume chunk is a task-private pseudo-container named by
-  `chunkName`, never logged.
+* the consume chunk is an ordinary transient container
+  (`consumeChunkName`, declared by the importer, `#D38`), private to each task
+  by `#D39`; only its initial content is written outside the logs.
 -/
 
 set_option autoImplicit false
@@ -27,25 +28,16 @@ namespace Dace
 
 open State (Endpoint)
 
-/-! ## Consume chunk pseudo-container -/
-
-/-- Memory name of the chunk consumed by the consume scope `entry`
-(`__dace_<label>_element(s)` in `cpu.py:2273-2291`). -/
-def chunkName (ctx : Ctx) (entry : NodeId) : Name :=
-  ctx.cname ("__consume_chunk_" ++ toString entry)
+/-! ## Consume chunk -/
 
 namespace Mem
 
-/-- Number of elements of a chunk (stored at the whole-container location). -/
-def chunkCount (m : Mem) (name : Name) : Nat := ((m.cells (Loc.whole name)).toInt?.getD 0).toNat
-
-/-- Elements of a chunk in order. -/
-def chunkVals (m : Mem) (name : Name) : List Val :=
-  (List.range (m.chunkCount name)).map fun k => m.cells (Loc.elem name k)
-
-/-- Write a chunk (count and elements), bypassing aliases and logs. -/
+/-- Write the elements of a chunk at the unit-stride offsets `0, 1, …` of
+container memory name `name` (the layout of `DataDesc.consumeChunk`),
+bypassing aliases and logs.  Elements past the end of a short last chunk
+keep their previous content (codegen passes the actual count separately,
+`cpu.py:2221-2230`, and the model gives tasklets no access to it). -/
 def writeChunk (m : Mem) (name : Name) (vs : List Val) : Mem :=
-  let m := { m with cells := Function.update m.cells (Loc.whole name) (.int vs.length) }
   vs.zipIdx.foldl (fun acc (v, k) => { acc with cells := Function.update acc.cells (Loc.elem name k) v }) m
 
 /-- Replace the content of the queue at a (resolved) location. -/
@@ -99,12 +91,11 @@ def readScalarData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset)
 
 /-- The scalar flowing along a leaf edge into a scope entry or code node
 (`Decisions.md#D42`): a single element of a container, one popped element
-of a stream, a code value, or the first chunk element.  `none` = no value
+of a stream, or a code value (the chunk is a container).  `none` = no value
 flows (unassigned dynamic output upstream, `Decisions.md#D13`). -/
 def readEdgeScalar (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res (Option Val × St) :=
   match s.srcEndpoint e with
   | .code key => .ok (st.val? key, st)
-  | .chunk entry => .ok ((st.mem.chunkVals (chunkName ctx entry)).head?, st)
   | .data d sub => readScalarData ctx ρ d sub st
   | .invalid => .err (.malformed "leaf edge without a valid source")
 
@@ -140,39 +131,17 @@ def copyData (ctx : Ctx) (ρ : Valuation) (st : St) (sd : Name) (ssub : Option S
       let (v, st) ← st.read ctx ρ sd p
       st.store ctx ρ dd q wcr v) st
 
-/-- Copy the consumed chunk `vs` into a container endpoint (like an array
-source). -/
-def copyChunk (ctx : Ctx) (ρ : Valuation) (st : St) (vs : List Val) (dd : Name) (dsub : Option Subset)
-    (wcr : Option WcrOp) : Res St :=
-  if ctx.isStream dd then do
-    let dp ← streamPoint ctx ρ st.mem dd dsub
-    st.push ctx ρ dd dp vs
-  else do
-    let dpts ← ctx.pointsOf ρ st.mem dd dsub
-    (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q wcr v) st
-
 /-- Execute a leaf copy edge (`Decisions.md#D7`, `#D10`): `copyData` between
-the structural endpoints; the consume chunk copies like an array source. -/
+the structural endpoints. -/
 def execCopy (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res St :=
   match e.data with
   | .dep => .ok st
   | .memlet m =>
     match s.srcEndpoint e, s.dstEndpoint e with
     | .data sd ssub, .data dd dsub => copyData ctx ρ st sd ssub dd dsub m.wcr
-    | .chunk entry, .data dd dsub => copyChunk ctx ρ st (st.mem.chunkVals (chunkName ctx entry)) dd dsub m.wcr
     | _, _ => .err (.malformed "copy between non-container endpoints")
 
 /-! ## Code nodes (tasklets and library nodes) -/
-
-/-- The consumed chunk as a connector value: a scalar for one element, else
-a pointer connector over the chunk. -/
-def bindInChunk (vs : List Val) : ConnIn :=
-  match vs with
-  | [v] => .scalar v
-  | _ => .array fun rel =>
-      match rel with
-      | [k] => if 0 ≤ k then vs[k.toNat]? else none
-      | _ => none
 
 /-- Bind a container endpoint to an input connector (`Decisions.md#D40`): a
 single-point subset is a scalar, a multi-point subset a pointer connector
@@ -209,7 +178,6 @@ come from `St.vals`. -/
 def bindIn (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res (Option ConnIn × St) :=
   match s.srcEndpoint e with
   | .code key => .ok ((st.val? key).map .scalar, st)
-  | .chunk entry => .ok (some (bindInChunk (st.mem.chunkVals (chunkName ctx entry))), st)
   | .data d sub => do
     let (c, st) ← bindInData ctx ρ d sub st
     pure (some c, st)
@@ -326,7 +294,7 @@ def State.hasDynamicWcrOut (s : State) (n : DNode) : Bool :=
 def execCode (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St)
     (run : (Conn → Option ConnIn) → Option TaskletOut) (undefinedErr : ErrReason) : Res St :=
   if s.hasDynamicWcrOut n then
-    .err (.malformed s!"dynamic WCR output of '{n.label}' (fetch-and-add) is not modeled")
+    .err (.unsupported s!"dynamic WCR output of '{n.label}' (fetch-and-add, Decisions.md#D47)")
   else do
     let (ins, st) ← bindInputs ctx ρ s n st
     match run ins with
@@ -385,12 +353,31 @@ def execReduce (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (props : Red
 
 /-! ## Views and references -/
 
-/-- Alias binding of container `d` to the lower corner of `sub` in `base`. -/
-def aliasTo (ctx : Ctx) (ρ : Valuation) (st : St) (d base : Name) (sub : Option Subset) : Res St := do
-  let pts ← ctx.pointsOf ρ st.mem base sub
-  let lo ← Res.ofOption pts.head? (.malformed s!"empty subset of '{base}' viewed by '{d}'")
-  let l ← ctx.loc ρ st.mem base lo
-  pure (st.bindAlias (ctx.cname d) { base := l.name, offset := l.offset })
+/-- Does aliasing `d` to `base` reinterpret the element type
+(`Decisions.md#D55`)?  Structures and container arrays (whose descriptors
+carry no element type of their own) never do. -/
+def Ctx.reinterprets (ctx : Ctx) (d base : Name) : Bool :=
+  match ctx.desc? d, ctx.desc? base with
+  | some dd, some bd =>
+    let plain (x : DataDesc) : Bool := !(x.kind matches .structure _ _ || x.kind matches .containerArray _) &&
+      !(x.kind matches .view .structure || x.kind matches .view .containerArray) &&
+      !(x.kind matches .reference .structure || x.kind matches .reference .containerArray)
+    plain dd && plain bd && dd.dtype ≠ bd.dtype
+  | _, _ => false
+
+/-- Alias binding of container `d` to the lower corner of `sub` in `base`.
+A view or reference whose element type differs from its base's is not
+modeled (`unsupported`, `Decisions.md#D55`, `#D59`). -/
+def aliasTo (ctx : Ctx) (ρ : Valuation) (st : St) (d base : Name) (sub : Option Subset) : Res St :=
+  if ctx.reinterprets d base then
+    let size (n : Name) := (ctx.desc? n).bind (·.dtype.bytes?)
+    let how := if size d == size base then "a bitcast of equal element size" else "a different element size"
+    .err (.unsupported s!"reinterpretation of '{base}' as '{d}' ({how}, Decisions.md#D55)")
+  else do
+    let pts ← ctx.pointsOf ρ st.mem base sub
+    let lo ← Res.ofOption pts.head? (.malformed s!"empty subset of '{base}' viewed by '{d}'")
+    let l ← ctx.loc ρ st.mem base lo
+    pure (st.bindAlias (ctx.cname d) { base := l.name, offset := l.offset })
 
 /-- Bind a view access node to its viewed data (`Decisions.md#D31`): the
 access node at the start (read view) or end (write view) of the memlet path
@@ -421,30 +408,38 @@ def bindViews (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List NodeId) (st :
 def refSet (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (d : Name) (st : St) : Res St :=
   match s.srcEndpoint e with
   | .data base sub => aliasTo ctx ρ st d base sub
+  | .code _ => .err (.unsupported s!"reference set of '{d}' from a code node (Decisions.md#D55)")
   | _ => .err (.malformed s!"reference '{d}' set from a non-container source")
 
 /-! ## Access and exit nodes -/
 
-/-- Execute the copies into a node: every memlet in-edge whose source is a
-container (or the chunk), except view definitions.  For a reference access
-node an edge into connector `set` binds the reference instead. -/
+/-- The reference whose `set` connector the memlet path from `e` reaches
+through exit nodes, if any. -/
+def refSetTarget? (ctx : Ctx) (s : State) (e : DEdge) : Option Name :=
+  let r := s.dstRootEdge e
+  if r.dstConn = some "set" then
+    ((s.node? r.dst).bind DNode.accessData?).filter ctx.isReference
+  else none
+
+/-- Execute the copies into a node (`Decisions.md#D29`, `#D30`): every
+memlet in-edge that is the *leaf* of its memlet tree and whose source is a
+container, except view definitions.  Routing edges (`State.isRouting`: here,
+edges leaving a scope exit through `OUT_`) carry no copy of their own: the
+copy they route executes at the leaf edge into the innermost exit, per
+iteration; entry and exit nodes have no effect of their own.  An edge whose path ends at the
+`set` connector of a reference binds the reference instead (`#D32`). -/
 def execCopiesInto (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) : Res St :=
   (s.inEdges n.id).foldlM (fun st e =>
     match e.data with
     | .dep => pure st
     | .memlet _ =>
-      if ctx.isViewDef s e then pure st
+      if ctx.isViewDef s e || s.isRouting e then pure st
       else
-        match n.accessData? with
-        | some d =>
-          if e.dstConn = some "set" && ctx.isReference d then refSet ctx ρ s e d st
-          else
-            match s.srcEndpoint e with
-            | .data _ _ | .chunk _ => execCopy ctx ρ s e st
-            | _ => pure st
+        match refSetTarget? ctx s e with
+        | some d => refSet ctx ρ s e d st
         | none =>
           match s.srcEndpoint e with
-          | .data _ _ | .chunk _ => execCopy ctx ρ s e st
+          | .data _ _ => execCopy ctx ρ s e st
           | _ => pure st) st
 
 /-- Nodes whose execution is a function of the state (no recursion into the
@@ -462,7 +457,7 @@ def execSimple (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) : 
   | .library l =>
     match l.reduce with
     | some props => execReduce ctx ρ s n props st
-    | none => execCode ctx ρ s n st (ctx.I.library l.classpath) (.libraryUnsupported l.classpath)
+    | none => execCode ctx ρ s n st (ctx.I.library l.classpath) (.libraryUndefined l.classpath)
   | .mapEntry _ | .consumeEntry _ | .nested _ _ _ =>
     .err (.malformed "scope entry or nested SDFG executed as a simple node")
 
@@ -531,10 +526,20 @@ def consumeCond (ctx : Ctx) (ρ : Valuation) (c : ConsumeNode) (m : Mem) (l : Lo
   | none => .ok (!q.isEmpty)
   | some e => ctx.evalBoolR ρ (m.setQueue l q) e
 
+/-- Memory name of the chunk container of the consume scope `entry`
+(`consumeChunkName` of its stream, `Decisions.md#D38`). -/
+def chunkMemName (ctx : Ctx) (s : State) (entry : NodeId) : Option Name :=
+  (s.consumedStream? entry).map fun d => ctx.cname (consumeChunkName d)
+
 /-- Initial state of a consume task: the pre-scope memory with the queue
-advanced past the chunk and the chunk written (`Decisions.md#D38`). -/
-def taskStart (ctx : Ctx) (entry : NodeId) (c : ConsumeNode) (l : Loc) (pre : St) (q : List Val) : St :=
-  { mem := (pre.mem.setQueue l (q.drop c.chunksize)).writeChunk (chunkName ctx entry) (q.take c.chunksize),
+advanced past the chunk and the chunk written to its container
+(`Decisions.md#D38`). -/
+def taskStart (ctx : Ctx) (s : State) (entry : NodeId) (c : ConsumeNode) (l : Loc) (pre : St) (q : List Val) :
+    St :=
+  let m := pre.mem.setQueue l (q.drop c.chunksize)
+  { mem := match chunkMemName ctx s entry with
+      | some name => m.writeChunk name (q.take c.chunksize)
+      | none => m,
     log := Log.empty, vals := pre.vals }
 
 namespace Log
@@ -585,7 +590,7 @@ def nestedValuation (ctx : Ctx) (ρ : Valuation) (m : Mem) (mapping : List (Sym 
 def nestedConns (n : DNode) : List Conn := ((n.inConns ++ n.outConns).map Prod.fst).eraseDups
 
 /-- Bind the connectors of a nested SDFG node (`Decisions.md#D15`, `#D34`):
-containers are aliased with offset `0`, the consume chunk likewise, scalar
+containers (the consume chunk included) are aliased with offset `0`, scalar
 code values are copied into the inner scalar.  Returns the aliased inner
 names. -/
 def bindConnectors (ctx ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (st : St) : Res (St × List Name) :=
@@ -601,9 +606,6 @@ def bindConnectors (ctx ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (s
     | .data base _ =>
       let inner := ctx'.cname c
       pure ({ st with mem := st.mem.setAlias inner { base := ctx.cname base } }, inner :: aliased)
-    | .chunk entry =>
-      let inner := ctx'.cname c
-      pure ({ st with mem := st.mem.setAlias inner { base := chunkName ctx entry } }, inner :: aliased)
     | .code key =>
       match st.val? key with
       | some v => do

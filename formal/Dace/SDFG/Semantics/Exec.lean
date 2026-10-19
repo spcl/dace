@@ -182,14 +182,14 @@ inductive ConsumeTasks : Ctx → Valuation → State → NodeId → ConsumeNode 
       (hc : consumeCond ctx ρ c pre.mem l q = .ok true) (hq : q.isEmpty = false)
       (hp : (0 ≤ p && p < np) = true)
       (hb : OrderedExec ctx (Valuation.set ρ c.peIndex (.int p)) s (s.scopeNodes entry)
-              (s.directChildren (some entry)) (taskStart ctx entry c l pre q) (.err e)) :
+              (s.directChildren (some entry)) (taskStart ctx s entry c l pre q) (.err e)) :
       ConsumeTasks ctx ρ s entry c l np priv pre q (.err e)
   | restErr {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId} {c : ConsumeNode} {l : Loc} {np : Int}
       {priv : List Name} {pre st : St} {q : List Val} {p : Int} {e : ErrReason}
       (hc : consumeCond ctx ρ c pre.mem l q = .ok true) (hq : q.isEmpty = false)
       (hp : (0 ≤ p && p < np) = true)
       (hb : OrderedExec ctx (Valuation.set ρ c.peIndex (.int p)) s (s.scopeNodes entry)
-              (s.directChildren (some entry)) (taskStart ctx entry c l pre q) (.ok st))
+              (s.directChildren (some entry)) (taskStart ctx s entry c l pre q) (.ok st))
       (hr : ConsumeTasks ctx ρ s entry c l np priv pre (q.drop c.chunksize) (.err e)) :
       ConsumeTasks ctx ρ s entry c l np priv pre q (.err e)
   | step {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId} {c : ConsumeNode} {l : Loc} {np : Int}
@@ -197,7 +197,7 @@ inductive ConsumeTasks : Ctx → Valuation → State → NodeId → ConsumeNode 
       (hc : consumeCond ctx ρ c pre.mem l q = .ok true) (hq : q.isEmpty = false)
       (hp : (0 ≤ p && p < np) = true)
       (hb : OrderedExec ctx (Valuation.set ρ c.peIndex (.int p)) s (s.scopeNodes entry)
-              (s.directChildren (some entry)) (taskStart ctx entry c l pre q) (.ok st))
+              (s.directChildren (some entry)) (taskStart ctx s entry c l pre q) (.ok st))
       (hr : ConsumeTasks ctx ρ s entry c l np priv pre (q.drop c.chunksize) (.ok (logs, rest, pushed))) :
       ConsumeTasks ctx ρ s entry c l np priv pre q
         (.ok (taskLog st priv l :: logs, rest, taskPushed st priv l ++ pushed))

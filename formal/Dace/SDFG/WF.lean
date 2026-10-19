@@ -144,9 +144,11 @@ def checkState (g : SDFG) (s : State) : WFReport :=
               | some sub => if sub.ndim = d.ndim || d.isScalar then {}
                             else err s!"{ectx}: subset has {sub.ndim} dims, '{m.data}' has {d.ndim}"
               | none => {})) ++
-          -- the data name must match an access-node endpoint of this edge or of its tree root
+          -- the data name must match an access-node endpoint of this edge, of its memlet path
+          -- (`validation.py:1013-1047` checks `memlet_path(e)[0].src` / `[-1].dst`) or of its tree root
           (let r := s.treeRoot e
-           let endpoints := [e.src, e.dst, r.src, r.dst].filterMap fun id => (s.node? id).bind DNode.accessData?
+           let endpoints := [e.src, e.dst, (s.pathStart e).src, (s.pathEnd e).dst, r.src, r.dst].filterMap
+             fun id => (s.node? id).bind DNode.accessData?
            if endpoints.isEmpty || endpoints.any (fun d => rootName d = rootName m.data) then {}
            else err s!"{ectx}: memlet data '{m.data}' matches no access-node endpoint of its tree") ++
           -- tree root has an access-node endpoint, or the edge is code→code

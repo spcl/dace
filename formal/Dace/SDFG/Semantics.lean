@@ -11,7 +11,9 @@ Big-step **operational** semantics of SDFGs as a relation
 `I` (opaque functions, WCR operators, tasklet and library bodies), started
 with symbol valuation `ρ₀` and memory `m₀`, may end in outcome `r`".
 Outcomes are a final memory or an explicit error (`ErrReason`: data race,
-blocked pop, undefined expression, unset reference, undefined tasklet, ...).
+blocked pop, undefined expression, unset reference, undefined tasklet, ...),
+a `malformed` program, or an `unsupported` construct (valid DaCe that is not
+modeled, `Decisions.md#D59`).
 Divergence is the absence of any derivation.
 
 ## Style

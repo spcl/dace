@@ -19,7 +19,7 @@ Shared infrastructure of the operational semantics (`Dace.SDFG.Semantics`):
   (`State.viewEdge?`, mirroring `dace/sdfg/utils.py:1141-1226`) and the
   private transients of a scope (`Decisions.md#D39`).
 
-Nothing here is recursive over the SDFG syntax except the access-node count
+Nothing here is recursive over the SDFG syntax except the mention count
 used by `Ctx.privateTransients`.
 -/
 
@@ -29,9 +29,17 @@ namespace Dace
 
 /-! ## Outcomes -/
 
-/-- Reasons for an erroneous outcome.  `malformed` covers situations that
-well-formedness (`SDFG.WF`) excludes; it keeps the semantics total over the
-syntax. -/
+/-- Reasons for an erroneous outcome.  Three classes (`Decisions.md#D59`):
+
+* **undefined behavior** (`race`, `stuckPop`, `undefinedExpr`,
+  `undefinedSubset`, `unsetRef`, `taskletUndefined`): the program is valid
+  but this execution has no defined result;
+* `malformed`: situations that well-formedness (`SDFG.WF`, `STree.check`)
+  excludes; it keeps the semantics total over the syntax;
+* `unsupported`: valid DaCe whose meaning is not modeled (fetch-and-add,
+  pointer-valued code outputs, library nodes without a model, reinterpreting
+  views of a different element size).  It is not undefined behavior:
+  equivalence makes no claim about a program that may end in it. -/
 inductive ErrReason where
   /-- Conflicting parallel accesses found by `merge`. -/
   | race (e : MergeError)
@@ -45,12 +53,19 @@ inductive ErrReason where
   | unsetRef (n : Name)
   /-- The tasklet interpretation is undefined for these inputs. -/
   | taskletUndefined (label : String)
-  /-- The library-node interpretation is undefined for this class path. -/
-  | libraryUnsupported (classpath : String)
+  /-- The library-node interpretation (`Interp.library`) is undefined for
+  this node and its inputs.  Like `taskletUndefined` this depends on the
+  interpretation, which equivalence quantifies over, hence undefined
+  behavior rather than `unsupported` (`Decisions.md#D59`). -/
+  | libraryUndefined (classpath : String)
+  /-- Valid DaCe that the semantics does not model (`Decisions.md#D59`). -/
+  | unsupported (msg : String)
   | malformed (msg : String)
   deriving Inhabited
 
-/-- Human-readable rendering (for tools and test output). -/
+/-- Human-readable rendering (for tools and test output).  `unsupported`
+messages start with `unsupported` (`scripts/difftest.py` reports them as
+SKIP). -/
 def ErrReason.toString : ErrReason → String
   | .race e => s!"data race: {repr e}"
   | .stuckPop l => s!"pop from an empty queue at {repr l}"
@@ -58,8 +73,26 @@ def ErrReason.toString : ErrReason → String
   | .undefinedSubset sub => s!"undefined subset {repr sub}"
   | .unsetRef n => s!"reference '{n}' accessed before it was set"
   | .taskletUndefined label => s!"tasklet '{label}' is undefined for its inputs"
-  | .libraryUnsupported classpath => s!"unsupported library node '{classpath}'"
+  | .libraryUndefined cp => s!"library node '{cp}' is undefined for its inputs"
+  | .unsupported msg => s!"unsupported {msg}"
   | .malformed msg => s!"malformed SDFG: {msg}"
+
+/-- The class of an error (`Decisions.md#D59`): `"ub"`, `"malformed"`,
+`"unsupported"`, or `"uninterpreted"` (undefined behavior because the
+interpretation of a tasklet or library node is undefined; for the
+executable interpretation this usually means a gap of the executable
+subset, so `scripts/difftest.py` reports it as SKIP). -/
+def ErrReason.kind : ErrReason → String
+  | .unsupported _ => "unsupported"
+  | .taskletUndefined _ | .libraryUndefined _ => "uninterpreted"
+  | .malformed _ => "malformed"
+  | _ => "ub"
+
+/-- Is the error undefined behavior (anything refines it)?  False exactly for
+`malformed` and `unsupported` (`Decisions.md#D59`). -/
+def ErrReason.isUB : ErrReason → Bool
+  | .unsupported _ | .malformed _ => false
+  | _ => true
 
 instance : ToString ErrReason := ⟨ErrReason.toString⟩
 
@@ -339,39 +372,12 @@ def isConsumeEntry (s : State) (id : NodeId) : Bool :=
   | some n => (n.kind matches .consumeEntry _)
   | none => false
 
-/-- Follow `prevEdges` while the source is a scope node entered through an
-`OUT_` connector (`memlet_path(e)[0]`). -/
-def walkPrev (s : State) : Nat → DEdge → DEdge
-  | 0, e => e
-  | fuel + 1, e =>
-    if s.isScopeNode e.src && connPrefix e.srcConn "OUT_" then
-      match s.prevEdges e with
-      | f :: _ => s.walkPrev fuel f
-      | [] => e
-    else e
-
-/-- Follow `nextEdges` while the destination is a scope node (only exit nodes
-when `onlyExits`) entered through an `IN_` connector (`memlet_path(e)[-1]`). -/
-def walkNext (s : State) (onlyExits : Bool) : Nat → DEdge → DEdge
-  | 0, e => e
-  | fuel + 1, e =>
-    if (if onlyExits then s.isExitNode e.dst else s.isScopeNode e.dst) && connPrefix e.dstConn "IN_" then
-      match s.nextEdges e with
-      | f :: _ => s.walkNext onlyExits fuel f
-      | [] => e
-    else e
-
-/-- First edge of the memlet path through `e`. -/
-def pathStart (s : State) (e : DEdge) : DEdge := s.walkPrev (s.edges.length + 1) e
-
-/-- Last edge of the memlet path through `e`. -/
-def pathEnd (s : State) (e : DEdge) : DEdge := s.walkNext false (s.edges.length + 1) e
-
 /-- Outermost edge reached from `e` through exit nodes only. -/
 def dstRootEdge (s : State) (e : DEdge) : DEdge := s.walkNext true (s.edges.length + 1) e
 
 /-- The consume entry whose `OUT_stream` connector the path into `e`
-crosses, if any (the data then is the consumed chunk, `Decisions.md#D38`). -/
+crosses, if any (the data then is the consumed chunk container,
+`Decisions.md#D38`). -/
 def chunkSource (s : State) : Nat → DEdge → Option NodeId
   | 0, _ => none
   | fuel + 1, e =>
@@ -388,8 +394,6 @@ inductive Endpoint where
   | data (n : Name) (sub : Option Subset)
   /-- A scalar value on a code→code edge, keyed by the producer. -/
   | code (key : NodeId × Conn)
-  /-- The chunk consumed by a consume scope. -/
-  | chunk (entry : NodeId)
   | invalid
   deriving DecidableEq, Repr, Inhabited
 
@@ -407,10 +411,15 @@ def leafDstSubset (e : DEdge) : Option Subset := e.data.memlet?.bind (·.dstSubs
 
 /-- Source endpoint of a leaf edge: its source access node, the access node
 at the start of its memlet path (through entry nodes), the producing code
-node, or the consumed chunk. -/
+node, or the chunk container of a consume scope whose `OUT_stream` the path
+crosses (`consumeChunkName`, whole range: the memlet's subset on the stream
+is not used, `Decisions.md#D38`). -/
 def srcEndpoint (s : State) (e : DEdge) : Endpoint :=
   match s.chunkSource (s.edges.length + 1) e with
-  | some entry => .chunk entry
+  | some entry =>
+    match s.consumedStream? entry with
+    | some d => .data (consumeChunkName d) none
+    | none => .invalid
   | none =>
     let r := s.pathStart e
     match s.node? r.src with
@@ -524,44 +533,70 @@ end Ctx
 
 /-! ## Private transients of a scope -/
 
+/-- Does node `n` mention container `t` (`Decisions.md#D39`): an access node
+of `t`, a tasklet naming `t` in its code (other than through a connector),
+or a map range, consume parameter or nested-SDFG symbol mapping mentioning
+`t` (`Expr.mentions`).  Mirrors the uses `determine_allocation_lifetime`
+collects (`framecode.py:676-696,803-850`). -/
+def DNode.mentions (n : DNode) (t : Name) : Bool :=
+  match n.kind with
+  | .access d => d = t
+  | .tasklet tk => tk.namesInCode t
+  | .mapEntry mp => mp.range.mentions t
+  | .consumeEntry c => c.numPes.mentions t || c.condition.any (·.mentions t)
+  | .nested _ mapping _ => mapping.any (·.2.mentions t)
+  | .library _ | .mapExit | .consumeExit => false
+
+/-- Does an interstate edge mention container `t` (condition or assignment
+right-hand sides)? -/
+def IEdge.mentions (e : IEdge) (t : Name) : Bool := e.cond.mentions t || e.assigns.any (·.2.mentions t)
+
 mutual
 
-/-- Number of access nodes of container `t` in a region (all states, nested
-regions included; nested SDFGs have their own namespace). -/
-def Region.countAccess (t : Name) : Region → Nat
-  | ⟨_, _, blocks, _, _⟩ => Blocks.countAccess t blocks
+/-- Number of mentions of container `t` in a region: nodes mentioning it
+(`DNode.mentions`, all states, nested regions included; nested SDFGs have
+their own namespace) plus interstate edges, loop and branch expressions
+mentioning it. -/
+def Region.countMentions (t : Name) : Region → Nat
+  | ⟨_, _, blocks, _, edges⟩ => Blocks.countMentions t blocks + (edges.filter (·.mentions t)).length
 
-def Blocks.countAccess (t : Name) : List Block → Nat
+def Blocks.countMentions (t : Name) : List Block → Nat
   | [] => 0
-  | b :: bs => Block.countAccess t b + Blocks.countAccess t bs
+  | b :: bs => Block.countMentions t b + Blocks.countMentions t bs
 
-def Block.countAccess (t : Name) : Block → Nat
-  | .state s => (s.nodes.filter fun n => n.accessData? = some t).length
-  | .region r => Region.countAccess t r
-  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.countAccess t body
-  | .cond _ brs => Branches.countAccess t brs
+def Block.countMentions (t : Name) : Block → Nat
+  | .state s => (s.nodes.filter (·.mentions t)).length
+  | .region r => Region.countMentions t r
+  | .loop ⟨_, _, init, cond, update, _, _, body⟩ =>
+    (if cond.mentions t || init.any (·.2.mentions t) || update.any (·.2.mentions t) then 1 else 0) +
+      Region.countMentions t body
+  | .cond _ brs => Branches.countMentions t brs
   | .breakBlock | .continueBlock | .returnBlock => 0
 
-def Branches.countAccess (t : Name) : List (Option Expr × Region) → Nat
+def Branches.countMentions (t : Name) : List (Option Expr × Region) → Nat
   | [] => 0
-  | (_, r) :: rest => Region.countAccess t r + Branches.countAccess t rest
+  | (c, r) :: rest =>
+    (if c.any (·.mentions t) then 1 else 0) + Region.countMentions t r + Branches.countMentions t rest
 
 end
 
-def SDFG.countAccess (g : SDFG) (t : Name) : Nat := Region.countAccess t g.top
+def SDFG.countMentions (g : SDFG) (t : Name) : Nat := Region.countMentions t g.top
 
 namespace Ctx
 
-/-- Transient containers of the current SDFG all of whose access nodes (over
-every state of the SDFG) lie inside the scope of `entry` in state `s`; their
-effects are private to one iteration/task (`Decisions.md#D39`).  Returned
-with the memory-name prefix. -/
+/-- Transient containers of the current SDFG with `Scope` lifetime all of
+whose mentions (over the whole SDFG, `Region.countMentions`) are nodes
+inside the scope of `entry` in state `s`; they are allocated per
+iteration/task, so their effects are private to it (`Decisions.md#D39`).
+Any other lifetime (`State`, `SDFG`, `Global`, `Persistent`, `External`)
+allocates the container once outside the scope, shared by all iterations.
+Returned with the memory-name prefix. -/
 def privateTransients (ctx : Ctx) (s : State) (entry : NodeId) : List Name :=
   let inside := s.scopeNodes entry
   ctx.g.arrays.filterMap fun (t, d) =>
-    if d.transient then
-      let here := (s.nodes.filter fun n => n.accessData? = some t && inside.contains n.id).length
-      if here = ctx.g.countAccess t then some (ctx.cname t) else none
+    if d.transient && d.lifetime = .scope then
+      let here := (s.nodes.filter fun n => n.mentions t && inside.contains n.id).length
+      if here = ctx.g.countMentions t then some (ctx.cname t) else none
     else none
 
 end Ctx

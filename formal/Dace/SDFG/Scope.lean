@@ -70,6 +70,41 @@ def isRouting (s : State) (e : DEdge) : Bool :=
 
 def isLeaf (s : State) (e : DEdge) : Bool := !s.isRouting e
 
+/-- Follow `prevEdges` while the source is a scope node entered through an
+`OUT_` connector (`memlet_path(e)[0]`). -/
+def walkPrev (s : State) : Nat → DEdge → DEdge
+  | 0, e => e
+  | fuel + 1, e =>
+    if s.isScopeNode e.src && connPrefix e.srcConn "OUT_" then
+      match s.prevEdges e with
+      | f :: _ => s.walkPrev fuel f
+      | [] => e
+    else e
+
+/-- Follow `nextEdges` while the destination is a scope node (only exit nodes
+when `onlyExits`) entered through an `IN_` connector (`memlet_path(e)[-1]`). -/
+def walkNext (s : State) (onlyExits : Bool) : Nat → DEdge → DEdge
+  | 0, e => e
+  | fuel + 1, e =>
+    if (if onlyExits then s.isExitNode e.dst else s.isScopeNode e.dst) && connPrefix e.dstConn "IN_" then
+      match s.nextEdges e with
+      | f :: _ => s.walkNext onlyExits fuel f
+      | [] => e
+    else e
+
+/-- First edge of the memlet path through `e`. -/
+def pathStart (s : State) (e : DEdge) : DEdge := s.walkPrev (s.edges.length + 1) e
+
+/-- Last edge of the memlet path through `e`. -/
+def pathEnd (s : State) (e : DEdge) : DEdge := s.walkNext false (s.edges.length + 1) e
+
+/-- The stream a consume entry pops from: the access node at the start of
+the memlet path into its `IN_stream` connector (`Decisions.md#D38`). -/
+def consumedStream? (s : State) (entry : NodeId) : Option Name :=
+  match (s.inEdges entry).find? (·.dstConn = some "IN_stream") with
+  | some e => (s.node? (s.pathStart e).src).bind DNode.accessData?
+  | none => none
+
 /-- Dynamic scope input edge. -/
 def isDynamicInput (s : State) (e : DEdge) : Bool :=
   s.isEntryNode e.dst && e.dstConn.isSome && !connPrefix e.dstConn "IN_"

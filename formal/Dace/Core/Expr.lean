@@ -33,6 +33,12 @@ inductive Dtype where
   | opaque (name : String)
   deriving DecidableEq, Repr, Inhabited
 
+/-- Element size in bytes (`typeclass.bytes`); `none` for opaque types. -/
+def Dtype.bytes? : Dtype → Option Nat
+  | .int bits _ | .float bits => some (bits / 8)
+  | .bool => some 1
+  | .opaque _ => none
+
 /-- Runtime values.  Rationals arise from SymPy's exact division in symbolic
 expressions (`1/2*N`); floats from float literals and tasklet arithmetic. -/
 inductive Val where
@@ -225,6 +231,11 @@ def readDataList : Exprs → List Name
   | .nil => []
   | .cons e es => e.readData ++ readDataList es
 end
+
+/-- Does the expression mention container `n`, by subscript or as a bare
+name (a bare name may denote a scalar container, `Decisions.md#D33`)?  Used
+for the private transients of a scope (`Decisions.md#D39`). -/
+def mentions (e : Expr) (n : Name) : Bool := e.readData.contains n || e.freeSyms.contains n
 
 mutual
 /-- Capture-free simultaneous substitution of symbols. -/

@@ -133,7 +133,7 @@ def execConsume (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (entry : N
       if q.isEmpty then none
       else if (0 ≤ (0 : Int) && (0 : Int) < np) then
         match execOrdered fuel ctx (Valuation.set ρ c.peIndex (.int 0)) s (s.scopeNodes entry)
-                (s.directChildren (some entry)) (taskStart ctx entry c l pre q) with
+                (s.directChildren (some entry)) (taskStart ctx s entry c l pre q) with
         | none => none
         | some (.err e) => some (.err e)
         | some (.ok st) =>

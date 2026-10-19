@@ -1,6 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Lean.Data.Json
-import Dace.SDFG.Syntax
+import Dace.SDFG.Scope
 
 /-!
 # Importing `.sdfg` files
@@ -202,11 +202,15 @@ def memlet? (j : Json) : P (Option Memlet) := do
 
 /-! ## Data descriptors -/
 
-def lifetime (s : Option String) : Lifetime :=
+/-- `AllocationLifetime` by its serialized name (`serialize.py:142-144`); an
+absent field is the default `Scope` (`dace/data/core.py`).  Unknown names are
+rejected, since the lifetime decides privacy (`Decisions.md#D39`). -/
+def lifetime (s : Option String) : P Lifetime :=
   match s with
-  | some "State" => .state | some "SDFG" => .sdfg | some "Global" => .global
-  | some "Persistent" => .persistent | some "External" => .external
-  | _ => .scope
+  | none | some "Scope" => pure .scope
+  | some "State" => pure .state | some "SDFG" => pure .sdfg | some "Global" => pure .global
+  | some "Persistent" => pure .persistent | some "External" => pure .external
+  | some other => throw s!"unknown allocation lifetime '{other}'"
 
 def baseKindOf (t : String) : BaseKind :=
   if t.startsWith "Structure" then .structure
@@ -223,12 +227,13 @@ partial def dataDesc (name : Name) (j : Json) : P (List (Name × DataDesc)) := d
   let offset ← exprListField a "offset"
   let totalSize ← (exprField? a "total_size").map (·.getD (shape.foldl (· * ·) (1 : Expr)))
   let startOffset ← (exprField? a "start_offset").map (·.getD 0)
+  let lt ← lifetime (strField? a "lifetime")
   let base : DataDesc :=
     { dtype := (field? a "dtype").map dtype |>.getD (.opaque "void")
       shape, strides, offset, totalSize, startOffset
       transient := boolField a "transient"
       storage := (strField? a "storage").getD "Default"
-      lifetime := lifetime (strField? a "lifetime")
+      lifetime := lt
       mayAlias := boolField a "may_alias"
       allowConflicts := boolField a "allow_conflicts" }
   match t with
@@ -313,6 +318,31 @@ def libNodeOf (j : Json) (label : String) : P LibNode := do
   let classpath := (strField? j "classpath").getD ""
   let reduce ← if classpath.endsWith ".Reduce" then some <$> reduceProps a else pure none
   pure { classpath, label, implementation := strField? a "implementation", reduce }
+
+/-- Declare the chunk containers of the consume scopes of an SDFG
+(`Decisions.md#D38`): for every consume entry popping from stream `d`, a
+transient `consumeChunkName d` described by `DataDesc.consumeChunk` with the
+stream's element type, as codegen declares it (`cpu.py:2273-2291`).  A
+consume entry whose `IN_stream` path does not start at a stream is skipped
+(the semantics reports it as `malformed`).  A chunk name that is already
+taken (two consume scopes on one stream, or a user container of that name)
+is rejected as unsupported. -/
+def declareConsumeChunks (g : SDFG) : P SDFG := do
+  let consumes := g.top.allStates.flatMap fun s => s.nodes.filterMap fun n =>
+    match n.kind with
+    | .consumeEntry c => (s.consumedStream? n.id).map fun d => (n.label, d, c.chunksize)
+    | _ => none
+  let chunks ← consumes.foldlM (fun acc (label, d, chunksize) => do
+    match g.arrays.find? (·.1 = d) with
+    | some (_, sd) =>
+      if sd.isStream then
+        let name := consumeChunkName d
+        if g.arrays.any (·.1 = name) || acc.any (·.1 = name) then
+          throw s!"unsupported: the chunk container '{name}' of consume scope '{label}' is already declared (several consume scopes on one stream, or a container of that name; Decisions.md#D38)"
+        else pure (acc ++ [(name, DataDesc.consumeChunk sd.dtype chunksize)])
+      else pure acc
+    | none => pure acc) []
+  pure { g with arrays := g.arrays ++ chunks }
 
 mutual
 
@@ -487,7 +517,7 @@ partial def sdfg (j : Json) : P SDFG := do
     | none => pure []
     | some v => do (← v.getArr?).toList.mapM str
   let top ← regionBody arrays j .plain
-  pure { name, arrays, symbols, constants, argNames, top := { top with label := name } }
+  declareConsumeChunks { name, arrays, symbols, constants, argNames, top := { top with label := name } }
 
 end
 

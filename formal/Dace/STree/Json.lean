@@ -172,6 +172,40 @@ partial def node (guids : List (String × String)) (j : Json) : P (Option SNode)
   | "StateBoundaryNode" => throw "StateBoundaryNode is a conversion artifact and has no schedule-tree syntax (D19)"
   | other => throw s!"unknown schedule tree node type '{other}'"
 
+/-- The consume scopes of a sibling list and its descendants with the stream
+each pops from (the memlet of the `IN_stream` `DynScopeCopyNode` before it,
+`Decisions.md#D50`) and its chunk size. -/
+partial def consumeStreams (cs : List SNode) : List (String × Name × Nat) :=
+  let rec go (inStream : Option Name) : List SNode → List (String × Name × Nat)
+    | [] => []
+    | n :: rest =>
+      let here := match n, inStream with
+        | .consumeScope c _, some d => [(c.label, d, c.chunksize)]
+        | _, _ => []
+      let inner := (n.children?.map consumeStreams).getD []
+      let next := match n with
+        | .dynScopeCopy "IN_stream" m => some m.data
+        | .dynScopeCopy _ _ => inStream
+        | _ => none
+      here ++ inner ++ go next rest
+  go none cs
+
+/-- Declare the chunk containers of the consume scopes (`Decisions.md#D38`),
+exactly as `Dace.SDFG.Json.declareConsumeChunks` does for SDFGs. -/
+def declareConsumeChunks (containers : List (Name × DataDesc)) (children : List SNode) :
+    P (List (Name × DataDesc)) := do
+  let chunks ← (consumeStreams children).foldlM (fun acc (label, d, chunksize) => do
+    match containers.find? (·.1 = d) with
+    | some (_, sd) =>
+      if sd.isStream then
+        let name := consumeChunkName d
+        if containers.any (·.1 = name) || acc.any (·.1 = name) then
+          throw s!"unsupported: the chunk container '{name}' of consume scope '{label}' is already declared (several consume scopes on one stream, or a container of that name; Decisions.md#D38)"
+        else pure (acc ++ [(name, DataDesc.consumeChunk sd.dtype chunksize)])
+      else pure acc
+    | none => pure acc) []
+  pure (containers ++ chunks)
+
 /-- The root (`ScheduleTreeRoot`). -/
 def root (j : Json) : P STree := do
   if strField? j "type" ≠ some "ScheduleTreeRoot" then throw "expected a ScheduleTreeRoot"
@@ -211,7 +245,8 @@ def root (j : Json) : P STree := do
     | some (.arr cs) => List.reduceOption <$> cs.toList.mapM (node guids)
     | some _ => throw "children is not a list"
     | none => pure []
-  pure { name, containers := containers.flatten, symbols, constants, argNames, callbackMapping, children }
+  let containers ← declareConsumeChunks containers.flatten children
+  pure { name, containers, symbols, constants, argNames, callbackMapping, children }
 
 /-- Parse a schedule tree from JSON text. -/
 def parseSTree (text : String) : P STree := do

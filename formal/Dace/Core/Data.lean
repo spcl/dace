@@ -103,6 +103,14 @@ def array (dtype : Dtype) (shape : List Expr) (transient : Bool := false) : Data
   { kind := .array, dtype, shape, strides := cStrides shape,
     totalSize := shape.foldl (· * ·) (1 : Expr), transient }
 
+/-- Descriptor of the chunk a consume scope pops from a stream of element type
+`dtype` (`Decisions.md#D38`), as codegen declares it (`cpu.py:2273-2291`): a
+scalar for `chunksize = 1`, else an array `[chunksize]`; transient, `Register`
+storage, `Scope` lifetime, unit stride and zero start offset. -/
+def consumeChunk (dtype : Dtype) (chunksize : Nat) : DataDesc :=
+  let d := if chunksize = 1 then scalar dtype true else array dtype [Expr.ofInt chunksize] true
+  { d with storage := "Register", lifetime := .scope }
+
 /-- Linear element offset of an index vector under the descriptor's strides
 and start offset (`cpp_offset_expr` without the per-dimension `offset`, which
 DaCe folds into the subset at use sites). -/
@@ -120,5 +128,10 @@ def isEquivalent (a b : DataDesc) : Bool :=
   a.kind = b.kind && a.dtype = b.dtype && a.shape = b.shape && a.effStrides = b.effStrides
 
 end DataDesc
+
+/-- Name of the transient holding the chunk a consume scope pops from
+`stream` (`Decisions.md#D38`); both importers declare it
+(`DataDesc.consumeChunk`) and the semantics addresses it like any container. -/
+def consumeChunkName (stream : Name) : Name := "__consume_chunk_" ++ stream
 
 end Dace

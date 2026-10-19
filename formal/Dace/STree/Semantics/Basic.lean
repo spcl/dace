@@ -78,15 +78,25 @@ def consuming (tc : TCtx) (d : Name) : TCtx := { tc with consumed := some d }
 /-- Does the container name denote the consumed chunk here? -/
 def isChunk (tc : TCtx) (d : Name) : Bool := tc.consumed = some d
 
-/-- Memory name of the chunk consumed from stream `d` (cf. `chunkName`). -/
-def chunkName (tc : TCtx) (d : Name) : Name := tc.ctx.cname ("__consume_chunk_" ++ d)
+/-- Memory name of the chunk container of a consume scope on stream `d`
+(`consumeChunkName`, declared by the importer, `Decisions.md#D38`). -/
+def chunkMemName (tc : TCtx) (d : Name) : Name := tc.ctx.cname (consumeChunkName d)
 
-/-- Transient containers all of whose mentions in the tree lie inside the
-scope with children `cs` (`Decisions.md#D54`, the tree analogue of `#D39`);
-their effects are private to one iteration/task. -/
+/-- The container side an input memlet reads: the chunk container (whole
+range) when the memlet is on the consumed stream, else the memlet's data and
+subset (the tree analogue of `State.srcEndpoint`, `Decisions.md#D38`). -/
+def inData (tc : TCtx) (m : Memlet) : Name × Option Subset :=
+  if tc.isChunk m.data then (consumeChunkName m.data, none) else (m.data, m.dataSubset)
+
+/-- Transient containers with `Scope` lifetime all of whose mentions in the
+tree (`SNode.mentions`) lie inside the scope with children `cs`
+(`Decisions.md#D54`, the tree analogue of `#D39`); their effects are private
+to one iteration/task. -/
 def privateTransients (tc : TCtx) (cs : List SNode) : List Name :=
   tc.tree.containers.filterMap fun (t, d) =>
-    if d.transient && SNodes.countData t cs = tc.tree.countData t then some (tc.ctx.cname t) else none
+    if d.transient && d.lifetime = .scope && SNodes.countData t cs = tc.tree.countData t then
+      some (tc.ctx.cname t)
+    else none
 
 end TCtx
 
