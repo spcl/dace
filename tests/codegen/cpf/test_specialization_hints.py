@@ -512,6 +512,45 @@ def test_a_guarded_recurrence_is_not_proven_through_its_guard():
     assert hints[0][0].startswith("unsure -- "), hints
 
 
+def test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration():
+    """nussinov's ``j`` loop: ``t[i, j]`` reads ``t[i, j - 1]``. Every access names the outer ``i`` as well; the witness
+    picks one outer iteration both accesses run in, instead of refusing ``i`` as an unknown symbol."""
+
+    @dace.program
+    def row_recurrence(t: dace.float64[N, N]):
+        for i in range(N - 1, -1, -1):
+            for j in range(i + 1, N):
+                t[i, j] = t[i, j - 1] + t[i + 1, j]
+
+    # Not canonicalized: canonicalization skews this nest into a wavefront, and the j loop is what is tested here.
+    sdfg = row_recurrence.to_sdfg(simplify=True)
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    inner = [loop.specialization_hint.splitlines()[0] for loop in loops_of(sdfg) if loop.loop_variable == "j"]
+    assert len(inner) == 1 and inner[0].startswith("sequential -- carried: RAW on t["), inner
+    # The solver's witness, with the outer iteration it chose; the constant-distance proof names only j.
+    assert "(witness: i=" in inner[0], inner
+
+
+def test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given():
+    """heat_3d: ``TSTEPS`` only bounds the time loop, so a witness may choose it like an array size. The loop carries
+    a dependence, but a skew with the parallel nest inside would parallelize it, so the label says so."""
+    T = dace.symbol("T")
+
+    @dace.program
+    def heat(A: dace.float64[N], B: dace.float64[N]):
+        for t in range(1, T + 1):
+            B[1:-1] = 0.25 * (A[:-2] + 2.0 * A[1:-1] + A[2:])
+            A[1:-1] = 0.25 * (B[:-2] + 2.0 * B[1:-1] + B[2:])
+
+    sdfg = heat.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
+    assert len(hints) == 1, hints
+    assert hints[0][0].startswith("sequential -- carried: RAW on ") and "T=" in hints[0][0], hints
+    assert "a skew of this loop with the parallel nest inside it" in hints[0][1], hints
+
+
 def test_a_read_ahead_dependence_is_named_war_not_raw():
     """ext_war_unit: ``a[i] = a[i + 1] + ...`` reads what a LATER iteration writes."""
 
@@ -813,6 +852,8 @@ if __name__ == "__main__":
     test_a_map_codegen_lowers_a_copy_into_is_labelled()
     test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering()
     test_a_guarded_recurrence_is_not_proven_through_its_guard()
+    test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration()
+    test_a_time_loop_over_a_stencil_is_proven_and_names_the_skew_it_is_not_given()
     test_a_read_ahead_dependence_is_named_war_not_raw()
     test_a_pattern_matched_dependence_names_its_witness_too()
     test_no_carried_dependence_is_claimed_for_independent_elements()

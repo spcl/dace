@@ -698,6 +698,7 @@ def find_conflict_witness(
     second_iters: tuple[IterRange, ...],
     sizes: set[str],
     rlimit: int = DEFAULT_RLIMIT,
+    outer: tuple[IterRange, ...] = (),
 ) -> dict[str, int] | None:
     """Values under which ``first``, at an earlier iteration of the carrying loop, and ``second``, at a later one,
     touch the same element; ``None`` when there are none, the solver gives up, or something cannot be encoded.
@@ -705,21 +706,23 @@ def find_conflict_witness(
     The iterator lists run outermost first, and both start with the carrying loop. Each side gets its own copy of
     every iterator. The only other symbols the witness may choose are ``sizes``, nonnegative: a symbol outside
     them is a fixed value nobody knows, and a conflict for one chosen value of it proves nothing about the
-    program, so its presence refuses the query.
+    program, so its presence refuses the query. ``outer`` are the counters of the loops around the carrying one,
+    outermost first: both accesses share one copy, an iteration of those loops in which the carrying loop runs.
     """
     exprs = [sp.sympify(e) for e in first + second]
-    exprs += [sp.sympify(b) for _, start, end, _ in first_iters + second_iters for b in (start, end)]
-    allowed = {name for name, *_ in first_iters + second_iters} | sizes
+    exprs += [sp.sympify(b) for _, start, end, _ in outer + first_iters + second_iters for b in (start, end)]
+    allowed = {name for name, *_ in outer + first_iters + second_iters} | sizes
     if not _HAS_Z3 or len(first) != len(second) or not admissible(exprs, allowed):
         return None
     sym_cache: dict[str, Any] = {}
     sides = [encode_side("__a", first, first_iters, sym_cache), encode_side("__b", second, second_iters, sym_cache)]
-    if None in sides:
+    shared = encode_side("", (), outer, sym_cache)
+    if None in sides or shared is None:
         return None
     carrier, _, _, step = first_iters[0]
     earlier, later = required(z3).Int(carrier + "__a"), required(z3).Int(carrier + "__b")
     solver = bounded_solver(rlimit)
-    solver.add(*sides[0][0], *sides[1][0], *(a == b for a, b in zip(sides[0][1], sides[1][1])))
+    solver.add(*shared[0], *sides[0][0], *sides[1][0], *(a == b for a, b in zip(sides[0][1], sides[1][1])))
     solver.add(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
     solver.add(*(required(z3).Int(name) >= 0 for name in sorted(sizes)))
     try:
@@ -730,7 +733,8 @@ def find_conflict_witness(
     except Exception:
         return None
     model = solver.model()
-    shown = [carrier + "__a", carrier + "__b"] + sorted({s.name for e in exprs for s in e.free_symbols} & sizes)
+    shown = [name for name, *_ in outer] + [carrier + "__a", carrier + "__b"]
+    shown += sorted({s.name for e in exprs for s in e.free_symbols} & sizes)
     return {name: model.eval(required(z3).Int(name), model_completion=True).as_long() for name in shown}
 
 

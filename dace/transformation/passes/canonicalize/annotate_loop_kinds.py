@@ -73,6 +73,14 @@ SEQUENTIAL_PROVEN = (
     "otherwise optimize the work inside"
 )
 
+#: A carried dependence on a loop whose body is a Do-All nest (a time loop over a stencil): proven too, but a skew
+#: of the loop with the nest inside it would parallelize it -- canonicalization does not skew a time loop.
+SEQUENTIAL_PROVEN_OVER_DOALL = (
+    "sequential -- carried: {reason}\n"
+    "settled: proven, {why}; a skew of this loop with the parallel nest inside it (a time-tiled wavefront) would "
+    "make it parallel, which canonicalization does not apply to a loop over a Do-All nest"
+)
+
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
 #: above: not proven, and the wording has to keep saying so in one word.
 UNSURE = (
@@ -531,8 +539,10 @@ def region_sites(
 
 
 def size_symbols(sdfg: SDFG) -> set[str]:
-    """The symbols the argument arrays' shapes are written in, less any the program assigns: the only ones a conflict
-    witness may choose a value for."""
+    """The symbols a conflict witness may choose a value for: those the argument arrays' shapes are written in, and
+    those that only bound a loop (a trip count such as ``TSTEPS``), less any the program assigns.
+
+    Either only says how much work there is: a value for it is an execution of the program at that size."""
     shapes = {
         s.name
         for desc in sdfg.arrays.values()
@@ -540,9 +550,27 @@ def size_symbols(sdfg: SDFG) -> set[str]:
         for dim in desc.shape
         for s in as_basic(dim).free_symbols
     }
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    bounds = {name for loop in loops for name in loop_header_names(loop, {})}
+    elsewhere = {
+        str(s)
+        for state in sdfg.states()
+        for edge in state.edges()
+        if edge.data is not None
+        for s in edge.data.free_symbols
+    }
+    elsewhere |= {str(s) for edge in sdfg.all_interstate_edges(recursive=True) for s in edge.data.free_symbols}
+    elsewhere |= {
+        str(s)
+        for block in sdfg.all_control_flow_blocks(recursive=True)
+        if isinstance(block, ConditionalBlock)
+        for condition, _ in block.branches
+        if condition is not None
+        for s in condition.get_free_symbols()
+    }
     assigned = {name for edge in sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
-    counters = {r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)}
-    return shapes - assigned - counters - set(sdfg.constants)
+    counters = {loop.loop_variable for loop in loops}
+    return (shapes | (bounds - elsewhere)) - assigned - counters - set(sdfg.constants)
 
 
 def witnessed_carrying_access(loop: LoopRegion) -> str | None:
@@ -557,6 +585,15 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     counter = loop_range(loop, {}) if loop.loop_variable else None
     if counter is None:
         return None
+    # The loops around ``loop`` in its SDFG, up to the first branch: below a branch the loop need not run at all.
+    outer = []
+    block = loop.parent_graph
+    while isinstance(block, LoopRegion) and block.loop_variable:
+        around = loop_range(block, {})
+        if around is None:
+            break
+        outer.insert(0, around)
+        block = block.parent_graph
     arrays = {name: (name, ()) for name, desc in loop.sdfg.arrays.items() if not isinstance(desc, data.View)}
     mapping = {name: sympy.sympify(value) for name, value in loop.sdfg.constants.items()}
     sites: list[Site] = []
@@ -568,7 +605,7 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     for write, other in pairs:
         for first, second in ((write, other), (other, write)):
             found = smt_dependence.find_conflict_witness(
-                first.access.index, second.access.index, first.iters, second.iters, sizes
+                first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
             )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
@@ -602,8 +639,21 @@ def loop_hint(loop: LoopRegion) -> str:
         return UNSURE.format(reason=NEVER_EXAMINED)
     access = proof_of_carry(loop, reason)
     if access is not None:
-        return SEQUENTIAL_PROVEN.format(reason=access, why=proven_why(access))
+        text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
+        return text.format(reason=access, why=proven_why(access))
     return UNSURE.format(reason=carrying_access(reason))
+
+
+def over_doall_nest(loop: LoopRegion) -> bool:
+    """Whether ``loop``'s body is a Do-All nest: maps, no reduction and no loop of its own (a time loop over a
+    stencil). A reduction inside gives a skew nothing to run in parallel."""
+    blocks = list(loop.all_control_flow_blocks())
+    states = [block for block in blocks if isinstance(block, SDFGState)]
+    return (
+        not any(isinstance(block, LoopRegion) for block in blocks)
+        and any(isinstance(node, nodes.MapEntry) for state in states for node in state.nodes())
+        and not any(edge.data.wcr is not None for state in states for edge in state.edges())
+    )
 
 
 def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
