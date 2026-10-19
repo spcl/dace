@@ -22,7 +22,7 @@ from dace import dtypes, subsets, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.scope import is_in_scope
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, memoize_facts
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
@@ -49,6 +49,15 @@ class InlineTaskletConnectors(ppl.Pass):
         :returns: ``(plans, safe)`` -- the per-tasklet connector accesses, and the container names
                   every toucher of which can be inlined.
         """
+        # Planning rewrites nothing, so one resolver and one facts memo serve every tasklet: the facts of a scope are
+        # derived once, not once per tasklet in it.
+        with memoize_facts():
+            return self._plan(sdfg, SymbolResolver())
+
+    def _plan(
+        self, sdfg: SDFG, resolver: SymbolResolver
+    ) -> tuple[list[tuple[nodes.Tasklet, dict[str, tuple[str, list[str]]]]], set[str]]:
+        """:meth:`plan`, resolving the facts at each tasklet through ``resolver``."""
         plans: list[tuple[nodes.Tasklet, dict[str, tuple[str, list[str]]]]] = []
         touched: dict[str, int] = {}
         inlinable: dict[str, int] = {}
@@ -64,7 +73,7 @@ class InlineTaskletConnectors(ppl.Pass):
                         continue
                     touched[edge.data.data] = touched.get(edge.data.data, 0) + 1
             try:
-                accesses = self._plan_tasklet(state.sdfg, state, node)
+                accesses = self._plan_tasklet(state.sdfg, state, node, resolver)
             except Exception as ex:  # noqa: BLE001
                 warnings.warn(
                     f"InlineTaskletConnectors: left tasklet {node.label!r} in classic form: {type(ex).__name__}: {ex}"
@@ -155,8 +164,13 @@ class InlineTaskletConnectors(ppl.Pass):
         indices = [str(rb) for (rb, _re, _rs) in subset.ranges]
         return (conn, memlet.data, indices)
 
-    def _plan_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> dict[str, tuple[str, list[str]]]:
-        """The connectors of ``node`` that could be inlined. Pure -- decides, never rewrites."""
+    def _plan_tasklet(
+        self, osdfg: SDFG, state, node: nodes.Tasklet, resolver: SymbolResolver | None = None
+    ) -> dict[str, tuple[str, list[str]]]:
+        """The connectors of ``node`` that could be inlined. Pure -- decides, never rewrites.
+
+        :param resolver: The ``SymbolResolver`` of the ongoing plan; one is made if not given.
+        """
         in_acc: dict[str, tuple[str, list[str]]] = {}
         out_acc: dict[str, tuple[str, list[str]]] = {}
         in_subset: dict[str, subsets.Subset] = {}
@@ -200,7 +214,13 @@ class InlineTaskletConnectors(ppl.Pass):
 
         candidates = [name for name in in_acc if name not in inout and name in accesses]
         for name in reads_after_aliased_writes(
-            node, candidates, in_acc, out_acc, in_subset, out_subset, SymbolResolver().facts_at(state, node)
+            node,
+            candidates,
+            in_acc,
+            out_acc,
+            in_subset,
+            out_subset,
+            (resolver if resolver is not None else SymbolResolver()).facts_at(state, node),
         ):
             del accesses[name]
         return accesses
