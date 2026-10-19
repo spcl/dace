@@ -335,16 +335,20 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
-                        # The symbols the state sees, loop variables included
-                        tasklet_types = {
-                            **state.defined_symbols(),
-                            **{e.dst_conn: sdfg.arrays[e.data.data].dtype for e in state.in_edges(edge.src)},
-                        }
-                        detector = AttributedCallDetector(tasklet_types)
-                        detector.visit(cb.code[0].value)
-                        if detector.detected:
-                            candidates.remove(candidate)
-                            continue
+                        # The detector reads the types only at a call of an attribute, so the
+                        # whole-SDFG ``defined_symbols`` walk is paid only by code holding one.
+                        value = cb.code[0].value
+                        if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) for n in ast.walk(value)):
+                            # The symbols the state sees, loop variables included
+                            tasklet_types = {
+                                **state.defined_symbols(),
+                                **{e.dst_conn: sdfg.arrays[e.data.data].dtype for e in state.in_edges(edge.src)},
+                            }
+                            detector = AttributedCallDetector(tasklet_types)
+                            detector.visit(value)
+                            if detector.detected:
+                                candidates.remove(candidate)
+                                continue
                     elif cb.language is dtypes.Language.CPP:
                         # Try to match a single C assignment
                         cstr = cb.as_string.strip()
