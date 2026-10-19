@@ -336,6 +336,31 @@ def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
 
 
+def branch_carried_sdfg(name: str) -> dace.SDFG:
+    """TSVC s161: the write ``c[i + 1]`` and the read ``c[i]`` each sit under a data-dependent branch, so no pair of
+    iterations is known to run both."""
+
+    @dace.program
+    def s161(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+        for i in range(N - 1):
+            if b[i] < 0.0:
+                c[i + 1] = a[i] + d[i] * d[i]
+            else:
+                a[i] = c[i] + d[i] * e[i]
+
+    sdfg = s161.to_sdfg(simplify=True)
+    sdfg.name = name
+    return sdfg
+
+
+def test_an_access_under_a_data_dependent_branch_proves_no_carried_dependence():
+    """``sequential -- carried`` is a proof, and accesses a branch may skip prove nothing: s161 was labelled
+    ``carried: RAW on c[i]`` from its two branch bodies. The solver witness skips branch bodies; so must the
+    constant-distance proof."""
+    rendered = comment_lines(named(branch_carried_sdfg("cpf_kind_branch_carried")))
+    assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
+
+
 def test_a_loop_that_was_never_examined_says_exactly_that():
     """A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
     That is as open as a declined test, so it is ``unsure`` too, with the reason saying why."""
@@ -467,9 +492,10 @@ def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
     assert any(line.startswith("// sequential -- carried: RAW on b[") for line in rendered), rendered
 
 
-def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
-    """s275: a guarded column recurrence. The nested body's memlets cover all of ``aa``, so
-    ``LoopToMap`` could only decline; the element accesses inside prove the carry."""
+def test_a_guarded_recurrence_is_not_proven_through_its_guard():
+    """s275: a guarded column recurrence. Canonicalize moves the guard ``aa[0, i] > 0`` inside the sequential loop,
+    so the recurrence's accesses sit under a branch the data decides, and an access a branch may skip proves no
+    dependence: the loop stays unsure, never ``sequential -- carried``."""
 
     @dace.program
     def guarded_columns(aa: dace.float64[N, N], bb: dace.float64[N, N]):
@@ -483,12 +509,7 @@ def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
     AnnotateLoopKinds().apply_pass(sdfg, {})
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
-    assert hints[0][0].startswith("sequential -- carried: RAW on aa["), hints
-    # The column index is the element the carry runs along, or the whole row once the parallel column
-    # map sits inside the sequential recurrence.
-    # ... followed by its witness: two consecutive iterations of the carry
-    assert re.search(r" - 1, (?:_loop_it_\d+|0:N)\] \(witness: (\w+)=1 and \1=2\)$", hints[0][0]), hints
-    assert hints[0][1].startswith("settled: proven, " + CONFLICT_MEANING["RAW"]), hints
+    assert hints[0][0].startswith("unsure -- "), hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -781,6 +802,7 @@ if __name__ == "__main__":
     test_a_multi_dimensional_map_names_every_loop_it_renders_as()
     test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it()
     test_a_declined_dependence_test_is_not_rendered_as_a_proof()
+    test_an_access_under_a_data_dependent_branch_proves_no_carried_dependence()
     test_a_loop_that_was_never_examined_says_exactly_that()
     test_a_wavefront_names_its_diagonal_and_its_front()
     test_a_tiled_wavefront_names_all_three_of_its_axes()
@@ -790,7 +812,7 @@ if __name__ == "__main__":
     test_a_map_a_library_expansion_leaves_is_labelled()
     test_a_map_codegen_lowers_a_copy_into_is_labelled()
     test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering()
-    test_a_carried_dependence_behind_a_whole_array_memlet_is_proven()
+    test_a_guarded_recurrence_is_not_proven_through_its_guard()
     test_a_read_ahead_dependence_is_named_war_not_raw()
     test_a_pattern_matched_dependence_names_its_witness_too()
     test_no_carried_dependence_is_claimed_for_independent_elements()
