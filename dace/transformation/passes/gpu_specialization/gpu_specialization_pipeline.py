@@ -50,12 +50,12 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     # running the body once per lane is sound; the rest is pinned sequential below.
     BlockTileKernels().apply_pass(sdfg, {})
     SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
-    # Several elements per thread along an axis the lanes do not walk, so the block reuses what it reads.
+    # An explicit thread block along the coalesced axis, each thread several points of an outer axis.
     factor = Config.get("optimizer", "canonicalization", "gpu_coarsen_factor")
     if factor > 1:
-        from dace.transformation.passes.gpu_specialization.coarsen_kernel_threads import CoarsenKernelThreads
+        from dace.transformation.passes.gpu_specialization.tile_kernels_coalesced import TileKernelsCoalesced
 
-        CoarsenKernelThreads(factor=factor).apply_pass(sdfg, {})
+        TileKernelsCoalesced(factor=factor).apply_pass(sdfg, {})
     return sdfg
 
 

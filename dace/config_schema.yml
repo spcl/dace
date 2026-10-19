@@ -146,10 +146,10 @@ required:
                         default: 1
                         title: GPU thread coarsening factor
                         description: >
-                            Elements each thread of a multi-dimensional GPU kernel computes along the
-                            outermost axis that is not threadIdx.x, so a wavefront's lanes still walk the
-                            contiguous axis (``CoarsenKernelThreads``). 1 disables. One-dimensional kernels
-                            are left alone: folding a streaming map measured no gain on MI300A.
+                            Points of an outer axis each thread of a multi-dimensional GPU kernel computes,
+                            under an explicit thread block whose lanes walk the coalesced axis
+                            (``TileKernelsCoalesced``); a one-dimensional kernel gets a 256-thread block and
+                            no coarsening. 1 disables.
     compiler:
         type: dict
         title: Compiler
