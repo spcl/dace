@@ -6,7 +6,7 @@ from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, ReturnBlock
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
@@ -53,14 +53,16 @@ def remove_empty_fallthrough_branches(added: list[tuple[ConditionalBlock, Contro
 
 
 def separate_early_returns(sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
-    """Put an empty state before each return on ``sdfg``'s own level, so its copies run on the return's path alone.
+    """Put an empty state before each return, break and continue on ``sdfg``'s own level, so the copies that jump
+    needs run on its path alone: it skips the copies the rest of its level (or loop body) ends with.
 
     :return: every region given such a state, with that state; ``remove_empty_return_entries`` takes them out again.
     """
     entries: list[tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
-        for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
-            entry = region.add_state_before(block, "return_entry", is_start_block=block is region.start_block)
+        for block in [block for block in region.nodes() if isinstance(block, (ReturnBlock, BreakBlock, ContinueBlock))]:
+            label = "return_entry" if isinstance(block, ReturnBlock) else "jump_entry"
+            entry = region.add_state_before(block, label, is_start_block=block is region.start_block)
             entries.append((region, entry))
     return entries
 

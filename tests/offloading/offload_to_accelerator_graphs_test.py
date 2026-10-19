@@ -8,7 +8,14 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, ReturnBlock
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.optimizer import Optimizer
@@ -1131,6 +1138,76 @@ def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) ->
 
     np.testing.assert_array_equal(returned, np.full(8, 7.0 if return_after_arm else 6.0))
     np.testing.assert_array_equal(fell_through, np.full(8, 0.0))
+
+
+def break_after_a_host_write_sdfg() -> dace.SDFG:
+    """A loop whose device map adds 1 to ``A``; in its second iteration a host arm sets ``A[0] = B[0]`` and breaks.
+
+    The break skips the copy back to the device that ends the loop body, after which the loop's end
+    hands ``A`` back from the device.
+    """
+    sdfg = dace.SDFG("accelerator_graphs_break_after_a_host_write")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    loop = LoopRegion("loop", "j < 4", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    device = loop.add_state("device", is_start_block=True)
+    device.add_mapped_tasklet(
+        "increment",
+        dict(i="0:8"),
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp + 1.0",
+        {"out": dace.Memlet("A[i]")},
+        external_edges=True,
+    )
+    stop = ConditionalBlock("stop")
+    loop.add_node(stop)
+    loop.add_edge(device, stop, dace.InterstateEdge())
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    stop.add_branch(dace.properties.CodeBlock("j == 1"), arm)
+    host = arm.add_state("host", is_start_block=True)
+    put = host.add_tasklet("put", {"b"}, {"o"}, "o = b")
+    host.add_edge(host.add_read("B"), None, put, "b", dace.Memlet("B[0]"))
+    host.add_edge(put, "o", host.add_write("A"), None, dace.Memlet("A[0]"))
+    leave = BreakBlock("leave")
+    arm.add_node(leave)
+    arm.add_edge(host, leave, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_break_copies_the_host_write_to_the_device_first() -> None:
+    """The loop's end holds ``A`` on the device, so the way into the break ends with the host write copied there."""
+    sdfg = break_after_a_host_write_sdfg()
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
+
+    leave = next(block for block in sdfg.all_control_flow_blocks(recursive=True) if isinstance(block, BreakBlock))
+    arm = leave.parent_graph
+    way_in = nx.shortest_path(arm.nx, arm.start_block, leave)
+    writers = [
+        block
+        for block in way_in
+        if isinstance(block, dace.SDFGState) and (writes_container(block, "A") or writes_container(block, "A_gpu"))
+    ]
+    assert writers and writes_container(writers[-1], "A_gpu"), (
+        f"the last write of A before the break is not the copy to the device: {[block.label for block in writers]}"
+    )
+
+
+@pytest.mark.gpu
+def test_a_break_keeps_the_host_write() -> None:
+    """Two increments, then ``A[0] = B[0]`` and the break: the copy back after the loop must not undo the host write."""
+    sdfg = break_after_a_host_write_sdfg()
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.zeros(8)
+    B = np.full(8, 42.0)
+    sdfg(A=A, B=B)
+
+    expected = np.full(8, 2.0)
+    expected[0] = 42.0
+    np.testing.assert_array_equal(A, expected)
 
 
 def branch_into_a_sibling_arm_sdfg() -> dace.SDFG:

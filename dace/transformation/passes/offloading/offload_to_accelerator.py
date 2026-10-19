@@ -1551,6 +1551,7 @@ class OffloadToAccelerator(ppl.Pass):
         IR.cpu_set = initially_on_cpu.copy()  # no copy -> may cause sideeffects
 
         # parse entire graph
+        self._loop_jump_entries: list[OffloadingIRNode] = []
         end = self._parse_to_IR(sdfg, sdfg, IR)
 
         # finish graph: tie the final node together with the inital close node
@@ -1591,6 +1592,8 @@ class OffloadToAccelerator(ppl.Pass):
                 state_node = OffloadingIRNode.new_state_node(state, cpu_set, gpu_set)
                 curr_node.append_node(state_node)
                 curr_node = state_node
+                if any(isinstance(edge.dst, (BreakBlock, ContinueBlock)) for edge in cfr.out_edges(state)):
+                    self._loop_jump_entries.append(state_node)
 
             # do nothing
             elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
@@ -1637,10 +1640,18 @@ class OffloadToAccelerator(ppl.Pass):
 
                     # parse body and connect to loop close node
                     # TODO: FIND ALL TAILS
+                    jumps_before = len(self._loop_jump_entries)
                     curr_node = self._parse_to_IR(
                         sdfg, loop, curr_node
                     )  # linked list representing all internal nodes of loop
                     curr_node.append_node(required(outer_node.close))
+                    # A break or continue skips the rest of the body, and with it the copies the body ends with:
+                    # the state leading into it must reach the locations the loop's end expects on its own. Inner
+                    # loops took their own jumps already, so what is left belongs to this loop.
+                    for jump in self._loop_jump_entries[jumps_before:]:
+                        if outer_node.close not in jump.next:
+                            jump.append_node(required(outer_node.close))
+                    del self._loop_jump_entries[jumps_before:]
 
                 # nested region -> flatten
                 elif isinstance(block, ControlFlowRegion):
