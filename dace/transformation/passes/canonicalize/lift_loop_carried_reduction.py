@@ -248,11 +248,21 @@ class LiftLoopCarriedReduction(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    def __init__(self, only: list | None = None):
+        super().__init__()
+        # When given, only these loops are candidates (the segments a split left behind).
+        self._only = only
+
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         lifted = 0
+        only = None if self._only is None else {id(loop) for loop in self._only}
+        if only is not None and not only:
+            return None
         for sd in sdfg.all_sdfgs_recursive():
             for loop in [n for n in sd.all_control_flow_regions(recursive=True) if isinstance(n, LoopRegion)]:
                 if loop.pinned_sequential or not loop.loop_variable:
+                    continue
+                if only is not None and id(loop) not in only:
                     continue
                 lifted += self._lift_loop(loop)
         return lifted or None

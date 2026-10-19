@@ -132,13 +132,23 @@ class LoopToStateScan(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    def __init__(self, only: list | None = None):
+        super().__init__()
+        # When given, only these loops are candidates (the segments a split left behind).
+        self._only = only
+
     def depends_on(self):
         return set()
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
         """Lift every eligible loop; returns how many, or ``None`` when none was."""
         lifted = 0
+        if self._only is not None and not self._only:
+            return None
         loops = [cfg for cfg in sdfg.all_control_flow_regions(recursive=True) if isinstance(cfg, LoopRegion)]
+        if self._only is not None:
+            only = {id(loop) for loop in self._only}
+            loops = [loop for loop in loops if id(loop) in only]
         for loop in loops:
             made = scan_node(loop)
             if made is None or not rest_is_parallel(loop, made[1].symbol):

@@ -161,10 +161,12 @@ class LoopToReduce(ppl.Pass):
         "lowering for accumulator ops the ``Reduce`` libnode cannot express.",
     )
 
-    def __init__(self, permissive: bool = False, prefer: str = "reduce-libnode"):
+    def __init__(self, permissive: bool = False, prefer: str = "reduce-libnode", only: list | None = None):
         super().__init__()
         self.permissive = permissive
         self.prefer = prefer
+        # When given, only these loops are candidates (the segments a split left behind).
+        self._only = only
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -188,8 +190,11 @@ class LoopToReduce(ppl.Pass):
         :class:`RetargetWCRAccumulator`, run after. Mirrored in ``LoopToScan``.
         """
         count = 0
+        only = None if self._only is None else {id(loop) for loop in self._only}
+        if only is not None and not only:
+            return None
         for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion):
+            if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
                 continue
             info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
             if info is None:

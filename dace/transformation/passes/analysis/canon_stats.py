@@ -63,7 +63,14 @@ def lifted(loop: Any) -> None:
     stats = _ACTIVE.get()
     if stats is not None:
         # The skew's own lift of the exposed axis is level 2: the isl skew is what made it parallel.
-        level = "level2" if stats.stage[1] == "WavefrontSkew" else "level3" if stats._probe_used_solver else "level1"
+        # A guarding pass's lift is the parallel arm of its guard, not a proof.
+        unit = stats.stage[1]
+        if unit == "WavefrontSkew":
+            level = "level2"
+        elif unit in GUARDED:
+            level = "guarded"
+        else:
+            level = "level3" if stats._probe_used_solver else "level1"
         stats._settle(loop, level)
 
 
@@ -87,16 +94,18 @@ def loops_of(sdfg: Any) -> dict[int, Any]:
 
 def remaining_outcome(loop: Any) -> str:
     """The class of a loop left after canonicalization, as the CPF rendering labels it."""
+    from dace.sdfg.state import ConditionalBlock
     from dace.transformation.passes.canonicalize import annotate_loop_kinds as kinds
 
     note = (loop.specialization_hint or "").splitlines()
     if note and ("wavefront" in note[0]) and note[0].startswith("sequential"):
         return "wavefront"
     hint = kinds.loop_hint(loop).splitlines()[0]
-    if hint.startswith("sequential -- pinned"):
-        return "guarded_fallback"
     if hint.startswith("sequential -- carried"):
         return "sequential_witness" if kinds.witnessed_carrying_access(loop) is not None else "sequential_pattern"
+    # The fallback arm of a specialization: pinned, and an arm of the conditional the guard is.
+    if loop.pinned_sequential and isinstance(getattr(loop.parent_graph, "parent_graph", None), ConditionalBlock):
+        return "guarded_fallback"
     if kinds.NEVER_EXAMINED in hint:
         return "never_examined"
     if hint.startswith("unsure"):

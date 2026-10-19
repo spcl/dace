@@ -880,6 +880,17 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
     return s
 
 
+def recurrence_lifts(interchange_carry_with_map: bool, target: str, only: list | None = None) -> list[ppl.Pass]:
+    """The lifts of a loop-carried recurrence, in :func:`lift_semantics` order; ``only`` restricts them to those loops."""
+    return [
+        LoopToReduce(only=only),
+        LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target, only=only),
+        LoopToStateScan(only=only),
+        LoopToConditionalReduce(only=only),
+        LiftLoopCarriedReduction(only=only),
+    ]
+
+
 def derive_parallelism(
     peel_limit: int,
     break_anti_dependence: bool,
@@ -920,12 +931,7 @@ def derive_parallelism(
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
-    s += [
-        (
-            LIFT_SEMANTICS,
-            LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target, only=segments),
-        )
-    ]
+    s += [(LIFT_SEMANTICS, unit) for unit in recurrence_lifts(interchange_carry_with_map, target, only=segments)]
     # Out of phase: the fill map LoopToScan's stride specialization emits is lifted only before a cleanup fuses a
     # second writer into its state (tsvc_2_5 scan_strided_sym).
     if lift_copy:

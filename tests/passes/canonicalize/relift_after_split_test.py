@@ -35,6 +35,15 @@ def hybrid_sparse(
             y[i] = s + y[i - 1]
 
 
+@dace.program
+def split_reduction(x: dace.float64[N], y: dace.float64[N], out: dace.float64[1]):
+    for i in range(N):
+        if i < K:
+            y[i] = 2.0 * x[i]
+        else:
+            out[0] += x[i]
+
+
 def reference(row_ptr, col, val, x, y, K):
     for i in range(y.shape[0]):
         s = val[row_ptr[i] : row_ptr[i + 1]] @ x[col[row_ptr[i] : row_ptr[i + 1]]]
@@ -75,6 +84,24 @@ def test_relifted_scan_matches_reference():
         assert np.allclose(got, expected), k
 
 
+def test_reduction_exposed_by_split_is_lifted_like_an_unsplit_one():
+    """The ``[K:N)`` half is ``out[0] += x[i]``: lifted to a ``Reduce`` as the lifting segment lifts any reduction."""
+    stats = {}
+    sdfg = split_reduction.to_sdfg(simplify=True)
+    sdfg.name = "relift_split_reduction"
+    canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(), stats=stats)
+    assert stats["outcomes"].get("lift:LoopToReduce") == 1, stats
+    compiled = finalize_for_target(copy.deepcopy(sdfg), "cpu").compile()
+    rng = np.random.default_rng(1234)
+    n = 97
+    for k in (1, 40, n + 5):
+        x, y, out = rng.random(n), np.zeros(n), np.zeros(1)
+        compiled(x=x, y=y, out=out, N=n, K=k)
+        assert np.allclose(y[: min(k, n)], 2.0 * x[: min(k, n)]) and not y[min(k, n) :].any(), k
+        assert np.isclose(out[0], x[min(k, n) :].sum()), k
+
+
 if __name__ == "__main__":
     test_recurrence_exposed_by_split_is_a_scan()
     test_relifted_scan_matches_reference()
+    test_reduction_exposed_by_split_is_lifted_like_an_unsplit_one()

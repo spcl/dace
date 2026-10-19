@@ -153,14 +153,24 @@ class LoopToConditionalReduce(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    def __init__(self, only: list | None = None):
+        super().__init__()
+        # When given, only these loops are candidates (the segments a split left behind).
+        self._only = only
+
     def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         rewritten = 0
+        only = None if self._only is None else {id(loop) for loop in self._only}
+        if only is not None and not only:
+            return None
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):
                 if not (isinstance(region, LoopRegion) and region.loop_variable):
+                    continue
+                if only is not None and id(region) not in only:
                     continue
                 # Stale-snapshot guard.
                 if region.parent_graph is None or region not in region.parent_graph.nodes():
