@@ -420,14 +420,17 @@ def propagate_fused_map_scope(
         propagation.propagate_memlets_scope(sdfg, state, leaves, symbols=SymbolResolver(sdfg, scope_symbols))
         return
     # `propagate_memlets_scope()`'s frontier walk; each scope's last visit comes after all of its children's.
+    #  One resolver for the walk, as `propagate_memlets_scope()` does: the facts of a scope are derived once,
+    #  not once per propagated edge, and nothing the walk rewrites (memlets) is read by them.
+    symbols = SymbolResolver(sdfg, scope_symbols)
     frontier: dict[ScopeTree, None] = dict.fromkeys(leaves)
     while frontier:
         parents: dict[ScopeTree, None] = {}
         for scope in frontier:
             if scope.entry is None:
                 continue
-            propagate_scope_node(state, scope.entry, scope_symbols, scope_records)
-            propagate_scope_node(state, scope.exit, scope_symbols, scope_records)
+            propagate_scope_node(state, scope.entry, scope_symbols, scope_records, symbols)
+            propagate_scope_node(state, scope.exit, scope_symbols, scope_records, symbols)
             parents[scope.parent] = None
         frontier = parents
 
@@ -472,6 +475,7 @@ def propagate_scope_node(
     node: nodes.EntryNode | nodes.ExitNode,
     scope_symbols: dict[str, dace.dtypes.typeclass],
     scope_records: ScopeRecords,
+    symbols: SymbolResolver | None = None,
 ) -> None:
     """`propagation.propagate_node()`, skipping each external edge whose propagation would rewrite nothing.
 
@@ -479,7 +483,8 @@ def propagate_scope_node(
     same objects (entry node, Map, range, descriptor, every internal memlet of the connector with its subsets
     and volume) with the same text and the same defined symbols. The result is a function of exactly these, so
     propagating again would write an equal memlet. Any other edge is propagated as `propagate_node()`
-    does and its record replaced.
+    does and its record replaced. `symbols` is the `SymbolResolver` of the ongoing propagation, built from
+    `scope_symbols`; one is made per propagated edge if it is not given.
     """
     entry_node = node if isinstance(node, nodes.EntryNode) else state.entry_node(node)
     if not isinstance(entry_node, nodes.MapEntry):
@@ -492,7 +497,7 @@ def propagate_scope_node(
             [lone_scope],
             propagate_entry=node is entry_node,
             propagate_exit=node is not entry_node,
-            symbols=SymbolResolver(state.parent, scope_symbols),
+            symbols=symbols if symbols is not None else SymbolResolver(state.parent, scope_symbols),
         )
         return
     if isinstance(node, nodes.EntryNode):
@@ -543,7 +548,13 @@ def propagate_scope_node(
         ):
             continue
         edge.data = propagation.propagate_memlet(
-            state, aligned_memlet, node, True, connector=connector, defined_variables=defined_variables
+            state,
+            aligned_memlet,
+            node,
+            True,
+            connector=connector,
+            defined_variables=defined_variables,
+            symbols=symbols,
         )
         scope_records[id(edge.data)] = (inputs, edge.data, memlet_text(edge.data))
 
