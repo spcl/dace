@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy as np
 import pytest
 
 import dace
@@ -200,6 +201,41 @@ def test_nesting_a_top_level_subgraph_consolidates_nothing(monkeypatch):
     sdfg.validate()
 
 
+def test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy():
+    """A map body whose own access node of ``A`` feeds the map exit: inside the nested SDFG that node
+    already writes the ``A`` connector, so no ``A -> A`` copy into a second node may appear."""
+    sdfg = dace.SDFG("nest_body_last_write_feeds_exit")
+    sdfg.add_array("A", [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:N"))
+    t = state.add_tasklet("t", {}, {"o"}, "o = i")
+    a_in = state.add_access("A")
+    a_out = state.add_write("A")
+    state.add_nedge(me, t, dace.Memlet())
+    state.add_edge(t, "o", a_in, None, dace.Memlet("A[i]"))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(a_in, None, mx, "IN_A", dace.Memlet("A[i]"))
+    state.add_edge(mx, "OUT_A", a_out, None, dace.Memlet("A[0:N]"))
+    sdfg.validate()
+
+    nested = nest_state_subgraph(sdfg, state, SubgraphView(state, [t, a_in]))
+    (inner,) = nested.sdfg.states()
+    self_copies = [
+        e
+        for e in inner.edges()
+        if isinstance(e.src, dace.nodes.AccessNode)
+        and isinstance(e.dst, dace.nodes.AccessNode)
+        and e.src.data == e.dst.data
+    ]
+    assert self_copies == []
+    sdfg.validate()
+
+    A = np.zeros(8)
+    sdfg(A=A, N=8)
+    assert np.array_equal(A, np.arange(8, dtype=np.float64))
+
+
 if __name__ == "__main__":
     test_simple_program()
     test_simple_sdfg()
@@ -209,3 +245,4 @@ if __name__ == "__main__":
     test_badscope()
     test_tiled_program()
     test_nest_scalar_with_none_subset_boundary()
+    test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy()
