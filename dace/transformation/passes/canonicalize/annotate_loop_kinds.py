@@ -28,6 +28,7 @@ outside a standalone rendering, and this pass changes no graph.
 """
 
 import re
+from collections.abc import Iterator
 from typing import Any, NamedTuple
 
 import sympy
@@ -326,7 +327,7 @@ def walk_body(
             (body.params if fixed else body.varying).add(region.loop_variable)
     for edge in sdfg_or_region.all_interstate_edges():
         body.varying.update(edge.data.assignments.keys())
-    for state in sdfg_or_region.states():
+    for state in unconditional_states(sdfg_or_region):
         for edge in state.edges():
             body.accesses.extend(edge_accesses(edge, state, arrays, mapping))
         for node in state.nodes():
@@ -337,6 +338,16 @@ def walk_body(
             elif isinstance(node, nodes.NestedSDFG):
                 inner_arrays, inner_mapping = nested_bindings(state, node, arrays, mapping)
                 walk_body(node.sdfg, inner_arrays, inner_mapping, loop_variable, body)
+
+
+def unconditional_states(region: ControlFlowRegion) -> Iterator[SDFGState]:
+    """The states under ``region`` outside every branch: a branch body may never run, so an access in it proves no
+    dependence (the rule :func:`region_sites` applies to a solver witness)."""
+    for block in region.nodes():
+        if isinstance(block, SDFGState):
+            yield block
+        elif isinstance(block, ControlFlowRegion) and not isinstance(block, ConditionalBlock):
+            yield from unconditional_states(block)
 
 
 def carried_distance(write: Access, read: Access, loop_var: sympy.Symbol) -> sympy.Expr | None:
