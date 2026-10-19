@@ -262,15 +262,16 @@ class RetargetWCRAccumulator(ppl.Pass):
         # gather-index iedge, final write through an extra transient AccessNode -> past every
         # ``AugAssignToWCR`` shape. In place: drop the tasklet's carry input, add WCR to the
         # final write, wrap with init + writeback.
+        # Every chain of the loop, one at a time: an unrolled sum keeps one accumulator per lane
+        # (``s0 += a[i]; s1 += a[i + 1]; ...``), and one left behind keeps the loop sequential.
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
                 continue
-            chain_info = _extract_multi_state_chain(node, _owner_sdfg(parent))
-            if chain_info is None:
-                continue
-            # Reuses ``node`` in place, so a pinned loop keeps its flag.
-            _lift_multi_state_chain(parent, node, chain_info)
-            count += 1
+            owner = _owner_sdfg(parent)
+            while (chain_info := _extract_multi_state_chain(node, owner)) is not None:
+                # Reuses ``node`` in place, so a pinned loop keeps its flag.
+                _lift_multi_state_chain(parent, node, chain_info)
+                count += 1
 
         if count > 0:
             from dace.sdfg.propagation import propagate_memlets_sdfg
@@ -1953,6 +1954,9 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if len(sink_in) != 1:
                 continue
             last_write_edge = sink_in[0]
+            # Already a reduction write (a chain this pass retargeted): nothing left to collapse.
+            if last_write_edge.data is not None and last_write_edge.data.wcr is not None:
+                continue
             cur_edge = last_write_edge
             cur_src = cur_edge.src
             while isinstance(cur_src, nodes.AccessNode):

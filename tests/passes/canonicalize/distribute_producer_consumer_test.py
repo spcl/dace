@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
@@ -300,7 +301,8 @@ def test_private_accumulator_is_expanded_to_split_a_reduction_from_a_recurrence(
     """The row sum ``s`` couples the CSR reduction to the ``y`` recurrence; ``s[i]`` lets the reduction leave.
 
     Without the expansion the whole row loop stays sequential behind ``y[i - 1]`` and the reduction runs once
-    per row in order. The row-pointer symbols assigned on the body edge stay with the inner loop they bound."""
+    per row in order. The row-pointer symbols assigned on the body edge stay with the inner loop they bound. The
+    ``y`` recurrence the split at ``K`` leaves is lifted to a scan."""
     sdfg = _to_loops(hybrid_csr_recurrence)
     assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
 
@@ -310,7 +312,8 @@ def test_private_accumulator_is_expanded_to_split_a_reduction_from_a_recurrence(
     sequential = [
         r for r in full.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
-    assert len(sequential) == 1, "only the y recurrence stays a loop"
+    assert not sequential, "the y recurrence is a scan, not a loop"
+    assert any(isinstance(n, Scan) for n, _ in full.all_nodes_recursive())
     assert any(isinstance(n, nodes.MapEntry) and n.map.range.size()[0] == N for n, _ in full.all_nodes_recursive())
 
     rng = np.random.default_rng(11)
