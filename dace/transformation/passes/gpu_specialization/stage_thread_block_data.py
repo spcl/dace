@@ -61,11 +61,19 @@ def static_bound(extent: Any) -> int | None:
     return int(approx) if approx.is_Integer else None
 
 
-def clipped(subset: subsets.Range, shape: list[Any]) -> subsets.Range:
-    """``subset`` with every range ended at the array's last index, so a partial edge tile copies only the cells
-    inside the array."""
+def exact(subset: subsets.Range) -> subsets.Range:
+    """``subset`` with every bound its exact expression: the memlets of a tiled kernel carry ``SymExpr`` bounds
+    (``Min(N - 1, g + 63)`` over-approximated as ``g + 63``), and the copy moves exactly the cells read."""
     return subsets.Range(
-        [(begin, sympy.Min(end, extent - 1), step) for (begin, end, step), extent in zip(subset.ranges, shape)]
+        [tuple(b.expr if isinstance(b, symbolic.SymExpr) else b for b in bounds) for bounds in subset.ranges]
+    )
+
+
+def clipped(subset: subsets.Range, shape: list[Any]) -> subsets.Range:
+    """``subset`` (exact) with every range ended at the array's last index, so a partial edge tile copies only the
+    cells inside the array."""
+    return subsets.Range(
+        [(begin, sympy.Min(end, extent - 1), step) for (begin, end, step), extent in zip(exact(subset).ranges, shape)]
     )
 
 
@@ -239,7 +247,7 @@ class StageThreadBlockData(ppl.Pass):
         source = sdfg.arrays[edge.data.data]
         region = clipped(edge.data.subset, list(source.shape))
         local = copy.deepcopy(region)
-        local.offset(subsets.Range.from_indices([begin for begin, _, _ in edge.data.subset.ranges]), True)
+        local.offset(subsets.Range.from_indices([begin for begin, _, _ in region.ranges]), True)
         node = CopyLibraryNode(f"stage_{edge.data.data}", sync=False, aligned_words=self.aligned_words)
         node.implementation = "SharedMemoryCollective"
         state.add_node(node)
@@ -299,7 +307,7 @@ class StageThreadBlockData(ppl.Pass):
         target = sdfg.arrays[edge.data.data]
         region = clipped(edge.data.subset, list(target.shape))
         local = copy.deepcopy(region)
-        local.offset(subsets.Range.from_indices([begin for begin, _, _ in edge.data.subset.ranges]), True)
+        local.offset(subsets.Range.from_indices([begin for begin, _, _ in region.ranges]), True)
         node = CopyLibraryNode(f"unstage_{edge.data.data}", sync=False, aligned_words=self.aligned_words)
         node.implementation = "SharedMemoryCollective"
         state.add_node(node)

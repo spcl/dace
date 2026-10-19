@@ -30,13 +30,14 @@ def weighted_columns(dtype: dace.typeclass = dace.float64):
     return weighted_columns
 
 
-def canonical_gpu(name: str, dtype: dace.typeclass = dace.float64) -> dace.SDFG:
+def canonical_gpu(name: str, dtype: dace.typeclass = dace.float64, factor: int = 1) -> dace.SDFG:
+    """The finalized kernel; with ``factor`` 1 as the offload leaves it, above 1 tiled along its coalesced axis
+    (``TileKernelsCoalesced``), each thread ``factor`` rows."""
     sdfg = weighted_columns(dtype).to_sdfg(simplify=True)
     sdfg.name = name
     canonicalize(sdfg, target="gpu")
     offload_to_gpu(sdfg)
-    # The pass under test takes the kernel as the offload leaves it, without the coalesced tiling.
-    with dace.config.set_temporary("optimizer", "canonicalization", "gpu_coarsen_factor", value=1):
+    with dace.config.set_temporary("optimizer", "canonicalization", "gpu_coarsen_factor", value=factor):
         finalize_for_target(sdfg, "gpu")
     return sdfg
 
@@ -76,19 +77,33 @@ def test_the_default_sync_adds_no_second_barrier():
     assert len([t for t in nodes_of(sdfg, dace.nodes.Tasklet) if is_barrier(t)]) == 2
 
 
+def test_a_coarsened_kernel_is_staged_through_its_thread_block_map():
+    """A kernel tiled along its coalesced axis already has its thread-block map; its memlets carry the tile's
+    over-approximated bounds (``SymExpr``), and the copies move the exact, clipped region."""
+    sdfg = canonical_gpu("stage_coarsened", factor=4)
+    staged = StageThreadBlockData(stage_stores=True).apply_pass(sdfg, {})
+    assert sorted(next(iter(staged.values()))) == ["load:idx", "load:w", "store:B"]
+    for copy_node in nodes_of(sdfg, CopyLibraryNode):
+        state = next(s for n, s in sdfg.all_nodes_recursive() if n is copy_node)
+        for edge in state.all_edges(copy_node):
+            assert edge.data.is_empty() or not any(isinstance(b, dace.symbolic.SymExpr) for r in edge.data.subset.ranges for b in r), edge
+    sdfg.validate()
+
+
 def test_a_tile_larger_than_the_budget_is_not_staged():
     sdfg = canonical_gpu("stage_budget")
     assert StageThreadBlockData(shared_memory_bytes=16).apply_pass(sdfg, {}) is None
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("factor", [1, 4])
 @pytest.mark.parametrize("stores", [False, True])
 @pytest.mark.parametrize("dtype", [dace.float64, dace.float32])
-def test_staged_kernels_compute_what_numpy_does(stores, dtype):
+def test_staged_kernels_compute_what_numpy_does(stores, dtype, factor):
     import cupy as cp
 
     m, n = 37, 1013
-    sdfg = canonical_gpu(f"stage_numeric_{int(stores)}_{dtype.to_string()}", dtype)
+    sdfg = canonical_gpu(f"stage_numeric_{int(stores)}_{dtype.to_string()}_f{factor}", dtype, factor)
     StageThreadBlockData(stage_stores=stores).apply_pass(sdfg, {})
     rng = np.random.default_rng(0)
     npt = dtype.as_numpy_dtype()
@@ -103,4 +118,5 @@ if __name__ == "__main__":
     test_loads_are_staged_with_one_barrier()
     test_stores_are_staged_behind_a_barrier()
     test_the_default_sync_adds_no_second_barrier()
+    test_a_coarsened_kernel_is_staged_through_its_thread_block_map()
     test_a_tile_larger_than_the_budget_is_not_staged()
