@@ -197,6 +197,44 @@ def test_a_python_program_modulo_in_a_subscript_floors():
     assert out[0] == 5
 
 
+@dace.program
+def called_modulos(
+    a: dace.int64[N], b: dace.int64[N], python: dace.int64[N], truncated: dace.int64[N], floored: dace.int64[N]
+):
+    python[:] = PyMod(a, b)
+    truncated[:] = FtnMod(a, b)
+    floored[:] = FtnModulo(a, b)
+
+
+def test_a_python_program_calls_each_modulo_spelling_like_a_builtin():
+    """Fortran's ``MOD(-7, 3)`` is ``-1`` (as ``np.fmod``), ``MODULO(-7, 3)`` is ``2`` (as ``np.mod``)."""
+    a, b = operand_pairs(np.int64)
+    python, truncated, floored = (np.zeros(a.shape, dtype=np.int64) for _ in range(3))
+    sdfg = called_modulos.to_sdfg()
+
+    code = sdfg.generate_code()[0].clean_code
+    sdfg(a=a, b=b, python=python, truncated=truncated, floored=floored, N=a.shape[0])
+
+    assert all(f"{function}(" in code for function in ("py_mod", "ftn_mod", "ftn_modulo"))
+    assert np.array_equal(python, np.mod(a, b))
+    assert np.array_equal(truncated, np.fmod(a, b))
+    assert np.array_equal(floored, np.mod(a, b))
+
+
+@dace.program
+def clamped_subscript(a: dace.int64[N], out: dace.int64[1]):
+    out[0] = a[min(I, N - 1)]
+
+
+def test_a_call_in_a_subscript_indexes_with_its_result():
+    a = np.arange(8, dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+
+    clamped_subscript(a=a, out=out, I=20, N=8)
+
+    assert out[0] == 7
+
+
 def test_a_python_program_modulo_in_a_condition_floors():
     """``(0 - 3) % 4`` is ``1`` in Python and ``-3`` in C."""
     out = np.zeros(1, dtype=np.int64)
@@ -229,3 +267,5 @@ if __name__ == "__main__":
         test_an_interstate_edge_modulo_computes_what_its_spelling_names(label, assignment, value)
     test_a_python_program_modulo_in_a_subscript_floors()
     test_a_python_program_modulo_in_a_condition_floors()
+    test_a_python_program_calls_each_modulo_spelling_like_a_builtin()
+    test_a_call_in_a_subscript_indexes_with_its_result()
