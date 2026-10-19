@@ -144,6 +144,10 @@ class UniqueLoopIterators(ppl.Pass):
             region = region.parent_graph
         return False
 
+    def read_in(self, sdfg: dace.SDFG, name: str) -> bool:
+        """Whether a block of ``sdfg`` still reads ``name`` once every loop binding it has been renamed."""
+        return any(block.sdfg is sdfg and not self.binds(block, name) for block in self.readers.get(name, ()))
+
     def read_after(self, loop: LoopRegion, name: str) -> bool:
         """Whether a block outside ``loop`` that may run after it reads ``name``."""
         inside = {loop}
@@ -191,7 +195,7 @@ class UniqueLoopIterators(ppl.Pass):
                     f"{POST_VALUE_STATE_PREFIX}_{ident}",
                     assignments={old: f"({symbolic.symstr(value, arrayexprs=frozenset(sdfg.arrays))})"},
                 )
-            elif old in sdfg.symbols and old not in sdfg.used_symbols(all_symbols=False):
+            elif old in sdfg.symbols and not self.read_in(sdfg, old):
                 # Nothing reads the old name any more; its declaration would leak as a free symbol of the SDFG.
                 sdfg.remove_symbol(old)
 
