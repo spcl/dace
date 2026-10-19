@@ -44,7 +44,7 @@ from dace.sdfg.propagation import (
     propagate_subset,
 )
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
+from dace.sdfg.sdfg import interstate_bound_names, is_scope_bound_name, scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -896,7 +896,7 @@ def add_indirection_subgraph(
 def declare_program_symbol(sdfg: SDFG, declared: symbolic.symbol) -> None:
     """Declares a symbol of the program itself (one of its globals) with what it was declared with, unless the SDFG
     declares it already or a loop or map scope binds it."""
-    if declared.name not in sdfg.symbols and declared.name not in scope_bound_names(sdfg):
+    if declared.name not in sdfg.symbols and not is_scope_bound_name(sdfg, declared.name):
         sdfg.add_symbol(declared)
 
 
@@ -914,7 +914,7 @@ def defined_type(defined: Any) -> dtypes.typeclass:
 
 def declare_read_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
     """Declares a symbol the program reads on the SDFG, unless a loop, map or interstate edge of the SDFG binds it."""
-    if name not in sdfg.symbols and name not in scope_bound_names(sdfg) and name not in interstate_bound_names(sdfg):
+    if name not in sdfg.symbols and not is_scope_bound_name(sdfg, name) and name not in interstate_bound_names(sdfg):
         sdfg.add_symbol(name, dtype)
 
 

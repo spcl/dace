@@ -224,6 +224,23 @@ def scope_bound_names(sdfg: "SDFG") -> set[str]:
     return names
 
 
+def is_scope_bound_name(sdfg: "SDFG", name: str) -> bool:
+    """Whether ``name in scope_bound_names(sdfg)``, walking only up to the first scope that binds it."""
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable == name and region.init_statement is not None:
+            return True
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                if name in node.map.params:
+                    return True
+            elif isinstance(node, nd.ConsumeEntry) and node.consume.pe_index == name:
+                return True
+            if isinstance(node, nd.EntryNode) and name in node.in_connectors and not name.startswith("IN_"):
+                return True
+    return False
+
+
 def interstate_bound_names(sdfg: "SDFG") -> set[str]:
     """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
     return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
