@@ -64,12 +64,14 @@ def test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(prog
     sdfg.validate()
 
 
-def test_a_one_dimensional_kernel_gets_a_256_thread_block_and_no_loop():
+def test_a_one_dimensional_kernel_keeps_its_selected_block():
+    """Re-blocking after the selection would conflict with what was sized from it (a tree reduction's
+    block-reduce, a warp tile promoted later)."""
     sdfg = offloaded(scaled, "tile_coalesced_1d")
-    ((_, outer, factor),) = TileKernelsCoalesced(factor=4).apply_pass(sdfg, {}).values()
-    assert outer is None and factor == 1
     (kernel,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
-    assert list(kernel.map.gpu_block_size) == [256, 1, 1]
+    block = list(kernel.map.gpu_block_size)
+    assert TileKernelsCoalesced(factor=4).apply_pass(sdfg, {}) is None
+    assert list(kernel.map.gpu_block_size) == block
 
 
 @pytest.mark.gpu
@@ -93,6 +95,6 @@ def test_tiled_kernels_compute_what_numpy_does(program):
 if __name__ == "__main__":
     test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(scaled_rows, "j", "i")
     test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(scaled_columns_transposed, "i", "j")
-    test_a_one_dimensional_kernel_gets_a_256_thread_block_and_no_loop()
+    test_a_one_dimensional_kernel_keeps_its_selected_block()
     test_tiled_kernels_compute_what_numpy_does(scaled_rows)
     test_tiled_kernels_compute_what_numpy_does(scaled_columns_transposed)

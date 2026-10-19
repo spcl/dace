@@ -18,9 +18,11 @@ reuses what neighbouring points of ``o`` read (a stencil's rows). The block keep
 :mod:`~dace.transformation.passes.gpu_block_size_selection` chose (``x`` on ``c``, ``y`` on ``o``, ``z`` on the
 next parameter); without one it is ``block_min_lanes x block_threads / block_min_lanes``.
 
-A one-parameter kernel is not coarsened (folding a streaming map measured no gain on MI300A, see
-:mod:`~dace.transformation.passes.gpu_specialization.grid_stride_kernels`): it only gets a ``block_threads``-wide
-block, which ``AddThreadBlockMaps`` then makes explicit.
+Left alone: a one-parameter kernel (folding a streaming map measured no gain on MI300A, see
+:mod:`~dace.transformation.passes.gpu_specialization.grid_stride_kernels`; its block is the domain-matched line),
+a kernel that owns or will own a thread-block level (an inner thread-block map, or a map tagged ``is_warp_tile``
+that ``PromoteWarpTiles`` turns into one), and a tree reduction, whose block is the width of its block-reduce.
+Re-blocking any of these after the block selection conflicts with what was sized from it.
 """
 
 from typing import Any
@@ -31,7 +33,11 @@ from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
-from dace.transformation.passes.gpu_block_size_selection import unit_stride_counts
+from dace.transformation.passes.gpu_block_size_selection import (
+    map_is_tree_reduction,
+    scope_contains_threadblock_map,
+    unit_stride_counts,
+)
 from dace.transformation.passes.gpu_specialization.block_tile_kernels import is_kernel
 
 def coalesced_param(state: SDFGState, entry: nodes.MapEntry, sdfg: SDFG) -> str:
@@ -50,7 +56,7 @@ class TileKernelsCoalesced(ppl.Pass):
     CATEGORY: str = "Device Specialization"
 
     factor = properties.Property(dtype=int, default=4, desc="Points of the outer axis each thread computes.")
-    block_threads = properties.Property(dtype=int, default=256, desc="Threads per block.")
+    block_threads = properties.Property(dtype=int, default=256, desc="Threads per block of a kernel without a preset block size.")
 
     def __init__(self, factor: int = 4, block_threads: int = 256) -> None:
         super().__init__()
@@ -72,12 +78,13 @@ class TileKernelsCoalesced(ppl.Pass):
         ]
         tiled = {}
         for state, kernel in kernels:
-            if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
-                continue
             params = kernel.map.params
-            if len(params) == 1:
-                kernel.map.gpu_block_size = [self.block_threads, 1, 1]
-                tiled[kernel.map.label] = (params[0], None, 1)
+            if (
+                len(params) == 1
+                or xfh.gpu_map_has_explicit_threadblocks(state, kernel)
+                or scope_contains_threadblock_map(state, kernel)
+                or map_is_tree_reduction(state, kernel)
+            ):
                 continue
             coalesced = coalesced_param(state, kernel, state.sdfg)
             outer = next(p for p in params if p != coalesced)
