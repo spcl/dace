@@ -1464,9 +1464,10 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     # in ``root.symbols`` the variable becomes a FREE symbol of ``root``. Harmless at the top
     # level, fatal one level down: a NestedSDFG's ``symbol_mapping`` has no entry for it and
     # validation reports ``Missing symbols on nested SDFG``. Same cleanup ``LoopToMap`` does
-    # when it consumes a loop; only newly-freed names are dropped.
-    for var in root.free_symbols - fsyms:
-        if var in root.symbols and (root.parent_nsdfg_node is None or var not in root.parent_nsdfg_node.symbol_mapping):
+    # when it consumes a loop; only the iterator is dropped, since the bridge seed newly READS the accumulator symbol.
+    var = loop.loop_variable
+    if var in root.free_symbols - fsyms and var in root.symbols:
+        if root.parent_nsdfg_node is None or var not in root.parent_nsdfg_node.symbol_mapping:
             root.remove_symbol(var)
 
     arr = red_state.add_read(info.array)

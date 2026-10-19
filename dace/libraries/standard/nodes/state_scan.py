@@ -27,10 +27,11 @@ import enum
 import dace
 from dace import SDFG, dtypes, library, symbolic
 from dace.libraries.standard.helper import schedule_dispatch
-from dace.libraries.standard.pure_components import chain, counted_loop
+from dace.libraries.standard.pure_components import chain, counted_loop, tasklet_state
 from dace.memlet import Memlet
-from dace.properties import EnumProperty, Property, SDFGReferenceProperty, SymbolicProperty
+from dace.properties import CodeBlock, EnumProperty, Property, SDFGReferenceProperty, SymbolicProperty
 from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.transformation import ExpandTransformation
 
 INIT_CONNECTOR = "_init"
@@ -159,83 +160,149 @@ def finite_compose_sdfg(node: "StateScan", outer: SDFG) -> SDFG:
     return inner
 
 
-#: The GF(2) compose. ``basis_images[j]`` is the step at ``begin`` from basis state ``j`` (from zero at ``j == bits``), so
-#: column ``j`` of ``A`` is ``basis_images[j] ^ basis_images[bits]``. Every non-empty block is ``size`` long except at most one, which
-#: holds the remainder; ``A^size`` and that block's power come from repeated squaring on column masks.
-GF2_COMPOSE = """
-unsigned long long column[64], full[64], last[64], base[64], next[64];
-const long long bits = {bits}, chunks = {chunks}, begin = {begin}, end = {end};
-const long long size = (end - begin + chunks - 1) / chunks;
-for (long long j = 0; j < bits; ++j) {{
-    column[j] = (unsigned long long)basis_images[j] ^ (unsigned long long)basis_images[bits];
-}}
-for (long long which = 0; which < 2; ++which) {{
-    unsigned long long *power = which == 0 ? full : last;
-    // the one block shorter than size, if any, holds the remainder
-    long long exponent = which == 0 ? size : (size > 0 ? (end - begin) % size : 0);
-    for (long long j = 0; j < bits; ++j) {{ power[j] = 1ULL << j; base[j] = column[j]; }}
-    while (exponent > 0) {{
-        if (exponent & 1) {{
-            for (long long j = 0; j < bits; ++j) {{
-                unsigned long long x = power[j], y = 0;
-                for (long long b = 0; b < bits; ++b) if ((x >> b) & 1ULL) y ^= base[b];
-                next[j] = y;
-            }}
-            for (long long j = 0; j < bits; ++j) power[j] = next[j];
-        }}
-        for (long long j = 0; j < bits; ++j) {{
-            unsigned long long x = base[j], y = 0;
-            for (long long b = 0; b < bits; ++b) if ((x >> b) & 1ULL) y ^= base[b];
-            next[j] = y;
-        }}
-        for (long long j = 0; j < bits; ++j) base[j] = next[j];
-        exponent >>= 1;
-    }}
-}}
-block_starts[0] = seed_state;
-for (long long c = 0; c < chunks; ++c) {{
-    long long lo = begin + c * size, hi = begin + (c + 1) * size;
-    if (lo > end) lo = end;
-    if (hi > end) hi = end;
-    unsigned long long x = (unsigned long long)block_starts[c], y = 0;
-    if (hi - lo == size) {{
-        for (long long b = 0; b < bits; ++b) if ((x >> b) & 1ULL) y ^= full[b];
-    }} else if (hi > lo) {{
-        for (long long b = 0; b < bits; ++b) if ((x >> b) & 1ULL) y ^= last[b];
-    }} else {{
-        y = x;
-    }}
-    block_starts[c + 1] = ({ctype})(y ^ (unsigned long long)block_constants[c]);
-}}
-states[end - begin] = block_starts[chunks];
-"""
+#: The uint64 scratch of the GF(2) nests: ``unit[j] = 1 << j``, the step's columns, the block powers, a product
+#: staging buffer and one accumulator word. The expansion declares it with the device's storage, as it does
+#: ``starts``: 64 words is too large for a kernel's registers.
+GF2_SCRATCH = ("unit", "column", "full", "last", "base", "product", "word")
+
+
+def unit_blocks(inner: SDFG, bits: int) -> list[ControlFlowBlock]:
+    """``unit[j] = 1 << j`` by doubling, so no shift overflows a narrower literal."""
+    one = tasklet_state(inner, "unit_one", "u = 1", {}, {"u": Memlet("unit[0]")})
+    double = counted_loop("unit_doubling", "__j", "1", str(bits))
+    double.add_node(
+        tasklet_state(inner, "unit_double", "u = v + v", {"v": Memlet("unit[__j - 1]")}, {"u": Memlet("unit[__j]")}),
+        is_start_block=True,
+    )
+    return [one, double]
+
+
+def word_loop(inner: SDFG, label: str, bits: int, code: str, reads: dict[str, Memlet], writes: dict[str, Memlet]):
+    """``code`` once per ``__j`` in ``[0, bits)``."""
+    loop = counted_loop(label, "__j", "0", str(bits))
+    loop.add_node(tasklet_state(inner, label, code, reads, writes), is_start_block=True)
+    return loop
+
+
+def times(inner: SDFG, label: str, bits: int, operand: str) -> list[ControlFlowBlock]:
+    """``operand := base * operand`` over GF(2): column ``j`` becomes the XOR of the ``base`` columns at its set
+    bits, staged through ``product``."""
+    rows = counted_loop(f"{label}_columns", "__j", "0", str(bits))
+    zero = tasklet_state(inner, f"{label}_zero", "w = 0", {}, {"w": Memlet("word[0]")})
+    fold = counted_loop(f"{label}_bits", "__b", "0", str(bits))
+    fold.add_node(
+        tasklet_state(
+            inner,
+            f"{label}_fold",
+            "w = acc ^ (col if ((x >> __b) & 1) == 1 else 0)",
+            {"acc": Memlet("word[0]"), "col": Memlet("base[__b]"), "x": Memlet(f"{operand}[__j]")},
+            {"w": Memlet("word[0]")},
+        ),
+        is_start_block=True,
+    )
+    store = tasklet_state(inner, f"{label}_store", "y = w", {"w": Memlet("word[0]")}, {"y": Memlet("product[__j]")})
+    chain(rows, [zero, fold, store])
+    back = word_loop(
+        inner, f"{label}_back", bits, "y = x", {"x": Memlet("product[__j]")}, {"y": Memlet(f"{operand}[__j]")}
+    )
+    return [rows, back]
+
+
+def power_blocks(inner: SDFG, bits: int, power: str, exponent: str) -> list[ControlFlowBlock]:
+    """``power := A^exponent`` by repeated squaring of ``base``, with ``A``'s columns in ``column``."""
+    start = word_loop(
+        inner,
+        f"{power}_start",
+        bits,
+        "p = u\nb = c",
+        {"u": Memlet("unit[__j]"), "c": Memlet("column[__j]")},
+        {"p": Memlet(f"{power}[__j]"), "b": Memlet("base[__j]")},
+    )
+    variable = f"__e_{power}"
+    squaring = LoopRegion(
+        f"{power}_squaring", f"{variable} > 0", variable, f"{variable} = {exponent}", f"{variable} = {variable} // 2"
+    )
+    odd = ConditionalBlock(f"{power}_odd")
+    multiply = ControlFlowRegion(f"{power}_multiply", sdfg=inner)
+    chain(multiply, times(inner, f"{power}_times", bits, power))
+    odd.add_branch(CodeBlock(f"{variable} % 2 == 1"), multiply)
+    chain(squaring, [odd, *times(inner, f"{power}_square", bits, "base")])
+    return [start, squaring]
 
 
 def gf2_compose_sdfg(node: "StateScan", outer: SDFG) -> SDFG:
-    """One thread: ``A`` from the basis runs, its block powers, ``starts`` and the final state into ``_out``."""
+    """One thread: ``A`` from the basis runs, its block powers, ``starts`` and the final state into ``_out``.
+    ``basis_images[j]`` (``raw``) is the step at ``begin`` from basis state ``j`` (from zero at ``j == bits``), so
+    column ``j`` of ``A`` is ``raw[j] ^ raw[bits]``. Every non-empty block is ``__size`` long except at most one,
+    which holds the remainder; ``A^__size`` and that block's power come from repeated squaring."""
     inner = SDFG("compose")
     for name in ("raw", "block", "starts", INIT_CONNECTOR, OUT_CONNECTOR):
         inner.add_datadesc(name, argument(outer, name))
-    state = inner.add_state("compose")
-    code = GF2_COMPOSE.format(
-        bits=node.bits,
-        chunks=symbolic.symstr(node.chunks, cpp_mode=True),
-        begin=symbolic.symstr(node.begin, cpp_mode=True),
-        end=symbolic.symstr(node.end, cpp_mode=True),
-        ctype=inner.arrays["starts"].dtype.ctype,
+    bits = node.bits
+    for name in GF2_SCRATCH:
+        inner.add_datadesc(name, argument(outer, name))
+    for name in ("__size", "__length"):
+        inner.add_symbol(name, dtypes.int64)
+    span = text(node.end - node.begin)
+    columns = word_loop(
+        inner,
+        "columns",
+        bits,
+        "c = r ^ z",
+        {"r": Memlet("raw[__j]"), "z": Memlet(f"raw[{bits}]")},
+        {"c": Memlet("column[__j]")},
     )
-    tasklet = state.add_tasklet(
-        "compose",
-        {"basis_images": None, "block_constants": None, "seed_state": None},
-        {"block_starts": None, "states": None},
-        code,
-        language=dtypes.Language.CPP,
+    seed = tasklet_state(
+        inner, "seed", "first = init", {"init": Memlet(f"{INIT_CONNECTOR}[0]")}, {"first": Memlet("starts[0]")}
     )
-    state.add_edge(state.add_read("raw"), None, tasklet, "basis_images", whole(inner, "raw"))
-    state.add_edge(state.add_read("block"), None, tasklet, "block_constants", whole(inner, "block"))
-    state.add_edge(state.add_read(INIT_CONNECTOR), None, tasklet, "seed_state", Memlet(f"{INIT_CONNECTOR}[0]"))
-    state.add_edge(tasklet, "block_starts", state.add_write("starts"), None, whole(inner, "starts"))
-    state.add_edge(tasklet, "states", state.add_write(OUT_CONNECTOR), None, whole(inner, OUT_CONNECTOR))
+    hops = counted_loop("compose_blocks", "__c", "0", text(node.chunks))
+    zero = tasklet_state(inner, "hop_zero", "w = 0", {}, {"w": Memlet("word[0]")})
+    fold = counted_loop("hop_bits", "__b", "0", str(bits))
+    fold.add_node(
+        tasklet_state(
+            inner,
+            "hop_fold",
+            "w = acc ^ ((f if __length == __size else (l if __length > 0 else u)) if ((x >> __b) & 1) == 1 else 0)",
+            {
+                "acc": Memlet("word[0]"),
+                "f": Memlet("full[__b]"),
+                "l": Memlet("last[__b]"),
+                "u": Memlet("unit[__b]"),
+                "x": Memlet("starts[__c]"),
+            },
+            {"w": Memlet("word[0]")},
+        ),
+        is_start_block=True,
+    )
+    store = tasklet_state(
+        inner,
+        "hop_store",
+        "s = w ^ k",
+        {"w": Memlet("word[0]"), "k": Memlet("block[__c]")},
+        {"s": Memlet("starts[__c + 1]")},
+    )
+    chain(hops, [zero, fold, store])
+    low, high = chunk_bounds(node)
+    hops.out_edges(zero)[0].data.assignments["__length"] = f"({high}) - min({low}, {text(node.end)})"
+    final = tasklet_state(
+        inner,
+        "final",
+        "out = cur",
+        {"cur": Memlet(f"starts[{text(node.chunks)}]")},
+        {"out": Memlet(f"{OUT_CONNECTOR}[{span}]")},
+    )
+    blocks = [
+        *unit_blocks(inner, bits),
+        columns,
+        *power_blocks(inner, bits, "full", "__size"),
+        *power_blocks(inner, bits, "last", f"({span}) % max(__size, 1)"),
+        seed,
+        hops,
+        final,
+    ]
+    chain(inner, blocks)
+    inner.out_edges(blocks[0])[0].data.assignments["__size"] = f"int_ceil({span}, {text(node.chunks)})"
+    inner.reset_cfg_list()
     return inner
 
 
@@ -243,13 +310,12 @@ def basis_sdfg(node: "StateScan", outer: SDFG) -> SDFG:
     """``seeds[j]``: the basis state ``1 << j`` for ``j < bits``, and zero at ``j == bits``."""
     inner = SDFG("basis")
     inner.add_datadesc("seeds", argument(outer, "seeds"))
-    state = inner.add_state("basis")
-    code = (
-        f"for (long long j = 0; j <= {node.bits}; ++j) "
-        f"basis_states[j] = j < {node.bits} ? ({inner.arrays['seeds'].dtype.ctype})(1ULL << j) : 0;"
-    )
-    tasklet = state.add_tasklet("basis", {}, {"basis_states": None}, code, language=dtypes.Language.CPP)
-    state.add_edge(tasklet, "basis_states", state.add_write("seeds"), None, whole(inner, "seeds"))
+    bits = node.bits
+    inner.add_datadesc("unit", argument(outer, "unit"))
+    copy_out = word_loop(inner, "basis_copy", bits, "s = u", {"u": Memlet("unit[__j]")}, {"s": Memlet("seeds[__j]")})
+    clear = tasklet_state(inner, "basis_zero", "s = 0", {}, {"s": Memlet(f"seeds[{bits}]")})
+    chain(inner, [*unit_blocks(inner, bits), copy_out, clear])
+    inner.reset_cfg_list()
     return inner
 
 
@@ -340,8 +406,11 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
         sdfg.add_array("seeds", [node.bits + 1], dtype, storage=storage, transient=True)
         sdfg.add_array("raw", [node.bits + 1], dtype, storage=storage, transient=True)
         sdfg.add_array("block", [node.chunks + 1], dtype, storage=storage, transient=True)
+        for name in GF2_SCRATCH:
+            words = 1 if name == "word" else node.bits
+            sdfg.add_array(name, [words], dtypes.uint64, storage=storage, transient=True)
         basis, columns, summaries, second, third = phases(sdfg, 5)
-        nest(basis, sdfg, basis_sdfg(node, sdfg), [], ["seeds"], {"__unit": "0:1"}, single)
+        nest(basis, sdfg, basis_sdfg(node, sdfg), [], ["seeds", "unit"], {"__unit": "0:1"}, single)
         once = (text(node.begin), f"min({text(node.begin)} + 1, {text(node.end)})")
         nest(
             columns,
@@ -366,7 +435,7 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
             sdfg,
             gf2_compose_sdfg(node, sdfg),
             ["raw", "block", INIT_CONNECTOR],
-            ["starts", OUT_CONNECTOR],
+            ["starts", OUT_CONNECTOR, *GF2_SCRATCH],
             {"__unit": "0:1"},
             single,
         )

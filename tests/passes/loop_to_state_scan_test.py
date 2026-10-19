@@ -335,6 +335,22 @@ def test_each_expansion_runs_the_block_maps_on_its_device(implementation, schedu
     assert {entry.map.schedule for entry in block_maps} == {schedule}
 
 
+@pytest.mark.parametrize("implementation", ["CPU", "CUDA", "pure"])
+def test_a_gf2_scan_expands_to_python_tasklets_only(implementation):
+    """A C++ tasklet hides its locals from the symbol analysis (a local ``c`` read as the program's ``c``), so every
+    expansion, the GF(2) compose included, is built from Python tasklets and control flow."""
+    sdfg = before_lifting(crc16)
+    LoopToStateScan().apply_pass(sdfg, {})
+    (node,) = state_scans(sdfg)
+    assert node.kind is StateScanKind.GF2_AFFINE
+    node.implementation = implementation
+
+    sdfg.expand_library_nodes(recursive=False)
+
+    languages = {n.language for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)}
+    assert languages == {dace.Language.Python}
+
+
 def test_a_kmp_search_whose_step_holds_a_while_loop_becomes_a_map_around_it():
     rng = np.random.default_rng(13)
     text = rng.integers(0, 2, 4000)
