@@ -344,6 +344,45 @@ def declareConsumeChunks (g : SDFG) : P SDFG := do
     | none => pure acc) []
   pure { g with arrays := g.arrays ++ chunks }
 
+/-- A relation `{"kind", "lhs", "rhs"}`; `none` for scale relations (`MUCH_LT`). -/
+def relation (j : Json) : P (Option Relation) := do
+  match RelKind.ofString? (← strField j "kind") with
+  | none => pure none
+  | some kind => pure (some { kind, lhs := ← exprField j "lhs", rhs := ← exprField j "rhs" })
+
+/-- The facts of `attributes.symbol_repo` (`symbol_repo.py`, `SymbolRepo.to_json`)
+and the declared parameter types.  Only `params` is read: the scale facts
+(`small`, `MUCH_LT`), `runtime_assumptions` and the facts of inner scopes are
+ignored (`Core/Facts`, `Decisions.md#D60`).  As in `symbol_facts`, integer
+symbols are those of an integer type other than `bool`, and an unsigned type
+is a `NONNEGATIVE` fact of its own. -/
+def symbolRepo (j : Json) : P (Constraints × List (Sym × Dtype)) := do
+  let params := (field? j "params").getD (Json.mkObj [])
+  let types ← match field? params "types" with
+    | none => pure []
+    | some m => do
+      let es ← entries m
+      pure (es.map fun (s, t) => (s, dtype t))
+  let intSyms := types.filterMap fun (s, t) => match t with
+    | .int _ _ => some s
+    | _ => none
+  let unsigned := types.filterMap fun (s, t) => match t with
+    | .int _ false => some (s, Pred.nonneg)
+    | _ => none
+  let preds ← match field? params "predicates" with
+    | none => pure []
+    | some m => do
+      let es ← entries m
+      es.flatMapM fun (s, ps) => do
+        let names ← (← ps.getArr?).toList.mapM str
+        names.mapM fun n => match Pred.ofString? n with
+          | some p => pure (s, p)
+          | none => throw s!"unknown predicate '{n}'"
+  let rels ← match field? params "relations" with
+    | none => pure []
+    | some v => do (← v.getArr?).toList.filterMapM relation
+  pure ({ intSyms, sign := preds ++ unsigned, rels }, types)
+
 mutual
 
 partial def node (j : Json) : P DNode := do
@@ -517,7 +556,13 @@ partial def sdfg (j : Json) : P SDFG := do
     | none => pure []
     | some v => do (← v.getArr?).toList.mapM str
   let top ← regionBody arrays j .plain
-  declareConsumeChunks { name, arrays, symbols, constants, argNames, top := { top with label := name } }
+  let (facts, repoTypes) ← match field? a "symbol_repo" with
+    | none => pure ({}, [])
+    | some r => symbolRepo r
+  -- with a symbol repository, `SDFG.symbols` is a view of `params.types`
+  let symbols := if symbols.isEmpty then repoTypes else symbols
+  declareConsumeChunks
+    { name, arrays, symbols, constants, argNames, top := { top with label := name }, facts }
 
 end
 

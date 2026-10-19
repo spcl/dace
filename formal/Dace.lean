@@ -12,6 +12,10 @@ import Dace.Core.MergeLemmas
 import Dace.Core.Tasklet
 import Dace.Core.Interp
 import Dace.Core.PyTasklet
+import Dace.Core.Facts
+import Dace.Core.SymArith
+import Dace.Core.SymCert
+import Dace.Core.SymSearch
 import Dace.SDFG.Syntax
 import Dace.SDFG.Scope
 import Dace.SDFG.ScopeSpec

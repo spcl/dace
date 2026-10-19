@@ -71,3 +71,13 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.State.topoOrder_spec
 #print axioms Dace.State.isTopologicalOrder_perm
 
+-- R2.1–R2.3: facts, polynomial normal form, certificate checking.
+#print axioms Dace.Constraints.satisfies_empty
+#print axioms Dace.toPoly?_sound
+#print axioms Dace.toPoly?_spec
+#print axioms Dace.atomEnv_axioms
+#print axioms Dace.axioms_atomOk
+#print axioms Dace.Cert.check_sound
+#print axioms Dace.Query.withAxioms_sound
+#print axioms Dace.Query.decide_sound
+#print axioms Dace.Constraints.toHyps_sound
