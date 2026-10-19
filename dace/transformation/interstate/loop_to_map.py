@@ -46,9 +46,21 @@ def _align_itersym(expr, itersym):
     return expr.subs(repl) if repl else expr
 
 
-def _check_range(subset, a, itersym, b, step, span=None):
+def _check_range(subset, a, itersym, b, step, span=None, memo: dict | None = None):
     """Whether some dimension of ``subset`` starts at ``a*itersym+b``. ``span`` (``end - start`` of the loop) marks
-    a WRITE, whose dimension must moreover be disjoint across iterations: ``Q[k:M, :]`` under ``k`` is not."""
+    a WRITE, whose dimension must moreover be disjoint across iterations: ``Q[k:M, :]`` under ``k`` is not.
+
+    :param memo: verdicts of earlier calls (:attr:`LiftInvariants.check_range`). The answer is a function of the
+                 subset's bounds and the other arguments alone, so a sweep re-probing the same accesses asks once.
+    """
+    key = None
+    if memo is not None:
+        # Typed: a ``SymExpr`` compares equal to its main expression, a Python int to a SymPy one.
+        bounds = tuple(tuple((type(x), x) for x in rng) for rng in subset.ndrange())
+        key = (bounds, a, itersym, b, step, span)
+        cached = memo.get(key)
+        if cached is not None:
+            return cached
     found = False
     for rb, re_, rs in subset.ndrange():
         # ``ndrange()`` yields plain ints as well as sympy expressions, and an int has no ``match``
@@ -70,6 +82,8 @@ def _check_range(subset, a, itersym, b, step, span=None):
             continue
         found = True
         break
+    if memo is not None:
+        memo[key] = found
     return found
 
 
@@ -483,14 +497,16 @@ def write_refusal(
         # each iteration writes a disjoint slab, so a lane firing or not can't
         # race another iteration's write.
         dst_subset = e.data.get_dst_subset(e, state)
-        if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start)):
+        ranges = None if ctx is None else ctx.invariants.check_range
+        if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
             return f"dynamic write to {dn.data} is not indexed by the iteration variable - dst_subset={dst_subset}"
 
     # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
     # iteration variable (which must be used).
     if e.data.wcr is None:
         dst_subset = e.data.get_dst_subset(e, state)
-        ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step, end - start)
+        ranges = None if ctx is None else ctx.invariants.check_range
+        ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)
         # NestedSDFG body propagates a whole-array external write hiding an
         # inner per-iteration write; look past the connector.
         if not ok and isinstance(e.src, nodes.NestedSDFG):
@@ -940,6 +956,9 @@ class LiftInvariants:
     #: disjoint-box verdicts of :func:`_smt_proves_disjoint_boxes`, keyed by the texts z3 parses, on the
     #: same grounds; a read witness re-asks every read-write pair of its container per re-probe.
     smt_disjoint_boxes: dict[tuple[str, ...], bool] = field(default_factory=dict)
+    #: :func:`_check_range` verdicts, keyed by the subset's bounds and the loop's iterator, step and span: a pure
+    #: function of the key, re-asked of the same accesses by every re-probe of a sweep.
+    check_range: dict[Any, bool] = field(default_factory=dict)
     #: interstate edge or loop/conditional header -> the names it reads, for :func:`control_flow_reads`.
     #: A lift edits neither: it moves the lifted loop's edges and headers as they are and re-attaches its
     #: out-edges' data unchanged, so an entry never goes stale.
@@ -1673,7 +1692,10 @@ class LoopToMap(xf.MultiStateTransformation):
                         continue
                     # itersym-dependent read: must match a*i+b like the writes, else this
                     # iteration reads a value another iteration writes.
-                    if not _check_range(src_subset, a, itersym, b, step) and not self.waives(data, permissive):
+                    ranges = None if ctx is None else ctx.invariants.check_range
+                    if not _check_range(src_subset, a, itersym, b, step, memo=ranges) and not self.waives(
+                        data, permissive
+                    ):
                         return refuse(
                             f"read of {data} at {src_subset} is iter-indexed but does not match the "
                             f"write pattern a*i+b -- loop-carried forward/backward dependency"
@@ -1933,6 +1955,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
+        lift_ctx = vars(self).get("lift_context")
+        ranges = None if lift_ctx is None else lift_ctx.invariants.check_range
         data = mmlt.data
         # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
         facts = self.probe_resolver().facts_at(state if state is not None else self.loop)
@@ -1940,7 +1964,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up
             return False
-        if not _check_range(src_subset, a, itersym, b, step):
+        if not _check_range(src_subset, a, itersym, b, step, memo=ranges):
             # ``_check_range`` accepts only reads that MOVE with the iteration (some dim
             # ``a*i+b``, ``|a| >= 1``). An itersym read not matching that is conservatively a
             # conflict. A loop-INVARIANT read (no itersym) is a conflict only if it overlaps a
@@ -1969,7 +1993,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # exempt it -- sound only for a reduction whose accumulator the loop never reads back.
             if (
                 candidate.wcr is not None
-                and not _check_range(write, a, itersym, b, step)
+                and not _check_range(write, a, itersym, b, step, memo=ranges)
                 and subsets.intersects(read, write, facts) is not symbolic.Truth.FALSE
             ):
                 return False
