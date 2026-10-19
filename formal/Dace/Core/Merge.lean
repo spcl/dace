@@ -17,11 +17,12 @@ queues.  Logs of parallel executions are **merged** onto the initial memory:
 * otherwise plain writes are applied, WCR contributions are folded onto the
   initial value, aliases are bound, and queue effects are applied.
 
-`merge` is defined on a list of logs but, for conflict-free lists, its result
-is invariant under permutation of the list (`merge_perm`, assuming the WCR
+`merge` is defined on a list of logs but, for conflict-free lists in which no
+two logs touch the same queue, its result is invariant under permutation of
+the list (`merge_perm` in `Dace/Core/MergeLemmas.lean`, assuming the WCR
 semantics is lawful); this is what makes map iterations unordered.
 Pushes to a shared queue by several parallel logs are appended in list order
-(`Decisions.md#D25`).
+(`Decisions.md#D25`), so they are the one order-dependent part of a merge.
 -/
 
 namespace Dace

@@ -160,7 +160,11 @@ def checkState (g : SDFG) (s : State) : WFReport :=
   let acyclic := match s.topoOrder ids with
     | some _ => {}
     | none => err s!"{ctx}: dataflow graph is cyclic"
-  uniqueIds ++ nodeChecks ++ edgeChecks ++ acyclic
+  -- `scope_dict` is a forest: every scope chain ends (`State.ScopeWF.acyclic`)
+  let scopeAcyclic :=
+    if s.nodes.all (fun n => (s.scopeChainFuel (s.nodes.length + 1) n.id).isSome) then {}
+    else err s!"{ctx}: cyclic scope nesting"
+  uniqueIds ++ nodeChecks ++ edgeChecks ++ acyclic ++ scopeAcyclic
 
 mutual
 

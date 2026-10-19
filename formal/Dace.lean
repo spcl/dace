@@ -8,11 +8,13 @@ import Dace.Core.Memlet
 import Dace.Core.Memory
 import Dace.Core.Wcr
 import Dace.Core.Merge
+import Dace.Core.MergeLemmas
 import Dace.Core.Tasklet
 import Dace.Core.Interp
 import Dace.Core.PyTasklet
 import Dace.SDFG.Syntax
 import Dace.SDFG.Scope
+import Dace.SDFG.ScopeSpec
 import Dace.SDFG.WF
 import Dace.SDFG.Semantics
 import Dace.SDFG.Interp

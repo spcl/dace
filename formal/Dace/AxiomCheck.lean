@@ -15,8 +15,59 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.SDFG.run_sound
 #print axioms Dace.SDFG.run_ok_sound
 
+-- R1.1: algebra of logs and of their parallel merge.
+#print axioms Dace.Log.seq_assoc
+#print axioms Dace.Log.empty_seq
+#print axioms Dace.Log.WF.seq
+#print axioms Dace.Log.conflicts_eq_false_iff
+#print axioms Dace.Log.conflicts_comm
+#print axioms Dace.Log.conflicts_mono
+#print axioms Dace.Log.conflicts_unionAll
+#print axioms Dace.Log.pairwiseFree_iff_pairwise
+#print axioms Dace.Log.pairwiseFree_perm
+#print axioms Dace.Log.pairwiseFree_of_sub
+#print axioms Dace.Log.apply_seq
+#print axioms Dace.Log.unionAll_cons_eq_seq
+#print axioms Dace.merge_eq_apply
+#print axioms Dace.merge_isOk_iff
+#print axioms Dace.merge_singleton
+#print axioms Dace.merge_cons_seq
+#print axioms Dace.merge_eq_foldl
+#print axioms Dace.merge_perm
+#print axioms Dace.Log.dropNames_seq
+#print axioms Dace.Log.dropNames_unionAll
+#print axioms Dace.Log.dropNames_mono
+#print axioms Dace.Log.Le.seq
+#print axioms Dace.Log.Le.unionAll
+#print axioms Dace.Log.Le.dropNames
+#print axioms Dace.Log.Le.apply_eq
+#print axioms Dace.Log.Le.seq_comm
+#print axioms Dace.merge_le
+#print axioms Dace.merge_le_conflict
+#print axioms Dace.Log.apply_push
+
 -- M4: soundness of the schedule tree interpreter with respect to the relational semantics.
 #print axioms Dace.STree.sound
 #print axioms Dace.STree.execList_sound
 #print axioms Dace.STree.run_sound
 #print axioms Dace.STree.run_ok_sound
+
+-- R0.4: specification of the (total) scope, component, memlet-tree and topological-order functions.
+#print axioms Dace.mem_closure
+#print axioms Dace.closure_nodup
+#print axioms Dace.State.scopeWF?_sound
+#print axioms Dace.State.mem_scopeNodes
+#print axioms Dace.State.mem_scopeNodes_iff_parent
+#print axioms Dace.State.scopeNodes_nodup
+#print axioms Dace.State.mem_component
+#print axioms Dace.State.components_cover
+#print axioms Dace.State.components_flatten_nodup
+#print axioms Dace.State.mem_components_iff
+#print axioms Dace.State.components_edge
+#print axioms Dace.State.components_eq_of_mem
+#print axioms Dace.State.components_flatten_perm
+#print axioms Dace.State.mem_treeEdges
+#print axioms Dace.State.treeEdges_nodup
+#print axioms Dace.State.topoOrder_spec
+#print axioms Dace.State.isTopologicalOrder_perm
+
