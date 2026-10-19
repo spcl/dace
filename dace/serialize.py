@@ -241,10 +241,11 @@ def load(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dump(*args, readable=False, **kwargs):
-    if readable:
-        return json.dump(*args, default=to_json, indent=2, **kwargs)
-    return json.dump(*args, default=to_json, indent=None, separators=(",", ":"), **kwargs)
+def dump(obj, fp, *args, readable=False, **kwargs):
+    # One write of ``dumps``' text, the same characters ``json.dump`` streams: ``json.dump`` always encodes with the
+    # pure-Python encoder, one ``fp.write`` per token (millions for a large SDFG, each through gzip), while ``dumps``
+    # uses the C encoder when there is no indent.
+    fp.write(dumps(obj, *args, readable=readable, **kwargs))
 
 
 def all_properties_to_json(object_with_properties):
