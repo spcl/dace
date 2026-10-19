@@ -736,21 +736,23 @@ class StateFlow:
         elif isinstance(block, ControlFlowRegion):
             self.add_region(block)
 
-    def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kill: SDFGState) -> bool:
-        """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``.
+    def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kills: SDFGState | tuple[SDFGState, ...]) -> bool:
+        """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kills`` (one state or several).
 
-        One search per (source, kill) pair answers every target asked about it: a caller asks about one write's
-        state, against another write of the container, for each access in that write's scope. ``kill``'s own
+        One search per (source, kills) pair answers every target asked about it: a caller asks about one write's
+        state, against another write of the container, for each access in that write's scope. A kill's own
         entry counts as reached when the search reaches one of its predecessors."""
         index = self.numbered()
         root, target = index.get(("out", id(src))), index.get(("in", id(dst)))
         if root is None or target is None:
             return False
-        blocked = index.get(("in", id(kill)), -1)
+        if isinstance(kills, SDFGState):
+            kills = (kills,)
+        blocked = tuple(sorted({index[key] for key in (("in", id(kill)) for kill in kills) if key in index}))
         reached = self.reach_avoiding(root, blocked)
-        if target != blocked:
+        if target not in blocked:
             return bool(reached[target])
-        return root == blocked or any(reached[parent] for parent in self.pred_ids[blocked])
+        return root in blocked or any(reached[parent] for parent in self.pred_ids[target])
 
     def numbered(self) -> dict[tuple[str, int], int]:
         if not self.index:
@@ -767,8 +769,8 @@ class StateFlow:
                     self.pred_ids[self.index[key]].append(number)
         return self.index
 
-    def reach_avoiding(self, root: int, blocked: int) -> bytearray:
-        """The nodes reached from ``root`` without entering ``blocked`` (``-1``: none avoided); ``root`` itself is
+    def reach_avoiding(self, root: int, blocked: tuple[int, ...]) -> bytearray:
+        """The nodes reached from ``root`` without entering any of ``blocked`` (sorted); ``root`` itself is
         reached. Kept for the last :data:`REACH_MEMO` pairs."""
         known = self.reached.get((root, blocked))
         if known is not None:
@@ -779,7 +781,7 @@ class StateFlow:
         stack = [root]
         while stack:
             for child in succ[stack.pop()]:
-                if not reached[child] and child != blocked:
+                if not reached[child] and child not in blocked:
                     reached[child] = 1
                     stack.append(child)
         if len(self.reached) >= REACH_MEMO:
@@ -1139,16 +1141,20 @@ class ScalarWriteShadowScopes(ppl.Pass):
         """
         if other_write is None:
             return True
-        kill_state, kill_node = other_write
+        # A scope a conditional's final writes formed is killed by EACH of them: avoiding only the first arm's
+        # write leaves the other arms as paths around it, and two sibling loops looked like one carried chain.
+        kills = self._scope_kills.get((desc, other_write), (other_write,))
         access_state, access_node = access
-        if not all(isinstance(b, SDFGState) for b in (write_state, kill_state, access_state)):
+        if not all(isinstance(b, SDFGState) for b in (write_state, access_state, *(k[0] for k in kills))):
             return True
-        if write_state is kill_state:
+        if any(write_state is kill_state for kill_state, _ in kills):
             return True
-        if not flow.reaches_avoiding(write_state, access_state, kill_state):
+        if not flow.reaches_avoiding(write_state, access_state, tuple(kill_state for kill_state, _ in kills)):
             return False
-        if access_state is not kill_state:
+        kill = next((k for k in kills if k[0] is access_state), None)
+        if kill is None:
             return True
+        kill_state, kill_node = kill
         if not isinstance(access_node, nd.AccessNode) or access_node is kill_node:
             return False
         return not self._reaches(kill_state, kill_node, access_node, self._reach_memo(kill_state, desc, reach_cache))
@@ -1171,6 +1177,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             AccessSets.__name__
         ]
         self._conditional_writes: dict[tuple[ConditionalBlock, str], list[tuple[SDFGState, nd.AccessNode]] | None] = {}
+        #: Per (container, scope key write), the writes that end that scope's value: its conditional's final writes.
+        self._scope_kills: dict[tuple[str, tuple[SDFGState, nd.AccessNode]], tuple] = {}
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
@@ -1311,6 +1319,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     if cdesc != desc or not finals or finals[0] not in result[desc]:
                         continue
                     scope = result[desc][finals[0]]
+                    self._scope_kills[(desc, finals[0])] = tuple(finals)
                     for other in finals[1:]:
                         for accesses in result[desc].values():
                             accesses.discard(other)
