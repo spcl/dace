@@ -63,6 +63,24 @@ def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
                 rename_iterator(node.sdfg, old, new)
 
 
+def freshen_copied_loops(sdfg: dace.SDFG, copy: LoopRegion) -> bool:
+    """Give ``copy``, a copy of a loop whose original keeps its names, and every loop nested in it a fresh
+    ``_loop_it_<N>``, so :class:`UniqueLoopIterators` finds nothing to rename after the pass that copied it.
+
+    Refused (``False``, nothing renamed) when an iterator is read outside its own loop within ``copy``: that read
+    needs the exit value :class:`UniqueLoopIterators` assigns, so the copy is left for it.
+    """
+    loops = [r for r in copy.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    read = copy.free_symbols
+    if any(loop.loop_variable in read for loop in loops if loop is not copy):
+        return False
+    next_id = first_free_id(sdfg)
+    # Innermost first, as in ``UniqueLoopIterators.rename_loops``: an outer rename replaces in the whole subtree.
+    for offset, loop in enumerate(reversed(loops)):
+        rename_iterator(loop, loop.loop_variable, f"{LOOP_ITERATOR_PREFIX}{next_id + offset}")
+    return True
+
+
 def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """The iterator value after a counted loop: one step past the last value it takes."""
     end = loop_analysis.get_loop_end(loop)

@@ -980,6 +980,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
         from dace.transformation.passes.analysis import loop_analysis
+        from dace.transformation.passes.unique_loop_iterators import freshen_copied_loops
 
         # A break leaves only its own segment, and every segment after it would still run.
         if any(isinstance(block, BreakBlock) for block in loop_analysis.loop_jumps(loop)):
@@ -1086,6 +1087,10 @@ class BestEffortLoopPeeling(ppl.Pass):
                 parent.remove_edge(oe)
         if not reuse_loop:
             parent.remove_node(loop)
+        # Every segment but the last is a copy whose iterators the last one still holds: renamed here, the split
+        # leaves nothing for ``UniqueLoopIterators`` to do (the last keeps the names a read after the loop sees).
+        for segment in chain[:-1]:
+            freshen_copied_loops(sdfg, segment)
         return True
 
     def _split_range_relations(self, loop: LoopRegion, x):
