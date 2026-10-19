@@ -299,7 +299,8 @@ def _body_heat3d_sass():
     """The stencil kernels must load 32 bits at a time. ``PRMT`` is not the metric -- an aligned
     load plus a register ``PRMT`` is the intended lowering -- ``LDG.E.U16`` is, plus the total
     instruction count, which must not grow paying for the extraction."""
-    sdfg = _vectorized(_heat3d, name="shifted_heat3d_sass")
+    # One thread's 2-lane tile loads a lane pair in 32 bits; a block tile gives each thread one 16-bit lane.
+    sdfg = _vectorized(_heat3d, name="shifted_heat3d_sass", tile_group=TileGroup.THREAD)
     sdfg.compile()
     ops = _sass_ops(sdfg.build_folder)
     assert sum(ops.values()) > 0, "no SASS found in the built object"
