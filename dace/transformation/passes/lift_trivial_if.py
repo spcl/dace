@@ -11,7 +11,7 @@ import sympy
 import dace
 from dace import SDFG, ControlFlowRegion, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.sdfg import ConditionalBlock
+from dace.sdfg.sdfg import ConditionalBlock, forget_all_facts, memoize_facts
 from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -368,6 +368,7 @@ class LiftTrivialIf(ppl.Pass):
                             break
                         if cnd is not None and (self._trivially_false(cnd, cfb) or self._unsatisfiable(cnd)):
                             cfb.remove_branch(cfg)
+                            forget_all_facts()  # The branch may have held interstate assignments
                             rmed_count += 1
 
                 # Supported variants:
@@ -384,6 +385,7 @@ class LiftTrivialIf(ppl.Pass):
                         _cfg = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
                         _cfg.add_state(label="empty_placholder", is_start_block=True)
                         cfb.add_branch(condition=None, branch=_cfg)
+                        forget_all_facts()
                         cfb_to_rm_cfg_to_keep[(cfb, _cfg)] = None
                 elif len(conditions_and_cfgs) == 2:
                     cond1, cfg1 = conditions_and_cfgs[0]
@@ -404,6 +406,7 @@ class LiftTrivialIf(ppl.Pass):
             existing = {n.label for n in graph.nodes()}
             before = {id(n) for n in graph.nodes()}
             move_branch_cfg_up_discard_conditions(cfb, cfg)
+            forget_all_facts()  # The discarded branches may have held interstate assignments
             assert cfb not in graph.nodes()
             # Bookkeep only the spliced-in subtree, not the whole SDFG -- the old whole-SDFG walk here
             # ran once per control-flow block and was quadratic (on CLOUDSC ~10s of a 15s run).
@@ -469,7 +472,10 @@ class LiftTrivialIf(ppl.Pass):
                   nested-SDFG parent bookkeeping are done incrementally per splice, scoped to the moved
                   subtree, so a no-op invocation touches nothing and a ``FixedPointPipeline`` converges.
         """
-        rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
+        # Every decided guard resolves the facts at its conditional, whose SDFG-wide part (``SDFG.facts()``) only a
+        # removal changes: share it between guards, drop it at every removal.
+        with memoize_facts():
+            rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
         if not rmed_count:
             return None
         # ``add_node`` / ``remove_node`` / ``remove_branch`` keep the CFG list exact per splice, and the
