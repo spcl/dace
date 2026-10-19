@@ -148,6 +148,20 @@ def test_assume_even_single_strided_gpu_map_no_mask():
     )
 
 
+@pytest.mark.parametrize("assume_even, bounded", [(True, True), (False, False)], ids=["even_extent", "masked_tail"])
+def test_a_block_tile_bounds_its_lanes_only_where_nothing_else_keeps_it_inside_its_map(
+    assume_even: bool, bounded: bool
+):
+    """An even extent is a multiple of the caller's width, not of the widened block tile, so its last tile bounds its
+    lanes. A masked tail needs no bounds: its full-tile branch is guarded and its remainder is masked."""
+    sdfg = _prep(_add16)
+
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=assume_even)).apply_pass(sdfg, {})
+
+    tiles = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
+    assert tiles and all(bool(n.lane_bounds) is bounded for n in tiles)
+
+
 @pytest.mark.parametrize("group,implementation,lanes", [(TileGroup.BLOCK, "block", 2), (TileGroup.THREAD, "cuda", 1)])
 def test_deferred_tile_nodes_are_cuda_stamped(group: TileGroup, implementation: str, lanes: int):
     """By default the GPU pipeline does NOT expand the tile lib nodes: the SDFG
