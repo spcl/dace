@@ -900,8 +900,12 @@ def derive_parallelism(
     lift_copy: bool,
     interchange_carry_with_map: bool,
     target: str,
+    validate: bool = False,
 ) -> Stages:
-    """LoopToMap, rescue the loops it refused, LoopToMap again, guarded and reduction loops, wavefront skew."""
+    """LoopToMap, rescue the loops it refused, LoopToMap again, guarded and reduction loops, wavefront skew.
+
+    :param validate: Whether the pipeline validates its result; best-effort peeling then validates its own once.
+    """
     label = DERIVE_PARALLELISM
     s: Stages = [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
     # SSA leaves one definition per name, which is when propagation can substitute it (``j = j_0 + 1`` into
@@ -919,7 +923,7 @@ def derive_parallelism(
     if peel_limit > 0:
         s += [
             (label, LoopCarriedRotationSubstitution(peel_limit)),
-            (label, BestEffortLoopPeeling(peel_limit, segments=segments)),
+            (label, BestEffortLoopPeeling(peel_limit, segments=segments, validate=validate)),
         ]
     s += [(label, unit) for unit in dead_dataflow_units()]
     s += [(label, _PrivatizeScalarsStage()), (label, _PrivatizeArraysStage())]
@@ -1091,8 +1095,11 @@ def build_stages(
     lift: bool = True,
     lift_copy: bool = True,
     semantic_lifting: bool = True,
+    validate: bool = False,
 ) -> Stages:
     """Build the canonicalization recipe: the paper's phases in order (see the section comment above).
+
+    :param validate: The pipeline's ``validate``, for the units that validate their own rewrite only when asked.
 
     :returns: ``(label, pass)`` pairs in run order, fresh instances each call.
     """
@@ -1113,6 +1120,7 @@ def build_stages(
         lift_copy,
         interchange_carry_with_map,
         target,
+        validate,
     )
     s += rail()
     s += recompose(lift, lift_copy, target)
@@ -1459,6 +1467,7 @@ class CanonicalizationPipeline(ppl.Pass):
             lift=self.lift,
             lift_copy=self.lift_copy,
             semantic_lifting=self.semantic_lifting,
+            validate=self.validate,
         )
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
