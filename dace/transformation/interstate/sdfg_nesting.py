@@ -854,9 +854,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if not any(n in cc for n in subgraph.nodes()):
                 cc2 = SubgraphView(state, [n for n in state.nodes() if n not in cc])
                 state = helpers.state_fission(cc2)
-        # The last inlined access node of each such output now feeds the scope exit in the nested SDFG's place.
+        # The last inlined access node of each such output now feeds the scope exit in the nested SDFG's place. A
+        # written one: an unwritten read of the same data can sort after the write and would not order it.
         for conn, edge in scope_outputs.items():
-            last = next((n for n in reversed(order) if n.data == edge.data.data and n in state.nodes()), None)
+            candidates = [n for n in reversed(order) if n.data == edge.data.data and n in state.nodes()]
+            last = next((n for n in candidates if state.in_degree(n) > 0), next(iter(candidates), None))
             if last is None:
                 self._remove_edge_path(state, {conn: edge}, {conn}, reverse=False)
                 continue

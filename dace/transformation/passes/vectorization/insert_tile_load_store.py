@@ -692,6 +692,8 @@ class InsertTileLoadStore(ppl.Pass):
                 and e.src.data == e.dst.data
                 and not e.data.is_empty()
                 and not inner_sdfg.arrays[e.src.data].transient
+                # Only an identity copy: a shifted one (``A[1:N] <- A[0:N-1]``) moves data.
+                and (e.data.other_subset is None or e.data.other_subset == e.data.subset)
             ):
                 inner_state.remove_edge(e)
                 inner_state.add_nedge(e.src, e.dst, Memlet())
@@ -700,7 +702,6 @@ class InsertTileLoadStore(ppl.Pass):
             if desc is None or desc.transient:
                 continue
             pre_stage_in_edges = list(inner_state.in_edges(an))
-            pre_stage_out_edges = list(inner_state.out_edges(an))
             if not pre_stage_in_edges:
                 continue  # No write to stage (pure source -- the read phase owns it).
             # An empty in-edge has no subset, so it reports the full array and hides a per-tile write.
