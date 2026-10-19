@@ -794,9 +794,16 @@ class InlineSDFG(transformation.SingleStateTransformation):
         removed_in_edges = self._remove_edge_path(
             state, inputs, set(inputs.keys()) - {inverse_repldict[n.data] for n in source_accesses}, reverse=True
         )
-        removed_out_edges = self._remove_edge_path(
-            state, outputs, set(outputs.keys()) - {inverse_repldict[n.data] for n in sink_accesses}, reverse=False
-        )
+        unsunk_outputs = set(outputs.keys()) - {inverse_repldict[n.data] for n in sink_accesses}
+        # An output without a sink access node (a shared connector whose node is written, then read) keeps its path
+        # through the enclosing scope's exit: without it the write happens inside the scope with no memlet out of it,
+        # and nothing orders the rest of the state after it (a device copy-back would run before the kernel).
+        scope_outputs = {
+            conn: outputs[conn]
+            for conn in unsunk_outputs
+            if nsdfg_scope_exit is not None and outputs[conn].dst is nsdfg_scope_exit
+        }
+        removed_out_edges = self._remove_edge_path(state, outputs, unsunk_outputs - set(scope_outputs), reverse=False)
 
         # Re-add in/out edges to first/last nodes in subgraph
         order = [x for x in nx.topological_sort(nstate._nx) if isinstance(x, nodes.AccessNode)]
@@ -847,6 +854,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if not any(n in cc for n in subgraph.nodes()):
                 cc2 = SubgraphView(state, [n for n in state.nodes() if n not in cc])
                 state = helpers.state_fission(cc2)
+        # The last inlined access node of each such output now feeds the scope exit in the nested SDFG's place.
+        for conn, edge in scope_outputs.items():
+            last = next((n for n in reversed(order) if n.data == edge.data.data and n in state.nodes()), None)
+            if last is None:
+                self._remove_edge_path(state, {conn: edge}, {conn}, reverse=False)
+                continue
+            state.remove_edge(edge)
+            state.add_edge(last, None, edge.dst, edge.dst_conn, dc(edge.data))
 
         #######################################################
         # Remove nested SDFG node

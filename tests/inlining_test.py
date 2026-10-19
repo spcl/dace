@@ -1809,6 +1809,21 @@ def test_inline_shared_inout_connector(kind: str, in_map: bool):
     check_shared_inout_inlining(sdfg, nested)
 
 
+@pytest.mark.parametrize("kind", ["write_then_read", "overlapping_subsets"])
+def test_inline_shared_inout_connector_in_a_map_keeps_the_write_in_the_scope(kind: str):
+    """
+    Tests that inlining a shared input/output connector without a sink access node inside a map keeps the write of
+    ``A`` flowing out of the map exit. Without that memlet the write is not ordered before anything after the map in
+    the state: on the GPU the copy of ``A`` back to the host ran before the kernel (tsvc s241, s243, s482).
+    """
+    sdfg, nested = make_shared_inout_sdfg(kind, in_map=True)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+    state = sdfg.start_block
+    (exit_node,) = [n for n in state.nodes() if isinstance(n, dace_nodes.MapExit) and n.map.label == "rows"]
+    assert "A" in {e.data.data for e in state.in_edges(exit_node)}
+    assert "A" in {e.data.data for e in state.out_edges(exit_node)}
+
+
 @pytest.mark.parametrize("in_map", [False, True])
 def test_inline_shared_inout_connector_shared_outer_input(in_map: bool):
     """
@@ -2101,6 +2116,8 @@ if __name__ == "__main__":
     for kind in ["write_then_read", "overlapping_subsets", "read_then_write"]:
         for in_map in [False, True]:
             test_inline_shared_inout_connector(kind=kind, in_map=in_map)
+    test_inline_shared_inout_connector_in_a_map_keeps_the_write_in_the_scope(kind="write_then_read")
+    test_inline_shared_inout_connector_in_a_map_keeps_the_write_in_the_scope(kind="overlapping_subsets")
     for in_map in [False, True]:
         test_inline_shared_inout_connector_shared_outer_input(in_map=in_map)
     for in_map in [False, True]:

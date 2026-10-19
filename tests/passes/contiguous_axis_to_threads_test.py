@@ -190,7 +190,9 @@ def test_the_gpu_finalization_band_makes_the_unit_stride_axis_a_thread_index():
     gpu_specialize_offloaded(sdfg)
     sdfg.validate()
     entry, _ = only_kernel(sdfg)
-    assert entry.map.params == ["k", "l"], entry.map.params
+    # The band may tile the kernel along its coalesced axis (``TileKernelsCoalesced``): the grid then runs over
+    # ``g_k, g_l``, still with ``l`` last, i.e. on threadIdx.x.
+    assert [p.removeprefix("g_") for p in entry.map.params] == ["k", "l"], entry.map.params
 
 
 def test_a_forwarded_scalar_is_read_through_the_kernel_entry():

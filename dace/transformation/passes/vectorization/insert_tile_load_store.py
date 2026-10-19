@@ -682,6 +682,19 @@ class InsertTileLoadStore(ppl.Pass):
         # Phase 2: stage every global WRITE in ``inner_state``, on one symbol-definition map for the phase.
         staged = 0
         sym_defs = build_symbol_definition_map(inner_sdfg, inner_state)
+        # A node of an array writing into another node of the same array (an inlined body's write leaving its scope
+        # through the node it also reads) moves no data: the first node's own producers are staged. Only the
+        # ordering remains, and it must be in place before any node is judged a pure sink.
+        for e in list(inner_state.edges()):
+            if (
+                isinstance(e.src, AccessNode)
+                and isinstance(e.dst, AccessNode)
+                and e.src.data == e.dst.data
+                and not e.data.is_empty()
+                and not inner_sdfg.arrays[e.src.data].transient
+            ):
+                inner_state.remove_edge(e)
+                inner_state.add_nedge(e.src, e.dst, Memlet())
         for an in [n for n in inner_state.nodes() if isinstance(n, AccessNode)]:
             desc = inner_sdfg.arrays.get(an.data)
             if desc is None or desc.transient:
@@ -697,7 +710,9 @@ class InsertTileLoadStore(ppl.Pass):
             if any(isinstance(e.src, TILE_TRANSFER_NODES) for e in pre_stage_in_edges):
                 continue  # Already staged by phase 1's bridge->output insertion.
             # Stage a pure sink, or an in-place RMW intermediate written and re-read in one state (cloudsc
-            # ``zqx_v = zqx_v + zqx_l``) whose reads are already bridged; otherwise leave the AN alone.
+            # ``zqx_v = zqx_v + zqx_l``) whose reads are already bridged; otherwise leave the AN alone. An ordering
+            # (empty) out-edge reads nothing.
+            pre_stage_out_edges = [e for e in inner_state.out_edges(an) if not e.data.is_empty()]
             if pre_stage_out_edges and not all(isinstance(e.dst, TILE_TRANSFER_NODES) for e in pre_stage_out_edges):
                 continue
             # Several writes can land on ONE AN at distinct elements (``zsolqa[1, 4, i]`` and
