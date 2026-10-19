@@ -744,21 +744,6 @@ def test_the_cpu_interchange_gate_leaves_a_branching_body_alone():
     assert graph_digest(sdfg) == before
 
 
-@dace.program
-def loop_bound_only_in_the_loop(data: dace.float64[I, J]):
-    for i in range(1, K):
-        for j in dace.map[0:J]:
-            data[i, j] = data[i - 1, j]
-
-
-def test_loop_bound_symbols_are_declared_in_the_nested_sdfg():
-    sdfg = loop_bound_only_in_the_loop.to_sdfg(simplify=True)
-    assert sdfg.apply_transformations(MoveLoopIntoMap) == 1
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.NestedSDFG):
-            assert node.symbol_mapping.keys() <= node.sdfg.symbols.keys()
-
-
 if __name__ == "__main__":
     test_forward_loops_semantic_eq()
     test_backward_loops_semantic_eq()

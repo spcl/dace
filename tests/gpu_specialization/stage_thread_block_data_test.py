@@ -86,7 +86,9 @@ def test_a_coarsened_kernel_is_staged_through_its_thread_block_map():
     for copy_node in nodes_of(sdfg, CopyLibraryNode):
         state = next(s for n, s in sdfg.all_nodes_recursive() if n is copy_node)
         for edge in state.all_edges(copy_node):
-            assert edge.data.is_empty() or not any(isinstance(b, dace.symbolic.SymExpr) for r in edge.data.subset.ranges for b in r), edge
+            assert edge.data.is_empty() or not any(
+                isinstance(b, dace.symbolic.SymExpr) for r in edge.data.subset.ranges for b in r
+            ), edge
     sdfg.validate()
 
 

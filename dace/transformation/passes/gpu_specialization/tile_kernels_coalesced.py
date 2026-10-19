@@ -40,6 +40,7 @@ from dace.transformation.passes.gpu_block_size_selection import (
 )
 from dace.transformation.passes.gpu_specialization.block_tile_kernels import is_kernel
 
+
 def coalesced_param(state: SDFGState, entry: nodes.MapEntry, sdfg: SDFG) -> str:
     """The parameter of ``entry`` that indexes the unit-stride dimension of the most accesses in its scope (counted
     as :func:`~dace.transformation.passes.gpu_block_size_selection.unit_stride_counts` counts them for the block
@@ -56,7 +57,9 @@ class TileKernelsCoalesced(ppl.Pass):
     CATEGORY: str = "Device Specialization"
 
     factor = properties.Property(dtype=int, default=4, desc="Points of the outer axis each thread computes.")
-    block_threads = properties.Property(dtype=int, default=256, desc="Threads per block of a kernel without a preset block size.")
+    block_threads = properties.Property(
+        dtype=int, default=256, desc="Threads per block of a kernel without a preset block size."
+    )
 
     def __init__(self, factor: int = 4, block_threads: int = 256) -> None:
         super().__init__()
