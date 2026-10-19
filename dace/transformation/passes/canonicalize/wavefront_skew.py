@@ -80,7 +80,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import canon_stats, loop_analysis
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_DIAGONAL,
@@ -1242,6 +1242,7 @@ def tiling_legal(deps: list[Dependence], tau: tuple[int, int], bi: int, bj: int)
     return True
 
 
+@canon_stats.timed("isl")
 def domain_bbox(u: str, v: str, params: list[str], domain: list[sympy.Expr]) -> list[sympy.Expr] | None:
     """``[u_lo, u_hi, v_lo, v_hi]`` -- the exact integer bounding box of the 2-D
     iteration domain -- or ``None`` when a side is not a single readable bound.

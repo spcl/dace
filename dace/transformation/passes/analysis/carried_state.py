@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.analysis import smt_body, smt_dependence, smt_region
+from dace.transformation.passes.analysis import canon_stats, smt_body, smt_dependence, smt_region
 from dace.transformation.passes.analysis.finite_state import StepSlice, step_sdfg, step_slices
 
 
@@ -57,7 +57,8 @@ def proves_equal(lhs: Any, rhs: Any) -> bool:
     """Whether z3 proves ``lhs == rhs`` for every value of their free variables."""
     solver = smt_dependence.bounded_solver()
     solver.add(lhs != rhs)
-    return solver.check() == smt_body.z3.unsat
+    with canon_stats.timed("z3"):
+        return solver.check() == smt_body.z3.unsat
 
 
 def proves_gf2_affine(loop: LoopRegion, step: StepSlice) -> int | None:

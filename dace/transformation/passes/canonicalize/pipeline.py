@@ -27,6 +27,7 @@ from dace.transformation.dataflow.redundant_array import RedundantArray, Redunda
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
+from dace.transformation.passes.analysis import canon_stats
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy,
@@ -886,6 +887,7 @@ def derive_parallelism(
     assume_parallel_guards: bool,
     reconstruct_wavefront_nest: bool,
     lift_copy: bool,
+    interchange_carry_with_map: bool,
     target: str,
 ) -> Stages:
     """LoopToMap, rescue the loops it refused, LoopToMap again, guarded and reduction loops, wavefront skew."""
@@ -902,8 +904,12 @@ def derive_parallelism(
     s += [(label, DeadCarriedStoreElimination())]
     s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
+    segments: list = []
     if peel_limit > 0:
-        s += [(label, LoopCarriedRotationSubstitution(peel_limit)), (label, BestEffortLoopPeeling(peel_limit))]
+        s += [
+            (label, LoopCarriedRotationSubstitution(peel_limit)),
+            (label, BestEffortLoopPeeling(peel_limit, segments=segments)),
+        ]
     s += [(label, unit) for unit in dead_dataflow_units()]
     s += [(label, _PrivatizeScalarsStage()), (label, _PrivatizeArraysStage())]
     s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
@@ -911,6 +917,15 @@ def derive_parallelism(
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
     s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
+    # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
+    # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
+    # settle it as sequential.
+    s += [
+        (
+            LIFT_SEMANTICS,
+            LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target, only=segments),
+        )
+    ]
     # Out of phase: the fill map LoopToScan's stride specialization emits is lifted only before a cleanup fuses a
     # second writer into its state (tsvc_2_5 scan_strided_sym).
     if lift_copy:
@@ -1087,6 +1102,7 @@ def build_stages(
         assume_parallel_guards,
         reconstruct_wavefront_nest,
         lift_copy,
+        interchange_carry_with_map,
         target,
     )
     s += rail()
@@ -1477,6 +1493,7 @@ class CanonicalizationPipeline(ppl.Pass):
         # since the last one; the graph starts dirty, and only NON-cleanup units re-dirty it, so a
         # cleanup that tidies something does not thereby earn the next one.
         dirty = True
+        recorder = canon_stats.active()
         for index, (label, unit) in enumerate(stages, start=1):
             is_cleanup = isinstance(unit, StructuralCleanup)
             if is_cleanup and not dirty:
@@ -1487,7 +1504,11 @@ class CanonicalizationPipeline(ppl.Pass):
             is_pipeline = isinstance(unit, ppl.Pipeline)
             if self.validate_all and isinstance(unit, ppl.Pipeline):
                 unit.validate_subpasses = True
+            if recorder is not None:
+                recorder.stage_start(label, unit)
             result = unit.apply_pass(sdfg, {})
+            if recorder is not None:
+                recorder.stage_done(sdfg)
             if is_cleanup:
                 dirty = False
             elif changed_the_graph(unit, result):
@@ -1542,6 +1563,7 @@ def canonicalize(
     dump_dir: str | None = None,
     stages: Sequence[str] | None = None,
     nonnegative_symbols: Iterable[str] | None = None,
+    stats: dict | str | None = None,
 ) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
@@ -1625,8 +1647,47 @@ def canonicalize(
                                 negative. Registered in the SDFG's facts before the first pass, so every proof reads
                                 them, and checked at program entry. Any other symbol has an unknown sign. ``None``
                                 (default) keeps what an earlier call declared, else none.
+    :param stats: Record which stage settled each loop and the time spent, in total and inside Z3 and isl
+                  (:mod:`~dace.transformation.passes.analysis.canon_stats`): a dict is filled with the record, a
+                  path gets it appended as one JSON line. ``None`` (default) records nothing.
     :returns: The same ``sdfg`` instance, canonicalized.
     """
+    arguments = (
+        validate,
+        validate_all,
+        unroll_limit,
+        peel_limit,
+        break_anti_dependence,
+        target,
+        interchange_carry_with_map,
+        scatter_to_guarded_maps,
+        privatize_scatter_reductions,
+        reconstruct_wavefront_nest,
+        normalize_loop_and_map_origin,
+        assume_parallel_guards,
+        perfect_loop_nesting,
+        specialize_constants,
+        lift,
+        lift_copy,
+        semantic_lifting,
+        dump_dir,
+        stages,
+    )
+    if stats is None:
+        return canonicalize_recorded(sdfg, nonnegative_symbols, *arguments)
+    recorder = canon_stats.CanonStats(sdfg.name)
+    with recorder.recording(sdfg):
+        canonicalize_recorded(sdfg, nonnegative_symbols, *arguments)
+    recorder.finish(sdfg)
+    if isinstance(stats, dict):
+        stats.update(recorder.as_dict())
+    else:
+        recorder.write(stats)
+    return sdfg
+
+
+def canonicalize_recorded(sdfg: SDFG, nonnegative_symbols: Iterable[str] | None, *arguments) -> SDFG:
+    """:func:`canonicalize` after its ``stats`` argument."""
     if nonnegative_symbols is not None:
         declare_nonnegative_symbols(sdfg, nonnegative_symbols)
     set_symbol_nonnegative_assumptions(sdfg)
@@ -1638,28 +1699,7 @@ def canonicalize(
     # keep the default.
     authority = {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
     with symbolic.serialization_symbol_dtypes(authority):
-        return canonicalize_under_authority(
-            sdfg,
-            validate,
-            validate_all,
-            unroll_limit,
-            peel_limit,
-            break_anti_dependence,
-            target,
-            interchange_carry_with_map,
-            scatter_to_guarded_maps,
-            privatize_scatter_reductions,
-            reconstruct_wavefront_nest,
-            normalize_loop_and_map_origin,
-            assume_parallel_guards,
-            perfect_loop_nesting,
-            specialize_constants,
-            lift,
-            lift_copy,
-            semantic_lifting,
-            dump_dir,
-            stages,
-        )
+        return canonicalize_under_authority(sdfg, *arguments)
 
 
 def canonicalize_under_authority(

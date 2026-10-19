@@ -78,7 +78,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import canon_stats, loop_analysis
 
 #: Map AST BinOp class -> ScanOp.
 _BINOP_TO_SCAN_OP = {
@@ -345,11 +345,19 @@ class LoopToScan(ppl.Pass):
         ),
     )
 
-    def __init__(self, interchange_carry_with_map: bool = False, lift_nested_scan: bool = False, target: str = "cpu"):
+    def __init__(
+        self,
+        interchange_carry_with_map: bool = False,
+        lift_nested_scan: bool = False,
+        target: str = "cpu",
+        only: list[LoopRegion] | None = None,
+    ):
         super().__init__()
         self.interchange_carry_with_map = interchange_carry_with_map
         self.lift_nested_scan = lift_nested_scan
         self.target = target
+        # When given, only these loops are candidates (the segments a split left behind).
+        self._only = only
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -509,8 +517,15 @@ class LoopToScan(ppl.Pass):
         # leaves them alone (they have already been rewritten to their final
         # sequential-per-thread form).
         interchanged_loop_ids = set()
+        if self._only is not None:
+            if not self._only:
+                return None
+            candidates = {id(loop) for loop in self._only}
+            collect = lambda: [entry for entry in _collect_loops(sdfg) if id(entry[0]) in candidates]
+        else:
+            collect = lambda: _collect_loops(sdfg)
         if self.interchange_carry_with_map:
-            for loop, parent, owner in list(_collect_loops(sdfg)):
+            for loop, parent, owner in list(collect()):
                 shape = _detect_carry_loop_with_inner_map(loop, owner)
                 if shape is None:
                     continue
@@ -523,7 +538,7 @@ class LoopToScan(ppl.Pass):
 
         # ``owner`` -- NOT ``sdfg`` -- is what every matcher and rewrite below gets: a loop
         # inside a NestedSDFG names ITS OWN SDFG's arrays. See :func:`_collect_loops`.
-        for loop, parent, owner in _collect_loops(sdfg):
+        for loop, parent, owner in collect():
             if id(loop) in interchanged_loop_ids:
                 continue
             if loop.pinned_sequential:
@@ -544,7 +559,7 @@ class LoopToScan(ppl.Pass):
             # leave it sequential if it isn't a clean forward-flat slot set.
             if infos and _is_multi_slot(infos):
                 if _multi_slot_liftable(infos):
-                    _rewrite_multi_slot(parent, loop, infos, owner)
+                    _lift_nonempty(parent, loop, owner, lambda region: _rewrite_multi_slot(region, loop, infos, owner))
                     count += 1
                     continue
                 # Not a clean forward-flat slot set (e.g. the nested cloudsc
@@ -576,12 +591,21 @@ class LoopToScan(ppl.Pass):
                     # rather than lift unconditionally: a violating runtime value
                     # (stride 0 -> a degenerate in-place update) degrades to the
                     # sequential fallback and still computes correctly.
-                    self._specialize_scan_under_stride_guard(parent, loop, guard, owner, infos)
+                    _lift_nonempty(
+                        parent,
+                        loop,
+                        owner,
+                        lambda region: self._specialize_scan_under_stride_guard(region, loop, guard, owner, infos),
+                    )
                     count += 1
                     continue
-                for info in infos:
-                    _rewrite(parent, loop, info, owner)
-                    count += 1
+
+                def rewrite_all(region: ControlFlowRegion) -> None:
+                    for info in infos:
+                        _rewrite(region, loop, info, owner)
+
+                _lift_nonempty(parent, loop, owner, rewrite_all)
+                count += len(infos)
                 continue
             # The COMPOSITE-BODY shape (cloudsc ``for_1133``): outer body has
             # a carry-copy state + sibling accumulate states writing the same
@@ -592,7 +616,9 @@ class LoopToScan(ppl.Pass):
             # ``Scan`` + seed-add via the nested-scan helpers.
             comp = _match_composite_body(loop, owner)
             if comp is not None:
-                if _rewrite_composite_body(parent, loop, comp, owner):
+                if _lift_nonempty(
+                    parent, loop, owner, lambda region: _rewrite_composite_body(region, loop, comp, owner)
+                ):
                     count += 1
                     continue
             # No array-carry match; try scalar-carry (TSVC s3112: scalar accumulator
@@ -602,7 +628,7 @@ class LoopToScan(ppl.Pass):
             # needs a SCALAR carrier read+written at constant subset [0].
             sc = _match_scalar_carry(loop, owner)
             if sc is not None:
-                _rewrite_scalar_carry(parent, loop, sc, owner)
+                _lift_nonempty(parent, loop, owner, lambda region: _rewrite_scalar_carry(region, loop, sc, owner))
                 count += 1
                 continue
             # Last: the AFFINE shape, the first-order LINEAR recurrence every matcher above
@@ -611,9 +637,10 @@ class LoopToScan(ppl.Pass):
             aff = match_affine_scan(loop, owner)
             if aff is not None:
                 if carry_distance_kind(aff.stride, SymbolResolver().facts_at(loop)) == "guard":
-                    self._specialize_affine_by_distance(parent, loop, aff, owner)
+                    rewrite = lambda region: self._specialize_affine_by_distance(region, loop, aff, owner)
                 else:
-                    rewrite_affine_scan(parent, loop, aff, owner)
+                    rewrite = lambda region: rewrite_affine_scan(region, loop, aff, owner)
+                _lift_nonempty(parent, loop, owner, rewrite)
                 count += 1
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
@@ -626,6 +653,73 @@ class LoopToScan(ppl.Pass):
 
             propagate_memlets_sdfg(sdfg)
         return count or None
+
+
+def _trip(start: Any, end: Any, facts: symbolic.Facts) -> Any:
+    """The iteration count of ``[start, end]``, ``Max(0, end - start + 1)`` unless the facts prove it nonnegative.
+
+    A loop past its end runs nothing, but a scan form sized ``end - start + 1`` would allocate and scan a negative
+    count (``range(M, N)`` with ``M > N``)."""
+    trip = symbolic.simplify(end - start + 1)
+    return trip if symbolic.provably_nonnegative(trip, facts) else sympy.Max(0, trip)
+
+
+def _lift_nonempty(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, rewrite) -> bool:
+    """Run ``rewrite(parent)``, which replaces ``loop`` by its scan form; ``False`` from it means it declined.
+
+    Unless the facts prove the loop runs, the scan chain's reads of the arrays it writes -- the seed one element
+    before the start, a residue class's head -- are clamped into the array. The loop reads the same elements
+    whenever it runs, so the clamp changes nothing then; when it does not, the scan is empty and the values unused.
+    The counts are clamped by :func:`_trip`.
+    """
+    start, end = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+    facts = SymbolResolver().facts_at(parent)
+    runs = start is None or end is None or symbolic.provably_nonnegative(end - start, facts)
+    blocks = set(parent.nodes())
+    if rewrite(parent) is False:
+        return False
+    if not runs:
+        for block in parent.nodes():
+            if block not in blocks:
+                _clamp_carrier_reads(block, sdfg, facts)
+    canon_stats.settle(loop, "lift:LoopToScan")
+    return True
+
+
+def _clamp_carrier_reads(block: ControlFlowBlock, sdfg: SDFG, facts: symbolic.Facts) -> None:
+    """Clamp the point reads of every array ``block``'s states write into that array's bounds (loops are left alone).
+
+    A range read keeps its size, so only a point is clamped: the seed and a residue class's head are points."""
+    if isinstance(block, LoopRegion):
+        return
+    if isinstance(block, ControlFlowRegion | ConditionalBlock):
+        for inner in block.nodes() if isinstance(block, ControlFlowRegion) else [b for _, b in block.branches]:
+            _clamp_carrier_reads(inner, sdfg, facts)
+        return
+    if not isinstance(block, SDFGState):
+        return
+    written = {
+        node.data for node in block.data_nodes() if block.in_degree(node) > 0 and not sdfg.arrays[node.data].transient
+    }
+    for edge in block.edges():
+        src = edge.src
+        if not isinstance(src, nodes.AccessNode) or src.data not in written or edge.data.is_empty():
+            continue
+        memlet = edge.data
+        side = "subset" if memlet.data == src.data else "other_subset"
+        subset = getattr(memlet, side)
+        if subset is not None and all(b == e for b, e, _ in subset.ndrange()):
+            setattr(memlet, side, _clamped(subset, sdfg.arrays[src.data].shape, facts))
+
+
+def _clamped(subset: subsets.Range, shape: Sequence[Any], facts: symbolic.Facts) -> subsets.Range:
+    def clamp(index: Any, extent: Any) -> Any:
+        inside = symbolic.provably_nonnegative(index, facts) and symbolic.provably_nonnegative(
+            extent - 1 - index, facts
+        )
+        return index if inside else sympy.Max(0, sympy.Min(index, extent - 1))
+
+    return subsets.Range([(clamp(b, n), clamp(b, n), s) for (b, _e, s), n in zip(subset.ndrange(), shape)])
 
 
 def _collect_loops(sdfg: SDFG):
@@ -1819,7 +1913,7 @@ def _rewrite_composite_body(parent: ControlFlowRegion, loop: LoopRegion, info: _
     inner_size = symbolic.simplify(as_expr(inner_end) - as_expr(inner_start) + 1)
 
     out_desc = sdfg.arrays[info.out_name]
-    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
     delta_buf, _ = sdfg.add_array(
         f"{_DELTA_BUF_PREFIX}{info.out_name}", [trip, inner_size], out_desc.dtype, transient=True, find_new_name=True
     )
@@ -3290,7 +3384,7 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
     import dace
 
     out_desc = sdfg.arrays[info.out_name]
-    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
     delta_buf, _ = sdfg.add_array(
         f"{_DELTA_BUF_PREFIX}{info.out_name}", [trip], out_desc.dtype, transient=True, find_new_name=True
     )
@@ -3395,7 +3489,7 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: li
 
     out_name = matched[0].out_name
     out_desc = sdfg.arrays[out_name]
-    trip = symbolic.simplify(matched[0].iter_end - matched[0].iter_start + 1)
+    trip = _trip(matched[0].iter_start, matched[0].iter_end, SymbolResolver().facts_at(parent))
 
     slots: list[tuple] = []
     for info in matched:
@@ -3452,7 +3546,7 @@ def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sd
     inner_size = symbolic.simplify(as_expr(inner_end) - as_expr(inner_start) + 1)
 
     out_desc = sdfg.arrays[info.out_name]
-    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
     # Layout: ``[trip, inner_size]`` -- the natural carrier-matching shape (outer
     # axis first, inner axis second). The single ``Scan`` libnode handles all
     # ``inner_size`` independent per-column prefix sums via its ``stride`` property
@@ -4317,7 +4411,7 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
     out_desc = sdfg.arrays[info.out_name]
     delta_desc = sdfg.arrays[info.delta_name]
     acc_desc = sdfg.arrays[info.acc_name]
-    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
 
     # Staging elision. The delta build and the out-write are PURE COPIES whenever the delta source
     # and the output already ARE the contiguous 1-D runs the libnode's connectors want, and
@@ -4411,7 +4505,7 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
 def _emit_scalar_carry_delta_build(state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan, delta_buf: str):
     """Map ``_i`` over ``[0, trip)`` copying
     ``delta[iter_start + _i + delta_offset, ...]`` into ``delta_buf[_i]``."""
-    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    trip = _trip(info.iter_start, info.iter_end, sdfg.facts())
     delta_desc = sdfg.arrays[info.delta_name]
     _i = symbolic.pystr_to_symbolic("_i")
     delta_axis_expr = symbolic.simplify(info.iter_start + _i + info.delta_offset)
@@ -4940,7 +5034,7 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
     :param sdfg: SDFG owning ``loop``.
     """
     out_desc = sdfg.arrays[info.out_name]
-    trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
+    trip = _trip(info.iter_start, info.iter_end, SymbolResolver().facts_at(parent))
     # An operand that is already a slice of an existing array is read where it lies; only a
     # COMPUTED one needs a buffer the body fills. See :func:`direct_operand`.
     direct_coef = direct_operand(info, info.coef_code, sdfg)

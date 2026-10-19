@@ -489,8 +489,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         "worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).",
     )
 
-    def __init__(self, peel_limit: int = DEFAULT_PEEL_LIMIT):
+    def __init__(self, peel_limit: int = DEFAULT_PEEL_LIMIT, segments: list[LoopRegion] | None = None):
         self.peel_limit = peel_limit
+        # When given, receives every loop a rewrite left behind, so a later pass can revisit only those.
+        self._segments = segments
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -1894,6 +1896,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         reaches is left alone, sequential and correct."""
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
+        before = {id(loop) for loop in _loops(sdfg)}
+        rewritten: list[LoopRegion] = []
         applied = 0
         # 1. Index-set splitting for interior equality guards. The split only regroups the loop's
         #    own iterations while the split point lies inside the range, which a loop-invariant
@@ -1910,6 +1914,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             self._specialize_index_set_split(
                 sdfg, loop, x, relations, middle_singleton=middle_singleton, guarded=guarded
             )
+            rewritten.append(loop)
             applied += 1
         # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
         #    even for loops LoopToMap already maps (the wrap-around access otherwise
@@ -1918,6 +1923,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             best = self._best_modulo_peel_for(loop, sdfg)
             if best is not None and self._peel_one_loop(sdfg, loop, *best):
                 self._clean_peeled_remainder(sdfg)
+                rewritten.append(loop)
                 applied += 1
         # 2b. Specialize a symbolic-boundary wrap the constant peel could not reach
         #     into `if (offset < modulus) { band split } else { original loop }`. Only
@@ -1927,6 +1933,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             if res is not None:
                 x, relations = res
                 self._specialize_modulo_split(sdfg, loop, x, relations)
+                rewritten.append(loop)
                 applied += 1
         # There is deliberately no separate boundary-peel stage. A boundary peel IS an index-set split
         # at a boundary point: ``_split_loop_at`` drops the side that would be empty, so ``x == end``
@@ -1942,6 +1949,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         # add them regressed nussinov (a point derived in the ENCLOSING loop's variable; three
         # InvalidSDFGEdgeError failures, root cause never pinned down) -- so the evidence for the
         # feature was zero and the evidence against it was three tests.
+        if applied and self._segments is not None:
+            # New loops, and a rewritten loop that survives as one of its own segments.
+            kept = {id(loop) for loop in rewritten}
+            self._segments.extend(loop for loop in _loops(sdfg) if id(loop) not in before or id(loop) in kept)
         return applied or None
 
     def _specialize_modulo_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:

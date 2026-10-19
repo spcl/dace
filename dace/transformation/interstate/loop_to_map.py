@@ -34,7 +34,7 @@ from dace.sdfg.state import (
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 IndexExpr = str | int | symbolic.SymbolicType
 
@@ -508,6 +508,7 @@ def write_refusal(
                     f"write to {dn.data} is not uniquely indexed by the iteration variable "
                     f"(needs an a*i+b subset) - dst_subset={dst_subset}"
                 )
+            canon_stats.solver_proof()
     return None
 
 
@@ -903,6 +904,7 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     # (``cov[i, i:M]`` against ``cov[i:M, i]``) has none, yet the two boxes provably meet only on
     # the diagonal of a single iteration -- which the SMT oracle can show directly.
     if _smt_proves_disjoint_boxes(m1.subset, m2.subset, itersym, start, end, step, varying):
+        canon_stats.solver_proof()
         return False
     return True
 
@@ -1419,6 +1421,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
         self.last_refusal_reason = None
+        canon_stats.begin_probe()
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
         # ``vars(self).get``, not ``getattr``: the attribute is genuinely absent on a plain match.
@@ -2005,6 +2008,7 @@ class LoopToMap(xf.MultiStateTransformation):
             ctx = vars(self).get("lift_context")
             boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
             if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes):
+                canon_stats.solver_proof()
                 continue
             # SMT fallback for non-affine read/write pairs. Only a proven 'none' (the accesses
             # never alias across iterations) admits the pair. A 'WAR' verdict is NOT enough:
@@ -2014,6 +2018,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if smt_dependence.has_z3():
                 classification = _smt_classify_read_write_pair(read, write, itervar, start, end, step, state)
                 if classification == "none":
+                    canon_stats.solver_proof()
                     continue
                 if classification == "RAW":
                     return False
@@ -2083,6 +2088,8 @@ class LoopToMap(xf.MultiStateTransformation):
         # Everything read from it here is a value ``apply`` would otherwise recompute per lift.
         lift_ctx: LiftContext | None = vars(self).get("lift_context")
         from dace.sdfg.propagation import align_memlet
+
+        canon_stats.lifted(self.loop)
 
         # Obtain loop information
         itervar = self.loop.loop_variable
