@@ -41,14 +41,20 @@ def first_free_id(sdfg: dace.SDFG) -> int:
 
 def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
     """Rename ``old`` to ``new`` in ``cfg``, the descriptors its states access and the nested SDFGs importing it."""
-    repl = {old: new}
+    rename_iterators(cfg, {old: new})
+
+
+def rename_iterators(cfg: ControlFlowRegion, repl: dict[str, str]) -> None:
+    """:func:`rename_iterator` for several names at once: one walk of ``cfg`` instead of one per name. The names must
+    be distinct iterators of ``cfg``'s tree (no loop rebinding another's name), as after :class:`UniqueLoopIterators`.
+    """
     cfg.replace_meta_accesses(repl)
     cfg.replace_dict(repl)
     if not isinstance(cfg, dace.SDFG):  # ``SDFG.replace_dict`` renames its own descriptors
         accessed = {n.data for state in cfg.states() for n in state.data_nodes()}
         for name in accessed:
             desc = cfg.sdfg.arrays[name]
-            if old in {str(s) for s in desc.free_symbols}:
+            if not repl.keys().isdisjoint(str(s) for s in desc.free_symbols):
                 replace_properties_dict(desc, repl)
     for state in cfg.states():
         for node in state.nodes():
@@ -56,28 +62,38 @@ def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
                 continue
             # ``replace_dict`` renamed the mapped value. A nested SDFG that does not import the iterator under its own
             # name owns any ``old`` it declares (its own loop's iterator), so it is left alone.
-            if str(node.symbol_mapping.get(old)) != new:
-                continue
-            node.symbol_mapping[new] = node.symbol_mapping.pop(old)
-            if old in node.sdfg.symbols:
-                rename_iterator(node.sdfg, old, new)
+            imported = {old: new for old, new in repl.items() if str(node.symbol_mapping.get(old)) == new}
+            for old, new in imported.items():
+                node.symbol_mapping[new] = node.symbol_mapping.pop(old)
+            inner = {old: new for old, new in imported.items() if old in node.sdfg.symbols}
+            if inner:
+                rename_iterators(node.sdfg, inner)
 
 
-def freshen_copied_loops(sdfg: dace.SDFG, copy: LoopRegion) -> bool:
-    """Give ``copy``, a copy of a loop whose original keeps its names, and every loop nested in it a fresh
-    ``_loop_it_<N>``, so :class:`UniqueLoopIterators` finds nothing to rename after the pass that copied it.
+def freshen_copied_loops(sdfg: dace.SDFG, copies: list[LoopRegion]) -> bool:
+    """Give each of ``copies`` (copies of one loop whose original keeps its names) and every loop nested in them a
+    fresh ``_loop_it_<N>``, so :class:`UniqueLoopIterators` finds nothing to rename after the pass that copied them.
 
-    Refused (``False``, nothing renamed) when an iterator is read outside its own loop within ``copy``: that read
-    needs the exit value :class:`UniqueLoopIterators` assigns, so the copy is left for it.
+    Refused (``False``, nothing renamed) when an iterator is read outside its own loop within the loop: that read
+    needs the exit value :class:`UniqueLoopIterators` assigns, so the copies are left for it. The copies differ only in
+    their range, so the first answers for all.
     """
-    loops = [r for r in copy.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-    read = copy.free_symbols
-    if any(loop.loop_variable in read for loop in loops if loop is not copy):
+    if not copies:
+        return True
+    head = copies[0]
+    read = head.free_symbols
+    if any(
+        r.loop_variable in read
+        for r in head.all_control_flow_regions()
+        if r is not head and isinstance(r, LoopRegion) and r.loop_variable
+    ):
         return False
     next_id = first_free_id(sdfg)
-    # Innermost first, as in ``UniqueLoopIterators.rename_loops``: an outer rename replaces in the whole subtree.
-    for offset, loop in enumerate(reversed(loops)):
-        rename_iterator(loop, loop.loop_variable, f"{LOOP_ITERATOR_PREFIX}{next_id + offset}")
+    for copy in copies:
+        loops = [r for r in copy.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+        repl = {loop.loop_variable: f"{LOOP_ITERATOR_PREFIX}{next_id + offset}" for offset, loop in enumerate(loops)}
+        next_id += len(loops)
+        rename_iterators(copy, repl)
     return True
 
 

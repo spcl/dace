@@ -52,7 +52,7 @@ def test_a_specialized_loop_keeps_the_cfg_list_in_place(monkeypatch, multi_state
 
     resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
     conditional = specialize_loop_under_condition(loop, "N > 4", parallelize, sdfg)
-    assert resets == [] and seen == [True]
+    assert resets == [] and [len(segments) for segments in seen] == [3]
     assert isinstance(conditional, ConditionalBlock) and conditional.parent_graph is sdfg
     loops = [r.label for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
     assert loops == ["outer_p0", "outer_p1", "outer_p2", "outer"], loops

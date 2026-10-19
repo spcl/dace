@@ -938,10 +938,11 @@ class BestEffortLoopPeeling(ppl.Pass):
         middle_singleton: bool = True,
         clamp: frozenset[str] = frozenset(),
         reuse_loop: bool = False,
-    ) -> bool:
+        freshen: bool = True,
+    ) -> list[LoopRegion]:
         """Index-set-split ``loop`` at iteration ``x`` into range segments, each a
         clone of the body wired in sequence in place of the loop. Unit stride only;
-        returns whether it split.
+        returns the segments, in order (empty if it did not split).
 
         With ``middle_singleton=True`` (the default) the split carves out the single
         iteration ``x``: [start, x-1] + {x} + [x+1, end], for peeling a special-case
@@ -974,7 +975,11 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         ``reuse_loop`` makes ``loop`` itself the last segment instead of a clone, saving one deepcopy of the
         nest. Only for a throwaway candidate graph: the loop object stays live, so a caller that later visits
-        its snapshot of loops (the real split in :meth:`apply_pass`) would find it still in the graph."""
+        its snapshot of loops (the real split in :meth:`apply_pass`) would find it still in the graph.
+
+        ``freshen`` names every segment but the last, and the loops nested in them, apart (see
+        :func:`~dace.transformation.passes.unique_loop_iterators.freshen_copied_loops`). A throwaway candidate skips
+        it: ``LoopToMap`` sees a later segment rebinding the iterator, and the count probes only the segments."""
         import copy
 
         from dace.properties import CodeBlock
@@ -984,17 +989,17 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         # A break leaves only its own segment, and every segment after it would still run.
         if any(isinstance(block, BreakBlock) for block in loop_analysis.loop_jumps(loop)):
-            return False
+            return []
         stride = loop_analysis.get_loop_stride(loop)
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         try:
             if stride is None or int(symbolic.evaluate(stride, sdfg.constants)) != 1:
-                return False
+                return []
         except (TypeError, ValueError):
-            return False
+            return []
         if start is None or end is None:
-            return False
+            return []
         # An ``x`` provably outside [start, end] regroups nothing: the middle singleton would
         # fabricate an iteration the loop never runs (the CONTRACT above; cloudsc's boundary guard
         # at ``x == end + 1`` produced a phantom ``{klev}`` iteration reading past the array).
@@ -1003,7 +1008,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         beyond = symbolic.simplify(symbolic.equalize_symbol(x - end))
         below = symbolic.simplify(symbolic.equalize_symbol(start - x))
         if any(gap.is_number and gap > 0 for gap in (beyond, below)):
-            return False
+            return []
         if not (beyond.is_number and below.is_number):
             facts = SymbolResolver().facts_at(loop.parent_graph)
             positive = symbolic.Predicate.POSITIVE
@@ -1011,7 +1016,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 symbolic.ask(symbolic.predicate_relation(positive, gap), facts) is symbolic.Truth.TRUE
                 for gap in (beyond, below)
             ):
-                return False
+                return []
         ivar = loop.loop_variable
         parent = loop.parent_graph
         # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a
@@ -1024,7 +1029,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         want_before = symbolic.simplify(x - start) != 0  # x != start -> [start, x-1] is non-empty
         want_after = symbolic.simplify(x - end) != 0  # x != end   -> [x+1, end] is non-empty
         if not middle_singleton and not want_before:
-            return False  # [x, end] would be the whole loop -> nothing to split
+            return []  # [x, end] would be the whole loop -> nothing to split
 
         chain: list[LoopRegion] = []
         in_edges = list(parent.in_edges(loop))
@@ -1089,9 +1094,9 @@ class BestEffortLoopPeeling(ppl.Pass):
             parent.remove_node(loop)
         # Every segment but the last is a copy whose iterators the last one still holds: renamed here, the split
         # leaves nothing for ``UniqueLoopIterators`` to do (the last keeps the names a read after the loop sees).
-        for segment in chain[:-1]:
-            freshen_copied_loops(sdfg, segment)
-        return True
+        if freshen:
+            freshen_copied_loops(sdfg, chain[:-1])
+        return chain
 
     def _split_range_relations(self, loop: LoopRegion, x):
         """The range-membership relations an index-set split at ``x`` needs for ``loop`` but cannot
@@ -1266,16 +1271,14 @@ class BestEffortLoopPeeling(ppl.Pass):
         mini, _ = self._isolate_loop(loop, sdfg)
         if mini is None:
             return None
-        # The split loop's own verdict must be recomputed for every candidate -- it is what the
-        # search is trying to change -- so its label never enters the memo. Its segments are new
-        # labels and miss the memo by construction.
+        # A split rewrites only the loop it carves: every loop nested in it keeps its verdict in each segment and
+        # counts once under its label, so it adds the same to every count. Only the split loop (baseline) and its
+        # segments (candidates) are scored -- the comparison the whole-nest counts made, without probing the nest.
         split_label = _loops(mini)[0].label if _loops(mini) else None
-        verdicts: dict[str, bool] = {}
         try:
-            baseline = self._mappable_loop_count(copy.deepcopy(mini), verdicts)
+            baseline = self._mappable_loop_count(copy.deepcopy(mini), scored=frozenset({required(split_label)}))
         except Exception:
             return None
-        verdicts.pop(required(split_label), None)
         best_count, best = baseline, None
         for x in candidates:
             singleton = x not in two_way
@@ -1293,16 +1296,18 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if not cloops:
                     continue
                 sides = frozenset() if guarded else clamp
-                if not self._split_loop_at(
-                    cand, cloops[0], x, middle_singleton=singleton, clamp=sides, reuse_loop=True
-                ):
+                segments = self._split_loop_at(
+                    cand, cloops[0], x, middle_singleton=singleton, clamp=sides, reuse_loop=True, freshen=False
+                )
+                if not segments:
+                    continue
+                labels = frozenset(segment.label for segment in segments)
+                # Skipping a candidate that cannot beat the best is what a count <= best_count does anyway.
+                if len(labels) <= best_count:
                     continue
                 self._clean_peeled_remainder(cand)
-                # Skipping a candidate that cannot beat the best is what a count <= best_count does anyway.
-                if mappable_count_upper_bound(cand, verdicts) <= best_count:
-                    continue
                 try:
-                    n_mappable = self._mappable_loop_count(cand, dict(verdicts))
+                    n_mappable = self._mappable_loop_count(cand, scored=labels)
                 except Exception:
                     continue
                 if n_mappable > best_count:
@@ -1781,7 +1786,9 @@ class BestEffortLoopPeeling(ppl.Pass):
                 for r in ranges_seen:
                     r.replace(repl)
 
-    def _mappable_loop_count(self, candidate: SDFG, verdicts: dict[str, bool] | None = None) -> int:
+    def _mappable_loop_count(
+        self, candidate: SDFG, verdicts: dict[str, bool] | None = None, scored: frozenset[str] | None = None
+    ) -> int:
         """Cheap proxy for "does the peel unblock parallelization?": run scalar
         fission -> symbol propagation -> constant propagation -> iterator SSA (no reduction
         passes), then COUNT the loops ``LoopToMap`` *could* parallelize -- via
@@ -1793,11 +1800,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         only when this count rises, so it must count what the pipeline will actually achieve and
         nothing else. Two things it must therefore do:
 
-        - Run ``UniqueLoopIterators`` first, as the pipeline does before ``parallelize``. Fresh
-          split segments all share the original iterator name, and ``LoopToMap`` refuses a segment
-          whose name is read by a LATER block ("loop-defined symbol used after the loop") -- which
-          is every segment but the last. Without the SSA rename the count misses exactly the
-          segments a split exists to unblock.
+        - See the segments a split makes as independent. They share the original iterator name, and
+          ``LoopToMap`` sees a later segment rebinding it, not reading it: the segments a split exists
+          to unblock are counted without renaming them (``UniqueLoopIterators`` once per candidate).
         - Count a loop once however many copies of it a split made. Every segment is a deepcopy of the
           loop, so an inner loop that maps in the original maps again in each segment under the same
           label; counted per copy, a split of CloudSC's level loop "unblocked" its ~30 inner loops
@@ -1810,18 +1815,18 @@ class BestEffortLoopPeeling(ppl.Pass):
         from dace.transformation.passes.constant_propagation import ConstantPropagation
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
-        from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
         PrivatizeScalars().apply_pass(candidate, {})
         SymbolPropagation().apply_pass(candidate, {})
         ConstantPropagation().apply_pass(candidate, {})
-        UniqueLoopIterators().apply_pass(candidate, {})
         # Built on the first loop that actually needs a probe, then shared by the rest (see
         # :meth:`_loop_to_map_prober`). Nothing here APPLIES a lift, so the graph the context
         # describes never changes under it.
         prober = _UNBUILT
         mappable_labels: set[str] = set()
         for loop in _loops(candidate):
+            if scored is not None and loop.label not in scored:
+                continue
             if loop.label in mappable_labels or loop_analysis.loop_provably_at_most_one_iteration(loop):
                 continue
             # Memo across the probes of ONE search. Every probe re-scores the same isolated nest --

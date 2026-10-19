@@ -83,10 +83,13 @@ def test_split_at_keeps_the_region_entry_and_does_not_ask_an_ambiguous_question(
 def test_apply_pass_splits_the_nested_loop():
     """End to end: the pass runs, the SDFG stays valid, and the inner loop became range segments."""
     sdfg = guarded_inner.to_sdfg(simplify=True)
+    label = _inner_loop(sdfg).label
     BestEffortLoopPeeling(peel_limit=4).apply_pass(sdfg, {})
     sdfg.validate()
-    inner = [loop for loop in _loops(sdfg) if loop.loop_variable == "i"]
+    # Every segment but the last carries a fresh iterator; all carry the loop's label.
+    inner = [loop for loop in _loops(sdfg) if loop.label.startswith(label)]
     assert len(inner) > 1, f"the inner loop must be split into segments, got {[l.label for l in inner]}"
+    assert len({loop.loop_variable for loop in inner}) == len(inner), "each segment owns its iterator"
 
 
 def test_split_form_is_bit_exact_against_the_sequential_reference():

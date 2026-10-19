@@ -1103,6 +1103,8 @@ class LiftContext:
     #: blocks that left the order are skipped by ``block_index``. Built on first use.
     symbol_uses: dict[str, list[Any]] | None = None
     symbol_kills: dict[str, list[Any]] | None = None
+    #: name -> the loops of ``block_order`` whose iterator it is (see :func:`rebinds_after`).
+    symbol_binders: dict[str, list[Any]] | None = None
 
 
 def index_block_symbols(ctx: LiftContext, block) -> None:
@@ -1116,13 +1118,21 @@ def index_block_symbols(ctx: LiftContext, block) -> None:
         killed = set(e.data.assignments.keys()) if killed is None else killed & e.data.assignments.keys()
     for name in killed or ():
         ctx.symbol_kills.setdefault(name, []).append(block)
+    if isinstance(block, LoopRegion) and block.loop_variable:
+        ctx.symbol_binders.setdefault(block.loop_variable, []).append(block)
+
+
+def rebinds_after(loop: LoopRegion, block: Any, name: str) -> bool:
+    """Whether ``block`` is a loop of ``loop``'s own region whose iterator is ``name``: its init assigns ``name`` before
+    anything after it reads it, so a value ``loop`` left behind is dead from there on."""
+    return isinstance(block, LoopRegion) and block.parent_graph is loop.parent_graph and block.loop_variable == name
 
 
 def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_blocks: set[Any]) -> bool:
     """Whether a block after ``loop`` reads one of ``names`` before every out-edge of some block reassigns it:
     the verdict of the ``block_order`` walk in :meth:`LoopToMap.can_be_applied`, from the index."""
     if ctx.symbol_uses is None:
-        ctx.symbol_uses, ctx.symbol_kills = {}, {}
+        ctx.symbol_uses, ctx.symbol_kills, ctx.symbol_binders = {}, {}, {}
         for block in ctx.block_order:
             index_block_symbols(ctx, block)
     index = ctx.block_index
@@ -1132,6 +1142,12 @@ def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_bl
         for block in ctx.symbol_kills.get(name, ()):
             i = index.get(block)
             if i is not None and i > start and block not in loop_blocks and (kill is None or i < kill):
+                kill = i
+        # A later loop of the same region that binds ``name`` assigns it before its body reads it, on every path:
+        # structured control flow runs every block of a region after the ones before it.
+        for block in ctx.symbol_binders.get(name, ()):
+            i = index.get(block)
+            if i is not None and i > start and rebinds_after(loop, block, name) and (kill is None or i < kill):
                 kill = i
         for block in ctx.symbol_uses.get(name, ()):
             i = index.get(block)
@@ -1805,6 +1821,10 @@ class LoopToMap(xf.MultiStateTransformation):
         for block in islice(in_order_blocks, loop_idx + 1, None):
             if block in all_loop_blocks:
                 continue
+            # A later sibling loop rebinding a name kills it (see :func:`rebinds_after`).
+            symbols_that_may_be_used = {
+                name for name in symbols_that_may_be_used if not rebinds_after(self.loop, block, name)
+            }
             # Don't continue in this direction, as all loop symbols have been reassigned
             if not symbols_that_may_be_used:
                 break
