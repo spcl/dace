@@ -272,16 +272,18 @@ def test_does_not_loop_fuse_two_maps():
 
 
 def test_four_loops_partial_chain():
-    """Four loops: a->b->c chain fuses, d independent; all value-preserving."""
+    """Four loops: the a->b->c->d recurrence chain (each refused by LoopToMap) fuses; the last loop is DOALL, which
+    LoopToMap maps, so FuseLoops leaves it; all value-preserving. Sibling loops sharing ``i`` are no reason to refuse
+    a map, so the chain is sequential through its recurrences."""
 
     @dace.program
     def k_four_loops_partial_chain(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
-        for i in range(N):
-            b[i] = a[i] + 1.0
-        for i in range(N):
-            c[i] = b[i] + 1.0
-        for i in range(N):
-            d[i] = c[i] + 1.0
+        for i in range(1, N):
+            b[i] = b[i - 1] + a[i]
+        for i in range(1, N):
+            c[i] = c[i - 1] + b[i]
+        for i in range(1, N):
+            d[i] = d[i - 1] + c[i]
         for i in range(N):
             a[i] = d[i] * 0.5
 
