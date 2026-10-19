@@ -1954,7 +1954,9 @@ class LoopToMap(xf.MultiStateTransformation):
             mmlt = align_memlet(state, edge, dst=False)
             data = mmlt.data
 
-        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts)
+        # The read propagated over the whole loop, for the last-resort overlap test only: most candidates are decided
+        # before it, so it is built on first use.
+        pread = None
         for candidate in write_memlets[data]:
             # Simple case: read and write are in the same subset
             read = src_subset
@@ -2032,6 +2034,10 @@ class LoopToMap(xf.MultiStateTransformation):
             if read == write:
                 continue
             # Propagated read does not overlap with propagated write
+            if pread is None:
+                pread = propagate_subset(
+                    [mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts
+                )
             pwrite = propagate_subset(
                 [candidate], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts, use_dst=True
             )
