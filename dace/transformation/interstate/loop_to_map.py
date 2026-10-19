@@ -2409,7 +2409,10 @@ class LoopToMap(xf.MultiStateTransformation):
                     direct_edges.append(e)
                     body.remove_edge(e)
 
-        # Reroute all memlets through the entry and exit nodes
+        # Reroute all memlets through the entry and exit nodes. Each pair propagates its memlet over
+        # the map, at the facts inside it: rerouting only adds edges and ``IN_``/``OUT_`` connectors,
+        # which neither the symbols nor the facts there read, so one resolver serves every pair.
+        resolver = SymbolResolver()
         for n in source_nodes:
             if isinstance(n, nodes.AccessNode):
                 for e in body.out_edges(n):
@@ -2417,7 +2420,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     new_memlet = align_memlet(body, e, dst=False)
 
                     body.remove_edge(e)
-                    body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
+                    body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn, symbols=resolver)
             else:
                 body.add_nedge(entry, n, memlet.Memlet())
         for n in sink_nodes:
@@ -2427,7 +2430,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     new_memlet = align_memlet(body, e, dst=True)
 
                     body.remove_edge(e)
-                    body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
+                    body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn, symbols=resolver)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
         intermediate_sinks: dict[str, nodes.AccessNode] = {}
