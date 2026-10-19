@@ -5,6 +5,7 @@ import abc
 import ast
 import collections
 import copy
+import functools
 import inspect
 import itertools
 import re
@@ -82,6 +83,15 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
     return None
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def conditions_are_exhaustive(conditions: tuple[str, ...]) -> bool:
+    """Whether at least one of ``conditions`` always holds; a condition SymPy cannot parse makes the answer False."""
+    try:
+        return sympy.Or(*(symbolic.pystr_to_symbolic(condition) for condition in conditions)).simplify() is sympy.true
+    except (TypeError, ValueError, SyntaxError):
+        return False
 
 
 def _make_iterators(ndrange):
@@ -4330,7 +4340,8 @@ class ConditionalBlock(AbstractControlFlowRegion):
         # Only one branch runs: each starts from the entry set.
         entry_defined, entry_partial = set(defined_syms), set(partially_defined)
         # Assigned on every path through the block; without an else arm, also on the path that skips every branch
-        has_else = any(condition is None for condition, _ in self._branches)
+        conditions = tuple(condition.as_string for condition, _ in self._branches if condition is not None)
+        has_else = len(conditions) < len(self._branches) or conditions_are_exhaustive(conditions)
         must_defined: set[str] | None = None if has_else else entry_defined - entry_partial
         for condition, region in self._branches:
             branch_defined, branch_partial = set(entry_defined), set(entry_partial)

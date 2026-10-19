@@ -281,6 +281,24 @@ def test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free():
     assert "k" in sdfg.free_symbols
 
 
+def test_a_symbol_assigned_by_branches_whose_conditions_cover_every_case_is_not_free():
+    """``a[0] > 0`` and ``a[0] <= 0`` leave no path past the block, so both arms assign ``k`` before the join reads it."""
+    sdfg = symbol_sdfg("exhaustive_branch_assignment")
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
+    for label, condition in (("then", "a[0] > 0"), ("other", "a[0] <= 0")):
+        arm = dace.sdfg.state.ControlFlowRegion(label, sdfg=sdfg, parent=block)
+        arm.add_edge(
+            arm.add_state(f"{label}_first", is_start_block=True),
+            arm.add_state(f"{label}_second"),
+            dace.InterstateEdge(assignments={"k": "1"}),
+        )
+        block.add_branch(dace.sdfg.state.CodeBlock(condition), arm)
+    sdfg.add_node(block, is_start_block=True)
+    sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
+
+    assert "k" not in sdfg.free_symbols
+
+
 def test_a_symbol_assigned_on_every_path_before_its_read_is_not_free():
     """Every path to the read passes the assignment, so the caller's ``k`` is dead: no over-reporting."""
     sdfg = symbol_sdfg("assigned_before_read")
