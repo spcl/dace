@@ -55,7 +55,7 @@ class ExpandLibraryNodes(ppl.Pass):
         return True
 
 
-def apply_thread_block_maps(sdfg: SDFG, xform: transformation.SingleStateTransformation) -> int:
+def apply_thread_block_maps(sdfg: SDFG, xform: transformation.SingleStateTransformation, validate: bool = False) -> int:
     """``sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)``, enumerating by walking.
 
     The matcher re-derives every match after each application: a multigraph collapse and a VF2 search per state, only
@@ -64,6 +64,7 @@ def apply_thread_block_maps(sdfg: SDFG, xform: transformation.SingleStateTransfo
     dtypes and with the same match setup) and applies the first accepted match, then restarts as the matcher does.
     The candidates, their order and every verdict are the matcher's; only the search is gone.
 
+    :param validate: Validate the SDFG once after the applications (the matcher always did).
     :return: The number of applications.
     """
     from dace import symbolic
@@ -116,7 +117,7 @@ def apply_thread_block_maps(sdfg: SDFG, xform: transformation.SingleStateTransfo
             xform.apply(state, owner)
         applied += 1
         last = xform
-    if applied:
+    if applied and validate:
         try:
             sdfg.validate()
         except InvalidSDFGError as err:

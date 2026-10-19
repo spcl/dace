@@ -74,7 +74,7 @@ from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers impo
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 
-def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: bool = True) -> SDFG:
+def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: bool = False) -> SDFG:
     """Specialize a canonicalized ``sdfg`` for the CPU, in place.
 
     Run this AFTER :func:`~dace.transformation.passes.canonicalize.pipeline.canonicalize`, which

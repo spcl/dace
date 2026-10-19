@@ -110,6 +110,12 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
 
     CATEGORY: str = "Canonicalization"
 
+    validate = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Validate the SDFG once after the pass changed it. Off by default: the caller validates its result.",
+    )
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.CFG
 
@@ -130,7 +136,8 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         rebased = self.visit_region(sdfg)
         if rebased == 0:
             return None
-        sdfg.validate()
+        if self.validate:
+            sdfg.validate()
         return rebased
 
     def visit_region(self, region: AbstractControlFlowRegion) -> int:

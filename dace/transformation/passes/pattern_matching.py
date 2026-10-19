@@ -46,7 +46,7 @@ class PatternMatchAndApply(ppl.Pass):
     )
     validate = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         category="Diagnostics",
         desc="If True, validates the SDFG after all transformations have been applied.",
     )
@@ -83,7 +83,7 @@ class PatternMatchAndApply(ppl.Pass):
         self,
         transformations: xf.PatternTransformation | Iterable[xf.PatternTransformation],
         permissive: bool = False,
-        validate: bool = True,
+        validate: bool = False,
         validate_all: bool = False,
         states: list[SDFGState] | None = None,
         print_report: bool | None = None,
@@ -230,7 +230,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         self,
         transformations: xf.PatternTransformation | Iterable[xf.PatternTransformation],
         permissive: bool = False,
-        validate: bool = True,
+        validate: bool = False,
         validate_all: bool = False,
         states: list[SDFGState] | None = None,
         print_report: bool | None = None,

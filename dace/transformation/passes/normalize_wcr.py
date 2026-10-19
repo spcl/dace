@@ -162,6 +162,9 @@ class NormalizeWCR(ppl.Pass):
     scalar rewrite is always on.
     """
 
+    #: Validate the SDFG after a rewrite. Off by default: the caller validates its result, once, when asked.
+    validate: bool = False
+
     CATEGORY: str = "Simplification"
 
     def __init__(self, extract_slice_wcr: bool = False):
@@ -706,5 +709,6 @@ class NormalizeWCR(ppl.Pass):
         n = self._apply(sdfg)
         if n == 0:
             return None
-        sdfg.validate()
+        if self.validate:
+            sdfg.validate()
         return {"normalized_nested_reductions": {str(n)}}

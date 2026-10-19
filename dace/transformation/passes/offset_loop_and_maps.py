@@ -204,6 +204,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
     convert_leq_to_lt = Property(dtype=bool, default=True)
     normalize_loops = Property(dtype=bool, default=False)
     squeeze = Property(dtype=bool, default=False)
+    validate = Property(
+        dtype=bool,
+        default=False,
+        desc="Validate the SDFG once after the pass changed it. Off by default: the caller validates its result.",
+    )
 
     def __init__(
         self,
@@ -385,7 +390,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # Do it for LoopRegions and Maps
         rewrites = self._apply(sdfg)
         rewrites += unit_copies or 0
-        sdfg.validate()
 
         # Simplify <= loop conditions to use < if set
         if self.convert_leq_to_lt:
@@ -407,7 +411,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     n.loop_condition = CodeBlock(expr_str)
                     if n.loop_condition.as_string != old_condition:
                         rewrites += 1
-        sdfg.validate()
 
         # Try to simplify loop init statements, expressions such as ((-1) + 1)
         for n, g in sdfg.all_nodes_recursive():
@@ -425,6 +428,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 n.init_statement = CodeBlock(expr_str)
                 if n.init_statement.as_string != old_init:
                     rewrites += 1
-        sdfg.validate()
+        if rewrites and self.validate:
+            sdfg.validate()
 
         return rewrites or None

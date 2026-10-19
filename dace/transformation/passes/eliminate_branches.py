@@ -17,6 +17,11 @@ class EliminateBranches(ppl.Pass):
     eps_operator_type_for_log_and_div = properties.Property(dtype=str, default="add", allow_none=True)
     apply_to_top_level_ifs = properties.Property(dtype=bool, default=False, allow_none=False)
     try_demote_and_fuse = properties.Property(dtype=bool, default=True, allow_none=False)
+    validate = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Validate the SDFG once after the pass changed it. Off by default: the caller validates its result.",
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -189,7 +194,8 @@ class EliminateBranches(ppl.Pass):
             added_scalar_names = added_scalar_names.union(cur_added_scalar_names)
             num_applied += cur_num_applied
 
-        sdfg.validate()
+        if self.validate:
+            sdfg.validate()
         return num_applied, added_scalar_names
 
     def report(self, pass_retval: int) -> str:

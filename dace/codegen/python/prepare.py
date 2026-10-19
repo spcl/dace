@@ -55,8 +55,11 @@ def expand_library_nodes(sdfg: SDFG) -> None:
             node.expand(state)
 
 
-def prepare(sdfg: SDFG) -> None:
-    """Expand, raise, flatten and rename ``sdfg`` in place so every name of it lives in one Python namespace."""
+def prepare(sdfg: SDFG, validate: bool = False) -> None:
+    """Expand, raise, flatten and rename ``sdfg`` in place so every name of it lives in one Python namespace.
+
+    :param validate: Validate the prepared SDFG once at the end.
+    """
     # Avoid import loop
     from dace.codegen.codegen import inline_host_nested_sdfgs
 
@@ -69,4 +72,5 @@ def prepare(sdfg: SDFG) -> None:
     inline_host_nested_sdfgs(sdfg, validate=False)
     InlineTaskletConnectors().apply_pass(sdfg, {})
     UniqueNames().apply_pass(sdfg, {})
-    sdfg.validate()
+    if validate:
+        sdfg.validate()

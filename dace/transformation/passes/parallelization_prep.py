@@ -603,7 +603,6 @@ class BestEffortLoopPeeling(ppl.Pass):
                 serialize.to_json(loop), context={"sdfg": mini, "version": dace.__version__}
             )
             mini.add_node(mini_loop, is_start_block=True)
-            mini.validate()
             return mini, mini_loop
         except Exception:
             return None, None

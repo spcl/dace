@@ -798,9 +798,9 @@ class SplitTasklets(ppl.Pass):
     split_operations = properties.Property(
         dtype=bool, default=True, desc="Split each output's expression into one operation per tasklet"
     )
-    validate = properties.Property(dtype=bool, default=True, desc="Validate the SDFG after splitting")
+    validate = properties.Property(dtype=bool, default=False, desc="Validate the SDFG after splitting")
 
-    def __init__(self, split_multi_output: bool = True, split_operations: bool = True, validate: bool = True) -> None:
+    def __init__(self, split_multi_output: bool = True, split_operations: bool = True, validate: bool = False) -> None:
         super().__init__()
         self.split_multi_output = split_multi_output
         self.split_operations = split_operations

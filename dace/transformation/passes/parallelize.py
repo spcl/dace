@@ -171,7 +171,7 @@ class ParallelizePipeline(ppl.Pass):
 
 def parallelize(
     sdfg: SDFG,
-    validate: bool = True,
+    validate: bool = False,
     validate_all: bool = False,
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     specialize_constants: dict[str, Any] | None = None,
