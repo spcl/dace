@@ -21,6 +21,17 @@ def tile_int_ceil(a, b):
 
 
 @ct.function
+def tile_py_mod(a, b):
+    return a - ct.floordiv(a, b) * b
+
+
+@ct.function
+def tile_c_mod(a, b):
+    floored = tile_py_mod(a, b)
+    return ct.where((floored != 0) & ((a < 0) != (b < 0)), floored - b, floored)
+
+
+@ct.function
 def tile_fma(a, b, c):
     return a * b + c
 """
@@ -33,6 +44,8 @@ class CuTile(Dialect):
     functions = {
         "int_floor": "tile_int_floor",
         "int_ceil": "tile_int_ceil",
+        "py_mod": "tile_py_mod",
+        "c_mod": "tile_c_mod",
         "fma": "tile_fma",
         "Min": "ct.minimum",
         "Max": "ct.maximum",

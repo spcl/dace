@@ -486,12 +486,13 @@ class ExpandReduceAuto(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
-        from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+        from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
 
         ExpandReduceAuto.environments = []
         block = in_kernel_block_implementation(node, state)
         if block is not None:
             node.implementation = block
+            release_kernel_block_size(node, state)
             ExpandReduceAuto.environments = list(Reduce.implementations[block].environments)
             return Reduce.implementations[block].expansion(node, state, sdfg)
         if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:

@@ -145,10 +145,11 @@ def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dac
     :param parent_state: state containing ``node``.
     :returns: a key of the node's ``implementations``.
     """
-    from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
 
     block = in_kernel_block_implementation(node, parent_state)
     if block is not None:
+        release_kernel_block_size(node, parent_state)
         return block
     if node.schedule in dtypes.ALL_GPU_SCHEDULES:
         name = "CUDA"

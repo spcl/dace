@@ -64,6 +64,7 @@ def c_mod(a, b):
 
 
 CMod = c_mod
+Mod = py_mod
 
 
 Min, Max, Abs = min, max, abs
@@ -74,9 +75,22 @@ def abort():
 """
 
 
+class Modulos(ast.NodeTransformer):
+    """DaCe text spells C's truncating modulo ``%`` and the floored one ``Mod``; Python's ``%`` floors."""
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.expr:
+        self.generic_visit(node)
+        if isinstance(node.op, ast.Mod):
+            return ast.Call(ast.Name("c_mod", ast.Load()), [node.left, node.right], [])
+        return node
+
+
 def expr(value) -> str:
     """A symbolic expression as Python."""
-    return symbolic.symstr(value, cpp_mode=False)
+    text = symbolic.symstr(value, cpp_mode=False)
+    if "%" not in text:
+        return text
+    return ast.unparse(Modulos().visit(ast.parse(text, mode="eval")))
 
 
 def starts(desc: data.Data, subset: subsets.Subset) -> list[str]:
@@ -274,7 +288,8 @@ class Emitter:
             if isinstance(value, np.ndarray):
                 self.line(f"{name} = np.asarray({value.tolist()!r}, np.{value.dtype.name})")
             else:
-                self.line(f"{name} = {value!r}")
+                # A NumPy scalar becomes a plain number, which a tile kernel can also take
+                self.line(f"{name} = {value.item() if isinstance(value, np.generic) else value!r}")
 
     def plan_allocations(self, sdfg: SDFG) -> None:
         """Place every transient the function entry cannot allocate: ahead of the first block that uses it, in the
@@ -554,20 +569,28 @@ class Emitter:
             value = f"np.reshape({value}, ({', '.join(expr(s) for s in dst_subset.size())},))"
         self.line(f"{dst}[{slices(dst_desc, dst_subset)}] = {value}")
 
+    def binds(self, sdfg: SDFG, node: nodes.NestedSDFG, edge: MultiConnectorEdge[Memlet], conn: str) -> bool:
+        """Whether the connector ``conn`` of ``node`` takes the outer container of ``edge`` before the body runs."""
+        return True
+
     def nested(self, sdfg: SDFG, state: SDFGState, node: nodes.NestedSDFG) -> None:
         inner = node.sdfg
         for name, value in node.symbol_mapping.items():
             if str(value) != name:
                 self.line(f"{name} = {expr(value)}")
+        connectors = set()
         for edge in (*state.in_edges(node), *state.out_edges(node)):
             conn = edge.dst_conn if edge.dst is node else edge.src_conn
-            if conn is None or edge.data.is_empty() or conn in self.allocated or conn == edge.data.data:
+            if conn is None or edge.data.is_empty():
                 continue
-            # The connector's descriptor is the outer container's (``NestedSDFG.validate``): an alias
-            self.line(f"{conn} = {edge.data.data}")
-            self.allocated.add(conn)
+            connectors.add(conn)
+            # The connector's descriptor is the outer container's (``NestedSDFG.validate``): an alias. Bound for
+            # every nested SDFG anew, which may give one connector name another container than the last did
+            if conn != edge.data.data and self.binds(sdfg, node, edge, conn):
+                self.line(f"{conn} = {edge.data.data}")
         self.constants(inner)
-        self.allocate_ready(inner, set(self.allocated) | set(node.symbol_mapping) | set(inner.constants))
+        ready = set(self.allocated) | connectors | set(node.symbol_mapping) | set(inner.constants)
+        self.allocate_ready(inner, ready)
         self.plan_allocations(inner)
         self.region(inner, inner)
 

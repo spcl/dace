@@ -166,22 +166,31 @@ THREAD_LEVEL_SCHEDULES = (
 )
 
 
+def enclosing_maps(node: nodes.Node, state: SDFGState) -> list[nodes.MapEntry]:
+    """The maps around ``node``, across nested SDFGs, innermost first."""
+    from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
+    return [s for s in get_parent_map_and_loop_scopes(state.sdfg, node, state) if isinstance(s, nodes.MapEntry)]
+
+
 def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) -> str | None:
     """The block collective ``node`` lowers to by default: inside a GPU kernel, outside thread-level code.
 
-    Choosing it releases the kernel's declared block size, which the collective's lane map now sets.
+    A caller that takes it calls :func:`release_kernel_block_size`.
 
     :returns: The implementation key, or ``None`` on the host, in thread-level code, or for a shape the
               node's block lowering refuses.
     """
-    from dace.transformation.helpers import get_parent_map_and_loop_scopes
-
-    maps = [s for s in get_parent_map_and_loop_scopes(state.sdfg, node, state) if isinstance(s, nodes.MapEntry)]
-    kernels = [m for m in maps if m.map.schedule == dtypes.ScheduleType.GPU_Device]
-    if not kernels or any(m.map.schedule in THREAD_LEVEL_SCHEDULES for m in maps):
+    maps = enclosing_maps(node, state)
+    if not any(m.map.schedule == dtypes.ScheduleType.GPU_Device for m in maps):
         return None
-    block = gpu_block_implementation(node, state, state.sdfg)
-    if block is not None:
-        for kernel in kernels:
-            kernel.map.gpu_block_size = None
-    return block
+    if any(m.map.schedule in THREAD_LEVEL_SCHEDULES for m in maps):
+        return None
+    return gpu_block_implementation(node, state, state.sdfg)
+
+
+def release_kernel_block_size(node: nodes.Node, state: SDFGState) -> None:
+    """Clear the declared block size of the kernels around ``node``, which a block collective's lane map now sets."""
+    for entry in enclosing_maps(node, state):
+        if entry.map.schedule == dtypes.ScheduleType.GPU_Device:
+            entry.map.gpu_block_size = None

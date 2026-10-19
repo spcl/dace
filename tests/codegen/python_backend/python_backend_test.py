@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 
 import dace
+from dace import symbolic
 from dace.codegen.exceptions import CodegenError
+from dace.codegen.python.emit import generate
+from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N")
 
@@ -347,3 +350,65 @@ def test_python_modulo_floors_and_c_modulo_truncates_a_negative_dividend():
         modulo_family_sdfg()(out=out, n=3)
 
     assert out.tolist() == [1, -4, -4]
+
+
+def modulo_bounded_loops_sdfg() -> dace.SDFG:
+    """Two counting loops, bounded by the floored and by C's truncating modulo of the negative ``n - 7``."""
+    n = dace.symbol("n", dace.int64)
+    sdfg = dace.SDFG("modulo_bounded_loops")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("out", [2], dace.int64)
+    previous = None
+    for k, bound in enumerate([symbolic.PyMod(n - 7, 5), symbolic.CMod(n - 7, 5) + 5]):
+        loop = LoopRegion(f"count{k}", f"i{k} < {symbolic.symstr(bound)}", f"i{k}", f"i{k} = 0", f"i{k} = i{k} + 1")
+        sdfg.add_node(loop, is_start_block=previous is None)
+        state = loop.add_state(f"step{k}", is_start_block=True)
+        tasklet = state.add_tasklet(f"inc{k}", {"c"}, {"o"}, "o = c + 1")
+        state.add_edge(state.add_read("out"), None, tasklet, "c", dace.Memlet(f"out[{k}]"))
+        state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet(f"out[{k}]"))
+        if previous is not None:
+            sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        previous = loop
+    return sdfg
+
+
+def test_a_symbolic_modulo_bound_keeps_its_rounding():
+    """``Mod(-4, 5)`` is 1 and C's ``-4 % 5`` is -4: one trip each, where Python's ``%`` would give six."""
+    out = np.zeros(2, dtype=np.int64)
+
+    with python_backend():
+        modulo_bounded_loops_sdfg()(out=out, n=3)
+
+    assert out.tolist() == [1, 1]
+
+
+def doubler_sdfg(label: str) -> dace.SDFG:
+    """``_y = 2 * _x`` over four elements, under connector names every instance shares."""
+    inner = dace.SDFG(label)
+    inner.add_array("_x", [4], dace.float64)
+    inner.add_array("_y", [4], dace.float64)
+    state = inner.add_state()
+    entry, exit_node = state.add_map("double", {"k": "0:4"})
+    tasklet = state.add_tasklet("twice", {"a"}, {"b"}, "b = a * 2")
+    state.add_memlet_path(state.add_read("_x"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("_x[k]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("_y"), src_conn="b", memlet=dace.Memlet("_y[k]"))
+    return inner
+
+
+def test_two_nested_sdfgs_with_one_connector_name_each_bind_their_own_arrays():
+    """Emitted as they are, not inlined, as a tile kernel emits them: the second binds ``_x`` and ``_y`` anew."""
+    sdfg = dace.SDFG("two_doublers")
+    for name in "pqrs":
+        sdfg.add_array(name, [4], dace.float64)
+    state = sdfg.add_state()
+    for source, target, label in (("p", "q", "first"), ("r", "s", "second")):
+        nested = state.add_nested_sdfg(doubler_sdfg(label), {"_x"}, {"_y"})
+        state.add_edge(state.add_read(source), None, nested, "_x", dace.Memlet(f"{source}[0:4]"))
+        state.add_edge(nested, "_y", state.add_write(target), None, dace.Memlet(f"{target}[0:4]"))
+    namespace: dict = {}
+    exec(compile(generate(sdfg), "two_doublers", "exec"), namespace)
+    p, r, q, s = np.arange(4.0), np.arange(10.0, 14.0), np.zeros(4), np.zeros(4)
+
+    namespace["two_doublers"](p=p, q=q, r=r, s=s)
+
+    assert q.tolist() == [0.0, 2.0, 4.0, 6.0] and s.tolist() == [20.0, 22.0, 24.0, 26.0]

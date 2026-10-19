@@ -264,6 +264,29 @@ def gather_doubled(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
 
 
 @dace.program
+def rows_gathered(x: dace.float64[8, 12], idx: dace.int64[8], y: dace.float64[8, 12]):
+    for i, j in dace.map[0:8, 0:12]:
+        y[i, j] = x[idx[i], j] * 2.0
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_row_gather_over_a_two_dim_tile_reads_every_indexed_row(dialect: str):
+    """The index tile varies over the row dim only: its shape is ``(4, ONE)``, the marker one lane wide."""
+    import cupy
+
+    sdfg = rows_gathered.to_sdfg(simplify=True)
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4, 4), tile_programs=True)).apply_pass(sdfg, {})
+    rng = np.random.default_rng(9)
+    permutation, x, y = rng.permutation(8), rng.random((8, 12)), cupy.zeros((8, 12))
+
+    with tile_backend(dialect):
+        sdfg.compile()(x=cupy.asarray(x), idx=cupy.asarray(permutation), y=y)
+
+    assert np.array_equal(y.get(), 2.0 * x[permutation])
+
+
+@dace.program
 def scatter_incremented(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
     for i in dace.map[0:N]:
         y[idx[i]] = x[i] + 1.0

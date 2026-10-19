@@ -41,9 +41,10 @@ from dace.sdfg.sdfg import interstate_bound_names
 from dace.sdfg.state import LoopRegion, SDFGState
 
 #: The prelude functions SymPy prints, which a kernel calls under the dialect's own name.
-HELPERS = ("int_floor", "int_ceil", "ipow", "Min", "Max", "Abs")
-#: The other spellings of a helper: the C++ runtime's name of the floored division, which vectorizer bounds carry.
-HELPER_ALIASES = {"py_floor": "int_floor"}
+HELPERS = ("int_floor", "int_ceil", "ipow", "Min", "Max", "Abs", "py_mod", "c_mod")
+#: The other spellings of a helper: the C++ runtime's name of the floored division, which vectorizer bounds carry,
+#: and SymPy's name of the floored modulo.
+HELPER_ALIASES = {"py_floor": "int_floor", "Mod": "py_mod"}
 HELPER_CALL = re.compile(rf"\b({'|'.join((*HELPERS, *HELPER_ALIASES))})\(")
 #: The lane index ``__l<k>`` of a per-lane expression of a tile node.
 LANE = re.compile(r"__l(\d+)")
@@ -123,8 +124,10 @@ class Dialect:
 
     def index_tile(self, name: str, shape: list[int], widths: list[int]) -> str:
         """The index tile ``name`` of ``shape``, extent 1 on the dims it does not vary over, added to lanes of
-        ``widths``."""
-        return name
+        ``widths``. It is loaded over the dims it varies on only, so it is reshaped to broadcast."""
+        if len(widths) == 1 or shape == widths:
+            return name
+        return f"{self['reshape']}({name}, {tuple(shape)})"
 
     def lane_quotient(self, lane: str, factor: str) -> str:
         """The lanes ``lane`` divided by ``factor``, rounded down; lanes are never negative."""
@@ -172,6 +175,11 @@ def holds_tile_ops(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> bool:
 
 #: The storages of a container a tile kernel holds itself, as a value or a buffer of its own.
 KERNEL_STORAGES = (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.GPU_Shared)
+
+
+def tile_extent(extent) -> int:
+    """A register tile extent; the ``ONE`` broadcast marker an index tile has on a dim it does not vary over is one."""
+    return 1 if symbolic.has_one_marker(extent) else int(extent)
 
 
 def is_register(desc: data.Data) -> bool:
@@ -307,6 +315,10 @@ class KernelEmitter(Emitter):
     def view(self, sdfg, state, node) -> None:
         raise CodegenError(f"Python backend: a tile kernel cannot take the view {node.data!r}")
 
+    def binds(self, sdfg, node, edge, conn) -> bool:
+        # A register output the body writes before it reads has nothing to bind in
+        return not (edge.src is node and conn not in node.in_connectors and is_register(sdfg.arrays[edge.data.data]))
+
     def nested(self, sdfg, state, node) -> None:
         # A register is a value: the connector it binds is one too, read in if the body reads it and written back
         # after. The connector must match the outer descriptor, which a pass that privatized the register into a
@@ -319,8 +331,6 @@ class KernelEmitter(Emitter):
             node.sdfg.arrays[conn].storage = dtypes.StorageType.Register
             if edge.src is node and conn != edge.data.data:
                 outputs.append((edge.data.data, conn))
-                if conn not in node.in_connectors:
-                    self.allocated.add(conn)  # written before it is read: nothing to bind in
         super().nested(sdfg, state, node)
         for outer, conn in outputs:
             self.line(f"{outer} = {conn}")
@@ -520,10 +530,10 @@ class TileStatement:
 
     def index_tile(self, dim: int) -> str:
         name = self.input(f"_idx_{dim}")
-        shape = [int(extent) for extent in self.sdfg.arrays[name].shape]
+        shape = self.sdfg.arrays[name].shape
         if resolve_gather_deps(shape, self.node.widths) is None:
             raise CodegenError(f"Python backend: {self.node.label!r} indexes with a tile of shape {shape}")
-        return self.dialect.index_tile(name, shape, list(self.node.widths))
+        return self.dialect.index_tile(name, [tile_extent(extent) for extent in shape], list(self.node.widths))
 
     def addressed(self, name: str, subset, tile_dims: list[int], replicate: list) -> Element:
         """The lanes of a gather or scatter in the global array ``name``. From the ``subset`` begin, a gather dim

@@ -23,6 +23,16 @@ def tile_int_ceil(a, b):
 
 
 @triton.jit
+def tile_py_mod(a, b):
+    return ((a % b) + b) % b
+
+
+@triton.jit
+def tile_c_mod(a, b):
+    return a % b
+
+
+@triton.jit
 def tile_multiply(a, b):
     return a * b
 
@@ -55,6 +65,8 @@ class Triton(Dialect):
     functions = {
         "int_floor": "tile_int_floor",
         "int_ceil": "tile_int_ceil",
+        "py_mod": "tile_py_mod",
+        "c_mod": "tile_c_mod",
         "Min": "tl.minimum",
         "Max": "tl.maximum",
         "Abs": "tl.abs",
