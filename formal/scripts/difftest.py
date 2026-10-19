@@ -4,8 +4,9 @@
 For every ``formal/tests/corpus/<base>[.variant].sdfg.json`` this script either
 
 * ``--record``  loads the SDFG from the JSON file, takes the inputs from the base
-  program's argument factory in :mod:`corpus_programs`, compiles and runs the
-  SDFG, and writes ``<name>.inputs.json`` and ``<name>.expected.json``; or
+  program's argument factory in :mod:`corpus_programs` (seeded with ``--seed``,
+  default 0, combined with the program's own seed), compiles and runs the SDFG,
+  and writes ``<name>.inputs.json`` and ``<name>.expected.json``; or
 * ``--check`` (alias ``--lean``) runs ``lake exe dace-interp <ir> <ir.json>
   <inputs.json>`` inside ``formal/``, parses its stdout as JSON and compares the
   resulting containers against ``<name>.expected.json`` with dtype-aware
@@ -16,6 +17,9 @@ For every ``formal/tests/corpus/<base>[.variant].sdfg.json`` this script either
 
 When neither mode is given, the script records if any expected file is missing
 and checks otherwise.
+
+The corpus is generated, not committed: run ``dump_corpus.py`` and then
+``difftest.py --record --seed 0`` (CI does the same with the fixed seed 0).
 
 JSON format (fixed; the Lean reader is written against it)::
 
@@ -107,7 +111,7 @@ def dump_json(path: str, obj: dict) -> None:
 # Corpus discovery
 # --------------------------------------------------------------------------- #
 def discover(corpus: str, only):
-    """Yield (name, base, sdfg_path) for each committed corpus SDFG JSON."""
+    """Yield (name, base, sdfg_path) for each corpus SDFG JSON."""
     out = []
     for path in sorted(glob.glob(os.path.join(corpus, "*.sdfg.json"))):
         name = os.path.basename(path)[: -len(".sdfg.json")]
@@ -147,15 +151,19 @@ def sanity_reference(base: str, args: dict):
 # --------------------------------------------------------------------------- #
 # Record mode
 # --------------------------------------------------------------------------- #
-def record(corpus: str, only) -> int:
+def record(corpus: str, only, seed: int = 0) -> int:
     failures = 0
-    for name, base, sdfg_path in discover(corpus, only):
+    entries = discover(corpus, only)
+    if not entries:
+        print(f"FAIL   no *.sdfg.json in {corpus}; run dump_corpus.py first")
+        return 1
+    for name, base, sdfg_path in entries:
         if base not in FACTORIES:
             print(f"SKIP   {name}: no argument factory for base {base!r}")
             continue
         try:
             sdfg = dace.SDFG.from_file(sdfg_path)
-            args = FACTORIES[base]()
+            args = FACTORIES[base](seed=seed)
             syms = symbol_values(sdfg, args)
 
             nonT = [n for n, d in sdfg.arrays.items() if not d.transient]
@@ -251,7 +259,11 @@ def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
         print("SKIP all: `lake` not found on PATH; cannot run the Lean interpreter.")
         return 0
     failures = 0
-    for name, base, sdfg_path in discover(corpus, only):
+    entries = discover(corpus, only)
+    if not entries:
+        print(f"FAIL   no *.sdfg.json in {corpus}; run dump_corpus.py and difftest.py --record first")
+        return 2
+    for name, base, sdfg_path in entries:
         inputs_path = os.path.join(corpus, f"{name}.inputs.json")
         expected_path = os.path.join(corpus, f"{name}.expected.json")
         if not (os.path.exists(inputs_path) and os.path.exists(expected_path)):
@@ -310,6 +322,13 @@ def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
 
 
 # --------------------------------------------------------------------------- #
+def _nonneg_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("seed must be non-negative")
+    return value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
@@ -317,6 +336,12 @@ def main() -> None:
     mode.add_argument("--check", "--lean", dest="check", action="store_true", help="run the Lean interpreter and compare")
     parser.add_argument("--only", nargs="*", default=None, help="subset of corpus names or program bases")
     parser.add_argument("--corpus", default=DEFAULT_CORPUS, help="corpus directory (default: formal/tests/corpus)")
+    parser.add_argument(
+        "--seed",
+        type=_nonneg_int,
+        default=0,
+        help="global input seed for --record, combined with each program's own seed (default: 0)",
+    )
     parser.add_argument("--tol-scale", type=float, default=1.0, help="multiply all rtol tolerances in --check")
     parser.add_argument(
         "--ir",
@@ -342,7 +367,7 @@ def main() -> None:
         ]
         do_record = bool(missing)
 
-    rc = record(corpus, only) if do_record else check(corpus, only, args.tol_scale, args.ir)
+    rc = record(corpus, only, args.seed) if do_record else check(corpus, only, args.tol_scale, args.ir)
     sys.exit(rc)
 
 

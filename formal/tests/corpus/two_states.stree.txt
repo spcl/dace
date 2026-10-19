@@ -1,4 +1,0 @@
-  map __i0 in [0:N]:
-    tmp[__i0] = tasklet(A[__i0], B[__i0])
-  map __i0 in [0:N]:
-    C[__i0] = tasklet(tmp[__i0])

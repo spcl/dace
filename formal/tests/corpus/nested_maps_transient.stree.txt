@@ -1,7 +1,0 @@
-  map i in [0:M]:
-    map __i0 in [0]:
-      acc[__i0] = tasklet()
-    map j in [0:N]:
-      acc[0] (CR: Sum) = tasklet(A[i, j])
-    B_slice = copy acc[0]
-    B[i] = tasklet(B_slice[0])

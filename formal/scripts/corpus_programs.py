@@ -2,9 +2,9 @@
 """Corpus of small DaCe programs exercising the SDFG features modeled in ``formal/``.
 
 Each entry of ``PROGRAMS`` is ``(name, dace_program, argument factory)``; the
-argument factory returns a dict of concrete NumPy inputs (and symbol values) for
-differential testing.  Keep programs small: their SDFG JSON is committed under
-``formal/tests/corpus``.
+argument factory takes a global ``seed`` (see :func:`_rng`) and returns concrete
+NumPy inputs (and symbol values) for differential testing.  Keep programs small;
+their corpus is generated (not committed) under ``formal/tests/corpus``.
 """
 
 import numpy as np
@@ -140,37 +140,50 @@ def nested_maps_transient(A: dace.float64[M, N], B: dace.float64[M]):
         B[i] = acc[0]
 
 
-def _rng(seed=0):
-    return np.random.default_rng(seed)
+def _rng(program_seed: int, base_seed: int = 0) -> np.random.Generator:
+    """Random generator for one program's inputs.
+
+    ``program_seed`` is fixed per program; ``base_seed`` is the global seed of a
+    corpus recording (``difftest.py --record --seed``).  Base seed 0 reproduces
+    the historical per-program streams exactly; any other base seed mixes both
+    into a ``SeedSequence``.
+
+    :param program_seed: The per-program seed.
+    :param base_seed: The global recording seed.
+    :return: A NumPy random generator.
+    """
+    if base_seed == 0:
+        return np.random.default_rng(program_seed)
+    return np.random.default_rng([base_seed, program_seed])
 
 
-def args_axpy():
-    r = _rng(1)
+def args_axpy(seed: int = 0) -> dict:
+    r = _rng(1, seed)
     return dict(a=2.0, x=r.random(16), y=r.random(16), N=16)
 
 
-def args_matmul():
-    r = _rng(2)
+def args_matmul(seed: int = 0) -> dict:
+    r = _rng(2, seed)
     return dict(A=r.random((4, 6)), B=r.random((6, 5)), C=np.zeros((4, 5)), M=4, K=6, N=5)
 
 
-def args_stencil():
-    r = _rng(3)
+def args_stencil(seed: int = 0) -> dict:
+    r = _rng(3, seed)
     return dict(A=r.random((6, 7)), B=np.zeros((6, 7)), H=6, W=7)
 
 
-def args_strided():
-    r = _rng(4)
+def args_strided(seed: int = 0) -> dict:
+    r = _rng(4, seed)
     return dict(A=r.random(11), out=np.zeros(1), N=11)
 
 
-def args_reduce():
-    r = _rng(5)
+def args_reduce(seed: int = 0) -> dict:
+    r = _rng(5, seed)
     return dict(A=r.random((3, 5)), out=np.zeros(3), M=3, N=5)
 
 
-def args_spmv():
-    r = _rng(6)
+def args_spmv(seed: int = 0) -> dict:
+    r = _rng(6, seed)
     h, w = 4, 5
     dense = (r.random((h, w)) > 0.5).astype(np.float32) * r.random((h, w)).astype(np.float32)
     rows = [0]
@@ -193,40 +206,40 @@ def args_spmv():
     )
 
 
-def args_loop_branch():
-    r = _rng(7)
+def args_loop_branch(seed: int = 0) -> dict:
+    r = _rng(7, seed)
     return dict(A=r.random(8) - 0.5, out=np.zeros(8), N=8)
 
 
-def args_while():
-    r = _rng(8)
+def args_while(seed: int = 0) -> dict:
+    r = _rng(8, seed)
     a = r.random(8)
     a[5] = -1.0
     return dict(A=a, out=np.zeros(1, dtype=np.int32), N=8)
 
 
-def args_nested_call():
-    r = _rng(9)
+def args_nested_call(seed: int = 0) -> dict:
+    r = _rng(9, seed)
     return dict(A=r.random((3, 4)), M=3, N=4)
 
 
-def args_slice_view():
-    r = _rng(10)
+def args_slice_view(seed: int = 0) -> dict:
+    r = _rng(10, seed)
     return dict(A=r.random(9), B=np.zeros(9), N=9)
 
 
-def args_augassign():
-    r = _rng(11)
+def args_augassign(seed: int = 0) -> dict:
+    r = _rng(11, seed)
     return dict(A=r.random(7), B=r.random(7), N=7)
 
 
-def args_two_states():
-    r = _rng(12)
+def args_two_states(seed: int = 0) -> dict:
+    r = _rng(12, seed)
     return dict(A=r.random(5), B=r.random(5), C=np.zeros(5), N=5)
 
 
-def args_nested_maps_transient():
-    r = _rng(13)
+def args_nested_maps_transient(seed: int = 0) -> dict:
+    r = _rng(13, seed)
     return dict(A=r.random((3, 4)), B=np.zeros(3), M=3, N=4)
 
 

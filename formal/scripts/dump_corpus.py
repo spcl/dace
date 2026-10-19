@@ -13,6 +13,8 @@ tree of the same SDFG as ``<name>.stree.json`` (machine-readable, see
 ``dace.sdfg.analysis.schedule_tree.serialize``) and ``<name>.stree.txt``
 (``as_string()`` for human review and Lean-side pretty-printer checks).
 Inputs/outputs for differential testing are produced by ``difftest.py``.
+The corpus is not committed; CI regenerates it with this script followed by
+``difftest.py --record --seed 0``.
 """
 
 import argparse
@@ -33,7 +35,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 def _scrub_paths(obj):
     """Make absolute paths under the repository root relative (debug info, ``source_files``).
 
-    The committed corpus must not depend on the machine it was generated on.
+    The generated corpus must not depend on the machine it was generated on.
     """
     if isinstance(obj, dict):
         return {k: _scrub_paths(v) for k, v in obj.items()}
@@ -48,7 +50,7 @@ def save(sdfg: dace.SDFG, out_dir: str, name: str) -> str:
     path = os.path.join(out_dir, f"{name}.sdfg.json")
     with open(path, "w") as f:
         f.write(dace.serialize.dumps(_scrub_paths(sdfg.to_json())))
-        # Keep the committed files friendly to the end-of-file pre-commit hook.
+        # End with a newline like the other generated JSON files.
         f.write("\n")
     _save_stree(sdfg, out_dir, name)
     return path

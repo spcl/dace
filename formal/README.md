@@ -31,13 +31,33 @@ scripts/check_axioms.sh   # build + sorry/axiom/import-isolation checks
 ## Differential testing
 
 `scripts/difftest.py` cross-checks the Lean interpreter against DaCe on the
-corpus under `tests/corpus`:
+corpus under `tests/corpus`.
+
+The corpus is generated, not committed (`tests/corpus/` is git-ignored); CI
+regenerates it on every run with a fixed seed. To (re)generate it locally, with
+DaCe importable, from the repository root:
+
+```bash
+python formal/scripts/dump_corpus.py               # <name>.sdfg.json, .stree.json, .stree.txt
+python formal/scripts/difftest.py --record --seed 0  # compiles with DaCe: .inputs.json, .expected.json
+cd formal
+for t in tests/*.lean; do lake env lean "$t"; done  # Lean corpus tests (fail on any problem)
+python scripts/difftest.py --check --ir sdfg
+python scripts/difftest.py --check --ir stree
+```
+
+The Lean corpus tests read `tests/corpus` relative to `formal/`; set
+`DACE_FORMAL_CORPUS=<dir>` to point them elsewhere (`--corpus`/`--out` do the
+same for the Python scripts).
 
 - `--record` loads each `<base>[.variant].sdfg.json` with `dace.SDFG.from_file`,
   takes inputs from the base program's factory in `scripts/corpus_programs.py`,
   compiles and runs the SDFG, and writes `<name>.inputs.json` and
-  `<name>.expected.json`. A few programs (axpy, matmul, reduce_rows) are also
-  cross-checked against a NumPy reference.
+  `<name>.expected.json`. Inputs are drawn from NumPy generators seeded per
+  program; `--seed S` (default 0) is combined with that per-program seed, and
+  seed 0 gives the per-program streams alone, so the same seed always
+  reproduces the same inputs. A few programs (axpy, matmul, reduce_rows) are
+  also cross-checked against a NumPy reference.
 - `--check` (alias `--lean`) runs `lake exe dace-interp sdfg <sdfg.json>
   <inputs.json>` per file, parses its stdout (`{"containers": …}` on success,
   `{"error": …}` on a semantic error) and compares to `<name>.expected.json`
@@ -46,7 +66,7 @@ corpus under `tests/corpus`:
   `lake` skips everything. The run exits non-zero if any file FAILs.
 
 With no mode flag it records when any expected file is missing, else checks.
-Options: `--only name…`, `--corpus DIR`, `--tol-scale`.
+Options: `--only name…`, `--corpus DIR`, `--seed S` (record), `--tol-scale` (check).
 
 The input/expected JSON format (the Lean reader is written against it):
 
@@ -85,7 +105,8 @@ descriptor}`), `symbols` (`{name: dtype}`), `constants`, `arg_names`,
 `callback_mapping` and `global`/`init`/`exit_code`. Parent pointers are not
 stored; they are restored on load. Files are written with sorted keys, two-space
 indentation and a trailing newline. (As with `.sdfg.json`, the per-element
-`guid`s are random, so regenerating the corpus is not byte-reproducible.)
+`guid`s are random, so the regenerated SDFG and tree files are not
+byte-reproducible; the recorded inputs and expected outputs are.)
 
 `difftest.py --check --ir stree` runs `lake exe dace-interp stree
 <name>.stree.json <inputs.json>` and compares against the same

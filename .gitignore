@@ -197,6 +197,8 @@ _all_tests/
 
 # Lean (formal/)
 **/.lake/
+# Generated differential-testing corpus (dump_corpus.py + difftest.py --record)
+formal/tests/corpus/
 *.olean
 *.ilean
 *.olean.hash
