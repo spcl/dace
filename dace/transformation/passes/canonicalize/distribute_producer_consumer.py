@@ -107,7 +107,27 @@ def _rw_subsets(block: ControlFlowBlock, loop_var: str | None) -> tuple[dict[str
     # it as unanalyzable keeps such a pair fused.
     for name in _interstate_reads(block):
         reads[name] = False
+    # A symbol is never a per-iteration subset: one assigned inside the block (KMP's state ``q``) is written, one
+    # the block uses is read, so a block reading a symbol another block assigns stays fused with it.
+    if not isinstance(block, SDFGState):
+        for edge in block.all_interstate_edges(recursive=True):
+            writes.update(dict.fromkeys(edge.data.assignments, False))
+    for name in map(str, block.free_symbols):
+        if name not in block.sdfg.arrays:
+            reads[name] = False
     return writes, reads
+
+
+def charge_body_edges(loop: LoopRegion, rw: dict) -> None:
+    """Charge each body edge's assignments and the names they read to the block the edge enters.
+
+    :func:`assignment_coupled` already keeps the edge's ends in one group; this makes the rest of the body see
+    what the edge reads and writes.
+    """
+    for edge in loop.edges():
+        writes, reads = rw[edge.dst]
+        writes.update(dict.fromkeys(edge.data.assignments, False))
+        reads.update(dict.fromkeys(edge.data.free_symbols, False))
 
 
 def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[ControlFlowBlock, ControlFlowBlock]:
@@ -166,6 +186,7 @@ def _forward_flow_groups(loop: LoopRegion, allow_assignments: bool = False) -> l
         return None
     lv = loop.loop_variable
     rw = {b: _rw_subsets(b, lv) for b in order}
+    charge_body_edges(loop, rw)
     parent = assignment_coupled(loop, order)
     flows: list[tuple[ControlFlowBlock, ControlFlowBlock]] = []
 

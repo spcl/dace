@@ -298,13 +298,19 @@ def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | No
     if order is None or len(order) < 2:
         return None
     seen: dict[str, int] = {}
+    accumulated: set[str] = set()
     for block in order:
         writes, reads = _rw_subsets(block, loop.loop_variable)
         for name in dict.fromkeys([*writes, *reads]):
             seen[name] = seen.get(name, 0) + 1
+        accumulated.update(name for name in writes if name in reads)
     shared = {name for name, count in seen.items() if count > 1}
     sdfg = loop.sdfg
-    if not shared or BufferExpansion._loop_mappable(sdfg, loop):
+    # Only an accumulator one block updates and another reads couples the blocks for good (the CSR row sum ``s``);
+    # without one, expanding a shared value (a loop-invariant ``alpha[0]`` copy) only splits off a statement and
+    # hides the nest from the library lifts (``LoopToSymm``).
+    transients = {name for name in shared & accumulated if name in sdfg.arrays and sdfg.arrays[name].transient}
+    if not transients or BufferExpansion._loop_mappable(sdfg, loop):
         return None
     applied = expand_iteration_private(sdfg, loop, shared)
     if applied is None:
