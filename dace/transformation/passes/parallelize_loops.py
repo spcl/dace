@@ -330,6 +330,11 @@ class ParallelizeLoops(ppl.Pass):
         # The lift edits ``sd``'s descriptors, symbols and interstate edges, and builds a new nested SDFG. The one
         # edit outside ``sd``, the symbol mapping of the node nesting it, is not a fact of its parent.
         forget_facts(sd)
+        # So the probes' resolver, once it forgets ``sd`` and what is nested in it, still holds what every enclosing
+        # SDFG resolved, and the propagation below need not derive their facts again.
+        resolver = vars(xform).get("symbol_resolver")
+        if resolver is not None:
+            resolver.forget_within(sd)
         for state in graph.states():
             lifted = [
                 node
@@ -346,7 +351,7 @@ class ParallelizeLoops(ppl.Pass):
                 # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
                 # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
                 # cost stays independent of ``propagate``.
-                propagate_memlets_state(sd, state)
+                propagate_memlets_state(sd, state, resolver)
         return True
 
     def holds_back(self, xform: LoopToMap, loop: LoopRegion) -> bool:
@@ -388,7 +393,8 @@ class ParallelizeLoops(ppl.Pass):
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
         xform = LoopToMap()
         # The facts every probe derives for its loop, and for each scope and SDFG enclosing it, are shared by the
-        # probes. A lift changes them for the lifted SDFG and every SDFG nested in it, and only there.
+        # probes. A lift changes them for the lifted SDFG and every SDFG nested in it, and only there: ``lift``
+        # forgets those before it propagates the lifted state.
         xform.symbol_resolver = SymbolResolver()
         # Kept across sweeps and patched after each lift, like the contexts: rebuilding either walks the
         # whole SDFG, once per lift.
@@ -421,7 +427,6 @@ class ParallelizeLoops(ppl.Pass):
                     continue
                 applied += 1
                 lifted_one = True
-                xform.symbol_resolver.forget_within(sd)
                 site = sites[0]
                 added = lifted_blocks(site, loop, graph)
                 if ctx.post_lift_free_symbols is None:
