@@ -1987,6 +1987,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             symbol_mapping = dict(symbol_mapping or {})
             for fs in sdfg.free_symbols:
                 symbol_mapping.setdefault(fs, fs)
+            # A declared symbol a constant pins (``specialize``) is not free, but still the parent's symbol
+            for cst in sdfg.symbols.keys() & sdfg.constants_prop.keys():
+                symbol_mapping.setdefault(cst, cst)
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
