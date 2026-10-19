@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+
 import networkx as nx
 import numpy as np
 import pytest
@@ -792,6 +794,67 @@ def test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped():
     assert b[0] == 11
 
 
+def symbol_reset_then_loop(start_reads_k: bool) -> tuple[dace.SDFG, list]:
+    """``[pre --k = 7-->] start --k = 0--> loop(k = loop_i) --> after(b[0] = k)``; the group is ``[start, loop]``,
+    and ``pre`` (only when ``start`` reads ``k``) gives that read a value."""
+    sdfg = dace.SDFG(f"symbol_reset_then_loop_{int(start_reads_k)}")
+    sdfg.add_array("a", [1], dace.int64)
+    sdfg.add_array("b", [1], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    if start_reads_k:
+        sdfg.add_state_before(start, "pre", is_start_block=True, assignments={"k": "7"})
+        tasklet = start.add_tasklet("t", {}, {"o"}, "o = k")
+        start.add_edge(tasklet, "o", start.add_write("a"), None, dace.Memlet("a[0]"))
+    loop = LoopRegion("loop", "loop_i < 5", "loop_i", "loop_i = 0", "loop_i = loop_i + 1")
+    sdfg.add_node(loop)
+    first = loop.add_state("first", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), dace.InterstateEdge(assignments={"k": "loop_i"}))
+    sdfg.add_edge(start, loop, dace.InterstateEdge(assignments={"k": "0"}))
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge())
+    tasklet = after.add_tasklet("t", {}, {"o"}, "o = k")
+    after.add_edge(tasklet, "o", after.add_write("b"), None, dace.Memlet("b[0]"))
+    return sdfg, [start, loop]
+
+
+def test_a_symbol_the_start_block_resets_is_bound_inside_not_an_argument():
+    """``k = 0`` leaves the start block before anything reads ``k``, so the parent's ``k`` is dead: mapping it in
+    would make ``k`` a required argument of the root SDFG. The final ``k`` still reaches ``after``."""
+    sdfg, blocks = symbol_reset_then_loop(start_reads_k=False)
+
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks), start=blocks[0])
+
+    nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert "k" not in nsdfg.symbol_mapping
+    assert "k" not in sdfg.free_symbols
+    a, b = np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64)
+    sdfg(a=a, b=b)
+    assert b[0] == 4
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="SDFG.free_symbols drops a symbol the SDFG assigns anywhere, even one read before the assignment, "
+    "so the nest warns that it maps an unused k",
+)
+def test_a_symbol_the_start_block_reads_before_the_reset_stays_mapped():
+    """The start block reads ``k`` before ``k = 0`` runs, so the parent's ``k`` is live and must cross the boundary."""
+    sdfg, blocks = symbol_reset_then_loop(start_reads_k=True)
+
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks), start=blocks[0])
+
+    nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert "k" in nsdfg.symbol_mapping
+    a, b = np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sdfg.validate()
+    sdfg(a=a, b=b)
+    assert a[0] == 7
+    assert b[0] == 4
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -819,3 +882,5 @@ if __name__ == "__main__":
     test_nest_two_loops_with_same_variable()
     test_a_container_moved_across_the_boundary_gets_one_connector()
     test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped()
+    test_a_symbol_the_start_block_resets_is_bound_inside_not_an_argument()
+    test_a_symbol_the_start_block_reads_before_the_reset_stays_mapped()

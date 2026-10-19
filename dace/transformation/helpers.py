@@ -220,6 +220,16 @@ def nest_sdfg_subgraph(
         # regions share is internal only when every one of them binds it internally.
         internal_counters -= external_counters
         strictly_defined_symbols.update(internal_counters)
+        # Every edge leaving the start block assigns these before anything in the subgraph reads them, so the
+        # caller's value is dead: mapping one in makes it free where nothing defines it yet (``k = 0`` ahead of a
+        # loop, read after the subgraph, became a required root-SDFG argument).
+        start_edges = graph.out_edges(source_node)
+        outright_assigned: set[str] = set()
+        if start_edges and all(e.dst in blocks for e in start_edges):
+            outright_assigned = set.intersection(*(set(e.data.assignments) for e in start_edges))
+            outright_assigned -= source_node.free_symbols
+            for e in start_edges:
+                outright_assigned -= e.data.free_symbols
 
         return_state = new_state = graph.add_state("nested_sdfg_parent")
 
@@ -357,9 +367,11 @@ def nest_sdfg_subgraph(
         # (nest-forge stages a float read as exactly such a symbol and needs it in the ABI).
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols)
-        fsymbols = fsymbols - strictly_defined_symbols - outright_counters
+        fsymbols = fsymbols - strictly_defined_symbols - outright_counters - outright_assigned
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping, bound_inside=outright_counters)
+        cnode = new_state.add_nested_sdfg(
+            nsdfg, read_set, write_set, mapping, bound_inside=outright_counters | outright_assigned
+        )
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
