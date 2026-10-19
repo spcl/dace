@@ -10,7 +10,6 @@ copies, naming the source as the target and normalizing to the destination.
 """
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, tree_to_sdfg
@@ -18,20 +17,6 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 N = dace.symbol("N")
 M = dace.symbol("M")
-
-
-def _can_compile() -> bool:
-    """Returns True if the DaCe CPU toolchain can compile a trivial SDFG in this environment."""
-    try:
-        sdfg = dace.SDFG("probe_copy_direction")
-        sdfg.add_array("A", [1], dace.float64)
-        state = sdfg.add_state()
-        tasklet = state.add_tasklet("w", {}, {"out"}, "out = 1.0")
-        state.add_edge(tasklet, "out", state.add_write("A"), None, dace.Memlet("A[0]"))
-        sdfg.compile()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def _assert_roundtrip_matches(sdfg: dace.SDFG, args: dict, tag: str) -> None:
@@ -116,8 +101,6 @@ def test_outward_copy_direction():
     outward = next(c for c in copies if c.target == "B")
     assert outward.memlet.data == "tmp"
 
-    if not _can_compile():
-        pytest.skip("DaCe compilation is unavailable in this environment")
     _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(0).random(5), B=np.zeros((5, 3)), N=5), "outward")
 
 
@@ -131,8 +114,6 @@ def test_inward_copy_direction():
     inward = next(c for c in _copy_nodes(tree) if c.target == "tmp")
     assert inward.memlet.data == "A"
 
-    if not _can_compile():
-        pytest.skip("DaCe compilation is unavailable in this environment")
     _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(1).random((4, 3)), B=np.zeros(3), N=4), "inward")
 
 
@@ -147,8 +128,6 @@ def test_outward_wcr_copy_direction():
     assert wcr.memlet.data == "tmp"
     assert wcr.memlet.wcr is not None
 
-    if not _can_compile():
-        pytest.skip("DaCe compilation is unavailable in this environment")
     _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(2).random((4, 3)), B=np.zeros(3), N=4), "outward_wcr")
 
 
@@ -162,8 +141,6 @@ def test_nested_outward_copy_direction():
     outward = next(c for c in _copy_nodes(tree) if c.target == "B")
     assert outward.memlet.data == "tmp"
 
-    if not _can_compile():
-        pytest.skip("DaCe compilation is unavailable in this environment")
     _assert_roundtrip_matches(
         sdfg, dict(A=np.random.default_rng(3).random(5), B=np.zeros((5, 2, 3)), N=5, M=2), "nested_outward"
     )

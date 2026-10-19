@@ -67,25 +67,9 @@ def test_roundtrip_corpus_programs(name):
     _assert_roundtrip(sdfg.as_schedule_tree())
 
 
-def _can_compile() -> bool:
-    try:
-        sdfg = dace.SDFG("probe")
-        sdfg.add_array("A", [1], dace.float64)
-        state = sdfg.add_state()
-        tasklet = state.add_tasklet("w", {}, {"out"}, "out = 1.0")
-        state.add_edge(tasklet, "out", state.add_write("A"), None, dace.Memlet("A[0]"))
-        sdfg.compile()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
 @pytest.mark.parametrize("name", ["axpy", "matmul"])
 def test_reloaded_tree_compiles_and_matches(name):
     """An SDFG rebuilt from a reloaded tree computes the same results as the original program's SDFG."""
-    if not _can_compile():
-        pytest.skip("DaCe compilation is unavailable in this environment")
-
     prog, factory = _CORPUS[name]
     sdfg = prog.to_sdfg(simplify=True)
     reloaded = _reload(sdfg.as_schedule_tree())
