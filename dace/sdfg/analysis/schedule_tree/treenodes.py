@@ -154,10 +154,13 @@ class ScheduleTreeScope(ScheduleTreeNode):
         disallow_propagation: set[str],
         **kwargs,
     ) -> MemletSet:
+        # A view binding defines an alias but moves no data, so a scope does not write the views it defines
+        # (their reads and writes are reported by the nodes using the view, resolved to the viewed container by
+        # consumers such as the state-boundary analysis).
         gather = (
             (lambda n, root: n.input_memlets(root, **kwargs))
             if inputs
-            else (lambda n, root: n.output_memlets(root, **kwargs))
+            else (lambda n, root: MemletSet() if type(n) is ViewNode else n.output_memlets(root, **kwargs))
         )
 
         # Fast path, no propagation necessary

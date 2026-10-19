@@ -291,17 +291,11 @@ class AffineSMemlet(SeparableMemletPattern):
         result_begin = rb.subs(self.param, node_rb).expand()
         result_end = re.subs(self.param, node_rlast).expand()
 
-        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element.
-        # Substitute the literal ``node_re`` here (not the tightened ``node_rlast``): the propagated range must
-        # stay *structurally* identical to ranges built directly from the map's own ``node_range`` (e.g.
-        # ``Range.size()``/``num_elements()``, as border-array transients in ``MapFission`` are), which SymPy
-        # cannot always prove equal to the ``node_rlast`` form without extra sign assumptions on ``node_rs``.
+        # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element. The
+        # strided result denotes the same points with the literal map end, which keeps it structurally equal to
+        # ranges derived from the map range itself (e.g., ``Range.size()``).
         if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
-            point_begin = rb.subs(self.param, node_rb).expand()
-            point_end = re.subs(self.param, node_re).expand()
-            if (self.multiplier < 0) == True:
-                point_begin, point_end = point_end, point_begin
-            return (point_begin, point_end, self.multiplier * node_rs, 1)
+            return (result_begin, re.subs(self.param, node_re).expand(), self.multiplier * node_rs, 1)
 
         # Special case: multiplier < 0
         if (self.multiplier < 0) == True:

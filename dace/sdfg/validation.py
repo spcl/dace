@@ -10,6 +10,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import networkx as nx
+import sympy
 
 from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo
@@ -1163,7 +1164,9 @@ def validate_state(
             else:
                 dst_expr = e.data.dst_subset.num_elements()
 
-            if symbolic.inequal_symbols(src_expr, dst_expr):
+            if symbolic.inequal_symbols(src_expr, dst_expr) and not _equal_under_positive_steps(
+                src_expr, dst_expr, _enclosing_map_steps(state, scope, e)
+            ):
                 error = InvalidSDFGEdgeError(
                     "Dimensionality mismatch between src/dst subsets", state.parent_graph, state_id, eid
                 )
@@ -1413,6 +1416,41 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
             locinfo += f"\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}"
 
         return f"{self.message} (at state {state.label}{edgestr}){locinfo}"
+
+
+def _enclosing_map_steps(state: "SDFGState", scope: dict, edge) -> set[str]:
+    """Names of the symbols appearing as steps of the map ranges enclosing either endpoint of ``edge``."""
+    from dace.sdfg import nodes as nd
+
+    steps: set[str] = set()
+    for endpoint in (edge.src, edge.dst):
+        entry = endpoint if isinstance(endpoint, nd.MapEntry) else scope.get(endpoint)
+        while entry is not None:
+            if isinstance(entry, nd.MapEntry):
+                for _, _, step in entry.map.range.ranges:
+                    if symbolic.issymbolic(step):
+                        steps |= {str(s) for s in step.free_symbols}
+            entry = scope.get(entry)
+    return steps
+
+
+def _equal_under_positive_steps(a, b, step_names: set[str]) -> bool:
+    """
+    Whether ``a`` and ``b`` are equal once the given map-step symbols are assumed positive.
+
+    A well-formed map has a positive step (a non-positive step is an empty scope), so element counts that
+    differ only by identities such as ``ceiling((s * ceiling(x / s) - s + 1) / s) == ceiling(x / s)`` are equal.
+    """
+    if not step_names or not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
+        return False
+    positive = {
+        s: sympy.Symbol(s.name, integer=True, positive=True)
+        for s in (a.free_symbols | b.free_symbols)
+        if s.name in step_names
+    }
+    if not positive:
+        return False
+    return (a.subs(positive) - b.subs(positive)).simplify() == 0
 
 
 def validate_memlet_data(memlet_data: str, access_data: str) -> bool:

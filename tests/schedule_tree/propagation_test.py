@@ -298,8 +298,11 @@ def test_propagation_clipped_tile_non_matching():
     """Fix 4: a clipped access whose clip is not the map end keeps the conservative ``Min`` result."""
     N, T = (dace.symbol(s) for s in ("N", "T"))
     m = propagate_subset([Memlet("A[i:Min(i+T, 3)]")], _array(N), ["i"], _rng((0, N - 1, T)))
-    # The clip (3) is not the map's end (N-1), so the dedicated case does not fire.
-    assert isinstance(m.subset.ranges[0][1], sympy.Min)
+    # The clip (3) is not the map's end (N-1), so the dedicated case does not fire and the end keeps its ``Min``
+    # (in inclusive form, i.e. ``Min(...) - 1``).
+    end = m.subset.ranges[0][1]
+    assert any(isinstance(a, sympy.Min) for a in sympy.preorder_traversal(end))
+    assert symbolic.simplify(end - (N - 1)) != 0
 
 
 def test_propagation_maptiling_clean_outer_memlets():

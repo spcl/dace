@@ -34,11 +34,16 @@ def _can_compile() -> bool:
         return False
 
 
-def _assert_roundtrip_matches(sdfg: dace.SDFG, args: dict) -> None:
-    """Rebuilds ``sdfg`` from its schedule tree and asserts both compute identical outputs for ``args``."""
+def _assert_roundtrip_matches(sdfg: dace.SDFG, args: dict, tag: str) -> None:
+    """Rebuilds ``sdfg`` from its schedule tree and asserts both compute identical outputs for ``args``.
+
+    ``tag`` makes the program names unique per test so that compiled builds are not shared between tests that
+    construct SDFGs of the same name.
+    """
     tree = sdfg_to_tree.as_schedule_tree(sdfg)
     rebuilt = tree_to_sdfg.from_schedule_tree(tree)
-    rebuilt.name = f"{sdfg.name}_copy_direction_roundtrip"
+    sdfg.name = f"{sdfg.name}_{tag}"
+    rebuilt.name = f"{sdfg.name}_roundtrip"
 
     expected = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in args.items()}
     actual = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in args.items()}
@@ -113,7 +118,7 @@ def test_outward_copy_direction():
 
     if not _can_compile():
         pytest.skip("DaCe compilation is unavailable in this environment")
-    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(0).random(5), B=np.zeros((5, 3)), N=5))
+    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(0).random(5), B=np.zeros((5, 3)), N=5), "outward")
 
 
 def test_inward_copy_direction():
@@ -128,7 +133,7 @@ def test_inward_copy_direction():
 
     if not _can_compile():
         pytest.skip("DaCe compilation is unavailable in this environment")
-    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(1).random((4, 3)), B=np.zeros(3), N=4))
+    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(1).random((4, 3)), B=np.zeros(3), N=4), "inward")
 
 
 def test_outward_wcr_copy_direction():
@@ -144,7 +149,7 @@ def test_outward_wcr_copy_direction():
 
     if not _can_compile():
         pytest.skip("DaCe compilation is unavailable in this environment")
-    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(2).random((4, 3)), B=np.zeros(3), N=4))
+    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(2).random((4, 3)), B=np.zeros(3), N=4), "outward_wcr")
 
 
 def test_nested_outward_copy_direction():
@@ -159,7 +164,9 @@ def test_nested_outward_copy_direction():
 
     if not _can_compile():
         pytest.skip("DaCe compilation is unavailable in this environment")
-    _assert_roundtrip_matches(sdfg, dict(A=np.random.default_rng(3).random(5), B=np.zeros((5, 2, 3)), N=5, M=2))
+    _assert_roundtrip_matches(
+        sdfg, dict(A=np.random.default_rng(3).random(5), B=np.zeros((5, 2, 3)), N=5, M=2), "nested_outward"
+    )
 
 
 if __name__ == "__main__":
