@@ -77,6 +77,15 @@ def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
     return init + symbolic.int_floor(end - init + step, step) * step
 
 
+def plans_a_rename(sdfg: dace.SDFG) -> bool:
+    """Whether :meth:`UniqueLoopIterators.rename_loops` renames a loop of ``sdfg`` (not of its nested SDFGs): an
+    iterator not named ``_loop_it_<N>`` yet, or one that two of its loops share."""
+    iterators = [
+        r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable
+    ]
+    return len(set(iterators)) < len(iterators) or any(iterator_id(name) < 0 for name in iterators)
+
+
 def symbol_readers(sdfg: dace.SDFG, names: set[str]) -> dict[str, set[ControlFlowBlock]]:
     """The blocks of the SDFG tree that read each of ``names``; an interstate edge reads in its destination."""
     readers: dict[str, set[ControlFlowBlock]] = {}
@@ -109,6 +118,9 @@ class UniqueLoopIterators(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> set[str] | None:
         """:returns: The new iterator names, or ``None`` if every iterator was unique already."""
+        # Settled tree: no SDFG plans a rename, so skip the id scan and the reader index, two walks of the whole tree.
+        if not any(plans_a_rename(sd) for sd in sdfg.all_sdfgs_recursive()):
+            return None
         self.next_id = first_free_id(sdfg)
         self.top = sdfg
         self.readers: dict[str, set[ControlFlowBlock]] = {}

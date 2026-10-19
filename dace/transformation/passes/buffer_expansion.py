@@ -248,6 +248,10 @@ class BufferExpansion(ppl.Pass):
         order: str | None = None  # ambient storage order: built lazily, only when actually expanding
 
         kept: dict[str, list[str]] = {}
+        # The first probe of every loop asks the graph as it stands, so those probes share one ``LiftContext`` (block
+        # order, access index, per-block free symbols) the way ``ParallelizeLoops`` shares it; an expansion, kept or
+        # undone, drops it. The probe after an expansion builds its own, as before.
+        lift_context: list[Any] = []
         for loop in loops:
             ix = self._loop_index(loop)
             if ix is None:
@@ -255,7 +259,7 @@ class BufferExpansion(ppl.Pass):
             loop_states = set(loop.states())
             if not self._has_candidate_buffer(loop_states, write_index, access_states, interstate_syms):
                 continue  # no privatizable-buffer candidate -> never expanded, so skip the probe
-            if self._loop_mappable(sdfg, loop):
+            if self._loop_mappable(sdfg, loop, lift_context):
                 continue  # already parallelizable -> expanding would only grow the SDFG
             buffers = self._privatizable_buffers(sdfg, loop, access_states, interstate_syms, loop_states)
             if not buffers:
@@ -264,6 +268,7 @@ class BufferExpansion(ppl.Pass):
                 order = self._ambient_order(sdfg)
             index, size = ix
             applied = [self._expand(sdfg, loop, arr, index, size, order) for arr in buffers]
+            lift_context.clear()
             if self._loop_mappable(sdfg, loop):
                 kept[loop.label] = list(buffers)
             else:
@@ -348,12 +353,25 @@ class BufferExpansion(ppl.Pass):
         return syms
 
     @staticmethod
-    def _loop_mappable(sdfg: SDFG, loop: LoopRegion) -> bool:
-        """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced)."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
+    def _loop_mappable(sdfg: SDFG, loop: LoopRegion, lift_context: list[Any] | None = None) -> bool:
+        """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced).
+
+        :param lift_context: Holder of the ``LiftContext`` of ``sdfg`` as it stands: empty to build it here, which
+                             the caller clears after any change to ``sdfg``. ``None`` probes without one.
+        """
+        # avoid an import cycle
+        from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context
 
         with contextlib.redirect_stdout(io.StringIO()):
-            return LoopToMap.can_be_applied_to(sdfg, loop=loop)
+            if lift_context is None:
+                return LoopToMap.can_be_applied_to(sdfg, loop=loop)
+            if not lift_context:
+                lift_context.append(build_lift_context(sdfg))
+            xform = LoopToMap()
+            xform.lift_context = lift_context[0]
+            # By the loop OBJECT, as ``ParallelizeLoops.lift`` does; ``LoopToMap`` never reads ``cfg_id``.
+            xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
+            return xform.can_be_applied(loop.parent_graph, 0, sdfg)
 
     @staticmethod
     def _loop_index(loop: LoopRegion):

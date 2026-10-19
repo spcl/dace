@@ -11,6 +11,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.sdfg import forget_all_facts, memoize_facts
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -378,6 +379,21 @@ class ArrayElimination(ppl.Pass):
         """
         Removes access nodes that represent redundant copies and/or views.
         """
+        # Every probe resolves the facts at its node, whose SDFG-wide part (``SDFG.facts()``, a walk of every
+        # interstate edge and descriptor) only an apply changes: share it between probes, drop it after each apply.
+        with memoize_facts():
+            return self._remove_redundant_copies(sdfg, state, removable_data, access_nodes)
+
+    @staticmethod
+    def _apply_forgetting_facts(xform: SingleStateTransformation, state: SDFGState, sdfg: SDFG) -> Any:
+        with memoize_facts(active=False):
+            ret = xform.apply(state, sdfg)
+        forget_all_facts()
+        return ret
+
+    def _remove_redundant_copies(
+        self, sdfg: SDFG, state: SDFGState, removable_data: set[str], access_nodes: dict[str, list[nodes.AccessNode]]
+    ):
         removed_nodes: set[nodes.AccessNode] = set()
         state_id = state.block_id
         # A linear scan per read; no transformation applied below adds or removes a region.
@@ -418,7 +434,7 @@ class ArrayElimination(ppl.Pass):
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
-                                    ret = xform.apply(state, sdfg)
+                                    ret = self._apply_forgetting_facts(xform, state, sdfg)
                                     if ret is not None:  # A view was created
                                         continue
                                     removed_nodes.add(anode)
@@ -440,7 +456,7 @@ class ArrayElimination(ppl.Pass):
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
-                                    ret = xform.apply(state, sdfg)
+                                    ret = self._apply_forgetting_facts(xform, state, sdfg)
                                     if ret is not None:  # A view was created
                                         continue
                                     removed_nodes.add(anode)
