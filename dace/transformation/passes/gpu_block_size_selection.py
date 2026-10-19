@@ -15,13 +15,13 @@ line of a fixed thread count that the domain can fill. ``threadIdx.x`` maps to t
 ``gpu_block_size`` is stored in CUDA ``(x, y, z)`` order, i.e. reversed map-parameter order.
 
     * 1-D domain              -> a line of 512          (``[512, 1, 1]``)
-    * 2-D domain              -> a rectangle of 256     (``N x N`` -> ``[32, 8, 1]``)
-    * 3-D domain              -> a box of 512           (``N x N x N`` -> ``[32, 4, 4]``)
+    * 2-D domain              -> a rectangle of 256     (``N x N`` -> ``[64, 4, 1]``)
+    * 3-D domain              -> a box of 512           (``N x N x N`` -> ``[64, 4, 2]``)
 
 The coalesced axis -- the one indexing the most accesses at unit stride, ``x`` on a tie -- starts
-at ``compiler.cuda.block_min_lanes`` threads (32: half a CDNA wavefront, a whole NVIDIA warp), so a
-wavefront's loads cover at least one contiguous 32-element run; a square or cube would split it
-into 16- or 8-element pieces.
+at ``compiler.cuda.block_min_lanes`` threads (64: one CDNA wavefront, two NVIDIA warps), so every
+wavefront loads one contiguous run; a square or cube would split it into 16- or 8-element pieces
+(MI300A, 20 2-D / 3-D kernels: 64 lanes 1.17x the 16 x 16 square, 32 lanes 1.12x).
 
 The block is grown one doubling at a time, always on the axis with the most domain left to cover
 (``extent / block``), so a skewed domain gets a matching rectangle (``8 x 1024`` ->

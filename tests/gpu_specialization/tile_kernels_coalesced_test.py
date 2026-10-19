@@ -57,8 +57,8 @@ def test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(prog
         maps[dtypes.ScheduleType.GPU_ThreadBlock],
         maps[dtypes.ScheduleType.Sequential],
     )
-    # The domain-matched block the offload chose for a 2-D map: 256 threads, 32 lanes on the coalesced axis.
-    assert list(grid.map.gpu_block_size) == [32, 8, 1]
+    # The domain-matched block the offload chose for a 2-D map: 256 threads, a 64-lane wavefront on the coalesced axis.
+    assert list(grid.map.gpu_block_size) == [64, 4, 1]
     assert block.map.params[-1].endswith(coalesced) and block.map.params[-2].endswith(outer), block.map.params
     assert thread.map.params == [outer, coalesced] and str(thread.map.range.size()[0]) != "1"
     sdfg.validate()
@@ -75,6 +75,8 @@ def test_a_one_dimensional_kernel_gets_a_256_thread_block_and_no_loop():
 @pytest.mark.gpu
 @pytest.mark.parametrize("program", [scaled_rows, scaled_columns_transposed])
 def test_tiled_kernels_compute_what_numpy_does(program):
+    import cupy
+
     sdfg = offloaded(program, f"tile_coalesced_run_{program.name}")
     TileKernelsCoalesced(factor=3).apply_pass(sdfg, {})
     finalize_for_target(sdfg, "gpu")
@@ -82,9 +84,10 @@ def test_tiled_kernels_compute_what_numpy_does(program):
     rows = program is scaled_rows
     w = np.random.rand(n if rows else m)
     A = np.random.rand(m, n) if rows else np.random.rand(n, m)
-    B = np.zeros_like(A)
-    sdfg(w=w, A=A, B=B, M=m, N=n)
-    assert np.allclose(B, (w[None, :] if rows else w[None, :]) * A)
+    # The offload moved the arguments to the device.
+    B = cupy.zeros(A.shape)
+    sdfg(w=cupy.asarray(w), A=cupy.asarray(A), B=B, M=m, N=n)
+    assert np.allclose(B.get(), w[None, :] * A)
 
 
 if __name__ == "__main__":

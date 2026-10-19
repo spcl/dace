@@ -16,9 +16,9 @@ from dace.transformation.passes.gpu_block_size_selection import (
 N = dace.symbol("N")
 M = dace.symbol("M")
 
-#: The expected shapes: a line of 512, 256 threads with 32 lanes on the coalesced axis.
+#: The expected shapes: a line of 512, 256 threads with a 64-lane wavefront on the coalesced axis.
 BLOCK_1D = [512, 1, 1]
-BLOCK_2D = [32, 8, 1]
+BLOCK_2D = [64, 4, 1]
 #: Without the lane floor (``compiler.cuda.block_min_lanes`` 1): a square of 256, rectangles following a skewed domain.
 BLOCK_2D_SQUARE = [16, 16, 1]
 #: ``i`` over 256, ``j`` (contiguous, ``x``) over 1024: four times as wide on ``x``.
@@ -57,7 +57,8 @@ def test_pick_block_size_2d_square_constant():
 def test_pick_block_size_2d_skewed_last_dim_wide():
     # Last (contiguous, threadIdx.x) dimension is 4x larger -> 32 on x.
     m = make_device_map(["i", "j"], [(0, 255, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == BLOCK_2D_WIDE_X
+    with without_lane_floor():
+        assert pick_gpu_block_size(m) == BLOCK_2D_WIDE_X
 
 
 def test_pick_block_size_2d_skewed_outer_dim_wide():
@@ -127,17 +128,17 @@ def test_pick_block_size_3d_is_a_cube():
         assert pick_gpu_block_size(m) == [8, 8, 8]
 
 
-def test_the_coalesced_axis_starts_at_32_lanes():
-    """Half a CDNA wavefront (a whole NVIDIA warp) of contiguous elements per load, wherever the domain is wider; the
+def test_the_coalesced_axis_starts_at_a_wavefront():
+    """One CDNA wavefront (two NVIDIA warps) of contiguous elements per load, wherever the domain is that wide; the
     rest of the block still follows the domain."""
     assert pick_gpu_block_size(make_device_map(["i", "j"], [(0, N - 1, 1), (0, M - 1, 1)])) == BLOCK_2D
-    assert pick_gpu_block_size(make_device_map(["i", "j"], [(0, 1023, 1), (0, 255, 1)])) == [32, 8, 1]
-    assert pick_gpu_block_size(make_device_map(["i", "j", "k"], [(0, N - 1, 1)] * 3)) == [32, 4, 4]
+    assert pick_gpu_block_size(make_device_map(["i", "j"], [(0, 1023, 1), (0, 255, 1)])) == [64, 4, 1]
+    assert pick_gpu_block_size(make_device_map(["i", "j", "k"], [(0, N - 1, 1)] * 3)) == [64, 4, 2]
     # The unit-stride axis takes the lanes, not ``x``; an axis narrower than the floor keeps its extent.
-    assert domain_matched_block([N, N], [0, 1]) == [8, 32, 1]
+    assert domain_matched_block([N, N], [0, 1]) == [4, 64, 1]
     assert domain_matched_block([8, N]) == [8, 32, 1]
-    with dace.config.set_temporary("compiler", "cuda", "block_min_lanes", value=64):
-        assert domain_matched_block([N, N]) == [64, 4, 1]
+    with dace.config.set_temporary("compiler", "cuda", "block_min_lanes", value=32):
+        assert domain_matched_block([N, N]) == [32, 8, 1]
 
 
 def test_pick_block_size_4d_leaves_default():
@@ -148,8 +149,9 @@ def test_pick_block_size_4d_leaves_default():
 def test_a_small_axis_hands_its_threads_to_the_unit_stride_axis():
     """An axis of four takes no thread past a symbolic one; of the two symbolic axes the one indexed at unit stride
     more often takes the extra doubling."""
-    assert domain_matched_block([N, 4, N], [2, 0, 1]) == [32, 1, 16]
-    assert domain_matched_block([N, 4, N], [1, 0, 2]) == [16, 1, 32]
+    with without_lane_floor():
+        assert domain_matched_block([N, 4, N], [2, 0, 1]) == [32, 1, 16]
+        assert domain_matched_block([N, 4, N], [1, 0, 2]) == [16, 1, 32]
 
 
 def test_a_domain_smaller_than_the_block_keeps_only_the_threads_it_uses():
@@ -340,7 +342,7 @@ if __name__ == "__main__":
     test_pick_block_size_2d_skewed_outer_dim_wide()
     test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis()
     test_pick_block_size_3d_is_a_cube()
-    test_the_coalesced_axis_starts_at_32_lanes()
+    test_the_coalesced_axis_starts_at_a_wavefront()
     test_pick_block_size_4d_leaves_default()
     test_a_small_axis_hands_its_threads_to_the_unit_stride_axis()
     test_a_domain_smaller_than_the_block_keeps_only_the_threads_it_uses()
