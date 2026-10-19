@@ -238,6 +238,71 @@ def test_a_state_reading_a_symbol_before_an_edge_assigns_it_keeps_it_free():
     assert "k" in sdfg.free_symbols
 
 
+def read_into(region, label: str, symbol: str, is_start_block: bool = False) -> dace.SDFGState:
+    """A state of ``region`` whose tasklet copies ``symbol`` into ``a[0]``."""
+    state = region.add_state(label, is_start_block=is_start_block)
+    tasklet = state.add_tasklet(f"{label}_read", {}, {"o": None}, f"o = {symbol}")
+    state.add_edge(tasklet, "o", state.add_write("a"), None, dace.Memlet("a[0]"))
+    return state
+
+
+def symbol_sdfg(name: str) -> dace.SDFG:
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [1], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    return sdfg
+
+
+def test_a_loop_body_reading_a_symbol_its_own_later_edge_assigns_keeps_it_free():
+    """The first iteration reads ``k`` before the body's edge assigns it, so the caller's ``k`` is live."""
+    sdfg = symbol_sdfg("loop_read_before_assignment")
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = read_into(loop, "first", "k", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), dace.InterstateEdge(assignments={"k": "i"}))
+
+    assert "k" in sdfg.free_symbols
+
+
+def test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free():
+    """The else arm leaves ``k`` as the caller passed it, so the read after the join needs the caller's ``k``."""
+    sdfg = symbol_sdfg("one_branch_assignment")
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
+    then = dace.sdfg.state.ControlFlowRegion("then", sdfg=sdfg, parent=block)
+    then.add_edge(
+        then.add_state("then_first", is_start_block=True),
+        then.add_state("then_second"),
+        dace.InterstateEdge(assignments={"k": "1"}),
+    )
+    block.add_branch(dace.sdfg.state.CodeBlock("a[0] > 0"), then)
+    sdfg.add_node(block, is_start_block=True)
+    sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
+
+    assert "k" in sdfg.free_symbols
+
+
+def test_a_symbol_assigned_on_every_path_before_its_read_is_not_free():
+    """Every path to the read passes the assignment, so the caller's ``k`` is dead: no over-reporting."""
+    sdfg = symbol_sdfg("assigned_before_read")
+    first = sdfg.add_state("first", is_start_block=True)
+    sdfg.add_edge(first, read_into(sdfg, "reader", "k"), dace.InterstateEdge(assignments={"k": "1"}))
+
+    assert "k" not in sdfg.free_symbols
+
+
+def test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symbol():
+    """A C++ tasklet is scanned token by token; a local named like a symbol is a read unless the tasklet lists it in
+    ``ignored_symbols``. Listed, the later assignment defines ``k`` and nothing reads the caller's ``k``."""
+    sdfg = symbol_sdfg("cpp_local_shadow")
+    first = sdfg.add_state("first", is_start_block=True)
+    tasklet = first.add_tasklet("local", {}, {"o": None}, "long long k = 2;\no = k;", language=dace.Language.CPP)
+    tasklet.ignored_symbols = {"k"}
+    first.add_edge(tasklet, "o", first.add_write("a"), None, dace.Memlet("a[0]"))
+    sdfg.add_edge(first, read_into(sdfg, "reader", "k"), dace.InterstateEdge(assignments={"k": "1"}))
+
+    assert "k" not in sdfg.free_symbols
+
+
 if __name__ == "__main__":
     test_single_state()
     test_state_subgraph()
@@ -250,3 +315,7 @@ if __name__ == "__main__":
     test_array_used_only_in_a_guard_keeps_its_stride_symbol()
     test_descriptor_free_symbols_follow_a_reassigned_extent()
     test_a_state_reading_a_symbol_before_an_edge_assigns_it_keeps_it_free()
+    test_a_loop_body_reading_a_symbol_its_own_later_edge_assigns_keeps_it_free()
+    test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free()
+    test_a_symbol_assigned_on_every_path_before_its_read_is_not_free()
+    test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symbol()
