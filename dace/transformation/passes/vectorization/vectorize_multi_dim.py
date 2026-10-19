@@ -1246,6 +1246,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
         host_isa = self._target_isa in CPU_SIMD_ISAS | {ISA.SCALAR}
         resolver = scopes.ScopedSymbolResolver()
+        masked_kernels: dict[int, bool] = {}
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
@@ -1259,7 +1260,9 @@ class VectorizeMultiDim(ppl.Pipeline):
                         if entry.map.schedule == dace.ScheduleType.GPU_Device:
                             # The thread-block maps of its tiles size the block, not the size the offload chose
                             entry.map.gpu_block_size = None
-                            node.lane_bounds = _block_tile_lane_bounds(node, parent, entry, entry_state, resolver)
+                            node.lane_bounds = _block_tile_lane_bounds(
+                                node, parent, entry, entry_state, resolver, masked_kernels
+                            )
                 if host_isa and on_gpu and node.group is TileGroup.THREAD:
                     node.implementation = "pure"
                 else:
@@ -1310,14 +1313,23 @@ def _block_tile_lane_bounds(
     kernel: dace.nodes.MapEntry,
     kernel_state: dace.SDFGState,
     resolver: scopes.ScopedSymbolResolver,
+    masked_kernels: dict[int, bool],
 ) -> list[str]:
     """The ``lane_bounds`` of a block tile ``node`` in the ``kernel`` map its widths stride: the iterations each tiled
     dim has left from the tile start. A block tile is wider than the lanes the even extent is a multiple of, so the
     last tile of a dim may end past the map. The symbols of the bounds are threaded into the nested SDFGs around
-    ``node``; no bounds for a map its widths do not stride."""
+    ``node``; no bounds for a map its widths do not stride, one they divide (the interior of a remainder split), or
+    one whose iteration mask covers its last tile (``masked_kernels`` caches that per kernel)."""
     K = len(node.widths)
     params, ranges = kernel.map.params[-K:], kernel.map.range.ranges[-K:]
     if len(ranges) != K or any(step != width for (_, _, step), width in zip(ranges, node.widths, strict=True)):
+        return []
+    extents = [end + 1 - begin for begin, end, _ in ranges]
+    if all(symbolic.simplify(sympy.Mod(e, w)) == 0 for e, w in zip(extents, node.widths, strict=True)):
+        return []
+    if id(kernel) not in masked_kernels:
+        masked_kernels[id(kernel)] = _masks_its_iterations(kernel, kernel_state)
+    if masked_kernels[id(kernel)]:
         return []
     bounds = [end + 1 - symbolic.symbol(param) for param, (_, end, _) in zip(params, ranges, strict=True)]
     names = sorted({str(sym) for bound in bounds for sym in bound.free_symbols})
@@ -1331,6 +1343,17 @@ def _block_tile_lane_bounds(
         thread_symbols_into_nsdfg(inner, nsdfg, names, required(inner.parent_sdfg), required(inner.parent), resolver)
         resolver.invalidate_sdfg(inner)
     return [symbolic.symstr(bound, cpp_mode=True) for bound in bounds]
+
+
+def _masks_its_iterations(kernel: dace.nodes.MapEntry, kernel_state: dace.SDFGState) -> bool:
+    """Whether ``kernel`` holds the iteration mask of a masked remainder: its masked tiles skip the lanes past the
+    map, and the full-tile branch a fused remainder guards them with covers no such lane."""
+    params = set(kernel.map.params)
+    for node in kernel_state.scope_subgraph(kernel).nodes():
+        inner = node.sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG) else [(node, None)]
+        if any(isinstance(n, TileMaskGen) and params & set(n.iter_vars) for n, _ in inner):
+            return True
+    return False
 
 
 def _has_gpu_device_map(sdfg: dace.SDFG) -> bool:
