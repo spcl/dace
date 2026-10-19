@@ -315,14 +315,16 @@ def test_hybrid_sparse_is_value_preserving():
 
 
 def test_hybrid_sparse_partitions_at_k():
-    """The ``[0,K)`` half is parallel; only ``[K,N)`` need remain a loop.
+    """The ``[0,K)`` half is parallel and the ``[K,N)`` half a scan: no loop remains.
 
-    Reached without a solver: the index-set split at ``K`` partitions the range, and the
-    ``[0,K)`` segment carries nothing once its branch is specialized. Flipped from
-    ``xfail`` to a plain assertion per this file's contract when it started passing.
+    Reached without a solver: the index-set split at ``K`` partitions the range, the
+    ``[0,K)`` segment carries nothing once its branch is specialized, and the ``[K,N)``
+    segment is ``y[i] = s + y[i - 1]``, which the re-lift after the split turns into a
+    ``Scan``. Flipped from ``xfail`` to a plain assertion per this file's contract when
+    it started passing.
     """
     sdfg = cpu_canon(hybrid_sparse.to_sdfg(simplify=True))
-    assert residual_loops(sdfg) == 1
+    assert residual_loops(sdfg) == 0
 
 
 # #
