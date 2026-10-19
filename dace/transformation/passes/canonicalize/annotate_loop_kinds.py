@@ -232,8 +232,9 @@ class Body(NamedTuple):
 
 def as_loop_names(expr: symbolic.SymbolicType, mapping: dict[str, sympy.Expr]) -> sympy.Expr:
     """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one
-    name is one symbol instance whichever scope minted it."""
-    expr = symbolic.pystr_to_symbolic(str(expr))
+    name is one symbol instance whichever scope minted it. A ``SymExpr`` bound (a tiled map's ``Min(N - 1, g + 63)``,
+    over-approximated as ``g + 63``) is read exactly: its text names both and does not parse back."""
+    expr = symbolic.pystr_to_symbolic(str(expr.expr if isinstance(expr, symbolic.SymExpr) else expr))
     repl = {sym: mapping[sym.name] for sym in free_symbols(as_basic(expr)) if sym.name in mapping}
     expr = expr.subs(repl, simultaneous=True) if repl else expr
     return symbolic.pystr_to_symbolic(str(expr))
