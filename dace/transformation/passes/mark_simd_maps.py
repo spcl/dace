@@ -152,7 +152,6 @@ class MarkSIMDMaps(ppl.Pass):
                             options={
                                 "expansion_limit": len(entry.map.params) - 1,
                                 "inner_schedule": dtypes.ScheduleType.Sequential,
-                                "propagate": False,
                             },
                             map_entry=entry,
                             verify=False,

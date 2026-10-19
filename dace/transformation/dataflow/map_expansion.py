@@ -36,12 +36,6 @@ class MapExpansion(pm.SingleStateTransformation):
         default=dtypes.ScheduleType.Sequential,
         allow_none=True,
     )
-    propagate = Property(
-        dtype=bool,
-        default=True,
-        desc="Propagate the memlets of the expanded scope. Without it the new paths between the nested entries and "
-        "exits carry the inner memlets as they are, and the edges outside the map keep their memlets.",
-    )
     expansion_limit = Property(
         category="Parameters",
         desc="How many unidimensional maps will be created, known as k. If None, the default no limit is in place.",
@@ -224,36 +218,7 @@ class MapExpansion(pm.SingleStateTransformation):
 
         # The one propagation: it rewrites every external edge from the innermost new scope outwards, so the paths
         # above are built from the unpropagated memlets rather than propagated once more on the way.
-        if self.propagate:
-            propagate_memlets_scope(sdfg, state=graph, scopes=scope)
-        else:
-            self._give_paths_outer_memlets(graph, map_entry, map_exit, entries, exits)
-        consolidate_edges(sdfg, scope, propagate=self.propagate)
+        propagate_memlets_scope(sdfg, state=graph, scopes=scope)
+        consolidate_edges(sdfg, scope)
 
         return [map_entry] + entries
-
-    @staticmethod
-    def _give_paths_outer_memlets(graph, map_entry, map_exit, entries, exits) -> None:
-        """Without propagation, every edge between two of the new scope nodes gets its own copy of the memlet the
-        original map already carries outside on that connector: the propagation over all the parameters, which
-        covers what each level accesses. The edges outside the map, and those to and from the body, are unchanged.
-        """
-        outer_in = {
-            e.dst_conn[3:]: e.data for e in graph.in_edges(map_entry) if e.dst_conn and e.dst_conn.startswith("IN_")
-        }
-        outer_out = {}
-        for e in graph.out_edges(map_exit):
-            if e.src_conn and e.src_conn.startswith("OUT_"):
-                outer_out.setdefault(e.src_conn[4:], e.data)
-        new_entries = set(entries)
-        for node in [map_entry, *entries[:-1]]:
-            for e in graph.out_edges(node):
-                if e.dst in new_entries and e.src_conn and e.src_conn.startswith("OUT_"):
-                    outer = outer_in.get(e.src_conn[4:])
-                    e.data = copy.deepcopy(outer if outer is not None else e.data)
-        new_exits = set(exits) | {map_exit}
-        for node in exits:
-            for e in graph.out_edges(node):
-                if e.dst in new_exits and e.src_conn and e.src_conn.startswith("OUT_"):
-                    outer = outer_out.get(e.src_conn[4:])
-                    e.data = copy.deepcopy(outer if outer is not None else e.data)
