@@ -146,8 +146,28 @@ def test_nested_outward_copy_direction():
     )
 
 
+def test_self_copy_destination_side_memlet():
+    """A copy within one container whose memlet is written on the destination side (``[0:5] -> A[5:10]``) reads the
+    source subset and writes the destination subset (the memlet must be turned around to the source)."""
+    sdfg = dace.SDFG("self_copy_dst_side")
+    sdfg.add_array("A", [10], dace.float64)
+    state = sdfg.add_state()
+    state.add_edge(state.add_read("A"), None, state.add_write("A"), None, dace.Memlet("[0:5] -> A[5:10]"))
+    sdfg.validate()
+    tree = sdfg_to_tree.as_schedule_tree(sdfg)
+    assert "A[5:10] = copy A[0:5]" in tree.as_string()
+
+    (copy,) = _copy_nodes(tree)
+    assert copy.memlet._is_data_src is True
+    assert copy.memlet.subset == dace.subsets.Range([(0, 4, 1)])
+    assert copy.memlet.other_subset == dace.subsets.Range([(5, 9, 1)])
+
+    _assert_roundtrip_matches(sdfg, dict(A=np.arange(10, dtype=np.float64)), "self_copy")
+
+
 if __name__ == "__main__":
     test_outward_copy_direction()
     test_inward_copy_direction()
     test_outward_wcr_copy_direction()
     test_nested_outward_copy_direction()
+    test_self_copy_destination_side_memlet()

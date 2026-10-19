@@ -51,7 +51,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.memlet_utils import MemletSet
-from dace.sdfg.sdfg import SDFG, InterstateEdge
+from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion
 
 __all__ = ["to_json", "from_json", "save", "load"]
@@ -183,7 +183,7 @@ def _node_to_json(node: tn.ScheduleTreeNode) -> dict:
     elif cls is tn.GotoNode:
         result = {"type": name, "target": node.target}
     elif cls is tn.AssignNode:
-        result = {"type": name, "name": node.name, "value": node.value.to_json(), "edge": node.edge.to_json()}
+        result = {"type": name, "name": node.name, "value": node.value.to_json()}
     elif cls in (tn.BreakNode, tn.ContinueNode):
         result = {"type": name}
     elif cls in (tn.TaskletNode, tn.LibraryCall):
@@ -193,6 +193,11 @@ def _node_to_json(node: tn.ScheduleTreeNode) -> dict:
             "in_memlets": _memlet_mapping_to_json(node.in_memlets),
             "out_memlets": _memlet_mapping_to_json(node.out_memlets),
         }
+        if cls is tn.LibraryCall:
+            # The printed own properties (``LibraryCall.as_string``), in declaration order: default values are not
+            # part of the node's serialized attributes, and JSON objects do not keep the declaration order.
+            # Ignored when loading (the node's properties are restored from its attributes).
+            result["own_properties"] = [[k, v] for k, v in node.own_properties()]
     elif cls in (tn.CopyNode, tn.DynScopeCopyNode):
         result = {"type": name, "target": node.target, "memlet": node.memlet.to_json()}
     elif cls is tn.ViewNode:
@@ -313,11 +318,8 @@ def _node_from_json(obj: dict, context: dict) -> tn.ScheduleTreeNode:
     if name == "GotoNode":
         return tn.GotoNode(target=obj["target"])
     if name == "AssignNode":
-        return tn.AssignNode(
-            name=obj["name"],
-            value=CodeBlock.from_json(obj["value"]),
-            edge=InterstateEdge.from_json(obj["edge"], context=context),
-        )
+        # Older files also store an ``"edge"`` key (a copy of the assignment); it is ignored.
+        return tn.AssignNode(name=obj["name"], value=CodeBlock.from_json(obj["value"]))
     if name == "BreakNode":
         return tn.BreakNode()
     if name == "ContinueNode":

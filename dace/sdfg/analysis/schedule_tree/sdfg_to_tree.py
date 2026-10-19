@@ -8,7 +8,7 @@ from collections import defaultdict
 import networkx as nx
 
 import dace
-from dace import data, symbolic, utils
+from dace import data, subsets, symbolic, utils
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
 from dace.memlet import Memlet
@@ -416,6 +416,14 @@ def _prepare_schedule_tree_edges(
                 # same-scope (node -> node) edges.
                 target_name = dst.data
                 new_memlet = normalize_memlet(sdfg, state, e, src.data)
+                if new_memlet._is_data_src is False and new_memlet.data == src.data == dst.data:
+                    # A copy within one container (``A -> A``) whose memlet is written on the destination side is
+                    # left as is by ``normalize_memlet``; turn it around so that ``memlet.subset`` is the read subset
+                    read_subset = new_memlet.src_subset
+                    if read_subset is None:
+                        read_subset = subsets.Range.from_array(sdfg.arrays[src.data])
+                    new_memlet.subset, new_memlet.other_subset = read_subset, new_memlet.dst_subset
+                    new_memlet._is_data_src = True
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
             scope = state.entry_node(e.dst if mtree.downwards else e.src)
@@ -570,7 +578,7 @@ def _isedge_schedule_tree(
 ) -> list[tn.ScheduleTreeNode]:
     result: list[tn.ScheduleTreeNode] = []
     for aname, aval in edge.data.assignments.items():
-        assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
+        assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval))
         result.append(assign_node)
 
     edge_body: list[tn.ScheduleTreeNode] = []

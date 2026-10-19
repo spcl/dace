@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import copy
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -11,7 +12,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
-from dace.sdfg.sdfg import SDFG, InterstateEdge, memlets_in_ast
+from dace.sdfg.sdfg import SDFG, memlets_in_ast
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 
 if TYPE_CHECKING:
@@ -494,14 +495,14 @@ class AssignNode(ScheduleTreeNode):
 
     name: str
     value: CodeBlock
-    edge: InterstateEdge
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f"assign {self.name} = {self.value.as_string}"
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
-        return MemletSet(self.edge.get_read_memlets(root.containers, include_scalars=True))
+        # The reads of ``InterstateEdge(assignments={name: value})``: subscripts and scalars in the right-hand side
+        return MemletSet(memlets_in_ast(ast.parse(self.value.as_string), root.containers, include_scalars=True))
 
     def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         return MemletSet()
@@ -1008,13 +1009,21 @@ class LibraryCall(ScheduleTreeNode):
         else:
             out_memlets = ", ".join(f"{v}" for v in self.out_memlets.values())
         libname = type(self.node).__name__
-        # Get the properties of the library node without its superclasses
-        own_properties = ", ".join(
-            f"{k}={getattr(self.node, k)}"
+        own_properties = ", ".join(f"{k}={v}" for k, v in self.own_properties())
+        return indent * INDENTATION + f"{out_memlets} = library {libname}[{own_properties}]({in_memlets})"
+
+    def own_properties(self) -> list[tuple[str, str]]:
+        """
+        Returns the properties of the library node without those of its superclasses (``Node``, ``CodeNode``,
+        ``LibraryNode``), as printed by :meth:`as_string`.
+
+        :return: ``(name, str(value))`` pairs in declaration order.
+        """
+        return [
+            (k, str(getattr(self.node, k)))
             for k, v in self.node.__properties__.items()
             if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode}
-        )
-        return indent * INDENTATION + f"{out_memlets} = library {libname}[{own_properties}]({in_memlets})"
+        ]
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         if isinstance(self.in_memlets, set):

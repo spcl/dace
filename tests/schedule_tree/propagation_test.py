@@ -31,7 +31,7 @@ def _tasklet(in_memlets, out_memlets):
 
 
 def _assign(name, expr):
-    return tn.AssignNode(name=name, value=CodeBlock(expr), edge=dace.InterstateEdge(assignments={name: expr}))
+    return tn.AssignNode(name=name, value=CodeBlock(expr))
 
 
 def _root(child, *, containers, symbols):
@@ -92,7 +92,7 @@ def test_stree_propagation_symassign():
             tn.MapScope(
                 node=dace.nodes.MapEntry(dace.nodes.Map("map", ["i"], dace.subsets.Range([(1, N - 1, 1)]))),
                 children=[
-                    tn.AssignNode("j", CodeBlock("N + i"), dace.InterstateEdge(assignments=dict(j="N + i"))),
+                    tn.AssignNode("j", CodeBlock("N + i")),
                     tn.TaskletNode(
                         nodes.Tasklet("inner", {}, {"out"}, "out = inp + 2"),
                         {"inp": dace.Memlet("A[j]")},

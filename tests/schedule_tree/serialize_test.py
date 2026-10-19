@@ -67,6 +67,34 @@ def test_roundtrip_corpus_programs(name):
     _assert_roundtrip(sdfg.as_schedule_tree())
 
 
+def test_assign_node_ignores_legacy_edge():
+    """Files written before ``AssignNode.edge`` was removed also store the assignment under ``"edge"``; it is ignored."""
+    tree = FACTORIES[tn.AssignNode]()
+    obj = ser.to_json(tree)
+    stack, legacy = [obj], 0
+    while stack:
+        node = stack.pop()
+        stack.extend(node.get("children", []))
+        if node["type"] == "AssignNode":
+            assert "edge" not in node
+            node["edge"] = dace.InterstateEdge(assignments={node["name"]: node["value"]["string_data"]}).to_json()
+            legacy += 1
+    assert legacy > 0
+    reloaded = ser.from_json(json.loads(json.dumps(obj)))
+    assert ser.to_json(reloaded) == ser.to_json(tree)
+    assert reloaded.as_string() == tree.as_string()
+
+
+def test_library_call_own_properties():
+    """A ``LibraryCall`` stores its own properties as printed by ``as_string``, in declaration order."""
+    prog, _ = _CORPUS["matmul_lib"]
+    tree = prog.to_sdfg(simplify=True).as_schedule_tree()
+    (call,) = [node for node in tree.preorder_traversal() if isinstance(node, tn.LibraryCall)]
+    (call_json,) = [node for node in ser.to_json(tree)["children"] if node["type"] == "LibraryCall"]
+    assert call_json["own_properties"] == [["alpha", "1"], ["beta", "0"], ["transA", "False"], ["transB", "False"]]
+    assert "[alpha=1, beta=0, transA=False, transB=False]" in call.as_string()
+
+
 @pytest.mark.parametrize("name", ["axpy", "matmul"])
 def test_reloaded_tree_compiles_and_matches(name):
     """An SDFG rebuilt from a reloaded tree computes the same results as the original program's SDFG."""
@@ -100,3 +128,5 @@ if __name__ == "__main__":
         test_roundtrip_covers_every_node_type(node_type)
     for program in sorted(_CORPUS):
         test_roundtrip_corpus_programs(program)
+    test_assign_node_ignores_legacy_edge()
+    test_library_call_own_properties()
