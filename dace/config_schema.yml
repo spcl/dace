@@ -140,6 +140,16 @@ required:
                         description: >
                             Bounds the wrapping-modulo peel to 1..peel_limit iterations
                             (0 disables). Seeds ``BestEffortLoopPeeling.peel_limit``.
+
+                    gpu_coarsen_factor:
+                        type: int
+                        default: 1
+                        title: GPU thread coarsening factor
+                        description: >
+                            Elements each thread of a multi-dimensional GPU kernel computes along the
+                            outermost axis that is not threadIdx.x, so a wavefront's lanes still walk the
+                            contiguous axis (``CoarsenKernelThreads``). 1 disables. One-dimensional kernels
+                            are left alone: folding a streaming map measured no gain on MI300A.
     compiler:
         type: dict
         title: Compiler
