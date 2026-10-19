@@ -12,6 +12,7 @@ import random
 import re
 import shutil
 import sys
+import time
 import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -3228,7 +3229,9 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True, return_program_handle=True) -> "CompiledSDFG":
+    def compile(
+        self, output_file=None, validate=True, return_program_handle=True, stats: dict | None = None
+    ) -> "CompiledSDFG":
         """Compiles a runnable binary from this SDFG.
 
         :param output_file: If not None, copies the output library file to
@@ -3236,8 +3239,14 @@ class SDFG(ControlFlowRegion):
         :param validate: If True, validates the SDFG prior to generating
                          code.
         :param return_program_handle: If False, does not load the generated library.
+        :param stats: If given, filled with the wall-clock seconds of each step: ``codegen_seconds`` (copying the
+                      SDFG, generating and writing the code), ``compile_seconds`` (configuring and building the
+                      library) and ``load_seconds``; ``cached`` is True when a previously built library was loaded
+                      and nothing was generated or built.
         :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
+        stats = {} if stats is None else stats
+        stats.update(codegen_seconds=0.0, compile_seconds=0.0, load_seconds=0.0, cached=False)
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
@@ -3257,6 +3266,7 @@ class SDFG(ControlFlowRegion):
                 object_folder=build_folder, sdfg_name=self.name, folder_mode=folder_mode
             )
             if lib_path.is_file():
+                stats["cached"] = True
                 if return_program_handle:
                     # NOTE: We should not pass `self` as `sdfg` argument, but instead deepcopy it.
                     #   The reason is that if code is generated the `CompiledSDFG.sdfg` attribute
@@ -3268,6 +3278,7 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
+        start = time.perf_counter()
         if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
@@ -3313,8 +3324,12 @@ class SDFG(ControlFlowRegion):
             # NOTE: See the note above about deepcopying.
             sdfg = self
 
+        stats["codegen_seconds"] = time.perf_counter() - start
+
         # Compile the code and get the shared library path
+        start = time.perf_counter()
         shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_mode=folder_mode)
+        stats["compile_seconds"] = time.perf_counter() - start
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -3324,7 +3339,10 @@ class SDFG(ControlFlowRegion):
 
         # Get the function handle
         if return_program_handle:
-            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
+            start = time.perf_counter()
+            handle = compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
+            stats["load_seconds"] = time.perf_counter() - start
+            return handle
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """Checks if arguments and keyword arguments match the SDFG
