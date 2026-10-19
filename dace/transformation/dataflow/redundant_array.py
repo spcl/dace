@@ -439,6 +439,7 @@ class RedundantArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
+
         # The facts at ``in_array``, derived on first use: most candidates are refused by the structural checks.
         def facts_here() -> symbolic.Facts:
             if not resolved:
@@ -1095,6 +1096,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
+
         # The facts at ``out_array``, derived on first use: most candidates are refused by the structural checks.
         def facts_here() -> symbolic.Facts:
             if not resolved:
