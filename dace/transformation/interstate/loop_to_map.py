@@ -2102,7 +2102,8 @@ class LoopToMap(xf.MultiStateTransformation):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
-        negative_step = step_direction(step, SymbolResolver().facts_at(self.loop)) == -1
+        # The facts the probe derived for this loop on the graph as it still is (a fresh resolver on a plain match).
+        negative_step = step_direction(step, self.probe_resolver().facts_at(self.loop)) == -1
 
         nsdfg = None
 
