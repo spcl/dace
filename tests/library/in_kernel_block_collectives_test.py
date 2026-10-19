@@ -11,6 +11,7 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.libraries.standard.helper import select_implementation_by_schedule
 from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.find_first import FindFirst
 from dace.sdfg import nodes
@@ -103,6 +104,18 @@ def test_a_node_in_thread_level_code_keeps_its_per_thread_lowering():
     node.schedule = dtypes.ScheduleType.Sequential
     sdfg.expand_library_nodes()
     assert node.implementation == "pure"
+
+
+def test_asking_which_lowering_an_in_kernel_node_takes_keeps_the_kernel_block_size():
+    """Only the expansion that commits to the block collective hands the block size over to its lane map."""
+    sdfg, state = argmax_kernel()
+    rows = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    rows.map.gpu_block_size = [128, 1, 1]
+    node = next(n for n in state.nodes() if isinstance(n, ArgReduce))
+
+    picked = select_implementation_by_schedule(node, state)
+
+    assert picked == "CUDA (block)" and rows.map.gpu_block_size == [128, 1, 1]
 
 
 @pytest.mark.gpu

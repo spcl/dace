@@ -60,6 +60,9 @@ def py_mod(a, b):
 
 
 def c_mod(a, b):
+    if isinstance(a, int) and isinstance(b, int):
+        remainder = abs(a) % abs(b)
+        return -remainder if a < 0 else remainder
     return np.fmod(a, b)
 
 
@@ -68,6 +71,7 @@ Mod = py_mod
 
 
 Min, Max, Abs = min, max, abs
+inf, nan = math.inf, math.nan
 
 
 def abort():
@@ -85,12 +89,16 @@ class Modulos(ast.NodeTransformer):
         return node
 
 
+def c_modulo(code: str) -> str:
+    """``code`` with C's truncating ``%``, the one every SDFG text means."""
+    if "%" not in code:
+        return code
+    return ast.unparse(Modulos().visit(ast.parse(code)))
+
+
 def expr(value) -> str:
     """A symbolic expression as Python."""
-    text = symbolic.symstr(value, cpp_mode=False)
-    if "%" not in text:
-        return text
-    return ast.unparse(Modulos().visit(ast.parse(text, mode="eval")))
+    return c_modulo(symbolic.symstr(value, cpp_mode=False))
 
 
 def starts(desc: data.Data, subset: subsets.Subset) -> list[str]:
@@ -264,9 +272,9 @@ class Emitter:
     def code(self, sdfg: SDFG, text: str) -> str:
         """Interstate code, with its ``Scalar`` containers read by element."""
         scalars = {name for name, desc in sdfg.arrays.items() if isinstance(desc, data.Scalar)}
-        if not scalars & used_names(text):
-            return text
-        return ast.unparse(ScalarReads(scalars).visit(ast.parse(text)))
+        if scalars & used_names(text):
+            text = ast.unparse(ScalarReads(scalars).visit(ast.parse(text)))
+        return c_modulo(text)
 
     def function(self) -> str:
         sdfg = self.sdfg
@@ -485,7 +493,7 @@ class Emitter:
         return f"{name}[{slices(desc, subset)}]"
 
     def body(self, sdfg: SDFG, node: nodes.Tasklet) -> str:
-        return node.code.as_string
+        return c_modulo(node.code.as_string)
 
     def tasklet(self, sdfg: SDFG, state: SDFGState, node: nodes.Tasklet) -> None:
         body = self.body(sdfg, node)
@@ -581,7 +589,8 @@ class Emitter:
         connectors = set()
         for edge in (*state.in_edges(node), *state.out_edges(node)):
             conn = edge.dst_conn if edge.dst is node else edge.src_conn
-            if conn is None or edge.data.is_empty():
+            # An in-out connector has an edge on each side and binds once
+            if conn is None or edge.data.is_empty() or conn in connectors:
                 continue
             connectors.add(conn)
             # The connector's descriptor is the outer container's (``NestedSDFG.validate``): an alias. Bound for

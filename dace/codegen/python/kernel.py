@@ -14,7 +14,7 @@ from typing import NamedTuple
 
 from dace import SDFG, data, dtypes, symbolic
 from dace.codegen.exceptions import CodegenError
-from dace.codegen.python.emit import Emitter, expr
+from dace.codegen.python.emit import Emitter, c_modulo, expr
 from dace.frontend.operations import detect_reduction_type
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.tileops import ops
@@ -203,7 +203,13 @@ class KernelEmitter(Emitter):
             super().line(HELPER_CALL.sub(lambda m: f"{self.dialect[HELPER_ALIASES.get(m[1], m[1])]}(", part))
 
     def code(self, sdfg: SDFG, text: str) -> str:
-        return text  # a scalar is a value in a kernel
+        # A scalar is a value in a kernel; an interstate read of a global element is a load as in a tasklet body
+        return self.accesses(sdfg, c_modulo(text))
+
+    def accesses(self, sdfg: SDFG, code: str) -> str:
+        """``code`` with its global elements read and written by the loads and stores of the dialect."""
+        tree = KernelAccesses(sdfg, self.dialect).visit(ast.parse(code))
+        return ast.unparse(ast.fix_missing_locations(tree))
 
     def allocate(self, name: str, desc: data.Data) -> None:
         if not is_register(desc):
@@ -289,8 +295,7 @@ class KernelEmitter(Emitter):
         if node.language is not dtypes.Language.Python:
             raise CodegenError(f"Python backend: tasklet {node.label!r} is {node.language.name}, not Python")
         # An inlined connector reads its array in the body, which the kernel spells as the dialect does
-        tree = KernelAccesses(sdfg, self.dialect).visit(ast.parse(node.code.as_string))
-        return ast.unparse(ast.fix_missing_locations(tree))
+        return self.accesses(sdfg, super().body(sdfg, node))
 
     def copy(self, sdfg, state, edge) -> None:
         path = state.memlet_path(edge)

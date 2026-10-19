@@ -136,21 +136,26 @@ def auto_dispatch(
 
 
 def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
-    """The lowering an ``'Auto'`` node takes from its schedule: a thread-block collective inside a GPU kernel,
-    ``CUDA`` on a GPU schedule, ``pure`` when ``Sequential`` or not yet inferred (``Default``: a caller expanding
-    a graph it still transforms), ``CPU`` otherwise. A node without the picked lowering takes ``pure``, else
-    ``CPU``.
+    """The lowering an ``'Auto'`` node takes: a thread-block collective inside a GPU kernel, else
+    :func:`implementation_by_schedule`. A query; :func:`schedule_dispatch` commits the pick.
 
     :param node: the library node being expanded.
     :param parent_state: state containing ``node``.
     :returns: a key of the node's ``implementations``.
     """
-    from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation
 
-    block = in_kernel_block_implementation(node, parent_state)
-    if block is not None:
-        release_kernel_block_size(node, parent_state)
-        return block
+    return in_kernel_block_implementation(node, parent_state) or implementation_by_schedule(node)
+
+
+def implementation_by_schedule(node: nodes.LibraryNode) -> str:
+    """The lowering of ``node`` outside a GPU kernel: ``CUDA`` on a GPU schedule, ``pure`` when ``Sequential`` or
+    not yet inferred (``Default``: a caller expanding a graph it still transforms), ``CPU`` otherwise. A node
+    without the picked lowering takes ``pure``, else ``CPU``.
+
+    :param node: the library node being expanded.
+    :returns: a key of the node's ``implementations``.
+    """
     if node.schedule in dtypes.ALL_GPU_SCHEDULES:
         name = "CUDA"
     elif node.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default):
@@ -164,7 +169,7 @@ def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dac
 
 
 def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dace.SDFGState):
-    """Expand ``node`` through :func:`select_implementation_by_schedule`, carrying the picked lowering's
+    """Expand ``node`` through the lowering :func:`select_implementation_by_schedule` picks, carrying its
     environments onto ``auto_cls`` (the ``'Auto'`` expansion) so a CUDA pick still links its library.
 
     :param auto_cls: the calling ``'Auto'`` expansion class.
@@ -172,10 +177,16 @@ def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dac
     :param parent_state: state containing ``node``.
     :returns: whatever the picked expansion returns.
     """
-    picked = type(node).implementations[select_implementation_by_schedule(node, parent_state)]
-    expansion = auto_dispatch(node, parent_state, select_implementation_by_schedule, type(node))
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+
+    block = in_kernel_block_implementation(node, parent_state)
+    if block is not None:
+        # The block collective's lane map now sets the block size of the kernels around it
+        release_kernel_block_size(node, parent_state)
+    name = block or implementation_by_schedule(node)
+    expansion = auto_dispatch(node, parent_state, lambda *_: name, type(node))
     # after the dispatch: an expansion may fill its environments inside ``expansion()``
-    auto_cls.environments = list(picked.environments)
+    auto_cls.environments = list(type(node).implementations[name].environments)
     return expansion
 
 

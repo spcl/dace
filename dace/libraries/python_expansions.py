@@ -154,11 +154,11 @@ def read_output(state: SDFGState, node: nodes.LibraryNode, edge: MultiConnectorE
     state.add_memlet_path(state.add_read(edge.data.data), *reversed(scopes), node, dst_conn=conn, memlet=memlet)
 
 
-def literal(value) -> str:
-    """A number property as Python source: an integer as written, any other through ``float`` (``inf`` too)."""
-    if isinstance(value, (int, np.integer)):
-        return repr(int(value))
-    return f"float({str(value)!r})"
+def literal(value, dtype: dtypes.typeclass) -> str:
+    """A number property as a scalar of ``dtype``, so an integer seed stays exact; SymPy spells infinity ``oo``."""
+    text = str(int(value)) if isinstance(value, (int, np.integer)) else str(value).replace("oo", "inf")
+    number = dtype.as_numpy_dtype().type(text)
+    return f"np.{number.dtype.name}({str(number)!r})"
 
 
 def transposed(operand: str, transpose: bool) -> str:
@@ -295,14 +295,14 @@ def doubling(update: str) -> str:
     return f"__ss = 1\nwhile __ss < __sy.shape[0]:\n    {update}\n    __ss *= 2\n"
 
 
-def scan_seed(node: scan_node.Scan) -> str | None:
+def scan_seed(node: scan_node.Scan, dtype: dtypes.typeclass) -> str | None:
     """The value the scan starts from, in the order :func:`~dace.libraries.standard.nodes.scan.chain_seed` picks it."""
     if scan_node.INIT_CONNECTOR_NAME in node.in_connectors and not node.exclusive:
         return scan_node.INIT_CONNECTOR_NAME
     if node.op is scan_node.ScanOp.AFFINE:
         return "0"
     if node.identity is not None:
-        return literal(node.identity)
+        return literal(node.identity, dtype)
     return SCAN_IDENTITIES.get(node.op)
 
 
@@ -326,7 +326,8 @@ def scan(o: Operands) -> str:
     node, xp = o.node, o.xp
     if node.chains != 1 or not symbolic.equal_valued(1, node.stride) or not symbolic.equal_valued(1, node.segments):
         raise NotImplementedError(f"{node.label}: the CuPy scan takes one unit-stride chain over one segment")
-    seed = scan_seed(node)
+    out = scan_node.OUTPUT_CONNECTOR_NAME
+    seed = scan_seed(node, o.sdfg.arrays[o.outputs[out].data.data].dtype)
     # One element binds as its value; the scan walks a one-dim array
     code = f"__sy = {xp}.array({o[scan_node.INPUT_CONNECTOR_NAME]}, ndmin=1)\n"
     if node.op is scan_node.ScanOp.AFFINE:
@@ -340,7 +341,6 @@ def scan(o: Operands) -> str:
         code += f"__sy = __sy + __sa * ({seed})\n"
     else:
         code += value_scan(node, xp, seed)
-    out = scan_node.OUTPUT_CONNECTOR_NAME
     return code + o.store(out, "__sy[0]" if o.single(out) else "__sy")
 
 
@@ -353,9 +353,10 @@ def arg_reduce(o: Operands) -> str:
 
 
 class Elementwise(ast.NodeTransformer):
-    """A predicate over a whole index range: ``and`` / ``or`` / ``not`` become the logical array functions, and an
-    array subscript is clamped into the array, since a guard such as ``i > 0 and a[i - 1]`` no longer
-    short-circuits the read it guards; the guard still decides the lanes it covered."""
+    """A predicate over a whole index range: ``and`` / ``or`` / ``not`` and a chained comparison become the logical
+    array functions, a conditional expression ``where``, and an array subscript is clamped into the array, since a
+    guard such as ``i > 0 and a[i - 1]`` no longer short-circuits the read it guards; the guard still decides the
+    lanes it covered."""
 
     def __init__(self, xp: str, arrays: set[str]) -> None:
         self.xp, self.arrays = xp, arrays
@@ -363,13 +364,25 @@ class Elementwise(ast.NodeTransformer):
     def call(self, function: str, args: list[ast.expr]) -> ast.Call:
         return ast.Call(ast.Attribute(ast.Name(self.xp, ast.Load()), function, ast.Load()), args, [])
 
-    def visit_BoolOp(self, node: ast.BoolOp) -> ast.expr:
-        self.generic_visit(node)
-        function = "logical_and" if isinstance(node.op, ast.And) else "logical_or"
-        result = node.values[0]
-        for value in node.values[1:]:
+    def fold(self, function: str, values: list[ast.expr]) -> ast.expr:
+        result = values[0]
+        for value in values[1:]:
             result = self.call(function, [result, value])
         return result
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> ast.expr:
+        self.generic_visit(node)
+        return self.fold("logical_and" if isinstance(node.op, ast.And) else "logical_or", node.values)
+
+    def visit_Compare(self, node: ast.Compare) -> ast.expr:
+        self.generic_visit(node)
+        operands = [node.left, *node.comparators]
+        pairs = [ast.Compare(left, [op], [right]) for left, op, right in zip(operands, node.ops, operands[1:])]
+        return self.fold("logical_and", pairs)
+
+    def visit_IfExp(self, node: ast.IfExp) -> ast.expr:
+        self.generic_visit(node)
+        return self.call("where", [node.test, node.body, node.orelse])
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.expr:
         self.generic_visit(node)

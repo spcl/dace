@@ -12,7 +12,6 @@ import re
 
 from dace import data, dtypes, symbolic
 from dace.codegen.exceptions import CodegenError
-from dace.codegen.python.emit import expr
 from dace.codegen.python.kernel import (
     Dialect,
     Element,
@@ -85,8 +84,7 @@ class TileLangEmitter(KernelEmitter):
             return
         kind = "shared" if name in self.shared else "fragment"
         # A register has no ``ONE`` dim: the copy filling an index tile writes only the dims it varies over
-        extents = [str(tile_extent(s)) for s in desc.shape if not symbolic.has_one_marker(s)] or ["1"]
-        shape = ", ".join(extents if is_register(desc) else (expr(s) for s in desc.shape))
+        shape = ", ".join([str(tile_extent(s)) for s in desc.shape if not symbolic.has_one_marker(s)] or ["1"])
         self.allocations.append(f'{name} = T.alloc_{kind}(({shape},), "{dtype_name(desc.dtype)}")')
 
     def copy(self, sdfg, state, edge) -> None:

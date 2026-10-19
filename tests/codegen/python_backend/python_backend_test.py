@@ -10,7 +10,7 @@ import pytest
 import dace
 from dace import symbolic
 from dace.codegen.exceptions import CodegenError
-from dace.codegen.python.emit import generate
+from dace.codegen.python.emit import PRELUDE, generate
 from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N")
@@ -173,6 +173,10 @@ def test_a_nested_sdfg_binds_its_row_in_place():
 
     assert np.array_equal(a, 2 * np.arange(12.0).reshape(3, 4))
     assert "row = A" in function_source(nested_sdfg())
+
+
+def test_an_in_out_connector_of_a_nested_sdfg_binds_once():
+    assert function_source(nested_sdfg()).count("row = A") == 1
 
 
 def one_tasklet_sdfg(code: str) -> dace.SDFG:
@@ -380,6 +384,56 @@ def test_a_symbolic_modulo_bound_keeps_its_rounding():
         modulo_bounded_loops_sdfg()(out=out, n=3)
 
     assert out.tolist() == [1, 1]
+
+
+def percent_sdfg() -> dace.SDFG:
+    """``%`` of a negative dividend, once in an interstate assignment and once in a tasklet body."""
+    sdfg = dace.SDFG("percent_modulos")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("x", [1], dace.int64)
+    sdfg.add_array("out", [2], dace.int64)
+    first, second = sdfg.add_state(), sdfg.add_state()
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"r": "(n - 9) % 4"}))
+    tasklet = second.add_tasklet("t", {"a": dace.int64}, {"b": dace.int64, "c": dace.int64}, "b = r\nc = a % 4")
+    second.add_edge(second.add_read("x"), None, tasklet, "a", dace.Memlet("x[0]"))
+    out = second.add_write("out")
+    second.add_edge(tasklet, "b", out, None, dace.Memlet("out[0]"))
+    second.add_edge(tasklet, "c", out, None, dace.Memlet("out[1]"))
+    return sdfg
+
+
+def test_a_percent_in_interstate_code_and_in_a_tasklet_truncates_as_in_c():
+    out = np.zeros(2, dtype=np.int64)
+
+    with python_backend():
+        percent_sdfg()(x=np.array([-5]), out=out, n=4)
+
+    assert out.tolist() == [-1, -1]
+
+
+def test_the_c_modulo_of_two_integers_is_an_exact_integer():
+    """A host symbol stays a Python int, which a tile kernel launch takes and a float would round."""
+    namespace: dict = {}
+    exec(PRELUDE, namespace)
+
+    remainder = namespace["c_mod"](-(10**20) - 3, 10)
+
+    assert type(remainder) is int and remainder == -3
+
+
+def test_an_infinite_constant_seeds_a_tasklet():
+    sdfg = dace.SDFG("infinite_seed")
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_constant("SEED", np.float64(-np.inf))
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {}, {"o": dace.float64}, "o = SEED")
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    out = np.zeros(1)
+
+    with python_backend():
+        sdfg(out=out)
+
+    assert out[0] == -np.inf
 
 
 def doubler_sdfg(label: str) -> dace.SDFG:

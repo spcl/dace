@@ -1012,6 +1012,24 @@ def test_non_transient_promotion_is_read_only():
     assert "total" not in scalar_to_symbol.find_promotable_scalars(wr, transients_only=False)
 
 
+def test_an_argument_only_a_memlet_subset_names_is_promoted():
+    """``a[inc + i]`` reads ``inc`` with no access node of its own: every index is a symbol, so ``inc`` becomes one."""
+
+    @dace.program
+    def offset_sum(a: dace.float64[40], inc: dace.int32, out: dace.float64[1]):
+        s = 0.0
+        for i in range(20):
+            s = s + a[inc + i]
+        out[0] = s
+
+    sdfg = offset_sum.to_sdfg(simplify=True)
+    assert not any(n.data == "inc" for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode))
+
+    promoted = scalar_to_symbol.find_promotable_scalars(sdfg, transients_only=False)
+
+    assert "inc" in promoted
+
+
 def test_index_produced_in_the_same_state_is_not_promotable():
     """A definition whose INDEX the same state is still computing cannot be hoisted out of it.
 

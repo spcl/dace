@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace.codegen.python.emit import generate
@@ -451,6 +452,26 @@ def test_an_exclusive_sum_scan_starts_from_zero():
     assert y.tolist() == [0.0, 1.0, 3.0, 6.0, 10.0]
 
 
+@pytest.mark.parametrize(
+    "identity, dtype, values, expected",
+    [
+        (str(np.iinfo(np.int64).max), np.int64, [2**62, 5, 7], [np.iinfo(np.int64).max, 2**62, 5]),
+        (sympy.oo, np.float64, [3.0, 1.0, 2.0], [np.inf, 3.0, 1.0]),
+    ],
+    ids=["int64_max_string", "sympy_infinity"],
+)
+def test_an_exclusive_min_scan_starts_from_its_identity_exactly(identity, dtype, values, expected):
+    node = Scan("scan", op=ScanOp.MIN, exclusive=True, identity=identity)
+    element = dace.dtypes.typeclass(dtype)
+    sdfg = wired_sdfg(node, {"x": ([3], element), "y": ([3], element)}, {"_scan_in": "x[0:3]"}, {"_scan_out": "y[0:3]"})
+    y = np.zeros(3, dtype)
+
+    with python_backend():
+        sdfg(x=np.array(values, dtype), y=y)
+
+    assert y.tolist() == expected
+
+
 def affine_scan_sdfg(storage: dace.StorageType) -> dace.SDFG:
     """``y[k] = c[k] * y[k-1] + d[k]`` from ``y[-1] = s[0]``."""
     node = Scan("scan", op=ScanOp.AFFINE)
@@ -536,6 +557,24 @@ def test_a_search_returns_the_first_index_in_range_where_the_predicate_holds(val
 
     with python_backend():
         find_first_sdfg(dace.StorageType.Default)(a=np.array(values), i=i)
+
+    assert i[0] == expected
+
+
+@pytest.mark.parametrize(
+    "predicate, expected",
+    [("0.5 < _a[__i] < 2.0", 2), ("(_a[__i] > 1.0) if __i > 2 else False", 3)],
+    ids=["chained_comparison", "conditional_expression"],
+)
+def test_a_search_predicate_holds_lane_by_lane(predicate: str, expected: int):
+    search = FindFirst("lanes", predicate=predicate, begin=0, end=5)
+    search.add_in_connector("_a")
+    arrays = {"a": ([5], dace.float64), "i": ([1], dace.int64)}
+    sdfg = wired_sdfg(search, arrays, {"_a": "a[0:5]"}, {"_out_idx": "i[0]"})
+    i = np.zeros(1, dtype=np.int64)
+
+    with python_backend():
+        sdfg(a=np.array([0.1, 3.0, 1.0, 5.0, 1.0]), i=i)
 
     assert i[0] == expected
 
