@@ -1202,7 +1202,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         used_before_assignment: set | None = None,
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
-        tentative: set | None = None,
+        partially_defined: set | None = None,
     ) -> tuple[set[str], set[str], set[str]]:
         raise NotImplementedError
 
@@ -3328,14 +3328,14 @@ class AbstractControlFlowRegion(
         used_before_assignment: set | None = None,
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
-        tentative: set | None = None,
+        partially_defined: set | None = None,
     ) -> tuple[set[str], set[str], set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
         # The symbols in ``defined_syms`` only some paths assign (one arm of a conditional): a read still needs the
         # caller's value
-        tentative = set() if tentative is None else tentative
+        partially_defined = set() if partially_defined is None else partially_defined
 
         if with_contents:
             try:
@@ -3353,7 +3353,7 @@ class AbstractControlFlowRegion(
                         used_before_assignment,
                         keep_defined_in_mapping,
                         with_contents,
-                        tentative=tentative,
+                        partially_defined=partially_defined,
                     )
                     free_syms |= b_free_syms
                     defined_syms |= b_defined_syms
@@ -3363,7 +3363,7 @@ class AbstractControlFlowRegion(
                     state_symbols = block.used_symbols(all_symbols, keep_defined_in_mapping, with_contents)
                     free_syms |= state_symbols
                     # A block reading a symbol nothing has assigned yet needs the caller's value
-                    used_before_assignment.update(state_symbols - (defined_syms - tentative))
+                    used_before_assignment.update(state_symbols - (defined_syms - partially_defined))
 
                 # Add free inter-state symbols
                 for e in self.out_edges(block):
@@ -3376,9 +3376,9 @@ class AbstractControlFlowRegion(
                     for d in dsyms:
                         efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
                     assigned = set(e.data.assignments.keys()) - (efsyms | state_symbols)
-                    used_before_assignment.update(efsyms - (defined_syms - tentative))
+                    used_before_assignment.update(efsyms - (defined_syms - partially_defined))
                     defined_syms |= assigned
-                    tentative -= assigned
+                    partially_defined -= assigned
                     free_syms |= efsyms
 
         # Remove symbols that were used before they were assigned.
@@ -4067,7 +4067,7 @@ class LoopRegion(ControlFlowRegion):
         used_before_assignment: set | None = None,
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
-        tentative: set | None = None,
+        partially_defined: set | None = None,
     ) -> tuple[set[str], set[str], set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
@@ -4087,7 +4087,9 @@ class LoopRegion(ControlFlowRegion):
         b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
             all_symbols, keep_defined_in_mapping=keep_defined_in_mapping, with_contents=with_contents
         )
-        outside_defined = defined_syms - used_before_assignment - (set() if tentative is None else tentative)
+        outside_defined = (
+            defined_syms - used_before_assignment - (set() if partially_defined is None else partially_defined)
+        )
         used_before_assignment |= (b_used_before_assignment - {self.loop_variable}) - outside_defined
         free_syms |= b_free_symbols
         defined_syms |= b_defined_symbols
@@ -4317,21 +4319,21 @@ class ConditionalBlock(AbstractControlFlowRegion):
         used_before_assignment: set | None = None,
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
-        tentative: set | None = None,
+        partially_defined: set | None = None,
     ) -> tuple[set[str], set[str], set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        tentative = set() if tentative is None else tentative
+        partially_defined = set() if partially_defined is None else partially_defined
 
         # Only one branch runs: each starts from the entry set.
-        entry_defined, entry_tentative = set(defined_syms), set(tentative)
+        entry_defined, entry_partial = set(defined_syms), set(partially_defined)
         # Assigned on every path through the block; without an else arm, also on the path that skips every branch
         has_else = any(condition is None for condition, _ in self._branches)
-        must_defined: set[str] | None = None if has_else else entry_defined - entry_tentative
+        must_defined: set[str] | None = None if has_else else entry_defined - entry_partial
         for condition, region in self._branches:
-            branch_defined, branch_tentative = set(entry_defined), set(entry_tentative)
+            branch_defined, branch_partial = set(entry_defined), set(entry_partial)
             if condition is not None:
                 free_syms |= condition.get_free_symbols(branch_defined)
             b_free_symbols, b_defined_symbols, b_used_before_assignment = region._used_symbols_internal(
@@ -4341,16 +4343,16 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 used_before_assignment,
                 keep_defined_in_mapping,
                 with_contents,
-                tentative=branch_tentative,
+                partially_defined=branch_partial,
             )
             free_syms |= b_free_symbols
             defined_syms |= b_defined_symbols
             used_before_assignment |= b_used_before_assignment
-            definite = b_defined_symbols - branch_tentative
+            definite = b_defined_symbols - branch_partial
             must_defined = definite if must_defined is None else must_defined & definite
         must_defined = must_defined or set()
-        tentative |= defined_syms - must_defined
-        tentative -= must_defined
+        partially_defined |= defined_syms - must_defined
+        partially_defined -= must_defined
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms
