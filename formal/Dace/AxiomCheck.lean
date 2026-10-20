@@ -81,3 +81,14 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Query.withAxioms_sound
 #print axioms Dace.Query.decide_sound
 #print axioms Dace.Constraints.toHyps_sound
+
+-- R1.2: observables, refinement and equivalence.
+#print axioms Dace.Refines.refl_of_supported
+#print axioms Dace.Refines.refl_iff_supported
+#print axioms Dace.Refines.trans
+#print axioms Dace.Refines.conservative
+#print axioms Dace.Equiv.symm
+#print axioms Dace.Equiv.trans
+#print axioms Dace.Equiv.refl_iff_supported
+#print axioms Dace.Refines_iff_sim
+#print axioms Dace.Sim.trans

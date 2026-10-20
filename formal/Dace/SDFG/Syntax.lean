@@ -237,9 +237,6 @@ def isTransient (g : SDFG) (n : Name) : Bool := (g.array? n).map (·.transient) 
 
 def symbolNames (g : SDFG) : List Sym := g.symbols.map Prod.fst
 
-/-- Non-transient containers: the data interface of the program. -/
-def interface (g : SDFG) : List Name := (g.arrays.filter fun (_, d) => !d.transient).map Prod.fst
-
 end SDFG
 
 /-! ## Traversal helpers (mutual recursion over the hierarchy) -/
