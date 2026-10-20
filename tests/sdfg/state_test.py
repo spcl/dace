@@ -383,3 +383,4 @@ if __name__ == "__main__":
     test_start_block_repinned_when_start_block_removed()
     for _cls in (SDFGState, BreakBlock, ContinueBlock, ReturnBlock):
         test_every_control_flow_block_answers_the_meta_access_queries(_cls)
+    test_removing_a_path_between_access_nodes_and_a_tasklet_removes_only_the_tasklet_connectors()
