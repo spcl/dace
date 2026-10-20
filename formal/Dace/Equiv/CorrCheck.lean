@@ -29,8 +29,9 @@ and function-call regions, `regCheck` then returns the rest of the list).
 
 Fragment (`UNKNOWN` with a reason outside it): no branching or conditional
 interstate edges (GBlocks, unstructured regions); every state is
-`SeqPure` (no streams, views, references, consume scopes, nested SDFGs,
-private transients or code→code values) with at most one component; no
+`SeqPureP` (no streams, views, references, consume scopes, nested SDFGs or
+code→code values; private transients allowed when both sides compute the
+same private sets) with at most one component; no
 dynamic map inputs; equal descriptor repositories; no constants; a code
 node's input memlets in the order of its in-edges (`sdfg_to_tree` lists
 them in `state.in_edges` order, so the tree must be built from the SDFG as
@@ -260,7 +261,7 @@ end Sound
 
 /-- Check one state against the head of the tree list; the rest of the list. -/
 def stateCheck (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Except String (List SNode) :=
-  if seqPure? ctx s = false then .error s!"state '{s.label}': outside the fragment (seqPure?)"
+  if seqPureP? ctx s = false then .error s!"state '{s.label}': outside the fragment (seqPureP?)"
   else
     match s.components with
     | [] => .ok cs
@@ -278,7 +279,7 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {s : State} {cs rest : List SNo
   split at h
   · cases h
   · rename_i hp
-    have hpure : SeqPure ctx s := seqPure?_sound (by simpa using hp)
+    have hpure : SeqPureP ctx s := seqPureP?_sound (by simpa using hp)
     split at h
     · rename_i hc
       cases h
@@ -621,8 +622,8 @@ variable {g : SDFG} {t : STree} {s : State} (I₁ I₂ : Interp)
 theorem CopyShape.withI {n : DNode} (h : s.CopyShape (sctx I₁ g) n) : s.CopyShape (sctx I₂ g) n :=
   ⟨h.noRef, h.dst⟩
 
-theorem SeqPure.withI (h : SeqPure (sctx I₁ g) s) : SeqPure (sctx I₂ g) s :=
-  ⟨h.plain, h.shapes, h.memlets, h.kinds, h.maps, h.reduces, h.codeOut⟩
+theorem SeqPureP.withI (h : SeqPureP (sctx I₁ g) s) : SeqPureP (sctx I₂ g) s :=
+  ⟨h.plain, h.shapes, h.memlets, h.kinds, h.ranges, h.reduces, h.codeOut⟩
 
 theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s o cs) :
     SegCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s o cs := by
@@ -635,7 +636,7 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I�
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s cs) :
     StateCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s cs := by
-  refine ⟨SeqPure.withI I₁ I₂ h.pure, ?_⟩
+  refine ⟨SeqPureP.withI I₁ I₂ h.pure, ?_⟩
   rcases h.comps with h₁ | ⟨c, o, full, hc, hseg, hto, hdir⟩
   · exact .inl h₁
   · exact .inr ⟨c, o, full, hc, SegCorr.withI I₁ I₂ hseg, hto, hdir⟩

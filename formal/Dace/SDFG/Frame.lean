@@ -35,6 +35,10 @@ Why the fragment:
   before it is written would be a dependence the map's delta does not
   record: map scopes must have none (`Ctx.privateTransients = []`);
 * code→code values are not logged; code nodes must not produce them.
+
+Without the restriction on private transients (`SeqPureP`, `seqPureP?`),
+runs are still coherent (`OrderedExec.coh`, end of the file); the pair
+checker of `Dace.Equiv.CorrCheck` only needs coherence.
 -/
 
 set_option autoImplicit false
@@ -47,9 +51,10 @@ def DNode.isCode (n : DNode) : Bool :=
   | .tasklet _ | .library _ => true
   | _ => false
 
-/-- The fragment of state-level dataflow on which sequential executions are
-footprinted actions (see the module documentation). -/
-structure SeqPure (ctx : Ctx) (s : State) : Prop where
+/-- The fragment of state-level dataflow whose sequential executions are
+coherent (the local view is the initial memory with the log applied,
+`NodeExec.coh`): `SeqPure` without the restriction on private transients. -/
+structure SeqPureP (ctx : Ctx) (s : State) : Prop where
   /-- No streams, references or views. -/
   plain : ∀ n d, ctx.desc? n = some d → d.isStream = false ∧ d.isReference = false ∧ d.isView = false
   /-- Shapes are pure (full ranges of missing subsets). -/
@@ -59,15 +64,43 @@ structure SeqPure (ctx : Ctx) (s : State) : Prop where
     m.srcSubset.all ctx.subsetPure = true ∧ m.dstSubset.all ctx.subsetPure = true
   /-- Only simple nodes and map entries (no consume scopes, no nested SDFGs). -/
   kinds : ∀ n ∈ s.nodes, n.isSimple = true ∨ ∃ mp, n.kind = .mapEntry mp
-  /-- Map scopes: pure ranges, no private transients. -/
-  maps : ∀ n ∈ s.nodes, ∀ mp, n.kind = .mapEntry mp →
-    ctx.rangePure mp.range = true ∧ ctx.privateTransients s n.id = []
+  /-- Map scopes have pure ranges. -/
+  ranges : ∀ n ∈ s.nodes, ∀ mp, n.kind = .mapEntry mp → ctx.rangePure mp.range = true
   /-- Reduction identities are pure. -/
   reduces : ∀ n ∈ s.nodes, ∀ l props, n.kind = .library l → l.reduce = some props →
     props.identity.all ctx.exprPure = true
   /-- Code nodes write containers only. -/
   codeOut : ∀ n ∈ s.nodes, n.isCode = true → ∀ e ∈ s.outEdges n.id, ∀ m, e.data = .memlet m →
     (s.dstEndpoint e).isData = true
+
+/-- The fragment of state-level dataflow on which sequential executions are
+footprinted actions: `SeqPureP` and map scopes without private transients. -/
+structure SeqPure (ctx : Ctx) (s : State) : Prop extends SeqPureP ctx s where
+  /-- Map scopes have no private transients. -/
+  noPriv : ∀ n ∈ s.nodes, ∀ mp, n.kind = .mapEntry mp → ctx.privateTransients s n.id = []
+
+instance {ctx : Ctx} {s : State} : Coe (SeqPure ctx s) (SeqPureP ctx s) := ⟨SeqPure.toSeqPureP⟩
+
+theorem SeqPure.maps {ctx : Ctx} {s : State} (h : SeqPure ctx s) :
+    ∀ n ∈ s.nodes, ∀ mp, n.kind = .mapEntry mp →
+      ctx.rangePure mp.range = true ∧ ctx.privateTransients s n.id = [] :=
+  fun n hn mp hk => ⟨h.ranges n hn mp hk, h.noPriv n hn mp hk⟩
+
+/-- Decision procedure for `SeqPureP` (`seqPureP?_sound`). -/
+def seqPureP? (ctx : Ctx) (s : State) : Bool :=
+  ctx.g.arrays.all (fun (_, d) => !d.isStream && !d.isReference && !d.isView && ctx.rangePure d.fullRange) &&
+  s.edges.all (fun e => match e.data with
+    | .memlet m => m.srcSubset.all ctx.subsetPure && m.dstSubset.all ctx.subsetPure
+    | .dep => true) &&
+  s.nodes.all (fun n =>
+    (n.isSimple || (match n.kind with | .mapEntry _ => true | _ => false)) &&
+    (match n.kind with
+      | .mapEntry mp => ctx.rangePure mp.range
+      | .library l => (l.reduce.map fun p => p.identity.all ctx.exprPure).getD true
+      | _ => true) &&
+    (!n.isCode || (s.outEdges n.id).all fun e => match e.data with
+      | .memlet _ => (s.dstEndpoint e).isData
+      | .dep => true))
 
 /-- Decision procedure for `SeqPure` (`seqPure?_sound`). -/
 def seqPure? (ctx : Ctx) (s : State) : Bool :=
@@ -85,8 +118,8 @@ def seqPure? (ctx : Ctx) (s : State) : Bool :=
       | .memlet _ => (s.dstEndpoint e).isData
       | .dep => true))
 
-theorem seqPure?_sound {ctx : Ctx} {s : State} (h : seqPure? ctx s = true) : SeqPure ctx s := by
-  simp only [seqPure?, Bool.and_eq_true, List.all_eq_true] at h
+theorem seqPureP?_sound {ctx : Ctx} {s : State} (h : seqPureP? ctx s = true) : SeqPureP ctx s := by
+  simp only [seqPureP?, Bool.and_eq_true, List.all_eq_true] at h
   obtain ⟨⟨harr, hedges⟩, hnodes⟩ := h
   have hdesc : ∀ n d, ctx.desc? n = some d → ∃ x ∈ ctx.g.arrays, x.2 = d := by
     intro n d hd
@@ -114,7 +147,7 @@ theorem seqPure?_sound {ctx : Ctx} {s : State} (h : seqPure? ctx s = true) : Seq
       cases hk : n.kind <;> simp [hk] at h₁
       exact ⟨_, rfl⟩
   · have := (hnodes n hn).1.2
-    simp only [hk, Bool.and_eq_true, List.isEmpty_iff] at this
+    simp only [hk] at this
     exact this
   · have := (hnodes n hn).1.2
     simp only [hk, hr, Option.map_some, Option.getD_some] at this
@@ -125,9 +158,52 @@ theorem seqPure?_sound {ctx : Ctx} {s : State} (h : seqPure? ctx s = true) : Seq
     simp only [hm] at this
     exact this
 
-namespace SeqPure
+theorem seqPure?_sound {ctx : Ctx} {s : State} (h : seqPure? ctx s = true) : SeqPure ctx s := by
+  simp only [seqPure?, Bool.and_eq_true, List.all_eq_true] at h
+  obtain ⟨⟨harr, hedges⟩, hnodes⟩ := h
+  have hdesc : ∀ n d, ctx.desc? n = some d → ∃ x ∈ ctx.g.arrays, x.2 = d := by
+    intro n d hd
+    simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hd
+    obtain ⟨x, hx, rfl⟩ := hd
+    exact ⟨x, List.mem_of_find?_eq_some hx, rfl⟩
+  have harr' : ∀ n d, ctx.desc? n = some d →
+      d.isStream = false ∧ d.isReference = false ∧ d.isView = false ∧ ctx.rangePure d.fullRange = true := by
+    intro n d hd
+    obtain ⟨x, hx, rfl⟩ := hdesc n d hd
+    have := harr x hx
+    simp only [Bool.not_eq_eq_eq_not, Bool.not_true] at this
+    exact ⟨this.1.1.1, this.1.1.2, this.1.2, this.2⟩
+  have hmaps : ∀ n ∈ s.nodes, ∀ mp, n.kind = .mapEntry mp →
+      ctx.rangePure mp.range = true ∧ ctx.privateTransients s n.id = [] := by
+    intro n hn mp hk
+    have := (hnodes n hn).1.2
+    simp only [hk, Bool.and_eq_true, List.isEmpty_iff] at this
+    exact this
+  refine ⟨⟨fun n d hd => ⟨(harr' n d hd).1, (harr' n d hd).2.1, (harr' n d hd).2.2.1⟩,
+    fun n d hd => (harr' n d hd).2.2.2, fun e he m hm => ?_, fun n hn => ?_, fun n hn mp hk => (hmaps n hn mp hk).1,
+    fun n hn l props hk hr => ?_, fun n hn hc e he m hm => ?_⟩, fun n hn mp hk => (hmaps n hn mp hk).2⟩
+  · have := hedges e he
+    simp only [hm, Bool.and_eq_true] at this
+    exact this
+  · have := (hnodes n hn).1.1
+    simp only [Bool.or_eq_true] at this
+    rcases this with h₁ | h₁
+    · exact .inl h₁
+    · right
+      cases hk : n.kind <;> simp [hk] at h₁
+      exact ⟨_, rfl⟩
+  · have := (hnodes n hn).1.2
+    simp only [hk, hr, Option.map_some, Option.getD_some] at this
+    exact this
+  · have := (hnodes n hn).2
+    simp only [hc, Bool.not_true, Bool.false_or, List.all_eq_true] at this
+    have := this e he
+    simp only [hm] at this
+    exact this
 
-variable {ctx : Ctx} {s : State} (h : SeqPure ctx s)
+namespace SeqPureP
+
+variable {ctx : Ctx} {s : State} (h : SeqPureP ctx s)
 include h
 
 theorem isStream (n : Name) : ctx.isStream n = false := by
@@ -194,13 +270,13 @@ theorem dstEndpoint_pure {e : DEdge} (he : e ∈ s.edges) {d : Name} {sub : Opti
     | (cases hs; exact h.dst_pure he _)
     | cases hs
 
-end SeqPure
+end SeqPureP
 
 /-! ## Leaf functions are footprinted -/
 
 section Leaf
 
-variable {ctx : Ctx} (ρ : Valuation) {s : State} (h : SeqPure ctx s)
+variable {ctx : Ctx} (ρ : Valuation) {s : State} (h : SeqPureP ctx s)
 include h
 
 omit h in
@@ -820,5 +896,89 @@ theorem SeqExec.coherent {ρ : Valuation} {ids : List NodeId} {st st' : St} {tr 
   rw [St.step_emptyLog]
 
 end FrameThm
+
+/-! ## Coherence on `SeqPureP`
+
+Coherence does not need the frame property: a normal run of a node steps
+the state by a delta (a leaf by `execSimple_foot`, a map scope by its
+set-up delta followed by the union of its iteration logs, private
+transients dropped or not), so a run from an empty log ends in its log
+applied to the initial memory (`OrderedExec.coh`). -/
+
+section Coherence
+
+variable {ctx : Ctx} {s : State} (h : SeqPureP ctx s)
+include h
+
+/-- A normal run of a node steps the state by a delta. -/
+theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.nodes)
+    (hx : NodeExec ctx ρ s n st (.ok a)) : ∃ δ, a = st.step ctx.I.wcr δ := by
+  suffices H : ∀ r, NodeExec ctx ρ s n st r → r = .ok a → ∃ δ, a = st.step ctx.I.wcr δ from H _ hx rfl
+  intro r hx hr
+  cases hx with
+  | simple _ =>
+    obtain ⟨δ, -, hδ, -⟩ := execSimple_foot ρ h hn st a hr
+    exact ⟨δ, hδ⟩
+  | mapScope hk hs _ =>
+    obtain ⟨δ₁, -, rfl, -⟩ := mapSetup_frame ρ h (h.ranges _ hn _ hk) hs
+    obtain ⟨-, rfl⟩ := scopeFinish_ok hr
+    exact ⟨_, St.step_step _ _ _ _⟩
+  | mapSetupErr => cases hr
+  | mapIterErr => cases hr
+  | consumeSetupErr => cases hr
+  | consumeTasksErr => cases hr
+  | nestedSetupErr => cases hr
+  | nestedInnerErr => cases hr
+  | consumeScope hk _ _ =>
+    exfalso
+    rcases h.kinds _ hn with hs | ⟨mp, hm⟩
+    · simp [DNode.isSimple, hk] at hs
+    · rw [hk] at hm; cases hm
+  | nested hk _ _ =>
+    exfalso
+    rcases h.kinds _ hn with hs | ⟨mp, hm⟩
+    · simp [DNode.isSimple, hk] at hs
+    · rw [hk] at hm; cases hm
+
+/-- A normal sequential run steps the state by a delta. -/
+theorem SeqExec.steps {ρ : Valuation} :
+    ∀ {ids : List NodeId} {st st₂ : St} {tr : List (NodeId × Log)},
+      SeqExec ctx ρ s ids st (.ok (st₂, tr)) → ∃ δ, st₂ = st.step ctx.I.wcr δ
+  | [], st, _, _, hx => by cases hx; exact ⟨Log.empty, (St.step_empty _ _).symm⟩
+  | _ :: _, st, _, _, hx => by
+    cases hx with
+    | cons hnode hn hr =>
+      obtain ⟨δ, rfl⟩ := NodeExec.steps h (List.mem_of_find?_eq_some hnode) hn
+      obtain ⟨δ', rfl⟩ := SeqExec.steps hr
+      rw [St.afterNode_step, St.step_step]
+      exact ⟨_, rfl⟩
+
+/-- A normal run of a scope body or component steps the state by a delta. -/
+theorem OrderedExec.steps {ρ : Valuation} {all direct : List NodeId} {st st' : St}
+    (hx : OrderedExec ctx ρ s all direct st (.ok st')) : ∃ δ, st' = st.step ctx.I.wcr δ := by
+  suffices H : ∀ r, OrderedExec ctx ρ s all direct st r → r = .ok st' → ∃ δ, st' = st.step ctx.I.wcr δ from
+    H _ hx rfl
+  intro r hx hr
+  cases hx with
+  | prologueErr => cases hr
+  | seqErr => cases hr
+  | hbRace => cases hr
+  | run _ hp hs _ =>
+    cases hr
+    rw [bindViews_eq ρ h] at hp
+    cases hp
+    exact SeqExec.steps h hs
+
+/-- **St-coherence on `SeqPureP`**: along a run from an empty log, the local
+view is the initial memory with the log applied, and the code-edge values
+are unchanged. -/
+theorem OrderedExec.coh {ρ : Valuation} {all direct : List NodeId} {st st' : St}
+    (hx : OrderedExec ctx ρ s all direct { st with log := Log.empty } (.ok st')) :
+    st'.mem = st'.log.apply ctx.I.wcr st.mem ∧ st'.vals = st.vals := by
+  obtain ⟨δ, rfl⟩ := OrderedExec.steps h hx
+  rw [St.step_emptyLog]
+  exact ⟨rfl, rfl⟩
+
+end Coherence
 
 end Dace

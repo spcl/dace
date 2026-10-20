@@ -23,7 +23,7 @@ leaves are equal leaf functions (`execCode_eq`, …) up to the log prefix
 whose SDFG trace has a happens-before race is undefined behavior
 (`OrderedExec.hbRace`).
 
-The fragment is `SeqPure` (`Dace.SDFG.Frame`): its frame lemmas give that
+The fragment is `SeqPureP` (`Dace.SDFG.Frame`): its leaf lemmas give that
 SDFG nodes keep the (empty) code-edge values.
 -/
 
@@ -346,7 +346,7 @@ theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).s
 
 section Matched
 
-variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPure ctx s) (he : tc.ctx.erase = ctx.erase)
+variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPureP ctx s) (he : tc.ctx.erase = ctx.erase)
   (hcons : tc.consumed = none)
 
 omit hcons in

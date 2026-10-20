@@ -252,3 +252,4 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.SDFGExec.det
 #print axioms Dace.SDFG.Exec.det
 #print axioms Dace.SDFG.Exec.no_err
+#print axioms Dace.OrderedExec.coh

@@ -6,11 +6,12 @@ import Dace.Equiv.Equiv
 # SDFG and schedule tree: states (M5a)
 
 * **States** (`StateCorr`, `StateCorr.matched`): a state of the fragment
-  `SeqPure` with at most one weakly connected component whose tree segment
+  `SeqPureP` (`SeqPure` with private transients allowed) with at most one
+  weakly connected component whose tree segment
   is the image of the component's top-level nodes in a topological order of
   the component (`SegCorr`).  The SDFG runs the component from the state's
   memory with an empty log and merges its log; the tree runs the segment on
-  the current state.  Coherence (`OrderedExec.coherent`: the memory after a
+  the current state.  Coherence (`OrderedExec.coh`: the memory after a
   run is the initial memory with its log applied) makes the two agree.
 
 Control flow and whole programs: `Dace.Equiv.CorrCtl`.
@@ -26,7 +27,7 @@ namespace Corr
 
 /-- The tree segment `cs` corresponds to state `s`. -/
 structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop where
-  pure : SeqPure ctx s
+  pure : SeqPureP ctx s
   comps : (s.components = [] ∧ cs = []) ∨
     ∃ c o full, s.components = [c] ∧ SegCorr ctx tc s o cs ∧ s.isTopologicalOrder c full = true ∧
       full.filter (s.topLevelOf c).contains = o
@@ -110,7 +111,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
         | false => exact .inl ⟨_, rfl, (hstate (.hbRace hto hp hs₀ hf)).1 _ rfl⟩
         | true =>
           have hrun : OrderedExec ctx cst.ρ s c (s.topLevelOf c) base (.ok st'') := .run hto hp hs₀ hf
-          have hcoh := OrderedExec.coherent h (st := base) hrun
+          have hcoh := (OrderedExec.coh h (st := base) hrun).1
           refine .inr (.inr ⟨cst', hl, ?_⟩)
           have := (hstate hrun).2 _ rfl
           have hcst : ({ cst with mem := st''.log.apply ctx.I.wcr cst.mem, log := cst.log.seq st''.log } : CSt) =
