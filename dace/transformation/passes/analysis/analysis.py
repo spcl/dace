@@ -1145,7 +1145,11 @@ class ScalarWriteShadowScopes(ppl.Pass):
         # write leaves the other arms as paths around it, and two sibling loops looked like one carried chain.
         kills = self._scope_kills.get((desc, other_write), (other_write,))
         access_state, access_node = access
-        if not all(isinstance(b, SDFGState) for b in (write_state, access_state, *(k[0] for k in kills))):
+        # A branch condition reads on entry to its conditional, a block the state flow has an entry for.
+        condition_read = isinstance(access_state, ConditionalBlock) and access_node is access_state
+        if not all(isinstance(b, SDFGState) for b in (write_state, *(k[0] for k in kills))) or not (
+            condition_read or isinstance(access_state, SDFGState)
+        ):
             return True
         if any(write_state is kill_state for kill_state, _ in kills):
             return True

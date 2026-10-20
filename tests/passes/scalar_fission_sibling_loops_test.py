@@ -120,6 +120,34 @@ def sibling_loops_writing_the_temporary_in_both_arms() -> dace.SDFG:
     return sdfg
 
 
+def sibling_loops_branching_on_the_temporary() -> dace.SDFG:
+    """``for k: {for i: z = a[k,i]*2; if z > 1: o1[k,i] = z + o1[k-1,i]}  {same with 3 into o2}``.
+
+    CloudSC's ``__tmp206``: each loop writes the temporary, then reads it in a branch CONDITION, which reads on entry
+    to the conditional -- a block, not a state -- and the next loop's write kills the value before its condition.
+    """
+    sdfg = new_sdfg("sibling_loops_branching_on_the_temporary")
+    outer = LoopRegion("outer", "k < M", "k", "k = 1", "k = k + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    loops = []
+    for index, (out, scale) in enumerate((("o1", 2.0), ("o2", 3.0))):
+
+        def body(inner, it, out=out, scale=scale):
+            write = inner.add_state("write", is_start_block=True)
+            add_assign(write, f"y = x * {scale}", {"x": f"a[k, {it}]"}, ("z", "z[0]"))
+            branch = ConditionalBlock("pick")
+            inner.add_node(branch)
+            inner.add_edge(write, branch, dace.InterstateEdge())
+            arm = ControlFlowRegion("arm", sdfg=sdfg)
+            read = arm.add_state("read", is_start_block=True)
+            add_assign(read, "y = x + p", {"x": "z[0]", "p": f"{out}[k - 1, {it}]"}, (out, f"{out}[k, {it}]"))
+            branch.add_branch(dace.properties.CodeBlock("z > 1.0"), arm)
+
+        loops.append(add_inner_loop(outer, index, body))
+    outer.add_edge(loops[0], loops[1], dace.InterstateEdge())
+    return sdfg
+
+
 def privatize_and_map(sdfg: dace.SDFG) -> list:
     sdfg.validate()
     PrivatizeScalars().apply_pass(sdfg, {})
@@ -175,7 +203,25 @@ def test_sibling_loops_writing_the_temporary_in_both_arms_each_get_their_own_cop
     np.testing.assert_allclose(o2, r2, rtol=1e-14, atol=0)
 
 
+def test_sibling_loops_branching_on_the_temporary_each_get_their_own_copy():
+    sdfg = sibling_loops_branching_on_the_temporary()
+    PrivatizeScalars().apply_pass(sdfg, {})
+    sdfg.validate()
+    containers = {node.data for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.AccessNode)} & {
+        name for name in sdfg.arrays if name.startswith("z")
+    }
+    assert len(containers) == 2, f"each sibling loop should own its copy of z, got {sorted(containers)}"
+    a, o1, o2 = run(sdfg)
+    r1, r2 = np.zeros((M, N)), np.zeros((M, N))
+    for k in range(1, M):
+        r1[k] = np.where(a[k] * 2.0 > 1.0, a[k] * 2.0 + r1[k - 1], 0.0)
+        r2[k] = np.where(a[k] * 3.0 > 1.0, a[k] * 3.0 + r2[k - 1], 0.0)
+    np.testing.assert_allclose(o1, r1, rtol=1e-14, atol=0)
+    np.testing.assert_allclose(o2, r2, rtol=1e-14, atol=0)
+
+
 if __name__ == "__main__":
     test_sibling_loops_each_get_their_own_copy_of_a_shared_temporary()
     test_a_temporary_carried_around_the_outer_loop_keeps_its_value()
     test_sibling_loops_writing_the_temporary_in_both_arms_each_get_their_own_copy()
+    test_sibling_loops_branching_on_the_temporary_each_get_their_own_copy()
