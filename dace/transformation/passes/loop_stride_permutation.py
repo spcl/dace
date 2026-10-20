@@ -205,8 +205,7 @@ class LoopStridePermutation(ppl.Pass):
         def revert() -> None:
             # Restore rather than re-swap: a trapezoid rewrite is not its own inverse.
             for lr, meta in zip(chain, snapshot):
-                for attr, value in meta.items():
-                    setattr(lr, attr, value)
+                _set_loop_meta(lr, meta)
 
         for k in range(pos, len(chain) - 1):
             # After prior swaps the target var sits at chain[k]; the pair being

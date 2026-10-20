@@ -1427,6 +1427,13 @@ class LoopToMap(xf.MultiStateTransformation):
 
     loop = xf.PatternNode(LoopRegion)
 
+    #: Shared analysis a pass probing many loops hands its probes (see :class:`LiftContext`); unset on a plain match.
+    lift_context: "LiftContext | None" = None
+    #: The resolver probes of one pass share; unset on a plain match.
+    symbol_resolver: "SymbolResolver | None" = None
+    #: Arrays the caller vouches for (a contract), whose conflicts are waived.
+    contract_arrays: frozenset = frozenset()
+
     keep_small_loops_sequential = properties.Property(
         dtype=bool,
         default=True,
@@ -1441,13 +1448,12 @@ class LoopToMap(xf.MultiStateTransformation):
         """Whether the dependence test waives conflicts on container ``name``: all of them under ``permissive``,
         else only the ``contract_arrays`` a caller set, whose writes a runtime contract check guards (the scatter
         targets of :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`)."""
-        return permissive or name in vars(self).get("contract_arrays", ())
+        return permissive or name in self.contract_arrays
 
     def probe_resolver(self) -> SymbolResolver:
         """The resolver a probe derives its facts with: the ``symbol_resolver`` a pass probing many loops shares
         until its next change to the graph, or a fresh one."""
-        # ``vars(self).get``, not ``getattr``, as for ``lift_context``: the attribute is absent on a plain match.
-        resolver = vars(self).get("symbol_resolver")
+        resolver = self.symbol_resolver
         return SymbolResolver() if resolver is None else resolver
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -1459,8 +1465,7 @@ class LoopToMap(xf.MultiStateTransformation):
         canon_stats.begin_probe()
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
-        # ``vars(self).get``, not ``getattr``: the attribute is genuinely absent on a plain match.
-        ctx: LiftContext | None = vars(self).get("lift_context")
+        ctx: LiftContext | None = self.lift_context
 
         def refuse(reason: str) -> bool:
             """Refuse the match and record why."""
@@ -1975,7 +1980,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
-        lift_ctx = vars(self).get("lift_context")
+        lift_ctx = self.lift_context
         ranges = None if lift_ctx is None else lift_ctx.invariants.check_range
         data = mmlt.data
         # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
@@ -2051,7 +2056,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # triangular read against its mirrored write (covariance reads ``cov[i, i:M]`` back to
             # store ``cov[i:M, i]``) is decided here rather than falling through to the
             # propagate+intersect fallback, which widens both to the whole array and always aliases.
-            ctx = vars(self).get("lift_context")
+            ctx = self.lift_context
             boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
             if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes):
                 canon_stats.solver_proof()
@@ -2136,7 +2141,7 @@ class LoopToMap(xf.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # Precomputed per-SDFG analysis, when a pass supplies it (see :class:`LiftContext`).
         # Everything read from it here is a value ``apply`` would otherwise recompute per lift.
-        lift_ctx: LiftContext | None = vars(self).get("lift_context")
+        lift_ctx: LiftContext | None = self.lift_context
         from dace.sdfg.propagation import align_memlet
 
         canon_stats.lifted(self.loop)

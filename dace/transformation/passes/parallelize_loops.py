@@ -332,7 +332,7 @@ class ParallelizeLoops(ppl.Pass):
         forget_facts(sd)
         # So the probes' resolver, once it forgets ``sd`` and what is nested in it, still holds what every enclosing
         # SDFG resolved, and the propagation below need not derive their facts again.
-        resolver = vars(xform).get("symbol_resolver")
+        resolver = xform.symbol_resolver
         if resolver is not None:
             resolver.forget_within(sd)
         for state in graph.states():
