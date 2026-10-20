@@ -380,7 +380,10 @@ theorem storeArrayWrite_shift (st : St) (d : Name) (sub : Option Subset) (w : Op
   · rfl
   · refine Res.bind_shift' _ fun lo => ?_
     split
-    · exact St.store_shift ..
+    · refine Res.bind_shift' _ fun pts => ?_
+      split
+      · exact St.store_shift ..
+      · rfl
     · rfl
 
 theorem applyArrayWrite_shift (s : State) (n : DNode) (st : St) (c : Conn) (rel : Idx) (v : Val) :

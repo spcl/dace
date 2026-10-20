@@ -385,7 +385,10 @@ theorem storeArrayWrite_foot (d : Name) (sub : Option Subset) (wcr : Option WcrO
   refine Foot.bind_det (fun st st₂ _ => ctx.lowerCorner_pure ρ _ _ hp) (fun lo => ?_)
   by_cases hl : rel.length = lo.length
   · simp only [hl, ↓reduceIte]
-    exact St.store_foot ctx ρ d _ oob wcr v
+    refine Foot.bind_det (fun st st₂ _ => ctx.pointsOf_pure ρ _ _ hp) (fun pts => ?_)
+    split
+    · exact St.store_foot ctx ρ d _ oob wcr v
+    · exact Foot.err _
   · simp only [hl, ↓reduceIte]
     exact Foot.err _
 

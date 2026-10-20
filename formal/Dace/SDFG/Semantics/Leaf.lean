@@ -259,14 +259,21 @@ def applyScalar (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (
 
 /-- Deliver an element write through a pointer output connector to a
 container endpoint, relative to the lower corner of the subset
-(`Ctx.lowerCorner`, also for an empty subset, `Decisions.md#D65`).  `oob` is
-the memlet's `allow_oob` flag. -/
+(`Ctx.lowerCorner`, also for an empty subset, `Decisions.md#D65`).  The
+written element must be a point of the memlet's subset; a write outside it
+is the undefined behavior `outsideSubset` (`Decisions.md#D67`), like a read
+outside an input subset is undefined for the tasklet.  `oob` is the
+memlet's `allow_oob` flag. -/
 def storeArrayWrite (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (wcr : Option WcrOp)
     (oob : Bool) (rel : Idx) (v : Val) : Res St :=
   if ctx.isStream d then .err (.malformed s!"array write to stream '{d}'")
   else do
     let lo ← ctx.lowerCorner ρ st.mem d sub
-    if rel.length = lo.length then st.store ctx ρ d (List.zipWith (· + ·) lo rel) oob wcr v
+    if rel.length = lo.length then do
+      let pts ← ctx.pointsOf ρ st.mem d sub
+      let abs := List.zipWith (· + ·) lo rel
+      if pts.contains abs then st.store ctx ρ d abs oob wcr v
+      else .err (.outsideSubset d abs)
     else .err (.malformed s!"array write index rank mismatch on '{d}'")
 
 /-- Deliver an element write through a pointer output connector. -/

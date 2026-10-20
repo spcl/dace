@@ -32,7 +32,8 @@ namespace Dace
 /-- Reasons for an erroneous outcome.  Three classes (`Decisions.md#D59`):
 
 * **undefined behavior** (`race`, `stuckPop`, `undefinedExpr`,
-  `undefinedSubset`, `unsetRef`, `outOfBounds`, `taskletUndefined`): the program is valid
+  `undefinedSubset`, `unsetRef`, `outOfBounds`, `outsideSubset`, `taskletUndefined`): the
+  program is valid
   but this execution has no defined result;
 * `malformed`: situations that well-formedness (`SDFG.WF`, `STree.check`)
   excludes; it keeps the semantics total over the syntax;
@@ -54,6 +55,9 @@ inductive ErrReason where
   /-- Element access outside the shape of the accessed container
   (`Decisions.md#D65`). -/
   | outOfBounds (n : Name) (idx : Idx)
+  /-- Element write through a pointer output connector outside the points
+  of the memlet's subset (`Decisions.md#D67`). -/
+  | outsideSubset (n : Name) (idx : Idx)
   /-- The tasklet interpretation is undefined for these inputs. -/
   | taskletUndefined (label : String)
   /-- The library-node interpretation (`Interp.library`) is undefined for
@@ -77,6 +81,7 @@ def ErrReason.toString : ErrReason → String
   | .undefinedSubset sub => s!"undefined subset {repr sub}"
   | .unsetRef n => s!"reference '{n}' accessed before it was set"
   | .outOfBounds n idx => s!"out-of-bounds access {idx} of '{n}'"
+  | .outsideSubset n idx => s!"write {idx} of '{n}' outside the memlet subset"
   | .taskletUndefined label => s!"tasklet '{label}' is undefined for its inputs"
   | .libraryUndefined cp => s!"library node '{cp}' is undefined for its inputs"
   | .unsupported msg => s!"unsupported {msg}"
@@ -102,6 +107,7 @@ def ErrReason.tag : ErrReason → String
   | .undefinedSubset _ => "undefinedSubset"
   | .unsetRef _ => "unsetRef"
   | .outOfBounds _ _ => "outOfBounds"
+  | .outsideSubset _ _ => "outsideSubset"
   | .taskletUndefined _ => "taskletUndefined"
   | .libraryUndefined _ => "libraryUndefined"
   | .unsupported _ => "unsupported"

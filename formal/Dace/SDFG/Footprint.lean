@@ -13,11 +13,10 @@ fragment in which logs carry no alias bindings and no queue effects.
   access (read, plain write, WCR contribution with its operator), and the
   map scopes (`binders`, outermost first) between the access and the
   footprinted region, whose parameters are additional free variables.
-  Element writes through pointer output connectors are **not** confined to
-  the memlet subset by the semantics (`storeArrayWrite` addresses
-  `lowerCorner + rel` for any `rel` the tasklet chooses), so a code node's
-  data output also contributes an `anyElem` access: any element of the
-  container that passes the bounds check (`Ctx.checkBounds`).
+  Element writes through pointer output connectors are confined to the
+  memlet subset by the semantics (a write outside it is the undefined
+  behavior `outsideSubset`, `Decisions.md#D67`), so a code node's data
+  output is the access of its subset.
 * `nodeFp ctx s F n` computes the accesses of node `n` (a map entry: of its
   whole scope, by fuel-bounded recursion over the scope tree), or `none`
   outside the fragment: consume scopes, nested SDFGs, view access nodes,
@@ -27,8 +26,7 @@ fragment in which logs carry no alias bindings and no queue effects.
 * `Access.Hit ctx m₀ ρ a l`: the location `l` is the element at linear offset
   `off` of `a`'s container, resolved through the aliases of `m₀`, where
   `off = ctx.elemOffset` of a point of `a`'s subset (as `Ctx.pointsOf`
-  enumerates it under some memory; or, for `anyElem`, of any index passing
-  the bounds check), under `ρ` extended by values of the binders'
+  enumerates it under some memory), under `ρ` extended by values of the binders'
   parameters taken from their ranges (`Binders.Ext`).
 
 Main results (`St.Step` = aliases unchanged and the log extended by covered
@@ -72,11 +70,6 @@ structure Access where
   data : Name
   sub : Option Subset
   kind : AccKind
-  /-- Any element of the container (bounds-checked unless `oob`), for
-  element writes through pointer output connectors. -/
-  anyElem : Bool := false
-  /-- The `allow_oob` flag of the memlet (only used with `anyElem`). -/
-  oob : Bool := false
   /-- Map scopes between the access and the footprinted region, outermost
   first: `(params, range)`. -/
   binders : List (List Sym × Range) := []
@@ -98,10 +91,7 @@ def Binders.Ext (ctx : Ctx) : Valuation → List (List Sym × Range) → Valuati
 valuation `ρ`. -/
 def Access.HitsOff (ctx : Ctx) (ρ : Valuation) (a : Access) (off : Int) : Prop :=
   ∃ d, ctx.desc? a.data = some d ∧
-    if a.anyElem then
-      ∃ idx, ctx.checkBounds ρ a.data idx a.oob = .ok () ∧ ctx.elemOffset ρ d idx = some off
-    else
-      ∃ m pts, ctx.pointsOf ρ m a.data a.sub = .ok pts ∧ ∃ p ∈ pts, ctx.elemOffset ρ d p = some off
+    ∃ m pts, ctx.pointsOf ρ m a.data a.sub = .ok pts ∧ ∃ p ∈ pts, ctx.elemOffset ρ d p = some off
 
 /-- The location `l` is hit by the access under `ρ` (aliases resolved in `m₀`). -/
 def Access.Hit (ctx : Ctx) (m₀ : Mem) (ρ : Valuation) (a : Access) (l : Loc) : Prop :=
@@ -371,29 +361,15 @@ def Ctx.SubOk (ctx : Ctx) (ρ : Valuation) (m₀ : Mem) (Q : Loc → Prop) (n : 
     Prop :=
   ∀ m pts, ctx.pointsOf ρ m n sub = .ok pts → ∀ p ∈ pts, ctx.ElemOk ρ m₀ Q n p oob
 
-/-- Every bounds-checked element is covered. -/
-def Ctx.AnyOk (ctx : Ctx) (ρ : Valuation) (m₀ : Mem) (Q : Loc → Prop) (n : Name) (oob : Bool) : Prop :=
-  ∀ idx, ctx.ElemOk ρ m₀ Q n idx oob
-
 section Hit
 
 variable {ctx : Ctx} {ρ : Valuation} {m₀ : Mem} {A : List Access}
 
 /-- A binder-free access covers the points of its subset. -/
-theorem Access.subOk {a : Access} (ha : a ∈ A) (hb : a.binders = []) (he : a.anyElem = false) (oob : Bool) :
+theorem Access.subOk {a : Access} (ha : a ∈ A) (hb : a.binders = []) (oob : Bool) :
     ctx.SubOk ρ m₀ ((LocPred.ofAccesses ctx m₀ ρ A).ofKind a.kind) a.data a.sub oob := by
   intro m pts hp p hpm d off hd ho _
-  refine LocPred.ofAccesses_ofKind ha ⟨ρ, by rw [hb]; rfl, off, ⟨d, hd, ?_⟩, rfl⟩
-  rw [he]
-  exact ⟨m, pts, hp, p, hpm, ho⟩
-
-/-- A binder-free `anyElem` access covers every bounds-checked element. -/
-theorem Access.anyOk {a : Access} (ha : a ∈ A) (hb : a.binders = []) (he : a.anyElem = true) :
-    ctx.AnyOk ρ m₀ ((LocPred.ofAccesses ctx m₀ ρ A).ofKind a.kind) a.data a.oob := by
-  intro idx d off hd ho hc
-  refine LocPred.ofAccesses_ofKind ha ⟨ρ, by rw [hb]; rfl, off, ⟨d, hd, ?_⟩, rfl⟩
-  rw [he]
-  exact ⟨idx, hc, ho⟩
+  exact LocPred.ofAccesses_ofKind ha ⟨ρ, by rw [hb]; rfl, off, ⟨d, hd, m, pts, hp, p, hpm, ho⟩, rfl⟩
 
 end Hit
 
@@ -475,9 +451,8 @@ def codeInFp (ctx : Ctx) (s : State) (e : DEdge) : Option (List Access) :=
     | _ => some []
 
 /-- Accesses of an output edge of a code node: a store to the destination
-subset (scalar outputs) and to any element of the destination container
-(element writes through a pointer connector); `none` for a stream
-destination. -/
+subset (scalar outputs and element writes through a pointer connector,
+`Decisions.md#D67`); `none` for a stream destination. -/
 def codeOutFp (ctx : Ctx) (s : State) (e : DEdge) : Option (List Access) :=
   match e.data with
   | .dep => some []
@@ -485,8 +460,7 @@ def codeOutFp (ctx : Ctx) (s : State) (e : DEdge) : Option (List Access) :=
     match s.dstEndpoint e with
     | .data d sub =>
       if ctx.isStream d then none
-      else some [{ data := d, sub, kind := .ofStore m.wcr },
-                 { data := d, sub := none, kind := .ofStore m.wcr, anyElem := true, oob := m.allowOob }]
+      else some [{ data := d, sub, kind := .ofStore m.wcr }]
     | _ => some []
 
 /-- Accesses of a code node (tasklet, library node without a direct model). -/
@@ -635,8 +609,8 @@ theorem execCopiesInto_step {s : State} {n : DNode} {st st' : St} (h : execCopie
               simp only [Bool.or_eq_true, not_or, Bool.not_eq_true] at hns
               cases hAe
               exact copyData_step hc hns.1 hns.2
-                (Access.subOk (a := { data := sd, sub := ssub, kind := .read }) (hsub _ (by simp)) rfl rfl _)
-                (Access.subOk (a := { data := dd, sub := dsub, kind := .ofStore m.wcr }) (hsub _ (by simp)) rfl rfl _)
+                (Access.subOk (a := { data := sd, sub := ssub, kind := .read }) (hsub _ (by simp)) rfl _)
+                (Access.subOk (a := { data := dd, sub := dsub, kind := .ofStore m.wcr }) (hsub _ (by simp)) rfl _)
           | code k => simp only [hdst] at hc; cases hc
           | invalid => simp only [hdst] at hc; cases hc
         | code k =>
@@ -654,8 +628,7 @@ def CodeInOk (ctx : Ctx) (ρ : Valuation) (m₀ : Mem) (P : LocPred) (s : State)
 /-- The output edges of a code node are covered (and none writes a stream). -/
 def CodeOutOk (ctx : Ctx) (ρ : Valuation) (m₀ : Mem) (P : LocPred) (s : State) (n : DNode) : Prop :=
   ∀ e ∈ s.outEdges n.id, ∀ m, e.data = .memlet m → ∀ d sub, s.dstEndpoint e = .data d sub →
-    ctx.isStream d = false ∧ ctx.SubOk ρ m₀ (P.ofKind (.ofStore m.wcr)) d sub m.allowOob ∧
-      ctx.AnyOk ρ m₀ (P.ofKind (.ofStore m.wcr)) d m.allowOob
+    ctx.isStream d = false ∧ ctx.SubOk ρ m₀ (P.ofKind (.ofStore m.wcr)) d sub m.allowOob
 
 theorem DEdge.allowOob_of {e : DEdge} {m : Memlet} (h : e.data = .memlet m) : e.allowOob = m.allowOob := by
   simp [DEdge.allowOob, h, EdgeData.memlet?]
@@ -738,7 +711,7 @@ theorem applyScalar_step {s : State} {n : DNode} {st st' : St} {c : Conn} {v : V
       subst hc
       exact St.Step.of_eq rfl rfl
     · rename_i d sub hdst
-      obtain ⟨hns, hsub, -⟩ := hout e heo m hm d sub hdst
+      obtain ⟨hns, hsub⟩ := hout e heo m hm d sub hdst
       unfold storeScalar at hc
       rw [hns] at hc
       simp only [Bool.false_eq_true, ↓reduceIte] at hc
@@ -762,13 +735,17 @@ theorem applyArrayWrite_step {s : State} {n : DNode} {st st' : St} {c : Conn} {r
   · rename_i m hm
     split at hc
     · rename_i d sub hdst
-      obtain ⟨hns, -, hany⟩ := hout e heo m hm d sub hdst
+      obtain ⟨hns, hsub⟩ := hout e heo m hm d sub hdst
       unfold storeArrayWrite at hc
       rw [hns] at hc
       simp only [Bool.false_eq_true, ↓reduceIte] at hc
       obtain ⟨lo, _, hc⟩ := Res.bind_eq_ok.1 hc
       split at hc
-      · exact St.store_step hc (hany _)
+      · obtain ⟨pts, hp, hc⟩ := Res.bind_eq_ok.1 hc
+        split at hc
+        · rename_i hcont
+          exact St.store_step hc (hsub _ _ hp _ (by simpa using hcont))
+        · cases hc
       · cases hc
     · cases hc
 
@@ -876,7 +853,7 @@ theorem codeInOk_of {s : State} {n : DNode} {A : List Access} {B : List Access}
   · rename_i hns
     cases hAe
     refine ⟨by simpa using hns, ?_⟩
-    exact Access.subOk (a := { data := d, sub, kind := .read }) (hB _ (hsub _ (by simp))) rfl rfl _
+    exact Access.subOk (a := { data := d, sub, kind := .read }) (hB _ (hsub _ (by simp))) rfl _
 
 /-- The output edges of a code node are covered by its static footprint. -/
 theorem codeOutOk_of {s : State} {n : DNode} {A : List Access} {B : List Access}
@@ -890,10 +867,8 @@ theorem codeOutOk_of {s : State} {n : DNode} {A : List Access} {B : List Access}
   · cases hAe
   · rename_i hns
     cases hAe
-    refine ⟨by simpa using hns, ?_, ?_⟩
-    · exact Access.subOk (a := { data := d, sub, kind := .ofStore m.wcr }) (hB _ (hsub _ (by simp))) rfl rfl _
-    · exact Access.anyOk (a := { data := d, sub := none, kind := .ofStore m.wcr, anyElem := true, oob := m.allowOob })
-        (hB _ (hsub _ (by simp))) rfl rfl
+    exact ⟨by simpa using hns,
+      Access.subOk (a := { data := d, sub, kind := .ofStore m.wcr }) (hB _ (hsub _ (by simp))) rfl _⟩
 
 theorem execCode_step_of_fp {s : State} {n : DNode} {st st' : St}
     {run : (Conn → Option ConnIn) → Option TaskletOut} {err : ErrReason} (h : execCode ctx ρ s n st run err = .ok st')
@@ -928,9 +903,9 @@ theorem execReduce_step {s : State} {n : DNode} {props : ReduceProps} {st st' : 
       dsimp only at hfp
       cases hfp
       exact reduceData_step h
-        (Access.subOk (a := { data := sd, sub := ssub, kind := .read }) (by simp) rfl rfl _)
-        (Access.subOk (a := { data := dd, sub := dsub, kind := .ofStore om.wcr }) (by simp) rfl rfl _)
-        (Access.subOk (a := { data := dd, sub := dsub, kind := .wcr (om.wcr.getD props.wcr) }) (by simp) rfl rfl _)
+        (Access.subOk (a := { data := sd, sub := ssub, kind := .read }) (by simp) rfl _)
+        (Access.subOk (a := { data := dd, sub := dsub, kind := .ofStore om.wcr }) (by simp) rfl _)
+        (Access.subOk (a := { data := dd, sub := dsub, kind := .wcr (om.wcr.getD props.wcr) }) (by simp) rfl _)
     · cases h
   · cases h
 

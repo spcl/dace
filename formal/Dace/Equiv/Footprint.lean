@@ -67,24 +67,17 @@ theorem Ctx.pointsOf_static {ctx : Ctx} {ρ : Valuation} {m : Mem} {n : Name} {s
 /-- **A hit of a pure access in static form**: the location is the element,
 resolved in `m₀`, at the element offset of a point of the access's subset
 (enumerated under `ctx.I.expr`) under the valuation extended by the inner map
-parameters, or of a bounds-checked index for `anyElem`. -/
+parameters. -/
 theorem Access.hit_static {ctx : Ctx} {m₀ : Mem} {ρ : Valuation} {a : Access} {l : Loc}
     (h : a.Hit ctx m₀ ρ l) (hp : a.pureIn ctx = true) :
     ∃ ρ', Binders.ExtS ctx.I.expr ρ a.binders ρ' ∧ ∃ d off, ctx.desc? a.data = some d ∧
-      (if a.anyElem then ∃ idx, ctx.checkBounds ρ' a.data idx a.oob = .ok () ∧ ctx.elemOffset ρ' d idx = some off
-       else ∃ pts, (a.sub.getD (.range d.fullRange)).points ctx.I.expr ρ' = some pts ∧
-         ∃ p ∈ pts, ctx.elemOffset ρ' d p = some off) ∧
+      (∃ pts, (a.sub.getD (.range d.fullRange)).points ctx.I.expr ρ' = some pts ∧
+        ∃ p ∈ pts, ctx.elemOffset ρ' d p = some off) ∧
       l = m₀.resolve (Loc.elem (ctx.cname a.data) off) := by
   obtain ⟨ρ', hext, off, ⟨d, hd, hoff⟩, hl⟩ := h
   simp only [Access.pureIn, Bool.and_eq_true] at hp
-  refine ⟨ρ', Binders.ext_static hp.1 hext, d, off, hd, ?_, hl⟩
-  split
-  · rename_i ha
-    simpa [ha] using hoff
-  · rename_i ha
-    simp only [ha, Bool.false_eq_true, ↓reduceIte] at hoff
-    obtain ⟨m, pts, hpts, p, hpm, ho⟩ := hoff
-    exact ⟨pts, Ctx.pointsOf_static hd hp.2 hpts, p, hpm, ho⟩
+  obtain ⟨m, pts, hpts, p, hpm, ho⟩ := hoff
+  exact ⟨ρ', Binders.ext_static hp.1 hext, d, off, hd, ⟨pts, Ctx.pointsOf_static hd hp.2 hpts, p, hpm, ho⟩, hl⟩
 
 theorem Ctx.elemOffset_of_not_scalar {ctx : Ctx} {ρ : Valuation} {d : DataDesc} {idx : Idx}
     (h : d.isScalar = false) : ctx.elemOffset ρ d idx = d.linearOffset ctx.I.expr ρ idx := by

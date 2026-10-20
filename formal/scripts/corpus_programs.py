@@ -454,3 +454,31 @@ EXPECTED_ERRORS["oob_read"] = {"sdfg": "outOfBounds", "stree": "outOfBounds"}
 PROGRAMS.append(
     ("oob_allowed", _BuiltProgram("oob_allowed", lambda: _build_oob_read("oob_allowed", True)), args_oob_read)
 )
+
+
+def _build_write_outside(name: str) -> dace.SDFG:
+    """A tasklet writes ``b[2]`` through a pointer output connector bound to ``B[1:3]``.
+
+    The generated code writes ``B[3]``, which is inside ``B`` but outside the memlet subset.  The formal semantics
+    makes this undefined behavior (``Decisions.md#D67``): the memlet declares every element the tasklet may access.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main")
+    x = state.add_read("X")
+    b = state.add_write("B")
+    t = state.add_tasklet("put", {"x"}, {"b"}, "b[2] = x")
+    state.add_edge(x, None, t, "x", dace.Memlet("X[0]"))
+    state.add_edge(t, "b", b, None, dace.Memlet("B[1:3]"))
+    return sdfg
+
+
+def args_write_outside(seed: int = 0) -> dict:
+    r = _rng(23, seed)
+    return dict(X=r.random(1), B=np.zeros(4))
+
+
+PROGRAMS.append(("write_outside", _BuiltProgram("write_outside", lambda: _build_write_outside("write_outside")),
+                 args_write_outside))
+EXPECTED_ERRORS["write_outside"] = {"sdfg": "outsideSubset", "stree": "outsideSubset"}
