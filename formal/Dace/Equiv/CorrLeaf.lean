@@ -255,6 +255,8 @@ theorem Ctx.leaf_eq {α : Sort _} {c₁ c₂ : Ctx} (he : c₁.erase = c₂.eras
     (hf : ∀ c, f c = f c.erase) : f c₁ = f c₂ := by
   rw [hf c₁, he, ← hf c₂]
 
+namespace Corr
+
 section Leaf
 
 variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
@@ -687,5 +689,7 @@ theorem mapSetupT_eq {mp : MapNode} (cst : CSt) :
   cases ctx.rangePoints cst.ρ cst.mem mp.range <;> rfl
 
 end Leaf
+
+end Corr
 
 end Dace
