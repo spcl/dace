@@ -148,3 +148,23 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.STree.NodeExec.log_iff
 #print axioms Dace.STree.NodeExec.rel
 #print axioms Dace.STree.ListExec.rel
+
+-- R1.4: block congruence (context congruence, paths, block replacement).
+#print axioms Dace.BlockExec.congr_iff
+#print axioms Dace.SDFGExec.congr_iff
+#print axioms Dace.NodeExec.congr
+#print axioms Dace.Ctx.agree_setBlockAt
+#print axioms Dace.Refines.of_simE
+#print axioms Dace.Supported.of_simE
+#print axioms Dace.RegionAt.simE
+#print axioms Dace.LoopExec.simE
+#print axioms Dace.CondExec.simE
+#print axioms Dace.Congr.region_setBlockAt
+#print axioms Dace.Region.setBlockAt_setBlockAt
+#print axioms Dace.Region.countMentions_setBlockAt
+#print axioms Dace.Congr.exec_simE
+#print axioms Dace.Congr.block
+#print axioms Dace.Congr.blockEquiv
+#print axioms Dace.Congr.emptyState
+#print axioms Dace.Congr.splitEmpty
+#print axioms Dace.Congr.mergeEmpty

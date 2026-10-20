@@ -39,6 +39,7 @@ import Dace.Equiv.Equiv
 import Dace.Equiv.Frag
 import Dace.SDFG.LogShift
 import Dace.STree.LogShift
+import Dace.Equiv.Congr
 
 /-!
 # DaCe formal semantics
