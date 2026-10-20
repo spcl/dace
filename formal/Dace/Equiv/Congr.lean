@@ -254,10 +254,11 @@ theorem RegionAt.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {rg : Region} {cst 
   | .exit hb hB hc => .exit hb (BlockExec.congr h hB) hc
   | .edgesErr hb hB he => .edgesErr hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he)
   | .stop hb hB he => .stop hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he)
-  | .assignErr hb hB he hm ha =>
-    .assignErr hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he) hm (by rw [← h.applyAssigns]; exact ha)
-  | .step hb hB he hm ha hn =>
-    .step hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he) hm (by rw [← h.applyAssigns]; exact ha)
+  | .ambiguous hb hB he => .ambiguous hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he)
+  | .assignErr hb hB he ha =>
+    .assignErr hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he) (by rw [← h.applyAssigns]; exact ha)
+  | .step hb hB he ha hn =>
+    .step hb (BlockExec.congr h hB) (by rw [← h.trueEdges]; exact he) (by rw [← h.applyAssigns]; exact ha)
       (RegionAt.congr h hn)
 
 theorem RegionExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {cst : CSt} {rg : Region} {r : Res (Ctl × CSt)} :
@@ -657,17 +658,21 @@ theorem RegionAt.matchedE {ctx : Ctx} {rg' rg : Region} (he : rg'.edges = rg.edg
     obtain ⟨b, hb0, hsim⟩ := forall₂_getElem?_some hb hm
     exact (hsim _ _ ha _ hB).okCases (fun e hu hy => MatchedE.of_ub (.blockErr hb0 hy) hu)
       (fun c₁ hrel hy => MatchedE.of_rel (.stop hb0 hy ((trueEdges_rel he hrel).symm.trans hte)) ⟨rfl, hrel⟩)
-  | .assignErr hm hB hte hie hA => by
+  | .ambiguous hm hB hte => by
     obtain ⟨b, hb0, hsim⟩ := forall₂_getElem?_some hb hm
     exact (hsim _ _ ha _ hB).okCases (fun e hu hy => MatchedE.of_ub (.blockErr hb0 hy) hu)
-      (fun c₁ hrel hy => MatchedE.of_rel (.assignErr hb0 hy ((trueEdges_rel he hrel).symm.trans hte) hie
+      (fun c₁ hrel hy => MatchedE.of_rel (.ambiguous hb0 hy ((trueEdges_rel he hrel).symm.trans hte)) rfl)
+  | .assignErr hm hB hte hA => by
+    obtain ⟨b, hb0, hsim⟩ := forall₂_getElem?_some hb hm
+    exact (hsim _ _ ha _ hB).okCases (fun e hu hy => MatchedE.of_ub (.blockErr hb0 hy) hu)
+      (fun c₁ hrel hy => MatchedE.of_rel (.assignErr hb0 hy ((trueEdges_rel he hrel).symm.trans hte)
         (applyAssigns_rel_err hrel hA)) rfl)
-  | .step hm hB hte hie hA hn => by
+  | .step hm hB hte hA hn => by
     obtain ⟨b, hb0, hsim⟩ := forall₂_getElem?_some hb hm
     refine (hsim _ _ ha _ hB).okCases (fun e hu hy => MatchedE.of_ub (.blockErr hb0 hy) hu) (fun c₁ hrel hy => ?_)
     obtain ⟨c₂, hc₂, hrel₂⟩ := applyAssigns_rel_ok hrel hA
     obtain ⟨z, hz, hbz⟩ := RegionAt.matchedE he hb hrel₂ hn
-    exact ⟨z, .step hb0 hy ((trueEdges_rel he hrel).symm.trans hte) hie hc₂ hz, hbz⟩
+    exact ⟨z, .step hb0 hy ((trueEdges_rel he hrel).symm.trans hte) hc₂ hz, hbz⟩
 
 theorem RegionMatchedE.of_blocks {ctx : Ctx} {rg' rg : Region} (he : rg'.edges = rg.edges) (hs : rg'.start = rg.start)
     (hb : List.Forall₂ (BlockMatchedE ctx) rg'.blocks rg.blocks) : RegionMatchedE ctx rg' rg := by
@@ -1330,16 +1335,14 @@ theorem thenEmpty_matchedE : ∀ cst r', BlockExec ctx cst (.region s.thenEmpty)
     cases State.thenEmpty_trueEdges₀.symm.trans he
   | stop hb hB he =>
     cases State.thenEmpty_trueEdges₀.symm.trans he
-  | assignErr hb hB he hm ha =>
+  | ambiguous hb hB he =>
     cases State.thenEmpty_trueEdges₀.symm.trans he
-    simp only [List.mem_singleton] at hm
-    subst hm
+  | assignErr hb hB he ha =>
+    cases State.thenEmpty_trueEdges₀.symm.trans he
     cases applyAssigns_nil.symm.trans ha
-  | step hb hB he hm ha hn =>
+  | step hb hB he ha hn =>
     cases hb
     cases State.thenEmpty_trueEdges₀.symm.trans he
-    simp only [List.mem_singleton] at hm
-    subst hm
     cases applyAssigns_nil.symm.trans ha
     cases hn with
     | missing hm => cases hm
@@ -1358,12 +1361,9 @@ theorem thenEmpty_matchedE : ∀ cst r', BlockExec ctx cst (.region s.thenEmpty)
       | state h =>
         cases StateExec_noComponents rfl h
         exact MatchedE.of_rel hB ⟨rfl, rfl, rfl, Log.Le.refl _⟩
-    | assignErr hb hB' he' hm' =>
-      cases State.thenEmpty_trueEdges₁.symm.trans he'
-      cases hm'
-    | step hb hB' he' hm' =>
-      cases State.thenEmpty_trueEdges₁.symm.trans he'
-      cases hm'
+    | ambiguous hb hB' he' => cases State.thenEmpty_trueEdges₁.symm.trans he'
+    | assignErr hb hB' he' => cases State.thenEmpty_trueEdges₁.symm.trans he'
+    | step hb hB' he' => cases State.thenEmpty_trueEdges₁.symm.trans he'
 
 /-- The state `s` is matched by the sub-region `s.thenEmpty`. -/
 theorem state_thenEmpty_matchedE : ∀ cst r', BlockExec ctx cst (.state s) r' →
@@ -1377,7 +1377,7 @@ theorem state_thenEmpty_matchedE : ∀ cst r', BlockExec ctx cst (.state s) r' �
       cases h with
       | state h => exact StateExec.ok_normal h _ _ rfl
     subst hn
-    exact MatchedE.of_rel (.region (.start (.step rfl h State.thenEmpty_trueEdges₀ (List.mem_singleton_self _)
+    exact MatchedE.of_rel (.region (.start (.step rfl h State.thenEmpty_trueEdges₀
       applyAssigns_nil (.stop rfl (.state (StateExec.of_noNodes rfl)) State.thenEmpty_trueEdges₁))))
       ⟨rfl, CSt.Rel.setAll_nil _⟩
 

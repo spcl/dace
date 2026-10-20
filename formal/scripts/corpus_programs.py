@@ -504,3 +504,35 @@ def args_map_same_write(seed: int = 0) -> dict:
 
 PROGRAMS.append(("map_same_write", _BuiltProgram("map_same_write", _build_map_same_write), args_map_same_write))
 EXPECTED_ERRORS["map_same_write"] = {"sdfg": "race", "stree": "race"}
+
+
+def _build_ambiguous_edges() -> dace.SDFG:
+    """Two outgoing interstate edges of the start state are both true for ``N > 1``.
+
+    Undefined (``doc/sdfg/ir.rst``, ``Decisions.md#D2``): the formal SDFG semantics reports ``ambiguousTransition``.
+    DaCe's code takes the first true edge in out-edge order, as does the schedule tree (``stateif`` in edge order),
+    which is compared by value.  Both branches rejoin an end state.
+    """
+    sdfg = dace.SDFG("ambiguous_edges")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    one = sdfg.add_state("one")
+    two = sdfg.add_state("two")
+    end = sdfg.add_state("end")
+    for state, value in ((one, 1), (two, 2)):
+        tasklet = state.add_tasklet("put", {}, {"a"}, f"a = {value}")
+        state.add_edge(tasklet, "a", state.add_write("A"), None, dace.Memlet("A[0]"))
+    sdfg.add_edge(start, one, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(start, two, dace.InterstateEdge("N > 1"))
+    sdfg.add_edge(one, end, dace.InterstateEdge())
+    sdfg.add_edge(two, end, dace.InterstateEdge())
+    return sdfg
+
+
+def args_ambiguous_edges(seed: int = 0) -> dict:
+    return dict(A=np.zeros(1), N=4)
+
+
+PROGRAMS.append(("ambiguous_edges", _BuiltProgram("ambiguous_edges", _build_ambiguous_edges), args_ambiguous_edges))
+EXPECTED_ERRORS["ambiguous_edges"] = {"sdfg": "ambiguousTransition"}

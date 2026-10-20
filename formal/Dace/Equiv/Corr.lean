@@ -188,7 +188,7 @@ theorem ChainCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} (hch :
         rfl
       rw [← ha] at hassign
       have hstep := fun {r'} (h' : RegionAt ctx rg cst' _ r') =>
-        RegionAt.step hb (.state hx') (trueEdges_uncond hout hc) (List.mem_singleton_self _) hassign h'
+        RegionAt.step hb (.state hx') (trueEdges_uncond hout hc) hassign h'
       rcases ih hl with ⟨e, hu, hy⟩ | ⟨e, hr, hy⟩ | ⟨c, hr, hy⟩
       · exact .inl ⟨e, hu, hstep hy⟩
       · exact .inr (.inl ⟨e, hr, hstep hy⟩)

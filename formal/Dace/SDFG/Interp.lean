@@ -217,10 +217,11 @@ def regionAt (fuel : Nat) (ctx : Ctx) (rg : Region) (cst : CSt) (bid : BlockId) 
         match trueEdges ctx rg cst₁ bid with
         | .err e => some (.err e)
         | .ok [] => some (.ok (.normal, cst₁))
-        | .ok (ie :: _) =>
+        | .ok [ie] =>
           match applyAssigns ctx cst₁ ie.assigns with
           | .err e => some (.err e)
           | .ok cst₂ => regionAt fuel ctx rg cst₂ ie.dst
+        | .ok (_ :: _ :: _) => some (.err (.ambiguousTransition bid))
 
 /-- Mirror of `RegionExec`. -/
 def execRegion (fuel : Nat) (ctx : Ctx) (cst : CSt) (rg : Region) : Option (Res (Ctl × CSt)) :=

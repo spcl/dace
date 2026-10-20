@@ -258,10 +258,11 @@ theorem regionAt_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {rg : Region} {
       split at h
       next e ht => cases h; exact .edgesErr hb (ih.block he) ht
       next ht => cases h; exact .stop hb (ih.block he) ht
-      next ie tl ht =>
+      next ie ht =>
         split at h
-        next e ha => cases h; exact .assignErr hb (ih.block he) ht (List.mem_cons_self ..) ha
-        next cst₂ ha => exact .step hb (ih.block he) ht (List.mem_cons_self ..) ha (ih.regAt h)
+        next e ha => cases h; exact .assignErr hb (ih.block he) ht ha
+        next cst₂ ha => exact .step hb (ih.block he) ht ha (ih.regAt h)
+      next ie₁ ie₂ tl ht => cases h; exact .ambiguous hb (ih.block he) ht
 
 theorem execRegion_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {cst : CSt} {rg : Region} {r : Res (Ctl × CSt)}
     (h : execRegion (fuel + 1) ctx cst rg = some r) : RegionExec ctx cst rg r := by

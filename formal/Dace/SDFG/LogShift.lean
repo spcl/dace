@@ -931,10 +931,11 @@ theorem RegionAt.shift {rg : Region} {cst : CSt} {bid : BlockId} {r : Res (Ctl �
   | .exit hb h hc => .exit hb (BlockExec.shift L h) hc
   | .edgesErr hb h he => .edgesErr hb (BlockExec.shift L h) he
   | .stop hb h he => .stop hb (BlockExec.shift L h) he
-  | .assignErr hb h he hm ha =>
-    .assignErr hb (BlockExec.shift L h) he hm ((applyAssigns_shift ..).trans (congrArg _ ha))
-  | .step hb h he hm ha hn =>
-    .step hb (BlockExec.shift L h) he hm ((applyAssigns_shift ..).trans (congrArg _ ha)) (RegionAt.shift L hn)
+  | .ambiguous hb h he => .ambiguous hb (BlockExec.shift L h) he
+  | .assignErr hb h he ha =>
+    .assignErr hb (BlockExec.shift L h) he ((applyAssigns_shift ..).trans (congrArg _ ha))
+  | .step hb h he ha hn =>
+    .step hb (BlockExec.shift L h) he ((applyAssigns_shift ..).trans (congrArg _ ha)) (RegionAt.shift L hn)
 
 theorem RegionExec.shift {cst : CSt} {rg : Region} {r : Res (Ctl × CSt)} (L : Log) :
     RegionExec ctx cst rg r → RegionExec ctx (cst.shift L) rg (r.map (shiftC L))
@@ -1011,19 +1012,23 @@ theorem RegionAt.unshift {rg : Region} {cst' cst : CSt} {L : Log} {bid : BlockId
     obtain ⟨r₀, h₀, he⟩ := BlockExec.unshift heq h
     obtain ⟨y, rfl, rfl⟩ := shiftC_eq_ok he
     exact ⟨_, .stop hb h₀ he', rfl⟩
-  | .assignErr hb h he' hm ha => by
+  | .ambiguous hb h he' => by
+    obtain ⟨r₀, h₀, he⟩ := BlockExec.unshift heq h
+    obtain ⟨y, rfl, rfl⟩ := shiftC_eq_ok he
+    exact ⟨_, .ambiguous hb h₀ he', rfl⟩
+  | .assignErr hb h he' ha => by
     obtain ⟨r₀, h₀, he⟩ := BlockExec.unshift heq h
     obtain ⟨y, rfl, rfl⟩ := shiftC_eq_ok he
     rw [applyAssigns_shift, Res.map_eq_err] at ha
-    exact ⟨_, .assignErr hb h₀ he' hm ha, rfl⟩
-  | .step hb h he' hm ha hn => by
+    exact ⟨_, .assignErr hb h₀ he' ha, rfl⟩
+  | .step hb h he' ha hn => by
     obtain ⟨r₀, h₀, he⟩ := BlockExec.unshift heq h
     obtain ⟨y, rfl, hy⟩ := shiftC_eq_ok he
     subst hy
     rw [applyAssigns_shift, Res.map_eq_ok] at ha
     obtain ⟨cst₂, ha, h₂⟩ := ha
     obtain ⟨r₁, h₁, he₁⟩ := RegionAt.unshift h₂.symm hn
-    exact ⟨_, .step hb h₀ he' hm ha h₁, he₁⟩
+    exact ⟨_, .step hb h₀ he' ha h₁, he₁⟩
 
 theorem RegionExec.unshift {cst' cst : CSt} {L : Log} {rg : Region} {r : Res (Ctl × CSt)} (heq : cst' = cst.shift L) :
     RegionExec ctx cst' rg r → ∃ r₀, RegionExec ctx cst rg r₀ ∧ r = r₀.map (shiftC L)

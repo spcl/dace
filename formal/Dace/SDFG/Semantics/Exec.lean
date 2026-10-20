@@ -277,9 +277,9 @@ inductive BlockExec : Ctx → CSt → Block → Res (Ctl × CSt) → Prop where
   | ret {ctx : Ctx} {cst : CSt} : BlockExec ctx cst .returnBlock (.ok (.ret, cst))
 
 /-- A region from block `bid`: run the block; a non-`normal` control signal
-ends the region; otherwise take one of the true out-edges
-(`Decisions.md#D2`, `#D35`), apply its assignments and continue; no true
-edge ends the region normally. -/
+ends the region; otherwise take the true out-edge (`Decisions.md#D35`),
+apply its assignments and continue; no true edge ends the region normally,
+several true edges are undefined behavior (`Decisions.md#D2`). -/
 inductive RegionAt : Ctx → Region → CSt → BlockId → Res (Ctl × CSt) → Prop where
   | missing {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId}
       (hb : rg.block? bid = none) :
@@ -298,16 +298,21 @@ inductive RegionAt : Ctx → Region → CSt → BlockId → Res (Ctl × CSt) →
       (hb : rg.block? bid = some b) (h : BlockExec ctx cst b (.ok (.normal, cst₁)))
       (he : trueEdges ctx rg cst₁ bid = .ok []) :
       RegionAt ctx rg cst bid (.ok (.normal, cst₁))
-  | assignErr {ctx : Ctx} {rg : Region} {cst cst₁ : CSt} {bid : BlockId} {b : Block} {es : List IEdge}
+  | ambiguous {ctx : Ctx} {rg : Region} {cst cst₁ : CSt} {bid : BlockId} {b : Block} {ie₁ ie₂ : IEdge}
+      {es : List IEdge}
+      (hb : rg.block? bid = some b) (h : BlockExec ctx cst b (.ok (.normal, cst₁)))
+      (he : trueEdges ctx rg cst₁ bid = .ok (ie₁ :: ie₂ :: es)) :
+      RegionAt ctx rg cst bid (.err (.ambiguousTransition bid))
+  | assignErr {ctx : Ctx} {rg : Region} {cst cst₁ : CSt} {bid : BlockId} {b : Block}
       {ie : IEdge} {e : ErrReason}
       (hb : rg.block? bid = some b) (h : BlockExec ctx cst b (.ok (.normal, cst₁)))
-      (he : trueEdges ctx rg cst₁ bid = .ok es) (hm : ie ∈ es)
+      (he : trueEdges ctx rg cst₁ bid = .ok [ie])
       (ha : applyAssigns ctx cst₁ ie.assigns = .err e) :
       RegionAt ctx rg cst bid (.err e)
-  | step {ctx : Ctx} {rg : Region} {cst cst₁ cst₂ : CSt} {bid : BlockId} {b : Block} {es : List IEdge}
+  | step {ctx : Ctx} {rg : Region} {cst cst₁ cst₂ : CSt} {bid : BlockId} {b : Block}
       {ie : IEdge} {r : Res (Ctl × CSt)}
       (hb : rg.block? bid = some b) (h : BlockExec ctx cst b (.ok (.normal, cst₁)))
-      (he : trueEdges ctx rg cst₁ bid = .ok es) (hm : ie ∈ es)
+      (he : trueEdges ctx rg cst₁ bid = .ok [ie])
       (ha : applyAssigns ctx cst₁ ie.assigns = .ok cst₂) (hn : RegionAt ctx rg cst₂ ie.dst r) :
       RegionAt ctx rg cst bid r
 

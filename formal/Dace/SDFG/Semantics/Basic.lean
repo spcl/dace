@@ -65,6 +65,9 @@ inductive ErrReason where
   interpretation, which equivalence quantifies over, hence undefined
   behavior rather than `unsupported` (`Decisions.md#D59`). -/
   | libraryUndefined (classpath : String)
+  /-- Several outgoing interstate edges of a block are true at once
+  (`Decisions.md#D2`: undefined, `doc/sdfg/ir.rst`). -/
+  | ambiguousTransition (block : Nat)
   /-- Valid DaCe that the semantics does not model (`Decisions.md#D59`). -/
   | unsupported (msg : String)
   | malformed (msg : String)
@@ -84,6 +87,7 @@ def ErrReason.toString : ErrReason → String
   | .outsideSubset n idx => s!"write {idx} of '{n}' outside the memlet subset"
   | .taskletUndefined label => s!"tasklet '{label}' is undefined for its inputs"
   | .libraryUndefined cp => s!"library node '{cp}' is undefined for its inputs"
+  | .ambiguousTransition b => s!"several outgoing interstate edges of block {b} are true"
   | .unsupported msg => s!"unsupported {msg}"
   | .malformed msg => s!"malformed SDFG: {msg}"
 
@@ -110,6 +114,7 @@ def ErrReason.tag : ErrReason → String
   | .outsideSubset _ _ => "outsideSubset"
   | .taskletUndefined _ => "taskletUndefined"
   | .libraryUndefined _ => "libraryUndefined"
+  | .ambiguousTransition _ => "ambiguousTransition"
   | .unsupported _ => "unsupported"
   | .malformed _ => "malformed"
 

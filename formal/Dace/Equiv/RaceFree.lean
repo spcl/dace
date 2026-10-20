@@ -973,10 +973,11 @@ theorem RegionAt.cgood {rg : Region} {cst : CSt} {bid : BlockId} {r : Res (Ctl �
   | .exit hb h _, hok, hi => BlockExec.cgood h (blockOk hok hb) hi
   | .edgesErr hb h he, _, _ => CGood.err_of he (trueEdges_clean _ _ _ _)
   | .stop hb h _, hok, hi => CGood.ok ((BlockExec.cgood h (blockOk hok hb) hi).2 _ _ rfl)
-  | .assignErr _ _ _ _ ha, _, _ => CGood.err_of ha (applyAssigns_clean _ _ _)
-  | .step (ie := ie) hb h he hm ha hn, hok, hi => by
+  | .ambiguous _ _ _, _, _ => ⟨Res.Clean.err (by clean_err), fun _ _ h => by cases h⟩
+  | .assignErr _ _ _ ha, _, _ => CGood.err_of ha (applyAssigns_clean _ _ _)
+  | .step (ie := ie) hb h he ha hn, hok, hi => by
     have hi₁ := (BlockExec.cgood h (blockOk hok hb) hi).2 _ _ rfl
-    have hie := trueEdges_mem he hm
+    have hie := trueEdges_mem he (List.mem_singleton_self _)
     rw [Region.raceOk_eq] at hok
     have hfresh : ∀ a ∈ ie.assigns, a.1 ∉ C.syms := fun a ha hc => by
       simp only [Bool.and_eq_true, List.all_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true] at hok

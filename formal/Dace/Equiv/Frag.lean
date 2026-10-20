@@ -34,9 +34,9 @@ branching structure of nondeterministic choices, i.e. at which point an
 alternative is still open.  On deterministic programs the two notions
 coincide.  The choices the SDFG semantics leaves open are the order of the
 nodes in a state (irrelevant for states without races, `Dace.Equiv.Det`;
-a race is undefined behavior), the processing element of a consume task
-(`Decisions.md#D38`) and the choice among several true interstate edges
-(`Decisions.md#D2`).
+a race is undefined behavior) and the processing element of a consume task
+(`Decisions.md#D38`); control flow is deterministic (several true
+interstate edges are undefined behavior, `Decisions.md#D2`).
 -/
 
 set_option autoImplicit false
