@@ -76,7 +76,7 @@ def _other_elements(other: subsets.Range, count: int) -> list[subsets.Range] | N
             # A non-constant extent: the lane axis a vectorized copy spans keeps its whole range on every element.
             axes.append([(begin, end, step)])
             continue
-        (b, e, s), = ranges
+        ((b, e, s),) = ranges
         axes.append([(v, v, 1) for v in range(b, e + 1, s)])
     picks = [list(choice) for choice in product(*axes)]
     if len(picks) != count:
