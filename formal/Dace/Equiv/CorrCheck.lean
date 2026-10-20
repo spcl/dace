@@ -23,10 +23,12 @@ bounded by the size of the region): a region is a chain of blocks joined
 by single unconditional edges, each edge's assignments a permutation of the
 following `AssignNode`s that may run one by one (`SeqAssigns`); a block is a
 state, a loop region (equal loop properties, body checked recursively), a
-conditional block (`if`/`elif`/`else` chain) or a break/continue/return.
+conditional block (`if`/`elif`/`else` chain), a break/continue/return, or
+a nested region (a `NamedRegionScope` for a named region; inlined for plain
+and function-call regions, `regCheck` then returns the rest of the list).
 
 Fragment (`UNKNOWN` with a reason outside it): no branching or conditional
-interstate edges (GBlocks), no nested control-flow regions; every state is
+interstate edges (GBlocks, unstructured regions); every state is
 `SeqPure` (no streams, views, references, consume scopes, nested SDFGs,
 private transients or code→code values) with at most one component; no
 dynamic map inputs; equal descriptor repositories; no constants; a code
@@ -321,8 +323,9 @@ variable (ctx : Ctx) (tc : TCtx)
 
 mutual
 
-/-- Check the region `rg` from block `bid` against the whole tree list. -/
-def regCheck : Nat → Region → BlockId → List SNode → Except String Unit
+/-- Check the region `rg` from block `bid` against the head of the tree list;
+the rest of the list. -/
+def regCheck : Nat → Region → BlockId → List SNode → Except String (List SNode)
   | 0, _, _, _ => .error "control flow too deep or cyclic"
   | f + 1, rg, bid, cs =>
     match rg.block? bid with
@@ -332,7 +335,7 @@ def regCheck : Nat → Region → BlockId → List SNode → Except String Unit
       | .error m => .error m
       | .ok rest =>
         match rg.outEdges bid with
-        | [] => if rest = [] then .ok () else .error s!"tree nodes after the last block of region '{rg.label}'"
+        | [] => .ok rest
         | [e] =>
           if e.isUnconditional = true ∧ headOk? rest = true then
             match takeAssignNodes e.assigns.length rest with
@@ -356,7 +359,8 @@ def blockCheck : Nat → Block → List SNode → Except String (List SNode)
         | some (lm, body) =>
           if loopCorr? l lm = true then
             match regCheck f l.body l.body.start body with
-            | .ok () => .ok rest
+            | .ok [] => .ok rest
+            | .ok _ => .error s!"loop '{l.label}': tree nodes after the body"
             | .error m => .error m
           else .error s!"loop '{l.label}': loop properties differ"
         | none => .error s!"loop '{l.label}': no loop scope in the tree"
@@ -368,7 +372,8 @@ def blockCheck : Nat → Block → List SNode → Except String (List SNode)
         | .ifScope pc body :: tl =>
           if pc.expr = c then
             match regCheck f rg rg.start body with
-            | .ok () => elifCheck f brs' tl
+            | .ok [] => elifCheck f brs' tl
+            | .ok _ => .error "conditional block: tree nodes after a branch"
             | .error m => .error m
           else .error "conditional block: the if condition differs"
         | _ => .error "conditional block: no if scope in the tree"
@@ -385,7 +390,20 @@ def blockCheck : Nat → Block → List SNode → Except String (List SNode)
       match cs with
       | .goto none :: rest => .ok rest
       | _ => .error "return: no exit goto in the tree"
-    | .region _ => .error "nested control-flow regions are not supported yet"
+    | .region rg =>
+      match rg.kind with
+      | .plain | .functionCall _ => regCheck f rg rg.start cs
+      | .named label =>
+        match cs with
+        | .namedRegion label' body :: rest =>
+          if label' = label then
+            match regCheck f rg rg.start body with
+            | .ok [] => .ok rest
+            | .ok _ => .error s!"named region '{label}': tree nodes after the body"
+            | .error m => .error m
+          else .error s!"named region '{label}': the label differs"
+        | _ => .error s!"named region '{label}': no named region scope in the tree"
+      | .unstructured => .error "unstructured regions (GBlocks) are not supported yet"
 
 /-- Check the `elif`/`else` branches of a conditional block. -/
 def elifCheck : Nat → List (Option Expr × Region) → List SNode → Except String (List SNode)
@@ -398,7 +416,8 @@ def elifCheck : Nat → List (Option Expr × Region) → List SNode → Except S
       | .elifScope pc body :: tl =>
         if pc.expr = c then
           match regCheck f rg rg.start body with
-          | .ok () => elifCheck f brs' tl
+          | .ok [] => elifCheck f brs' tl
+          | .ok _ => .error "conditional block: tree nodes after a branch"
           | .error m => .error m
         else .error "conditional block: an elif condition differs"
       | _ => .error "conditional block: no elif scope in the tree"
@@ -408,7 +427,8 @@ def elifCheck : Nat → List (Option Expr × Region) → List SNode → Except S
         match cs with
         | .elseScope body :: tl =>
           match regCheck f rg rg.start body with
-          | .ok () => .ok tl
+          | .ok [] => .ok tl
+          | .ok _ => .error "conditional block: tree nodes after the else branch"
           | .error m => .error m
         | _ => .error "conditional block: no else scope in the tree"
       | _ => .error "conditional block: else is not the last branch"
@@ -423,26 +443,22 @@ variable {ctx : Ctx} {tc : TCtx}
 
 mutual
 
-theorem regCheck_sound : ∀ (f : Nat) (rg : Region) (bid : BlockId) (cs : List SNode),
-    regCheck ctx tc f rg bid cs = .ok () → RegCorr ctx tc rg bid cs
-  | 0, _, _, _, h => by simp [regCheck] at h
-  | f + 1, rg, bid, cs, h => by
+theorem regCheck_sound : ∀ (f : Nat) (rg : Region) (bid : BlockId) (cs rest : List SNode),
+    regCheck ctx tc f rg bid cs = .ok rest → ∃ pre, cs = pre ++ rest ∧ RegCorr ctx tc rg bid pre
+  | 0, _, _, _, _, h => by simp [regCheck] at h
+  | f + 1, rg, bid, cs, rest, h => by
     unfold regCheck at h
     split at h
     · cases h
     · rename_i b hb
       split at h
       · cases h
-      · rename_i rest hbc
-        obtain ⟨pre, rfl, hpre⟩ := blockCheck_sound f b cs rest hbc
+      · rename_i restB hbc
+        obtain ⟨pre, rfl, hpre⟩ := blockCheck_sound f b cs restB hbc
         split at h
         · rename_i hout
-          split at h
-          · rename_i hr
-            subst hr
-            rw [List.append_nil]
-            exact .last hb hpre hout
-          · cases h
+          cases h
+          exact ⟨pre, rfl, .last hb hpre hout⟩
         · rename_i e hout
           split at h
           · rename_i hc
@@ -453,8 +469,11 @@ theorem regCheck_sound : ∀ (f : Nat) (rg : Region) (bid : BlockId) (cs : List 
               · rename_i hc'
                 obtain ⟨hp, hs⟩ := hc'
                 obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
-                exact .step hb hpre hout hu (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) (headOk?_sound hh)
-                  (regCheck_sound f rg e.dst rest' h)
+                obtain ⟨pre₂, rfl, hpre₂⟩ := regCheck_sound f rg e.dst rest' rest h
+                refine ⟨pre ++ (ns ++ pre₂), by simp only [List.append_assoc], ?_⟩
+                exact .step hb hpre hout hu (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs)
+                  (HeadOk.of_append (l := ns ++ pre₂) (rest := rest) (by
+                    have := headOk?_sound hh; simpa only [List.append_assoc] using this)) hpre₂
               · cases h
             · cases h
           · cases h
@@ -477,7 +496,11 @@ theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
             split at h
             · rename_i hr
               cases h
-              exact ⟨[n], rfl, .loop hn (loopCorr?_sound hl) (regCheck_sound f _ _ _ hr)⟩
+              obtain ⟨pre, hpre, hc⟩ := regCheck_sound f _ _ _ _ hr
+              rw [List.append_nil] at hpre
+              subst hpre
+              exact ⟨[n], rfl, .loop hn (loopCorr?_sound hl) hc⟩
+            · cases h
             · cases h
           · cases h
         · cases h
@@ -490,7 +513,11 @@ theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
             split at h
             · rename_i hr
               obtain ⟨pre, rfl, hpre⟩ := elifCheck_sound f _ _ rest h
-              exact ⟨_, rfl, .cond hc (regCheck_sound f _ _ _ hr) hpre⟩
+              obtain ⟨preB, hpreB, hcB⟩ := regCheck_sound f _ _ _ _ hr
+              rw [List.append_nil] at hpreB
+              subst hpreB
+              exact ⟨_, rfl, .cond hc hcB hpre⟩
+            · cases h
             · cases h
           · cases h
         · cases h
@@ -504,7 +531,28 @@ theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
     · split at h
       · cases h; exact ⟨_, rfl, .ret⟩
       · cases h
-    · cases h
+    · split at h
+      · obtain ⟨pre, hpre, hc⟩ := regCheck_sound f _ _ _ _ h
+        exact ⟨pre, hpre, .flat hc⟩
+      · obtain ⟨pre, hpre, hc⟩ := regCheck_sound f _ _ _ _ h
+        exact ⟨pre, hpre, .flat hc⟩
+      · split at h
+        · rename_i label' body rest'
+          split at h
+          · rename_i hl
+            subst hl
+            split at h
+            · rename_i hr
+              cases h
+              obtain ⟨pre, hpre, hc⟩ := regCheck_sound f _ _ _ _ hr
+              rw [List.append_nil] at hpre
+              subst hpre
+              exact ⟨_, rfl, .named hc⟩
+            · cases h
+            · cases h
+          · cases h
+        · cases h
+      · cases h
 
 theorem elifCheck_sound : ∀ (f : Nat) (brs : List (Option Expr × Region)) (cs rest : List SNode),
     elifCheck ctx tc f brs cs = .ok rest → ∃ pre, cs = pre ++ rest ∧ ElifCorr ctx tc brs pre
@@ -520,7 +568,11 @@ theorem elifCheck_sound : ∀ (f : Nat) (brs : List (Option Expr × Region)) (cs
           split at h
           · rename_i hr
             obtain ⟨pre, rfl, hpre⟩ := elifCheck_sound f _ _ rest h
-            exact ⟨_, rfl, .elif hc (regCheck_sound f _ _ _ hr) hpre⟩
+            obtain ⟨preB, hpreB, hcB⟩ := regCheck_sound f _ _ _ _ hr
+            rw [List.append_nil] at hpreB
+            subst hpreB
+            exact ⟨_, rfl, .elif hc hcB hpre⟩
+          · cases h
           · cases h
         · cases h
       · cases h
@@ -530,7 +582,11 @@ theorem elifCheck_sound : ∀ (f : Nat) (brs : List (Option Expr × Region)) (cs
           split at h
           · rename_i hr
             cases h
-            exact ⟨_, rfl, .els (regCheck_sound f _ _ _ hr)⟩
+            obtain ⟨preB, hpreB, hcB⟩ := regCheck_sound f _ _ _ _ hr
+            rw [List.append_nil] at hpreB
+            subst hpreB
+            exact ⟨_, rfl, .els hcB⟩
+          · cases h
           · cases h
         · cases h
       · cases h
@@ -543,8 +599,11 @@ end CheckSound
 def corrCheck (g : SDFG) (t : STree) : Except String Unit :=
   if t.containers ≠ g.arrays then .error "the descriptor repositories differ"
   else if t.constants.isEmpty && g.constants.isEmpty then
-    regCheck (checkCtx g) (TCtx.ofTree Interp.uninterpreted t) (3 * Region.size g.top + 3) g.top g.top.start
-      t.children
+    match regCheck (checkCtx g) (TCtx.ofTree Interp.uninterpreted t) (3 * Region.size g.top + 3) g.top g.top.start
+        t.children with
+    | .ok [] => .ok ()
+    | .ok _ => .error "tree nodes after the end of the program"
+    | .error m => .error m
   else .error "constants are not compared yet"
 
 /-- `corrCheck` as a Boolean. -/
@@ -598,6 +657,8 @@ theorem BlockCorr.withI {b : Block} {cs : List SNode} :
   | .brk => .brk
   | .cont => .cont
   | .ret => .ret
+  | .flat h => .flat (RegCorr.withI h)
+  | .named h => .named (RegCorr.withI h)
 
 theorem ElifCorr.withI {brs : List (Option Expr × Region)} {cs : List SNode} :
     ElifCorr (sctx I₁ g) (TCtx.ofTree I₁ t) brs cs → ElifCorr (sctx I₂ g) (TCtx.ofTree I₂ t) brs cs
@@ -623,7 +684,14 @@ theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I :
       refine ⟨by simpa using ha, ?_, ?_⟩
       · funext ρ x
         simp [SDFG.withConstants, STree.toSDFG, hc.1, hc.2]
-      · exact RegCorr.withI Interp.uninterpreted I (regCheck_sound _ _ _ _ h)
+      · split at h
+        · rename_i hr
+          obtain ⟨pre, hpre, hc⟩ := regCheck_sound _ _ _ _ _ hr
+          rw [List.append_nil] at hpre
+          subst hpre
+          exact RegCorr.withI Interp.uninterpreted I hc
+        · cases h
+        · cases h
     · cases h
 
 theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) : ProgCorr I g t := by

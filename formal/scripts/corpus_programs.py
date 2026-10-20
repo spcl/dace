@@ -616,3 +616,33 @@ PROGRAMS.append(("do_while", _BuiltProgram("do_while", lambda: _build_do_while(T
 PROGRAMS.append(
     ("do_while_cond_first", _BuiltProgram("do_while_cond_first", lambda: _build_do_while(False)), args_do_while)
 )
+
+
+def _build_regions() -> dace.SDFG:
+    """A named region (a ``NamedRegionScope``) followed by a plain region (inlined by ``sdfg_to_tree``)."""
+    sdfg = dace.SDFG("regions")
+    sdfg.add_array("A", [3], dace.float64)
+    named = dace.sdfg.state.NamedRegion("my_region")
+    sdfg.add_node(named, is_start_block=True)
+    first = named.add_state("first", is_start_block=True)
+    tasklet = first.add_tasklet("one", {}, {"out"}, "out = 1")
+    first.add_edge(tasklet, "out", first.add_write("A"), None, dace.Memlet("A[0]"))
+    plain = dace.sdfg.state.ControlFlowRegion("plain_region")
+    sdfg.add_node(plain)
+    sdfg.add_edge(named, plain, dace.InterstateEdge())
+    second = plain.add_state("second", is_start_block=True)
+    tasklet = second.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
+    second.add_edge(second.add_read("A"), None, tasklet, "inp", dace.Memlet("A[0]"))
+    second.add_edge(tasklet, "out", second.add_write("A"), None, dace.Memlet("A[1]"))
+    third = plain.add_state_after(second, "third")
+    tasklet = third.add_tasklet("dbl", {"inp"}, {"out"}, "out = 2 * inp")
+    third.add_edge(third.add_read("A"), None, tasklet, "inp", dace.Memlet("A[1]"))
+    third.add_edge(tasklet, "out", third.add_write("A"), None, dace.Memlet("A[2]"))
+    return sdfg
+
+
+def args_regions(seed: int = 0) -> dict:
+    return dict(A=np.zeros(3))
+
+
+PROGRAMS.append(("regions", _BuiltProgram("regions", _build_regions), args_regions))

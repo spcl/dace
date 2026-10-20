@@ -833,6 +833,11 @@ inductive BlockCorr (ctx : Ctx) (tc : TCtx) : Block → List SNode → Prop wher
   | brk : BlockCorr ctx tc .breakBlock [.breakNode]
   | cont : BlockCorr ctx tc .continueBlock [.continueNode]
   | ret : BlockCorr ctx tc .returnBlock [.goto none]
+  /-- A plain or function-call region: `sdfg_to_tree` inlines its blocks. -/
+  | flat {rg : Region} {cs : List SNode} (h : RegCorr ctx tc rg rg.start cs) : BlockCorr ctx tc (.region rg) cs
+  /-- A named region: a `NamedRegionScope`. -/
+  | named {rg : Region} {label : String} {cs : List SNode} (h : RegCorr ctx tc rg rg.start cs) :
+      BlockCorr ctx tc (.region rg) [.namedRegion label cs]
 
 /-- The `elif`/`else` scopes after the `if` of a conditional block. -/
 inductive ElifCorr (ctx : Ctx) (tc : TCtx) : List (Option Expr × Region) → List SNode → Prop where
@@ -880,6 +885,41 @@ theorem ElifCorr.skip {ctx : Ctx} {tc : TCtx} {full : List SNode} {gb : Bool} {r
       cases he'.2.1
 
 /-! ## Matching -/
+
+theorem HeadOk.append {l rest : List SNode} (hl : HeadOk l) (hr : HeadOk rest) : HeadOk (l ++ rest) := by
+  cases l with
+  | nil => exact hr
+  | cons a l => intro n hn; exact hl n (by simpa using hn)
+
+theorem HeadOk.of_append {l rest : List SNode} (h : HeadOk (l ++ rest)) : HeadOk l := by
+  cases l with
+  | nil => exact HeadOk.nil
+  | cons a l => intro n hn; exact h n (by simpa using hn)
+
+/-- A block outcome followed by the empty list is a list outcome. -/
+theorem BOut.toOut {X : Res (Ctl × CSt) → Prop} {tc : TCtx} {full : List SNode} {gb : Bool} {r : Res (TCtl × CSt)}
+    (h : BOut X (fun c => STree.ListExec tc full gb {} [] c r) r) : Out X r := by
+  rcases h with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨ctl, c, -, hr, h⟩ | ⟨c, hl, h⟩
+  · exact .inl ⟨e, hu, h⟩
+  · exact .inr (.inl ⟨e, hr, h⟩)
+  · exact .inr (.inr ⟨ctl, c, hr, h⟩)
+  · rw [STree.ListExec_nil rfl hl]
+    exact .inr (.inr ⟨.normal, c, rfl, h⟩)
+
+theorem ListExec.append_nil {tc : TCtx} {full : List SNode} {gb : Bool} {sc : SibCtx} {cs : List SNode} {cst : CSt}
+    {r : Res (TCtl × CSt)} (h : STree.ListExec tc full gb sc cs cst r) : STree.ListExec tc full gb sc (cs ++ []) cst r := by
+  rw [List.append_nil]; exact h
+
+theorem namedRegion_inv {tc : TCtx} {label : String} {body : List SNode} {cst : CSt} {res : Res NodeOut}
+    (h : STree.NodeExec tc {} (.namedRegion label body) cst res) :
+    ∃ r', STree.ListExec tc body false {} body cst r' ∧ res = scopeOut r' := by
+  generalize hn : SNode.namedRegion label body = n at h
+  cases h with
+  | pendingErr _ hp => simp [Pending.isEmpty] at hp
+  | leaf _ h' => subst hn; simp [stepLeaf] at h'
+  | loop _ hl _ => subst hn; simp [SNode.loop?] at hl
+  | namedRegion _ hb => cases hn; exact ⟨_, hb, rfl⟩
+  | _ => cases hn
 
 section Matched
 
@@ -943,29 +983,31 @@ set_option linter.unusedSectionVars false
 mutual
 
 theorem RegCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} :
-    RegCorr ctx tc rg bid cs → ∀ {full : List SNode} {gb : Bool} {cst : CSt} {r : Res (TCtl × CSt)},
-      STree.ListExec tc full gb {} cs cst r → Out (RegionAt ctx rg cst bid) r
-  | .last (cs := cs) hb hc hout, full, gb, cst, r, hx => by
-    have hx' : STree.ListExec tc full gb {} (cs ++ []) cst r := by rw [List.append_nil]; exact hx
-    rcases BlockCorr.matched hc HeadOk.nil hx' with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨ctl, c, hn, hr, h⟩ | ⟨c, hl, h⟩
+    RegCorr ctx tc rg bid cs → ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt}
+      {r : Res (TCtl × CSt)}, HeadOk rest → STree.ListExec tc full gb {} (cs ++ rest) cst r →
+      BOut (RegionAt ctx rg cst bid) (fun c => STree.ListExec tc full gb {} rest c r) r
+  | .last hb hc hout, full, gb, rest, cst, r, hh, hx => by
+    rcases BlockCorr.matched hc hh hx with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨ctl, c, hn, hr, h⟩ | ⟨c, hl, h⟩
     · exact .inl ⟨e, hu, .blockErr hb h⟩
     · exact .inr (.inl ⟨e, hr, .blockErr hb h⟩)
-    · exact .inr (.inr ⟨ctl, c, hr, .exit hb h hn⟩)
-    · rw [STree.ListExec_nil rfl hl]
-      exact .inr (.inr ⟨.normal, c, rfl, .stop hb h (trueEdges_nil hout)⟩)
-  | .step hb hc hout hu hp ha hs hh h, full, gb, cst, r, hx => by
+    · exact .inr (.inr (.inl ⟨ctl, c, hn, hr, .exit hb h hn⟩))
+    · exact .inr (.inr (.inr ⟨c, hl, .stop hb h (trueEdges_nil hout)⟩))
+  | .step hb hc hout hu hp ha hs hh h, full, gb, rest, cst, r, hhr, hx => by
     have hn : (_ : List (Sym × Expr)).map Prod.fst |>.Nodup := ((hp.map Prod.fst).nodup_iff).1 hs.nodup
-    rcases BlockCorr.matched hc hh hx with ⟨e, hu', h₁⟩ | ⟨e, hr, h₁⟩ | ⟨ctl, c, hn', hr, h₁⟩ | ⟨c, hl, h₁⟩
+    rw [List.append_assoc] at hx
+    rcases BlockCorr.matched hc (hh.append hhr) hx with
+      ⟨e, hu', h₁⟩ | ⟨e, hr, h₁⟩ | ⟨ctl, c, hn', hr, h₁⟩ | ⟨c, hl, h₁⟩
     · exact .inl ⟨e, hu', .blockErr hb h₁⟩
     · exact .inr (.inl ⟨e, hr, .blockErr hb h₁⟩)
-    · exact .inr (.inr ⟨ctl, c, hr, .exit hb h₁ hn'⟩)
-    · rcases assigns_run he ha hl with ⟨e, -, ha'⟩ | ⟨c₂, ha', hl'⟩
+    · exact .inr (.inr (.inl ⟨ctl, c, hn', hr, .exit hb h₁ hn'⟩))
+    · rw [List.append_assoc] at hl
+      rcases assigns_run he ha hl with ⟨e, -, ha'⟩ | ⟨c₂, ha', hl'⟩
       · rw [assigns_seq ctx _ _ hs] at ha'
         obtain ⟨e', hu', ha''⟩ := (applyAssigns_perm hp hn).2 _ ha'
         exact .inl ⟨e', hu', .assignErr hb h₁ (trueEdges_isUncond hout hu) ha''⟩
       · rw [assigns_seq ctx _ _ hs] at ha'
         have ha'' := (applyAssigns_perm hp hn).1 _ ha'
-        exact (RegCorr.matched h hl').mono fun _ h' => .step hb h₁ (trueEdges_isUncond hout hu) ha'' h'
+        exact (RegCorr.matched h hhr hl').mono fun _ h' => .step hb h₁ (trueEdges_isUncond hout hu) ha'' h'
 
 theorem BlockCorr.matched {b : Block} {cs : List SNode} :
     BlockCorr ctx tc b cs → ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt}
@@ -978,13 +1020,13 @@ theorem BlockCorr.matched {b : Block} {cs : List SNode} :
     · exact .inr (.inr (.inr ⟨c, hl, .state h⟩))
   | .loop (l := l) (body := body) hn hm hb, full, gb, rest, cst, r, hh, hx => by
     have hbody : ∀ c r', STree.ListExec tc body false {} body c r' → Out (RegionExec ctx c l.body) r' :=
-      fun c r' hx' => (RegCorr.matched hb hx').mono fun _ h => .start h
+      fun c r' hx' => (RegCorr.matched hb HeadOk.nil (ListExec.append_nil hx')).toOut.mono fun _ h => .start h
     refine node_list hh (fun res hres => ?_) hx
     obtain ⟨r', hl, rfl⟩ := loop_inv hn hres
     exact ((LoopExecT.matched he hm hbody hl).mono fun _ h => .loop h).scopeOut
   | .cond hc hb ht, full, gb, rest, cst, r, hh, hx => by
     subst hc
-    refine (chain_step he (fun res hres => if_inv hres) (fun r' hx' => RegCorr.matched hb hx')
+    refine (chain_step he (fun res hres => if_inv hres) (fun r' hx' => (RegCorr.matched hb HeadOk.nil (ListExec.append_nil hx')).toOut)
       (fun hx' => ElifCorr.matched ht hh hx') (fun c hx' => ElifCorr.skip ht hx') hh hx).mono
       fun _ h => .cond h
   | .brk, full, gb, rest, cst, r, hh, hx => by
@@ -999,6 +1041,12 @@ theorem BlockCorr.matched {b : Block} {cs : List SNode} :
     refine node_list hh (fun res hres => ?_) hx
     rw [leafStep_inv rfl hres]
     exact .inr (.inr ⟨{}, .ret, cst, rfl, rfl, .ret⟩)
+  | .flat h, full, gb, rest, cst, r, hh, hx =>
+    (RegCorr.matched h hh hx).mono fun _ h' => .region (.start h')
+  | .named h, full, gb, rest, cst, r, hh, hx => by
+    refine node_list hh (fun res hres => ?_) hx
+    obtain ⟨r', hb', rfl⟩ := namedRegion_inv hres
+    exact ((RegCorr.matched h HeadOk.nil (ListExec.append_nil hb')).toOut.mono fun _ h' => .region (.start h')).scopeOut
 
 theorem ElifCorr.matched {brs : List (Option Expr × Region)} {cs : List SNode} :
     ElifCorr ctx tc brs cs → ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt}
@@ -1007,12 +1055,12 @@ theorem ElifCorr.matched {brs : List (Option Expr × Region)} {cs : List SNode} 
   | .nil, full, gb, rest, cst, r, hh, hx => .inr (.inr (.inr ⟨cst, listChainFree hx rfl hh, .nil⟩))
   | .elif hc hb ht, full, gb, rest, cst, r, hh, hx => by
     subst hc
-    exact chain_step he (fun res hres => elif_inv hres) (fun r' hx' => RegCorr.matched hb hx')
+    exact chain_step he (fun res hres => elif_inv hres) (fun r' hx' => (RegCorr.matched hb HeadOk.nil (ListExec.append_nil hx')).toOut)
       (fun hx' => ElifCorr.matched ht hh hx') (fun c hx' => ElifCorr.skip ht hx') hh hx
   | .els hb, full, gb, rest, cst, r, hh, hx => by
     refine node_list hh (fun res hres => ?_) hx
     obtain ⟨r', hb', rfl⟩ := else_inv hres
-    exact ((RegCorr.matched hb hb').mono fun _ h => .els (.start h)).scopeOut
+    exact ((RegCorr.matched hb HeadOk.nil (ListExec.append_nil hb')).toOut.mono fun _ h => .els (.start h)).scopeOut
 
 end
 
@@ -1040,7 +1088,8 @@ theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) 
   have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := m₀ } := by
     simp [rootStart, hc.consts]
   rw [hstart] at hx
-  rcases hc.reg.matched he rfl hx with ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩
+  rcases (hc.reg.matched he rfl HeadOk.nil (ListExec.append_nil hx)).toOut with
+    ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩
   · exact .inl ⟨e, hu, _, .err (.start hy), rfl⟩
   · exact .inr ⟨_, .err (.start hy), rfl⟩
   · cases ctl with

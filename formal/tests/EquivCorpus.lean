@@ -19,7 +19,7 @@ def corpusDir : IO System.FilePath :=
 def expected : List String :=
   ["axpy", "matmul", "matmul.tiled", "stencil2d", "strided_sum", "two_states", "reduce_rows", "matmul_lib",
    "map_same_write", "unordered_writes", "oob_read", "oob_allowed", "write_outside", "slice_view",
-   "loop_with_branch", "while_loop", "nested_call", "loop_control", "early_return", "do_while", "do_while_cond_first"]
+   "loop_with_branch", "while_loop", "nested_call", "loop_control", "early_return", "do_while", "do_while_cond_first", "regions"]
 
 def main : IO Unit := do
   let dir ← corpusDir
