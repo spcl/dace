@@ -104,6 +104,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.sdfg import memlets_in_ast
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import transformation
@@ -957,7 +958,7 @@ def tile_slice(index_lists: list[list[Any]]) -> bool:
     for dim, index in enumerate(first):
         named = {
             str(s)
-            for s in (index.free_symbols if isinstance(index, sympy.Basic) else ())
+            for s in (as_basic(index).free_symbols if isinstance(index, (sympy.Basic, symbolic.SymExpr)) else ())
             if str(s).startswith(AXIS_PREFIX)
         }
         if named != cut:

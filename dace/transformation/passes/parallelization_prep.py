@@ -136,7 +136,7 @@ def _unified(expr, *context):
         return expr
     widest: dict[str, Any] = {}
     for other in context:
-        for sym in other.free_symbols if isinstance(other, sympy.Basic) else ():
+        for sym in as_basic(other).free_symbols if isinstance(other, (sympy.Basic, symbolic.SymExpr)) else ():
             if not isinstance(sym, symbolic.symbol):
                 continue
             best = widest.get(sym.name)

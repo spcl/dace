@@ -20,6 +20,7 @@ from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -184,8 +185,8 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 free = set()
                 for rb, re, _ in outer.ndrange():
                     for expr in (rb, re):
-                        if isinstance(expr, sp.Basic):
-                            free |= set(expr.free_symbols)
+                        if isinstance(expr, (sp.Basic, symbolic.SymExpr)):
+                            free |= set(as_basic(expr).free_symbols)
                 if itersym not in free:
                     continue
                 # itersym-dependent read: must match the writes' a*i+b, else it's a carried read.
@@ -1714,8 +1715,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     free = set()
                     for rb, re_, _ in src_subset.ndrange():
                         for expr in (rb, re_):
-                            if isinstance(expr, sp.Basic):
-                                free |= set(expr.free_symbols)
+                            if isinstance(expr, (sp.Basic, symbolic.SymExpr)):
+                                free |= set(as_basic(expr).free_symbols)
                     if itersym not in free:
                         continue
                     # itersym-dependent read: must match a*i+b like the writes, else this

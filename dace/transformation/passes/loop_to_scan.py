@@ -2790,7 +2790,7 @@ def _symbolic_stride_guard(infos: list["_Scan"], facts: symbolic.Facts) -> str |
     conds: list[str] = []
     seen = set()
     for info in infos:
-        s = info.scan_stride
+        s = as_basic(info.scan_stride) if isinstance(info.scan_stride, symbolic.SymExpr) else info.scan_stride
         if isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts):
             cond = f"({symbolic.symstr(s)}) >= 1"
             if cond not in seen:
@@ -2833,7 +2833,7 @@ def stride_guard_is_statically_dischargeable(infos: list["_Scan"], facts: symbol
     """
     guarded = False
     for info in infos:
-        s = info.scan_stride
+        s = as_basic(info.scan_stride) if isinstance(info.scan_stride, symbolic.SymExpr) else info.scan_stride
         if not (isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts)):
             continue
         guarded = True

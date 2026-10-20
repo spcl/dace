@@ -712,6 +712,44 @@ def test_a_guard_reading_a_body_scalar_only_in_its_condition_is_not_hoisted():
     _run_and_check(sdfg, py_ref, A=np.array([0.0, 0.0, 1.0, 0.0]), B=np.zeros(4), N=4)
 
 
+def test_a_state_reading_what_a_sibling_guard_writes_is_not_hoisted():
+    """A conditional's writes conflict with a sibling's reads. Counting the guard's states only for a
+    ``ControlFlowRegion`` (``ConditionalBlock`` is not one) left its write set empty, so the state reading ``t``
+    looked invariant and was hoisted above the loop: CloudSC CPU then read values from before the loop."""
+    sdfg = dace.SDFG("licm_guard_write_conflict")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("t", [1], dace.float64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard, is_start_block=True)
+    branch = ControlFlowRegion("guard_body")
+    guard.add_branch(CodeBlock("i % 2 == 1"), branch)
+    store = branch.add_state("store", is_start_block=True)
+    copy_a = store.add_tasklet("copy_a", {"a"}, {"y"}, "y = a")
+    store.add_edge(store.add_read("A"), None, copy_a, "a", mm.Memlet("A[i]"))
+    store.add_edge(copy_a, "y", store.add_write("t"), None, mm.Memlet("t[0]"))
+    use = loop.add_state("use")
+    loop.add_edge(guard, use, dace.InterstateEdge())
+    inc = use.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1.0")
+    use.add_edge(use.add_read("t"), None, inc, "x", mm.Memlet("t[0]"))
+    use.add_edge(inc, "y", use.add_write("B"), None, mm.Memlet("B[0]"))
+
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert any(n is use for n in loop.nodes()), "the state reading t was hoisted out of the loop whose guard writes t"
+
+    def py_ref(A, B, t, N):
+        for i in range(N):
+            if i % 2 == 1:
+                t[0] = A[i]
+            B[0] = t[0] + 1.0
+
+    _run_and_check(sdfg, py_ref, A=np.array([1.0, 2.0, 3.0, 4.0]), B=np.zeros(1), t=np.zeros(1), N=4)
+
+
 def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
     """TSVC2 s452: `for nl: for i: a[i] = b[i] + c[i] * (i + 1)`.
 
@@ -1288,6 +1326,7 @@ if __name__ == "__main__":
     test_tsvc2_s431_like_inner_loop_aw_read_blocks_hoist()
     test_an_inner_loop_reading_a_body_array_only_on_an_interstate_edge_is_not_hoisted()
     test_a_guard_reading_a_body_scalar_only_in_its_condition_is_not_hoisted()
+    test_a_state_reading_what_a_sibling_guard_writes_is_not_hoisted()
     test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist()
     test_llvm_basictest_scalar_times_literal_hoisted()
     test_llvm_hoist_binop_chain_both_hoisted()

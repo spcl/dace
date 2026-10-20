@@ -27,7 +27,7 @@ from typing import Any
 from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.optionals import required
 from dace.sdfg import InterstateEdge, nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
@@ -286,7 +286,7 @@ def _region_rw_sets(region: Any) -> tuple[set[str], set[str]]:
             if region.out_degree(n) > 0:
                 reads.add(n.data)
         return reads, writes
-    if isinstance(region, ControlFlowRegion):
+    if isinstance(region, AbstractControlFlowRegion):
         for s in region.states():
             for n in s.data_nodes():
                 if s.in_degree(n) > 0:
@@ -307,7 +307,7 @@ def _region_has_work(region: Any) -> bool:
             if isinstance(n, (nodes.Tasklet, nodes.NestedSDFG, nodes.LibraryNode, nodes.MapEntry)):
                 return True
         return False
-    if isinstance(region, ControlFlowRegion):
+    if isinstance(region, AbstractControlFlowRegion):
         for s in region.states():
             if _region_has_work(s):
                 return True
@@ -327,7 +327,7 @@ def _region_has_side_effect(region: Any) -> bool:
                 if oe.data is not None and oe.data.wcr is not None:
                     return True
         return False
-    if isinstance(region, ControlFlowRegion):
+    if isinstance(region, AbstractControlFlowRegion):
         for s in region.states():
             if _region_has_side_effect(s):
                 return True
