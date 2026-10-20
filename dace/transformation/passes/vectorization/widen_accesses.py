@@ -38,6 +38,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
+from dace.transformation.passes.vectorization.split_constant_indexed_buffers import split_constant_indexed_buffer
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     check_tile_widths,
@@ -154,6 +155,14 @@ def emit_per_lane_symbol_fanout(
                 repl[symbolic.symbol(iv)] = shifted
             iedge.data.assignments[plane] = str(rhs_sym.xreplace(repl))
     return per_lane_syms
+
+
+class UnwidenableLaneBuffer(NotImplementedError):
+    """A lane-dependent transient with more than one element, which :class:`WidenAccesses` cannot widen."""
+
+    def __init__(self, name: str, message: str) -> None:
+        super().__init__(message)
+        self.name = name
 
 
 @properties.make_properties
@@ -518,6 +527,20 @@ class WidenAccesses(ppl.Pass):
                                 changed = True
         return lane_dep_transients
 
+    def _lane_dep_splitting_buffers(
+        self, inner_sdfg: SDFG, iter_vars: tuple[str, ...], nt_lane_dep: set[str]
+    ) -> set[str]:
+        # Step 3, splitting a lane-dependent buffer accessed at constant elements (a fused map's per-iteration buffer,
+        # CloudSC's ``zpfplsx`` species pair) into one scalar per element when it cannot be widened as it is: each
+        # element is then a per-lane temporary like any other. Only such a buffer is split, so the rest of the body
+        # is exactly what it was.
+        while True:
+            try:
+                return self._propagate_lane_dep(inner_sdfg, iter_vars, nt_lane_dep)
+            except UnwidenableLaneBuffer as refusal:
+                if not split_constant_indexed_buffer(inner_sdfg, refusal.name):
+                    raise
+
     @staticmethod
     def _is_narrowed_constant_transient(inner_sdfg: SDFG, name: str, memo: dict[str, bool] | None = None) -> bool:
         # True iff transient ``name`` is produced SOLELY by pure compile-time constant assignments -- ``out = <numeric
@@ -611,10 +634,11 @@ class WidenAccesses(ppl.Pass):
     @staticmethod
     def _unwidenable_lane_dep_error(name: str, desc: dd.Data) -> NotImplementedError:
         # Build the refusal for a lane-dependent transient we cannot widen.
-        return NotImplementedError(
+        return UnwidenableLaneBuffer(
+            name,
             f"WidenAccesses: lane-dependent transient '{name}' has non-scalar shape "
             f"{tuple(desc.shape)}; widening a multi-element per-lane buffer to (W, ...) is "
-            f"unsupported. Refusing rather than emitting an under-widened tile."
+            f"unsupported. Refusing rather than emitting an under-widened tile.",
         )
 
     # Step 5: seed per-lane symbols for Bypass-form gathers
@@ -862,7 +886,7 @@ class WidenAccesses(ppl.Pass):
                 if self._widen_non_transient_memlets(inner_sdfg, name, iter_vars):
                     total += 1
             # Step 3: propagate lane-dep through Tasklets (fixed point).
-            to_widen = self._propagate_lane_dep(inner_sdfg, iter_vars, nt_lane_dep)
+            to_widen = self._lane_dep_splitting_buffers(inner_sdfg, iter_vars, nt_lane_dep)
             # Step 4: widen lane-dep transient descriptors.
             for name in sorted(to_widen):
                 if self._widen_transient(inner_sdfg, name, to_widen, map_widths):
