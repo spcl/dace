@@ -51,7 +51,7 @@ def is_lossless_integer_cast(node: ast.Call, symbols: dict[str, dtypes.typeclass
         return False
     if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Name):
         return False
-    target = getattr(dtypes, node.func.attr, None)
+    target = dtypes.TYPECLASS_BY_NAME.get(node.func.attr)
     source = symbols.get(node.args[0].id)
     return _is_signed_integer(target) and _is_signed_integer(source) and source.bytes <= target.bytes
 
@@ -76,7 +76,7 @@ class AttributedCallDetector(ast.NodeVisitor):
             # Special case: widening a signed integer name (e.g., dace.int64(i) for an int32 symbol i). Only one
             # widening cast is allowed, so that the remaining operands already carry the wider type.
             if is_lossless_integer_cast(node, self.symbols):
-                if self.symbols[node.args[0].id].bytes < getattr(dtypes, node.func.attr).bytes:
+                if self.symbols[node.args[0].id].bytes < dtypes.TYPECLASS_BY_NAME[node.func.attr].bytes:
                     self.widening_casts += 1
                 if self.widening_casts <= 1:
                     return self.generic_visit(node)

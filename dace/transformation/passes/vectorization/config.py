@@ -56,14 +56,12 @@ class VectorizeConfig:
     tile_programs: bool = False
 
     def __post_init__(self) -> None:
-        for name, enum_cls in (
-            ("target_isa", ISA),
-            ("remainder_strategy", RemainderStrategy),
-            ("branch_mode", BranchMode),
-            ("tile_group", TileGroup),
+        for name, value, enum_cls in (
+            ("target_isa", self.target_isa, ISA),
+            ("remainder_strategy", self.remainder_strategy, RemainderStrategy),
+            ("branch_mode", self.branch_mode, BranchMode),
+            ("tile_group", self.tile_group, TileGroup),
         ):
-            if not isinstance(getattr(self, name), enum_cls):
-                raise TypeError(
-                    f"VectorizeConfig.{name} must be a {enum_cls.__name__} member, got {getattr(self, name)!r}"
-                )
+            if not isinstance(value, enum_cls):
+                raise TypeError(f"VectorizeConfig.{name} must be a {enum_cls.__name__} member, got {value!r}")
         self.widths = tuple(self.widths)

@@ -706,8 +706,6 @@ class CPUCodeGen(TargetCodeGenerator):
         self._global_sdfg: SDFG = sdfg
         # Containers the calling code generator passes to nested SDFGs in addition to their connectors
         self.extra_nsdfg_args = []
-        # Nested SDFG -> the symbols its header and call pass; see nsdfg_argument_symbols
-        self.nsdfg_argument_symbol_cache: dict[SDFG, frozenset[str]] = {}
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -2918,15 +2916,6 @@ class CPUCodeGen(TargetCodeGenerator):
             self.nested_sdfg_fingerprints_counted = True
         return self.nested_sdfg_fingerprint_counts.get(nested_sdfg_fingerprint(nsdfg), 0) != 1
 
-    def nsdfg_argument_symbols(self, nsdfg: SDFG) -> frozenset[str]:
-        """The symbols a nested SDFG's function takes, walked once per nest: its header and its call
-        both ask, and emission does not change the SDFG (see ``lower_and_generate_code``)."""
-        cached = self.nsdfg_argument_symbol_cache.get(nsdfg)
-        if cached is None:
-            cached = frozenset(nsdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True))
-            self.nsdfg_argument_symbol_cache[nsdfg] = cached
-        return cached
-
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
@@ -2961,7 +2950,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f"{atype} {restrict} {aname}" for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        fsyms = self.nsdfg_argument_symbols(node.sdfg)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         arguments += [
             f"{self.nsdfg_symbol_argument(node.sdfg.symbols[aname], aname)}"
             for aname in sorted(node.symbol_mapping.keys())
@@ -2976,7 +2965,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_struct = False  # matches generate_nsdfg_header, which drops the parameter
         if state_struct:
             prepend = ["__state"]
-        fsyms = self.nsdfg_argument_symbols(node.sdfg)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         args = ", ".join(
             prepend
             + [argval for _, _, argval in memlet_references]

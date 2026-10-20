@@ -283,7 +283,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # the post-outer-decision state.
         kept: dict[str, list[str]] = {}
         for loop, pairs in candidates.items():
-            if self._l2m_accepts(loop, sdfg):
+            # Only a refusal on one of the candidate arrays can be lifted by privatizing their slots: a refusal on
+            # another container, or for structure, bounds or symbols, survives the promotion unchanged.
+            accepted, refused_on = self._l2m_verdict(loop, sdfg)
+            if accepted or refused_on not in {arr_name for arr_name, _ in pairs}:
                 continue
             applied: list[_Promotion] = []
             labels: list[str] = []
@@ -291,7 +294,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 promo = self._promote(sdfg, loop, arr_name, c_subset)
                 applied.append(promo)
                 labels.append(f"{arr_name}@{c_subset}")
-            if applied and self._l2m_accepts(loop, sdfg):
+            if applied and self._l2m_verdict(loop, sdfg)[0]:
                 kept[loop.label] = labels
             else:
                 # Undo in reverse: prologues + edits + descriptors come off cleanly.
@@ -300,8 +303,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return kept
 
     @staticmethod
-    def _l2m_accepts(loop: LoopRegion, sdfg: SDFG) -> bool:
-        """Whether ``LoopToMap`` would accept ``loop`` right now (refusals silenced).
+    def _l2m_verdict(loop: LoopRegion, sdfg: SDFG) -> tuple[bool, str | None]:
+        """Whether ``LoopToMap`` would accept ``loop`` right now, and the container it refused on.
 
         Asks ``LoopToMap.can_be_applied`` directly on the single loop. Avoids the
         whole-SDFG ``match_patterns(sdfg, LoopToMap)`` walk -- which, on
@@ -312,7 +315,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
         :param loop: The loop region to test.
         :param sdfg: The owning SDFG.
-        :returns: ``True`` if L2M's strict-mode ``can_be_applied`` returns True.
+        :returns: ``(accepted, container)``: L2M's strict-mode verdict and, on a refusal, the
+                  :attr:`~LoopToMap.last_refusal_container` it names (``None`` for any other refusal).
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
 
@@ -321,9 +325,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
         xform.expr_index = 0
         with contextlib.redirect_stdout(io.StringIO()):
             try:
-                return bool(xform.can_be_applied(loop.parent_graph, 0, sdfg, permissive=False))
+                accepted = bool(xform.can_be_applied(loop.parent_graph, 0, sdfg, permissive=False))
             except Exception:
-                return False
+                return False, None
+        return accepted, None if accepted else xform.last_refusal_container
 
     # slot detection
 
@@ -962,7 +967,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     # Slot-precise: swap the arr-AccessNode endpoint to a fresh per-state
                     # scalar AccessNode (one per state; reused across this slot's edges).
                     for endpoint in ("src", "dst"):
-                        end_node = getattr(edge, endpoint)
+                        end_node = edge.src if endpoint == "src" else edge.dst
                         if isinstance(end_node, nodes.AccessNode) and end_node.data == arr_name:
                             if per_state_scalar is None:
                                 per_state_scalar = state.add_access(scalar_name)

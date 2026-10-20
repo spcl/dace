@@ -442,6 +442,10 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     alpha = properties.SymbolicProperty(allow_none=False, default=1, category="Semantics")
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.SymbolicProperty(allow_none=False, default=0, category="Semantics")
 
     transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")

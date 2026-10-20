@@ -84,7 +84,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         me.map.range = dace.subsets.Range(new_ranges)
 
         def _subs(x: symbolic.SymbolicType) -> symbolic.SymbolicType:
-            return x.subs(subsdict) if isinstance(x, sympy.Basic) else x
+            return x.subs(subsdict) if isinstance(x, (sympy.Basic, symbolic.SymExpr)) else x
 
         def subs_range(sub: Subset) -> dace.subsets.Range:
             return dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in sub.ndrange()])

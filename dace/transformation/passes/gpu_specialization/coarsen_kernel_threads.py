@@ -106,8 +106,11 @@ class CoarsenKernelThreads(ppl.Pass):
         grid, *_ = xfh.get_parent_map(state, kernel)
         # The kernel's launch properties and its timing move to the grid map; the tile is the thread's loop.
         grid.map.schedule = dtypes.ScheduleType.GPU_Device
-        for name in ("gpu_block_size", "gpu_launch_bounds", "gpu_min_warps_per_eu", "gpu_maxnreg", "instrument"):
-            setattr(grid.map, name, getattr(kernel.map, name))
+        grid.map.gpu_block_size = kernel.map.gpu_block_size
+        grid.map.gpu_launch_bounds = kernel.map.gpu_launch_bounds
+        grid.map.gpu_min_warps_per_eu = kernel.map.gpu_min_warps_per_eu
+        grid.map.gpu_maxnreg = kernel.map.gpu_maxnreg
+        grid.map.instrument = kernel.map.instrument
         kernel.map.schedule = dtypes.ScheduleType.Sequential
         kernel.map.gpu_block_size = None
         kernel.map.instrument = dtypes.InstrumentationType.No_Instrumentation

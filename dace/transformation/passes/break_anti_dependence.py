@@ -265,6 +265,10 @@ class BreakAntiDependence(ppl.Pass):
     def __init__(self, forward_reads: bool = False) -> None:
         super().__init__()
         self.forward_reads = forward_reads
+        #: The carried offsets of one loop whose sign the classification could not decide.
+        self._unproven_offsets: list = []
+        #: The facts a loop's offsets are asked under, per loop, for one pass run.
+        self._facts_memo: dict = {}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -465,7 +469,7 @@ class BreakAntiDependence(ppl.Pass):
             if provably_nonpositive_offset(carried_offset, facts):
                 return ("RAW", None)  # provable read-behind (``a[i - K]``): a true recurrence
             # A read-ahead under ``offset >= 1``: the loop may be versioned on it (``version_on_offset_sign``)
-            vars(self).setdefault("_unproven_offsets", []).append(carried_offset)
+            self._unproven_offsets.append(carried_offset)
             # Sign undecidable even under the nonneg-symbol assumption (``K - M``): keep
             # sequential, but do NOT report 'RAW'. RAW means a *proven* read-behind, and a
             # consumer that fuses on that (LoopFusion) would then wrongly permit fusing a possible
@@ -1232,19 +1236,19 @@ class BreakAntiDependence(ppl.Pass):
         :param loop: The loop to break.
         :param sdfg: The SDFG owning ``loop``.
         """
-        vars(self)["_unproven_offsets"] = []
+        self._unproven_offsets = []
         plans = self.forward_read_plans(loop, sdfg)
         if plans is None:
             return 0
         facts = self.offset_facts(loop, sdfg)
         one = symbolic.pystr_to_symbolic("1")
         unproven = [g for plan in plans for g in plan[2] if not symbolic.provably_le(one, g, facts)]
-        unproven += vars(self)["_unproven_offsets"]
+        unproven += self._unproven_offsets
         unproven = list(dict.fromkeys(unproven))
         if not unproven:
             return self.break_forward_reads(loop, sdfg, plans)
         proven = [plan for plan in plans if not set(plan[2]) & set(unproven)]
-        memo = vars(self)["_facts_memo"]
+        memo = self._facts_memo
         # A loop the whole-array policy renames under the same ``offset >= 1`` is left to it: it maps the loop
         memo[loop] = facts.with_relations(symbolic.Relation(symbolic.RelationKind.LE, one, o) for o in unproven)
         try:
@@ -1305,7 +1309,7 @@ class BreakAntiDependence(ppl.Pass):
     def offset_facts(self, loop: LoopRegion | None, sdfg: SDFG | None) -> symbolic.Facts:
         """The facts a carried offset's sign is asked under: at ``loop``, else of ``sdfg``; derived once per loop
         and pass run (the rename adds containers and states, never a bound or a symbol fact)."""
-        memo = vars(self).setdefault("_facts_memo", {})
+        memo = self._facts_memo
         key = loop if loop is not None else sdfg
         if key not in memo:
             if loop is not None:
@@ -1321,7 +1325,7 @@ class BreakAntiDependence(ppl.Pass):
         ``forward_reads`` picks the admission policy (see the module docstring): the default
         whole-array pure-WAR rename, or the per-edge read-ahead break that unbinds two statements
         of a loop that stays sequential."""
-        vars(self)["_facts_memo"] = {}
+        self._facts_memo = {}
         if self.forward_reads:
             applied = 0
             for loop in self._loops(sdfg):
@@ -1334,7 +1338,7 @@ class BreakAntiDependence(ppl.Pass):
                 continue
             if not self._safe_stride(loop, sdfg):
                 continue
-            vars(self)["_unproven_offsets"] = []
+            self._unproven_offsets = []
             renames = list(self._renamable_arrays(loop, sdfg))
             facts = self.offset_facts(loop, sdfg)
             unproven = [
@@ -1343,7 +1347,7 @@ class BreakAntiDependence(ppl.Pass):
                 for g in guards
                 if not symbolic.provably_le(self.least_offset(loop, name), g, facts)
             ]
-            unproven = list(dict.fromkeys(unproven + vars(self)["_unproven_offsets"]))
+            unproven = list(dict.fromkeys(unproven + self._unproven_offsets))
             if not unproven:
                 renamed += self.rename_loop(loop, sdfg, renames) if renames else 0
                 continue
@@ -1388,7 +1392,7 @@ class BreakAntiDependence(ppl.Pass):
             return 0
         zero = sympy.Integer(0)
         conditions = [symbolic.Relation(symbolic.RelationKind.LE, zero, offset) for offset in offsets]
-        memo = vars(self)["_facts_memo"]
+        memo = self._facts_memo
         facts = self.offset_facts(loop, sdfg)
         memo[loop] = facts.with_relations(conditions)
         try:

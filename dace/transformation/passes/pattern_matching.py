@@ -614,6 +614,7 @@ def _try_to_match_transformation(
     options: dict[str, Any],
     pipeline_results: dict[str, Any] | None = None,
     cfg_ids: Optional["CfgIds"] = None,
+    authority: Any = None,
 ) -> xf.PatternTransformation | None:
     """
     Helper function that tries to instantiate a pattern match into a
@@ -625,6 +626,7 @@ def _try_to_match_transformation(
                              is what issue#1911 is about; ``setup_match`` resets the member, so it
                              has to be set after that call.
     :param cfg_ids: The CFG list indexed once by the caller, to resolve the region's ``cfg_id``.
+    :param authority: :func:`match_authority` of ``sdfg``, prepared by a caller trying many matches in a row.
     """
     # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
     # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
@@ -667,7 +669,7 @@ def _try_to_match_transformation(
         # After setup_match, which resets it to None.
         match._pipeline_results = pipeline_results
         # The predicate parses names from text just as the application does, so it decides under the same dtypes.
-        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True, prepared=authority):
             match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool("optimizer", "match_exception"):
@@ -975,8 +977,13 @@ def state_matches(
     # Collapse multigraph into directed graph in order to use VF2
     digraph = collapse_multigraph_to_nx(state)
 
+    # Every probe parses under the same authority; prepare it once per run of probes. A consumer may apply a match
+    # (and change the symbols) once one is yielded, so it is prepared again after each.
+    authority = None
     for xform, expr_idx, nxpattern, matcher, opts in candidates:
         for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
+            if authority is None:
+                authority = match_authority(cfr.sdfg)
             match = _try_to_match_transformation(
                 state,
                 digraph,
@@ -990,9 +997,19 @@ def state_matches(
                 opts,
                 pipeline_results,
                 cfg_ids,
+                authority,
             )
             if match is not None:
+                authority = None
                 yield match
+
+
+def match_authority(sdfg: SDFG) -> Any:
+    """The symbol-dtype authority :func:`_try_to_match_transformation` parses a probe of ``sdfg`` under -- the
+    enclosing one with ``sdfg``'s own symbols on top -- prepared to be pushed without rebuilding it per probe."""
+    # pylint: disable=protected-access
+    enclosing = symbolic._SERIALIZATION_SYMBOL_DTYPES.get()
+    return symbolic.prepare_serialization_symbol_dtypes({**enclosing, **sdfg.symbols})
 
 
 def enumerate_matches(

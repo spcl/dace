@@ -2033,8 +2033,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             state_symbols = self.symbols_defined_at_state(sdfg_symbols=scope_symbols)
         symbols = collections.OrderedDict(state_symbols)
 
-        # Find scopes this node is situated in
-        sdict = self.scope_dict()
+        # Find scopes this node is situated in. The cached scope dict is read in place: ``scope_dict()`` copies it
+        sdict = self._scope_dict_toparent_cached
+        if sdict is None:
+            sdict = self.scope_dict()
         scope_list = []
         seen = {id(node)}
         curnode = node
@@ -2511,6 +2513,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         scope_connector=None,
         internal_connector=None,
         external_connector=None,
+        symbols: Optional["SymbolResolver"] = None,
     ):
         """Adds two edges around a scope node (e.g., map entry, consume
         exit).
@@ -2538,6 +2541,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                    connect to.
         :param external_connector: The connector on external_node to
                                    connect to.
+        :param symbols: The ``SymbolResolver`` to propagate with, for a caller adding many edge pairs
+                        while the SDFG's symbols, descriptors and control flow stay unchanged.
         :return: A 2-tuple representing the (internal, external) edges.
         """
         if not isinstance(scope_node, (nd.EntryNode, nd.ExitNode)):
@@ -2584,7 +2589,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Add external edge
         if external_memlet is None:
             # If undefined, propagate
-            external_memlet = sdprop.propagate_memlet(self, internal_memlet, scope_node, True)
+            external_memlet = sdprop.propagate_memlet(self, internal_memlet, scope_node, True, symbols=symbols)
 
         if isinstance(scope_node, nd.EntryNode):
             eedge = self.add_edge(
@@ -3027,8 +3032,8 @@ class SymbolResolver:
     data descriptors, is genuinely per SDFG and is reused as such. Only the state asked about last
     is kept, one per SDFG: callers resolve the nodes of one state together, and a copy of every
     symbol for every state of a large SDFG costs gigabytes (QE ``h_psi``: 14478 states of about
-    12500 symbols each). A resolver is only valid while the symbols, data descriptors, control flow
-    regions and inter-state edges stay unchanged.
+    12500 symbols each). The same holds for the scope resolved last. A resolver is only valid while the symbols, data
+    descriptors, control flow regions, inter-state edges and scopes stay unchanged.
     """
 
     def __init__(self, sdfg: Optional["SDFG"] = None, sdfg_symbols: dict[str, dtypes.typeclass] | None = None) -> None:
@@ -3042,6 +3047,8 @@ class SymbolResolver:
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
         self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
+        #: Per SDFG, the scope resolved last and the symbols every node directly inside it sees.
+        self._per_scope: dict[SDFG, tuple[SDFGState, nd.EntryNode, dict[str, dtypes.typeclass]]] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
         last = self._per_state.get(state.sdfg)
@@ -3055,7 +3062,20 @@ class SymbolResolver:
                 sdfg_symbols=sdfg_symbols, region_updates=self._region_updates
             )
             self._per_state[state.sdfg] = (state, state_symbols)
-        return state.symbols_defined_at(node, state_symbols=state_symbols)
+        # What a node sees depends only on its innermost scope. The cached scope dict is read in place:
+        # ``scope_dict()`` copies it per call.
+        sdict = state._scope_dict_toparent_cached
+        scope = (state.scope_dict() if sdict is None else sdict).get(node)
+        if scope is None:
+            return state.symbols_defined_at(node, state_symbols=state_symbols)
+        last = self._per_scope.get(state.sdfg)
+        if last is None or last[0] is not state or last[1] is not scope:
+            last = self._per_scope[state.sdfg] = (
+                state,
+                scope,
+                state.symbols_defined_at(node, state_symbols=state_symbols),
+            )
+        return collections.OrderedDict(last[2])
 
     def facts_at(self, block: "ControlFlowBlock", node: nd.Node | None = None) -> symbolic.Facts:
         """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
@@ -3198,6 +3218,7 @@ class SymbolResolver:
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state.pop(sdfg, None)
+        self._per_scope.pop(sdfg, None)
 
     def forget_within(self, sdfg: "SDFG") -> None:
         """Drops what was resolved inside ``sdfg`` and every SDFG nested in it, after a change to ``sdfg``'s graph.
@@ -3210,6 +3231,7 @@ class SymbolResolver:
         for nested in within:
             self._per_sdfg.pop(nested, None)
             self._per_state.pop(nested, None)
+            self._per_scope.pop(nested, None)
 
 
 @make_properties

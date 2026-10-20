@@ -25,9 +25,8 @@ def liftable(loop: LoopRegion, permissive: bool, like: LoopToMap | None = None) 
     probe = LoopToMap()
     probe.keep_small_loops_sequential = False
     if like is not None:
-        for shared in ("lift_context", "symbol_resolver"):
-            if shared in vars(like):
-                setattr(probe, shared, vars(like)[shared])
+        probe.lift_context = like.lift_context
+        probe.symbol_resolver = like.symbol_resolver
     probe.setup_match(loop.sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
     return probe.can_be_applied(loop.parent_graph, 0, loop.sdfg, permissive=permissive)
 

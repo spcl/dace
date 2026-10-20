@@ -90,19 +90,16 @@ class DaCeCodeGenerator:
         # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
         # of the same name, and only one of them may qualify. Empty under the default ``eager``.
         self.loop_local_counters: dict[tuple[int, str], str] = {}
-        # id(obj) -> (obj, result). The object itself is kept alive here so its address
+        # (id(obj), keep_defined_in_mapping) -> (obj, result). The object itself is kept alive here so its address
         # cannot be recycled by a later, unrelated object for as long as the entry lives
         # (a WeakValueDictionary would not do this: it lets obj die and the id go stale).
-        self.fsyms: dict[int, tuple[Any, frozenset[str]]] = {}
+        self.fsyms: dict[tuple[int, bool], tuple[Any, frozenset[str]]] = {}
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: dict[int, bool] = {}
         self._symbols_and_constants: dict[int, set[str]] = {}
         # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
         self._symbol_resolver = SymbolResolver()
-        # Per SDFG, the scope resolved last and the symbols every node directly inside it sees: the nodes of one
-        # scope are generated together, and each would otherwise re-type every enclosing map's parameters.
-        self._per_scope: dict[SDFG, tuple[SDFGState, nodes.Node, dict[str, dtypes.typeclass]]] = {}
         self._struct_types: dict[SDFG, dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
@@ -150,12 +147,15 @@ class DaCeCodeGenerator:
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any) -> frozenset[str]:
-        k = id(obj)
+    def free_symbols(self, obj: Any, keep_defined_in_mapping: bool = False) -> frozenset[str]:
+        k = (id(obj), keep_defined_in_mapping)
         cached = self.fsyms.get(k)
         if cached is not None and cached[0] is obj:
             return cached[1]
-        if hasattr(obj, "used_symbols"):
+        if keep_defined_in_mapping:
+            # The symbols a nested SDFG's header and call pass; interstate edges do not take the flag
+            result = obj.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        elif hasattr(obj, "used_symbols"):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -176,20 +176,7 @@ class DaCeCodeGenerator:
         :param node: The node.
         :return: A dictionary mapping symbol names to their types, which the caller may modify.
         """
-        # What a node sees depends only on its innermost scope: the walk adds every enclosing scope's symbols, outermost
-        # first. The cached scope dict is read in place, as ``scope_dict()`` copies it per call.
-        sdict = state._scope_dict_toparent_cached
-        if sdict is None:
-            sdict = state.scope_dict()
-        scope = sdict.get(node)
-        if scope is None:
-            return self._symbol_resolver.defined_at(state, node)
-        last = self._per_scope.get(state.sdfg)
-        if last is not None and last[0] is state and last[1] is scope:
-            return collections.OrderedDict(last[2])
-        symbols = self._symbol_resolver.defined_at(state, node)
-        self._per_scope[state.sdfg] = (state, scope, collections.OrderedDict(symbols))
-        return symbols
+        return self._symbol_resolver.defined_at(state, node)
 
     def struct_types(self, sdfg: SDFG) -> dict[str, dtypes.struct]:
         """

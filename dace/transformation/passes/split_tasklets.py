@@ -8,6 +8,8 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+import sympy
+
 import dace
 from dace import SDFG, properties, subsets, symbolic
 from dace import graphlib as nx
@@ -875,9 +877,12 @@ class SplitTasklets(ppl.Pass):
             for k, v in e.data.assignments.items():
                 if k not in sdfg.symbols:
                     symexpr = dace.symbolic.SymExpr(v)
-                    cast_name = getattr(getattr(symexpr, "func", None), "__name__", None)
-                    if cast_name in dace.dtypes.TYPECLASS_STRINGS:
-                        cast_dtype = getattr(dace, cast_name)
+                    cast_dtype = (
+                        dace.dtypes.TYPECLASS_BY_NAME.get(symexpr.func.__name__)
+                        if isinstance(symexpr, sympy.Basic)
+                        else None
+                    )
+                    if cast_dtype is not None:
                         if cast_dtype in dace.dtypes.INTEGER_TYPES:
                             sdfg.add_symbol(k, cast_dtype)
                             added.add(k)

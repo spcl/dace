@@ -1,6 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :mod:`~dace.transformation.passes.parallelization_prep` range recovery."""
 
+import hashlib
+import json
+
 import pytest
 
 import dace
@@ -26,19 +29,6 @@ def test_a_split_keeps_the_cfg_list_in_place(monkeypatch, multi_state, reuse_loo
 
 
 @pytest.mark.parametrize("multi_state", [False, True])
-def test_an_isolated_loop_arrives_with_its_cfg_list_in_place(monkeypatch, multi_state):
-    """The probe copy of a loop is re-homed by ``add_node``; no reset of its tree is needed before validation."""
-    sdfg = loop_over_nested_sdfg(multi_state)
-    loop = next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))
-    resets = record_tree_resets(monkeypatch, lambda root: root.name.endswith("_peelprobe"))
-    mini, mini_loop = BestEffortLoopPeeling()._isolate_loop(loop, sdfg)
-    assert mini is not None and mini_loop.parent_graph is mini
-    assert resets == []
-    assert [type(r).__name__ for r in mini.cfg_list] == [type(r).__name__ for r in sdfg.cfg_list]
-    assert_cfg_list_as_after_a_reset(mini)
-
-
-@pytest.mark.parametrize("multi_state", [False, True])
 def test_a_specialized_loop_keeps_the_cfg_list_in_place(monkeypatch, multi_state):
     """Swapping a loop for ``if cond: split else: loop`` needs no reset, before or after the callback splits."""
     sdfg = loop_over_nested_sdfg(multi_state)
@@ -52,7 +42,7 @@ def test_a_specialized_loop_keeps_the_cfg_list_in_place(monkeypatch, multi_state
 
     resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
     conditional = specialize_loop_under_condition(loop, "N > 4", parallelize, sdfg)
-    assert resets == [] and seen == [True]
+    assert resets == [] and [len(segments) for segments in seen] == [3]
     assert isinstance(conditional, ConditionalBlock) and conditional.parent_graph is sdfg
     loops = [r.label for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
     assert loops == ["outer_p0", "outer_p1", "outer_p2", "outer"], loops
@@ -86,6 +76,74 @@ def test_a_split_that_only_copies_mappable_loops_is_not_taken():
     assert loop_labels(sdfg) == before
 
 
+N = dace.symbol("N", nonnegative=True)
+M = dace.symbol("M", nonnegative=True)
+K = dace.symbol("K", nonnegative=True)
+
+
+@dace.program
+def wrap_at_the_end(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        a[(i + 1) % N] = b[i]
+
+
+@dace.program
+def wrap_at_the_end_nested(a: dace.float64[N, M], b: dace.float64[N, M]):
+    for i in range(N):
+        for j in range(M):
+            a[(i + 1) % N, j] = b[i, j]
+
+
+@dace.program
+def wrap_at_a_symbolic_point(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        a[(i + K) % N] = b[i]
+
+
+def _outer_loop(sdfg: dace.SDFG) -> LoopRegion:
+    return next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))
+
+
+def _json_digest(sdfg: dace.SDFG) -> str:
+    return hashlib.sha256(json.dumps(sdfg.to_json(), sort_keys=True).encode()).hexdigest()
+
+
+@pytest.mark.parametrize("program", [wrap_at_the_end, wrap_at_the_end_nested])
+def test_the_modulo_peel_is_decided_on_the_loop_itself(program):
+    """``(i + 1) % N`` wraps only on the last iteration, so the smallest peel that folds it is one back iteration. The
+    search decides that from the remaining loop's range -- and, with a loop in the body, from the peeled iteration's --
+    probed on the loop itself, which serializes to the same bytes afterwards."""
+    sdfg = program.to_sdfg(simplify=True)
+    loop = _outer_loop(sdfg)
+    peel = BestEffortLoopPeeling(peel_limit=4)
+    nested = program is wrap_at_the_end_nested
+    # The remaining loop, and the peeled iteration only when its body holds a loop that could keep a wrap.
+    assert len(peel._peel_segments(loop, 1, "back")) == (2 if nested else 1)
+    before = _json_digest(sdfg)
+    assert peel._best_modulo_peel_for(loop, sdfg) == (1, "back")
+    assert _json_digest(sdfg) == before
+    assert peel.apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not any(peel._has_wrapping_modulo(l) for l in sdfg.all_control_flow_regions() if isinstance(l, LoopRegion))
+
+
+def test_the_modulo_split_is_decided_on_the_loop_itself():
+    """``(i + K) % N`` wraps at the symbolic ``i = N - K``, which no bounded peel reaches. The split there folds both
+    halves, the far one under ``K < N`` -- the relation the emitted branch is guarded by -- and the search that finds it
+    leaves the loop as it was."""
+    sdfg = wrap_at_a_symbolic_point.to_sdfg(simplify=True)
+    loop = _outer_loop(sdfg)
+    peel = BestEffortLoopPeeling(peel_limit=4)
+    before = _json_digest(sdfg)
+    assert peel._best_modulo_peel_for(loop, sdfg) is None
+    found = peel._best_modulo_split_for(loop, sdfg)
+    assert _json_digest(sdfg) == before
+    assert found is not None
+    x, relations = found
+    assert symbolic.simplify(x - symbolic.pystr_to_symbolic("N - K")) == 0, x
+    assert [str(r) for r in relations] == ["K < N"], relations
+
+
 if __name__ == "__main__":
     import _pytest.monkeypatch
 
@@ -94,7 +152,8 @@ if __name__ == "__main__":
             with _pytest.monkeypatch.MonkeyPatch.context() as mp:
                 test_a_split_keeps_the_cfg_list_in_place(mp, multi_state, reuse_loop)
         with _pytest.monkeypatch.MonkeyPatch.context() as mp:
-            test_an_isolated_loop_arrives_with_its_cfg_list_in_place(mp, multi_state)
-        with _pytest.monkeypatch.MonkeyPatch.context() as mp:
             test_a_specialized_loop_keeps_the_cfg_list_in_place(mp, multi_state)
     test_a_split_that_only_copies_mappable_loops_is_not_taken()
+    for program in (wrap_at_the_end, wrap_at_the_end_nested):
+        test_the_modulo_peel_is_decided_on_the_loop_itself(program)
+    test_the_modulo_split_is_decided_on_the_loop_itself()

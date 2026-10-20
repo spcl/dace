@@ -19,15 +19,17 @@ BOTH parities of the trip count -- the odd case puts the loop's fixpoint iterati
 and is the one an off-by-one would corrupt.
 """
 
-import copy
+import hashlib
+import json
 
 import numpy as np
 import pytest
 
 import dace
-from dace import symbolic
+from dace import subsets, symbolic
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, mappable_count_upper_bound
+from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 
 N = dace.symbol("N", nonnegative=True)
 K = dace.symbol("K", nonnegative=True)
@@ -132,8 +134,8 @@ def test_crossover_candidates_are_the_floor_and_ceil_of_the_direction_flip():
 
 
 def test_measurement_picks_the_bracket_that_unblocks_both_halves():
-    """The derivation only NOMINATES; the probe on an isolated copy is what accepts, and it keeps a bracket that leaves
-    both range segments provably conflict-free."""
+    """The derivation only NOMINATES; the probe of each candidate's segments is what accepts, and it keeps a bracket
+    that leaves both range segments provably conflict-free."""
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     loop = _loops(sdfg)[0]
     peel = BestEffortLoopPeeling(peel_limit=4)
@@ -156,26 +158,23 @@ def test_a_singleton_only_split_is_not_counted_as_a_win():
     that only ADDS residual sequential loops as an improvement, so such a segment must not count."""
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     peel = BestEffortLoopPeeling(peel_limit=4)
-    mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
-    assert mini is not None
-    cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.pystr_to_symbolic("K"))
-    peel._clean_peeled_remainder(cand)
-    assert peel._mappable_loop_count(cand) == 0, "a provably-single-iteration segment is not parallelism"
+    loop = _loops(sdfg)[0]
+    k = symbolic.pystr_to_symbolic("K")
+    assert [singleton for _, _, singleton in peel._split_plan(sdfg, loop, k)] == [False, True, False]
+    assert peel._mappable_segments(sdfg, loop, k, True, frozenset()) == 0, (
+        "a single-iteration segment is not parallelism"
+    )
 
 
 def test_the_accepted_split_counts_both_range_segments():
-    """Counterpart: the accepted cut scores 2, which is only reachable if the count SSA-renames the
-    segment iterators first. Sharing one name makes ``LoopToMap`` refuse every segment but the last
-    ("loop-defined symbol used after the loop") -- exactly the ones a split exists to unblock."""
+    """Counterpart: the accepted cut scores 2. Each range segment is probed on the loop itself, under the segment's
+    own bounds, so the scalar ``x`` stays local to the one loop it lives in and neither segment sees the other."""
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     peel = BestEffortLoopPeeling(peel_limit=4)
-    mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
-    assert peel._mappable_loop_count(copy.deepcopy(mini)) == 0, "the unsplit loop parallelizes nothing"
-    cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2))
-    peel._clean_peeled_remainder(cand)
-    assert peel._mappable_loop_count(cand) == 2
+    loop = _loops(sdfg)[0]
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=loop), "the unsplit loop parallelizes nothing"
+    x = symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2)
+    assert peel._mappable_segments(sdfg, loop, x, True, frozenset()) == 2
 
 
 def test_no_crossover_means_the_pass_refuses_and_leaves_the_loop_alone():
@@ -279,19 +278,85 @@ def test_split_point_past_the_end_by_the_sdfg_facts_is_refused():
     assert _loops(sdfg) == [loop], "a refused split must leave the loop alone"
 
 
-def test_split_search_bound_never_undercounts_a_candidate():
-    """The search skips a candidate whose bound cannot beat the best, so the bound must hold after the count's prep."""
-    sdfg = reverse_read_same_write.to_sdfg(simplify=True)
-    peel = BestEffortLoopPeeling(peel_limit=4)
-    mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
-    verdicts = {}
-    assert peel._mappable_loop_count(copy.deepcopy(mini), verdicts) == 0
-    verdicts.pop(_loops(mini)[0].label)
-    cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2))
-    peel._clean_peeled_remainder(cand)
-    labels = [l.label for l in _loops(cand)]
-    bound = mappable_count_upper_bound(cand, verdicts)
-    count = peel._mappable_loop_count(cand, dict(verdicts))
-    assert [l.label for l in _loops(cand)] == labels, "the count prep must not add, drop or relabel a loop"
-    assert (bound, count) == (3, 2)
+@dace.program
+def rejected_everywhere(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    # Nominates ``x = N - 1`` (the guard) and ``x = 0`` (``b[0]`` read against the ``b[i]`` write), and the carried
+    # ``a[i - 1]`` keeps every segment of either split sequential. The segment ``[0, N - 2]`` resolves the guard (its
+    # else branch always runs there) and folds ``(i + 1) % N`` to ``i + 1``: the probe edits the graph and must undo it.
+    for i in range(N):
+        if i == N - 1:
+            b[i] = b[0]
+        else:
+            a[i] = a[i - 1] + c[(i + 1) % N]
+
+
+def _json_digest(sdfg) -> str:
+    return hashlib.sha256(json.dumps(sdfg.to_json(), sort_keys=True).encode()).hexdigest()
+
+
+def _spy_on_probe_edits(monkeypatch) -> list[tuple[int, int]]:
+    """Record, per segment probe, how many conditionals it resolved and how many subsets it folded."""
+    edits: list[tuple[int, int]] = []
+    lift = BestEffortLoopPeeling._lift_trivial_ifs_virtually
+    fold = BestEffortLoopPeeling._rewrite_modulo_over_range
+
+    def spy_lift(loop, saved):
+        lift(loop, saved)
+        edits.append((len(saved), 0))
+
+    def spy_fold(self, region, collect=None, saved=None):
+        fold(self, region, collect, saved)
+        edits[-1] = (edits[-1][0], len(saved))
+
+    monkeypatch.setattr(BestEffortLoopPeeling, "_lift_trivial_ifs_virtually", staticmethod(spy_lift))
+    monkeypatch.setattr(BestEffortLoopPeeling, "_rewrite_modulo_over_range", spy_fold)
+    return edits
+
+
+def test_a_search_that_rejects_every_candidate_leaves_the_graph_byte_identical(monkeypatch):
+    """The segment probes edit the loop in place -- its header, its guards, its modulo subsets -- and must put back
+    exactly what they replaced: a search that splits nothing leaves the SDFG serializing to the very same bytes."""
+    sdfg = rejected_everywhere.to_sdfg(simplify=True)
+    loop = _loops(sdfg)[0]
+    edits = _spy_on_probe_edits(monkeypatch)
+    before = _json_digest(sdfg)
+    assert BestEffortLoopPeeling(peel_limit=4)._best_split_for(loop, sdfg) is None
+    assert any(resolved and folded for resolved, folded in edits), f"no probe resolved a guard and folded: {edits}"
+    assert _json_digest(sdfg) == before
+    sdfg.validate()
+
+
+@pytest.mark.parametrize("failing", ["loop_to_map", "fold"])
+def test_a_probe_that_raises_part_way_leaves_the_graph_byte_identical(monkeypatch, failing):
+    """A probe that raises after its edits -- in ``LoopToMap`` itself, after the header swap, the guard resolution and
+    the fold, or in the fold, right after it rewrote a subset -- still restores the loop, and the candidate is scored
+    as not mapping rather than aborting the search."""
+    sdfg = rejected_everywhere.to_sdfg(simplify=True)
+    loop = _loops(sdfg)[0]
+    edits = _spy_on_probe_edits(monkeypatch)
+    rewritten = []
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("probe failure")
+
+    def rewrite_then_explode(self, repl):
+        replace(self, repl)
+        rewritten.append(self)
+        raise RuntimeError("fold failure")
+
+    if failing == "loop_to_map":
+        monkeypatch.setattr(LoopToMap, "can_be_applied_to", classmethod(explode))
+    before = _json_digest(sdfg)
+    replace = subsets.Range.replace
+    if failing == "fold":
+        monkeypatch.setattr(subsets.Range, "replace", rewrite_then_explode)
+    assert BestEffortLoopPeeling(peel_limit=4)._best_split_for(loop, sdfg) is None
+    monkeypatch.undo()
+    if failing == "fold":
+        assert rewritten and any(resolved for resolved, _ in edits), (
+            f"no probe resolved a guard and then folded: {edits}"
+        )
+    else:
+        assert any(resolved and folded for resolved, folded in edits), f"no probe resolved a guard and folded: {edits}"
+    assert _json_digest(sdfg) == before
+    sdfg.validate()

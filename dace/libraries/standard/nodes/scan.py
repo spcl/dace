@@ -46,6 +46,7 @@ partial reductions does not change the result.
 import enum
 
 import numpy
+import sympy
 
 import dace
 from dace import cpf_lowering, dtypes, library, nodes, symbolic
@@ -61,7 +62,6 @@ from dace.libraries.standard.pure_components import counted_loop, element, opera
 from dace.memlet import Memlet
 from dace.optionals import required
 from dace.properties import EnumProperty, Property, SymbolicProperty
-from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.tasklet_utils import add_abort_guard
 from dace.transformation.transformation import ExpandTransformation
@@ -393,7 +393,7 @@ def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
     codegen's scalar-typing of single-element subsets."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     n = symbolic.simplify(required(in_edges[0].data.subset).num_elements())
-    return getattr(n, "is_Integer", False) and int(as_expr(n)) == 1
+    return isinstance(n, sympy.Integer) and int(n) == 1
 
 
 def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:

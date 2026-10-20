@@ -147,6 +147,22 @@ GPU_KERNEL_ACCESSIBLE_STORAGES = [
     StorageType.CPU_Pinned,
 ]
 
+# Coarsest first
+GPU_THREAD_SCHEDULES = [
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES_WITHOUT_CODEGEN = [
+    ScheduleType.GPU_Chiplet,
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
@@ -1462,6 +1478,9 @@ TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
     int64: "LL",
     uint64: "ULL",
 }
+
+#: Each typeclass by the name a program spells it with (``dace.int32``, ``dace.bool``).
+TYPECLASS_BY_NAME = {name.removeprefix("dace::"): t for t, name in TYPECLASS_TO_STRING.items()} | {"bool": bool_}
 
 TYPECLASS_STRINGS = [
     "int",

@@ -43,6 +43,10 @@ class Einsum(nodes.LibraryNode):
     alpha = properties.SymbolicProperty(
         category="Semantics", desc="The coefficient to multiply the inputs with", default=1.0
     )
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.SymbolicProperty(
         category="Semantics", desc="The coefficient to multiply the output with when added to the product", default=0.0
     )

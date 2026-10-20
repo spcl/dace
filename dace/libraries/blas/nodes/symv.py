@@ -149,6 +149,10 @@ class Symv(dace.sdfg.nodes.LibraryNode):
 
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True if upper triangle of A is referenced")
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):

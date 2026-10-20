@@ -75,8 +75,16 @@ from dace.transformation import transformation
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 
+
 #: Loop-control properties swapped to realize an interchange.
-_LOOP_META_ATTRS = ("loop_variable", "init_statement", "loop_condition", "update_statement", "inverted")
+def _loop_meta(loop: LoopRegion) -> tuple:
+    """The loop-control metadata of ``loop``: variable, init, condition, update, inverted."""
+    return (loop.loop_variable, loop.init_statement, loop.loop_condition, loop.update_statement, loop.inverted)
+
+
+def _set_loop_meta(loop: LoopRegion, meta: tuple) -> None:
+    """Restore what :func:`_loop_meta` read."""
+    loop.loop_variable, loop.init_statement, loop.loop_condition, loop.update_statement, loop.inverted = meta
 
 
 @transformation.explicit_cf_compatible
@@ -192,13 +200,12 @@ class LoopStridePermutation(ppl.Pass):
         doall_before = sum(1 for lr in chain if self._is_doall(sdfg, lr))
 
         done: list[tuple[LoopRegion, LoopRegion]] = []
-        snapshot = [{attr: getattr(lr, attr) for attr in _LOOP_META_ATTRS} for lr in chain]
+        snapshot = [_loop_meta(lr) for lr in chain]
 
         def revert() -> None:
             # Restore rather than re-swap: a trapezoid rewrite is not its own inverse.
             for lr, meta in zip(chain, snapshot):
-                for attr, value in meta.items():
-                    setattr(lr, attr, value)
+                _set_loop_meta(lr, meta)
 
         for k in range(pos, len(chain) - 1):
             # After prior swaps the target var sits at chain[k]; the pair being
@@ -242,8 +249,7 @@ class LoopStridePermutation(ppl.Pass):
     def _meta_tokens(lr: LoopRegion) -> set[str]:
         """Identifiers appearing anywhere in ``lr``'s loop control."""
         toks: set[str] = set()
-        for attr in ("init_statement", "loop_condition", "update_statement"):
-            block = getattr(lr, attr)
+        for block in (lr.init_statement, lr.loop_condition, lr.update_statement):
             if block is not None:
                 toks |= LoopStridePermutation._tokens(block.as_string)
         return toks
@@ -263,8 +269,7 @@ class LoopStridePermutation(ppl.Pass):
         ovar, ivar = outer.loop_variable, inner.loop_variable
         if ivar in LoopStridePermutation._meta_tokens(outer):
             return False
-        for attr in ("loop_condition", "update_statement"):
-            block = getattr(inner, attr)
+        for block in (inner.loop_condition, inner.update_statement):
             if block is not None and ovar in LoopStridePermutation._tokens(block.as_string):
                 return False
         if loop_analysis.get_loop_stride(outer) != 1 or loop_analysis.get_loop_stride(inner) != 1:
@@ -306,10 +311,9 @@ class LoopStridePermutation(ppl.Pass):
     def _swap_loop_metadata(a: LoopRegion, b: LoopRegion) -> None:
         """Swap the loop-control metadata of two regions -- this realizes the
         interchange because the body references the loop variables by name."""
-        for attr in _LOOP_META_ATTRS:
-            av, bv = getattr(a, attr), getattr(b, attr)
-            setattr(a, attr, bv)
-            setattr(b, attr, av)
+        meta_a, meta_b = _loop_meta(a), _loop_meta(b)
+        _set_loop_meta(a, meta_b)
+        _set_loop_meta(b, meta_a)
 
     def _is_doall(self, sdfg: SDFG, loop: LoopRegion) -> bool:
         """``True`` iff ``loop`` is a DOALL loop ``LoopToMap`` would parallelize.

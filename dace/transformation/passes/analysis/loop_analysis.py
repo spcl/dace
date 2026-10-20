@@ -430,7 +430,7 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: dict[str, str]) -> N
                     writers += 1
         if writers != 1:
             continue
-        code = n.code.code if hasattr(n.code, "code") else n.code
+        code = n.code.code
         if not isinstance(code, list) or len(code) != 1:
             continue
         stmt = code[0]

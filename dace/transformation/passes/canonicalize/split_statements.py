@@ -124,6 +124,8 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
 
+import sympy
+
 from dace import SDFG, Memlet, dtypes, properties, subsets, symbolic
 from dace import data as dt
 from dace.optionals import required
@@ -545,7 +547,7 @@ def access_offset(read_subset: subsets.Subset | None, write_subset: subsets.Subs
             diff = symbolic.simplify(r - w)
         except (TypeError, ValueError, AttributeError):
             return None
-        if not getattr(diff, "is_Integer", False):
+        if not isinstance(diff, sympy.Integer):
             return None
         if diff != 0:
             return 1 if diff > 0 else -1

@@ -319,7 +319,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             elif isinstance(node, nodes.LibraryNode):
                 # A node whose work per entry is the chunk an enclosing loop hands it (FindFirst) opts out of
                 # the loop half of the re-entry rule; an enclosing parallel map still serializes it.
-                loop_reentry = getattr(node, "serial_on_loop_reentry", True)
+                loop_reentry = node.serial_on_loop_reentry
                 if node.schedule in CPU_PARALLEL_SCHEDULES and (
                     in_parallel or (loop_reentry and is_reentered_cpu_transfer(node, state, loop_cache=self.loop_cache))
                 ):

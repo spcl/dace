@@ -104,7 +104,7 @@ def remaining_outcome(loop: Any) -> str:
     if hint.startswith("sequential -- carried"):
         return "sequential_witness" if kinds.witnessed_carrying_access(loop) is not None else "sequential_pattern"
     # The fallback arm of a specialization: pinned, and an arm of the conditional the guard is.
-    if loop.pinned_sequential and isinstance(getattr(loop.parent_graph, "parent_graph", None), ConditionalBlock):
+    if loop.pinned_sequential and isinstance(loop.parent_graph.parent_graph, ConditionalBlock):
         return "guarded_fallback"
     if kinds.NEVER_EXAMINED in hint:
         return "never_examined"

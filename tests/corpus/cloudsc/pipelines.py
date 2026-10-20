@@ -185,12 +185,18 @@ def load_offload_pass() -> Callable[[dace.SDFG], None]:
 
 
 def offload_stage() -> list[Stage]:
-    """The GPU-offload phase: schedule the outermost non-block map as a kernel and mirror host data to
-    the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction:
-    nothing in the recipe runs after it."""
+    """The GPU-offload phase: the pipeline's own ``offload_to_gpu`` and the GPU finalization. Terminal by
+    construction: nothing in the recipe runs after it.
+
+    Not CloudSC's hand-written mirror (:func:`load_offload_pass`): a sequential host loop the pipeline cannot
+    parallelize (CloudSC's ``nssopt`` switch without its constant) writes arrays the kernels also use, which the
+    mirror leaves unmirrored, and the kernels then read host memory. The offload pass places the copies both ways.
+    """
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 
     def apply(sdfg):
-        load_offload_pass()(sdfg)
+        offload_to_gpu(sdfg)
+        finalize_for_target(sdfg, "gpu")
 
     return [("offload_to_gpu", apply)]
 
@@ -466,6 +472,12 @@ def run_candidate(sdfg: dace.SDFG, inputs: dict, cpu_args: str, sequential: bool
         make_sequential(sdfg)
     needed = set(sdfg.arglist().keys()) | {str(s) for s in sdfg.free_symbols}
     args = {k: v for k, v in copy.deepcopy(inputs).items() if k in needed}
+    # An offload that keeps the arguments on the device takes device buffers for them (read off the descriptors).
+    on_device = device_resident(sdfg)
+    if on_device:
+        import cupy  # GPU-only dependency, needed only by an offloaded graph
+
+        args = {k: (cupy.asarray(v) if k in on_device and isinstance(v, numpy.ndarray) else v) for k, v in args.items()}
     saved_args = dace.Config.get("compiler", "cpu", "args")
     try:
         dace.Config.set("compiler", "cpu", "args", value=cpu_args)
@@ -473,7 +485,19 @@ def run_candidate(sdfg: dace.SDFG, inputs: dict, cpu_args: str, sequential: bool
     finally:
         dace.Config.set("compiler", "cpu", "args", value=saved_args)
         sdfg.name = saved_name
+    if on_device:
+        args = {k: (cupy.asnumpy(v) if isinstance(v, cupy.ndarray) else v) for k, v in args.items()}
     return args
+
+
+#: Storage classes that put an array in device memory, so the caller must pass a device buffer for it.
+GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
+
+
+def device_resident(sdfg: dace.SDFG) -> set[str]:
+    """Non-transient arrays an offload left in device memory -- the arguments the caller has to hand device buffers
+    for. Empty for a mirroring offload, which keeps every argument on the host."""
+    return {name for name, desc in sdfg.arrays.items() if not desc.transient and desc.storage in GPU_STORAGES}
 
 
 def build_reference_outputs(reference: dace.SDFG, regime: str = "ieee", seed: int = 0) -> tuple[dict, dict]:

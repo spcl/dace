@@ -51,11 +51,9 @@ import contextlib
 import gc
 import os
 
-import numpy as np
 import pytest
 
 import dace
-from dace import dtypes
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
@@ -73,6 +71,7 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
 from tests.corpus.cloudsc.pipelines import (
     build_reference_outputs,
+    device_resident,
     generate_cuda_code,
     gpu_is_runnable,
     is_device_scheduled,
@@ -99,9 +98,6 @@ PARALLEL_TOL = 1e-10
 VECTOR_WIDTH = 8
 #: Tile width for the GPU vectorize leg.
 GPU_VECTOR_WIDTH = 2
-
-#: Storage classes that put an array in device memory, so the caller must pass a device buffer for it.
-GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
 
 
 def tile_nodes(sdfg: dace.SDFG):
@@ -137,12 +133,6 @@ def run_on_host(sdfg: dace.SDFG, inputs, tag: str):
     return run_candidate(sdfg, inputs, IEEE_CPU_ARGS, sequential=False, tag=tag)
 
 
-def device_resident(sdfg: dace.SDFG):
-    """Non-transient arrays the offload left in ``GPU_Global`` -- the arguments the caller has to
-    hand device buffers for. Empty for a mirroring offload, which keeps every argument on the host."""
-    return {name for name, desc in sdfg.arrays.items() if not desc.transient and desc.storage in GPU_STORAGES}
-
-
 def run_on_device(sdfg: dace.SDFG, inputs, tag: str):
     """Run an offloaded ``sdfg`` on the GPU under the same strict FP rules the host reference used,
     and return the outputs back on the host.
@@ -150,22 +140,11 @@ def run_on_device(sdfg: dace.SDFG, inputs, tag: str):
     The device compilers contract to FMA by DEFAULT, which would build the device leg under looser
     FP rules than the reference it is compared against -- :func:`strict_fp_device_build` turns that
     off. ``sequential=False`` because forcing sequential schedules would demote every kernel back to
-    the host and the run would pass while proving nothing about the GPU.
-
-    Which arguments are device buffers is READ OFF the descriptors (:func:`device_resident`), not
-    assumed: the two offload recipes disagree, and guessing wrong is either a crash or -- worse -- a
-    silent host run. A mirroring offload leaves none, and then no device array library is needed.
+    the host and the run would pass while proving nothing about the GPU. Which arguments are device
+    buffers :func:`run_candidate` reads off the descriptors (:func:`device_resident`).
     """
-    on_device = device_resident(sdfg)
-    if not on_device:
-        with strict_fp_device_build():
-            return run_candidate(sdfg, inputs, IEEE_CPU_ARGS, sequential=False, tag=tag)
-    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
-
-    args = {k: (cupy.asarray(v) if k in on_device and isinstance(v, np.ndarray) else v) for k, v in inputs.items()}
     with strict_fp_device_build():
-        out = run_candidate(sdfg, args, IEEE_CPU_ARGS, sequential=False, tag=tag)
-    return {k: (cupy.asnumpy(v) if isinstance(v, cupy.ndarray) else v) for k, v in out.items()}
+        return run_candidate(sdfg, inputs, IEEE_CPU_ARGS, sequential=False, tag=tag)
 
 
 def assert_matches(out, reference_out, leg: str) -> None:

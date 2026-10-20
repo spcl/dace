@@ -1615,7 +1615,7 @@ def _state_in_nested_loop(state: SDFGState, loop: LoopRegion) -> bool:
     while g is not None and g is not loop:
         if isinstance(g, LoopRegion):
             return True
-        g = getattr(g, "parent_graph", None)
+        g = g.parent_graph
     return False
 
 

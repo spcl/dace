@@ -361,6 +361,22 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         return True
 
+    @staticmethod
+    def _same_container(src: nodes.Node, dst: nodes.Node, memlet: Memlet) -> bool:
+        """Whether reconnecting ``src -> dst`` with ``memlet`` would copy a container onto itself.
+
+        A connector names the whole outer container (windowed connectors are refused above), so an outer access node
+        and an inlined one of the same container are that container twice: a data edge between them would be an
+        identity copy, which moves nothing and which every later pass would have to recognize. A WCR memlet is not
+        an identity -- it accumulates -- and keeps its edge.
+        """
+        return (
+            isinstance(src, nodes.AccessNode)
+            and isinstance(dst, nodes.AccessNode)
+            and src.data == dst.data
+            and memlet.wcr is None
+        )
+
     def _remove_edge_path(
         self, state: SDFGState, edge_map: dict[str, MultiConnectorEdge], unused: set[str], reverse: bool = False
     ) -> list[MultiConnectorEdge]:
@@ -824,6 +840,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 anode = state.add_access(edge.data.data)
                 state.add_edge(edge.src, edge.src_conn, anode, edge.dst_conn, edge.data)
                 state.add_edge(anode, None, node, None, Memlet())
+            elif self._same_container(edge.src, node, edge.data):
+                # The outer node IS the container the inlined node reads: only the order remains.
+                state.add_nedge(edge.src, node, Memlet())
             else:
                 state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn, edge.data)
             # Fission state if necessary
@@ -847,6 +866,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 anode = state.add_access(edge.data.data)
                 state.add_edge(node, None, anode, None, Memlet())
                 state.add_edge(anode, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            elif self._same_container(node, edge.dst, edge.data):
+                # The inlined node already wrote the container the outer node holds: only the order remains.
+                state.add_nedge(node, edge.dst, Memlet())
             else:
                 state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
             # Fission state if necessary

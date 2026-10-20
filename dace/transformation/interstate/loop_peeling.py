@@ -11,7 +11,7 @@ from dace import symbolic
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
@@ -178,56 +178,65 @@ class LoopPeeling(LoopUnroll):
             new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
         iedge.assignments = new_assignments
 
+    def peel_plan(
+        self, loop: LoopRegion, sdfg: sd.SDFG
+    ) -> tuple[list[tuple[int, symbolic.SymbolicType]], str | None, str | None]:
+        """What peeling ``count`` iterations off ``loop`` makes, without making it.
+
+        :returns: ``(iterations, init, condition)``: the peeled ``(index, iterate value)`` pairs in the order
+                  ``apply`` instantiates them, and the init statement / loop condition the remaining loop gets
+                  (``None`` keeps its own).
+        :raises ValueError: When the loop condition is not a comparison the back peel can shorten.
+        """
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if self.begin:
+            iterations = [(i, start + (i * stride)) for i in range(self.count)]
+            if not iterations:
+                return iterations, None, None
+            new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
+            return iterations, f"{loop.loop_variable} = {new_start}", None
+        # Anchor the iterate value on the loop end (never the loop variable) so back-peeled iterations don't leak a
+        # loop-defined symbol past the loop. ``i`` counts down, so ``end - (count - 1 - i) * stride`` yields ascending
+        # values that pick up where the shortened loop stops.
+        iterations = [(i, end - (self.count - 1 - i) * stride) for i in reversed(range(self.count))]
+        if not iterations:
+            return iterations, None, None
+        return iterations, None, self._modify_cond(loop.loop_condition, loop.loop_variable, stride)
+
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # Obtain loop information
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
-        stride = loop_analysis.get_loop_stride(self.loop)
         # A symbolic bound makes every iterate value symbolic too, so the label falls back to the
         # iteration index. Upstream dropped this in favour of always indexing; extended still needs
         # it because _instantiate_peeled_iteration takes the suffix rather than an index.
         is_symbolic = any(symbolic.issymbolic(r) for r in (start, end))
+        iterations, init, condition = self.peel_plan(self.loop, sdfg)
+
+        peeled_iterations: list[ControlFlowBlock] = []
+        for i, current_index in iterations:
+            is_symbolic |= symbolic.issymbolic(current_index)
+            it = self._instantiate_peeled_iteration(graph, current_index, str(i) if is_symbolic else None)
+            if len(peeled_iterations) > 0:
+                if self.begin:
+                    graph.add_edge(peeled_iterations[-1], it, sd.InterstateEdge())
+                else:
+                    graph.add_edge(it, peeled_iterations[-1], sd.InterstateEdge())
+            peeled_iterations.append(it)
+        if not peeled_iterations:
+            return
 
         if self.begin:
-            peeled_iterations: list[ControlFlowBlock] = []
-            for i in range(self.count):
-                current_index = start + (i * stride)
-                is_symbolic |= symbolic.issymbolic(current_index)
-                it = self._instantiate_peeled_iteration(graph, current_index, str(i) if is_symbolic else None)
-
-                if len(peeled_iterations) > 0:
-                    graph.add_edge(peeled_iterations[-1], it, sd.InterstateEdge())
-                peeled_iterations.append(it)
-
-            if peeled_iterations:
-                for ie in graph.in_edges(self.loop):
-                    graph.add_edge(ie.src, peeled_iterations[0], ie.data)
-                    graph.remove_edge(ie)
-                graph.add_edge(peeled_iterations[-1], self.loop, sd.InterstateEdge())
-
-                new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
-                self.loop.init_statement = CodeBlock(f"{self.loop.loop_variable} = {new_start}")
+            for ie in graph.in_edges(self.loop):
+                graph.add_edge(ie.src, peeled_iterations[0], ie.data)
+                graph.remove_edge(ie)
+            graph.add_edge(peeled_iterations[-1], self.loop, sd.InterstateEdge())
+            self.loop.init_statement = CodeBlock(init)
         else:
-            peeled_iterations: list[ControlFlowBlock] = []
-            for i in reversed(range(self.count)):
-                # Anchor the iterate value on the loop end (never the loop
-                # variable) so back-peeled iterations don't leak a loop-defined
-                # symbol past the loop. ``i`` counts down, so
-                # ``end - (count - 1 - i) * stride`` yields ascending values
-                # that pick up where the shortened loop stops.
-                current_index = end - (self.count - 1 - i) * stride
-                is_symbolic |= symbolic.issymbolic(current_index)
-                it = self._instantiate_peeled_iteration(graph, current_index, str(i) if is_symbolic else None)
-
-                if len(peeled_iterations) > 0:
-                    graph.add_edge(it, peeled_iterations[-1], sd.InterstateEdge())
-                peeled_iterations.append(it)
-
-            if peeled_iterations:
-                for oe in graph.out_edges(self.loop):
-                    graph.add_edge(peeled_iterations[0], oe.dst, oe.data)
-                    graph.remove_edge(oe)
-                graph.add_edge(self.loop, peeled_iterations[-1], sd.InterstateEdge())
-
-                new_cond = CodeBlock(self._modify_cond(self.loop.loop_condition, self.loop.loop_variable, stride))
-                self.loop.loop_condition = new_cond
+            for oe in graph.out_edges(self.loop):
+                graph.add_edge(peeled_iterations[0], oe.dst, oe.data)
+                graph.remove_edge(oe)
+            graph.add_edge(self.loop, peeled_iterations[-1], sd.InterstateEdge())
+            self.loop.loop_condition = CodeBlock(condition)

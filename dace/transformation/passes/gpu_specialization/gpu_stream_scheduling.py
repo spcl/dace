@@ -411,8 +411,6 @@ def iedge_reads_gpu_array(edge_data: "dace.InterstateEdge", sdfg: SDFG, gpu_writ
 def meta_reads_gpu_written(block, sdfg: SDFG, gpu_written: OrderedSet) -> bool:
     """Whether ``block``'s own control-flow code (a branch condition, a loop's init / condition / update)
     reads a GPU-written array. That code runs on the host before anything inside ``block``."""
-    if not hasattr(block, "get_meta_codeblocks"):
-        return False
     reads = {str(sym) for code in block.get_meta_codeblocks() for sym in code.get_free_symbols()}
     return bool(reads & sdfg.arrays.keys() & gpu_written)
 

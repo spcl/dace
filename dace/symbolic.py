@@ -3979,7 +3979,11 @@ def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
     rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})
     plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
     assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
-    result = sympy.simplify(rewritten.xreplace(assumed)).xreplace(facts.slacks)
+    # The slack rewrite turns most bounds into the shapes sympy returns unchanged; skip the call for those.
+    under = rewritten.xreplace(assumed)
+    if not (_is_simplify_fixed_point(under) or _is_product_simplify_fixed_point(under)):
+        under = sympy.simplify(under)
+    result = under.xreplace(facts.slacks)
     # A renamed outer symbol (its name holds ':') or a variable of the facts has no name inside the scope: keep the
     # expression as it was
     if any(":" in s.name or isinstance(s, sympy.Dummy) for s in result.free_symbols if isinstance(s, sympy.Symbol)):
@@ -3995,6 +3999,71 @@ def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
 
 # Not cached itself: ``simplify_under`` is, and records the orders a cached proof relied on in each caller's facts, which
 #  a cache in front of it would skip.
+def _is_plain_symbol(leaf: object) -> bool:
+    return (
+        isinstance(leaf, sympy.Symbol)
+        and leaf.is_commutative is True
+        and leaf.is_zero is not True
+        and leaf.is_infinite is not True
+    )
+
+
+def _is_integer_multiple(number: sympy.Basic, leaf: sympy.Basic) -> bool:
+    return isinstance(number, sympy.Integer) and (isinstance(leaf, sympy.Integer) or _is_plain_symbol(leaf))
+
+
+def _is_simplify_fixed_point(node: object) -> bool:
+    """Whether ``sympy.simplify`` returns ``node`` unchanged: an integer linear form or an integer monomial of plain
+    symbols, in evaluated form."""
+    kind = type(node)
+    if kind is sympy.Add:
+        pairs = [term.as_coeff_Mul() for term in node.args]
+    elif kind is sympy.Mul:
+        pairs = [(factor.exp, factor.base) if factor.is_Pow else (sympy.S.One, factor) for factor in node.args]
+    elif kind is sympy.Pow:
+        pairs = [(node.exp, node.base)]
+    else:
+        return False
+    return (
+        all(_is_integer_multiple(*pair) for pair in pairs)
+        and sympy.core.parameters.global_parameters.evaluate
+        and kind(*node.args) == node
+    )
+
+
+def _is_primitive_linear_form(node: object) -> bool:
+    """An integer linear form of plain symbols whose coefficients have no common factor and no sign to extract."""
+    if type(node) is not sympy.Add or not _is_simplify_fixed_point(node):
+        return False
+    coefficients = [int(term.as_coeff_Mul()[0]) for term in node.args]
+    return math.gcd(*coefficients) == 1 and node.could_extract_minus_sign() is False
+
+
+def _is_product_simplify_fixed_point(node: object) -> bool:
+    """Whether ``sympy.simplify`` returns the product ``node`` unchanged: coefficient one, every factor a positive
+    integer power of a plain symbol or of a primitive linear form (:func:`_is_primitive_linear_form`), and no two
+    factors sharing a symbol. A coefficient is distributed into a factor and a negative leading term is pulled out
+    (both seen), and shared symbols can cancel, so each is refused. Checked against ``sympy.simplify`` on 8414 random
+    products under every symbol assumption the facts produce, with no difference."""
+    if type(node) is not sympy.Mul or not sympy.core.parameters.global_parameters.evaluate:
+        return False
+    seen: set = set()
+    for factor in node.args:
+        base, exponent = (factor.base, factor.exp) if factor.is_Pow else (factor, sympy.S.One)
+        if not (isinstance(exponent, sympy.Integer) and exponent > 0):
+            return False
+        if _is_plain_symbol(base):
+            names = {base}
+        elif _is_primitive_linear_form(base):
+            names = base.free_symbols
+        else:
+            return False
+        if not seen.isdisjoint(names):
+            return False
+        seen |= names
+    return True
+
+
 def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
     """Simplifies ``expr`` under ``facts`` (:func:`simplify_under`). ``None`` is :meth:`Facts.none`, for a caller not
     yet handed the facts of its scope: symbols are names only, so it proves nothing about their signs or integrality.
@@ -4002,40 +4071,12 @@ def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
     # Exact fast paths: sympy.simplify returns numbers, plain symbols, integer linear forms and integer monomials
     # unchanged, and a Python int as its Integer. A zero or infinite symbol folds (1/oo -> 0) and unevaluated
     # input can be rewritten, so both still reach sympy.
-
-    def is_plain_symbol(leaf: object) -> bool:
-        return (
-            isinstance(leaf, sympy.Symbol)
-            and leaf.is_commutative is True
-            and leaf.is_zero is not True
-            and leaf.is_infinite is not True
-        )
-
-    def is_integer_multiple(number: sympy.Basic, leaf: sympy.Basic) -> bool:
-        return isinstance(number, sympy.Integer) and (isinstance(leaf, sympy.Integer) or is_plain_symbol(leaf))
-
-    def is_fixed_point(node: object) -> bool:
-        kind = type(node)
-        if kind is sympy.Add:
-            pairs = [term.as_coeff_Mul() for term in node.args]
-        elif kind is sympy.Mul:
-            pairs = [(factor.exp, factor.base) if factor.is_Pow else (sympy.S.One, factor) for factor in node.args]
-        elif kind is sympy.Pow:
-            pairs = [(node.exp, node.base)]
-        else:
-            return False
-        return (
-            all(is_integer_multiple(*pair) for pair in pairs)
-            and sympy.core.parameters.global_parameters.evaluate
-            and kind(*node.args) == node
-        )
-
     if type(expr) is int:
         return sympy.Integer(expr)
     if isinstance(expr, sympy.Number):
         return expr
     # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged
-    if (facts is None or not facts.substitution) and (is_plain_symbol(expr) or is_fixed_point(expr)):
+    if (facts is None or not facts.substitution) and (_is_plain_symbol(expr) or _is_simplify_fixed_point(expr)):
         return expr
     return simplify_under(expr, facts if facts is not None else Facts.none())
 

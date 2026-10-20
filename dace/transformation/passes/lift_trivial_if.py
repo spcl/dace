@@ -176,7 +176,7 @@ class LiftTrivialIf(ppl.Pass):
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
                     ranges.append((graph.loop_variable, start, end))
-            graph = getattr(graph, "parent_graph", None)
+            graph = graph.parent_graph
         return ranges
 
     @staticmethod
@@ -304,7 +304,7 @@ class LiftTrivialIf(ppl.Pass):
     def _is_conjunction(expr) -> bool:
         # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
         # ``func`` is named ``AND``), not ``sympy.And``; accept either.
-        return isinstance(expr, sympy.And) or getattr(getattr(expr, "func", None), "__name__", "") == "AND"
+        return isinstance(expr, sympy.And) or (isinstance(expr, sympy.Basic) and expr.func.__name__ == "AND")
 
     def _flatten_conjuncts(self, expr) -> list:
         """All conjuncts of a (possibly nested) conjunction, flattened.
@@ -342,6 +342,40 @@ class LiftTrivialIf(ppl.Pass):
                 return True
         return False
 
+    def dead_branch(self, cond: CodeBlock | None, cfb: ConditionalBlock) -> bool:
+        """Whether a branch of ``cfb`` guarded by ``cond`` can never run: a condition that is false (statically or over
+        the enclosing loop ranges) or a contradiction such as ``c and not c``. An else branch (``None``) always can."""
+        return cond is not None and (self._trivially_false(cond, cfb) or self._unsatisfiable(cond))
+
+    def taken_branch(self, cfb: ConditionalBlock) -> tuple[bool, ControlFlowRegion | None]:
+        """Whether the conditions of an ``if`` or ``if/else`` decide which of its branches runs.
+
+        :param cfb: A conditional with one branch, or two of which at most one has a condition.
+        :returns: ``(True, branch)`` when ``branch`` always runs and the other never does, ``(True, None)`` when no
+                  branch ever runs, and ``(False, None)`` when the conditions are not decided (or ``cfb`` has another
+                  shape).
+        """
+        branches = cfb.branches
+        if len(branches) == 1:
+            cond, cfg = branches[0]
+            if self._trivially_true(cond, cfb):
+                return True, cfg
+            if self._trivially_false(cond, cfb):
+                return True, None
+        elif len(branches) == 2:
+            (cond1, cfg1), (cond2, cfg2) = branches
+            # Either one of them must be none
+            if cond1 is not None and cond2 is not None:
+                return False, None
+            (not_none_cond, not_none_cfg), none_cfg = (
+                ((cond1, cfg1), cfg2) if cond1 is not None else ((cond2, cfg2), cfg1)
+            )
+            if self._trivially_true(not_none_cond, cfb):
+                return True, not_none_cfg
+            if self._trivially_false(not_none_cond, cfb):
+                return True, none_cfg
+        return False, None
+
     def _detect_and_remove_top_level_trivial_ifs(self, graph: ControlFlowRegion | SDFG) -> int:
         """Process the conditionals directly in ``graph`` (one level, no recursion).
 
@@ -366,41 +400,23 @@ class LiftTrivialIf(ppl.Pass):
                     for cnd, cfg in list(cfb.branches):
                         if len(cfb.branches) <= 2:
                             break
-                        if cnd is not None and (self._trivially_false(cnd, cfb) or self._unsatisfiable(cnd)):
+                        if self.dead_branch(cnd, cfb):
                             cfb.remove_branch(cfg)
                             forget_all_facts()  # The branch may have held interstate assignments
                             rmed_count += 1
 
                 # Supported variants:
-                # 1. if (cond) where cond is always true
-                # 2. if (cond) else ()
-                # 2.1 where cond is always true
-                # 2.2 cond is always false
-                conditions_and_cfgs = cfb.branches
-                if len(conditions_and_cfgs) == 1:
-                    cond, cfg = conditions_and_cfgs[0]
-                    if self._trivially_true(cond, cfb):
-                        cfb_to_rm_cfg_to_keep[(cfb, cfg)] = None
-                    elif self._trivially_false(cond, cfb):
-                        _cfg = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
-                        _cfg.add_state(label="empty_placholder", is_start_block=True)
-                        cfb.add_branch(condition=None, branch=_cfg)
-                        forget_all_facts()
-                        cfb_to_rm_cfg_to_keep[(cfb, _cfg)] = None
-                elif len(conditions_and_cfgs) == 2:
-                    cond1, cfg1 = conditions_and_cfgs[0]
-                    cond2, cfg2 = conditions_and_cfgs[1]
-                    # Either one of them must be none
-                    if cond1 is not None and cond2 is not None:
-                        continue
-                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (
-                        ((cond1, cfg1), (cond2, cfg2)) if cond1 is not None else ((cond2, cfg2), (cond1, cfg1))
-                    )
-
-                    if self._trivially_true(not_none_cond, cfb):  # 2.1
-                        cfb_to_rm_cfg_to_keep[(cfb, not_none_cfg)] = None
-                    elif self._trivially_false(not_none_cond, cfb):  # 2.2
-                        cfb_to_rm_cfg_to_keep[(cfb, none_cfg)] = None
+                # 1. if (cond) where cond is always true (its body is lifted) or always false (nothing is)
+                # 2. if (cond) else (), where cond is always true or always false (the taken side is lifted)
+                decided, taken = self.taken_branch(cfb)
+                if not decided:
+                    continue
+                if taken is None:
+                    taken = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
+                    taken.add_state(label="empty_placholder", is_start_block=True)
+                    cfb.add_branch(condition=None, branch=taken)
+                    forget_all_facts()
+                cfb_to_rm_cfg_to_keep[(cfb, taken)] = None
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
             existing = {n.label for n in graph.nodes()}

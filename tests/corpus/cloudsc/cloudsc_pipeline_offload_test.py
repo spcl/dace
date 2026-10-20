@@ -25,7 +25,9 @@ from tests.corpus.cloudsc.pipelines import (
     OFFLOAD_PHASE,
     OFFLOAD_VARIANTS,
     VARIANTS,
+    device_resident,
     generate_cuda_code,
+    is_device_scheduled,
     load_offload_pass,
     run_pipeline,
     variant_phases,
@@ -74,12 +76,14 @@ def test_every_variant_is_offloadable():
 def test_offload_stage_offloads_and_generates_cuda(variant):
     """Applying the appended stage to a CloudSC-shaped blocked SDFG leaves a validating,
     device-scheduled graph that code-generates a CUDA kernel -- the check the offload phase runs in
-    place of ``numeric_check``."""
+    place of ``numeric_check``. The stage is the pipeline's own ``offload_to_gpu``, which keeps the
+    arguments in device memory (the caller hands device buffers) rather than mirroring them."""
     sdfg = blocked_sdfg()
     apply_fn = variant_phases(variant, offload=True)[-1][1][0][1]
     apply_fn(sdfg)
     sdfg.validate()
-    assert "gpu_pin" in sdfg.arrays and "gpu_pout" in sdfg.arrays
+    assert is_device_scheduled(sdfg)
+    assert device_resident(sdfg) == {"pin", "pout"}
     assert generate_cuda_code(sdfg) == 1
 
 

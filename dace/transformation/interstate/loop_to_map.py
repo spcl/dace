@@ -20,6 +20,7 @@ from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -46,9 +47,21 @@ def _align_itersym(expr, itersym):
     return expr.subs(repl) if repl else expr
 
 
-def _check_range(subset, a, itersym, b, step, span=None):
+def _check_range(subset, a, itersym, b, step, span=None, memo: dict | None = None):
     """Whether some dimension of ``subset`` starts at ``a*itersym+b``. ``span`` (``end - start`` of the loop) marks
-    a WRITE, whose dimension must moreover be disjoint across iterations: ``Q[k:M, :]`` under ``k`` is not."""
+    a WRITE, whose dimension must moreover be disjoint across iterations: ``Q[k:M, :]`` under ``k`` is not.
+
+    :param memo: verdicts of earlier calls (:attr:`LiftInvariants.check_range`). The answer is a function of the
+                 subset's bounds and the other arguments alone, so a sweep re-probing the same accesses asks once.
+    """
+    key = None
+    if memo is not None:
+        # Typed: a ``SymExpr`` compares equal to its main expression, a Python int to a SymPy one.
+        bounds = tuple(tuple((type(x), x) for x in rng) for rng in subset.ndrange())
+        key = (bounds, a, itersym, b, step, span)
+        cached = memo.get(key)
+        if cached is not None:
+            return cached
     found = False
     for rb, re_, rs in subset.ndrange():
         # ``ndrange()`` yields plain ints as well as sympy expressions, and an int has no ``match``
@@ -70,6 +83,8 @@ def _check_range(subset, a, itersym, b, step, span=None):
             continue
         found = True
         break
+    if memo is not None:
+        memo[key] = found
     return found
 
 
@@ -170,8 +185,8 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 free = set()
                 for rb, re, _ in outer.ndrange():
                     for expr in (rb, re):
-                        if hasattr(expr, "free_symbols"):
-                            free |= set(expr.free_symbols)
+                        if isinstance(expr, (sp.Basic, symbolic.SymExpr)):
+                            free |= set(as_basic(expr).free_symbols)
                 if itersym not in free:
                     continue
                 # itersym-dependent read: must match the writes' a*i+b, else it's a carried read.
@@ -483,14 +498,16 @@ def write_refusal(
         # each iteration writes a disjoint slab, so a lane firing or not can't
         # race another iteration's write.
         dst_subset = e.data.get_dst_subset(e, state)
-        if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start)):
+        ranges = None if ctx is None else ctx.invariants.check_range
+        if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
             return f"dynamic write to {dn.data} is not indexed by the iteration variable - dst_subset={dst_subset}"
 
     # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
     # iteration variable (which must be used).
     if e.data.wcr is None:
         dst_subset = e.data.get_dst_subset(e, state)
-        ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step, end - start)
+        ranges = None if ctx is None else ctx.invariants.check_range
+        ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)
         # NestedSDFG body propagates a whole-array external write hiding an
         # inner per-iteration write; look past the connector.
         if not ok and isinstance(e.src, nodes.NestedSDFG):
@@ -940,6 +957,9 @@ class LiftInvariants:
     #: disjoint-box verdicts of :func:`_smt_proves_disjoint_boxes`, keyed by the texts z3 parses, on the
     #: same grounds; a read witness re-asks every read-write pair of its container per re-probe.
     smt_disjoint_boxes: dict[tuple[str, ...], bool] = field(default_factory=dict)
+    #: :func:`_check_range` verdicts, keyed by the subset's bounds and the loop's iterator, step and span: a pure
+    #: function of the key, re-asked of the same accesses by every re-probe of a sweep.
+    check_range: dict[Any, bool] = field(default_factory=dict)
     #: interstate edge or loop/conditional header -> the names it reads, for :func:`control_flow_reads`.
     #: A lift edits neither: it moves the lifted loop's edges and headers as they are and re-attaches its
     #: out-edges' data unchanged, so an entry never goes stale.
@@ -1103,6 +1123,8 @@ class LiftContext:
     #: blocks that left the order are skipped by ``block_index``. Built on first use.
     symbol_uses: dict[str, list[Any]] | None = None
     symbol_kills: dict[str, list[Any]] | None = None
+    #: name -> the loops of ``block_order`` whose iterator it is (see :func:`rebinds_after`).
+    symbol_binders: dict[str, list[Any]] | None = None
 
 
 def index_block_symbols(ctx: LiftContext, block) -> None:
@@ -1116,13 +1138,21 @@ def index_block_symbols(ctx: LiftContext, block) -> None:
         killed = set(e.data.assignments.keys()) if killed is None else killed & e.data.assignments.keys()
     for name in killed or ():
         ctx.symbol_kills.setdefault(name, []).append(block)
+    if isinstance(block, LoopRegion) and block.loop_variable:
+        ctx.symbol_binders.setdefault(block.loop_variable, []).append(block)
+
+
+def rebinds_after(loop: LoopRegion, block: Any, name: str) -> bool:
+    """Whether ``block`` is a loop of ``loop``'s own region whose iterator is ``name``: its init assigns ``name`` before
+    anything after it reads it, so a value ``loop`` left behind is dead from there on."""
+    return isinstance(block, LoopRegion) and block.parent_graph is loop.parent_graph and block.loop_variable == name
 
 
 def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_blocks: set[Any]) -> bool:
     """Whether a block after ``loop`` reads one of ``names`` before every out-edge of some block reassigns it:
     the verdict of the ``block_order`` walk in :meth:`LoopToMap.can_be_applied`, from the index."""
     if ctx.symbol_uses is None:
-        ctx.symbol_uses, ctx.symbol_kills = {}, {}
+        ctx.symbol_uses, ctx.symbol_kills, ctx.symbol_binders = {}, {}, {}
         for block in ctx.block_order:
             index_block_symbols(ctx, block)
     index = ctx.block_index
@@ -1132,6 +1162,12 @@ def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_bl
         for block in ctx.symbol_kills.get(name, ()):
             i = index.get(block)
             if i is not None and i > start and block not in loop_blocks and (kill is None or i < kill):
+                kill = i
+        # A later loop of the same region that binds ``name`` assigns it before its body reads it, on every path:
+        # structured control flow runs every block of a region after the ones before it.
+        for block in ctx.symbol_binders.get(name, ()):
+            i = index.get(block)
+            if i is not None and i > start and rebinds_after(loop, block, name) and (kill is None or i < kill):
                 kill = i
         for block in ctx.symbol_uses.get(name, ()):
             i = index.get(block)
@@ -1392,6 +1428,18 @@ class LoopToMap(xf.MultiStateTransformation):
 
     loop = xf.PatternNode(LoopRegion)
 
+    #: Shared analysis a pass probing many loops hands its probes (see :class:`LiftContext`); unset on a plain match.
+    lift_context: "LiftContext | None" = None
+    #: The resolver probes of one pass share; unset on a plain match.
+    symbol_resolver: "SymbolResolver | None" = None
+    #: Arrays the caller vouches for (a contract), whose conflicts are waived.
+    contract_arrays: frozenset = frozenset()
+    #: Why the last probe refused, or ``None`` after an accept.
+    last_refusal_reason: str | None = None
+    #: The container whose dependence the last probe refused on, or ``None`` when it refused for any other reason
+    #: (structure, bounds, symbols) or accepted. A rewrite of other containers cannot lift that refusal.
+    last_refusal_container: str | None = None
+
     keep_small_loops_sequential = properties.Property(
         dtype=bool,
         default=True,
@@ -1406,13 +1454,12 @@ class LoopToMap(xf.MultiStateTransformation):
         """Whether the dependence test waives conflicts on container ``name``: all of them under ``permissive``,
         else only the ``contract_arrays`` a caller set, whose writes a runtime contract check guards (the scatter
         targets of :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`)."""
-        return permissive or name in vars(self).get("contract_arrays", ())
+        return permissive or name in self.contract_arrays
 
     def probe_resolver(self) -> SymbolResolver:
         """The resolver a probe derives its facts with: the ``symbol_resolver`` a pass probing many loops shares
         until its next change to the graph, or a fresh one."""
-        # ``vars(self).get``, not ``getattr``, as for ``lift_context``: the attribute is absent on a plain match.
-        resolver = vars(self).get("symbol_resolver")
+        resolver = self.symbol_resolver
         return SymbolResolver() if resolver is None else resolver
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -1421,15 +1468,16 @@ class LoopToMap(xf.MultiStateTransformation):
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
         self.last_refusal_reason = None
+        self.last_refusal_container = None
         canon_stats.begin_probe()
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
-        # ``vars(self).get``, not ``getattr``: the attribute is genuinely absent on a plain match.
-        ctx: LiftContext | None = vars(self).get("lift_context")
+        ctx: LiftContext | None = self.lift_context
 
-        def refuse(reason: str) -> bool:
-            """Refuse the match and record why."""
+        def refuse(reason: str, container: str | None = None) -> bool:
+            """Refuse the match and record why, and on which container's dependence."""
             self.last_refusal_reason = reason
+            self.last_refusal_container = container
             return False
 
         # A loop pinned sequential is a deliberate fallback (the else branch of an
@@ -1524,7 +1572,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if facts is not None and facts.refusal_witness is not None:
             reason = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
             if reason is not None:
-                return refuse(reason)
+                return refuse(reason, facts.refusal_witness[1])
         in_order_loop_blocks = None if facts is None else facts.block_order
         if in_order_loop_blocks is UNCOMPUTED or facts is None:
             in_order_loop_blocks = None
@@ -1643,7 +1691,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
-                            return refuse(reason)
+                            return refuse(reason, dn.data)
 
                         write_memlets[dn.data].append(e.data)
 
@@ -1667,16 +1715,20 @@ class LoopToMap(xf.MultiStateTransformation):
                     free = set()
                     for rb, re_, _ in src_subset.ndrange():
                         for expr in (rb, re_):
-                            if hasattr(expr, "free_symbols"):
-                                free |= set(expr.free_symbols)
+                            if isinstance(expr, (sp.Basic, symbolic.SymExpr)):
+                                free |= set(as_basic(expr).free_symbols)
                     if itersym not in free:
                         continue
                     # itersym-dependent read: must match a*i+b like the writes, else this
                     # iteration reads a value another iteration writes.
-                    if not _check_range(src_subset, a, itersym, b, step) and not self.waives(data, permissive):
+                    ranges = None if ctx is None else ctx.invariants.check_range
+                    if not _check_range(src_subset, a, itersym, b, step, memo=ranges) and not self.waives(
+                        data, permissive
+                    ):
                         return refuse(
                             f"read of {data} at {src_subset} is iter-indexed but does not match the "
-                            f"write pattern a*i+b -- loop-carried forward/backward dependency"
+                            f"write pattern a*i+b -- loop-carried forward/backward dependency",
+                            data,
                         )
 
         # Fixed for the whole loop, so compute once and share with every dependence test below.
@@ -1698,7 +1750,8 @@ class LoopToMap(xf.MultiStateTransformation):
                         data, permissive
                     ):
                         return refuse(
-                            f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations"
+                            f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations",
+                            data,
                         )
             # WCR writes combine with each other in any order, but not with a plain write: ``A[N-1] += 1`` on
             # one iteration and ``A[i] = ...`` on iteration N-1 race once the loop is a map.
@@ -1710,7 +1763,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     ):
                         return refuse(
                             f"accumulated write {acc.subset} and plain write {plain.subset} to {data} "
-                            "may overlap across iterations"
+                            "may overlap across iterations",
+                            data,
                         )
 
         # After looping over relevant writes, consider reads that may overlap
@@ -1746,7 +1800,8 @@ class LoopToMap(xf.MultiStateTransformation):
                             if facts is not None:
                                 facts.refusal_witness = ("read", data)
                             return refuse(
-                                f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}"
+                                f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}",
+                                data,
                             )
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -1759,7 +1814,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt, mmlt.subset, varying
                 ):
                     return refuse(
-                        f"read-after-write conflict on {mmlt.data} via an inter-state edge - subset={mmlt.subset}"
+                        f"read-after-write conflict on {mmlt.data} via an inter-state edge - subset={mmlt.subset}",
+                        mmlt.data,
                     )
 
         # Iteration variable + other symbols must not be used on later edges/blocks before
@@ -1805,6 +1861,10 @@ class LoopToMap(xf.MultiStateTransformation):
         for block in islice(in_order_blocks, loop_idx + 1, None):
             if block in all_loop_blocks:
                 continue
+            # A later sibling loop rebinding a name kills it (see :func:`rebinds_after`).
+            symbols_that_may_be_used = {
+                name for name in symbols_that_may_be_used if not rebinds_after(self.loop, block, name)
+            }
             # Don't continue in this direction, as all loop symbols have been reassigned
             if not symbols_that_may_be_used:
                 break
@@ -1933,6 +1993,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
+        lift_ctx = self.lift_context
+        ranges = None if lift_ctx is None else lift_ctx.invariants.check_range
         data = mmlt.data
         # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
         facts = self.probe_resolver().facts_at(state if state is not None else self.loop)
@@ -1940,7 +2002,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up
             return False
-        if not _check_range(src_subset, a, itersym, b, step):
+        if not _check_range(src_subset, a, itersym, b, step, memo=ranges):
             # ``_check_range`` accepts only reads that MOVE with the iteration (some dim
             # ``a*i+b``, ``|a| >= 1``). An itersym read not matching that is conservatively a
             # conflict. A loop-INVARIANT read (no itersym) is a conflict only if it overlaps a
@@ -1954,7 +2016,9 @@ class LoopToMap(xf.MultiStateTransformation):
             mmlt = align_memlet(state, edge, dst=False)
             data = mmlt.data
 
-        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts)
+        # The read propagated over the whole loop, for the last-resort overlap test only: most candidates are decided
+        # before it, so it is built on first use.
+        pread = None
         for candidate in write_memlets[data]:
             # Simple case: read and write are in the same subset
             read = src_subset
@@ -1967,7 +2031,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # exempt it -- sound only for a reduction whose accumulator the loop never reads back.
             if (
                 candidate.wcr is not None
-                and not _check_range(write, a, itersym, b, step)
+                and not _check_range(write, a, itersym, b, step, memo=ranges)
                 and subsets.intersects(read, write, facts) is not symbolic.Truth.FALSE
             ):
                 return False
@@ -2005,7 +2069,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # triangular read against its mirrored write (covariance reads ``cov[i, i:M]`` back to
             # store ``cov[i:M, i]``) is decided here rather than falling through to the
             # propagate+intersect fallback, which widens both to the whole array and always aliases.
-            ctx = vars(self).get("lift_context")
+            ctx = self.lift_context
             boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
             if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes):
                 canon_stats.solver_proof()
@@ -2032,6 +2096,10 @@ class LoopToMap(xf.MultiStateTransformation):
             if read == write:
                 continue
             # Propagated read does not overlap with propagated write
+            if pread is None:
+                pread = propagate_subset(
+                    [mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts
+                )
             pwrite = propagate_subset(
                 [candidate], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts, use_dst=True
             )
@@ -2086,7 +2154,7 @@ class LoopToMap(xf.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # Precomputed per-SDFG analysis, when a pass supplies it (see :class:`LiftContext`).
         # Everything read from it here is a value ``apply`` would otherwise recompute per lift.
-        lift_ctx: LiftContext | None = vars(self).get("lift_context")
+        lift_ctx: LiftContext | None = self.lift_context
         from dace.sdfg.propagation import align_memlet
 
         canon_stats.lifted(self.loop)
@@ -2096,7 +2164,8 @@ class LoopToMap(xf.MultiStateTransformation):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
-        negative_step = step_direction(step, SymbolResolver().facts_at(self.loop)) == -1
+        # The facts the probe derived for this loop on the graph as it still is (a fresh resolver on a plain match).
+        negative_step = step_direction(step, self.probe_resolver().facts_at(self.loop)) == -1
 
         nsdfg = None
 
@@ -2409,7 +2478,10 @@ class LoopToMap(xf.MultiStateTransformation):
                     direct_edges.append(e)
                     body.remove_edge(e)
 
-        # Reroute all memlets through the entry and exit nodes
+        # Reroute all memlets through the entry and exit nodes. Each pair propagates its memlet over
+        # the map, at the facts inside it: rerouting only adds edges and ``IN_``/``OUT_`` connectors,
+        # which neither the symbols nor the facts there read, so one resolver serves every pair.
+        resolver = SymbolResolver()
         for n in source_nodes:
             if isinstance(n, nodes.AccessNode):
                 for e in body.out_edges(n):
@@ -2417,7 +2489,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     new_memlet = align_memlet(body, e, dst=False)
 
                     body.remove_edge(e)
-                    body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
+                    body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn, symbols=resolver)
             else:
                 body.add_nedge(entry, n, memlet.Memlet())
         for n in sink_nodes:
@@ -2427,7 +2499,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     new_memlet = align_memlet(body, e, dst=True)
 
                     body.remove_edge(e)
-                    body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
+                    body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn, symbols=resolver)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
         intermediate_sinks: dict[str, nodes.AccessNode] = {}

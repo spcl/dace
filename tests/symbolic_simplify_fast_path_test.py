@@ -158,7 +158,6 @@ def test_python_int_becomes_the_sympy_integer_sympy_would_return(monkeypatch: py
         (sympy.Symbol("N") - 1) * (sympy.Symbol("N") + 1),  # expands to N**2 - 1
         (2 - sympy.Symbol("N")) ** 2,  # base sign is normalized
         sympy.Symbol("N") * (2 * sympy.Symbol("M") + 2),  # content 2 is pulled out
-        sympy.Add(sympy.Symbol("N"), sympy.Symbol("N"), evaluate=False),  # folds to 2*N
         sympy.Symbol("N") / 2,
         sympy.Mod(sympy.Symbol("N"), 2),
         sympy.Min(sympy.Symbol("N"), sympy.Symbol("M")),
@@ -176,6 +175,30 @@ def test_shapes_outside_the_proven_rules_are_handed_to_sympy(
     # ``simplify_under`` hands sympy the expression over the facts' symbols, which are names only
     assert len(calls) == 1
     assert result == REFERENCE_SIMPLIFY(expr)
+
+
+def test_an_unevaluated_sum_the_rewrite_folds_to_a_linear_form_skips_sympy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``N + N`` built unevaluated is rebuilt as ``2*N`` by the facts' rewrite, a linear form sympy returns unchanged."""
+    expr = sympy.Add(sympy.Symbol("N"), sympy.Symbol("N"), evaluate=False)
+    calls = spy_on_sympy_simplify(monkeypatch)
+
+    result = dace.symbolic.simplify(expr)
+
+    assert calls == []
+    assert result == REFERENCE_SIMPLIFY(expr)
+
+
+def test_products_of_primitive_linear_forms_skip_sympy_and_match_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``(N + 1)*(M - K + 1)*J**2``: coefficient one, symbol-disjoint primitive factors -- sympy returns it unchanged."""
+    N, M, K, J = (sympy.Symbol(name) for name in "NMKJ")
+    exprs = [(N + 1) * (M - K + 1), (N + 1) ** 2 * J, J * (M + 2 * K + 1) * (N - 1)]
+    references = [REFERENCE_SIMPLIFY(expr) for expr in exprs]
+    calls = spy_on_sympy_simplify(monkeypatch)
+
+    results = [dace.symbolic.simplify(expr) for expr in exprs]
+
+    assert calls == []
+    assert all(structurally_equal(r, ref) for r, ref in zip(results, references))
 
 
 def test_generated_linear_forms_and_monomials_skip_sympy_and_match_it(monkeypatch: pytest.MonkeyPatch) -> None:

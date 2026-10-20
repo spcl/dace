@@ -407,6 +407,10 @@ class TensorTranspose(nodes.LibraryNode):
         element_type=int, default=[], category="Semantics", desc="Permutation of input tensor's modes"
     )
     alpha = properties.Property(dtype=Number, default=1, category="Semantics", desc="Input tensor scaling factor")
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.Property(dtype=Number, default=0, category="Semantics", desc="Output tensor scaling factor")
 
     def __init__(self, name, axes=[], alpha=1, beta=0, *args, **kwargs):
