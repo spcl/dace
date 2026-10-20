@@ -50,6 +50,7 @@ import Dace.Equiv.RaceFree
 import Dace.Equiv.ScopeBody
 import Dace.Equiv.Det
 import Dace.Equiv.CorrLeaf
+import Dace.Equiv.CorrSim
 
 /-!
 # DaCe formal semantics
