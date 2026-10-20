@@ -147,6 +147,22 @@ GPU_KERNEL_ACCESSIBLE_STORAGES = [
     StorageType.CPU_Pinned,
 ]
 
+# Coarsest first
+GPU_THREAD_SCHEDULES = [
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES_WITHOUT_CODEGEN = [
+    ScheduleType.GPU_Chiplet,
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
