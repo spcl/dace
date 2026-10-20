@@ -1433,6 +1433,11 @@ class LoopToMap(xf.MultiStateTransformation):
     symbol_resolver: "SymbolResolver | None" = None
     #: Arrays the caller vouches for (a contract), whose conflicts are waived.
     contract_arrays: frozenset = frozenset()
+    #: Why the last probe refused, or ``None`` after an accept.
+    last_refusal_reason: str | None = None
+    #: The container whose dependence the last probe refused on, or ``None`` when it refused for any other reason
+    #: (structure, bounds, symbols) or accepted. A rewrite of other containers cannot lift that refusal.
+    last_refusal_container: str | None = None
 
     keep_small_loops_sequential = properties.Property(
         dtype=bool,
@@ -1462,14 +1467,16 @@ class LoopToMap(xf.MultiStateTransformation):
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
         self.last_refusal_reason = None
+        self.last_refusal_container = None
         canon_stats.begin_probe()
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
         ctx: LiftContext | None = self.lift_context
 
-        def refuse(reason: str) -> bool:
-            """Refuse the match and record why."""
+        def refuse(reason: str, container: str | None = None) -> bool:
+            """Refuse the match and record why, and on which container's dependence."""
             self.last_refusal_reason = reason
+            self.last_refusal_container = container
             return False
 
         # A loop pinned sequential is a deliberate fallback (the else branch of an
@@ -1564,7 +1571,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if facts is not None and facts.refusal_witness is not None:
             reason = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
             if reason is not None:
-                return refuse(reason)
+                return refuse(reason, facts.refusal_witness[1])
         in_order_loop_blocks = None if facts is None else facts.block_order
         if in_order_loop_blocks is UNCOMPUTED or facts is None:
             in_order_loop_blocks = None
@@ -1683,7 +1690,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
-                            return refuse(reason)
+                            return refuse(reason, dn.data)
 
                         write_memlets[dn.data].append(e.data)
 
@@ -1719,7 +1726,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     ):
                         return refuse(
                             f"read of {data} at {src_subset} is iter-indexed but does not match the "
-                            f"write pattern a*i+b -- loop-carried forward/backward dependency"
+                            f"write pattern a*i+b -- loop-carried forward/backward dependency",
+                            data,
                         )
 
         # Fixed for the whole loop, so compute once and share with every dependence test below.
@@ -1741,7 +1749,8 @@ class LoopToMap(xf.MultiStateTransformation):
                         data, permissive
                     ):
                         return refuse(
-                            f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations"
+                            f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations",
+                            data,
                         )
             # WCR writes combine with each other in any order, but not with a plain write: ``A[N-1] += 1`` on
             # one iteration and ``A[i] = ...`` on iteration N-1 race once the loop is a map.
@@ -1753,7 +1762,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     ):
                         return refuse(
                             f"accumulated write {acc.subset} and plain write {plain.subset} to {data} "
-                            "may overlap across iterations"
+                            "may overlap across iterations",
+                            data,
                         )
 
         # After looping over relevant writes, consider reads that may overlap
@@ -1789,7 +1799,8 @@ class LoopToMap(xf.MultiStateTransformation):
                             if facts is not None:
                                 facts.refusal_witness = ("read", data)
                             return refuse(
-                                f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}"
+                                f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}",
+                                data,
                             )
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -1802,7 +1813,8 @@ class LoopToMap(xf.MultiStateTransformation):
                     sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt, mmlt.subset, varying
                 ):
                     return refuse(
-                        f"read-after-write conflict on {mmlt.data} via an inter-state edge - subset={mmlt.subset}"
+                        f"read-after-write conflict on {mmlt.data} via an inter-state edge - subset={mmlt.subset}",
+                        mmlt.data,
                     )
 
         # Iteration variable + other symbols must not be used on later edges/blocks before
