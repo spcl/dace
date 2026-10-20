@@ -5792,7 +5792,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.symbols:
             return name
 
-        if name in __builtins__:
+        if name in __builtins__ or name in replacements.operators.MODULO_CALLS:
             return name
 
         if name in self.iterator_copies:
