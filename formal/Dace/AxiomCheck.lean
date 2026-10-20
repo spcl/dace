@@ -99,3 +99,36 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Equiv.refl_iff_supported
 #print axioms Dace.Refines_iff_sim
 #print axioms Dace.Sim.trans
+
+-- R1.3: logs are write-only (log-shift lemmas for both relation families).
+#print axioms Dace.NodeExec.shift_iff
+#print axioms Dace.SeqExec.shift_iff
+#print axioms Dace.OrderedExec.shift_iff
+#print axioms Dace.IterExec.shift_iff
+#print axioms Dace.ConsumeTasks.shift_iff
+#print axioms Dace.StateExec.shift_iff
+#print axioms Dace.BlockExec.shift_iff
+#print axioms Dace.RegionAt.shift_iff
+#print axioms Dace.RegionExec.shift_iff
+#print axioms Dace.LoopExec.shift_iff
+#print axioms Dace.LoopGuard.shift_iff
+#print axioms Dace.LoopIter.shift_iff
+#print axioms Dace.LoopTail.shift_iff
+#print axioms Dace.CondExec.shift_iff
+#print axioms Dace.BlockExec.log_iff
+#print axioms Dace.NodeExec.log_iff
+#print axioms Dace.BlockExec.rel
+#print axioms Dace.NodeExec.rel
+#print axioms Dace.SeqExec.rel
+#print axioms Dace.OrderedExec.rel
+#print axioms Dace.STree.NodeExec.shift_iff
+#print axioms Dace.STree.ListExec.shift_iff
+#print axioms Dace.STree.IterExec.shift_iff
+#print axioms Dace.STree.ConsumeTasks.shift_iff
+#print axioms Dace.STree.LoopExec.shift_iff
+#print axioms Dace.STree.LoopGuard.shift_iff
+#print axioms Dace.STree.LoopIter.shift_iff
+#print axioms Dace.STree.LoopTail.shift_iff
+#print axioms Dace.STree.NodeExec.log_iff
+#print axioms Dace.STree.NodeExec.rel
+#print axioms Dace.STree.ListExec.rel

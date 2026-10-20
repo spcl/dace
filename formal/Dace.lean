@@ -36,6 +36,8 @@ import Dace.STree.Soundness
 import Dace.Equiv.Observable
 import Dace.Equiv.Equiv
 import Dace.Equiv.Frag
+import Dace.SDFG.LogShift
+import Dace.STree.LogShift
 
 /-!
 # DaCe formal semantics
