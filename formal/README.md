@@ -20,6 +20,10 @@ representations:
   (`Congr.scopeBody`, `Congr.mapBody`; decidable side condition
   `sameOutside?`, exercised on every corpus map by
   `tests/ScopeBodyCheck.lean`) by one that simulates it refines the SDFG.
+  Determinism (`Equiv/Det`): on the fragment `seqPure?` with convex map
+  scopes (`scopesOk?`), one normal run of a state makes every run normal
+  with the same memory, whatever topological orders the scopes take
+  (`StateExec.det`); `tests/DetCheck.lean` checks the hypotheses on the corpus.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 

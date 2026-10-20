@@ -223,3 +223,11 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.StateExec.simB
 #print axioms Dace.State.isTopologicalOrder_splice
 #print axioms Dace.NodeLocal.execSimple
+
+-- R1.6: determinism
+#print axioms Dace.NodeExec.det
+#print axioms Dace.OrderedExec.det
+#print axioms Dace.CompsExec.det
+#print axioms Dace.StateExec.det
+#print axioms Dace.StateExec.no_err
+#print axioms Dace.scopesOk?_sound

@@ -30,9 +30,8 @@ semantics:
   independent of the order of the components.
 
 The full determinism theorem (*every* derivation, including the orders
-chosen inside nested map scopes, is normal and `St.Eqv`-equal) needs a
-mutual induction over the derivation whose per-node step is the frame
-property plus uniqueness of node outcomes; it is not stated here.
+chosen inside nested map scopes, is normal and `St.Eqv`-equal) is
+`Dace.Equiv.Det` (`OrderedExec.det`, `StateExec.det`).
 -/
 
 set_option autoImplicit false

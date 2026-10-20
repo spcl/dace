@@ -48,6 +48,7 @@ import Dace.Equiv.Order
 import Dace.SDFG.Clean
 import Dace.Equiv.RaceFree
 import Dace.Equiv.ScopeBody
+import Dace.Equiv.Det
 
 /-!
 # DaCe formal semantics
