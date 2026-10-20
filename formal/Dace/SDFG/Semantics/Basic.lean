@@ -32,7 +32,7 @@ namespace Dace
 /-- Reasons for an erroneous outcome.  Three classes (`Decisions.md#D59`):
 
 * **undefined behavior** (`race`, `stuckPop`, `undefinedExpr`,
-  `undefinedSubset`, `unsetRef`, `taskletUndefined`): the program is valid
+  `undefinedSubset`, `unsetRef`, `outOfBounds`, `taskletUndefined`): the program is valid
   but this execution has no defined result;
 * `malformed`: situations that well-formedness (`SDFG.WF`, `STree.check`)
   excludes; it keeps the semantics total over the syntax;
@@ -51,6 +51,9 @@ inductive ErrReason where
   | undefinedSubset (sub : Subset)
   /-- Access to a reference container before it was `set` (`Decisions.md#D11`). -/
   | unsetRef (n : Name)
+  /-- Element access outside the shape of the accessed container
+  (`Decisions.md#D65`). -/
+  | outOfBounds (n : Name) (idx : Idx)
   /-- The tasklet interpretation is undefined for these inputs. -/
   | taskletUndefined (label : String)
   /-- The library-node interpretation (`Interp.library`) is undefined for
@@ -73,6 +76,7 @@ def ErrReason.toString : ErrReason → String
   | .undefinedExpr e => s!"undefined expression '{e}'"
   | .undefinedSubset sub => s!"undefined subset {repr sub}"
   | .unsetRef n => s!"reference '{n}' accessed before it was set"
+  | .outOfBounds n idx => s!"out-of-bounds access {idx} of '{n}'"
   | .taskletUndefined label => s!"tasklet '{label}' is undefined for its inputs"
   | .libraryUndefined cp => s!"library node '{cp}' is undefined for its inputs"
   | .unsupported msg => s!"unsupported {msg}"
@@ -97,6 +101,7 @@ def ErrReason.tag : ErrReason → String
   | .undefinedExpr _ => "undefinedExpr"
   | .undefinedSubset _ => "undefinedSubset"
   | .unsetRef _ => "unsetRef"
+  | .outOfBounds _ _ => "outOfBounds"
   | .taskletUndefined _ => "taskletUndefined"
   | .libraryUndefined _ => "libraryUndefined"
   | .unsupported _ => "unsupported"
@@ -216,9 +221,12 @@ index (`[]` or `[0]`); everything else goes through the strides
 def elemOffset (ctx : Ctx) (ρ : Valuation) (d : DataDesc) (idx : Idx) : Option Int :=
   if d.isScalar then d.startOffset.evalInt ctx.I.expr ρ else d.linearOffset ctx.I.expr ρ idx
 
-/-- Location of element `idx` of container `n`.  Fails with `unsetRef` for a
-reference that is not bound (`Decisions.md#D11`). -/
-def loc (ctx : Ctx) (ρ : Valuation) (m : Mem) (n : Name) (idx : Idx) : Res Loc :=
+/-- Address of element `idx` of container `n`, **without** a bounds check:
+the location a view or reference is bound to (the lower corner of a subset,
+which may lie outside the container when the subset is empty,
+`Decisions.md#D65`).  Fails with `unsetRef` for a reference that is not bound
+(`Decisions.md#D11`). -/
+def addr (ctx : Ctx) (ρ : Valuation) (m : Mem) (n : Name) (idx : Idx) : Res Loc :=
   match ctx.desc? n with
   | none => .err (.malformed s!"unknown container '{n}'")
   | some d =>
@@ -226,6 +234,30 @@ def loc (ctx : Ctx) (ρ : Valuation) (m : Mem) (n : Name) (idx : Idx) : Res Loc 
     else match ctx.elemOffset ρ d idx with
       | some o => .ok (Loc.elem (ctx.cname n) o)
       | none => .err (.malformed s!"undefined element offset {idx} in '{n}'")
+
+/-- Bounds check of an element access (`Decisions.md#D65`): every coordinate
+of `idx` lies in `0 ≤ idx_k < shape_k` of the accessed container's own
+descriptor (a view, reference or nested connector is checked against its
+own shape).  Skipped for accesses through an `allow_oob` memlet (`oob`), for
+scalars (codegen ignores their index) and for streams (unbounded queues). -/
+def checkBounds (ctx : Ctx) (ρ : Valuation) (n : Name) (idx : Idx) (oob : Bool) : Res Unit :=
+  match ctx.desc? n with
+  | none => .err (.malformed s!"unknown container '{n}'")
+  | some d =>
+    if oob || d.isScalar || d.isStream then .ok ()
+    else do
+      let shape ← d.shape.mapM fun s => Res.ofOption (s.evalInt ctx.I.expr ρ) (.undefinedExpr s)
+      if shape.length = idx.length && (idx.zip shape).all (fun (i, s) => decide (0 ≤ i ∧ i < s)) then .ok ()
+      else .err (.outOfBounds n idx)
+
+/-- Location of element `idx` of container `n` accessed by a data access
+(read, write, WCR, queue): its address (`addr`) after the bounds check
+(`checkBounds`, `Decisions.md#D65`); `oob` is the `allow_oob` flag of the
+memlet the access goes through. -/
+def loc (ctx : Ctx) (ρ : Valuation) (m : Mem) (n : Name) (idx : Idx) (oob : Bool := false) : Res Loc := do
+  let l ← ctx.addr ρ m n idx
+  ctx.checkBounds ρ n idx oob
+  pure l
 
 /-- Expression interpretation reading data from `m` (interstate conditions,
 assignments and dynamic ranges may read `A[i]`).  Such reads are not logged
@@ -309,35 +341,39 @@ def val? (st : St) (key : NodeId × Conn) : Option Val :=
 def setVal (st : St) (key : NodeId × Conn) (v : Val) : St :=
   { st with vals := (key, v) :: st.vals }
 
-/-- Read one element, logging the (resolved) location. -/
-def read (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) : Res (Val × St) := do
-  let l ← ctx.loc ρ st.mem n idx
+/-- Read one element, logging the (resolved) location.  `oob` is the
+`allow_oob` flag of the memlet the read goes through (`Decisions.md#D65`). -/
+def read (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (oob : Bool) : Res (Val × St) := do
+  let l ← ctx.loc ρ st.mem n idx oob
   pure (st.mem.read l, st.logged { reads := [st.mem.resolve l] })
 
 /-- Read several elements in order. -/
-def readMany (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (pts : List Idx) : Res (List Val × St) :=
+def readMany (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (pts : List Idx) (oob : Bool) :
+    Res (List Val × St) :=
   pts.foldlM (fun (acc, st) p => do
-      let (v, st) ← st.read ctx ρ n p
+      let (v, st) ← st.read ctx ρ n p oob
       pure (acc ++ [v], st)) ([], st)
 
 /-- Plain write. -/
-def write (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (v : Val) : Res St := do
-  let l ← ctx.loc ρ st.mem n idx
+def write (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (oob : Bool) (v : Val) : Res St := do
+  let l ← ctx.loc ρ st.mem n idx oob
   pure { st with mem := st.mem.write l v, log := st.log.seq { writes := [(st.mem.resolve l, v)] } }
 
 /-- WCR contribution: the local view is updated immediately with the
 interpretation's operator; the log records the contribution. -/
-def wcr (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (op : WcrOp) (v : Val) : Res St := do
-  let l ← ctx.loc ρ st.mem n idx
+def wcr (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (oob : Bool) (op : WcrOp) (v : Val) :
+    Res St := do
+  let l ← ctx.loc ρ st.mem n idx oob
   let old := st.mem.read l
   pure { st with mem := st.mem.write l (ctx.I.wcr op old v),
                  log := st.log.seq { wcrs := [(st.mem.resolve l, op, v)] } }
 
 /-- Plain write or WCR contribution according to the memlet. -/
-def store (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (wcrOp : Option WcrOp) (v : Val) : Res St :=
+def store (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (oob : Bool) (wcrOp : Option WcrOp)
+    (v : Val) : Res St :=
   match wcrOp with
-  | none => st.write ctx ρ n idx v
-  | some op => st.wcr ctx ρ n idx op v
+  | none => st.write ctx ρ n idx oob v
+  | some op => st.wcr ctx ρ n idx oob op v
 
 /-- Current content of the queue at element `idx` of stream `n`. -/
 def queue (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) : Res (List Val) := do

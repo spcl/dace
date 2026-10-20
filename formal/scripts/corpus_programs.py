@@ -402,3 +402,55 @@ def args_unordered_writes(seed: int = 0) -> dict:
 
 PROGRAMS.append(("unordered_writes", _BuiltProgram("unordered_writes", _build_unordered_writes), args_unordered_writes))
 EXPECTED_ERRORS["unordered_writes"] = {"sdfg": "race"}
+
+
+@dace.program
+def empty_view(A: dace.float64[N, N], B: dace.float64[N]):
+    B[0] = np.sum(A[0, :M])
+    B[1] = np.sum(A[1, M:N])
+
+
+def args_empty_view(seed: int = 0) -> dict:
+    """With ``M = 0`` the view ``A[0, :M]`` is empty: a valid alias of its lower corner (``Decisions.md#D65``).
+
+    The bound is a symbol rather than a loop variable (``A[i, :i]`` at ``i = 0``, as in npbench) because for the
+    latter the frontend gives the view memlet a volume symbol that is not identical to the subset's, so DaCe's
+    ``as_string`` prints a volume the serialized tree cannot reproduce.
+    """
+    r = _rng(18, seed)
+    return dict(A=r.random((4, 4)), B=np.zeros(4), N=4, M=0)
+
+
+PROGRAMS.append(("empty_view", empty_view, args_empty_view))
+
+
+def _build_oob_read(name: str, allow_oob: bool) -> dace.SDFG:
+    """``B[0] = X[0, k]`` with ``X`` of shape ``[2, 3]``; run with ``k = 3``, one past the end of the row.
+
+    The generated code reads linear offset 3, i.e. ``X[1, 0]``.  Without ``allow_oob`` the access is out of bounds,
+    undefined behavior in the formal semantics (``Decisions.md#D65``); with it the model reads the same element.
+    The index is symbolic, so validation cannot prove it out of bounds.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("X", [2, 3], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state("main")
+    x = state.add_read("X")
+    b = state.add_write("B")
+    t = state.add_tasklet("get", {"x"}, {"y"}, "y = x")
+    state.add_edge(x, None, t, "x", dace.Memlet("X[0, k]", allow_oob=allow_oob))
+    state.add_edge(t, "y", b, None, dace.Memlet("B[0]"))
+    return sdfg
+
+
+def args_oob_read(seed: int = 0) -> dict:
+    r = _rng(19, seed)
+    return dict(X=r.random((2, 3)), B=np.zeros(1), k=3)
+
+
+PROGRAMS.append(("oob_read", _BuiltProgram("oob_read", lambda: _build_oob_read("oob_read", False)), args_oob_read))
+EXPECTED_ERRORS["oob_read"] = {"sdfg": "outOfBounds", "stree": "outOfBounds"}
+PROGRAMS.append(
+    ("oob_allowed", _BuiltProgram("oob_allowed", lambda: _build_oob_read("oob_allowed", True)), args_oob_read)
+)

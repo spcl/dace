@@ -11,7 +11,8 @@ parser for that language into `Expr`, and a printer back to the same syntax.
 Recognized SymPy/DaCe function spellings (`Decisions.md#D22`):
 `Min`, `Max` (variadic), `Abs`, `int_floor`, `int_ceil`, `Mod`, `floor`,
 `ceiling`, `Not`, `Eq`, `Ne`/`NotEq`, `AND`/`And`, `OR`/`Or`, `IfExpr`,
-`Pow`.  Anything else becomes an opaque `Expr.app`.
+`Pow`.  Anything else becomes an opaque `Expr.app`.  A typed symbol
+`symbol($N, dtype=dace.int64, …)` is the symbol `N` (`Decisions.md#D66`).
 
 The parser is a plain executable tool (`partial`): it is not reasoned about.
 -/
@@ -400,6 +401,20 @@ partial def parseAtom : P Expr := do
   | .float m e => advance; pure (.lit (.float m e))
   | .ident "True" => advance; pure (.lit (.bool true))
   | .ident "False" => advance; pure (.lit (.bool false))
+  | .ident "symbol" =>
+    advance
+    if (← peek) = .lparen then
+      -- typed symbol `symbol($N, dtype=dace.int64, nonnegative=True, …)`
+      -- (`DaceSympySerializer._print_Symbol`): the symbol `N`; its dtype and
+      -- assumptions are dropped (`Decisions.md#D22`, `#D1`)
+      advance
+      match ← peek with
+      | .ident x =>
+        advance
+        parseSymbolKwargs
+        pure (.sym x)
+      | _ => failure
+    else pure (.sym "symbol")
   | .ident f =>
     advance
     if (← peek) = .lparen then
@@ -413,6 +428,22 @@ partial def parseAtom : P Expr := do
     expect .rparen
     pure e
   | _ => failure
+
+/-- The keyword arguments `, k = v` of a typed symbol up to (and consuming)
+the closing parenthesis; the values are parsed and discarded. -/
+partial def parseSymbolKwargs : P Unit := do
+  repeat
+    match ← peek with
+    | .rparen => advance; break
+    | .comma =>
+      advance
+      match ← peek with
+      | .ident _ =>
+        advance
+        expect (.op "=")
+        let _ ← parseTernary
+      | _ => failure
+    | _ => failure
 
 end
 

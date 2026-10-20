@@ -51,6 +51,15 @@ def ev (s : String) : Option Val := (Expr.parse? s) >>= fun e => e.eval ExprInte
 #guard ev "ceiling(1/3*N)" == some (.int 4)
 #guard (Expr.parse? "-1 + $N").map Expr.toPy == some "(-1) + N"
 #guard (Expr.parse? "SymExpr(Min(-1 + $K, 2 + $tile_k), 2 + $tile_k)").isSome
+-- Typed symbols (`DaceSympySerializer._print_Symbol`): dtype and assumptions are dropped
+#guard Expr.parse? "symbol($N, dtype=dace.int64)" == some (.sym "N")
+#guard Expr.parse? "-2 + symbol($N, dtype=dace.int64, nonnegative=True, nonzero=True, positive=True)" ==
+  Expr.parse? "-2 + N"
+#guard Expr.parse? "symbol($i, nonnegative=True)**2" == Expr.parse? "i**2"
+#guard Expr.parse? "symbol($N)" == some (.sym "N")
+#guard Expr.parse? "symbol + 1" == Expr.parse? "$symbol + 1"
+#guard (Expr.parse? "symbol($N, dtype)").isNone
+#guard ev "2*symbol($N, dtype=dace.uint32) - 1" == some (.int 19)
 #guard Expr.parseAssign? "i = (i + 1)" == some ("i", Expr.parse? "i + 1" |>.get!)
 #guard ev "i << 2" == some (.int 12)
 

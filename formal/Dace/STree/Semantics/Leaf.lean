@@ -34,7 +34,7 @@ namespace Dace
 the chunk container for the consumed stream). -/
 def bindMemletIn (tc : TCtx) (ρ : Valuation) (m : Memlet) (st : St) : Res (ConnIn × St) :=
   let (d, sub) := tc.inData m
-  bindInData tc.ctx ρ d sub st
+  bindInData tc.ctx ρ d sub m.allowOob st
 
 /-- Bind all input connectors of a code node, in memlet order. -/
 def bindInputsT (tc : TCtx) (ρ : Valuation) (ins : MemletMap) (st : St) : Res ((Conn → Option ConnIn) × St) := do
@@ -52,9 +52,10 @@ def applyOutT (tc : TCtx) (ρ : Valuation) (ins outs : MemletMap) (st : St) (out
     | [] => .err (.malformed s!"pop through unknown connector '{c}'")
     | ms => ms.foldlM (fun st m => let (d, sub) := tc.inData m; popFrom tc.ctx ρ st d sub k) st) st
   let st ← out.scalars.foldlM (fun st (c, v) =>
-    (outs.on c).foldlM (fun st m => storeScalar tc.ctx ρ st m.data m.dataSubset m.wcr v) st) st
+    (outs.on c).foldlM (fun st m => storeScalar tc.ctx ρ st m.data m.dataSubset m.wcr m.allowOob v) st) st
   let st ← out.arrayWrites.foldlM (fun st (c, rel, v) =>
-    (outs.on c).foldlM (fun st m => storeArrayWrite tc.ctx ρ st m.data m.dataSubset m.wcr rel v) st) st
+    (outs.on c).foldlM (fun st m =>
+      storeArrayWrite tc.ctx ρ st m.data m.dataSubset m.wcr m.allowOob rel v) st) st
   out.pushes.foldlM (fun st (c, vs) =>
     (outs.on c).foldlM (fun st m => pushTo tc.ctx ρ st m.data m.dataSubset vs) st) st
 
@@ -78,7 +79,7 @@ def execReduceT (tc : TCtx) (ρ : Valuation) (props : ReduceProps) (ins outs : M
   match ins.memlets, outs.memlets with
   | [im], [om] =>
     let (d, sub) := tc.inData im
-    reduceData tc.ctx ρ st props d sub om.data om.dataSubset om.wcr
+    reduceData tc.ctx ρ st props d sub om.data om.dataSubset om.wcr im.allowOob om.allowOob
   | _, _ => .err (.malformed "reduce node must have exactly one input and one output")
 
 /-- A `LibraryCall`: `Reduce` directly, everything else through `Interp.library`. -/
@@ -90,7 +91,7 @@ def execLibraryT (tc : TCtx) (ρ : Valuation) (l : LibNode) (ins outs : MemletMa
 /-- A `CopyNode` (`Decisions.md#D53`): `target[other_subset] = data[subset]`. -/
 def execCopyT (tc : TCtx) (ρ : Valuation) (target : Name) (m : Memlet) (st : St) : Res St :=
   let (d, sub) := tc.inData m
-  copyData tc.ctx ρ st d sub target m.otherSubset m.wcr
+  copyData tc.ctx ρ st d sub target m.otherSubset m.wcr m.allowOob
 
 /-- A `ViewNode`: alias `target` to the lower corner of the viewed subset of
 `source` (`Decisions.md#D31`, `#D55`). -/
@@ -118,7 +119,7 @@ def execDynScopeCopy (tc : TCtx) (ρ : Valuation) (p : Pending) (target : Sym) (
     else .err (.malformed s!"IN_stream of non-stream '{m.data}'")
   else do
     let (d, sub) := tc.inData m
-    let (v?, st) ← readScalarData tc.ctx ρ d sub st
+    let (v?, st) ← readScalarData tc.ctx ρ d sub m.allowOob st
     match v? with
     | some v => pure ({ p with syms := p.syms ++ [(target, v)] }, st)
     | none => pure (p, st)

@@ -16,7 +16,8 @@ Conventions (`Decisions.md#D29`–`#D32`, `#D38`, `#D40`):
 
 * a **copy** executes at its destination node (access node or scope exit);
   a code node reads its in-edges and writes its out-edges when it executes;
-* every element access goes through `Ctx.loc` and is logged resolved;
+* every element access goes through `Ctx.loc` (bounds-checked unless its
+  memlet has `allow_oob`, `#D65`) and is logged resolved;
 * the consume chunk is an ordinary transient container
   (`consumeChunkName`, declared by the importer, `#D38`), private to each task
   by `#D39`; only its initial content is written outside the logs.
@@ -75,9 +76,15 @@ end State
 
 /-! ## Reading single values -/
 
+/-- The `allow_oob` flag of an edge's memlet (`Decisions.md#D65`): accesses
+through it are not bounds-checked. -/
+def DEdge.allowOob (e : DEdge) : Bool := e.data.memlet?.any (·.allowOob)
+
 /-- The scalar at a single-element subset of container `d`: one popped
-element for a stream, the element itself otherwise. -/
-def readScalarData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (st : St) : Res (Option Val × St) := do
+element for a stream, the element itself otherwise.  `oob` is the
+`allow_oob` flag of the memlet (`Decisions.md#D65`). -/
+def readScalarData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (oob : Bool) (st : St) :
+    Res (Option Val × St) := do
   let pts ← ctx.pointsOf ρ st.mem d sub
   match pts with
   | [p] =>
@@ -85,7 +92,7 @@ def readScalarData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset)
       let (vs, st) ← st.popN ctx ρ d p 1
       pure (vs.head?, st)
     else do
-      let (v, st) ← st.read ctx ρ d p
+      let (v, st) ← st.read ctx ρ d p oob
       pure (some v, st)
   | _ => .err (.malformed s!"scalar read of '{d}' is not a single element")
 
@@ -96,7 +103,7 @@ flows (unassigned dynamic output upstream, `Decisions.md#D13`). -/
 def readEdgeScalar (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res (Option Val × St) :=
   match s.srcEndpoint e with
   | .code key => .ok (st.val? key, st)
-  | .data d sub => readScalarData ctx ρ d sub st
+  | .data d sub => readScalarData ctx ρ d sub e.allowOob st
   | .invalid => .err (.malformed "leaf edge without a valid source")
 
 /-- Location of the (first) element of a stream endpoint. -/
@@ -104,32 +111,55 @@ def streamPoint (ctx : Ctx) (ρ : Valuation) (m : Mem) (d : Name) (sub : Option 
   let pts ← ctx.pointsOf ρ m d sub
   Res.ofOption pts.head? (.malformed s!"empty subset of stream '{d}'")
 
+/-- Lower corner of a subset of container `n` (`Range.min_element`, the
+point a pointer to the subset addresses: `cpp_offset_expr` at index `0`,
+`Decisions.md#D65`): the evaluated per-dimension lower bounds, whether or not
+the subset is empty; zeros for the full range (`Decisions.md#D9`).  The
+subset must be enumerable (`Ctx.pointsOf`, else `undefinedSubset`); for a
+union, the lower corner of its first range. -/
+def Ctx.lowerCorner (ctx : Ctx) (ρ : Valuation) (m : Mem) (n : Name) (sub : Option Subset) : Res Idx := do
+  let _ ← ctx.pointsOf ρ m n sub
+  match sub with
+  | none =>
+    match ctx.desc? n with
+    | some d => pure (d.shape.map fun _ => 0)
+    | none => .err (.malformed s!"unknown container '{n}'")
+  | some s =>
+    let r? : Option Range := match s with
+      | .range r => some r
+      | .union rs => rs.head?
+    match r? with
+    | none => .err (.undefinedSubset s)
+    | some r =>
+      r.dims.mapM fun dim => Res.ofOption (ctx.evalInt ρ m dim.lo) (.undefinedSubset s)
+
 /-! ## Copies -/
 
 /-- Copy between two container endpoints (`Decisions.md#D7`, `#D10`):
 elementwise over the zipped point lists; a stream source pops as many
 elements as the destination has points, a stream destination receives all
-source elements in order. -/
+source elements in order.  `oob` is the memlet's `allow_oob` flag
+(`Decisions.md#D65`). -/
 def copyData (ctx : Ctx) (ρ : Valuation) (st : St) (sd : Name) (ssub : Option Subset) (dd : Name)
-    (dsub : Option Subset) (wcr : Option WcrOp) : Res St :=
+    (dsub : Option Subset) (wcr : Option WcrOp) (oob : Bool) : Res St :=
   match ctx.isStream sd, ctx.isStream dd with
   | true, true => .err (.malformed "stream-to-stream copy")
   | true, false => do
     let dpts ← ctx.pointsOf ρ st.mem dd dsub
     let sp ← streamPoint ctx ρ st.mem sd ssub
     let (vs, st) ← st.popN ctx ρ sd sp dpts.length
-    (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q wcr v) st
+    (dpts.zip vs).foldlM (fun st (q, v) => st.store ctx ρ dd q oob wcr v) st
   | false, true => do
     let spts ← ctx.pointsOf ρ st.mem sd ssub
     let dp ← streamPoint ctx ρ st.mem dd dsub
-    let (vs, st) ← st.readMany ctx ρ sd spts
+    let (vs, st) ← st.readMany ctx ρ sd spts oob
     st.push ctx ρ dd dp vs
   | false, false => do
     let spts ← ctx.pointsOf ρ st.mem sd ssub
     let dpts ← ctx.pointsOf ρ st.mem dd dsub
     (spts.zip dpts).foldlM (fun st (p, q) => do
-      let (v, st) ← st.read ctx ρ sd p
-      st.store ctx ρ dd q wcr v) st
+      let (v, st) ← st.read ctx ρ sd p oob
+      st.store ctx ρ dd q oob wcr v) st
 
 /-- Execute a leaf copy edge (`Decisions.md#D7`, `#D10`): `copyData` between
 the structural endpoints. -/
@@ -138,16 +168,20 @@ def execCopy (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Re
   | .dep => .ok st
   | .memlet m =>
     match s.srcEndpoint e, s.dstEndpoint e with
-    | .data sd ssub, .data dd dsub => copyData ctx ρ st sd ssub dd dsub m.wcr
+    | .data sd ssub, .data dd dsub => copyData ctx ρ st sd ssub dd dsub m.wcr m.allowOob
     | _, _ => .err (.malformed "copy between non-container endpoints")
 
 /-! ## Code nodes (tasklets and library nodes) -/
 
 /-- Bind a container endpoint to an input connector (`Decisions.md#D40`): a
-single-point subset is a scalar, a multi-point subset a pointer connector
-addressed relative to the subset's lower corner (its whole footprint is
-logged as read), a stream connector sees the current queue. -/
-def bindInData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (st : St) : Res (ConnIn × St) :=
+single-point subset is a scalar, any other subset a pointer connector
+addressed relative to the subset's lower corner (`Ctx.lowerCorner`; its
+whole footprint is logged as read, and only its points are readable, so an
+empty subset binds a pointer that reads nothing, `Decisions.md#D65`), a
+stream connector sees the current queue.  `oob` is the memlet's `allow_oob`
+flag. -/
+def bindInData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (oob : Bool) (st : St) :
+    Res (ConnIn × St) :=
   if ctx.isStream d then do
     let p ← streamPoint ctx ρ st.mem d sub
     let q ← st.queue ctx ρ d p
@@ -155,18 +189,18 @@ def bindInData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (st
   else do
     let pts ← ctx.pointsOf ρ st.mem d sub
     match pts with
-    | [] => .err (.malformed s!"empty input subset of '{d}'")
     | [p] => do
-      let (v, st) ← st.read ctx ρ d p
+      let (v, st) ← st.read ctx ρ d p oob
       pure (.scalar v, st)
-    | lo :: _ => do
-      let (_, st) ← st.readMany ctx ρ d pts
+    | _ => do
+      let lo ← ctx.lowerCorner ρ st.mem d sub
+      let (_, st) ← st.readMany ctx ρ d pts oob
       let m := st.mem
       let get : Idx → Option Val := fun rel =>
         if rel.length = lo.length then
           let abs := List.zipWith (· + ·) lo rel
           if pts.contains abs then
-            match ctx.loc ρ m d abs with
+            match ctx.loc ρ m d abs oob with
             | .ok l => some (m.read l)
             | .err _ => none
           else none
@@ -179,7 +213,7 @@ def bindIn (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Res 
   match s.srcEndpoint e with
   | .code key => .ok ((st.val? key).map .scalar, st)
   | .data d sub => do
-    let (c, st) ← bindInData ctx ρ d sub st
+    let (c, st) ← bindInData ctx ρ d sub e.allowOob st
     pure (some c, st)
   | .invalid => .err (.malformed "input edge without a valid source")
 
@@ -197,16 +231,17 @@ def bindInputs (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) :
   pure (fun c => (bs.find? (·.1 = c)).map (·.2), st)
 
 /-- Deliver a scalar output to a container endpoint: a plain/WCR write of
-a single element, or a push to a stream. -/
+a single element, or a push to a stream.  `oob` is the memlet's `allow_oob`
+flag (`Decisions.md#D65`). -/
 def storeScalar (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (wcr : Option WcrOp)
-    (v : Val) : Res St :=
+    (oob : Bool) (v : Val) : Res St :=
   if ctx.isStream d then do
     let p ← streamPoint ctx ρ st.mem d sub
     st.push ctx ρ d p [v]
   else do
     let pts ← ctx.pointsOf ρ st.mem d sub
     match pts with
-    | [p] => st.store ctx ρ d p wcr v
+    | [p] => st.store ctx ρ d p oob wcr v
     | [] => .err (.malformed s!"scalar output to an empty subset of '{d}'")
     | _ => .err (.malformed s!"scalar output to several elements of '{d}'")
 
@@ -219,18 +254,19 @@ def applyScalar (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St) (
     | .memlet m =>
       match s.dstEndpoint e with
       | .code key => pure (st.setVal key v)
-      | .data d sub => storeScalar ctx ρ st d sub m.wcr v
+      | .data d sub => storeScalar ctx ρ st d sub m.wcr m.allowOob v
       | _ => .err (.malformed s!"output connector '{c}' without a valid destination")) st
 
 /-- Deliver an element write through a pointer output connector to a
-container endpoint, relative to the lower corner of the subset. -/
+container endpoint, relative to the lower corner of the subset
+(`Ctx.lowerCorner`, also for an empty subset, `Decisions.md#D65`).  `oob` is
+the memlet's `allow_oob` flag. -/
 def storeArrayWrite (ctx : Ctx) (ρ : Valuation) (st : St) (d : Name) (sub : Option Subset) (wcr : Option WcrOp)
-    (rel : Idx) (v : Val) : Res St :=
+    (oob : Bool) (rel : Idx) (v : Val) : Res St :=
   if ctx.isStream d then .err (.malformed s!"array write to stream '{d}'")
   else do
-    let pts ← ctx.pointsOf ρ st.mem d sub
-    let lo ← Res.ofOption pts.head? (.malformed s!"array write to an empty subset of '{d}'")
-    if rel.length = lo.length then st.store ctx ρ d (List.zipWith (· + ·) lo rel) wcr v
+    let lo ← ctx.lowerCorner ρ st.mem d sub
+    if rel.length = lo.length then st.store ctx ρ d (List.zipWith (· + ·) lo rel) oob wcr v
     else .err (.malformed s!"array write index rank mismatch on '{d}'")
 
 /-- Deliver an element write through a pointer output connector. -/
@@ -241,7 +277,7 @@ def applyArrayWrite (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : S
     | .dep => pure st
     | .memlet m =>
       match s.dstEndpoint e with
-      | .data d sub => storeArrayWrite ctx ρ st d sub m.wcr rel v
+      | .data d sub => storeArrayWrite ctx ρ st d sub m.wcr m.allowOob rel v
       | _ => .err (.malformed s!"array write through connector '{c}' to a non-container")) st
 
 /-- Push values to a stream endpoint. -/
@@ -307,6 +343,12 @@ def execCode (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (st : St)
 def reduceKeep (axes : List Nat) (p : Idx) : Idx :=
   p.zipIdx.filterMap fun (x, k) => if axes.contains k then none else some x
 
+/-- The groups of a reduction, paired in order with the output points: the
+distinct non-reduced coordinates of the input points; an empty input (e.g. an
+empty view, `Decisions.md#D65`) gives every output point an empty group. -/
+def reduceGroups (axes : List Nat) (spts dpts : List Idx) : List Idx :=
+  if spts.isEmpty then dpts.map fun _ => [] else (spts.map (reduceKeep axes)).eraseDups
+
 /-- Direct semantics of `Reduce` between two container endpoints
 (`Decisions.md#D37`, mirroring `ExpandReducePure`,
 `dace/libraries/standard/nodes/reduce.py:35-166`): input points are grouped
@@ -314,30 +356,35 @@ by their non-reduced coordinates, in the order of the output points; with an
 `identity` the fold starts there and the result is written (plainly, or
 through the out-memlet's WCR); without one the fold of the group is
 contributed to the existing output through the reduction operator (the pure
-expansion has no initialization state). -/
+expansion has no initialization state).  An empty input reduces every output
+point over an empty group (the identity, or nothing; the expansion's
+`reduce_init` map writes the identity to the whole output, `reduce.py:98-110`).
+`soob`/`doob` are the `allow_oob`
+flags of the input and output memlets (`Decisions.md#D65`). -/
 def reduceData (ctx : Ctx) (ρ : Valuation) (st : St) (props : ReduceProps) (sd : Name) (ssub : Option Subset)
-    (dd : Name) (dsub : Option Subset) (outWcr : Option WcrOp) : Res St :=
+    (dd : Name) (dsub : Option Subset) (outWcr : Option WcrOp) (soob doob : Bool) : Res St :=
   if ctx.isStream sd || ctx.isStream dd then .err (.malformed "reduce over a stream")
   else do
     let spts ← ctx.pointsOf ρ st.mem sd ssub
     let dpts ← ctx.pointsOf ρ st.mem dd dsub
     let ndim := (spts.head?.map List.length).getD 0
     let axes := props.axes.getD (List.range ndim)
-    let groups := (spts.map (reduceKeep axes)).eraseDups
+    let groups := reduceGroups axes spts dpts
     if groups.length ≠ dpts.length then .err (.malformed "reduce output shape mismatch")
     else do
-      let (vals, st) ← st.readMany ctx ρ sd spts
+      let (vals, st) ← st.readMany ctx ρ sd spts soob
       let pairs := spts.zip vals
       (groups.zip dpts).foldlM (fun st (g, q) =>
         let gv := (pairs.filter fun (p, _) => reduceKeep axes p = g).map (·.2)
         match props.identity with
         | some ide => do
           let i ← ctx.evalR ρ st.mem ide
-          st.store ctx ρ dd q outWcr (gv.foldl (ctx.I.wcr props.wcr) i)
+          st.store ctx ρ dd q doob outWcr (gv.foldl (ctx.I.wcr props.wcr) i)
         | none =>
           match gv with
           | [] => pure st
-          | v :: rest => st.wcr ctx ρ dd q (outWcr.getD props.wcr) (rest.foldl (ctx.I.wcr props.wcr) v)) st
+          | v :: rest =>
+            st.wcr ctx ρ dd q doob (outWcr.getD props.wcr) (rest.foldl (ctx.I.wcr props.wcr) v)) st
 
 /-- The `Reduce` library node: `reduceData` between its single input and
 output endpoints. -/
@@ -347,7 +394,8 @@ def execReduce (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (props : Red
   match ins, outs with
   | [ie], [oe] =>
     match s.srcEndpoint ie, s.dstEndpoint oe, oe.data.memlet? with
-    | .data sd ssub, .data dd dsub, some om => reduceData ctx ρ st props sd ssub dd dsub om.wcr
+    | .data sd ssub, .data dd dsub, some om =>
+      reduceData ctx ρ st props sd ssub dd dsub om.wcr ie.allowOob om.allowOob
     | _, _, _ => .err (.malformed "reduce node not between containers")
   | _, _ => .err (.malformed "reduce node must have exactly one input and one output")
 
@@ -365,18 +413,20 @@ def Ctx.reinterprets (ctx : Ctx) (d base : Name) : Bool :=
     plain dd && plain bd && dd.dtype ≠ bd.dtype
   | _, _ => false
 
-/-- Alias binding of container `d` to the lower corner of `sub` in `base`.
-A view or reference whose element type differs from its base's is not
-modeled (`unsupported`, `Decisions.md#D55`, `#D59`). -/
+/-- Alias binding of container `d` to the lower corner of `sub` in `base`
+(`Ctx.lowerCorner`, its address `Ctx.addr`: binding is not an access, so
+the corner of an empty subset may lie outside `base`; such a view is valid,
+and element accesses through it are checked against the view's own shape,
+`Decisions.md#D65`).  A view or reference whose element type differs from
+its base's is not modeled (`unsupported`, `Decisions.md#D55`, `#D59`). -/
 def aliasTo (ctx : Ctx) (ρ : Valuation) (st : St) (d base : Name) (sub : Option Subset) : Res St :=
   if ctx.reinterprets d base then
     let size (n : Name) := (ctx.desc? n).bind (·.dtype.bytes?)
     let how := if size d == size base then "a bitcast of equal element size" else "a different element size"
     .err (.unsupported s!"reinterpretation of '{base}' as '{d}' ({how}, Decisions.md#D55)")
   else do
-    let pts ← ctx.pointsOf ρ st.mem base sub
-    let lo ← Res.ofOption pts.head? (.malformed s!"empty subset of '{base}' viewed by '{d}'")
-    let l ← ctx.loc ρ st.mem base lo
+    let lo ← ctx.lowerCorner ρ st.mem base sub
+    let l ← ctx.addr ρ st.mem base lo
     pure (st.bindAlias (ctx.cname d) { base := l.name, offset := l.offset })
 
 /-- Bind a view access node to its viewed data (`Decisions.md#D31`): the
