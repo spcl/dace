@@ -281,6 +281,25 @@ def test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free():
     assert "k" in sdfg.free_symbols
 
 
+def test_a_symbol_both_arms_of_an_if_else_assign_is_not_free():
+    """``if a[0] > 0: k = 1 else: k = 0`` assigns ``k`` on every path, so the read after the join never sees the
+    caller's ``k``: it is not free."""
+    sdfg = symbol_sdfg("if_else_assignment")
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
+    for label, condition, value in (("then", dace.sdfg.state.CodeBlock("a[0] > 0"), "1"), ("else", None, "0")):
+        arm = dace.sdfg.state.ControlFlowRegion(label, sdfg=sdfg, parent=block)
+        arm.add_edge(
+            arm.add_state(f"{label}_first", is_start_block=True),
+            arm.add_state(f"{label}_second"),
+            dace.InterstateEdge(assignments={"k": value}),
+        )
+        block.add_branch(condition, arm)
+    sdfg.add_node(block, is_start_block=True)
+    sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
+
+    assert "k" not in sdfg.free_symbols
+
+
 def branch_assignments(name: str, conditions: tuple[str, ...]) -> dace.SDFG:
     """Each of ``conditions`` guards a branch that assigns ``k``; a state after the block reads ``k``."""
     sdfg = symbol_sdfg(name)
@@ -350,5 +369,8 @@ if __name__ == "__main__":
     test_a_state_reading_a_symbol_before_an_edge_assigns_it_keeps_it_free()
     test_a_loop_body_reading_a_symbol_its_own_later_edge_assigns_keeps_it_free()
     test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free()
+    test_a_symbol_both_arms_of_an_if_else_assign_is_not_free()
+    test_a_symbol_assigned_by_branches_whose_last_condition_negates_the_others_is_not_free()
+    test_a_symbol_assigned_by_branches_whose_conditions_are_not_a_negation_stays_free()
     test_a_symbol_assigned_on_every_path_before_its_read_is_not_free()
     test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symbol()
