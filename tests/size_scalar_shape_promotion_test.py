@@ -329,6 +329,22 @@ def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
     assert np.allclose(px, expected), px
 
 
+def test_a_size_symbol_another_program_declared_as_a_float_still_sizes_an_array():
+    """A promoted size symbol is a name: an earlier program that promoted a FLOAT scalar under the same name
+    (``__sym_n_0``) leaves an object of that name, declared ``double``, in SymPy's and the parser's caches. The
+    integer program must size its arrays by its own declaration, not by that object's."""
+
+    @dace.program
+    def float_size(a: dace.float64[N], out: dace.float64[N]):
+        n = a[0] * 1.5
+        tmp = np.zeros(n, dtype=np.float64)
+        out[0] = tmp[0]
+
+    with pytest.raises(TypeError, match="not integral"):
+        float_size.to_sdfg(simplify=False)
+    test_two_arrays_from_one_size_share_their_extent()
+
+
 if __name__ == "__main__":
     test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()
     test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
@@ -349,3 +365,5 @@ if __name__ == "__main__":
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)
+
+    test_a_size_symbol_another_program_declared_as_a_float_still_sizes_an_array()

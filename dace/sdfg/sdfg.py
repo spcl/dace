@@ -2542,21 +2542,29 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Array(
-            dtype,
-            shape,
-            storage=storage,
-            location=location,
-            allow_conflicts=allow_conflicts,
-            transient=transient,
-            strides=strides,
-            offset=offset,
-            lifetime=lifetime,
-            alignment=alignment,
-            debuginfo=debuginfo,
-            total_size=total_size,
-            may_alias=may_alias,
+        # The shape is validated against the types this SDFG declares: a symbol is its name, so an object found in a
+        # shape may be one another SDFG declared at another dtype (SymPy and the parse caches hand it back).
+        scope = (
+            symbolic.serialization_symbol_dtypes(self.symbols, inherit=True)
+            if any(symbolic.issymbolic(entry) for entry in shape)
+            else contextlib.nullcontext()
         )
+        with scope:
+            desc = dt.Array(
+                dtype,
+                shape,
+                storage=storage,
+                location=location,
+                allow_conflicts=allow_conflicts,
+                transient=transient,
+                strides=strides,
+                offset=offset,
+                lifetime=lifetime,
+                alignment=alignment,
+                debuginfo=debuginfo,
+                total_size=total_size,
+                may_alias=may_alias,
+            )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
