@@ -15,7 +15,11 @@ representations:
 - `Dace/Equiv`: observational equivalence, refinement and congruence, and
   verified checks (`lake exe dace-equiv`): `dace-equiv racefree <sdfg.json>...`
   runs the static race check `raceFree?`, proven sound (`raceFree?_sound`);
-  `tests/RaceFreeCorpus.lean` pins its corpus verdicts.
+  `tests/RaceFreeCorpus.lean` pins its corpus verdicts. Congruence:
+  replacing a control-flow block (`Congr.block`) or the body of a map
+  (`Congr.scopeBody`, `Congr.mapBody`; decidable side condition
+  `sameOutside?`, exercised on every corpus map by
+  `tests/ScopeBodyCheck.lean`) by one that simulates it refines the SDFG.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 

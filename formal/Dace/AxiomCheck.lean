@@ -214,3 +214,12 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.RegionExec.cgood
 #print axioms Dace.execSimple_clean
 #print axioms Dace.raceFreeWith_sound
+
+-- R1.5: map-body congruence
+#print axioms Dace.Congr.scopeBody
+#print axioms Dace.Congr.scopeBodyEquiv
+#print axioms Dace.Congr.mapBody
+#print axioms Dace.sameOutside?_spec
+#print axioms Dace.StateExec.simB
+#print axioms Dace.State.isTopologicalOrder_splice
+#print axioms Dace.NodeLocal.execSimple
