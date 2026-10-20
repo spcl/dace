@@ -2,7 +2,7 @@
 
 import ast
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
@@ -47,6 +47,10 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     """
 
     CATEGORY: str = "Simplification"
+
+    #: The reachability result :attr:`reachable_by_region` was tied to, and that table keyed by region.
+    reachability_tied_to: dict | None = field(default=None, init=False, hash=False, compare=False, repr=False)
+    reachable_by_region: dict | None = field(default=None, init=False, hash=False, compare=False, repr=False)
 
     skip_library_nodes = properties.Property(
         dtype=bool,
@@ -94,7 +98,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         reachability = pipeline_results.get(ap.ControlFlowBlockReachability.__name__)
         if reachability is None:
             self.reachable_by_region = None
-        elif getattr(self, "reachability_tied_to", None) is not reachability:
+        elif self.reachability_tied_to is not reachability:
             self.reachability_tied_to = reachability
             self.reachable_by_region = {
                 cfg: reachability[cfg_id] for cfg_id, cfg in enumerate(sdfg.cfg_list) if cfg_id in reachability
@@ -105,7 +109,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         self, region, pipeline_results: dict[str, Any]
     ) -> dict[ControlFlowBlock, set[ControlFlowBlock]]:
         """``region``'s block reachability: the table tied to it when the result was first read, else by ``cfg_id``."""
-        by_region = getattr(self, "reachable_by_region", None)
+        by_region = self.reachable_by_region
         if by_region is not None and region in by_region:
             return by_region[region]
         return pipeline_results[ap.ControlFlowBlockReachability.__name__][region.cfg_id]

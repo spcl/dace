@@ -706,10 +706,14 @@ def _clamp_carrier_reads(block: ControlFlowBlock, sdfg: SDFG, facts: symbolic.Fa
         if not isinstance(src, nodes.AccessNode) or src.data not in written or edge.data.is_empty():
             continue
         memlet = edge.data
-        side = "subset" if memlet.data == src.data else "other_subset"
-        subset = getattr(memlet, side)
+        on_subset = memlet.data == src.data
+        subset = memlet.subset if on_subset else memlet.other_subset
         if subset is not None and all(b == e for b, e, _ in subset.ndrange()):
-            setattr(memlet, side, _clamped(subset, sdfg.arrays[src.data].shape, facts))
+            clamped = _clamped(subset, sdfg.arrays[src.data].shape, facts)
+            if on_subset:
+                memlet.subset = clamped
+            else:
+                memlet.other_subset = clamped
 
 
 def _clamped(subset: subsets.Range, shape: Sequence[Any], facts: symbolic.Facts) -> subsets.Range:
@@ -1023,7 +1027,7 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
             if st.in_degree(node) == 0:
                 continue
             desc = sdfg.arrays.get(node.data)
-            if desc is None or getattr(desc, "transient", False):
+            if desc is None or desc.transient:
                 continue
             if node.data not in carrier_set:
                 return []
@@ -1677,7 +1681,7 @@ def _walk_back_to_computation(state: SDFGState, sdfg: SDFG, src_node, carrier: s
             desc = sdfg.arrays.get(cur.data)
             if desc is None:
                 return None, [], None
-            if not getattr(desc, "transient", False):
+            if not desc.transient:
                 # Non-transient source AccessNode. If it's the carrier itself,
                 # we've reached a pure data copy from the carrier -- treat the
                 # AN as the primary and the chain's last edge as the carrier
@@ -1759,7 +1763,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
             if state.in_degree(an) == 0:
                 continue
             desc = sdfg.arrays.get(an.data)
-            if desc is None or getattr(desc, "transient", False):
+            if desc is None or desc.transient:
                 continue
             carrier = an.data
             in_edges = list(state.in_edges(an))
@@ -2168,7 +2172,7 @@ def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> _ScalarCarryScan | None
         if state.in_degree(n) == 0:
             continue
         desc = sdfg.arrays.get(n.data)
-        if desc is None or getattr(desc, "transient", False):
+        if desc is None or desc.transient:
             continue
         if n.data != info.out_name:
             return None
@@ -2184,7 +2188,7 @@ def _find_scalar_carry_candidates(state: SDFGState, sdfg: SDFG) -> list[str]:
     writes: set = set()
     for n in state.data_nodes():
         desc = sdfg.arrays.get(n.data)
-        if desc is None or not getattr(desc, "transient", False):
+        if desc is None or not desc.transient:
             continue
         is_scalar = isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,))
         if not is_scalar:
@@ -2424,7 +2428,7 @@ def _resolve_per_iter_gather(state: SDFGState, edge, sdfg: SDFG, loop_var: str):
         desc = sdfg.arrays.get(cur.data)
         if desc is None:
             return None
-        if not getattr(desc, "transient", False):
+        if not desc.transient:
             # Reached the non-transient source. The array-level gather subset
             # is on ``last_edge`` (the most recent edge we traversed: it goes
             # from this source AN to the first transient intermediate; its
@@ -2474,7 +2478,7 @@ def _resolve_per_iter_write(state: SDFGState, edge, sdfg: SDFG, loop_var: str, a
             desc = sdfg.arrays.get(dst.data)
             if desc is None:
                 return None
-            if not getattr(desc, "transient", False):
+            if not desc.transient:
                 sub = cur_edge.data.subset
                 if sub is None:
                     return None
@@ -2545,7 +2549,7 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> list[st
         if m is None or m.data is None or m.subset is None:
             continue
         desc = sdfg.arrays.get(m.data)
-        if desc is None or getattr(desc, "transient", False):
+        if desc is None or desc.transient:
             continue
         if _subset_uses(m.subset, loop_var):
             arrays_with_carrier_subset.add(m.data)
@@ -2559,7 +2563,7 @@ def _find_carried_arrays(state: SDFGState, sdfg: SDFG, loop_var: str) -> list[st
     writes: set = set()
     for n in state.data_nodes():
         desc = sdfg.arrays.get(n.data)
-        if desc is None or getattr(desc, "transient", False):
+        if desc is None or desc.transient:
             continue
         if n.data not in arrays_with_carrier_subset:
             continue
@@ -2618,7 +2622,7 @@ def _find_carried_arrays_via_nested(state: SDFGState, sdfg: SDFG, loop_var: str)
                 if outer_name is None:
                     continue
                 outer_desc = sdfg.arrays.get(outer_name)
-                if outer_desc is None or getattr(outer_desc, "transient", False):
+                if outer_desc is None or outer_desc.transient:
                     continue
                 # The subset uses ``loop_var`` (after mapping) if any of the
                 # inner symbols carrying ``loop_var`` appears in the subset's
@@ -3093,7 +3097,7 @@ def _stores_scan_result(state: SDFGState, write_edge, tasklet, op) -> bool:
     for node in chain:
         if isinstance(node, nodes.AccessNode):
             desc = state.sdfg.arrays.get(node.data)
-            if desc is None or not getattr(desc, "transient", False):
+            if desc is None or not desc.transient:
                 return False
         elif not _is_pure_copy_tasklet(node) and _tasklet_scan_op(node) is not op:
             return False
@@ -3253,11 +3257,11 @@ def _same_other_indices(a, b) -> bool:
 
 def _in_conditional_branch(state: SDFGState) -> bool:
     """``True`` iff the parent chain of ``state`` includes a ``ConditionalBlock``."""
-    cur = getattr(state, "parent_graph", None)
+    cur = state.parent_graph
     while cur is not None:
         if isinstance(cur, ConditionalBlock):
             return True
-        cur = getattr(cur, "parent_graph", None)
+        cur = cur.parent_graph
     return False
 
 
@@ -3273,11 +3277,11 @@ def _masked_update_within(state: SDFGState, loop: LoopRegion) -> bool:
     :param state: the body state holding the update.
     :param loop: the loop whose body it is; the walk stops here.
     """
-    cur = getattr(state, "parent_graph", None)
+    cur = state.parent_graph
     while cur is not None and cur is not loop:
         if isinstance(cur, ConditionalBlock):
             return True
-        cur = getattr(cur, "parent_graph", None)
+        cur = cur.parent_graph
     return False
 
 
@@ -4141,7 +4145,7 @@ def _collect_output_chain(state: SDFGState, tasklet: nodes.Tasklet, out_conn: st
             break
         chain.append(nxt)
         desc = state.sdfg.arrays.get(nxt.data)
-        if desc is not None and not getattr(desc, "transient", False):
+        if desc is not None and not desc.transient:
             break  # non-transient = the original ``out`` write target; stop after appending
         # Continue through transient intermediates.
         cur = nxt

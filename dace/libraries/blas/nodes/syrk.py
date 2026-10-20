@@ -255,6 +255,10 @@ class Syrk(dace.sdfg.nodes.LibraryNode):
         desc="'N' -> C := alpha*A*A^T + beta*C (A is NxK); 'T' -> C := alpha*A^T*A + beta*C (A is KxN).",
     )
     alpha = properties.SymbolicProperty(allow_none=False, default=1, desc="Scalar multiplied with the product.")
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.SymbolicProperty(allow_none=False, default=0, desc="Scalar multiplied with C before adding.")
     cin = properties.Property(dtype=bool, default=True, desc="Whether C is an input connector when beta != 0.")
     alpha_input = properties.Property(

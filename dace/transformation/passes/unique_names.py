@@ -88,16 +88,16 @@ class NameRenamer(ast.NodeTransformer):
 
 def rename_connector(state: SDFGState, node: nodes.CodeNode, old: str, new: str) -> None:
     """Rename the connector ``old`` of ``node`` and of the edges that attach to it."""
-    for connectors, edges, attr in (
-        (node.in_connectors, state.in_edges(node), "dst_conn"),
-        (node.out_connectors, state.out_edges(node), "src_conn"),
-    ):
-        if old not in connectors:
-            continue
-        connectors[new] = connectors.pop(old)
-        for edge in edges:
-            if getattr(edge, attr) == old:
-                setattr(edge, attr, new)
+    if old in node.in_connectors:
+        node.in_connectors[new] = node.in_connectors.pop(old)
+        for edge in state.in_edges(node):
+            if edge.dst_conn == old:
+                edge.dst_conn = new
+    if old in node.out_connectors:
+        node.out_connectors[new] = node.out_connectors.pop(old)
+        for edge in state.out_edges(node):
+            if edge.src_conn == old:
+                edge.src_conn = new
 
 
 def rename_scope_params(state: SDFGState, taken: set[str]) -> int:
@@ -158,12 +158,13 @@ def rename_strings(graph: SDFG | StateSubgraphView, repl: dict[str, str]) -> Non
     for node, _ in found:
         if not isinstance(node, TileOp):
             continue
-        for prop in type(node).__properties__:
-            value = getattr(node, prop)
+        # Every declared property of the node, through its descriptor: the names may sit in any of them.
+        for prop in type(node).__properties__.values():
+            value = prop.__get__(node, type(node))
             if isinstance(value, str):
-                setattr(node, prop, names.sub(lambda m: repl[m.group(1)], value))
+                prop.__set__(node, names.sub(lambda m: repl[m.group(1)], value))
             elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-                setattr(node, prop, [names.sub(lambda m: repl[m.group(1)], item) for item in value])
+                prop.__set__(node, [names.sub(lambda m: repl[m.group(1)], item) for item in value])
 
 
 def rename_nested(state: SDFGState, node: nodes.NestedSDFG, taken: set[str]) -> int:

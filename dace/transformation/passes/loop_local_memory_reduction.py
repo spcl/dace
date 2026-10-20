@@ -393,7 +393,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # can be matched against the loop's top-level CFG.
         cur = block
         while cur is not None:
-            parent = getattr(cur, "parent_graph", None)
+            parent = cur.parent_graph
             if parent is loop:
                 return cur
             if parent is None:

@@ -962,7 +962,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     # Slot-precise: swap the arr-AccessNode endpoint to a fresh per-state
                     # scalar AccessNode (one per state; reused across this slot's edges).
                     for endpoint in ("src", "dst"):
-                        end_node = getattr(edge, endpoint)
+                        end_node = edge.src if endpoint == "src" else edge.dst
                         if isinstance(end_node, nodes.AccessNode) and end_node.data == arr_name:
                             if per_state_scalar is None:
                                 per_state_scalar = state.add_access(scalar_name)

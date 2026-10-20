@@ -176,7 +176,7 @@ class LiftTrivialIf(ppl.Pass):
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
                     ranges.append((graph.loop_variable, start, end))
-            graph = getattr(graph, "parent_graph", None)
+            graph = graph.parent_graph
         return ranges
 
     @staticmethod
@@ -304,7 +304,7 @@ class LiftTrivialIf(ppl.Pass):
     def _is_conjunction(expr) -> bool:
         # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
         # ``func`` is named ``AND``), not ``sympy.And``; accept either.
-        return isinstance(expr, sympy.And) or getattr(getattr(expr, "func", None), "__name__", "") == "AND"
+        return isinstance(expr, sympy.And) or (isinstance(expr, sympy.Basic) and expr.func.__name__ == "AND")
 
     def _flatten_conjuncts(self, expr) -> list:
         """All conjuncts of a (possibly nested) conjunction, flattened.

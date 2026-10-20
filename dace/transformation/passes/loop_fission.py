@@ -11,6 +11,8 @@ value-preserving. A no-op when the body has a single group.
 import copy
 from typing import Any
 
+import sympy
+
 from dace import SDFG, symbolic
 from dace.optionals import required
 from dace.ordered import OrderedSet
@@ -53,7 +55,7 @@ def _is_per_iter_subset(subset, loop_var: str | None) -> bool:
             return False
         if loop_sym in expr.free_symbols:
             offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
-            if not (getattr(offset, "is_number", False) and offset == 0):
+            if not (isinstance(offset, sympy.Basic) and offset.is_number and offset == 0):
                 return False
             saw_loop_var = True
     # A subset that NEVER references the loop variable is a constant slot in
@@ -194,7 +196,7 @@ def _rewrite_per_iter_bridges(state: SDFGState, loop_var: str | None, sdfg: SDFG
     written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
     for data in list(written):
         desc = sdfg.arrays.get(data)
-        if desc is None or getattr(desc, "transient", False):
+        if desc is None or desc.transient:
             continue
         if not _container_per_iter_only(state, data, loop_var):
             continue
@@ -249,7 +251,7 @@ def _is_accumulator_group(group: list[nodes.Node], state: SDFGState, sdfg: SDFG)
     written_data = {n.data for n in data_nodes if state.in_degree(n) > 0}
     for data in written_data:
         desc = sdfg.arrays.get(data)
-        if desc is None or getattr(desc, "transient", False) is False:
+        if desc is None or desc.transient is False:
             continue
         if _has_self_path(state, data):
             return True
@@ -268,7 +270,7 @@ def _consumed_by_sibling_loop(state: SDFGState, data: set[str]) -> bool:
     further split.
     """
     loop = state.parent_graph
-    if loop is None or not hasattr(loop, "parent_graph"):
+    if loop is None:
         return False
     parent = loop.parent_graph
     if parent is None:
@@ -279,7 +281,7 @@ def _consumed_by_sibling_loop(state: SDFGState, data: set[str]) -> bool:
         # Skip the loop itself, and skip the original loop when this state is a
         # deepcopy probe (the probe shares the parent's nodes, so the original loop
         # would otherwise look like a sibling of itself).
-        if block is loop or getattr(block, "label", None) == getattr(loop, "label", None):
+        if block is loop or block.label == loop.label:
             continue
         reads, _ = _block_rw(block)
         if reads & data:
@@ -404,9 +406,7 @@ def _independent_groups(
         if loop_var is not None:
             desc = sdfg.arrays.get(data)
             per_iter_non_transient = (
-                desc is not None
-                and not getattr(desc, "transient", False)
-                and _container_per_iter_only(state, data, loop_var)
+                desc is not None and not desc.transient and _container_per_iter_only(state, data, loop_var)
             )
         if per_iter_non_transient:
             write_nodes = [

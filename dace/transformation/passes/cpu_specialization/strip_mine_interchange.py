@@ -97,6 +97,8 @@ from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any, NamedTuple
 
+import sympy
+
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.optionals import required
 from dace.ordered import OrderedSet
@@ -953,7 +955,11 @@ def tile_slice(index_lists: list[list[Any]]) -> bool:
         return False
     first = index_lists[0]
     for dim, index in enumerate(first):
-        named = {str(s) for s in getattr(index, "free_symbols", ()) if str(s).startswith(AXIS_PREFIX)}
+        named = {
+            str(s)
+            for s in (index.free_symbols if isinstance(index, sympy.Basic) else ())
+            if str(s).startswith(AXIS_PREFIX)
+        }
         if named != cut:
             continue
         if all(len(other) == len(first) and same_index(other[dim], index) for other in index_lists):

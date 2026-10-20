@@ -2047,6 +2047,11 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True, category="Semantics")
+
+    def folds_onto_output(self) -> bool:
+        # Without an identity the fold starts from the output: the expansion emits no init.
+        return self.wcr is not None and self.identity is None
+
     wcr = LambdaProperty(default="lambda a, b: a", category="Semantics")
     identity = Property(allow_none=True, to_json=lambda x: str(x), category="Semantics")
 

@@ -1754,6 +1754,21 @@ def full_class_path(cls_or_obj: type | object):
 
 @make_properties
 class LibraryNode(CodeNode):
+    #: Whether a parallel schedule of this node is serialized when an enclosing loop re-enters it (see
+    #: ``SequentializeUnprofitableParallelScopes``). A node whose work per entry is the chunk the loop hands it opts out.
+    serial_on_loop_reentry: bool = True
+
+    def folds_onto_output(self) -> bool:
+        """Whether the node folds its result onto the output's PRIOR value in place (``C = alpha*A@B + beta*C`` with a
+        nonzero ``beta``, a reduction without an identity), so its write is a read-modify-write with no read edge to
+        show it. ``False`` unless the library node says otherwise."""
+        return False
+
+    @staticmethod
+    def folds_by_beta(beta) -> bool:
+        """:meth:`folds_onto_output` of a node scaling its prior output by ``beta``."""
+        return beta is not None and not dace.symbolic.equal_valued(0, beta)
+
     name = Property(dtype=str, category="General", desc="Name of node")
     implementation = LibraryImplementationProperty(
         dtype=str,

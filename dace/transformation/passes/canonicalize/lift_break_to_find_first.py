@@ -38,6 +38,8 @@ import ast
 import copy
 from typing import Any
 
+import sympy
+
 from dace import SDFG, InterstateEdge, data, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME, FindFirst
 from dace.memlet import Memlet
@@ -158,7 +160,7 @@ def searched(
             # By name: the parsed index symbol need not carry the dtype a fresh one would.
             index = next((s for s in expr.free_symbols if str(s) == INDEX_NAME), None)
             slope = expr.diff(index) if index is not None else 0
-            if bounds is None or not getattr(slope, "is_number", True):
+            if bounds is None or (isinstance(slope, sympy.Basic) and not slope.is_number):
                 bounds = None
                 continue
             first, last = (expr.subs(index, lo), expr.subs(index, hi - 1)) if index is not None else (expr, expr)

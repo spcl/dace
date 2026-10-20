@@ -1423,14 +1423,8 @@ def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> b
         if isinstance(tree_edge.src, nd.NestedSDFG):
             return False
         src = tree_edge.src
-        if isinstance(src, nd.LibraryNode):
-            beta = getattr(src, "beta", None)
-            if beta is not None and not symbolic.equal_valued(0, beta):
-                return False
-            # The default distinguishes "no identity" from "no such property": only a node that
-            # reduces (carries a ``wcr``) and left the identity unset folds onto the output.
-            if getattr(src, "wcr", None) is not None and getattr(src, "identity", 0) is None:
-                return False
+        if isinstance(src, nd.LibraryNode) and src.folds_onto_output():
+            return False
     # A write through a view carries the view's full range, whatever reached the view itself.
     if isinstance(edge.src, nd.AccessNode) and isinstance(edge.src.desc(state), dt.View):
         view = edge.src.desc(state)

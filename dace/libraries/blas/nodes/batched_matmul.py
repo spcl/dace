@@ -602,6 +602,10 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         category="Semantics",
         desc="A scalar which will be multiplied with A @ B before adding C",
     )
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.Property(
         allow_none=False,
         default=0,

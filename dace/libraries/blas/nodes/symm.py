@@ -380,6 +380,10 @@ class Symm(dace.sdfg.nodes.LibraryNode):
         dtype=str, default="L", choices=["L", "U"], desc="Referenced triangle of A: 'L' lower, 'U' upper."
     )
     alpha = properties.SymbolicProperty(allow_none=False, default=1, desc="Scalar multiplied with the product.")
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.SymbolicProperty(allow_none=False, default=0, desc="Scalar multiplied with C before adding.")
     cin = properties.Property(dtype=bool, default=True, desc="Whether C is an input connector when beta != 0.")
     alpha_input = properties.Property(

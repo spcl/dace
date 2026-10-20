@@ -136,7 +136,7 @@ def _unified(expr, *context):
         return expr
     widest: dict[str, Any] = {}
     for other in context:
-        for sym in getattr(other, "free_symbols", ()):
+        for sym in other.free_symbols if isinstance(other, sympy.Basic) else ():
             if not isinstance(sym, symbolic.symbol):
                 continue
             best = widest.get(sym.name)
@@ -1456,7 +1456,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                         _retyped(_as_symbolic(start), owner, scoped),
                         _retyped(_as_symbolic(end), owner, scoped),
                     )
-            graph = getattr(graph, "parent_graph", None)
+            graph = graph.parent_graph
         return ranges
 
     @staticmethod
@@ -1469,7 +1469,7 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         if isinstance(node, sympy.Mod) and len(node.args) == 2:
             return node.args[0], node.args[1]
-        name = getattr(getattr(node, "func", None), "__name__", None)
+        name = node.func.__name__ if isinstance(node, sympy.Basic) else None
         if name in _MODULO_FUNC_NAMES and len(node.args) == 2:
             return node.args[0], node.args[1]
         return None

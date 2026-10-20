@@ -264,6 +264,10 @@ class Syr2k(dace.sdfg.nodes.LibraryNode):
         "'T' -> C := alpha*A^T*B + alpha*B^T*A + beta*C (A, B are KxN).",
     )
     alpha = properties.SymbolicProperty(allow_none=False, default=1, desc="Scalar multiplied with both products.")
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.SymbolicProperty(allow_none=False, default=0, desc="Scalar multiplied with C before adding.")
     cin = properties.Property(dtype=bool, default=True, desc="Whether C is an input connector when beta != 0.")
     alpha_input = properties.Property(

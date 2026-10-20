@@ -1463,6 +1463,9 @@ TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
     uint64: "ULL",
 }
 
+#: Each typeclass by the name a program spells it with (``dace.int32``, ``dace.bool``).
+TYPECLASS_BY_NAME = {name.removeprefix("dace::"): t for t, name in TYPECLASS_TO_STRING.items()} | {"bool": bool_}
+
 TYPECLASS_STRINGS = [
     "int",
     "float",

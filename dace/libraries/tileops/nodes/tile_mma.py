@@ -70,6 +70,10 @@ class TileMMA(TileOp):
         default=1,
         desc="Scalar prefactor for ``A @ B`` (matches :class:`Gemm.alpha` convention).",
     )
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.Property(
         allow_none=False,
         default=1,

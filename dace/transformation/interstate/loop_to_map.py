@@ -184,7 +184,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                 free = set()
                 for rb, re, _ in outer.ndrange():
                     for expr in (rb, re):
-                        if hasattr(expr, "free_symbols"):
+                        if isinstance(expr, sp.Basic):
                             free |= set(expr.free_symbols)
                 if itersym not in free:
                     continue
@@ -1702,7 +1702,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     free = set()
                     for rb, re_, _ in src_subset.ndrange():
                         for expr in (rb, re_):
-                            if hasattr(expr, "free_symbols"):
+                            if isinstance(expr, sp.Basic):
                                 free |= set(expr.free_symbols)
                     if itersym not in free:
                         continue
