@@ -56,7 +56,7 @@ def main : IO Unit := do
         let base := String.ofList (name.toList.take (name.length - 5))
         -- Tolerate CRLF checkouts/copies of the `.txt` reference.
         let txt := (← IO.FS.readFile (base ++ ".txt")).replace "\r\n" "\n"
-        let got := t.prettyPrint
+        let got := stripTrailing t.prettyPrint
         let exp := stripTrailing txt
         if got = exp then IO.println s!"  as_string: identical"
         else

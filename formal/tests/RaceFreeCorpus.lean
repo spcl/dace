@@ -17,7 +17,8 @@ def expected : List (String × Bool) :=
     ("matmul.tiled", true), ("matmul_lib", true), ("nested_call", true), ("oob_allowed", true),
     ("oob_read", true), ("private_stage_out", true), ("reduce_rows", true), ("slice_view", true),
     ("stencil2d", true), ("strided_sum", true), ("two_states", true), ("while_loop", true),
-    ("write_outside", true),
+    ("write_outside", true), ("loop_control", true), ("early_return", true), ("do_while", true),
+    ("do_while_cond_first", true),
     -- consume scope, a view, nested SDFGs, dynamic map ranges: outside the fragment
     ("consume_sum", false), ("empty_view", false), ("nested_maps_transient", false),
     ("reduce_rows.expanded", false), ("spmv", false),

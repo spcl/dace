@@ -516,7 +516,7 @@ partial def block (arrays : List (Name × DataDesc)) (j : Json) : P Block := do
       | none => pure (.lit (.bool true))
     pure (.loop { label := body.label, loopVar := strField? a "loop_variable", init, cond, update,
                   inverted := boolField a "inverted",
-                  updateBeforeCond := boolField a "update_before_condition", body })
+                  updateBeforeCond := boolField a "update_before_condition" (dflt := true), body })
   | "ConditionalBlock" => do
     let brs ← ((field? j "branches").getD (Json.arr #[])).getArr?
     let branches ← brs.toList.mapM fun b => do

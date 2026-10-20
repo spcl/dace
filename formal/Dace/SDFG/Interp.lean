@@ -306,8 +306,8 @@ def execSDFG (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (m : Mem) (g : SDFG) :
     match execRegion fuel ctx { ρ := g.withConstants ρ, mem := m } g.top with
     | none => none
     | some (.err e) => some (.err e)
-    | some (.ok (.brk, _)) => some (.err (.malformed "break/continue escaping the SDFG"))
-    | some (.ok (.cont, _)) => some (.err (.malformed "break/continue escaping the SDFG"))
+    | some (.ok (.brk, _)) => some (.err (.malformed "break/continue escaping the program"))
+    | some (.ok (.cont, _)) => some (.err (.malformed "break/continue escaping the program"))
     | some (.ok (.normal, cst)) => some (.ok (cst.ρ, cst.mem, cst.log))
     | some (.ok (.ret, cst)) => some (.ok (cst.ρ, cst.mem, cst.log))
 

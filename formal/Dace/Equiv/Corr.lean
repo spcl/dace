@@ -3,7 +3,7 @@ import Dace.Equiv.CorrMatch
 import Dace.Equiv.Equiv
 
 /-!
-# SDFG and schedule tree: states, the state chain and the program (M5a)
+# SDFG and schedule tree: states (M5a)
 
 * **States** (`StateCorr`, `StateCorr.matched`): a state of the fragment
   `SeqPure` with at most one weakly connected component whose tree segment
@@ -12,12 +12,8 @@ import Dace.Equiv.Equiv
   memory with an empty log and merges its log; the tree runs the segment on
   the current state.  Coherence (`OrderedExec.coherent`: the memory after a
   run is the initial memory with its log applied) makes the two agree.
-* **The chain** (`ChainCorr`, `ChainCorr.matched`): the top region is a chain of
-  states joined by unconditional edges without assignments; the tree's root
-  list is the concatenation of their segments.
-* **Programs** (`Corr.exec`): every outcome of the tree is an outcome of the
-  SDFG, or the SDFG may end in undefined behavior; hence the tree refines
-  the SDFG when the SDFG is `Supported` (`Corr.refines`).
+
+Control flow and whole programs: `Dace.Equiv.CorrCtl`.
 -/
 
 set_option autoImplicit false
@@ -128,116 +124,6 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
           rwa [hcst] at this
 
 end State
-
-/-! ## The state chain -/
-
-/-- The top region is a chain of states `blocks` joined by unconditional
-edges without assignments, and the tree list is the concatenation of their
-segments. -/
-inductive ChainCorr (ctx : Ctx) (tc : TCtx) (rg : Region) : BlockId → List SNode → Prop where
-  | last {bid : BlockId} {s : State} {cs : List SNode}
-      (hb : rg.block? bid = some (.state s)) (hs : StateCorr ctx tc s cs) (he : rg.outEdges bid = []) :
-      ChainCorr ctx tc rg bid cs
-  | step {bid : BlockId} {s : State} {cs rest : List SNode} {e : IEdge}
-      (hb : rg.block? bid = some (.state s)) (hs : StateCorr ctx tc s cs) (he : rg.outEdges bid = [e])
-      (hc : e.cond = .lit (.bool true)) (ha : e.assigns = []) (h : ChainCorr ctx tc rg e.dst rest) :
-      ChainCorr ctx tc rg bid (cs ++ rest)
-
-section Chain
-
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
-
-theorem evalBoolR_true (ctx : Ctx) (ρ : Valuation) (m : Mem) : ctx.evalBoolR ρ m (.lit (.bool true)) = .ok true := by
-  simp [Ctx.evalBoolR, Ctx.evalBool, Expr.evalBool, Expr.eval, Val.toBool?, Res.ofOption]
-
-theorem trueEdges_uncond {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} {e : IEdge}
-    (he : rg.outEdges bid = [e]) (hc : e.cond = .lit (.bool true)) : trueEdges ctx rg cst bid = .ok [e] := by
-  simp [trueEdges, he, List.filterMapM, List.filterMapM.loop, hc, evalBoolR_true]
-
-theorem trueEdges_nil {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} (he : rg.outEdges bid = []) :
-    trueEdges ctx rg cst bid = .ok [] := by
-  simp only [trueEdges, he]
-  rfl
-
-include he hcons in
-/-- **Matching of the chain**: the tree's list from the segment of block
-`bid` on, against the SDFG region from `bid`. -/
-theorem ChainCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} (hch : ChainCorr ctx tc rg bid cs) :
-    ∀ {full : List SNode} {cst : CSt} {r : Res (TCtl × CSt)},
-      STree.ListExec tc full false {} cs cst r →
-      (∃ e, e.isUB = true ∧ RegionAt ctx rg cst bid (.err e)) ∨
-      (∃ e, r = .err e ∧ RegionAt ctx rg cst bid (.err e)) ∨
-      ∃ c, r = .ok (.normal, c) ∧ RegionAt ctx rg cst bid (.ok (.normal, c)) := by
-  induction hch with
-  | @last bid s cs hb hs hout =>
-    intro full cst r hx
-    have hx₀ : STree.ListExec tc full false {} (cs ++ []) cst r := by rw [List.append_nil]; exact hx
-    rcases hs.matched he hcons hx₀ with ⟨e, hu, hx'⟩ | ⟨e, hr, hx'⟩ | ⟨cst', hl, hx'⟩
-    · exact .inl ⟨e, hu, .blockErr hb (.state hx')⟩
-    · exact .inr (.inl ⟨e, hr, .blockErr hb (.state hx')⟩)
-    · have := STree.ListExec_nil rfl hl
-      subst this
-      exact .inr (.inr ⟨_, rfl, .stop hb (.state hx') (trueEdges_nil hout)⟩)
-  | step hb hs hout hc ha _ ih =>
-    intro full cst r hx
-    rcases hs.matched he hcons hx with ⟨e, hu, hx'⟩ | ⟨e, hr, hx'⟩ | ⟨cst', hl, hx'⟩
-    · exact .inl ⟨e, hu, .blockErr hb (.state hx')⟩
-    · exact .inr (.inl ⟨e, hr, .blockErr hb (.state hx')⟩)
-    · have hassign : applyAssigns ctx cst' [] = .ok cst' := by
-        simp [applyAssigns]
-        rfl
-      rw [← ha] at hassign
-      have hstep := fun {r'} (h' : RegionAt ctx rg cst' _ r') =>
-        RegionAt.step hb (.state hx') (trueEdges_uncond hout hc) hassign h'
-      rcases ih hl with ⟨e, hu, hy⟩ | ⟨e, hr, hy⟩ | ⟨c, hr, hy⟩
-      · exact .inl ⟨e, hu, hstep hy⟩
-      · exact .inr (.inl ⟨e, hr, hstep hy⟩)
-      · exact .inr (.inr ⟨c, hr, hstep hy⟩)
-
-end Chain
-
-/-! ## Programs -/
-
-/-- The contexts in which an SDFG and a schedule tree run. -/
-def sctx (I : Interp) (g : SDFG) : Ctx := { I, g, pfx := "" }
-
-/-- The tree's root list corresponds to the SDFG's top region. -/
-structure ProgCorr (I : Interp) (g : SDFG) (t : STree) : Prop where
-  arrays : t.containers = g.arrays
-  consts : t.toSDFG.withConstants = g.withConstants
-  chain : ChainCorr (sctx I g) (TCtx.ofTree I t) g.top g.top.start t.children
-
-/-- **Programs**: every outcome of the tree is an outcome of the SDFG, or the
-SDFG may end in undefined behavior. -/
-theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) {ρ₀ : Valuation} {m₀ : Mem}
-    {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
-    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r := by
-  obtain ⟨res, hx, rfl⟩ := ht
-  have he : (TCtx.ofTree I t).ctx.erase = (sctx I g).erase :=
-    Ctx.erase_eq_of rfl rfl (by simp [TCtx.ofTree, STree.toSDFG, sctx, hc.arrays])
-  have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := m₀ } := by
-    simp [rootStart, hc.consts]
-  rw [hstart] at hx
-  rcases hc.chain.matched he rfl hx with ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨c, rfl, hy⟩
-  · exact .inl ⟨e, hu, _, .err (.start hy), rfl⟩
-  · exact .inr ⟨_, .err (.start hy), rfl⟩
-  · exact .inr ⟨_, .run (.start hy) rfl, rfl⟩
-
-/-- **Refinement**: if the SDFG is supported, the tree refines it. -/
-theorem ProgCorr.refines {g : SDFG} {t : STree} (hc : ∀ I, ProgCorr I g t) (hs : Supported g.prog) :
-    Refines t.prog g.prog := by
-  intro I ρ₀ m₀ hpre
-  by_cases hmu : mayUB g.prog I ρ₀ m₀
-  · exact .inl hmu
-  · refine .inr fun r hr => ?_
-    rcases (hc I).exec hr with ⟨e, hu, hy⟩ | hy
-    · exact absurd ⟨e, hu, hy⟩ hmu
-    · cases r with
-      | ok m => exact ⟨m, rfl, m, hy, obsEq.refl _ _⟩
-      | err e =>
-        rcases hs I ρ₀ m₀ hpre with h | h
-        · exact absurd h hmu
-        · exact absurd hy (h e)
 
 end Corr
 

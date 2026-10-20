@@ -403,7 +403,7 @@ inductive SDFGExec : Ctx → Valuation → Mem → SDFG → Res (Valuation × Me
   | escape {ctx : Ctx} {ρ : Valuation} {m : Mem} {g : SDFG} {ctl : Ctl} {cst : CSt}
       (h : RegionExec ctx { ρ := g.withConstants ρ, mem := m } g.top (.ok (ctl, cst)))
       (hc : (ctl == .brk || ctl == .cont) = true) :
-      SDFGExec ctx ρ m g (.err (.malformed "break/continue escaping the SDFG"))
+      SDFGExec ctx ρ m g (.err (.malformed "break/continue escaping the program"))
   | run {ctx : Ctx} {ρ : Valuation} {m : Mem} {g : SDFG} {ctl : Ctl} {cst : CSt}
       (h : RegionExec ctx { ρ := g.withConstants ρ, mem := m } g.top (.ok (ctl, cst)))
       (hc : (ctl == .normal || ctl == .ret) = true) :

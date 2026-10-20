@@ -1,8 +1,8 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import Dace.Equiv.Corr
+import Dace.Equiv.CorrCtl
 
 /-!
-# The verified SDFG / schedule-tree pair checker (M5a)
+# The verified SDFG / schedule-tree pair checker (M5a, M5b steps 1–3)
 
 `corrCheck g t` decides the correspondence `ProgCorr` of `Dace.Equiv.Corr`
 for the M5a v1 fragment and is proven sound (`corrCheck_sound`), so that
@@ -18,8 +18,15 @@ with equal keys, a map scope whose body matches recursively) is a prefix of
 the remaining tree list.  The order found must be a topological order of the
 component (or scope); the greedy choice only affects completeness.
 
-Fragment (`UNKNOWN` with a reason outside it): the top region is a chain of
-states joined by unconditional edges without assignments; every state is
+The control flow is walked by `regCheck`/`blockCheck`/`elifCheck` (fuel
+bounded by the size of the region): a region is a chain of blocks joined
+by single unconditional edges, each edge's assignments a permutation of the
+following `AssignNode`s that may run one by one (`SeqAssigns`); a block is a
+state, a loop region (equal loop properties, body checked recursively), a
+conditional block (`if`/`elif`/`else` chain) or a break/continue/return.
+
+Fragment (`UNKNOWN` with a reason outside it): no branching or conditional
+interstate edges (GBlocks), no nested control-flow regions; every state is
 `SeqPure` (no streams, views, references, consume scopes, nested SDFGs,
 private transients or code→code values) with at most one component; no
 dynamic map inputs; equal descriptor repositories; no constants; a code
@@ -286,56 +293,257 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {s : State} {cs rest : List SNo
       · cases h
     · cases h
 
-/-- Check the chain of states from block `bid` against the tree list. -/
-def chainCheck (ctx : Ctx) (tc : TCtx) (rg : Region) : Nat → BlockId → List SNode → Except String Unit
-  | 0, _, _ => .error "control-flow chain too long"
-  | fuel + 1, bid, cs =>
+mutual
+
+/-- The size of a region (a bound on the checker's recursion). -/
+def Region.size : Region → Nat
+  | ⟨_, _, blocks, _, _⟩ => Blocks.size blocks + 1
+
+def Blocks.size : List Block → Nat
+  | [] => 0
+  | b :: bs => Block.size b + Blocks.size bs
+
+def Block.size : Block → Nat
+  | .region r => Region.size r + 1
+  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.size body + 1
+  | .cond _ brs => Branches.size brs + 1
+  | _ => 1
+
+def Branches.size : List (Option Expr × Region) → Nat
+  | [] => 0
+  | (_, r) :: rest => Region.size r + Branches.size rest
+
+end
+
+section Check
+
+variable (ctx : Ctx) (tc : TCtx)
+
+mutual
+
+/-- Check the region `rg` from block `bid` against the whole tree list. -/
+def regCheck : Nat → Region → BlockId → List SNode → Except String Unit
+  | 0, _, _, _ => .error "control flow too deep or cyclic"
+  | f + 1, rg, bid, cs =>
     match rg.block? bid with
-    | some (.state s) =>
-      match stateCheck ctx tc s cs with
+    | none => .error s!"block {bid} out of range"
+    | some b =>
+      match blockCheck f b cs with
+      | .error m => .error m
       | .ok rest =>
         match rg.outEdges bid with
-        | [] => if rest = [] then .ok () else .error "tree nodes after the last state"
+        | [] => if rest = [] then .ok () else .error s!"tree nodes after the last block of region '{rg.label}'"
         | [e] =>
-          if e.cond = .lit (.bool true) ∧ e.assigns = [] then chainCheck ctx tc rg fuel e.dst rest
-          else .error s!"interstate edge from block {bid}: condition or assignments (M5b)"
-        | _ => .error s!"block {bid}: branching control flow (M5b)"
-      | .error m => .error m
-    | _ => .error s!"block {bid}: not a state (control-flow regions are M5b)"
+          if e.isUnconditional = true ∧ headOk? rest = true then
+            match takeAssignNodes e.assigns.length rest with
+            | some (as, rest') =>
+              if as.isPerm e.assigns = true ∧ seqAssigns? ctx as = true then regCheck f rg e.dst rest'
+              else .error s!"interstate edge from block {bid}: assignments differ or cannot run one by one"
+            | none => .error s!"interstate edge from block {bid}: assignments do not match"
+          else .error s!"interstate edge from block {bid}: conditional"
+        | _ => .error s!"block {bid}: several out-edges (GBlocks are M5b step 5)"
 
-theorem chainCheck_sound {ctx : Ctx} {tc : TCtx} {rg : Region} :
-    ∀ (fuel : Nat) (bid : BlockId) (cs : List SNode), chainCheck ctx tc rg fuel bid cs = .ok () →
-      ChainCorr ctx tc rg bid cs
-  | 0, _, _, h => by simp [chainCheck] at h
-  | fuel + 1, bid, cs, h => by
-    unfold chainCheck at h
+/-- Check one block against the head of the tree list; the rest of the list. -/
+def blockCheck : Nat → Block → List SNode → Except String (List SNode)
+  | 0, _, _ => .error "control flow too deep"
+  | f + 1, b, cs =>
+    match b with
+    | .state s => stateCheck ctx tc s cs
+    | .loop l =>
+      match cs with
+      | n :: rest =>
+        match n.loop? with
+        | some (lm, body) =>
+          if loopCorr? l lm = true then
+            match regCheck f l.body l.body.start body with
+            | .ok () => .ok rest
+            | .error m => .error m
+          else .error s!"loop '{l.label}': loop properties differ"
+        | none => .error s!"loop '{l.label}': no loop scope in the tree"
+      | [] => .error s!"loop '{l.label}': no loop scope in the tree"
+    | .cond _ brs =>
+      match brs with
+      | (some c, rg) :: brs' =>
+        match cs with
+        | .ifScope pc body :: tl =>
+          if pc.expr = c then
+            match regCheck f rg rg.start body with
+            | .ok () => elifCheck f brs' tl
+            | .error m => .error m
+          else .error "conditional block: the if condition differs"
+        | _ => .error "conditional block: no if scope in the tree"
+      | _ => .error "conditional block: no leading if branch"
+    | .breakBlock =>
+      match cs with
+      | .breakNode :: rest => .ok rest
+      | _ => .error "break: no break node in the tree"
+    | .continueBlock =>
+      match cs with
+      | .continueNode :: rest => .ok rest
+      | _ => .error "continue: no continue node in the tree"
+    | .returnBlock =>
+      match cs with
+      | .goto none :: rest => .ok rest
+      | _ => .error "return: no exit goto in the tree"
+    | .region _ => .error "nested control-flow regions are not supported yet"
+
+/-- Check the `elif`/`else` branches of a conditional block. -/
+def elifCheck : Nat → List (Option Expr × Region) → List SNode → Except String (List SNode)
+  | 0, _, _ => .error "control flow too deep"
+  | f + 1, brs, cs =>
+    match brs with
+    | [] => .ok cs
+    | (some c, rg) :: brs' =>
+      match cs with
+      | .elifScope pc body :: tl =>
+        if pc.expr = c then
+          match regCheck f rg rg.start body with
+          | .ok () => elifCheck f brs' tl
+          | .error m => .error m
+        else .error "conditional block: an elif condition differs"
+      | _ => .error "conditional block: no elif scope in the tree"
+    | (none, rg) :: more =>
+      match more with
+      | [] =>
+        match cs with
+        | .elseScope body :: tl =>
+          match regCheck f rg rg.start body with
+          | .ok () => .ok tl
+          | .error m => .error m
+        | _ => .error "conditional block: no else scope in the tree"
+      | _ => .error "conditional block: else is not the last branch"
+
+end
+
+end Check
+
+section CheckSound
+
+variable {ctx : Ctx} {tc : TCtx}
+
+mutual
+
+theorem regCheck_sound : ∀ (f : Nat) (rg : Region) (bid : BlockId) (cs : List SNode),
+    regCheck ctx tc f rg bid cs = .ok () → RegCorr ctx tc rg bid cs
+  | 0, _, _, _, h => by simp [regCheck] at h
+  | f + 1, rg, bid, cs, h => by
+    unfold regCheck at h
     split at h
-    · rename_i s hb
+    · cases h
+    · rename_i b hb
       split at h
-      · rename_i rest hs
-        obtain ⟨pre, rfl, hsc⟩ := stateCheck_sound hs
+      · cases h
+      · rename_i rest hbc
+        obtain ⟨pre, rfl, hpre⟩ := blockCheck_sound f b cs rest hbc
         split at h
         · rename_i hout
           split at h
           · rename_i hr
             subst hr
             rw [List.append_nil]
-            exact .last hb hsc hout
+            exact .last hb hpre hout
           · cases h
         · rename_i e hout
           split at h
           · rename_i hc
-            exact .step hb hsc hout hc.1 hc.2 (chainCheck_sound fuel _ _ h)
+            obtain ⟨hu, hh⟩ := hc
+            split at h
+            · rename_i as rest' ht
+              split at h
+              · rename_i hc'
+                obtain ⟨hp, hs⟩ := hc'
+                obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+                exact .step hb hpre hout hu (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) (headOk?_sound hh)
+                  (regCheck_sound f rg e.dst rest' h)
+              · cases h
+            · cases h
+          · cases h
+        · cases h
+
+theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
+    blockCheck ctx tc f b cs = .ok rest → ∃ pre, cs = pre ++ rest ∧ BlockCorr ctx tc b pre
+  | 0, _, _, _, h => by simp [blockCheck] at h
+  | f + 1, b, cs, rest, h => by
+    simp only [blockCheck] at h
+    split at h
+    · obtain ⟨pre, hpre, hsc⟩ := stateCheck_sound h
+      exact ⟨pre, hpre, .state hsc⟩
+    · split at h
+      · rename_i n rest'
+        split at h
+        · rename_i lm body hn
+          split at h
+          · rename_i hl
+            split at h
+            · rename_i hr
+              cases h
+              exact ⟨[n], rfl, .loop hn (loopCorr?_sound hl) (regCheck_sound f _ _ _ hr)⟩
+            · cases h
           · cases h
         · cases h
       · cases h
+    · split at h
+      · split at h
+        · rename_i c rg brs' pc body tl
+          split at h
+          · rename_i hc
+            split at h
+            · rename_i hr
+              obtain ⟨pre, rfl, hpre⟩ := elifCheck_sound f _ _ rest h
+              exact ⟨_, rfl, .cond hc (regCheck_sound f _ _ _ hr) hpre⟩
+            · cases h
+          · cases h
+        · cases h
+      · cases h
+    · split at h
+      · cases h; exact ⟨_, rfl, .brk⟩
+      · cases h
+    · split at h
+      · cases h; exact ⟨_, rfl, .cont⟩
+      · cases h
+    · split at h
+      · cases h; exact ⟨_, rfl, .ret⟩
+      · cases h
     · cases h
+
+theorem elifCheck_sound : ∀ (f : Nat) (brs : List (Option Expr × Region)) (cs rest : List SNode),
+    elifCheck ctx tc f brs cs = .ok rest → ∃ pre, cs = pre ++ rest ∧ ElifCorr ctx tc brs pre
+  | 0, _, _, _, h => by simp [elifCheck] at h
+  | f + 1, brs, cs, rest, h => by
+    simp only [elifCheck] at h
+    split at h
+    · cases h; exact ⟨[], rfl, .nil⟩
+    · split at h
+      · rename_i c rg brs' pc body tl
+        split at h
+        · rename_i hc
+          split at h
+          · rename_i hr
+            obtain ⟨pre, rfl, hpre⟩ := elifCheck_sound f _ _ rest h
+            exact ⟨_, rfl, .elif hc (regCheck_sound f _ _ _ hr) hpre⟩
+          · cases h
+        · cases h
+      · cases h
+    · split at h
+      · split at h
+        · rename_i rg body tl
+          split at h
+          · rename_i hr
+            cases h
+            exact ⟨_, rfl, .els (regCheck_sound f _ _ _ hr)⟩
+          · cases h
+        · cases h
+      · cases h
+
+end
+
+end CheckSound
 
 /-- The checker. -/
 def corrCheck (g : SDFG) (t : STree) : Except String Unit :=
   if t.containers ≠ g.arrays then .error "the descriptor repositories differ"
   else if t.constants.isEmpty && g.constants.isEmpty then
-    chainCheck (checkCtx g) (TCtx.ofTree Interp.uninterpreted t) g.top (g.top.blocks.length + 1) g.top.start
+    regCheck (checkCtx g) (TCtx.ofTree Interp.uninterpreted t) (3 * Region.size g.top + 3) g.top g.top.start
       t.children
   else .error "constants are not compared yet"
 
@@ -373,11 +581,31 @@ theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofT
   · exact .inl h₁
   · exact .inr ⟨c, o, full, hc, SegCorr.withI I₁ I₂ hseg, hto, hdir⟩
 
-theorem ChainCorr.withI {rg : Region} {bid : BlockId} {cs : List SNode}
-    (h : ChainCorr (sctx I₁ g) (TCtx.ofTree I₁ t) rg bid cs) : ChainCorr (sctx I₂ g) (TCtx.ofTree I₂ t) rg bid cs := by
-  induction h with
-  | last hb hs he => exact .last hb (StateCorr.withI I₁ I₂ hs) he
-  | step hb hs he hc ha _ ih => exact .step hb (StateCorr.withI I₁ I₂ hs) he hc ha ih
+mutual
+
+theorem RegCorr.withI {rg : Region} {bid : BlockId} {cs : List SNode} :
+    RegCorr (sctx I₁ g) (TCtx.ofTree I₁ t) rg bid cs → RegCorr (sctx I₂ g) (TCtx.ofTree I₂ t) rg bid cs
+  | .last hb hc he => .last hb (BlockCorr.withI hc) he
+  | .step hb hc he hu hp ha hs hh h =>
+    .step hb (BlockCorr.withI hc) he hu hp ha (SeqAssigns.of_g (c₁ := sctx I₁ g) (c₂ := sctx I₂ g) rfl hs) hh
+      (RegCorr.withI h)
+
+theorem BlockCorr.withI {b : Block} {cs : List SNode} :
+    BlockCorr (sctx I₁ g) (TCtx.ofTree I₁ t) b cs → BlockCorr (sctx I₂ g) (TCtx.ofTree I₂ t) b cs
+  | .state h => .state (StateCorr.withI I₁ I₂ h)
+  | .loop hn hm hb => .loop hn hm (RegCorr.withI hb)
+  | .cond hc hb ht => .cond hc (RegCorr.withI hb) (ElifCorr.withI ht)
+  | .brk => .brk
+  | .cont => .cont
+  | .ret => .ret
+
+theorem ElifCorr.withI {brs : List (Option Expr × Region)} {cs : List SNode} :
+    ElifCorr (sctx I₁ g) (TCtx.ofTree I₁ t) brs cs → ElifCorr (sctx I₂ g) (TCtx.ofTree I₂ t) brs cs
+  | .nil => .nil
+  | .elif hc hb ht => .elif hc (RegCorr.withI hb) (ElifCorr.withI ht)
+  | .els hb => .els (RegCorr.withI hb)
+
+end
 
 end WithI
 
@@ -395,7 +623,7 @@ theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I :
       refine ⟨by simpa using ha, ?_, ?_⟩
       · funext ρ x
         simp [SDFG.withConstants, STree.toSDFG, hc.1, hc.2]
-      · exact ChainCorr.withI Interp.uninterpreted I (chainCheck_sound _ _ _ h)
+      · exact RegCorr.withI Interp.uninterpreted I (regCheck_sound _ _ _ _ h)
     · cases h
 
 theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) : ProgCorr I g t := by

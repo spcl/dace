@@ -223,8 +223,8 @@ def programOutcome : Res (TCtl × CSt) → Res Mem
   | .err e => .err e
   | .ok (.normal, cst) => .ok cst.mem
   | .ok (.ret, cst) => .ok cst.mem
-  | .ok (.brk, _) => .err (.malformed "break/continue escaping the schedule tree")
-  | .ok (.cont, _) => .err (.malformed "break/continue escaping the schedule tree")
+  | .ok (.brk, _) => .err (.malformed "break/continue escaping the program")
+  | .ok (.cont, _) => .err (.malformed "break/continue escaping the program")
   | .ok (.goto l, _) => .err (.malformed s!"goto '{l}' escaping the schedule tree")
 
 /-- Initial control-flow state: the valuation extended by the constants. -/

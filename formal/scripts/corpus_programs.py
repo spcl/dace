@@ -479,8 +479,9 @@ def args_write_outside(seed: int = 0) -> dict:
     return dict(X=r.random(1), B=np.zeros(4))
 
 
-PROGRAMS.append(("write_outside", _BuiltProgram("write_outside", lambda: _build_write_outside("write_outside")),
-                 args_write_outside))
+PROGRAMS.append(
+    ("write_outside", _BuiltProgram("write_outside", lambda: _build_write_outside("write_outside")), args_write_outside)
+)
 EXPECTED_ERRORS["write_outside"] = {"sdfg": "outsideSubset", "stree": "outsideSubset"}
 
 
@@ -536,3 +537,82 @@ def args_ambiguous_edges(seed: int = 0) -> dict:
 
 PROGRAMS.append(("ambiguous_edges", _BuiltProgram("ambiguous_edges", _build_ambiguous_edges), args_ambiguous_edges))
 EXPECTED_ERRORS["ambiguous_edges"] = {"sdfg": "ambiguousTransition"}
+
+
+@dace.program
+def loop_control(A: dace.float64[N], out: dace.float64[1]):
+    for i in range(N):
+        if A[i] < 0.2:
+            continue
+        if A[i] > 0.9:
+            break
+        out[0] = out[0] + A[i]
+
+
+def args_loop_control(seed: int = 0) -> dict:
+    r = _rng(20, seed)
+    a = r.random(12)
+    a[9] = 0.95
+    return dict(A=a, out=np.zeros(1), N=12)
+
+
+PROGRAMS.append(("loop_control", loop_control, args_loop_control))
+
+
+@dace.program
+def early_return(A: dace.float64[N], out: dace.float64[1]):
+    for i in range(N):
+        if A[i] > 0.7:
+            out[0] = A[i]
+            return
+    out[0] = -1.0
+
+
+def args_early_return(seed: int = 0) -> dict:
+    r = _rng(21, seed)
+    a = r.random(10) * 0.6
+    a[6] = 0.8
+    return dict(A=a, out=np.zeros(1), N=10)
+
+
+PROGRAMS.append(("early_return", early_return, args_early_return))
+
+
+def _build_do_while(update_before_condition: bool) -> dace.SDFG:
+    """An inverted loop (``do``-``while``) doubling ``A`` into ``out``.
+
+    With ``update_before_condition`` the condition ``i < N`` is tested after the update; without it the condition
+    ``i < N - 1`` is tested before the update (``Decisions.md#D36``).  Both write all ``N`` elements.
+    """
+    name = "do_while" if update_before_condition else "do_while_cond_first"
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    cond = "i < N" if update_before_condition else "i < N - 1"
+    loop = dace.sdfg.state.LoopRegion(
+        "dw",
+        condition_expr=cond,
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+        inverted=True,
+        update_before_condition=update_before_condition,
+    )
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("dbl", {"a"}, {"o"}, "o = 2 * a")
+    body.add_edge(body.add_read("A"), None, tasklet, "a", dace.Memlet("A[i]"))
+    body.add_edge(tasklet, "o", body.add_write("out"), None, dace.Memlet("out[i]"))
+    return sdfg
+
+
+def args_do_while(seed: int = 0) -> dict:
+    r = _rng(22, seed)
+    return dict(A=r.random(6), out=np.zeros(6), N=6)
+
+
+PROGRAMS.append(("do_while", _BuiltProgram("do_while", lambda: _build_do_while(True)), args_do_while))
+PROGRAMS.append(
+    ("do_while_cond_first", _BuiltProgram("do_while_cond_first", lambda: _build_do_while(False)), args_do_while)
+)

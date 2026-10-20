@@ -77,7 +77,7 @@ def loopMeta (j : Json) : P LoopMeta := do
     | some c => some <$> pyAssign c
     | none => pure none
   pure { label := (strField? j "label").getD "", loopVar := strField? j "loop_variable", init, cond, update,
-         inverted := boolField j "inverted", updateBeforeCond := boolField j "update_before_condition" }
+         inverted := boolField j "inverted", updateBeforeCond := boolField j "update_before_condition" (dflt := true) }
 
 /-- A data descriptor (the first entry of the flattened repository). -/
 def singleDesc (name : String) (j : Json) : P DataDesc := do
