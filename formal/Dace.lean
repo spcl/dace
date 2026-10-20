@@ -39,7 +39,12 @@ import Dace.Equiv.Equiv
 import Dace.Equiv.Frag
 import Dace.SDFG.LogShift
 import Dace.STree.LogShift
+import Dace.SDFG.Footprint
+import Dace.Equiv.Footprint
 import Dace.Equiv.Congr
+import Dace.SDFG.Footprinted
+import Dace.SDFG.Frame
+import Dace.Equiv.Order
 
 /-!
 # DaCe formal semantics

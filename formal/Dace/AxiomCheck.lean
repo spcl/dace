@@ -149,6 +149,18 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.STree.NodeExec.rel
 #print axioms Dace.STree.ListExec.rel
 
+-- R2.6: static footprints of dataflow executions.
+#print axioms Dace.NodeExec.fp_step
+#print axioms Dace.SeqExec.fp_step
+#print axioms Dace.SeqExec.fp_trace
+#print axioms Dace.OrderedExec.fp_step
+#print axioms Dace.OrderedExec.fp_log
+#print axioms Dace.NodeExec.fp_log
+#print axioms Dace.IterExec.fp_logs
+#print axioms Dace.CompsExec.fp_logs
+#print axioms Dace.IterExec.footprint
+#print axioms Dace.Access.hit_static
+
 -- R1.4: block congruence (context congruence, paths, block replacement).
 #print axioms Dace.BlockExec.congr_iff
 #print axioms Dace.SDFGExec.congr_iff
@@ -168,3 +180,30 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Congr.emptyState
 #print axioms Dace.Congr.splitEmpty
 #print axioms Dace.Congr.mergeEmpty
+
+-- R1.6: frame property, St-coherence and order independence on `SeqPure`.
+#print axioms Dace.Ctx.eval_pure
+#print axioms Dace.Ctx.pointsOf_pure
+#print axioms Dace.FootA.bind
+#print axioms Dace.Foot.foldlM
+#print axioms Dace.seqPure?_sound
+#print axioms Dace.execSimple_foot
+#print axioms Dace.NodeExec.frame
+#print axioms Dace.SeqExec.frame
+#print axioms Dace.OrderedExec.frame
+#print axioms Dace.IterExec.frame
+#print axioms Dace.NodeExec.frame_ok
+#print axioms Dace.OrderedExec.frame_ok
+#print axioms Dace.NodeExec.coherent
+#print axioms Dace.OrderedExec.coherent
+#print axioms Dace.SeqExec.coherent
+#print axioms Dace.SeqExec.swap
+#print axioms Dace.SeqExec.bubble
+#print axioms Dace.SeqExec.reorder
+#print axioms Dace.State.topo_pairwise
+#print axioms Dace.State.components_convex
+#print axioms Dace.OrderedExec.order_indep
+#print axioms Dace.OrderedExec.order_indep_exec
+#print axioms Dace.OrderedExec.order_indep_component
+#print axioms Dace.CompsExec.sequential
+#print axioms Dace.CompsExec.merge_perm
