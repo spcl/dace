@@ -20,7 +20,8 @@ imports pull in).
 """
 
 import ast
-import copy
+import contextlib
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import sympy
@@ -54,6 +55,12 @@ _MODULO_FUNC_NAMES = frozenset({"Mod", "py_mod", "ftn_modulo", "CMod"})
 
 def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+
+
+def _loops_in(loop: LoopRegion) -> list[LoopRegion]:
+    """``loop`` and the loops nested in it, nested SDFGs excluded (what :func:`_loops` lists of a graph holding only
+    ``loop``)."""
+    return [r for r in loop.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
 #: Largest loop nest, in control-flow blocks, the split search probes. A split it takes duplicates the nest in the
@@ -510,17 +517,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         constant-size gate; infeasible loops simply raise and are skipped.
         """
         from dace.transformation.interstate.loop_peeling import LoopPeeling
-        from dace.transformation.passes.analysis import loop_analysis
 
-        # ``verify=False`` below skips LoopUnroll's own refusal of a loop with a break or continue.
-        if loop_analysis.loop_jumps(loop):
-            return False
-        sides = {"front": [True], "back": [False], "both": [True, False]}[direction]
-        # A loop short enough to be fully consumed by the peel is the unroll
-        # pass's job, not peeling's.
-        trip = _constant_trip_count(loop, sdfg)
-        if trip is not None and trip <= count * len(sides):
-            return False
+        sides = self._peel_sides(loop, count, direction)
         did = False
         for idx, begin in enumerate(sides):
             try:
@@ -539,6 +537,23 @@ class BestEffortLoopPeeling(ppl.Pass):
                 continue
         return did
 
+    @staticmethod
+    def _peel_sides(loop: LoopRegion, count: int, direction: str) -> list[bool]:
+        """The ``begin`` flags of the :class:`~dace.transformation.interstate.loop_peeling.LoopPeeling` applications a
+        ``count`` x ``direction`` peel of ``loop`` makes (``[]`` when it must not peel)."""
+        from dace.transformation.passes.analysis import loop_analysis
+
+        # ``verify=False`` in :meth:`_peel_one_loop` skips LoopUnroll's own refusal of a loop with a break or continue.
+        if loop_analysis.loop_jumps(loop):
+            return []
+        sides = {"front": [True], "back": [False], "both": [True, False]}[direction]
+        # A loop short enough to be fully consumed by the peel is the unroll
+        # pass's job, not peeling's.
+        trip = _constant_trip_count(loop, loop.sdfg)
+        if trip is not None and trip <= count * len(sides):
+            return []
+        return sides
+
     def _peel_loops(self, sdfg: SDFG, count: int, direction: str) -> int:
         """Peel every peelable loop in ``sdfg`` (used directly in tests). Prunes
         the dead boundary guards a peel leaves behind."""
@@ -546,54 +561,6 @@ class BestEffortLoopPeeling(ppl.Pass):
         if peeled:
             self._clean_peeled_remainder(sdfg)
         return peeled
-
-    def _isolate_loop(self, loop: LoopRegion, sdfg: SDFG):
-        """Build a throwaway mini-SDFG containing only a copy of ``loop`` and the
-        arrays / symbols it references, so the peel search can experiment cheaply
-        without deep-copying the whole SDFG. Returns ``(mini, mini_loop)`` or
-        ``(None, None)`` if the nest cannot be isolated cleanly."""
-        import dace
-        from dace import serialize
-
-        try:
-            mini = dace.SDFG(sdfg.name + "_peelprobe")
-            # The declarations with their facts, so a proof on the copy sees what it sees on ``sdfg``
-            predicates = sdfg.symbol_repo.params.predicates
-            for sname, stype in sdfg.symbols.items():
-                mini.add_symbol(sname, stype, predicates=predicates.get(sname, frozenset()))
-            # An enclosing loop's iterator is bound outside the copy, which reads it as a parameter
-            region = loop.parent_graph
-            while region is not None and not isinstance(region, SDFG):
-                if isinstance(region, LoopRegion) and region.loop_variable and region.loop_variable not in mini.symbols:
-                    itertype = region.new_symbols(sdfg.symbols).get(region.loop_variable)
-                    if itertype is not None:
-                        mini.add_symbol(region.loop_variable, itertype)
-                region = region.parent_graph
-            # Arrays referenced by the loop body and its interstate edges.
-            needed = set()
-            for st in loop.states():
-                for n in st.data_nodes():
-                    needed.add(n.data)
-                for e in st.edges():
-                    if e.data is not None and e.data.data is not None:
-                        needed.add(e.data.data)
-            for e in loop.all_interstate_edges():
-                needed |= e.data.used_arrays(sdfg.arrays)
-            for name in needed:
-                if name in sdfg.arrays and name not in mini.arrays:
-                    mini.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
-            # Copy the loop region via a JSON round-trip (reparents to `mini`).
-            # ``context['version']`` is required for symbolic deserialization (the
-            # symbolic-property deserializer refuses without it); a loop with a
-            # symbolic subset such as ``a[N // 2]`` (``int_floor``) would otherwise
-            # fail the round-trip and the nest be wrongly treated as un-isolable.
-            mini_loop = serialize.from_json(
-                serialize.to_json(loop), context={"sdfg": mini, "version": dace.__version__}
-            )
-            mini.add_node(mini_loop, is_start_block=True)
-            return mini, mini_loop
-        except Exception:
-            return None, None
 
     def _equality_guard_values(self, loop: LoopRegion):
         """Loop-invariant values ``x`` for which the body has an ``if i == x`` guard
@@ -1323,36 +1290,53 @@ class BestEffortLoopPeeling(ppl.Pass):
         return sum(1 for init, condition in ranges if self._probe_segment(sdfg, loop, init, condition))
 
     def _probe_segment(self, sdfg: SDFG, loop: LoopRegion, init: str | None, condition: str | None) -> bool:
-        """Whether ``LoopToMap`` could parallelize ``loop`` with ``init`` / ``condition`` replacing its init statement
-        and loop condition (``None`` keeps it), after the cleanup a split runs on a segment.
-
-        Probed on ``loop`` itself, without copying it: its header is swapped to the segment's, the guards the
-        range-aware ``LiftTrivialIf`` would resolve over that range are resolved in place
-        (:meth:`_lift_trivial_ifs_virtually`), and the modulo subsets the shortened range makes affine are folded
-        (:meth:`_rewrite_modulo_over_range`). Every edit keeps what it replaced -- the header ``CodeBlock`` objects,
-        the branch entries, the subset ranges -- and puts it back afterwards, whether the probe returned or raised.
+        """Whether ``LoopToMap`` could parallelize ``loop`` as the segment with ``init`` / ``condition`` for its init
+        statement and loop condition (``None`` keeps the loop's), after the cleanup a split runs on a segment
+        (:meth:`_as_segment`). A segment that provably runs at most once is not parallelism and scores ``False``.
 
         A verdict only CHOOSES a split. The split itself and ``LoopToMap`` after it re-check everything on the
         transformed graph, so a wrong verdict costs a missed or a pointless split, never a miscompile."""
-        from dace.properties import CodeBlock
         from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.analysis import loop_analysis
+
+        try:
+            with self._as_segment(loop, init, condition) as clean:
+                if loop_analysis.loop_provably_at_most_one_iteration(loop):
+                    return False
+                clean()
+                return bool(LoopToMap.can_be_applied_to(sdfg, loop=loop))
+        except Exception:
+            return False
+
+    @contextlib.contextmanager
+    def _as_segment(
+        self, loop: LoopRegion, init: str | None, condition: str | None
+    ) -> Iterator[Callable[[set | None], None]]:
+        """Let ``loop`` stand for one segment of a split or a peel, with nothing copied, for the ``with`` block.
+
+        ``loop``'s header is swapped to the segment's (``init`` / ``condition``, ``None`` keeps the loop's own). The
+        block receives ``clean(collect=None)``, which runs the cleanup a real split or peel runs on the segment: the
+        guards the range-aware ``LiftTrivialIf`` would resolve over that range are resolved in place
+        (:meth:`_lift_trivial_ifs_virtually`), and the modulo subsets the range makes affine are folded
+        (:meth:`_rewrite_modulo_over_range`, which adds the ``offset < modulus`` relations a fold leans on to
+        ``collect``). Every edit keeps what it replaced (the header ``CodeBlock`` objects, the branch entries, the
+        subset ranges) and puts it back when the block exits, whether it returned or raised."""
+        from dace.properties import CodeBlock
 
         header = (loop.init_statement, loop.loop_condition)
         branches: dict[ConditionalBlock, list] = {}
         subsets: list[tuple[Any, list, list]] = []
+
+        def clean(collect: set | None = None) -> None:
+            self._lift_trivial_ifs_virtually(loop, branches)
+            self._rewrite_modulo_over_range(loop, collect, saved=subsets)
+
         try:
             if init is not None:
                 loop.init_statement = CodeBlock(init)
             if condition is not None:
                 loop.loop_condition = CodeBlock(condition)
-            if loop_analysis.loop_provably_at_most_one_iteration(loop):
-                return False
-            self._lift_trivial_ifs_virtually(loop, branches)
-            self._rewrite_modulo_over_range(loop, saved=subsets)
-            return bool(LoopToMap.can_be_applied_to(sdfg, loop=loop))
-        except Exception:
-            return False
+            yield clean
         finally:
             # In reverse: a range listed twice (one subset shared by two memlets) ends at its first, original value.
             for subset, ranges, tile_sizes in reversed(subsets):
@@ -1764,76 +1748,112 @@ class BestEffortLoopPeeling(ppl.Pass):
 
     def _best_modulo_peel_for(self, loop: LoopRegion, sdfg: SDFG):
         """The smallest ``(count, direction)`` peel that turns a genuinely-wrapping
-        body modulo into an affine, floor-correct index for ``loop``, probed on an
-        isolated copy; ``None`` if the loop has no such wrap or no bounded peel folds
-        it. Unlike the index-set split above, this runs *even when* ``LoopToMap`` already
-        maps the loop: a wrap-around read maps as-is but then emits C's truncated
-        ``%``, computing the wrong boundary value, so the peel is for correctness, not
-        to unblock a map. A peel is accepted as soon as it removes every wrapping
-        modulo (so no C ``%`` survives) while staying valid -- folding the wrap to its
-        affine, floor-correct form is value-preserving whether or not it also maps."""
+        body modulo into an affine, floor-correct index for ``loop``; ``None`` if the
+        loop has no such wrap or no bounded peel folds it. Unlike the index-set split
+        above, this runs *even when* ``LoopToMap`` already maps the loop: a wrap-around
+        read maps as-is but then emits C's truncated ``%``, computing the wrong boundary
+        value, so the peel is for correctness, not to unblock a map. A peel is accepted
+        as soon as it removes every wrapping modulo (so no C ``%`` survives) --
+        folding the wrap to its affine, floor-correct form is value-preserving whether
+        or not it also maps.
+
+        Decided by range analysis alone (:meth:`_folds_every_wrap`): each peel's remaining
+        loop, and each peeled iteration whose body holds a loop, is probed on ``loop``
+        itself under its own header, and nothing is peeled until the winner is known."""
         if not self._has_wrapping_modulo(loop):
-            return None
-        mini, _ = self._isolate_loop(loop, sdfg)
-        if mini is None:
             return None
         # Smallest peel first (count ascending, single-side before both) so the
         # correctness fix touches as few iterations as possible.
         for count in range(1, self.peel_limit + 1):
             for direction in ("front", "back", "both"):
-                cand = copy.deepcopy(mini)
-                cloops = _loops(cand)
-                if not cloops:
-                    return None
-                if not self._peel_one_loop(cand, cloops[0], count, direction):
-                    continue
-                self._clean_peeled_remainder(cand)
-                try:
-                    if any(self._has_wrapping_modulo(l) for l in _loops(cand)):
-                        continue  # a wrapping modulo still survives -> C ``%`` remains
-                except Exception:
-                    continue
-                return (count, direction)
+                segments = self._peel_segments(loop, count, direction)
+                if segments and self._folds_every_wrap(loop, segments):
+                    return (count, direction)
         return None
+
+    def _peel_segments(self, loop: LoopRegion, count: int, direction: str) -> list[tuple[str | None, str | None, bool]]:
+        """The segments :meth:`_peel_one_loop` would leave of ``loop``, as ``(init, condition, peeled)``: the
+        remaining loop's header first (``None`` keeps the loop's own), then a single-iteration header per peeled
+        iteration (``peeled``), but only when the body holds a loop -- a peeled iteration is no loop itself, so only
+        the loops in its body can keep a wrapping modulo. Empty when the peel would not apply.
+
+        A peel side whose header :class:`~dace.transformation.interstate.loop_peeling.LoopPeeling` cannot derive is
+        skipped, as :meth:`_peel_one_loop` skips a side that raises."""
+        from dace.transformation.interstate.loop_peeling import LoopPeeling
+
+        sides = self._peel_sides(loop, count, direction)
+        init = condition = None
+        values = []
+        for begin in sides:
+            peeling = LoopPeeling()
+            peeling.count = count
+            peeling.begin = begin
+            try:
+                iterations, side_init, side_condition = peeling.peel_plan(loop, loop.sdfg)
+            except Exception:
+                continue
+            values.extend(value for _, value in iterations)
+            init = side_init if side_init is not None else init
+            condition = side_condition if side_condition is not None else condition
+        if not values:
+            return []
+        segments: list[tuple[str | None, str | None, bool]] = [(init, condition, False)]
+        if any(region is not loop for region in _loops_in(loop)):
+            ivar = loop.loop_variable
+            segments.extend((f"{ivar} = {value}", f"{ivar} <= {value}", True) for value in values)
+        return segments
+
+    def _folds_every_wrap(
+        self, loop: LoopRegion, segments: list[tuple[str | None, str | None, bool]], collect: set | None = None
+    ) -> bool:
+        """Whether no loop of any segment keeps a wrapping modulo (:meth:`_has_wrapping_modulo`) once the segment's
+        cleanup folded what its range makes affine -- the check the modulo peel and split stand or fall by.
+
+        Each ``(init, condition, peeled)`` segment is probed on ``loop`` itself (:meth:`_as_segment`); for a peeled
+        iteration only the loops in its body count. ``collect`` receives the ``offset < modulus`` relations the folds
+        leaned on. A probe that raises refuses the candidate."""
+        for init, condition, peeled in segments:
+            try:
+                with self._as_segment(loop, init, condition) as clean:
+                    clean(collect)
+                    if any(
+                        self._has_wrapping_modulo(region)
+                        for region in _loops_in(loop)
+                        if not (peeled and region is loop)
+                    ):
+                        return False
+            except Exception:
+                return False
+        return True
 
     def _best_modulo_split_for(self, loop: LoopRegion, sdfg: SDFG):
         """``(x, condition_relations)`` for the band-crossing split that turns a
         genuinely-wrapping body modulo into affine, floor-correct indices on BOTH
-        halves of ``loop``, probed on an isolated copy; ``None`` if the loop has no
-        such wrap or no candidate split folds it. This is the symbolic-boundary
-        counterpart of :meth:`_best_modulo_peel_for`: a bounded peel can only reach a
-        boundary a constant number of iterations from an end, so a wrap whose
-        boundary is symbolic (``a[(i + K) % N]``, boundary ``i = N - K``) needs a
-        split at the symbolic crossing ``x = N - K`` instead. Each half's wrap then
-        folds to a single-band affine index -- the near half ``i + K``
-        unconditionally, the far half ``i + K - N`` under ``K < N``. Those
-        ``offset < modulus`` relations are returned as the ``if cond: par else: seq``
-        branch condition: the split (parallel) form is emitted under them and the
-        original modular loop is the sequential fallback for the rest. A split is
-        accepted as soon as it removes every wrapping modulo while staying valid."""
+        halves of ``loop``; ``None`` if the loop has no such wrap or no candidate
+        split folds it. This is the symbolic-boundary counterpart of
+        :meth:`_best_modulo_peel_for`: a bounded peel can only reach a boundary a
+        constant number of iterations from an end, so a wrap whose boundary is
+        symbolic (``a[(i + K) % N]``, boundary ``i = N - K``) needs a split at the
+        symbolic crossing ``x = N - K`` instead. Each half's wrap then folds to a
+        single-band affine index -- the near half ``i + K`` unconditionally, the far
+        half ``i + K - N`` under ``K < N``. Those ``offset < modulus`` relations are
+        returned as the ``if cond: par else: seq`` branch condition: the split
+        (parallel) form is emitted under them and the original modular loop is the
+        sequential fallback for the rest. A split is accepted as soon as it removes
+        every wrapping modulo.
+
+        Decided by range analysis alone (:meth:`_folds_every_wrap`): both halves are probed
+        on ``loop`` itself under their own headers, and nothing is split until the winner
+        is known."""
         if not self._has_wrapping_modulo(loop):
             return None
-        points = self._modulo_split_points(loop)
-        if not points:
-            return None
-        mini, _ = self._isolate_loop(loop, sdfg)
-        if mini is None:
-            return None
-        for x in points:
-            cand = copy.deepcopy(mini)
-            cloops = _loops(cand)
-            if not cloops:
-                return None
-            if not self._split_loop_at(cand, cloops[0], x, middle_singleton=False, reuse_loop=True):
+        for x in self._modulo_split_points(loop):
+            plan = self._split_plan(loop.sdfg, loop, x, middle_singleton=False)
+            if not plan:
                 continue
-            relations: set = set()
-            self._clean_peeled_remainder(cand, collect=relations)  # capture the branch condition
-            try:
-                if any(self._has_wrapping_modulo(l) for l in _loops(cand)):
-                    continue  # a wrapping modulo still survives -> C ``%`` remains
-            except Exception:
-                continue
-            return x, frozenset(relations)
+            relations: set = set()  # the branch condition
+            if self._folds_every_wrap(loop, [(init, condition, False) for init, condition, _ in plan], relations):
+                return x, frozenset(relations)
         return None
 
     def _rewrite_modulo_over_range(
