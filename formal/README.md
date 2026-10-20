@@ -19,7 +19,7 @@ representations:
   replacing a control-flow block (`Congr.block`) or the body of a map
   (`Congr.scopeBody`, `Congr.mapBody`; decidable side condition
   `sameOutside?`, exercised on every corpus map by
-  `tests/ScopeBodyCheck.lean`) by one that simulates it refines the SDFG.
+  `tests/ScopeBodyCheck.lean`) by one whose runs it matches refines the SDFG.
   Determinism (`Equiv/Det`): on the fragment `seqPure?` with convex map
   scopes (`scopesOk?`), one normal run of a state makes every run normal
   with the same memory, whatever topological orders the scopes take

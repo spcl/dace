@@ -7,10 +7,10 @@ import Dace.Equiv.Order
 
 The second congruence principle of the equivalence framework (R1.5, R1
 design §2.3): replacing the body of one map scope of a state by a body whose
-iterations are simulated by the old body's iterations refines the SDFG
+iterations are matched by the old body's iterations refines the SDFG
 (`Congr.scopeBody`; both directions give `Equiv`, `Congr.scopeBodyEquiv`).
-An atom proves only `BodySimE`: one iteration of the new body, from any
-pre-map state and valuation, is simulated by one iteration of the old body,
+An atom proves only `BodyMatchedE`: one iteration of the new body, from any
+pre-map state and valuation, is matched by one iteration of the old body,
 comparing the logs without the map's private transients.
 
 ## The side condition
@@ -48,12 +48,12 @@ are hypotheses (`State.withBody` builds `s'` so that they hold, checked by
 
 ## Fragment
 
-Outer consume scopes are rejected (their tasks are not simulated); the entry
+Outer consume scopes are rejected (their tasks are not matched); the entry
 `M` must be a map entry.  Nested SDFGs outside the body are supported (their
-invocation is local).  The simulation (`StateExec.simB`) is a mutual
-induction over the new run (`NodeExec.simB`, `SeqExec.simB`,
-`OrderedExec.simB`, `IterExec.simB`); the replaced map's iterations come
-from `BodySimE` (`IterExec.simBody`), merges respect `Log.Le` (`merge_le`),
+invocation is local).  The matching (`StateExec.matchedB`) is a mutual
+induction over the new run (`NodeExec.matchedB`, `SeqExec.matchedB`,
+`OrderedExec.matchedB`, `IterExec.matchedB`); the replaced map's iterations come
+from `BodyMatchedE` (`IterExec.matchedBody`), merges respect `Log.Le` (`merge_le`),
 and a merge that fails in the old run is a race (undefined behavior).
 `tests/ScopeBodyCheck.lean` runs the check on every map of the corpus
 (unchanged and rebuilt bodies pass; a body cut off from its entry fails).
@@ -602,7 +602,7 @@ structure ScopeCorr (B' B : List NodeId) (M : NodeId) (all' all : List NodeId) :
   hin : M ∈ all → (∀ x ∈ B, x ∈ all) ∧ ∀ x ∈ B', x ∈ all'
   hout : M ∉ all → ∀ x ∈ all, x ∉ B
 
-/-- What the simulation of `s'` by `s` (the body of the map `M` replaced)
+/-- What the matching of `s'` by `s` (the body of the map `M` replaced)
 needs about the part of the states outside the bodies `B = s.scopeNodes M`,
 `B' = s'.scopeNodes M`.  `sameOutside?_spec` derives it from a check. -/
 structure OuterFacts (ctx : Ctx) (s' s : State) (M : NodeId) : Prop where
@@ -781,26 +781,26 @@ theorem forall₂_le_refl : ∀ (t : List Log), List.Forall₂ Log.Le t t
   | [] => .nil
   | _ :: t => .cons (Log.Le.refl _) (forall₂_le_refl t)
 
-namespace SimE
+namespace MatchedE
 
 variable {α : Type} {R : α → α → Prop} {X : Res α → Prop}
 
-/-- An error simulated by `X`: `X` has the same error or undefined behavior. -/
-theorem err_cases {e : ErrReason} (h : SimE R X (.err e)) :
+/-- An error matched by `X`: `X` has the same error or undefined behavior. -/
+theorem err_cases {e : ErrReason} (h : MatchedE R X (.err e)) :
     ∃ e₀, X (.err e₀) ∧ ∀ {β : Type} (S : β → β → Prop), Res.Below S (.err e) (.err e₀) := by
   obtain ⟨r, hr, hb⟩ := h
   obtain ⟨e₀, rfl⟩ := hb.err_inv
   exact ⟨e₀, hr, fun S => hb.err_err⟩
 
-/-- A normal outcome simulated by `X`: undefined behavior, or a related normal outcome. -/
-theorem ok_cases {a' : α} (h : SimE R X (.ok a')) :
+/-- A normal outcome matched by `X`: undefined behavior, or a related normal outcome. -/
+theorem ok_cases {a' : α} (h : MatchedE R X (.ok a')) :
     (∃ e, e.isUB = true ∧ X (.err e)) ∨ ∃ a, X (.ok a) ∧ R a' a := by
   obtain ⟨r, hr, hb⟩ := h
   rcases hb.ok_inv with ⟨e, rfl, he⟩ | ⟨a, rfl, ha⟩
   · exact .inl ⟨e, he, hr⟩
   · exact .inr ⟨a, hr, ha⟩
 
-end SimE
+end MatchedE
 
 section Helpers
 
@@ -854,17 +854,17 @@ theorem stateFinish_below (hw : ctx.I.wcr.Lawful) (cst : CSt) {logs' logs : List
 
 end Helpers
 
-/-- The body simulation the congruence assumes: every run of one iteration
-of the new body (from the pre-map state, under any valuation) is simulated
+/-- The body matching the congruence assumes: every run of one iteration
+of the new body (from the pre-map state, under any valuation) is matched
 by a run of an iteration of the old body, comparing the logs without the
 map's private transients. -/
-def BodySimE (ctx : Ctx) (s' s : State) (M : NodeId) : Prop :=
+def BodyMatchedE (ctx : Ctx) (s' s : State) (M : NodeId) : Prop :=
   ∀ (ρ : Valuation) (pre : St) (r' : Res St),
     OrderedExec ctx ρ s' (s'.scopeNodes M) (s'.directChildren (some M)) (iterStart pre) r' →
-      SimE (fun a' a => Log.Le (a'.log.dropNames (ctx.privateTransients s M)) (a.log.dropNames (ctx.privateTransients s M)))
+      MatchedE (fun a' a => Log.Le (a'.log.dropNames (ctx.privateTransients s M)) (a.log.dropNames (ctx.privateTransients s M)))
         (OrderedExec ctx ρ s (s.scopeNodes M) (s.directChildren (some M)) (iterStart pre)) r'
 
-/-! ## The simulation -/
+/-! ## The matching -/
 
 theorem SeqExec.trace_mem {ctx : Ctx} {ρ : Valuation} {s : State} :
     ∀ {ids : List NodeId} {st st₂ : St} {tr : List (NodeId × Log)},
@@ -961,103 +961,103 @@ theorem topViews {l' l : List NodeId} (h : l' = l ∨ l'.Perm l ∧ ViewFree ctx
 
 end OuterFacts
 
-section Sim
+section Matched
 
 variable {ctx : Ctx} {s' s : State} {M : NodeId}
 
-/-- The iterations of the replaced map, from the body simulation. -/
-theorem IterExec.simBody (hbody : BodySimE ctx s' s M) {ρ : Valuation} {params : List Sym}
+/-- The iterations of the replaced map, from the body matching. -/
+theorem IterExec.matchedBody (hbody : BodyMatchedE ctx s' s M) {ρ : Valuation} {params : List Sym}
     {pre : St} {pts : List Idx} {r' : Res (List Log)} :
     IterExec ctx ρ s' M params (ctx.privateTransients s M) pre pts r' →
-      SimE (List.Forall₂ Log.Le) (IterExec ctx ρ s M params (ctx.privateTransients s M) pre pts) r'
-  | .nil => SimE.of_rel .nil List.Forall₂.nil
+      MatchedE (List.Forall₂ Log.Le) (IterExec ctx ρ s M params (ctx.privateTransients s M) pre pts) r'
+  | .nil => MatchedE.of_rel .nil List.Forall₂.nil
   | .headErr hb => by
     obtain ⟨e₀, hr, hbl⟩ := (hbody _ _ _ hb).err_cases
     exact ⟨_, .headErr hr, hbl _⟩
   | .tailErr hb hr => by
     rcases (hbody _ _ _ hb).ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
-    · exact SimE.of_ub (.headErr hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := SimE.err_cases (IterExec.simBody hbody hr)
+    · exact MatchedE.of_ub (.headErr hx) he
+    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedBody hbody hr)
       exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
   | .cons hb hr => by
     rcases (hbody _ _ _ hb).ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, hle⟩
-    · exact SimE.of_ub (.headErr hx) he
-    · rcases SimE.ok_cases (IterExec.simBody hbody hr) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
-      · exact SimE.of_ub (.tailErr hx hx') he
-      · exact SimE.of_rel (.cons hx hx') (List.Forall₂.cons hle hl)
+    · exact MatchedE.of_ub (.headErr hx) he
+    · rcases MatchedE.ok_cases (IterExec.matchedBody hbody hr) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
+      · exact MatchedE.of_ub (.tailErr hx hx') he
+      · exact MatchedE.of_rel (.cons hx hx') (List.Forall₂.cons hle hl)
 
-variable (hF : OuterFacts ctx s' s M) (hw : ctx.I.wcr.Lawful) (hbody : BodySimE ctx s' s M)
+variable (hF : OuterFacts ctx s' s M) (hw : ctx.I.wcr.Lawful) (hbody : BodyMatchedE ctx s' s M)
 include hF hw hbody
 
 set_option linter.unusedSectionVars false
 
 mutual
 
-theorem NodeExec.simB {ρ : Valuation} {n : DNode} {st : St} {r' : Res St} :
-    NodeExec ctx ρ s' n st r' → n ∈ s.outerNodes (s.scopeNodes M) → SimE St.RelV (NodeExec ctx ρ s n st) r'
+theorem NodeExec.matchedB {ρ : Valuation} {n : DNode} {st : St} {r' : Res St} :
+    NodeExec ctx ρ s' n st r' → n ∈ s.outerNodes (s.scopeNodes M) → MatchedE St.RelV (NodeExec ctx ρ s n st) r'
   | .simple hs, hn => by
     have hM : n.id ≠ M := hF.ne_entry_of_kind hn fun mp hk => by simp [DNode.isSimple, hk] at hs
     rw [(hF.nodeLocal hn hM).execSimple]
-    exact SimE.of_rel (.simple hs) (Res.Rel.refl St.RelV.refl _)
-  | .mapSetupErr hk hs, hn => SimE.of_rel (.mapSetupErr hk (by rw [← hF.mapSetup hn]; exact hs)) rfl
+    exact MatchedE.of_rel (.simple hs) (Res.Rel.refl St.RelV.refl _)
+  | .mapSetupErr hk hs, hn => MatchedE.of_rel (.mapSetupErr hk (by rw [← hF.mapSetup hn]; exact hs)) rfl
   | .mapIterErr (ρ' := ρ') (st₁ := st₁) (pts := pts) (mp := mp) (e := e) hk hs hi, hn => by
     have hs' : mapSetup ctx ρ s n mp st = .ok (ρ', st₁, pts) := by rw [← hF.mapSetup hn]; exact hs
-    have hsim : SimE (List.Forall₂ Log.Le)
+    have hsim : MatchedE (List.Forall₂ Log.Le)
         (IterExec ctx ρ' s n.id mp.params (ctx.privateTransients s' n.id) st₁ pts) (.err e) := by
       by_cases hM : n.id = M
       · rw [hF.priv n hn mp hk] at hi ⊢
         rw [hM] at hi ⊢
-        exact IterExec.simBody hbody hi
+        exact IterExec.matchedBody hbody hi
       · obtain ⟨hc, hd, ho⟩ := hF.scopes n hn mp hk hM
-        exact IterExec.simB hi hc hd ho
+        exact IterExec.matchedB hi hc hd ho
     rw [hF.priv n hn mp hk] at hsim
     obtain ⟨e₀, hr, hb⟩ := hsim.err_cases
     exact ⟨_, .mapIterErr hk hs' hr, hb _⟩
   | .mapScope (ρ' := ρ') (st₁ := st₁) (pts := pts) (mp := mp) (logs := logs') hk hs hi, hn => by
     have hs' : mapSetup ctx ρ s n mp st = .ok (ρ', st₁, pts) := by rw [← hF.mapSetup hn]; exact hs
-    have hsim : SimE (List.Forall₂ Log.Le)
+    have hsim : MatchedE (List.Forall₂ Log.Le)
         (IterExec ctx ρ' s n.id mp.params (ctx.privateTransients s' n.id) st₁ pts) (.ok logs') := by
       by_cases hM : n.id = M
       · rw [hF.priv n hn mp hk] at hi ⊢
         rw [hM] at hi ⊢
-        exact IterExec.simBody hbody hi
+        exact IterExec.matchedBody hbody hi
       · obtain ⟨hc, hd, ho⟩ := hF.scopes n hn mp hk hM
-        exact IterExec.simB hi hc hd ho
+        exact IterExec.matchedB hi hc hd ho
     rw [hF.priv n hn mp hk] at hsim
     rcases hsim.ok_cases with ⟨e, he, hx⟩ | ⟨logs, hx, hl⟩
-    · exact SimE.of_ub (.mapIterErr hk hs' hx) he
+    · exact MatchedE.of_ub (.mapIterErr hk hs' hx) he
     · exact ⟨_, .mapScope hk hs' hx, scopeFinish_below hw st₁ hl⟩
   | .consumeSetupErr hk _, hn => absurd hk (hF.noConsume n hn _)
   | .consumeTasksErr hk _ _, hn => absurd hk (hF.noConsume n hn _)
   | .consumeScope hk _ _, hn => absurd hk (hF.noConsume n hn _)
   | .nestedSetupErr hk hs, hn => by
     have hL := hF.nodeLocal hn (hF.ne_entry_of_kind hn fun mp h => by rw [hk] at h; cases h)
-    exact SimE.of_rel (.nestedSetupErr hk (by rw [← hL.nestedSetup]; exact hs)) rfl
+    exact MatchedE.of_rel (.nestedSetupErr hk (by rw [← hL.nestedSetup]; exact hs)) rfl
   | .nestedInnerErr hk hs hr, hn => by
     have hL := hF.nodeLocal hn (hF.ne_entry_of_kind hn fun mp h => by rw [hk] at h; cases h)
-    exact SimE.of_rel (.nestedInnerErr hk (by rw [← hL.nestedSetup]; exact hs) hr) rfl
+    exact MatchedE.of_rel (.nestedInnerErr hk (by rw [← hL.nestedSetup]; exact hs) hr) rfl
   | .nested hk hs hr, hn => by
     have hL := hF.nodeLocal hn (hF.ne_entry_of_kind hn fun mp h => by rw [hk] at h; cases h)
     rw [hL.nestedFinish]
-    exact SimE.of_rel (.nested hk (by rw [← hL.nestedSetup]; exact hs) hr) (Res.Rel.refl St.RelV.refl _)
+    exact MatchedE.of_rel (.nested hk (by rw [← hL.nestedSetup]; exact hs) hr) (Res.Rel.refl St.RelV.refl _)
 
-theorem SeqExec.simB {ρ : Valuation} {ids : List NodeId} {st : St} {r' : Res (St × List (NodeId × Log))} :
+theorem SeqExec.matchedB {ρ : Valuation} {ids : List NodeId} {st : St} {r' : Res (St × List (NodeId × Log))} :
     SeqExec ctx ρ s' ids st r' → (∀ id ∈ ids, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) →
-      SimE SeqRelV (SeqExec ctx ρ s ids st) r'
-  | .nil, _ => SimE.of_rel .nil ⟨St.RelV.refl _, .nil⟩
+      MatchedE SeqRelV (SeqExec ctx ρ s ids st) r'
+  | .nil, _ => MatchedE.of_rel .nil ⟨St.RelV.refl _, .nil⟩
   | .missing h, hids => by
     obtain ⟨h₁, h₂⟩ := hids _ (List.mem_cons_self ..)
-    exact SimE.of_rel (.missing (by rw [← hF.node? h₁ h₂]; exact h)) rfl
+    exact MatchedE.of_rel (.missing (by rw [← hF.node? h₁ h₂]; exact h)) rfl
   | .headErr h hn, hids => by
     obtain ⟨h₁, h₂⟩ := hids _ (List.mem_cons_self ..)
-    obtain ⟨e₀, hr, hb⟩ := SimE.err_cases (NodeExec.simB hn (hF.mem_outer h h₂))
+    obtain ⟨e₀, hr, hb⟩ := MatchedE.err_cases (NodeExec.matchedB hn (hF.mem_outer h h₂))
     exact ⟨_, .headErr (by rw [← hF.node? h₁ h₂]; exact h) hr, hb _⟩
   | .tailErr h hn hr, hids => by
     obtain ⟨h₁, h₂⟩ := hids _ (List.mem_cons_self ..)
     have hnode := (hF.node? h₁ h₂).symm.trans h
-    rcases SimE.ok_cases (NodeExec.simB hn (hF.mem_outer h h₂)) with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
-    · exact SimE.of_ub (.headErr hnode hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := SimE.err_cases (SeqExec.simB hr fun id hid => hids id (List.mem_cons_of_mem _ hid))
+    rcases MatchedE.ok_cases (NodeExec.matchedB hn (hF.mem_outer h h₂)) with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
+    · exact MatchedE.of_ub (.headErr hnode hx) he
+    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (SeqExec.matchedB hr fun id hid => hids id (List.mem_cons_of_mem _ hid))
       obtain ⟨hm, hv, hle⟩ := ha.afterNode st
       obtain ⟨r₁, hr₁, hrel⟩ := SeqExec.transferV hm hv hle hr₀
       obtain rfl := hrel.err_inv
@@ -1065,26 +1065,26 @@ theorem SeqExec.simB {ρ : Valuation} {ids : List NodeId} {st : St} {r' : Res (S
   | .cons h hn hr, hids => by
     obtain ⟨h₁, h₂⟩ := hids _ (List.mem_cons_self ..)
     have hnode := (hF.node? h₁ h₂).symm.trans h
-    rcases SimE.ok_cases (NodeExec.simB hn (hF.mem_outer h h₂)) with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
-    · exact SimE.of_ub (.headErr hnode hx) he
+    rcases MatchedE.ok_cases (NodeExec.matchedB hn (hF.mem_outer h h₂)) with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
+    · exact MatchedE.of_ub (.headErr hnode hx) he
     · obtain ⟨hm, hv, hle⟩ := ha.afterNode st
-      rcases SimE.ok_cases (SeqExec.simB hr fun id hid => hids id (List.mem_cons_of_mem _ hid)) with
+      rcases MatchedE.ok_cases (SeqExec.matchedB hr fun id hid => hids id (List.mem_cons_of_mem _ hid)) with
         ⟨e, he, hx'⟩ | ⟨y, hx', hrel⟩
       · obtain ⟨r₁, hr₁, hrel₁⟩ := SeqExec.transferV hm hv hle hx'
         obtain rfl := hrel₁.err_inv
-        exact SimE.of_ub (.tailErr hnode hx hr₁) he
+        exact MatchedE.of_ub (.tailErr hnode hx hr₁) he
       · obtain ⟨r₁, hr₁, hrel₁⟩ := SeqExec.transferV hm hv hle hx'
         obtain ⟨z, rfl, hz⟩ := hrel₁.ok_inv
-        exact SimE.of_rel (.cons hnode hx hr₁)
+        exact MatchedE.of_rel (.cons hnode hx hr₁)
           ⟨hrel.1.trans hz.1, .cons ⟨rfl, ha.2.2⟩ (forall₂_trRel_trans hrel.2 hz.2)⟩
 
-theorem OrderedExec.simB {ρ : Valuation} {all' direct' : List NodeId} {st : St} {r' : Res St} :
+theorem OrderedExec.matchedB {ρ : Valuation} {all' direct' : List NodeId} {st : St} {r' : Res St} :
     OrderedExec ctx ρ s' all' direct' st r' → ∀ all direct,
       ScopeCorr (s'.scopeNodes M) (s.scopeNodes M) M all' all → direct'.Perm direct →
       bindViews ctx ρ s' direct' st = bindViews ctx ρ s direct st →
       (∀ id ∈ direct, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) →
-      SimE St.RelV (OrderedExec ctx ρ s all direct st) r'
-  | .prologueErr hp, _, _, _, _, hbv, _ => SimE.of_rel (.prologueErr (hbv ▸ hp)) rfl
+      MatchedE St.RelV (OrderedExec ctx ρ s all direct st) r'
+  | .prologueErr hp, _, _, _, _, hbv, _ => MatchedE.of_rel (.prologueErr (hbv ▸ hp)) rfl
   | .seqErr (order := o') ho hp hs, all, direct, hc, hpd, hbv, hd => by
     obtain ⟨o, ho₁, hfo⟩ := hF.transport ho hc hd
     have hp' := hbv.symm.trans hp
@@ -1092,7 +1092,7 @@ theorem OrderedExec.simB {ρ : Valuation} {all' direct' : List NodeId} {st : St}
       hfo.trans (List.filter_congr fun x _ => by simp only [List.contains_eq_mem, hpd.mem_iff])
     have hids : ∀ id ∈ o'.filter direct'.contains, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M :=
       fun id hid => hd id (hpd.mem_iff.1 (by simpa using (List.mem_filter.1 hid).2))
-    obtain ⟨e₀, hr, hb⟩ := SimE.err_cases (SeqExec.simB hs hids)
+    obtain ⟨e₀, hr, hb⟩ := MatchedE.err_cases (SeqExec.matchedB hs hids)
     exact ⟨_, .seqErr ho₁ hp' (hfl ▸ hr), hb _⟩
   | .hbRace (order := o') ho hp hs hf, all, direct, hc, hpd, hbv, hd => by
     obtain ⟨o, ho₁, hfo⟩ := hF.transport ho hc hd
@@ -1101,14 +1101,14 @@ theorem OrderedExec.simB {ρ : Valuation} {all' direct' : List NodeId} {st : St}
       hfo.trans (List.filter_congr fun x _ => by simp only [List.contains_eq_mem, hpd.mem_iff])
     have hids : ∀ id ∈ o'.filter direct'.contains, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M :=
       fun id hid => hd id (hpd.mem_iff.1 (by simpa using (List.mem_filter.1 hid).2))
-    rcases SimE.ok_cases (SeqExec.simB hs hids) with ⟨e, he, hx⟩ | ⟨⟨st₂, tr⟩, hx, hrel⟩
-    · exact SimE.of_ub (.seqErr ho₁ hp' (hfl ▸ hx)) he
+    rcases MatchedE.ok_cases (SeqExec.matchedB hs hids) with ⟨e, he, hx⟩ | ⟨⟨st₂, tr⟩, hx, hrel⟩
+    · exact MatchedE.of_ub (.seqErr ho₁ hp' (hfl ▸ hx)) he
     · have hf' := hF.hbFree_false hrel.2 (fun x hx => by
         obtain ⟨h₁, n, h₂⟩ := SeqExec.trace_mem hs x hx
         have hn := hF.mem_outer h₂ (hids _ h₁).2
         obtain ⟨-, hid⟩ := State.node?_some h₂
         exact List.mem_map.2 ⟨n, hn, hid⟩) hf
-      exact SimE.of_ub (.hbRace ho₁ hp' (hfl ▸ hx) hf') rfl
+      exact MatchedE.of_ub (.hbRace ho₁ hp' (hfl ▸ hx) hf') rfl
   | .run (order := o') ho hp hs hf, all, direct, hc, hpd, hbv, hd => by
     obtain ⟨o, ho₁, hfo⟩ := hF.transport ho hc hd
     have hp' := hbv.symm.trans hp
@@ -1116,80 +1116,80 @@ theorem OrderedExec.simB {ρ : Valuation} {all' direct' : List NodeId} {st : St}
       hfo.trans (List.filter_congr fun x _ => by simp only [List.contains_eq_mem, hpd.mem_iff])
     have hids : ∀ id ∈ o'.filter direct'.contains, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M :=
       fun id hid => hd id (hpd.mem_iff.1 (by simpa using (List.mem_filter.1 hid).2))
-    rcases SimE.ok_cases (SeqExec.simB hs hids) with ⟨e, he, hx⟩ | ⟨⟨st₂, tr⟩, hx, hrel⟩
-    · exact SimE.of_ub (.seqErr ho₁ hp' (hfl ▸ hx)) he
+    rcases MatchedE.ok_cases (SeqExec.matchedB hs hids) with ⟨e, he, hx⟩ | ⟨⟨st₂, tr⟩, hx, hrel⟩
+    · exact MatchedE.of_ub (.seqErr ho₁ hp' (hfl ▸ hx)) he
     · cases hft : s.hbFree tr with
-      | false => exact SimE.of_ub (.hbRace ho₁ hp' (hfl ▸ hx) hft) rfl
-      | true => exact SimE.of_rel (.run ho₁ hp' (hfl ▸ hx) hft) hrel.1
+      | false => exact MatchedE.of_ub (.hbRace ho₁ hp' (hfl ▸ hx) hft) rfl
+      | true => exact MatchedE.of_rel (.run ho₁ hp' (hfl ▸ hx) hft) hrel.1
 
-theorem IterExec.simB {ρ : Valuation} {P : NodeId} {params : List Sym} {priv : List Name} {pre : St}
+theorem IterExec.matchedB {ρ : Valuation} {P : NodeId} {params : List Sym} {priv : List Name} {pre : St}
     {pts : List Idx} {r' : Res (List Log)} :
     IterExec ctx ρ s' P params priv pre pts r' →
       ScopeCorr (s'.scopeNodes M) (s.scopeNodes M) M (s'.scopeNodes P) (s.scopeNodes P) →
       s'.directChildren (some P) = s.directChildren (some P) →
       (∀ id ∈ s.directChildren (some P), id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) →
-      SimE (List.Forall₂ Log.Le) (IterExec ctx ρ s P params priv pre pts) r'
-  | .nil, _, _, _ => SimE.of_rel .nil List.Forall₂.nil
+      MatchedE (List.Forall₂ Log.Le) (IterExec ctx ρ s P params priv pre pts) r'
+  | .nil, _, _, _ => MatchedE.of_rel .nil List.Forall₂.nil
   | .headErr hb, hc, hdir, ho => by
-    have h₁ := OrderedExec.simB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
+    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
     obtain ⟨e₀, hr, hbl⟩ := h₁.err_cases
     exact ⟨_, .headErr hr, hbl _⟩
   | .tailErr hb hr, hc, hdir, ho => by
-    have h₁ := OrderedExec.simB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
+    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
     rcases h₁.ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
-    · exact SimE.of_ub (.headErr hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := SimE.err_cases (IterExec.simB hr hc hdir ho)
+    · exact MatchedE.of_ub (.headErr hx) he
+    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedB hr hc hdir ho)
       exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
   | .cons hb hr, hc, hdir, ho => by
-    have h₁ := OrderedExec.simB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
+    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
     rcases h₁.ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
-    · exact SimE.of_ub (.headErr hx) he
-    · rcases SimE.ok_cases (IterExec.simB hr hc hdir ho) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
-      · exact SimE.of_ub (.tailErr hx hx') he
-      · exact SimE.of_rel (.cons hx hx') (List.Forall₂.cons (ha.2.2.dropNames _) hl)
+    · exact MatchedE.of_ub (.headErr hx) he
+    · rcases MatchedE.ok_cases (IterExec.matchedB hr hc hdir ho) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
+      · exact MatchedE.of_ub (.tailErr hx hx') he
+      · exact MatchedE.of_rel (.cons hx hx') (List.Forall₂.cons (ha.2.2.dropNames _) hl)
 
 end
 
-theorem CompsExec.simB {ρ : Valuation} {m : Mem} :
+theorem CompsExec.matchedB {ρ : Valuation} {m : Mem} :
     ∀ {comps' comps : List (List NodeId)} {r' : Res (List Log)}, CompsExec ctx ρ s' m comps' r' →
       List.Forall₂ (fun c' c => ScopeCorr (s'.scopeNodes M) (s.scopeNodes M) M c' c ∧
         (s'.topLevelOf c' = s.topLevelOf c ∨
           (s'.topLevelOf c').Perm (s.topLevelOf c) ∧ ViewFree ctx s (s.topLevelOf c)) ∧
         ∀ id ∈ s.topLevelOf c, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M)
         comps' comps →
-      SimE (List.Forall₂ Log.Le) (CompsExec ctx ρ s m comps) r'
-  | _, _, _, .nil, .nil => SimE.of_rel .nil List.Forall₂.nil
+      MatchedE (List.Forall₂ Log.Le) (CompsExec ctx ρ s m comps) r'
+  | _, _, _, .nil, .nil => MatchedE.of_rel .nil List.Forall₂.nil
   | _, _, _, .headErr hc, .cons ⟨hcorr, htop, hout⟩ _ => by
-    have h₁ := OrderedExec.simB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
-    obtain ⟨e₀, hr, hb⟩ := SimE.err_cases h₁
+    have h₁ := OrderedExec.matchedB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
+    obtain ⟨e₀, hr, hb⟩ := MatchedE.err_cases h₁
     exact ⟨_, .headErr hr, hb _⟩
   | _, _, _, .tailErr hc hr, .cons ⟨hcorr, htop, hout⟩ hrest => by
-    have h₁ := OrderedExec.simB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
-    rcases SimE.ok_cases h₁ with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
-    · exact SimE.of_ub (.headErr hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := SimE.err_cases (CompsExec.simB hr hrest)
+    have h₁ := OrderedExec.matchedB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
+    rcases MatchedE.ok_cases h₁ with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
+    · exact MatchedE.of_ub (.headErr hx) he
+    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (CompsExec.matchedB hr hrest)
       exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
   | _, _, _, .cons hc hr, .cons ⟨hcorr, htop, hout⟩ hrest => by
-    have h₁ := OrderedExec.simB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
-    rcases SimE.ok_cases h₁ with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
-    · exact SimE.of_ub (.headErr hx) he
-    · rcases SimE.ok_cases (CompsExec.simB hr hrest) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
-      · exact SimE.of_ub (.tailErr hx hx') he
-      · exact SimE.of_rel (.cons hx hx') (List.Forall₂.cons ha.2.2 hl)
+    have h₁ := OrderedExec.matchedB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
+    rcases MatchedE.ok_cases h₁ with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
+    · exact MatchedE.of_ub (.headErr hx) he
+    · rcases MatchedE.ok_cases (CompsExec.matchedB hr hrest) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
+      · exact MatchedE.of_ub (.tailErr hx hx') he
+      · exact MatchedE.of_rel (.cons hx hx') (List.Forall₂.cons ha.2.2 hl)
 
-/-- **The state with the body replaced is simulated by the original state.** -/
-theorem StateExec.simB {cst : CSt} {r' : Res (Ctl × CSt)} (h : StateExec ctx cst s' r') :
-    SimE CtlRel (StateExec ctx cst s) r' := by
+/-- **The state with the body replaced is matched by the original state.** -/
+theorem StateExec.matchedB {cst : CSt} {r' : Res (Ctl × CSt)} (h : StateExec ctx cst s' r') :
+    MatchedE CtlRel (StateExec ctx cst s) r' := by
   cases h with
   | compsErr hc =>
-    obtain ⟨e₀, hr, hb⟩ := SimE.err_cases (CompsExec.simB hF hw hbody hc hF.comps)
+    obtain ⟨e₀, hr, hb⟩ := MatchedE.err_cases (CompsExec.matchedB hF hw hbody hc hF.comps)
     exact ⟨_, .compsErr hr, hb _⟩
   | run hc =>
-    rcases SimE.ok_cases (CompsExec.simB hF hw hbody hc hF.comps) with ⟨e, he, hx⟩ | ⟨logs, hx, hl⟩
-    · exact SimE.of_ub (.compsErr hx) he
+    rcases MatchedE.ok_cases (CompsExec.matchedB hF hw hbody hc hF.comps) with ⟨e, he, hx⟩ | ⟨logs, hx, hl⟩
+    · exact MatchedE.of_ub (.compsErr hx) he
     · exact ⟨_, .run hx, stateFinish_below hw cst hl⟩
 
-end Sim
+end Matched
 
 /-! ## The check -/
 
@@ -1394,17 +1394,17 @@ theorem sameOutside?_mentions {g : SDFG} {s' s : State} {M : NodeId} (h : sameOu
 
 /-! ## Congruence -/
 
-/-- The block simulation `Congr.block` needs, from the body simulation. -/
-theorem scopeBody_blockSimE {g : SDFG} {s' s : State} {M : NodeId} (hchk : sameOutside? g s' s M = true)
+/-- The block matching `Congr.block` needs, from the body matching. -/
+theorem scopeBody_blockMatchedE {g : SDFG} {s' s : State} {M : NodeId} (hchk : sameOutside? g s' s M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M)) {I : Interp} (hI : I.Lawful)
-    (hbody : BodySimE { I, g, pfx := "" } s' s M) :
+    (hbody : BodyMatchedE { I, g, pfx := "" } s' s M) :
     ∀ cst r', BlockExec { I, g, pfx := "" } cst (.state s') r' →
-      SimE CtlRel (BlockExec { I, g, pfx := "" } cst (.state s)) r' := by
+      MatchedE CtlRel (BlockExec { I, g, pfx := "" } cst (.state s)) r' := by
   intro cst r' h
   cases h with
   | state h =>
-    exact (StateExec.simB (sameOutside?_spec hchk hN hE I) hI hbody h).mono (fun _ _ h => h) fun _ h => .state h
+    exact (StateExec.matchedB (sameOutside?_spec hchk hN hE I) hI hbody h).mono (fun _ _ h => h) fun _ h => .state h
 
 /-- **Map-body congruence** (R1.5, R1 design §2.3): replacing the body of the
 map with entry `M` in the state at path `p`, index `i` of `g` refines `g` if
@@ -1418,32 +1418,32 @@ map with entry `M` in the state at path `p`, index `i` of `g` refines `g` if
 * the nodes and edges outside the bodies are equal (`State.withBody` gives
   this by construction, `State.withBody_outer`);
 * for every lawful interpretation, every run of one iteration of the new body
-  is simulated by a run of an iteration of the old body from the same state,
+  is matched by a run of an iteration of the old body from the same state,
   with the same outcome up to the log outside the map's private transients
-  (`BodySimE`, which is all an atom has to prove);
+  (`BodyMatchedE`, which is all an atom has to prove);
 * `g` is `Supported`. -/
 theorem Congr.scopeBody {g : SDFG} {p : List PathStep} {i : BlockId} {s s' : State} {M : NodeId}
     (hat : g.top.blockAt? p i = some (.state s)) (hchk : sameOutside? g s' s M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M))
-    (hbody : ∀ I : Interp, I.Lawful → BodySimE { I, g, pfx := "" } s' s M)
+    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } s' s M)
     (hsup : Supported g.prog) : Refines (g.setBlockAt p i (.state s')).prog g.prog :=
   Congr.block hat (sameOutside?_mentions hchk)
-    (fun I hI => scopeBody_blockSimE hchk hN hE hI (hbody I hI)) hsup
+    (fun I hI => scopeBody_blockMatchedE hchk hN hE hI (hbody I hI)) hsup
 
-/-- **Map-body congruence, both directions**: bodies that simulate each other
+/-- **Map-body congruence, both directions**: bodies that match each other's runs
 (with the check in both directions) give equivalent SDFGs. -/
 theorem Congr.scopeBodyEquiv {g : SDFG} {p : List PathStep} {i : BlockId} {s s' : State} {M : NodeId}
     (hat : g.top.blockAt? p i = some (.state s)) (hchk : sameOutside? g s' s M = true)
     (hchk' : sameOutside? g s s' M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M))
-    (hbody : ∀ I : Interp, I.Lawful → BodySimE { I, g, pfx := "" } s' s M)
-    (hbody' : ∀ I : Interp, I.Lawful → BodySimE { I, g, pfx := "" } s s' M)
+    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } s' s M)
+    (hbody' : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } s s' M)
     (hsup : Supported g.prog) : Equiv (g.setBlockAt p i (.state s')).prog g.prog :=
   Congr.blockEquiv hat (sameOutside?_mentions hchk)
-    (fun I hI => scopeBody_blockSimE hchk hN hE hI (hbody I hI))
-    (fun I hI => scopeBody_blockSimE hchk' hN.symm hE.symm hI (hbody' I hI)) hsup
+    (fun I hI => scopeBody_blockMatchedE hchk hN hE hI (hbody I hI))
+    (fun I hI => scopeBody_blockMatchedE hchk' hN.symm hE.symm hI (hbody' I hI)) hsup
 
 /-! ## Building the new state -/
 
@@ -1480,13 +1480,13 @@ hypotheses of `Congr.scopeBody` become the check `bodyFits?`. -/
 theorem Congr.mapBody {g : SDFG} {p : List PathStep} {i : BlockId} {s : State} {M : NodeId} {bn : List DNode}
     {be : List DEdge} (hat : g.top.blockAt? p i = some (.state s)) (hfit : s.bodyFits? M bn be = true)
     (hchk : sameOutside? g (s.withBody M bn be) s M = true)
-    (hbody : ∀ I : Interp, I.Lawful → BodySimE { I, g, pfx := "" } (s.withBody M bn be) s M)
+    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } (s.withBody M bn be) s M)
     (hsup : Supported g.prog) : Refines (g.setBlockAt p i (.state (s.withBody M bn be))).prog g.prog :=
   Congr.scopeBody hat hchk (State.withBody_outer hfit).1 (State.withBody_outer hfit).2 hbody hsup
 
-/-- An unchanged body simulates itself (the trivial instance). -/
-theorem BodySimE.refl (ctx : Ctx) (s : State) (M : NodeId) : BodySimE ctx s s M :=
-  fun _ _ _ h => SimE.of_rel h (by
+/-- An unchanged body matches itself (the trivial instance). -/
+theorem BodyMatchedE.refl (ctx : Ctx) (s : State) (M : NodeId) : BodyMatchedE ctx s s M :=
+  fun _ _ _ h => MatchedE.of_rel h (by
     rename_i r'
     cases r' with
     | ok a => exact Log.Le.refl _

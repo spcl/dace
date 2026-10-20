@@ -113,8 +113,8 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Equiv.symm
 #print axioms Dace.Equiv.trans
 #print axioms Dace.Equiv.refl_iff_supported
-#print axioms Dace.Refines_iff_sim
-#print axioms Dace.Sim.trans
+#print axioms Dace.Refines_iff_matched
+#print axioms Dace.Matched.trans
 
 -- R1.3: logs are write-only (log-shift lemmas for both relation families).
 #print axioms Dace.NodeExec.shift_iff
@@ -166,15 +166,15 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.SDFGExec.congr_iff
 #print axioms Dace.NodeExec.congr
 #print axioms Dace.Ctx.agree_setBlockAt
-#print axioms Dace.Refines.of_simE
-#print axioms Dace.Supported.of_simE
-#print axioms Dace.RegionAt.simE
-#print axioms Dace.LoopExec.simE
-#print axioms Dace.CondExec.simE
+#print axioms Dace.Refines.of_matchedE
+#print axioms Dace.Supported.of_matchedE
+#print axioms Dace.RegionAt.matchedE
+#print axioms Dace.LoopExec.matchedE
+#print axioms Dace.CondExec.matchedE
 #print axioms Dace.Congr.region_setBlockAt
 #print axioms Dace.Region.setBlockAt_setBlockAt
 #print axioms Dace.Region.countMentions_setBlockAt
-#print axioms Dace.Congr.exec_simE
+#print axioms Dace.Congr.exec_matchedE
 #print axioms Dace.Congr.block
 #print axioms Dace.Congr.blockEquiv
 #print axioms Dace.Congr.emptyState
@@ -220,7 +220,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Congr.scopeBodyEquiv
 #print axioms Dace.Congr.mapBody
 #print axioms Dace.sameOutside?_spec
-#print axioms Dace.StateExec.simB
+#print axioms Dace.StateExec.matchedB
 #print axioms Dace.State.isTopologicalOrder_splice
 #print axioms Dace.NodeLocal.execSimple
 
@@ -235,8 +235,8 @@ Axiom audit: every trusted theorem of the development is listed here so that
 -- M5a: SDFG / schedule-tree pair checker
 #print axioms Dace.Corr.execCode_eq
 #print axioms Dace.Corr.execCopiesInto_eq
-#print axioms Dace.Corr.SegCorr.sim
-#print axioms Dace.Corr.StateCorr.sim
+#print axioms Dace.Corr.SegCorr.matched
+#print axioms Dace.Corr.StateCorr.matched
 #print axioms Dace.Corr.ProgCorr.exec
 #print axioms Dace.Corr.ProgCorr.refines
 #print axioms Dace.Corr.corrCheck_sound

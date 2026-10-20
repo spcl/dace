@@ -3,7 +3,7 @@ import Dace.Equiv.CorrLeaf
 import Dace.SDFG.Footprint
 
 /-!
-# SDFG and schedule tree: simulation of a dataflow segment (M5a)
+# SDFG and schedule tree: matching of a dataflow segment (M5a)
 
 `SegCorr ctx tc s o cs`: the tree sibling list `cs` is the image of the
 SDFG nodes `o` of state `s`, in that order: an access or exit node becomes
@@ -12,13 +12,14 @@ none), a tasklet or library node the tree node with the same keys
 (`Dace.Equiv.CorrLeaf`), a map entry a `MapScope` whose body is the image
 of the scope's direct children in a topological order of the scope.
 
-**Simulation** (`SegCorr.sim`): every run of the tree list (followed by any
+**Matching** (`SegCorr.matched`; a simulation relation in the sense of
+refinement proofs, see the terminology note in `Dace.Equiv.Frag`): every run of the tree list (followed by any
 `rest`) is matched by the sequential SDFG run of `o` from a state with the
 same memory and log: the SDFG run is undefined behavior, or fails with the
 same error, or ends normally in a state with the same memory and log while
 the tree continues with `rest`.  The proof is by induction on `SegCorr`;
 leaves are equal leaf functions (`execCode_eq`, …) up to the log prefix
-(`*_shift`), a map's iterations are simulated one by one, and an iteration
+(`*_shift`), a map's iterations are matched one by one, and an iteration
 whose SDFG trace has a happens-before race is undefined behavior
 (`OrderedExec.hbRace`).
 
@@ -307,7 +308,7 @@ theorem map_inv {tc : TCtx} {full : List SNode} {gb : Bool} {mp : MapNode} {body
     · obtain ⟨-, h₂, -⟩ := (fin hres).2 _ _ _ rfl
       cases h₂
 
-/-! ## Simulation -/
+/-! ## Matching -/
 
 /-- Prepend a node to the matched SDFG run. -/
 theorem SeqOut.cons {ctx : Ctx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {ρ : Valuation} {st : St}
@@ -343,7 +344,7 @@ theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).s
   simp only at hy
   simp [CSt.withSt, CSt.st, hy]
 
-section Sim
+section Matched
 
 variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPure ctx s) (he : tc.ctx.erase = ctx.erase)
   (hcons : tc.consumed = none)
@@ -430,9 +431,9 @@ theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o :
       exact .inr (.inr ⟨y, hy ▸ NodeExec.simple hsimp, ih hx₁ (hrel.afterNode hyv ⟨rfl, rfl⟩) rfl⟩)
 
 include h in
-/-- **The iterations of a map**: the tree's iterations, each simulated by
+/-- **The iterations of a map**: the tree's iterations, each matched by
 the SDFG's run of the scope body along the tree's order. -/
-theorem iter_sim {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : List SNode}
+theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : List SNode}
     (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
     (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
     (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
@@ -526,8 +527,8 @@ theorem DNode.isSimple_of_copyTarget {n : DNode} (hk : DNode.isCopyTarget n = tr
   split at hk <;> simp_all
 
 include h he hcons in
-/-- **Simulation of a dataflow segment** (see the module documentation). -/
-theorem SegCorr.sim {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o cs) :
+/-- **Matching of a dataflow segment** (see the module documentation). -/
+theorem SegCorr.matched {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o cs) :
     ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St},
       STree.ListExec tc full gb {} (cs ++ rest) cst r → StRel st cst → SeqOut ctx s o cst.ρ st tc full gb rest r := by
   induction hc with
@@ -619,7 +620,7 @@ theorem SegCorr.sim {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o
         rw [hp] at hs hset
         simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
         obtain ⟨rfl, rfl⟩ := hs
-        rcases iter_sim h hto hdir hpriv (fun hb hr => ihb hb hr) (pre := { cst with ρ := cst.ρ }) (st₁ := st.forNode)
+        rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) (pre := { cst with ρ := cst.ρ }) (st₁ := st.forNode)
             hmem hrel.2.2 hi with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl, -⟩
         · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
         · cases he'; exact .inr (.inl ⟨_, rfl, .mapIterErr hk hset hy⟩)
@@ -631,7 +632,7 @@ theorem SegCorr.sim {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o
         rw [hp] at hs hset
         simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
         obtain ⟨rfl, rfl⟩ := hs
-        rcases iter_sim h hto hdir hpriv (fun hb hr => ihb hb hr) (pre := { cst with ρ := cst.ρ }) (st₁ := st.forNode)
+        rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) (pre := { cst with ρ := cst.ρ }) (st₁ := st.forNode)
             hmem hrel.2.2 hi with ⟨e', hu, hy⟩ | ⟨e', he', -⟩ | ⟨logs', hl, hy⟩
         · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
         · cases he'
@@ -657,7 +658,7 @@ theorem SegCorr.sim {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o
               exact .inr (.inr ⟨y, hy' ▸ NodeExec.mapScope hk hset hy,
                 ih (cst := cst.withSt (y.shift cst.log)) hx' (hrel.afterNode hyv ⟨rfl, rfl⟩)⟩)
 
-end Sim
+end Matched
 
 end Corr
 

@@ -1,18 +1,18 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import Dace.Equiv.CorrSim
+import Dace.Equiv.CorrMatch
 import Dace.Equiv.Equiv
 
 /-!
 # SDFG and schedule tree: states, the state chain and the program (M5a)
 
-* **States** (`StateCorr`, `StateCorr.sim`): a state of the fragment
+* **States** (`StateCorr`, `StateCorr.matched`): a state of the fragment
   `SeqPure` with at most one weakly connected component whose tree segment
   is the image of the component's top-level nodes in a topological order of
   the component (`SegCorr`).  The SDFG runs the component from the state's
   memory with an empty log and merges its log; the tree runs the segment on
   the current state.  Coherence (`OrderedExec.coherent`: the memory after a
   run is the initial memory with its log applied) makes the two agree.
-* **The chain** (`ChainCorr`, `ChainCorr.sim`): the top region is a chain of
+* **The chain** (`ChainCorr`, `ChainCorr.matched`): the top region is a chain of
   states joined by unconditional edges without assignments; the tree's root
   list is the concatenation of their segments.
 * **Programs** (`Corr.exec`): every outcome of the tree is an outcome of the
@@ -43,9 +43,9 @@ section State
 variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
 
 include he hcons in
-/-- **Simulation of a state**: the tree runs the segment, the SDFG the state;
+/-- **Matching of a state**: the tree runs the segment, the SDFG the state;
 undefined behavior, the same error, or the same control-flow state. -/
-theorem StateCorr.sim {s : State} {cs : List SNode} (hsc : StateCorr ctx tc s cs) {full : List SNode} {gb : Bool}
+theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc s cs) {full : List SNode} {gb : Bool}
     {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)}
     (hx : STree.ListExec tc full gb {} (cs ++ rest) cst r) :
     (∃ e, e.isUB = true ∧ StateExec ctx cst s (.err e)) ∨
@@ -84,7 +84,7 @@ theorem StateCorr.sim {s : State} {cs : List SNode} (hsc : StateCorr ctx tc s cs
           simp only [stateFinish]
           rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
         rwa [hf] at this
-    rcases SegCorr.sim h he hcons hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
+    rcases SegCorr.matched h he hcons hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
       cases r₀ with
@@ -160,9 +160,9 @@ theorem trueEdges_nil {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} (he 
   rfl
 
 include he hcons in
-/-- **Simulation of the chain**: the tree's list from the segment of block
+/-- **Matching of the chain**: the tree's list from the segment of block
 `bid` on, against the SDFG region from `bid`. -/
-theorem ChainCorr.sim {rg : Region} {bid : BlockId} {cs : List SNode} (hch : ChainCorr ctx tc rg bid cs) :
+theorem ChainCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} (hch : ChainCorr ctx tc rg bid cs) :
     ∀ {full : List SNode} {cst : CSt} {r : Res (TCtl × CSt)},
       STree.ListExec tc full false {} cs cst r →
       (∃ e, e.isUB = true ∧ RegionAt ctx rg cst bid (.err e)) ∨
@@ -172,7 +172,7 @@ theorem ChainCorr.sim {rg : Region} {bid : BlockId} {cs : List SNode} (hch : Cha
   | @last bid s cs hb hs hout =>
     intro full cst r hx
     have hx₀ : STree.ListExec tc full false {} (cs ++ []) cst r := by rw [List.append_nil]; exact hx
-    rcases hs.sim he hcons hx₀ with ⟨e, hu, hx'⟩ | ⟨e, hr, hx'⟩ | ⟨cst', hl, hx'⟩
+    rcases hs.matched he hcons hx₀ with ⟨e, hu, hx'⟩ | ⟨e, hr, hx'⟩ | ⟨cst', hl, hx'⟩
     · exact .inl ⟨e, hu, .blockErr hb (.state hx')⟩
     · exact .inr (.inl ⟨e, hr, .blockErr hb (.state hx')⟩)
     · have := STree.ListExec_nil rfl hl
@@ -180,7 +180,7 @@ theorem ChainCorr.sim {rg : Region} {bid : BlockId} {cs : List SNode} (hch : Cha
       exact .inr (.inr ⟨_, rfl, .stop hb (.state hx') (trueEdges_nil hout)⟩)
   | step hb hs hout hc ha _ ih =>
     intro full cst r hx
-    rcases hs.sim he hcons hx with ⟨e, hu, hx'⟩ | ⟨e, hr, hx'⟩ | ⟨cst', hl, hx'⟩
+    rcases hs.matched he hcons hx with ⟨e, hu, hx'⟩ | ⟨e, hr, hx'⟩ | ⟨cst', hl, hx'⟩
     · exact .inl ⟨e, hu, .blockErr hb (.state hx')⟩
     · exact .inr (.inl ⟨e, hr, .blockErr hb (.state hx')⟩)
     · have hassign : applyAssigns ctx cst' [] = .ok cst' := by
@@ -218,7 +218,7 @@ theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) 
   have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := m₀ } := by
     simp [rootStart, hc.consts]
   rw [hstart] at hx
-  rcases hc.chain.sim he rfl hx with ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨c, rfl, hy⟩
+  rcases hc.chain.matched he rfl hx with ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨c, rfl, hy⟩
   · exact .inl ⟨e, hu, _, .err (.start hy), rfl⟩
   · exact .inr ⟨_, .err (.start hy), rfl⟩
   · exact .inr ⟨_, .run (.start hy) rfl, rfl⟩

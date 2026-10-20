@@ -3,10 +3,10 @@ import Dace.Equiv.Equiv
 import Dace.Core.MergeLemmas
 
 /-!
-# Simulation of fragment outcomes
+# Matching of fragment outcomes
 
 Building blocks of the congruence proofs (R1 design §2.2): relations between
-the intermediate states of two executions and the simulation of one outcome
+the intermediate states of two executions and the matching of one outcome
 by the outcome set of a fragment.
 
 * `St.Rel a' a`: two sequential dataflow states agree on the local memory
@@ -14,40 +14,56 @@ by the outcome set of a fragment.
   most what `a` reads, same effects up to commuting reorderings);
 * `CSt.Rel a' a`: two control-flow states agree on valuation and memory, and
   `a'`'s log refines `a`'s;
-* `Sim R X r'`: the outcome `r'` is simulated by the outcome set `X`: either
+* `Matched R X r'`: the outcome `r'` is matched by the outcome set `X`: either
   `X` contains undefined behavior, or `r'` is normal and `R`-related to a
-  normal outcome of `X`.  `Refines` is `Sim obsEq` pointwise
-  (`Refines_iff_sim`).
+  normal outcome of `X`.  `Refines` is `Matched obsEq` pointwise
+  (`Refines_iff_matched`).
 
 The fragment denotations themselves (one map iteration, one block) are
 defined over the execution relations once those are final.
+
+**Terminology.** "Matched" is a *simulation* in the sense of refinement
+proofs (Milner's simulation relations; forward simulations in the sense of
+Lynch and Vaandrager), taken over big-step outcomes: the reference program
+`X` simulates the outcome `r'` of the program being checked.  The theorems
+built on it (`*.matched`, `*.matchedE`, `*.matchedB`) quantify over all
+derivations, inputs, symbol values and lawful interpretations; nothing is
+executed.  Matching in both directions (`Equiv`) relates outcome *sets*,
+which is weaker than *bisimulation*: bisimulation also relates the
+branching structure of nondeterministic choices, i.e. at which point an
+alternative is still open.  On deterministic programs the two notions
+coincide.  The choices the SDFG semantics leaves open are the order of the
+nodes in a state (irrelevant for states without races, `Dace.Equiv.Det`;
+a race is undefined behavior), the processing element of a consume task
+(`Decisions.md#D38`) and the choice among several true interstate edges
+(`Decisions.md#D2`).
 -/
 
 set_option autoImplicit false
 
 namespace Dace
 
-/-! ## Simulation of outcomes -/
+/-! ## Matching of outcomes -/
 
-/-- `r'` is simulated by the outcome set `X` up to `R`: `X` may be undefined,
+/-- `r'` is matched by the outcome set `X` up to `R`: `X` may be undefined,
 or `r'` is a normal outcome related to a normal outcome of `X`. -/
-def Sim {α : Type} (R : α → α → Prop) (X : Res α → Prop) (r' : Res α) : Prop :=
+def Matched {α : Type} (R : α → α → Prop) (X : Res α → Prop) (r' : Res α) : Prop :=
   (∃ e, e.isUB = true ∧ X (.err e)) ∨ ∃ a', r' = .ok a' ∧ ∃ a, X (.ok a) ∧ R a' a
 
-namespace Sim
+namespace Matched
 
 variable {α : Type} {R : α → α → Prop} {X Y : Res α → Prop}
 
-/-- A normal outcome of `X` is simulated by `X` itself. -/
-theorem of_ok (hR : ∀ a, R a a) {a : α} (h : X (.ok a)) : Sim R X (.ok a) :=
+/-- A normal outcome of `X` is matched by `X` itself. -/
+theorem of_ok (hR : ∀ a, R a a) {a : α} (h : X (.ok a)) : Matched R X (.ok a) :=
   .inr ⟨a, rfl, a, h, hR a⟩
 
-/-- Undefined behavior in `X` simulates everything. -/
-theorem of_ub {e : ErrReason} (he : e.isUB = true) (h : X (.err e)) (r' : Res α) : Sim R X r' :=
+/-- Undefined behavior in `X` matches everything. -/
+theorem of_ub {e : ErrReason} (he : e.isUB = true) (h : X (.err e)) (r' : Res α) : Matched R X r' :=
   .inl ⟨e, he, h⟩
 
-/-- A non-UB error is never simulated unless `X` may be undefined. -/
-theorem err_iff {e : ErrReason} : Sim R X (.err e) ↔ ∃ e', e'.isUB = true ∧ X (.err e') := by
+/-- A non-UB error is never matched unless `X` may be undefined. -/
+theorem err_iff {e : ErrReason} : Matched R X (.err e) ↔ ∃ e', e'.isUB = true ∧ X (.err e') := by
   constructor
   · rintro (h | ⟨a', h, -⟩)
     · exact h
@@ -55,15 +71,15 @@ theorem err_iff {e : ErrReason} : Sim R X (.err e) ↔ ∃ e', e'.isUB = true �
   · exact .inl
 
 theorem mono {R' : α → α → Prop} (hR : ∀ a' a, R a' a → R' a' a) (hX : ∀ r, X r → Y r) {r' : Res α}
-    (h : Sim R X r') : Sim R' Y r' := by
+    (h : Matched R X r') : Matched R' Y r' := by
   rcases h with ⟨e, he, hx⟩ | ⟨a', h, a, hx, hr⟩
   · exact .inl ⟨e, he, hX _ hx⟩
   · exact .inr ⟨a', h, a, hX _ hx, hR _ _ hr⟩
 
-/-- Simulation composes: if every outcome of `Y` is simulated by `X`, then
-whatever `Y` simulates, `X` simulates. -/
-theorem trans (hR : ∀ a b c, R a b → R b c → R a c) (hYX : ∀ r, Y r → Sim R X r) {r' : Res α}
-    (h : Sim R Y r') : Sim R X r' := by
+/-- Matching composes: if every outcome of `Y` is matched by `X`, then
+whatever `Y` matches, `X` matches. -/
+theorem trans (hR : ∀ a b c, R a b → R b c → R a c) (hYX : ∀ r, Y r → Matched R X r) {r' : Res α}
+    (h : Matched R Y r') : Matched R X r' := by
   rcases h with ⟨e, he, hy⟩ | ⟨a', rfl, b, hy, hab⟩
   · exact .inl (err_iff.mp (hYX _ hy))
   · rcases hYX _ hy with hu | ⟨b', hb, c, hx, hbc⟩
@@ -71,11 +87,11 @@ theorem trans (hR : ∀ a b c, R a b → R b c → R a c) (hYX : ∀ r, Y r → 
     · cases hb
       exact .inr ⟨a', rfl, c, hx, hR _ _ _ hab hbc⟩
 
-end Sim
+end Matched
 
-/-- Refinement is pointwise simulation up to observational equality. -/
-theorem Refines_iff_sim {Q P : Prog} :
-    Refines Q P ↔ ∀ I ρ₀ m₀, P.Pre I ρ₀ m₀ → ∀ r, Q.exec I ρ₀ m₀ r → Sim (obsEq P.interface) (P.exec I ρ₀ m₀) r := by
+/-- Refinement is pointwise matching up to observational equality. -/
+theorem Refines_iff_matched {Q P : Prog} :
+    Refines Q P ↔ ∀ I ρ₀ m₀, P.Pre I ρ₀ m₀ → ∀ r, Q.exec I ρ₀ m₀ r → Matched (obsEq P.interface) (P.exec I ρ₀ m₀) r := by
   constructor
   · intro h I ρ₀ m₀ hp r hr
     rcases h I ρ₀ m₀ hp with hu | hall
