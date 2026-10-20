@@ -2773,7 +2773,7 @@ class SymbolResolver:
     The reuse is per state on purpose: what a state sees depends on the control flow regions
     around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
     data descriptors, is genuinely per SDFG and is reused as such. A resolver is only valid while
-    the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
+    the symbols, data descriptors, control flow regions, inter-state edges and scopes stay unchanged.
     """
 
     def __init__(self) -> None:
@@ -2782,6 +2782,7 @@ class SymbolResolver:
         self._region_updates: dict[
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
+        self._per_scope: dict[tuple[SDFGState, nd.EntryNode], dict[str, dtypes.typeclass]] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
         state_symbols = self._per_state.get(state)
@@ -2792,7 +2793,18 @@ class SymbolResolver:
             state_symbols = self._per_state[state] = state.symbols_defined_at_state(
                 sdfg_symbols=sdfg_symbols, region_updates=self._region_updates
             )
-        return state.symbols_defined_at(node, state_symbols=state_symbols)
+        # What a node sees depends only on its innermost scope. The cached scope dict is read in place:
+        # ``scope_dict()`` copies it per call.
+        sdict = state._scope_dict_toparent_cached
+        scope = (state.scope_dict() if sdict is None else sdict).get(node)
+        if scope is None:
+            return state.symbols_defined_at(node, state_symbols=state_symbols)
+        scope_symbols = self._per_scope.get((state, scope))
+        if scope_symbols is None:
+            scope_symbols = self._per_scope[(state, scope)] = state.symbols_defined_at(
+                node, state_symbols=state_symbols
+            )
+        return collections.OrderedDict(scope_symbols)
 
     def forget(self, sdfg: "SDFG") -> None:
         """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
@@ -2802,6 +2814,7 @@ class SymbolResolver:
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}
+        self._per_scope = {key: syms for key, syms in self._per_scope.items() if key[0].sdfg is not sdfg}
 
 
 @make_properties
