@@ -29,6 +29,7 @@ from dace import properties, symbolic
 from dace.optionals import required
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic, as_expr, config_int
+from dace.sdfg.sdfg import forget_all_facts, memoize_facts
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -49,31 +50,18 @@ DEFAULT_UNROLL_TASKLET_BUDGET = config_int("optimizer", "canonicalization", "unr
 DEFAULT_PEEL_LIMIT = config_int("optimizer", "canonicalization", "peel_limit")
 #: Modulo spellings the peel rewrite folds; ``CMod`` only over a nonnegative band.
 _MODULO_FUNC_NAMES = frozenset({"Mod", "py_mod", "ftn_modulo", "CMod"})
-#: "not built yet", distinct from a built-but-absent value.
-_UNBUILT = object()
 
 
 def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
-#: Largest loop nest, in control-flow blocks, the split search probes. The search isolates the nest and
-#: deep-copies it per candidate, and a split it takes duplicates the nest in the program: CLOUDSC's level loop
-#: (3475 blocks; the next largest loop has 79) cost 170 s of search per canonicalization, and its split, before
-#: the count stopped scoring copies, doubled the 8000-line function g++ spends minutes on. The kernels a split
-#: unblocks (TSVC's boundary conflicts) are a few dozen blocks.
+#: Largest loop nest, in control-flow blocks, the split search probes. A split it takes duplicates the nest in the
+#: program: CLOUDSC's level loop (3475 blocks; the next largest loop has 79) cost 170 s of search per
+#: canonicalization when the search still copied the nest per candidate, and its split, before the count stopped
+#: scoring copies, doubled the 8000-line function g++ spends minutes on. The kernels a split unblocks (TSVC's
+#: boundary conflicts) are a few dozen blocks.
 SPLIT_SEARCH_MAX_BLOCKS = 1024
-
-
-def mappable_count_upper_bound(candidate: SDFG, verdicts: dict[str, bool]) -> int:
-    """An upper bound on ``BestEffortLoopPeeling._mappable_loop_count(candidate, dict(verdicts))``, without its prep.
-
-    The count scores each loop label 0 or 1 -- its memoized verdict when the label is in ``verdicts``, a
-    fresh probe otherwise -- and skips provably-single-iteration loops. Its prep passes (scalar
-    privatization, symbol and constant propagation, iterator renaming without post-value states)
-    add, remove and relabel no ``LoopRegion``, so the loops and labels read here are the ones the
-    count scores."""
-    return len({loop.label for loop in _loops(candidate) if verdicts.get(loop.label, True)})
 
 
 def _as_symbolic(expr):
@@ -464,9 +452,9 @@ class BestEffortLoopPeeling(ppl.Pass):
 
     Split points are DERIVED from the body -- an equality guard's value, a broadcast read's
     conflicting index -- rather than enumerated blindly, so the body nominates the few cuts
-    worth trying. Those candidates are still probed (each on a ``copy.deepcopy``, revertible
-    by construction) and only the one unblocking the most maps reaches the real SDFG. A loop
-    the body nominates nothing for is left alone: sequential and correct.
+    worth trying. Those candidates are still probed -- each segment on the loop itself, under
+    the segment's header and restored after the probe -- and only the one unblocking the most
+    maps is built. A loop the body nominates nothing for is left alone: sequential and correct.
 
     Peeling is what a split at a boundary point degenerates to (``_split_loop_at`` drops the
     empty side), so there is no separate boundary-peel stage. The wrapping-modulo peel does
@@ -675,7 +663,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         drops it -- leaving a body with nothing left to block ``LoopToMap``.
 
         Liberal by design, like the other candidate sources: :meth:`_best_split_for` probes each
-        candidate on an isolated copy and keeps one only if it unblocks strictly more maps.
+        candidate and keeps one only if it unblocks strictly more maps.
         """
         ivar_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
         values = []
@@ -768,9 +756,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         rewrite fixes it -- but each side of the crossover has read and write sets that no longer
         meet).
 
-        Liberal by design: :meth:`_best_split_for` probes every candidate on an isolated copy and
-        keeps only one that raises the count of loops ``LoopToMap`` can prove parallel, so a
-        candidate that unblocks nothing is discarded rather than trusted.
+        Liberal by design: :meth:`_best_split_for` probes every candidate and keeps only one that
+        raises the count of loops ``LoopToMap`` can prove parallel, so a candidate that unblocks
+        nothing is discarded rather than trusted.
         """
         ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
         reads, writes = self.point_accesses(loop)
@@ -862,9 +850,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         ``a[i] = a[N//2] + b[i]``).
 
         Returns loop-invariant split values (``!=`` the loop variable). Liberal by
-        design: :meth:`_best_split_for` probes each candidate on an isolated copy and
-        keeps only one that raises the mappable-loop count, so a non-helping candidate
-        is harmless.
+        design: :meth:`_best_split_for` probes each candidate and keeps only one that
+        raises the mappable-loop count, so a non-helping candidate is harmless.
         """
         ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
         reads, writes = self.point_accesses(loop)
@@ -984,8 +971,78 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
-        from dace.transformation.passes.analysis import loop_analysis
         from dace.transformation.passes.unique_loop_iterators import freshen_copied_loops
+
+        plan = self._split_plan(sdfg, loop, x, middle_singleton, clamp)
+        if not plan:
+            return []
+        parent = loop.parent_graph
+        # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a
+        # clone lands disconnected, so from then on the region has several source blocks and
+        # ``start_block`` refuses to guess between them unless an entry was pinned at construction
+        # (a region whose entry is merely the unique source has none). The chain head then inherits
+        # the role via ``is_start_block`` below, so the region is never momentarily entry-less.
+        is_start = parent.start_block is loop
+
+        chain: list[LoopRegion] = []
+        in_edges = list(parent.in_edges(loop))
+        out_edges = list(parent.out_edges(loop))
+
+        def clone_segment(last: bool = False) -> LoopRegion:
+            label = _unique_block_label(sdfg, loop.label)
+            if last and reuse_loop:
+                # The last segment IS the loop: every earlier clone is already taken, so copying it once
+                # more only to delete the original is a whole-nest deepcopy for nothing. Removed and
+                # re-added, it lands where that last clone would, with the edges re-attached below.
+                parent.remove_node(loop)
+                seg = loop
+            else:
+                seg = copy.deepcopy(loop)
+            seg.label = label
+            # Registers the clone so the next unique-label query sees it, and marks the head of the
+            # chain as the region entry when the loop it replaces was one.
+            parent.add_node(seg, is_start_block=is_start and not chain)
+            return seg
+
+        for index, (init, condition, _singleton) in enumerate(plan):
+            segment = clone_segment(last=index == len(plan) - 1)
+            if init is not None:
+                segment.init_statement = CodeBlock(init)
+            if condition is not None:
+                segment.loop_condition = CodeBlock(condition)
+            chain.append(segment)
+
+        # A reused loop took its own edges with it; otherwise each edge moves over before the loop goes.
+        for ie in in_edges:
+            parent.add_edge(ie.src, chain[0], ie.data)
+            if not reuse_loop:
+                parent.remove_edge(ie)
+        for prev, nxt in zip(chain, chain[1:]):
+            parent.add_edge(prev, nxt, InterstateEdge())
+        for oe in out_edges:
+            parent.add_edge(chain[-1], oe.dst, oe.data)
+            if not reuse_loop:
+                parent.remove_edge(oe)
+        if not reuse_loop:
+            parent.remove_node(loop)
+        # Every segment but the last is a copy whose iterators the last one still holds: renamed here, the split
+        # leaves nothing for ``UniqueLoopIterators`` to do (the last keeps the names a read after the loop sees).
+        if freshen:
+            freshen_copied_loops(sdfg, chain[:-1])
+        return chain
+
+    def _split_plan(
+        self, sdfg: SDFG, loop: LoopRegion, x, middle_singleton: bool = True, clamp: frozenset[str] = frozenset()
+    ) -> list[tuple[str | None, str | None, bool]]:
+        """The segments :meth:`_split_loop_at` carves ``loop`` into at ``x``, in order, without carving them.
+
+        Each is ``(init, condition, singleton)``: the init statement and the loop condition the segment
+        replaces ``loop``'s own with (``None`` keeps the loop's), and whether it is the middle singleton
+        ``{x}``. Empty when the split is refused: a break, a non-unit stride, unreadable bounds, an ``x``
+        provably outside the range, or a two-way split whose first half would be empty. The split search
+        probes these headers on ``loop`` itself (:meth:`_mappable_segments`), so the segments it scores
+        are the ones the split it picks then builds."""
+        from dace.transformation.passes.analysis import loop_analysis
 
         # A break leaves only its own segment, and every segment after it would still run.
         if any(isinstance(block, BreakBlock) for block in loop_analysis.loop_jumps(loop)):
@@ -1018,85 +1075,32 @@ class BestEffortLoopPeeling(ppl.Pass):
             ):
                 return []
         ivar = loop.loop_variable
-        parent = loop.parent_graph
-        # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a
-        # clone lands disconnected, so from then on the region has several source blocks and
-        # ``start_block`` refuses to guess between them unless an entry was pinned at construction
-        # (a region whose entry is merely the unique source has none). The chain head then inherits
-        # the role via ``is_start_block`` below, so the region is never momentarily entry-less.
-        is_start = parent.start_block is loop
         # Drop a range segment that is provably empty at a boundary split point.
         want_before = symbolic.simplify(x - start) != 0  # x != start -> [start, x-1] is non-empty
         want_after = symbolic.simplify(x - end) != 0  # x != end   -> [x+1, end] is non-empty
         if not middle_singleton and not want_before:
             return []  # [x, end] would be the whole loop -> nothing to split
 
-        chain: list[LoopRegion] = []
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
-
-        def clone_segment(last: bool = False) -> LoopRegion:
-            label = _unique_block_label(sdfg, loop.label)
-            if last and reuse_loop:
-                # The last segment IS the loop: every earlier clone is already taken, so copying it once
-                # more only to delete the original is a whole-nest deepcopy for nothing. Removed and
-                # re-added, it lands where that last clone would, with the edges re-attached below.
-                parent.remove_node(loop)
-                seg = loop
-            else:
-                seg = copy.deepcopy(loop)
-            seg.label = label
-            # Registers the clone so the next unique-label query sees it, and marks the head of the
-            # chain as the region entry when the loop it replaces was one.
-            parent.add_node(seg, is_start_block=is_start and not chain)
-            return seg
-
+        plan: list[tuple[str | None, str | None, bool]] = []
         if want_before:
-            before = clone_segment()
             # [start, x-1]; clamped to ``end + 1`` where ``x <= end`` is not provable, so an ``x``
             # past the end makes this segment exactly the original loop instead of overrunning it.
             hi = f"min(({x}), ({end}) + 1)" if "before" in clamp else f"({x})"
-            before.loop_condition = CodeBlock(f"{ivar} < {hi}")
-            chain.append(before)
+            plan.append((None, f"{ivar} < {hi}", False))
         if middle_singleton:
-            # {x} intersected with [start, end]: at most a single iteration
-            at = clone_segment(last=not want_after)
-            # Clamped to the range, so an out-of-range ``x`` runs nothing here rather than an
-            # iteration the loop never had. Nobody maps a singleton, so the min/max costs no
-            # parallelism -- unlike the range segments, whose bounds must stay bare for
-            # ``LoopToMap`` and are guarded by :meth:`_split_range_relations` instead.
-            at.init_statement = CodeBlock(f"{ivar} = max(({x}), ({start}))")
-            at.loop_condition = CodeBlock(f"{ivar} < min(({x}), ({end})) + 1")
-            chain.append(at)
+            # {x} intersected with [start, end]: at most a single iteration. Clamped to the range, so
+            # an out-of-range ``x`` runs nothing here rather than an iteration the loop never had.
+            # Nobody maps a singleton, so the min/max costs no parallelism -- unlike the range
+            # segments, whose bounds must stay bare for ``LoopToMap`` and are guarded by
+            # :meth:`_split_range_relations` instead.
+            plan.append((f"{ivar} = max(({x}), ({start}))", f"{ivar} < min(({x}), ({end})) + 1", True))
             if want_after:
-                after = clone_segment(last=True)  # [x+1, end], original condition
                 lo = f"max(({x}) + 1, ({start}))" if "after" in clamp else f"({x}) + 1"
-                after.init_statement = CodeBlock(f"{ivar} = {lo}")
-                chain.append(after)
+                plan.append((f"{ivar} = {lo}", None, False))  # [x+1, end], original condition
         else:
-            after = clone_segment(last=True)  # [x, end]: x joins the second half, original condition
             lo = f"max(({x}), ({start}))" if "after" in clamp else f"({x})"
-            after.init_statement = CodeBlock(f"{ivar} = {lo}")
-            chain.append(after)
-
-        # A reused loop took its own edges with it; otherwise each edge moves over before the loop goes.
-        for ie in in_edges:
-            parent.add_edge(ie.src, chain[0], ie.data)
-            if not reuse_loop:
-                parent.remove_edge(ie)
-        for prev, nxt in zip(chain, chain[1:]):
-            parent.add_edge(prev, nxt, InterstateEdge())
-        for oe in out_edges:
-            parent.add_edge(chain[-1], oe.dst, oe.data)
-            if not reuse_loop:
-                parent.remove_edge(oe)
-        if not reuse_loop:
-            parent.remove_node(loop)
-        # Every segment but the last is a copy whose iterators the last one still holds: renamed here, the split
-        # leaves nothing for ``UniqueLoopIterators`` to do (the last keeps the names a read after the loop sees).
-        if freshen:
-            freshen_copied_loops(sdfg, chain[:-1])
-        return chain
+            plan.append((f"{ivar} = {lo}", None, False))  # [x, end]: x joins the second half, original condition
+        return plan
 
     def _split_range_relations(self, loop: LoopRegion, x):
         """The range-membership relations an index-set split at ``x`` needs for ``loop`` but cannot
@@ -1230,9 +1234,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         specialize_loop_under_condition(loop, condition, parallelize, sdfg)
 
     def _best_split_for(self, loop: LoopRegion, sdfg: SDFG):
-        """``(x, middle_singleton)`` for the index-set split that unblocks the most maps for
-        ``loop`` (probed on an isolated copy), or ``None`` if splitting does not help or the loop
-        already maps.
+        """``(x, middle_singleton, guarded)`` for the index-set split that unblocks the most maps
+        for ``loop``, or ``None`` if splitting does not help or the loop already maps.
+
+        Analyze first, transform only the winner: every candidate's segments are probed on ``loop``
+        itself (:meth:`_mappable_segments`), which is restored after each probe, so the search
+        copies nothing and leaves the graph as it found it.
 
         The mode travels with the point because the two candidate families want different splits: a
         guard true for ONE iteration wants that iteration carved out (``middle_singleton``), a guard
@@ -1241,7 +1248,7 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
         # broadcast-conflict split point has no split candidate, so a split can never unblock it --
-        # skip the can_be_applied probe AND the isolate-and-search (behaviour-identical: both paths
+        # skip the can_be_applied probe AND the segment probes (behaviour-identical: both paths
         # return None here). On a stencil like channel_flow this drops the whole split search to a
         # cheap syntactic scan instead of a per-loop can_be_applied probe.
         candidates = self._equality_guard_values(loop)
@@ -1268,51 +1275,139 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return None
         except Exception:
             pass
-        mini, _ = self._isolate_loop(loop, sdfg)
-        if mini is None:
-            return None
-        # A split rewrites only the loop it carves: every loop nested in it keeps its verdict in each segment and
-        # counts once under its label, so it adds the same to every count. Only the split loop (baseline) and its
-        # segments (candidates) are scored -- the comparison the whole-nest counts made, without probing the nest.
-        split_label = _loops(mini)[0].label if _loops(mini) else None
-        try:
-            baseline = self._mappable_loop_count(copy.deepcopy(mini), scored=frozenset({required(split_label)}))
-        except Exception:
-            return None
-        best_count, best = baseline, None
-        for x in candidates:
-            singleton = x not in two_way
-            clamp = self._split_sides_needing_clamp(_loops(mini)[0], x) or frozenset()
-            # Probe the clamped form first; if it needs a clamp, probe the BARE-bound form too.
-            # Clamping writes the split point into the segment's own bound (``Min(x, end + 1)``),
-            # and the dependence test that the split exists to unblock then has to see ``x`` is
-            # outside ``[start, Min(x, end + 1) - 1]`` -- true, but not through the ``Min``. When
-            # the bare bound unlocks strictly more maps, the guarded emission is worth its
-            # sequential fallback; when it unlocks the same, clamping is free and keeps the
-            # fallback copy out (measured: the fallback doubled hybrid_sparse's residual loops).
-            for guarded in (False, True) if clamp else (False,):
-                cand = copy.deepcopy(mini)
-                cloops = _loops(cand)
-                if not cloops:
-                    continue
-                sides = frozenset() if guarded else clamp
-                segments = self._split_loop_at(
-                    cand, cloops[0], x, middle_singleton=singleton, clamp=sides, reuse_loop=True, freshen=False
-                )
-                if not segments:
-                    continue
-                labels = frozenset(segment.label for segment in segments)
-                # Skipping a candidate that cannot beat the best is what a count <= best_count does anyway.
-                if len(labels) <= best_count:
-                    continue
-                self._clean_peeled_remainder(cand)
-                try:
-                    n_mappable = self._mappable_loop_count(cand, scored=labels)
-                except Exception:
-                    continue
-                if n_mappable > best_count:
-                    best_count, best = n_mappable, (x, singleton, guarded)
+        # The loop itself maps nothing (just probed), so a candidate wins with one mappable segment and a later one
+        # only by mapping strictly more: the first candidate reaching a count keeps it.
+        best_count, best = 0, None
+        # Each probe resolves the facts of the SDFG for every guard it decides; shared until a probe edits a branch.
+        with memoize_facts():
+            for x in candidates:
+                singleton = x not in two_way
+                clamp = self._split_sides_needing_clamp(loop, x) or frozenset()
+                # Probe the clamped form first; if it needs a clamp, probe the BARE-bound form too.
+                # Clamping writes the split point into the segment's own bound (``Min(x, end + 1)``),
+                # and the dependence test that the split exists to unblock then has to see ``x`` is
+                # outside ``[start, Min(x, end + 1) - 1]`` -- true, but not through the ``Min``. When
+                # the bare bound unlocks strictly more maps, the guarded emission is worth its
+                # sequential fallback; when it unlocks the same, clamping is free and keeps the
+                # fallback copy out (measured: the fallback doubled hybrid_sparse's residual loops).
+                for guarded in (False, True) if clamp else (False,):
+                    mappable = self._mappable_segments(
+                        sdfg, loop, x, singleton, frozenset() if guarded else clamp, best_count
+                    )
+                    if mappable > best_count:
+                        best_count, best = mappable, (x, singleton, guarded)
         return best
+
+    def _mappable_segments(
+        self, sdfg: SDFG, loop: LoopRegion, x, middle_singleton: bool, clamp: frozenset[str], to_beat: int = 0
+    ) -> int:
+        """How many range segments of the index-set split of ``loop`` at ``x`` ``LoopToMap`` could parallelize.
+
+        Nothing is built. Each segment :meth:`_split_plan` describes is probed on ``loop`` ITSELF, under that
+        segment's header and as the cleanup after a real split leaves its body (:meth:`_probe_segment`), and
+        ``loop`` is restored after every probe. The middle singleton is not scored: it is DOALL by construction,
+        with no dependence proven about it, and counting it would score a split that only ADDS a residual
+        sequential loop as a win. Neither is a range segment that provably runs at most once, for the same reason.
+
+        :param to_beat: The count the caller already holds; a split with no more range segments than that
+                        cannot exceed it and is not probed (0 is returned).
+        :returns: The number of range segments that map; 0 when the split is refused.
+        """
+        ranges = [
+            (init, condition)
+            for init, condition, singleton in self._split_plan(sdfg, loop, x, middle_singleton, clamp)
+            if not singleton
+        ]
+        if len(ranges) <= to_beat:
+            return 0
+        return sum(1 for init, condition in ranges if self._probe_segment(sdfg, loop, init, condition))
+
+    def _probe_segment(self, sdfg: SDFG, loop: LoopRegion, init: str | None, condition: str | None) -> bool:
+        """Whether ``LoopToMap`` could parallelize ``loop`` with ``init`` / ``condition`` replacing its init statement
+        and loop condition (``None`` keeps it), after the cleanup a split runs on a segment.
+
+        Probed on ``loop`` itself, without copying it: its header is swapped to the segment's, the guards the
+        range-aware ``LiftTrivialIf`` would resolve over that range are resolved in place
+        (:meth:`_lift_trivial_ifs_virtually`), and the modulo subsets the shortened range makes affine are folded
+        (:meth:`_rewrite_modulo_over_range`). Every edit keeps what it replaced -- the header ``CodeBlock`` objects,
+        the branch entries, the subset ranges -- and puts it back afterwards, whether the probe returned or raised.
+
+        A verdict only CHOOSES a split. The split itself and ``LoopToMap`` after it re-check everything on the
+        transformed graph, so a wrong verdict costs a missed or a pointless split, never a miscompile."""
+        from dace.properties import CodeBlock
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.analysis import loop_analysis
+
+        header = (loop.init_statement, loop.loop_condition)
+        branches: dict[ConditionalBlock, list] = {}
+        subsets: list[tuple[Any, list, list]] = []
+        try:
+            if init is not None:
+                loop.init_statement = CodeBlock(init)
+            if condition is not None:
+                loop.loop_condition = CodeBlock(condition)
+            if loop_analysis.loop_provably_at_most_one_iteration(loop):
+                return False
+            self._lift_trivial_ifs_virtually(loop, branches)
+            self._rewrite_modulo_over_range(loop, saved=subsets)
+            return bool(LoopToMap.can_be_applied_to(sdfg, loop=loop))
+        except Exception:
+            return False
+        finally:
+            # In reverse: a range listed twice (one subset shared by two memlets) ends at its first, original value.
+            for subset, ranges, tile_sizes in reversed(subsets):
+                subset.ranges[:] = ranges
+                subset.tile_sizes[:] = tile_sizes
+            for cfb, entries in branches.items():
+                cfb.branches[:] = entries
+            loop.init_statement, loop.loop_condition = header
+            if branches:
+                forget_all_facts()  # the restored branches hold their interstate assignments again
+
+    @staticmethod
+    def _lift_trivial_ifs_virtually(loop: LoopRegion, saved: dict[ConditionalBlock, list]) -> None:
+        """Resolve, in place and reversibly, the conditionals in ``loop`` that ``LiftTrivialIf`` would collapse.
+
+        The decisions are ``LiftTrivialIf``'s own (:meth:`~dace.transformation.passes.lift_trivial_if.LiftTrivialIf.
+        dead_branch`, :meth:`~dace.transformation.passes.lift_trivial_if.LiftTrivialIf.taken_branch`), which read
+        the ranges of the enclosing loops from the graph, so they see the header the caller swapped in. Where the pass
+        would move a branch up into the parent region, the branch list of the conditional becomes that one branch with
+        no condition (it always runs, and a must-write analysis sees it as exhaustive), or no branch at all when
+        nothing runs. Dropped branches leave the walk, so a guard nested in a lifted branch is decided in a later sweep,
+        as the pass's fixpoint decides it after the lift.
+
+        :param saved: Receives, per conditional edited, its original branch entries (the very objects), for the caller
+                      to put back with ``cfb.branches[:] = entries``.
+        """
+        from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+
+        lift = LiftTrivialIf()
+        resolved: set[ConditionalBlock] = set()
+        changed = True
+        while changed:
+            changed = False
+            for cfb in [b for b in loop.all_control_flow_blocks(recursive=True) if isinstance(b, ConditionalBlock)]:
+                if cfb in resolved:
+                    continue
+                entries = cfb.branches
+                # Recorded before the first edit, so a verdict that raises part-way leaves nothing unrecorded.
+                original = list(entries)
+                index = 0
+                while len(entries) > 2 and index < len(entries):
+                    if lift.dead_branch(entries[index][0], cfb):
+                        saved.setdefault(cfb, original)
+                        del entries[index]
+                        forget_all_facts()  # the branch may have held interstate assignments
+                        changed = True
+                    else:
+                        index += 1
+                decided, taken = lift.taken_branch(cfb)
+                if decided:
+                    saved.setdefault(cfb, original)
+                    entries[:] = [] if taken is None else [(None, taken)]
+                    forget_all_facts()
+                    resolved.add(cfb)
+                    changed = True
 
     def _prune_dead_loop_branches(self, sdfg: SDFG):
         """Collapse the boundary guards a peel leaves in the remainder loop body so
@@ -1741,8 +1836,10 @@ class BestEffortLoopPeeling(ppl.Pass):
             return x, frozenset(relations)
         return None
 
-    def _rewrite_modulo_over_range(self, sdfg: SDFG, collect: set | None = None):
-        """Rewrite every ``Mod(arg, m)`` memlet subset to an equivalent affine form
+    def _rewrite_modulo_over_range(
+        self, region: ControlFlowRegion, collect: set | None = None, saved: list[tuple[Any, list, list]] | None = None
+    ):
+        """Rewrite every ``Mod(arg, m)`` memlet subset in ``region``'s states to an equivalent affine form
         when ``arg`` provably stays in one band over its enclosing loops' ranges (see
         :meth:`_modulo_to_affine`). A peel that removes the wrapping boundary
         iterations leaves a remainder whose wrap-around modulo is the identity, and
@@ -1753,12 +1850,15 @@ class BestEffortLoopPeeling(ppl.Pass):
         on is added to it. The symbolic-split search reads that set back as the
         ``if cond: par else: seq`` branch condition (the fold is applied inside the
         parallel branch, where the condition already holds, so the relation guards
-        the branch rather than aborting)."""
+        the branch rather than aborting).
+
+        When ``saved`` is given, it receives ``(subset, ranges, tile_sizes)`` -- copies of what a subset held -- before
+        each subset is rewritten, so a caller probing the fold can put the subsets back."""
         import sympy
 
         from dace import subsets
 
-        for st in sdfg.states():
+        for st in region.states():
             ranges = self._enclosing_loop_ranges(st)
             repl: dict[Any, Any] = {}
             ranges_seen = []
@@ -1784,109 +1884,9 @@ class BestEffortLoopPeeling(ppl.Pass):
                                         collect.update(relations)
             if repl:
                 for r in ranges_seen:
+                    if saved is not None:
+                        saved.append((r, list(r.ranges), list(r.tile_sizes)))
                     r.replace(repl)
-
-    def _mappable_loop_count(
-        self, candidate: SDFG, verdicts: dict[str, bool] | None = None, scored: frozenset[str] | None = None
-    ) -> int:
-        """Cheap proxy for "does the peel unblock parallelization?": run scalar
-        fission -> symbol propagation -> constant propagation -> iterator SSA (no reduction
-        passes), then COUNT the loops ``LoopToMap`` *could* parallelize -- via
-        ``can_be_applied_to``, WITHOUT applying it. Peeling is a preparation pass;
-        the actual ``LoopToMap`` is the pipeline's ``parallelize`` stage, so the
-        search only probes ``can_be_applied``. Mutates ``candidate`` (the prep).
-
-        This is the whole soundness argument for the derived split points: a candidate is KEPT
-        only when this count rises, so it must count what the pipeline will actually achieve and
-        nothing else. Two things it must therefore do:
-
-        - See the segments a split makes as independent. They share the original iterator name, and
-          ``LoopToMap`` sees a later segment rebinding it, not reading it: the segments a split exists
-          to unblock are counted without renaming them (``UniqueLoopIterators`` once per candidate).
-        - Count a loop once however many copies of it a split made. Every segment is a deepcopy of the
-          loop, so an inner loop that maps in the original maps again in each segment under the same
-          label; counted per copy, a split of CloudSC's level loop "unblocked" its ~30 inner loops
-          a second time while parallelizing nothing, and the whole nest was duplicated for it.
-        - Skip a loop accepted only because it provably runs at most once. Such a segment is DOALL
-          by construction, with no dependence proven about it, so counting it scores every split
-          that merely carves out a singleton as a win -- and a split that adds a residual sequential
-          loop while parallelizing nothing would then be accepted."""
-        from dace.transformation.passes.analysis import loop_analysis
-        from dace.transformation.passes.constant_propagation import ConstantPropagation
-        from dace.transformation.passes.scalar_fission import PrivatizeScalars
-        from dace.transformation.passes.symbol_propagation import SymbolPropagation
-
-        PrivatizeScalars().apply_pass(candidate, {})
-        SymbolPropagation().apply_pass(candidate, {})
-        ConstantPropagation().apply_pass(candidate, {})
-        # Built on the first loop that actually needs a probe, then shared by the rest (see
-        # :meth:`_loop_to_map_prober`). Nothing here APPLIES a lift, so the graph the context
-        # describes never changes under it.
-        prober = _UNBUILT
-        mappable_labels: set[str] = set()
-        for loop in _loops(candidate):
-            if scored is not None and loop.label not in scored:
-                continue
-            if loop.label in mappable_labels or loop_analysis.loop_provably_at_most_one_iteration(loop):
-                continue
-            # Memo across the probes of ONE search. Every probe re-scores the same isolated nest --
-            # CloudSC's level loop wraps ~30 inner ones -- and a split rewrites only the loop it
-            # carves, so the inner verdicts are recomputed unchanged once per candidate. The caller
-            # seeds the memo from the baseline and holds back the split loop's own label, whose
-            # verdict is the one the search exists to move.
-            if verdicts is not None and loop.label in verdicts:
-                mappable = verdicts[loop.label]
-            else:
-                if prober is _UNBUILT:
-                    prober = self._loop_to_map_prober(candidate)
-                try:
-                    mappable = bool(prober(loop))
-                except Exception:
-                    mappable = False
-                if verdicts is not None:
-                    verdicts[loop.label] = mappable
-            if mappable:
-                mappable_labels.add(loop.label)
-        return len(mappable_labels)
-
-    @staticmethod
-    def _loop_to_map_prober(candidate: SDFG):
-        """``loop -> LoopToMap.can_be_applied(loop)`` over ``candidate``, sharing ONE
-        :class:`~dace.transformation.interstate.loop_to_map.LiftContext` across every call.
-
-        ``LoopToMap.can_be_applied_to`` builds a fresh match per call, so each probe re-derives the
-        same whole-SDFG facts: the access-state index, the block topological order, ``sdfg``'s free
-        symbols, and every block's own free-symbol set. :meth:`_mappable_loop_count` scores EVERY
-        loop of the isolated nest -- 106 of them for CloudSC's biggest -- so that is the same walk a
-        hundred times over one unchanging graph. ``lift_context`` is the interface ``LoopToMap``
-        documents for exactly this ("a pass probing many loops of one SDFG builds this ONCE"), the
-        way ``parallelize_loops`` already drives its sweep; the verdict is the one the context-free
-        path returns, only without the repeated derivation.
-
-        Valid for the whole count because the count APPLIES nothing -- a context is invalidated by a
-        lift, and there is none here. Falls back to the per-call form if the context cannot be built,
-        so a graph the analysis chokes on is scored exactly as before rather than not at all."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context, build_lift_invariants
-
-        try:
-            ctx = build_lift_context(candidate, build_lift_invariants(candidate))
-        except Exception:
-            return lambda loop: LoopToMap.can_be_applied_to(candidate, loop=loop)
-        # One instance, reused: ``setup_match`` overwrites every field a probe reads.
-        xform = LoopToMap()
-        xform.lift_context = ctx
-
-        def probe(loop: LoopRegion) -> bool:
-            graph = loop.parent_graph
-            # ``override=True`` with the loop OBJECT resolves the match by identity, skipping the
-            # two linear scans (``graph.node_id`` and ``cfg_list.index``) a per-call match pays.
-            cfg_id = ctx.cfg_ids.get(graph)
-            if cfg_id is None:
-                cfg_id = graph.cfg_id  # a region the context predates; fall back to the scan
-            xform.setup_match(candidate, cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
-            return xform.can_be_applied(graph, 0, candidate, permissive=False)
-
-        return probe
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Unblock stuck loops, splitting or peeling each at a point taken from its body.
