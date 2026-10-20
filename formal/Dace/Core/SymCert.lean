@@ -37,7 +37,7 @@ structure Query where
   hyps : List Ineq := []
   disj : List Disj := []
   goal : Poly
-  deriving Repr, Inhabited
+  deriving DecidableEq, Repr, Inhabited
 
 namespace Query
 

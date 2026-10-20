@@ -173,22 +173,48 @@ theorem bindIdx_binds (ρ : Valuation) :
       simp only [this, ↓reduceIte]
       exact ho s fun h => hs (List.mem_cons_of_mem _ h)
 
+/-- `iterDisjoint?` with undecided obligations accepted by the oracle `orc`
+(R1/R2 design §3.5: obligations are discharged outside, e.g. by the Lean
+kernel on the file `Query.toLeanFile` emits).  With `orc = fun _ => false`
+it is `iterDisjoint?`. -/
+def iterDisjointWith? (orc : Query → Bool) (C : Constraints) (params : List Sym) (rng : Range) (dA : DataDesc)
+    (A : Subset) (dB : DataDesc) (B : Subset) : Bool :=
+  match iterObligations? C params rng dA A dB B with
+  | some qs => qs.all orc
+  | none => false
+
+theorem iterDisjointWith?_sound {I : ExprInterp} {ρ : Valuation} {orc : Query → Bool}
+    (horc : ∀ q, orc q = true → q.Valid) {C : Constraints} {params : List Sym} {rng : Range}
+    {dA dB : DataDesc} {A B : Subset} (h : iterDisjointWith? orc C params rng dA A dB B = true)
+    (hC : C.satisfies I ρ) {pts : List Idx}
+    (hrng : rng.points I ρ = some pts) {i i' : Idx} (hi : i ∈ pts) (hi' : i' ∈ pts) (hne : i ≠ i')
+    {ρi ρi' : Valuation} (hb : Binds ρ params i ρi) (hb' : Binds ρ params i' ρi') {psA psB : List Idx}
+    (hA : A.points I ρi = some psA) (hB : B.points I ρi' = some psB) {p q : Idx} (hp : p ∈ psA) (hq : q ∈ psB)
+    {o o' : Int} (ho : dA.linearOffset I ρi p = some o) (ho' : dB.linearOffset I ρi' q = some o') : o ≠ o' := by
+  unfold iterDisjointWith? at h
+  split at h
+  · rename_i qs hobl
+    exact iterObligations?_sound hobl (fun x hx => horc x (List.all_eq_true.1 h x hx)) hC hrng hi hi' hne hb hb'
+      hA hB hp hq ho ho'
+  · cases h
+
 /-- Static separation of two accesses in two **distinct iterations** of the
 map `params ∈ rng`: `accSep`, or both outside nested maps, pure, on the same
-non-scalar container, with `iterDisjoint?` subsets. -/
-def iterSep (ctx : Ctx) (C : Constraints) (params : List Sym) (rng : Range) (a b : Access) : Bool :=
+non-scalar container, with `iterDisjointWith?` subsets. -/
+def iterSep (ctx : Ctx) (orc : Query → Bool) (C : Constraints) (params : List Sym) (rng : Range) (a b : Access) :
+    Bool :=
   accSep a b ||
   (a.binders.isEmpty && b.binders.isEmpty && a.data == b.data && ctx.pointsPure a.data a.sub &&
     ctx.pointsPure b.data b.sub &&
     match ctx.desc? a.data with
     | some d => !d.isScalar &&
-        iterDisjoint? C params rng d (a.sub.getD (.range d.fullRange)) d (b.sub.getD (.range d.fullRange))
+        iterDisjointWith? orc C params rng d (a.sub.getD (.range d.fullRange)) d (b.sub.getD (.range d.fullRange))
     | none => true)
 
-theorem iterSep_sound {C : Constraints} {params : List Sym} {rng : Range} {ρ : Valuation} {pts : List Idx}
+theorem iterSep_sound {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid) {C : Constraints} {params : List Sym} {rng : Range} {ρ : Valuation} {pts : List Idx}
     {i j : Idx} {a b : Access} (hna : NoAlias m₀) (hC : C.satisfies ctx.I.expr ρ)
     (hrng : rng.points ctx.I.expr ρ = some pts) (hi : i ∈ pts) (hj : j ∈ pts) (hne : i ≠ j)
-    (hnd : params.Nodup) (hlen : params.length = rng.dims.length) (h : iterSep ctx C params rng a b = true) :
+    (hnd : params.Nodup) (hlen : params.length = rng.dims.length) (h : iterSep ctx orc C params rng a b = true) :
     Access.Sep ctx m₀ (ρ.bindIdx params i) (ρ.bindIdx params j) a b := by
   unfold iterSep at h
   rcases Bool.or_eq_true_iff.1 h with h | h
@@ -211,7 +237,7 @@ theorem iterSep_sound {C : Constraints} {params : List Sym} {rng : Range} {ρ : 
     rw [Ctx.elemOffset_of_not_scalar hns] at ho ho'
     have hli := ((Range.mem_points hrng).1 hi).length_eq
     have hlj := ((Range.mem_points hrng).1 hj).length_eq
-    have hne' := iterDisjoint?_sound hdis hC hrng hi hj hne (bindIdx_binds ρ hnd (by omega))
+    have hne' := iterDisjointWith?_sound horc hdis hC hrng hi hj hne (bindIdx_binds ρ hnd (by omega))
       (bindIdx_binds ρ hnd (by omega)) hA hB hp hq ho ho'
     rw [hl₁, Mem.resolve_of_none (hna _), Mem.resolve_of_none (hna _), ← hab] at hl₂
     simp only [Loc.elem, Loc.mk.injEq, List.cons.injEq, Accessor.lin.injEq, and_true, true_and] at hl₂
@@ -394,7 +420,7 @@ theorem forall₂_mem_right {α β : Type} {R : α → β → Prop} :
 
 section Check
 
-variable (ctx : Ctx) (s : State) (F : Nat)
+variable (ctx : Ctx) (s : State) (F : Nat) (orc : Query → Bool)
 
 /-- The static footprints of nodes `p` and `q` are separated (`accSep`). -/
 def nodesSep (p q : NodeId) : Bool :=
@@ -418,7 +444,7 @@ def mapOk (C : Constraints) (n : DNode) (mp : MapNode) : Bool :=
   match scopeFp ctx s F (s.directChildren (some n.id)) with
   | some B =>
     let B' := Access.shared ctx (ctx.privateTransients s n.id) B
-    B'.all fun a => B'.all fun b => iterSep ctx C mp.params mp.range a b
+    B'.all fun a => B'.all fun b => iterSep ctx orc C mp.params mp.range a b
   | none => false
 
 /-- Race freedom of a sequential execution of the nodes `ids` under facts
@@ -428,7 +454,7 @@ def bodyOk : Nat → Constraints → List NodeId → Bool
   | G + 1, C, ids => (scopeFp ctx s F ids).isSome && hbOk ctx s F ids &&
       ids.all fun id => match s.node? id with
         | some n => match n.kind with
-          | .mapEntry mp => mapOk ctx s F C n mp && mp.params.all (fun p => !C.syms.contains p) &&
+          | .mapEntry mp => mapOk ctx s F orc C n mp && mp.params.all (fun p => !C.syms.contains p) &&
               bodyOk G (C.addInts mp.params) (s.directChildren (some n.id))
           | _ => true
         | none => true
@@ -453,22 +479,22 @@ theorem pairwiseB_iff {α : Type} (R : α → α → Bool) (l : List α) :
   | cons x xs ih => simp [pairwiseB, ih, List.pairwise_cons]
 
 /-- The static race check of a state under facts `C`. -/
-def stateOk (ctx : Ctx) (C : Constraints) (s : State) : Bool :=
+def stateOk (ctx : Ctx) (orc : Query → Bool) (C : Constraints) (s : State) : Bool :=
   let F := s.nodes.length + 1
-  s.components.all (fun comp => bodyOk ctx s F F C (s.topLevelOf comp)) && pairwiseB (compsSep ctx s F) s.components
+  s.components.all (fun comp => bodyOk ctx s F orc F C (s.topLevelOf comp)) && pairwiseB (compsSep ctx s F) s.components
 
-theorem bodyOk_succ {ctx : Ctx} {s : State} {F G : Nat} {C : Constraints} {ids : List NodeId}
-    (h : bodyOk ctx s F G C ids = true) : ∃ G', G = G' + 1 := by
+theorem bodyOk_succ {orc : Query → Bool} {ctx : Ctx} {s : State} {F G : Nat} {C : Constraints} {ids : List NodeId}
+    (h : bodyOk ctx s F orc G C ids = true) : ∃ G', G = G' + 1 := by
   cases G with
   | zero => simp [bodyOk] at h
   | succ G' => exact ⟨G', rfl⟩
 
-theorem bodyOk_spec {ctx : Ctx} {s : State} {F G : Nat} {C : Constraints} {ids : List NodeId}
-    (h : bodyOk ctx s F (G + 1) C ids = true) :
+theorem bodyOk_spec {orc : Query → Bool} {ctx : Ctx} {s : State} {F G : Nat} {C : Constraints} {ids : List NodeId}
+    (h : bodyOk ctx s F orc (G + 1) C ids = true) :
     (∃ A, scopeFp ctx s F ids = some A) ∧ hbOk ctx s F ids = true ∧
       ∀ id ∈ ids, ∀ n, s.node? id = some n → ∀ mp, n.kind = .mapEntry mp →
-        mapOk ctx s F C n mp = true ∧ (∀ p ∈ mp.params, p ∉ C.syms) ∧
-          bodyOk ctx s F G (C.addInts mp.params) (s.directChildren (some n.id)) = true := by
+        mapOk ctx s F orc C n mp = true ∧ (∀ p ∈ mp.params, p ∉ C.syms) ∧
+          bodyOk ctx s F orc G (C.addInts mp.params) (s.directChildren (some n.id)) = true := by
   simp only [bodyOk, Bool.and_eq_true, List.all_eq_true, Option.isSome_iff_exists] at h
   obtain ⟨⟨hfp, hhb⟩, hall⟩ := h
   refine ⟨hfp, hhb, fun id hid n hn mp hk => ?_⟩
@@ -492,22 +518,25 @@ theorem stateFinish_clean {ctx : Ctx} {cst : CSt} {logs : List Log} (h : Log.pai
   exact Res.Clean.ok _
 
 /-- Iteration logs within separated footprints are pairwise free. -/
-theorem iterLogs_free {ctx : Ctx} {m₀ : Mem} {C : Constraints} {params : List Sym} {rng : Range} {ρ : Valuation}
+theorem iterLogs_free {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid) {ctx : Ctx} {m₀ : Mem} {C : Constraints} {params : List Sym} {rng : Range} {ρ : Valuation}
     {pts : List Idx} {logs : List Log} {B : List Access} (hna : NoAlias m₀) (hC : C.satisfies ctx.I.expr ρ)
     (hrng : rng.points ctx.I.expr ρ = some pts) (hnd : params.Nodup) (hlen : params.length = rng.dims.length)
-    (hsep : ∀ a ∈ B, ∀ b ∈ B, iterSep ctx C params rng a b = true)
+    (hsep : ∀ a ∈ B, ∀ b ∈ B, iterSep ctx orc C params rng a b = true)
     (hw : List.Forall₂ (fun g i => g.Within (LocPred.ofAccesses ctx m₀ (ρ.bindIdx params i) B)) logs pts) :
     Log.pairwiseFree logs = true := by
   rw [Log.pairwiseFree_iff_pairwise_free]
   refine ListLemmas.pairwise_of_forall₂ (R := fun i j : Idx => i ∈ pts ∧ j ∈ pts ∧ i ≠ j)
     (fun g i h j ⟨hi, hg⟩ ⟨hj, hh⟩ ⟨_, _, hne⟩ =>
-      free_of_sep hg hh fun a ha b hb => iterSep_sound hna hC hrng hi hj hne hnd hlen (hsep a ha b hb))
+      free_of_sep hg hh fun a ha b hb => iterSep_sound horc hna hC hrng hi hj hne hnd hlen (hsep a ha b hb))
     (forall₂_mem_right hw) ?_
   exact ((Range.points_nodup hrng).imp_of_mem fun hi hj hne => ⟨hi, hj, hne⟩)
 
 /-! ## Dataflow executions in the fragment never race -/
 
 section Dataflow
+
+variable {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid)
+include horc
 
 variable {ctx : Ctx} {s : State} {F : Nat}
 
@@ -552,8 +581,8 @@ mutual
 theorem NodeExec.clean {ρ : Valuation} {n : DNode} {st : St} {r : Res St} {G : Nat} {C : Constraints}
     {A : List Access} :
     NodeExec ctx ρ s n st r → C.satisfies ctx.I.expr ρ → NoAlias st.mem → nodeFp ctx s F n = some A →
-      (∀ mp, n.kind = .mapEntry mp → mapOk ctx s F C n mp = true ∧ (∀ p ∈ mp.params, p ∉ C.syms) ∧
-          bodyOk ctx s F G (C.addInts mp.params) (s.directChildren (some n.id)) = true) →
+      (∀ mp, n.kind = .mapEntry mp → mapOk ctx s F orc C n mp = true ∧ (∀ p ∈ mp.params, p ∉ C.syms) ∧
+          bodyOk ctx s F orc G (C.addInts mp.params) (s.directChildren (some n.id)) = true) →
       r.Clean
   | .simple _, _, _, _, _ => execSimple_clean _ _ _ _ _
   | .mapSetupErr _ hs, _, _, _, _ => Res.Clean.err_of hs (mapSetup_clean _ _ _ _ _ _)
@@ -578,7 +607,7 @@ theorem NodeExec.clean {ρ : Valuation} {n : DNode} {st : St} {r : Res St} {G : 
     · rename_i B hB'
       simp only [List.all_eq_true] at hB
       simp only [Ctx.rangePoints, Ctx.range_points_pure ctx _ _ hrp, Res.ofOption_eq_ok] at hpts
-      exact scopeFinish_clean (iterLogs_free hna hC hpts hnd hlen hB
+      exact scopeFinish_clean (iterLogs_free horc hna hC hpts hnd hlen hB
         (IterExec.fp_pairs (scopeFp_incl hB') rfl hna hi rfl))
     · cases hB
   | .consumeSetupErr hk _, _, _, hfp, _ => by rw [nodeFp_consumeEntry hk] at hfp; cases hfp
@@ -593,8 +622,8 @@ theorem SeqExec.clean {ρ : Valuation} {ids : List NodeId} {st : St} {r : Res (S
     {C : Constraints} {A : List Access} :
     SeqExec ctx ρ s ids st r → C.satisfies ctx.I.expr ρ → NoAlias st.mem → FpIncl ctx s F ids A →
       (∀ id ∈ ids, ∀ n, s.node? id = some n → ∀ mp, n.kind = .mapEntry mp →
-        mapOk ctx s F C n mp = true ∧ (∀ p ∈ mp.params, p ∉ C.syms) ∧
-          bodyOk ctx s F G (C.addInts mp.params) (s.directChildren (some n.id)) = true) →
+        mapOk ctx s F orc C n mp = true ∧ (∀ p ∈ mp.params, p ∉ C.syms) ∧
+          bodyOk ctx s F orc G (C.addInts mp.params) (s.directChildren (some n.id)) = true) →
       r.Clean
   | .nil, _, _, _, _ => Res.Clean.ok _
   | .missing _, _, _, _, _ => Res.Clean.err (by clean_err)
@@ -615,7 +644,7 @@ theorem SeqExec.clean {ρ : Valuation} {ids : List NodeId} {st : St} {r : Res (S
 theorem OrderedExec.clean {ρ : Valuation} {all direct : List NodeId} {st : St} {r : Res St} {G : Nat}
     {C : Constraints} :
     OrderedExec ctx ρ s all direct st r → C.satisfies ctx.I.expr ρ → NoAlias st.mem →
-      bodyOk ctx s F (G + 1) C direct = true → r.Clean
+      bodyOk ctx s F orc (G + 1) C direct = true → r.Clean
   | .prologueErr hp, _, _, _ => Res.Clean.err_of hp (bindViews_clean _ _ _ _ _)
   | .seqErr _ hp hs, hC, hna, hok => by
     obtain ⟨⟨A, hfp⟩, -, hmaps⟩ := bodyOk_spec hok
@@ -626,7 +655,7 @@ theorem OrderedExec.clean {ρ : Valuation} {all direct : List NodeId} {st : St} 
       (fun id hid => hmaps id (by simpa using (List.mem_filter.1 hid).2)))
   | .hbRace ho hp hs hf, _, hna, hok => by
     obtain ⟨⟨A, hfp⟩, hhb, -⟩ := bodyOk_spec hok
-    rw [hbFree_of_ok hna ho hp hs hfp hhb] at hf
+    rw [hbFree_of_ok horc hna ho hp hs hfp hhb] at hf
     cases hf
   | .run _ _ _ _, _, _, _ => Res.Clean.ok _
 
@@ -635,7 +664,7 @@ theorem IterExec.clean {ρ : Valuation} {entry : NodeId} {params : List Sym} {pr
     {pts : List Idx} {r : Res (List Log)} {G : Nat} {C : Constraints} :
     IterExec ctx ρ s entry params priv pre pts r →
       (∀ i ∈ pts, (C.addInts params).satisfies ctx.I.expr (ρ.bindIdx params i)) → NoAlias pre.mem →
-      bodyOk ctx s F G (C.addInts params) (s.directChildren (some entry)) = true → r.Clean
+      bodyOk ctx s F orc G (C.addInts params) (s.directChildren (some entry)) = true → r.Clean
   | .nil, _, _, _ => Res.Clean.ok _
   | .headErr hb, hC, hna, hok => by
     obtain ⟨G', rfl⟩ := bodyOk_succ hok
@@ -651,23 +680,26 @@ end Dataflow
 
 section StateLevel
 
+variable {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid)
+include horc
+
 variable {ctx : Ctx}
 
 theorem CompsExec.clean {ρ : Valuation} {s : State} {m : Mem} {F G : Nat} {C : Constraints} :
     ∀ {comps : List (List NodeId)} {r : Res (List Log)}, CompsExec ctx ρ s m comps r →
-      C.satisfies ctx.I.expr ρ → NoAlias m → (∀ comp ∈ comps, bodyOk ctx s F G C (s.topLevelOf comp) = true) →
+      C.satisfies ctx.I.expr ρ → NoAlias m → (∀ comp ∈ comps, bodyOk ctx s F orc G C (s.topLevelOf comp) = true) →
       r.Clean
   | _, _, .nil, _, _, _ => Res.Clean.ok _
   | _, _, .headErr hc, hC, hna, hok => by
     have h := hok _ (List.mem_cons_self ..)
     obtain ⟨G', rfl⟩ := bodyOk_succ h
-    exact Res.Clean.err_of rfl (OrderedExec.clean hc hC hna h)
+    exact Res.Clean.err_of rfl (OrderedExec.clean horc hc hC hna h)
   | _, _, .tailErr _ hr, hC, hna, hok =>
     CompsExec.clean hr hC hna fun comp hc => hok comp (List.mem_cons_of_mem _ hc)
   | _, _, .cons _ _, _, _, _ => Res.Clean.ok _
 
-theorem stateOk_spec {C : Constraints} {s : State} (h : stateOk ctx C s = true) :
-    (∀ comp ∈ s.components, bodyOk ctx s (s.nodes.length + 1) (s.nodes.length + 1) C (s.topLevelOf comp) = true) ∧
+theorem stateOk_spec {C : Constraints} {s : State} (h : stateOk ctx orc C s = true) :
+    (∀ comp ∈ s.components, bodyOk ctx s (s.nodes.length + 1) orc (s.nodes.length + 1) C (s.topLevelOf comp) = true) ∧
       s.components.Pairwise fun c₁ c₂ => compsSep ctx s (s.nodes.length + 1) c₁ c₂ = true := by
   simp only [stateOk, Bool.and_eq_true, List.all_eq_true] at h
   exact ⟨h.1, (pairwiseB_iff _ _).1 h.2⟩
@@ -675,9 +707,9 @@ theorem stateOk_spec {C : Constraints} {s : State} (h : stateOk ctx C s = true) 
 /-- The logs of the components of a checked state are pairwise free and bind
 no alias. -/
 theorem CompsExec.logs_free {ρ : Valuation} {s : State} {m : Mem} {C : Constraints} {logs : List Log}
-    (h : CompsExec ctx ρ s m s.components (.ok logs)) (hok : stateOk ctx C s = true) (hna : NoAlias m) :
+    (h : CompsExec ctx ρ s m s.components (.ok logs)) (hok : stateOk ctx orc C s = true) (hna : NoAlias m) :
     Log.pairwiseFree logs = true ∧ ∀ g ∈ logs, g.aliasSets = [] := by
-  obtain ⟨hbody, hsep⟩ := stateOk_spec hok
+  obtain ⟨hbody, hsep⟩ := stateOk_spec horc hok
   have hw := CompsExec.fp_logs (F := s.nodes.length + 1) h rfl
   have hw' := forall₂_mem_right hw.flip
   have hsome : ∀ comp ∈ s.components, ∃ A, scopeFp ctx s (s.nodes.length + 1) (s.topLevelOf comp) = some A :=
@@ -697,14 +729,14 @@ theorem CompsExec.logs_free {ρ : Valuation} {s : State} {m : Mem} {C : Constrai
 /-- A checked state never races, and a normal outcome keeps the valuation
 and binds no alias. -/
 theorem StateExec.good {cst : CSt} {s : State} {r : Res (Ctl × CSt)} {C : Constraints}
-    (h : StateExec ctx cst s r) (hok : stateOk ctx C s = true) (hC : C.satisfies ctx.I.expr cst.ρ)
+    (h : StateExec ctx cst s r) (hok : stateOk ctx orc C s = true) (hC : C.satisfies ctx.I.expr cst.ρ)
     (hna : NoAlias cst.mem) :
     r.Clean ∧ ∀ ctl cst', r = .ok (ctl, cst') → cst'.ρ = cst.ρ ∧ NoAlias cst'.mem := by
   cases h with
   | compsErr hc =>
-    refine ⟨Res.Clean.err_of rfl (CompsExec.clean hc hC hna (stateOk_spec hok).1), fun _ _ h => by cases h⟩
+    refine ⟨Res.Clean.err_of rfl (CompsExec.clean horc hc hC hna (stateOk_spec horc hok).1), fun _ _ h => by cases h⟩
   | @run _ _ _ logs hc =>
-    obtain ⟨hfree, hal⟩ := CompsExec.logs_free hc hok hna
+    obtain ⟨hfree, hal⟩ := CompsExec.logs_free horc hc hok hna
     refine ⟨stateFinish_clean hfree, fun ctl cst' hr => ?_⟩
     unfold stateFinish at hr
     split at hr
@@ -774,21 +806,21 @@ end
 
 section ControlLemmas
 
-variable {ctx : Ctx} {C : Constraints}
+variable {orc : Query → Bool} {ctx : Ctx} {C : Constraints}
 
 theorem Region.raceOk_eq (rg : Region) :
-    Region.raceOk (stateOk ctx C) C rg =
-      (Blocks.raceOk (stateOk ctx C) C rg.blocks && rg.edges.all fun e => e.assigns.all fun a => !C.syms.contains a.1) := by
+    Region.raceOk (stateOk ctx orc C) C rg =
+      (Blocks.raceOk (stateOk ctx orc C) C rg.blocks && rg.edges.all fun e => e.assigns.all fun a => !C.syms.contains a.1) := by
   cases rg; rfl
 
 theorem Block.raceOk_loop (l : LoopRegion) :
-    Block.raceOk (stateOk ctx C) C (.loop l) =
+    Block.raceOk (stateOk ctx orc C) C (.loop l) =
       (l.init.all (fun a => !C.syms.contains a.1) && l.update.all (fun a => !C.syms.contains a.1) &&
-        Region.raceOk (stateOk ctx C) C l.body) := by
+        Region.raceOk (stateOk ctx orc C) C l.body) := by
   cases l; rfl
 
-theorem Blocks.raceOk_mem : ∀ {bs : List Block} {b : Block}, Blocks.raceOk (stateOk ctx C) C bs = true → b ∈ bs →
-    Block.raceOk (stateOk ctx C) C b = true
+theorem Blocks.raceOk_mem : ∀ {bs : List Block} {b : Block}, Blocks.raceOk (stateOk ctx orc C) C bs = true → b ∈ bs →
+    Block.raceOk (stateOk ctx orc C) C b = true
   | [], _, _, hb => absurd hb List.not_mem_nil
   | b' :: bs, b, h, hb => by
     simp only [Blocks.raceOk, Bool.and_eq_true] at h
@@ -892,38 +924,41 @@ theorem trueEdges_mem {rg : Region} {cst : CSt} {bid : BlockId} {es : List IEdge
     exact (List.mem_filter.1 hx).1
   · cases hf
 
-theorem blockOk {rg : Region} {bid : BlockId} {b : Block} (hok : Region.raceOk (stateOk ctx C) C rg = true)
-    (hb : rg.block? bid = some b) : Block.raceOk (stateOk ctx C) C b = true := by
+theorem blockOk {rg : Region} {bid : BlockId} {b : Block} (hok : Region.raceOk (stateOk ctx orc C) C rg = true)
+    (hb : rg.block? bid = some b) : Block.raceOk (stateOk ctx orc C) C b = true := by
   rw [Region.raceOk_eq, Bool.and_eq_true] at hok
   exact Blocks.raceOk_mem hok.1 (List.mem_of_getElem? hb)
 
-theorem loopInit {l : LoopRegion} (hok : Block.raceOk (stateOk ctx C) C (.loop l) = true) :
+theorem loopInit {l : LoopRegion} (hok : Block.raceOk (stateOk ctx orc C) C (.loop l) = true) :
     l.init.all (fun a => !C.syms.contains a.1) = true := by
   rw [Block.raceOk_loop] at hok; simp only [Bool.and_eq_true] at hok; exact hok.1.1
 
-theorem loopUpdate {l : LoopRegion} (hok : Block.raceOk (stateOk ctx C) C (.loop l) = true) :
+theorem loopUpdate {l : LoopRegion} (hok : Block.raceOk (stateOk ctx orc C) C (.loop l) = true) :
     l.update.all (fun a => !C.syms.contains a.1) = true := by
   rw [Block.raceOk_loop] at hok; simp only [Bool.and_eq_true] at hok; exact hok.1.2
 
-theorem loopBody {l : LoopRegion} (hok : Block.raceOk (stateOk ctx C) C (.loop l) = true) : Region.raceOk (stateOk ctx C) C l.body = true := by
+theorem loopBody {l : LoopRegion} (hok : Block.raceOk (stateOk ctx orc C) C (.loop l) = true) : Region.raceOk (stateOk ctx orc C) C l.body = true := by
   rw [Block.raceOk_loop] at hok; simp only [Bool.and_eq_true] at hok; exact hok.2
 
 end ControlLemmas
 
 section ControlFlow
 
+variable {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid)
+include horc
+
 variable {ctx : Ctx} {C : Constraints}
 
 theorem StateExec.cgood {cst : CSt} {s : State} {r : Res (Ctl × CSt)} (h : StateExec ctx cst s r)
-    (hok : stateOk ctx C s = true) (hi : CInv ctx.I.expr C cst) : CGood ctx.I.expr C r := by
-  obtain ⟨hc, hinv⟩ := StateExec.good h hok hi.1 hi.2
+    (hok : stateOk ctx orc C s = true) (hi : CInv ctx.I.expr C cst) : CGood ctx.I.expr C r := by
+  obtain ⟨hc, hinv⟩ := StateExec.good horc h hok hi.1 hi.2
   exact ⟨hc, fun ctl cst' hr => let ⟨hρ, hna⟩ := hinv ctl cst' hr; ⟨hρ ▸ hi.1, hna⟩⟩
 
 mutual
 
 theorem BlockExec.cgood {cst : CSt} {b : Block} {r : Res (Ctl × CSt)} :
-    BlockExec ctx cst b r → Block.raceOk (stateOk ctx C) C b = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
-  | .state h, hok, hi => StateExec.cgood h hok hi
+    BlockExec ctx cst b r → Block.raceOk (stateOk ctx orc C) C b = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+  | .state h, hok, hi => StateExec.cgood horc h hok hi
   | .region h, hok, hi => RegionExec.cgood h hok hi
   | .loop h, hok, hi => LoopExec.cgood h hok hi
   | .cond h, hok, hi => CondExec.cgood h hok hi
@@ -932,7 +967,7 @@ theorem BlockExec.cgood {cst : CSt} {b : Block} {r : Res (Ctl × CSt)} :
   | .ret, _, hi => CGood.ok hi
 
 theorem RegionAt.cgood {rg : Region} {cst : CSt} {bid : BlockId} {r : Res (Ctl × CSt)} :
-    RegionAt ctx rg cst bid r → Region.raceOk (stateOk ctx C) C rg = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    RegionAt ctx rg cst bid r → Region.raceOk (stateOk ctx orc C) C rg = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .missing _, _, _ => ⟨Res.Clean.err (by clean_err), fun _ _ h => by cases h⟩
   | .blockErr hb h, hok, hi => BlockExec.cgood h (blockOk hok hb) hi
   | .exit hb h _, hok, hi => BlockExec.cgood h (blockOk hok hb) hi
@@ -949,30 +984,30 @@ theorem RegionAt.cgood {rg : Region} {cst : CSt} {bid : BlockId} {r : Res (Ctl �
     exact RegionAt.cgood hn (by rw [Region.raceOk_eq]; exact hok) (applyAssigns_inv ha hfresh hi₁)
 
 theorem RegionExec.cgood {cst : CSt} {rg : Region} {r : Res (Ctl × CSt)} :
-    RegionExec ctx cst rg r → Region.raceOk (stateOk ctx C) C rg = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    RegionExec ctx cst rg r → Region.raceOk (stateOk ctx orc C) C rg = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .start h, hok, hi => RegionAt.cgood h hok hi
 
 theorem LoopExec.cgood {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
-    LoopExec ctx cst l r → Block.raceOk (stateOk ctx C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    LoopExec ctx cst l r → Block.raceOk (stateOk ctx orc C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .initErr hi', _, _ => CGood.err_of hi' (applyAssign?_clean _ _ _)
   | .guardFirst hi' _ hg, hok, hi => LoopGuard.cgood hg hok (applyAssign?_inv hi' (loopInit hok) hi)
   | .bodyFirst hi' _ hb, hok, hi => LoopIter.cgood hb hok (applyAssign?_inv hi' (loopInit hok) hi)
 
 theorem LoopGuard.cgood {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
-    LoopGuard ctx cst l r → Block.raceOk (stateOk ctx C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    LoopGuard ctx cst l r → Block.raceOk (stateOk ctx orc C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .condErr hc, _, _ => CGood.err_of hc (Ctx.evalBoolR_clean _ _ _ _)
   | .exit _, _, hi => CGood.ok hi
   | .enter _ hb, hok, hi => LoopIter.cgood hb hok hi
 
 theorem LoopIter.cgood {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
-    LoopIter ctx cst l r → Block.raceOk (stateOk ctx C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    LoopIter ctx cst l r → Block.raceOk (stateOk ctx orc C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .bodyErr hb, hok, hi => RegionExec.cgood hb (loopBody hok) hi
   | .ret hb, hok, hi => CGood.ok ((RegionExec.cgood hb (loopBody hok) hi).2 _ _ rfl)
   | .brk hb, hok, hi => CGood.ok ((RegionExec.cgood hb (loopBody hok) hi).2 _ _ rfl)
   | .tail hb _ ht, hok, hi => LoopTail.cgood ht hok ((RegionExec.cgood hb (loopBody hok) hi).2 _ _ rfl)
 
 theorem LoopTail.cgood {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
-    LoopTail ctx cst l r → Block.raceOk (stateOk ctx C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    LoopTail ctx cst l r → Block.raceOk (stateOk ctx orc C) C (.loop l) = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .updateErr _ hu, _, _ => CGood.err_of hu (applyAssign?_clean _ _ _)
   | .updateGuard _ hu hg, hok, hi => LoopGuard.cgood hg hok (applyAssign?_inv hu (loopUpdate hok) hi)
   | .condFirstErr _ hc, _, _ => CGood.err_of hc (Ctx.evalBoolR_clean _ _ _ _)
@@ -981,7 +1016,7 @@ theorem LoopTail.cgood {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
   | .condFirstNext _ _ hu hb, hok, hi => LoopIter.cgood hb hok (applyAssign?_inv hu (loopUpdate hok) hi)
 
 theorem CondExec.cgood {cst : CSt} {brs : List (Option Expr × Region)} {r : Res (Ctl × CSt)} :
-    CondExec ctx cst brs r → Branches.raceOk (stateOk ctx C) C brs = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
+    CondExec ctx cst brs r → Branches.raceOk (stateOk ctx orc C) C brs = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
   | .nil, _, hi => CGood.ok hi
   | .els h, hok, hi => RegionExec.cgood h (by simp only [Branches.raceOk, Bool.and_eq_true] at hok; exact hok.1) hi
   | .condErr hc, _, _ => CGood.err_of hc (Ctx.evalBoolR_clean _ _ _ _)
@@ -998,7 +1033,7 @@ end ControlFlow
 
 section Indep
 
-variable (ctx : Ctx) (I : Interp) (s : State) (F : Nat)
+variable (ctx : Ctx) (I : Interp) (s : State) (F : Nat) (orc : Query → Bool)
 
 theorem nodeFp_withI : ∀ (G : Nat) (n : DNode), nodeFp { ctx with I } s G n = nodeFp ctx s G n := by
   intro G
@@ -1016,12 +1051,12 @@ theorem hbOk_withI (ids : List NodeId) : hbOk { ctx with I } s F ids = hbOk ctx 
   simp only [hbOk, nodesSep, nodeFp_withI]
 
 theorem mapOk_withI (C : Constraints) (n : DNode) (mp : MapNode) :
-    mapOk { ctx with I } s F C n mp = mapOk ctx s F C n mp := by
+    mapOk { ctx with I } s F orc C n mp = mapOk ctx s F orc C n mp := by
   simp only [mapOk, scopeFp_withI]
   rfl
 
 theorem bodyOk_withI : ∀ (G : Nat) (C : Constraints) (ids : List NodeId),
-    bodyOk { ctx with I } s F G C ids = bodyOk ctx s F G C ids := by
+    bodyOk { ctx with I } s F orc G C ids = bodyOk ctx s F orc G C ids := by
   intro G
   induction G with
   | zero => intro C ids; rfl
@@ -1033,7 +1068,7 @@ theorem compsSep_withI : compsSep { ctx with I } s F = compsSep ctx s F := by
   funext c₁ c₂
   simp only [compsSep, scopeFp_withI]
 
-theorem stateOk_withI (C : Constraints) : stateOk { ctx with I } C s = stateOk ctx C s := by
+theorem stateOk_withI (C : Constraints) : stateOk { ctx with I } orc C s = stateOk ctx orc C s := by
   simp only [stateOk, bodyOk_withI, compsSep_withI]
 
 end Indep
@@ -1051,10 +1086,14 @@ assigned anywhere (interstate edges, loops) nor constants. -/
 def raceFacts (g : SDFG) : Constraints :=
   g.facts.restrict fun x => !g.top.assigned.contains x && !g.constants.any (·.1 == x)
 
+/-- The static race check of an SDFG with undecided disjointness obligations
+accepted by the oracle `orc` (`raceFreeWith_sound` assumes them valid). -/
+def raceFreeWith (orc : Query → Bool) (g : SDFG) : Bool :=
+  Region.raceOk (stateOk { I := Interp.uninterpreted, g } orc (raceFacts g)) (raceFacts g) g.top
+
 /-- **The static race check** of an SDFG (sound, incomplete): `true` means
 `RaceFree` (`raceFree?_sound`). -/
-def raceFree? (g : SDFG) : Bool :=
-  Region.raceOk (stateOk { I := Interp.uninterpreted, g } (raceFacts g)) (raceFacts g) g.top
+def raceFree? (g : SDFG) : Bool := raceFreeWith (fun _ => false) g
 
 theorem raceFacts_initial {g : SDFG} {I : ExprInterp} {ρ₀ : Valuation} (h : g.facts.satisfies I ρ₀) :
     (raceFacts g).satisfies I (g.withConstants ρ₀) := by
@@ -1068,24 +1107,88 @@ theorem raceFacts_initial {g : SDFG} {I : ExprInterp} {ρ₀ : Valuation} (h : g
     simpa using hk.2 c hc
   rw [this]
 
-/-- **Soundness of `raceFree?`.** -/
-theorem raceFree?_sound {g : SDFG} (h : raceFree? g = true) : RaceFree g := by
+/-- **Soundness of the assumed-obligations mode**: if every query the
+oracle accepts is valid, `raceFreeWith` implies race freedom. -/
+theorem raceFreeWith_sound {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid) {g : SDFG}
+    (h : raceFreeWith orc g = true) : RaceFree g := by
   intro I ρ₀ m₀ hpre w hx
   obtain ⟨-, hf, hna⟩ := hpre
   obtain ⟨res, hres, hr⟩ := hx
   have hctx : ({ I := Interp.uninterpreted, g } : Ctx) = { ({ I, g } : Ctx) with I := Interp.uninterpreted } := rfl
-  have hok : Region.raceOk (stateOk { I, g } (raceFacts g)) (raceFacts g) g.top = true := by
-    have := funext fun s => stateOk_withI ({ I, g } : Ctx) Interp.uninterpreted s (raceFacts g)
-    unfold raceFree? at h
+  have hok : Region.raceOk (stateOk { I, g } orc (raceFacts g)) (raceFacts g) g.top = true := by
+    have := funext fun s => stateOk_withI ({ I, g } : Ctx) Interp.uninterpreted s orc (raceFacts g)
+    unfold raceFreeWith at h
     rw [hctx, this] at h
     exact h
   cases hres with
   | err hrg =>
-    rename_i e
-    have hc := (RegionExec.cgood hrg hok ⟨raceFacts_initial hf, hna⟩).1
+    have hc := (RegionExec.cgood horc hrg hok ⟨raceFacts_initial hf, hna⟩).1
     simp only [Res.map_err, Res.err.injEq] at hr
     exact hc w (by rw [hr])
   | escape _ _ => simp at hr
   | run _ _ => simp at hr
+
+/-- **Soundness of `raceFree?`.** -/
+theorem raceFree?_sound {g : SDFG} (h : raceFree? g = true) : RaceFree g :=
+  raceFreeWith_sound (fun _ h => by cases h) h
+
+/-! ## Collecting obligations (tooling, not trusted) -/
+
+/-- The undecided disjointness obligations of one map: those of every pair of
+shared accesses that only `iterDisjointWith?` could separate. -/
+def mapObligations (ctx : Ctx) (s : State) (F : Nat) (C : Constraints) (n : DNode) (mp : MapNode) : List Query :=
+  match scopeFp ctx s F (s.directChildren (some n.id)) with
+  | some B =>
+    let B' := Access.shared ctx (ctx.privateTransients s n.id) B
+    B'.flatMap fun a => B'.flatMap fun b =>
+      if accSep a b then []
+      else match ctx.desc? a.data with
+        | some d =>
+          ((iterObligations? C mp.params mp.range d (a.sub.getD (.range d.fullRange)) d
+            (b.sub.getD (.range d.fullRange))).getD [])
+        | none => []
+  | none => []
+
+/-- Obligations of the maps among `ids`, recursively (`bodyOk`'s traversal). -/
+def bodyObligations (ctx : Ctx) (s : State) (F : Nat) : Nat → Constraints → List NodeId → List Query
+  | 0, _, _ => []
+  | G + 1, C, ids => ids.flatMap fun id => match s.node? id with
+    | some n => match n.kind with
+      | .mapEntry mp => mapObligations ctx s F C n mp ++
+          bodyObligations ctx s F G (C.addInts mp.params) (s.directChildren (some n.id))
+      | _ => []
+    | none => []
+
+mutual
+
+/-- Every obligation `raceFreeWith` may ask the oracle about (a superset).
+`raceFreeWith (fun q => (raceObligations g).contains q) g` is the
+assumed-obligations check of the kernel fallback (`dace-equiv racefree
+--emit-obligations`). -/
+def Region.raceObligations (ctx : Ctx) (C : Constraints) : Region → List Query
+  | ⟨_, _, blocks, _, _⟩ => Blocks.raceObligations ctx C blocks
+
+def Blocks.raceObligations (ctx : Ctx) (C : Constraints) : List Block → List Query
+  | [] => []
+  | b :: bs => Block.raceObligations ctx C b ++ Blocks.raceObligations ctx C bs
+
+def Block.raceObligations (ctx : Ctx) (C : Constraints) : Block → List Query
+  | .state s =>
+    let F := s.nodes.length + 1
+    s.components.flatMap fun comp => bodyObligations ctx s F F C (s.topLevelOf comp)
+  | .region r => Region.raceObligations ctx C r
+  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.raceObligations ctx C body
+  | .cond _ brs => Branches.raceObligations ctx C brs
+  | .breakBlock | .continueBlock | .returnBlock => []
+
+def Branches.raceObligations (ctx : Ctx) (C : Constraints) : List (Option Expr × Region) → List Query
+  | [] => []
+  | (_, r) :: rest => Region.raceObligations ctx C r ++ Branches.raceObligations ctx C rest
+
+end
+
+/-- The obligations of an SDFG, without duplicates. -/
+def raceObligations (g : SDFG) : List Query :=
+  (Region.raceObligations { I := Interp.uninterpreted, g } (raceFacts g) g.top).eraseDups
 
 end Dace
