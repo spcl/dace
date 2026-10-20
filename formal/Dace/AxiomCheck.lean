@@ -207,3 +207,9 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.OrderedExec.order_indep_component
 #print axioms Dace.CompsExec.sequential
 #print axioms Dace.CompsExec.merge_perm
+
+-- R2.7: static race freedom
+#print axioms Dace.raceFree?_sound
+#print axioms Dace.NodeExec.clean
+#print axioms Dace.RegionExec.cgood
+#print axioms Dace.execSimple_clean

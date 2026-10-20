@@ -45,6 +45,8 @@ import Dace.Equiv.Congr
 import Dace.SDFG.Footprinted
 import Dace.SDFG.Frame
 import Dace.Equiv.Order
+import Dace.SDFG.Clean
+import Dace.Equiv.RaceFree
 
 /-!
 # DaCe formal semantics

@@ -350,6 +350,17 @@ def relation (j : Json) : P (Option Relation) := do
   | none => pure none
   | some kind => pure (some { kind, lhs := ← exprField j "lhs", rhs := ← exprField j "rhs" })
 
+/-- The facts implied by declared symbol types alone (`Decisions.md#D60`):
+symbols of an integer type other than `bool` are integers, unsigned ones are
+nonnegative.  Used when an SDFG has no symbol repository. -/
+def typeFacts (types : List (Sym × Dtype)) : Constraints :=
+  { intSyms := types.filterMap fun (s, t) => match t with
+      | .int _ _ => some s
+      | _ => none
+    sign := types.filterMap fun (s, t) => match t with
+      | .int _ false => some (s, Pred.nonneg)
+      | _ => none }
+
 /-- The facts of `attributes.symbol_repo` (`symbol_repo.py`, `SymbolRepo.to_json`)
 and the declared parameter types.  Only `params` is read: the scale facts
 (`small`, `MUCH_LT`), `runtime_assumptions` and the facts of inner scopes are
@@ -557,7 +568,7 @@ partial def sdfg (j : Json) : P SDFG := do
     | some v => do (← v.getArr?).toList.mapM str
   let top ← regionBody arrays j .plain
   let (facts, repoTypes) ← match field? a "symbol_repo" with
-    | none => pure ({}, [])
+    | none => pure (typeFacts symbols, [])
     | some r => symbolRepo r
   -- with a symbol repository, `SDFG.symbols` is a view of `params.types`
   let symbols := if symbols.isEmpty then repoTypes else symbols

@@ -43,8 +43,8 @@ def expected : Constraints where
 #guard facts withRepo == some expected
 -- `SDFG.symbols` is the view of `params.types`
 #guard (syms withRepo).map (·.map (·.1)) == some ["K", "N", "U", "x"]
--- no repository: no facts, symbols unchanged
-#guard facts withoutRepo == some {}
+-- no repository: the declared types are the facts (`int32` ⇒ integer), symbols unchanged
+#guard facts withoutRepo == some { intSyms := ["N"] }
 #guard (syms withoutRepo).map (·.map (·.1)) == some ["N"]
 
 /-! Facts as hypotheses (`Constraints.toHyps`, sound by `Constraints.toHyps_sound`). -/

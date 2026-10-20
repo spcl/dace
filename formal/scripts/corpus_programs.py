@@ -482,3 +482,25 @@ def args_write_outside(seed: int = 0) -> dict:
 PROGRAMS.append(("write_outside", _BuiltProgram("write_outside", lambda: _build_write_outside("write_outside")),
                  args_write_outside))
 EXPECTED_ERRORS["write_outside"] = {"sdfg": "outsideSubset", "stree": "outsideSubset"}
+
+
+def _build_map_same_write() -> dace.SDFG:
+    """Every iteration of a parallel map writes its index to ``A[0]``.
+
+    A race between map iterations (merged logs conflict, ``Decisions.md#D3``): the generated code may leave any
+    index in ``A[0]``.  The negative test of the static race check (``raceFree?`` answers UNKNOWN).
+    """
+    sdfg = dace.SDFG("map_same_write")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [1], dace.int64)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet("put", {"i": "0:N"}, {}, "a = i", {"a": dace.Memlet("A[0]")}, external_edges=True)
+    return sdfg
+
+
+def args_map_same_write(seed: int = 0) -> dict:
+    return dict(A=np.zeros(1, dtype=np.int64), N=4)
+
+
+PROGRAMS.append(("map_same_write", _BuiltProgram("map_same_write", _build_map_same_write), args_map_same_write))
+EXPECTED_ERRORS["map_same_write"] = {"sdfg": "race", "stree": "race"}

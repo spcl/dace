@@ -12,8 +12,10 @@ representations:
   relational `Semantics`, the executable `Interp` and its `Soundness`
   proof); `tests/ImportStreeCorpus.lean` imports the
   corpus trees, checks them and compares the pretty-printer with DaCe.
-- `Dace/Equiv`: observational equivalence and the verified pair checker
-  (`lake exe dace-equiv`).
+- `Dace/Equiv`: observational equivalence, refinement and congruence, and
+  verified checks (`lake exe dace-equiv`): `dace-equiv racefree <sdfg.json>...`
+  runs the static race check `raceFree?`, proven sound (`raceFree?_sound`);
+  `tests/RaceFreeCorpus.lean` pins its corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 
