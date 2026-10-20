@@ -2033,8 +2033,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             state_symbols = self.symbols_defined_at_state(sdfg_symbols=scope_symbols)
         symbols = collections.OrderedDict(state_symbols)
 
-        # Find scopes this node is situated in
-        sdict = self.scope_dict()
+        # Find scopes this node is situated in. The cached scope dict is read in place: ``scope_dict()`` copies it
+        sdict = self._scope_dict_toparent_cached
+        if sdict is None:
+            sdict = self.scope_dict()
         scope_list = []
         seen = {id(node)}
         curnode = node
