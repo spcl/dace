@@ -38,6 +38,7 @@ from dace import SDFG, properties, symbolic
 from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -176,6 +177,8 @@ class MinimizeStridePermutation(ppl.Pass):
     """
 
     CATEGORY: str = "Optimization Preparation"
+    #: Whether this run split a map, so the SDFG's memlets need one propagation at the end.
+    _expanded: bool = False
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.Memlets
@@ -191,10 +194,13 @@ class MinimizeStridePermutation(ppl.Pass):
                  states that changed, or ``None`` if nothing was modified.
         """
         result: dict[int, int] = {}
+        self._expanded = False
         for state in sdfg.states():
             applied = self._process_state(state, state.sdfg)
             if applied:
                 result[state.block_id] = applied
+        if self._expanded:
+            propagate_memlets_sdfg(sdfg)
         return result or None
 
     def _process_state(self, state: SDFGState, sdfg: SDFG) -> int:
@@ -289,7 +295,17 @@ class MinimizeStridePermutation(ppl.Pass):
         outer = nest[0]
         for entry in nest:
             if len(entry.map.params) > 1:
-                MapExpansion.apply_to(sdfg, options={"inner_schedule": None}, map_entry=entry, verify=False, save=False)
+                # The expansion propagates its own scope; the whole-SDFG propagation ``apply_to`` would add per split
+                # runs once, at the end of the pass.
+                MapExpansion.apply_to(
+                    sdfg,
+                    options={"inner_schedule": None},
+                    map_entry=entry,
+                    verify=False,
+                    save=False,
+                    annotate=False,
+                )
+                self._expanded = True
                 applied += 1
         if applied:
             nest = self._collect_perfect_nest(state, outer, state.scope_children())
