@@ -89,6 +89,22 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Query.decide_sound
 #print axioms Dace.Constraints.toHyps_sound
 
+-- R2.4: points of subsets and verified subset procedures.
+#print axioms Dace.Expr.eval_congr
+#print axioms Dace.Expr.eval_subst
+#print axioms Dace.Dim.mem_elems
+#print axioms Dace.Dim.elems_sep
+#print axioms Dace.Range.mem_points
+#print axioms Dace.Subset.mem_points
+#print axioms Dace.exists_firstDiff
+#print axioms Dace.SymSubset.dominates_inj
+#print axioms Dace.Expr.nonneg?_sound
+#print axioms Dace.Expr.pos?_sound
+#print axioms Dace.Subset.disjoint?_sound
+#print axioms Dace.Subset.subsetOf?_sound
+#print axioms Dace.iterObligations?_sound
+#print axioms Dace.iterDisjoint?_sound
+
 -- R1.2: observables, refinement and equivalence.
 #print axioms Dace.Refines.refl_of_supported
 #print axioms Dace.Refines.refl_iff_supported

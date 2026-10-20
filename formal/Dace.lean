@@ -16,6 +16,7 @@ import Dace.Core.Facts
 import Dace.Core.SymArith
 import Dace.Core.SymCert
 import Dace.Core.SymSearch
+import Dace.Core.SymSubset
 import Dace.SDFG.Syntax
 import Dace.SDFG.Scope
 import Dace.SDFG.ScopeSpec
