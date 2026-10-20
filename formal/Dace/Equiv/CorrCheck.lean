@@ -32,7 +32,7 @@ interstate edges (GBlocks, unstructured regions); every state is
 `SeqPureP` (no streams, views, references, consume scopes, nested SDFGs or
 code→code values; private transients allowed when both sides compute the
 same private sets) with at most one component; no
-dynamic map inputs; equal descriptor repositories; no constants; a code
+equal descriptor repositories; no constants; a code
 node's input memlets in the order of its in-edges (`sdfg_to_tree` lists
 them in `state.in_edges` order, so the tree must be built from the SDFG as
 stored).
@@ -72,6 +72,32 @@ theorem takeCopies_sound : ∀ {k : Nat} {cs : List SNode} {ps : List (Name × M
         rfl
       | _ => simp [takeCopies] at h
 
+/-- The leading `DynScopeCopyNode`s of a tree list, exactly `k` of them:
+their input keys and the rest. -/
+def takeDyn : Nat → List SNode → Option (List InKey × List SNode)
+  | 0, cs => some ([], cs)
+  | k + 1, .dynScopeCopy t m :: cs => (takeDyn k cs).map fun p => (m.inKey t :: p.1, p.2)
+  | _ + 1, _ => none
+
+theorem takeDyn_sound : ∀ {k : Nat} {cs : List SNode} {ks : List InKey} {rest : List SNode},
+    takeDyn k cs = some (ks, rest) → ∃ ds, cs = ds ++ rest ∧ DynNodes ks ds
+  | 0, cs, ks, rest, h => by
+    simp only [takeDyn, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact ⟨[], rfl, .nil⟩
+  | k + 1, c :: cs, ks, rest, h => by
+    cases c with
+    | dynScopeCopy t m =>
+      simp only [takeDyn, Option.map_eq_some_iff] at h
+      obtain ⟨⟨ks', rest'⟩, h', he⟩ := h
+      simp only [Prod.mk.injEq] at he
+      obtain ⟨rfl, rfl⟩ := he
+      obtain ⟨ds, rfl, hds⟩ := takeDyn_sound h'
+      have hkc : (m.inKey t).conn = t := rfl
+      exact ⟨.dynScopeCopy t m :: ds, rfl, .cons ⟨m, by rw [hkc], rfl⟩ hds⟩
+    | _ => simp [takeDyn] at h
+  | _ + 1, [], _, _, h => by simp [takeDyn] at h
+
 /-- A matched scope: the order of its direct nodes, the full (nested) order
 and the rest of the tree list. -/
 abbrev MatchRes := List NodeId × List NodeId × List SNode
@@ -106,17 +132,26 @@ def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) 
           outs.hasDynamicWcr = false then some ([], rest) else none
     | _ => none
   | .mapEntry mp =>
-    match cs with
-    | .mapScope mp' body :: rest =>
-      if mp' = mp ∧ (s.inEdges n.id).all (fun e => !s.isDynamicInput e) = true ∧
-          tc.privateTransients body = ctx.privateTransients s n.id then
-        match rec (s.directChildren (some n.id)) body with
-        | some (oM, fullM, []) =>
-          if s.isTopologicalOrder (s.scopeNodes n.id) fullM = true ∧
-              fullM.filter (s.directChildren (some n.id)).contains = oM then some (fullM, rest) else none
-        | _ => none
+    match s.dynKeys? n with
+    | none => none
+    | some keys =>
+      if dynOk? ctx keys = true then
+        match takeDyn keys.length cs with
+        | some (dks, cs') =>
+          if dks = keys then
+            match cs' with
+            | .mapScope mp' body :: rest =>
+              if mp' = mp ∧ tc.privateTransients body = ctx.privateTransients s n.id then
+                match rec (s.directChildren (some n.id)) body with
+                | some (oM, fullM, []) =>
+                  if s.isTopologicalOrder (s.scopeNodes n.id) fullM = true ∧
+                      fullM.filter (s.directChildren (some n.id)).contains = oM then some (fullM, rest) else none
+                | _ => none
+              else none
+            | _ => none
+          else none
+        | none => none
       else none
-    | _ => none
   | _ => none
 
 /-- The unplaced nodes and the nodes nested in them. -/
@@ -206,27 +241,40 @@ theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
     · cases hm
   · rename_i mp hk
     split at hm
-    · rename_i mp' body rest'
+    · cases hm
+    · rename_i keys hkeys
       split at hm
-      · rename_i hc
-        obtain ⟨rfl, hdyn, hpriv⟩ := hc
+      · rename_i hok
         split at hm
-        · rename_i oM fullM hb
+        · rename_i dks cs' htk
           split at hm
-          · rename_i hto
-            simp only [Option.some.injEq, Prod.mk.injEq] at hm
-            obtain ⟨-, rfl⟩ := hm
-            obtain ⟨pre, hpre, hseg⟩ := hrec _ _ _ _ _ hb
-            rw [List.append_nil] at hpre
-            subst hpre
-            refine ⟨[_], rfl, fun id o tail hn ht => .map hn hk ?_ hto.1 hto.2 hpriv hseg ht⟩
-            intro e he
-            have := List.all_eq_true.1 hdyn e he
-            simpa using this
+          · rename_i hdks
+            subst hdks
+            split at hm
+            · rename_i mp' body rest'
+              split at hm
+              · rename_i hc
+                obtain ⟨rfl, hpriv⟩ := hc
+                split at hm
+                · rename_i oM fullM hb
+                  split at hm
+                  · rename_i hto
+                    simp only [Option.some.injEq, Prod.mk.injEq] at hm
+                    obtain ⟨-, rfl⟩ := hm
+                    obtain ⟨pre, hpre, hseg⟩ := hrec _ _ _ _ _ hb
+                    rw [List.append_nil] at hpre
+                    subst hpre
+                    obtain ⟨ds, rfl, hds⟩ := takeDyn_sound htk
+                    refine ⟨ds ++ [.mapScope mp' body], by simp, fun id o tail hn ht => ?_⟩
+                    have := SegCorr.map hn hk hkeys (dynOk?_sound hok) hds hto.1 hto.2 hpriv hseg ht
+                    simpa using this
+                  · cases hm
+                · cases hm
+              · cases hm
+            · cases hm
           · cases hm
         · cases hm
       · cases hm
-    · cases hm
   · cases hm
 
 theorem matchSeg_sound : ∀ (fuel : Nat) (U : List NodeId) (cs : List SNode) (o full : List NodeId) (rest : List SNode),
@@ -632,7 +680,7 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I�
   | copies hn hk hsh hks _ ih => exact .copies hn hk (CopyShape.withI I₁ I₂ hsh) hks ih
   | tasklet hn hk hsh hki hko hd hdT _ ih => exact .tasklet hn hk hsh hki hko hd hdT ih
   | library hn hk hl hsh hki hko hd hdT _ ih => exact .library hn hk hl hsh hki hko hd hdT ih
-  | map hn hk hdyn hto hdir hpriv _ _ ihb ih => exact .map hn hk hdyn hto hdir hpriv ihb ih
+  | map hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih => exact .map hn hk hkeys hok hds hto hdir hpriv ihb ih
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s cs) :
     StateCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s cs := by

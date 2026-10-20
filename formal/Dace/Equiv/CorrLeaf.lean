@@ -1,5 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Equiv.ScopeBody
+import Dace.Equiv.EvalCongr
 import Dace.STree.Semantics
 
 /-!
@@ -71,6 +72,14 @@ def inKey? (s : State) (e : DEdge) : Option InKey :=
   match e.data, s.srcEndpoint e with
   | .memlet _, .data d sub => some ⟨e.dstConn.getD "", d, sub, e.allowOob⟩
   | _, _ => none
+
+/-- The keys of the dynamic inputs of a scope entry, in in-edge order: each
+from a container element into a connector. -/
+def dynKeys? (s : State) (n : DNode) : Option (List InKey) :=
+  ((s.inEdges n.id).filter s.isDynamicInput).mapM fun e =>
+    match e.data, e.dstConn, s.srcEndpoint e with
+    | .memlet _, some c, .data d sub => some ⟨c, d, sub, e.allowOob⟩
+    | _, _, _ => none
 
 /-- The key of a memlet out-edge of a code node with a container destination. -/
 def outKey? (s : State) (e : DEdge) : Option OutKey :=
@@ -688,7 +697,169 @@ theorem mapSetupT_eq {mp : MapNode} (cst : CSt) :
   rw [Ctx.leaf_eq he Ctx.rangePoints (fun _ => rfl)]
   cases ctx.rangePoints cst.ρ cst.mem mp.range <;> rfl
 
+/-! ### Dynamic map inputs
+
+The SDFG binds the dynamic inputs of a map one by one, reading each under
+the valuation extended by the previous ones (`bindDynamicInputs`); the tree
+reads them under the scope's valuation into pending symbols and binds them
+all at the map (`mapSetupT`).  The two agree when the connectors are
+distinct and neither a descriptor nor an input's subset mentions a connector
+(`DynOk`); both then equal `dynReadAcc` followed by `Valuation.setAll`. -/
+
 end Leaf
+
+/-- Dynamic inputs that may all be read before any is bound. -/
+def DynOk (ctx : Ctx) (keys : List InKey) : Prop :=
+  (keys.map (·.conn)).Nodup ∧ ∀ k ∈ keys, k.conn ≠ "IN_stream" ∧ k.conn ∉ ctx.g.descSyms ∧
+    ∀ k' ∈ keys, k.conn ∉ (k'.sub.map Subset.freeSyms).getD []
+
+def dynOk? (ctx : Ctx) (keys : List InKey) : Bool :=
+  (keys.map (·.conn)).Nodup && keys.all fun k => k.conn != "IN_stream" && !ctx.g.descSyms.contains k.conn &&
+    keys.all fun k' => !((k'.sub.map Subset.freeSyms).getD []).contains k.conn
+
+theorem dynOk?_sound {ctx : Ctx} {keys : List InKey} (h : dynOk? ctx keys = true) : DynOk ctx keys := by
+  simp only [dynOk?, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, bne_iff_ne, ne_eq,
+    Bool.not_eq_eq_eq_not, Bool.not_true, List.contains_eq_mem, decide_eq_false_iff_not] at h
+  exact ⟨h.1, fun k hk => ⟨(h.2 k hk).1.1, (h.2 k hk).1.2, (h.2 k hk).2⟩⟩
+
+/-- Read the dynamic inputs `ks` under the fixed valuation `ρ`, appending
+the defined values to `acc`. -/
+def dynReadAcc (ctx : Ctx) (ρ : Valuation) : List (Sym × Val) → List InKey → St → Res (List (Sym × Val) × St)
+  | acc, [], st => .ok (acc, st)
+  | acc, k :: ks, st =>
+    readScalarData ctx ρ k.data k.sub k.oob st >>= fun (v?, st) =>
+      dynReadAcc ctx ρ (acc ++ (v?.map fun v => (k.conn, v)).toList) ks st
+
+theorem dynReadAcc_shift (ctx : Ctx) (ρ : Valuation) (L : Log) :
+    ∀ (acc : List (Sym × Val)) (ks : List InKey) (st : St),
+      dynReadAcc ctx ρ acc ks (st.shift L) = (dynReadAcc ctx ρ acc ks st).map (St.shiftR L)
+  | acc, [], st => rfl
+  | acc, k :: ks, st => by
+    simp only [dynReadAcc]
+    rw [readScalarData_shift]
+    cases readScalarData ctx ρ k.data k.sub k.oob st with
+    | err e => rfl
+    | ok p =>
+      obtain ⟨v?, st'⟩ := p
+      exact dynReadAcc_shift ctx ρ L _ ks st'
+
+theorem setAll_snoc (ρ : Valuation) (acc : List (Sym × Val)) (c : Sym) (v : Val) (hc : c ∉ acc.map Prod.fst) :
+    Valuation.set (Valuation.setAll ρ acc) c v = Valuation.setAll ρ (acc ++ [(c, v)]) := by
+  funext y
+  simp only [Valuation.set, Valuation.setAll, List.find?_append]
+  by_cases hy : y = c
+  · subst hy
+    have : acc.find? (fun q => decide (q.1 = y)) = none := by
+      rw [List.find?_eq_none]
+      intro q hq hqy
+      exact hc (List.mem_map.2 ⟨q, hq, by simpa using hqy⟩)
+    simp [this]
+  · cases h : acc.find? (fun q => decide (q.1 = y)) <;> simp [hy, Ne.symm hy]
+
+theorem foldlM_filter {α β : Type} (f : β → α → Res β) (p : α → Bool) (hp : ∀ b x, p x = false → f b x = .ok b) :
+    ∀ (l : List α) (b : β), l.foldlM f b = (l.filter p).foldlM f b
+  | [], _ => rfl
+  | x :: xs, b => by
+    rw [List.foldlM_cons]
+    cases hx : p x with
+    | false => rw [hp b x hx, List.filter_cons_of_neg (by simp [hx])]; exact foldlM_filter f p hp xs b
+    | true =>
+      rw [List.filter_cons_of_pos hx, List.foldlM_cons]
+      cases f b x with
+      | err e => rfl
+      | ok b' => exact foldlM_filter f p hp xs b'
+
+/-- **Dynamic inputs** of the SDFG: under `DynOk`, binding them one by one is
+reading them under the scope's valuation and binding them at once. -/
+theorem bindDynamicInputs_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {keys : List InKey}
+    (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (st : St) :
+    bindDynamicInputs ctx ρ s n st = (dynReadAcc ctx ρ [] keys st).map fun p => (Valuation.setAll ρ p.1, p.2) := by
+  unfold bindDynamicInputs
+  rw [foldlM_filter _ s.isDynamicInput (fun b x hx => by simp [hx])]
+  unfold State.dynKeys? at hkeys
+  rw [List.mapM_option_some_iff] at hkeys
+  -- invariant: the accumulated symbols are connectors of earlier keys
+  suffices H : ∀ (E : List DEdge) (ks : List InKey), List.Forall₂ (fun e k => (match e.data, e.dstConn, s.srcEndpoint e with
+      | .memlet _, some c, .data d sub => some (⟨c, d, sub, e.allowOob⟩ : InKey)
+      | _, _, _ => none) = some k) E ks → (∀ e ∈ E, s.isDynamicInput e = true) → ks ⊆ keys →
+      ((ks.map (·.conn)).Nodup) →
+      ∀ (acc : List (Sym × Val)) (st : St), (∀ x ∈ acc.map Prod.fst, x ∈ keys.map (·.conn) ∧ x ∉ ks.map (·.conn)) →
+        E.foldlM (fun (p : Valuation × St) e =>
+          if s.isDynamicInput e then
+            match e.data, e.dstConn with
+            | .memlet _, some c => do
+              let (v?, st) ← readEdgeScalar ctx p.1 s e p.2
+              match v? with
+              | some v => pure (Valuation.set p.1 c v, st)
+              | none => pure (p.1, st)
+            | _, _ => pure (p.1, p.2)
+          else pure (p.1, p.2)) (Valuation.setAll ρ acc, st) =
+        (dynReadAcc ctx ρ acc ks st).map fun p => (Valuation.setAll ρ p.1, p.2) by
+    have := H _ _ hkeys (fun e he => (List.mem_filter.1 he).2) (fun _ h => h) hok.1 [] st (by simp)
+    exact this
+  intro E
+  induction E with
+  | nil => intro ks hks; cases hks; intros; rfl
+  | cons e E ih =>
+    intro ks hks hdynE hsub hnd acc st hacc
+    cases hks with
+    | cons hk hks' =>
+      rename_i k ks'
+      have hde := hdynE e List.mem_cons_self
+      rw [List.foldlM_cons]
+      simp only [hde, ↓reduceIte]
+      split at hk
+      · rename_i m c d sub hdata hconn hsrc
+        simp only [Option.some.injEq] at hk
+        subst hk
+        simp only [hdata, hconn]
+        have hkmem : (⟨c, d, sub, e.allowOob⟩ : InKey) ∈ keys := hsub List.mem_cons_self
+        -- the read does not see the accumulated bindings
+        have hagree : ∀ x, x ∉ acc.map Prod.fst → Valuation.setAll ρ acc x = ρ x := fun x hx => Valuation.setAll_of_not_mem hx
+        have hread : readEdgeScalar ctx (Valuation.setAll ρ acc) s e st = readScalarData ctx ρ d sub e.allowOob st := by
+          unfold readEdgeScalar
+          rw [hsrc]
+          apply readScalarData_congr
+          · intro x hx
+            apply hagree
+            intro hxa
+            obtain ⟨k₀, hk₀, rfl⟩ := List.mem_map.1 (hacc _ hxa).1
+            exact (hok.2 k₀ hk₀).2.1 hx
+          · intro x hx
+            apply hagree
+            intro hxa
+            obtain ⟨k₀, hk₀, rfl⟩ := List.mem_map.1 (hacc _ hxa).1
+            exact (hok.2 k₀ hk₀).2.2 _ hkmem hx
+        rw [hread]
+        simp only [dynReadAcc]
+        cases hrd : readScalarData ctx ρ d sub e.allowOob st with
+        | err er => rfl
+        | ok p =>
+          obtain ⟨v?, st'⟩ := p
+          have hnd' : (ks'.map (·.conn)).Nodup := (List.nodup_cons.1 hnd).2
+          have hcnot : c ∉ ks'.map (·.conn) := (List.nodup_cons.1 hnd).1
+          have hcacc : c ∉ acc.map Prod.fst := fun h => (hacc c h).2 List.mem_cons_self
+          cases v? with
+          | some v =>
+            show List.foldlM _ (Valuation.set (Valuation.setAll ρ acc) c v, st') E = _
+            rw [setAll_snoc ρ acc c v hcacc]
+            refine ih ks' hks' (fun e' he' => hdynE e' (List.mem_cons_of_mem _ he'))
+              (fun k' hk' => hsub (List.mem_cons_of_mem _ hk')) hnd' _ st' ?_
+            intro x hx
+            rw [List.map_append, List.mem_append] at hx
+            rcases hx with hx | hx
+            · exact ⟨(hacc x hx).1, fun h => (hacc x hx).2 (List.mem_cons_of_mem _ h)⟩
+            · simp only [List.map_cons, List.map_nil, List.mem_singleton] at hx
+              subst hx
+              exact ⟨List.mem_map.2 ⟨_, hkmem, rfl⟩, hcnot⟩
+          | none =>
+            show List.foldlM _ (Valuation.setAll ρ acc, st') E = (dynReadAcc ctx ρ (acc ++ []) ks' st').map _
+            rw [List.append_nil]
+            refine ih ks' hks' (fun e' he' => hdynE e' (List.mem_cons_of_mem _ he'))
+              (fun k' hk' => hsub (List.mem_cons_of_mem _ hk')) hnd' _ st' ?_
+            intro x hx
+            exact ⟨(hacc x hx).1, fun h => (hacc x hx).2 (List.mem_cons_of_mem _ h)⟩
+      · cases hk
 
 end Corr
 

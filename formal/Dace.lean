@@ -52,6 +52,7 @@ import Dace.Equiv.Det
 import Dace.Equiv.DetProg
 import Dace.Equiv.CorrLeaf
 import Dace.Equiv.CorrMatch
+import Dace.Equiv.EvalCongr
 import Dace.Equiv.Corr
 import Dace.Equiv.CorrCtl
 import Dace.Equiv.CorrCheck

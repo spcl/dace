@@ -117,6 +117,30 @@ theorem St.popN_vals {ctx : Ctx} {ρ : Valuation} {st st' : St} {n : Name} {idx 
       · cases h
       · simp only [Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h; rw [← h.2]
 
+theorem readScalarData_vals {ctx : Ctx} {ρ : Valuation} {d : Name} {sub : Option Subset} {oob : Bool}
+    {st st' : St} {v? : Option Val} (h : readScalarData ctx ρ d sub oob st = .ok (v?, st')) : st'.vals = st.vals := by
+  unfold readScalarData at h
+  cases hp : ctx.pointsOf ρ st.mem d sub with
+  | err e => rw [hp] at h; cases h
+  | ok pts =>
+    rw [hp] at h
+    simp only [Res.ok_bind] at h
+    split at h
+    · split at h
+      · cases hpop : st.popN ctx ρ d _ 1 with
+        | err e => rw [hpop] at h; cases h
+        | ok q =>
+          rw [hpop] at h
+          simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
+          rw [← h.2]; exact St.popN_vals hpop
+      · cases hr : st.read ctx ρ d _ oob with
+        | err e => rw [hr] at h; cases h
+        | ok q =>
+          rw [hr] at h
+          simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
+          rw [← h.2]; exact keepsVals_read ctx ρ d _ oob st _ _ hr
+    · cases h
+
 theorem copyData_vals {ctx : Ctx} {ρ : Valuation} {st st' : St} {sd : Name} {ssub : Option Subset} {dd : Name}
     {dsub : Option Subset} {w : Option WcrOp} {oob : Bool} (h : copyData ctx ρ st sd ssub dd dsub w oob = .ok st') :
     st'.vals = st.vals := by
@@ -155,6 +179,10 @@ def DNode.isCopyTarget (n : DNode) : Bool :=
   | .access _ | .mapExit => true
   | _ => false
 
+/-- The `DynScopeCopyNode`s of the dynamic inputs `keys`, in order. -/
+def DynNodes (keys : List InKey) (ds : List SNode) : Prop :=
+  List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ m.inKey k.conn = k) keys ds
+
 /-- The tree list `cs` is the image of the SDFG nodes `o` of state `s`. -/
 inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNode → Prop where
   | nil : SegCorr ctx tc s [] []
@@ -177,14 +205,14 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (.libraryCall l' props ins outs :: cs)
   | map {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {oM full : List NodeId}
-      {body : List SNode}
+      {body : List SNode} {keys : List InKey} {ds : List SNode}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
-      (hdyn : ∀ e ∈ s.inEdges n.id, s.isDynamicInput e = false)
+      (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
       (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
       (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
       (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
       (hb : SegCorr ctx tc s oM body) (h : SegCorr ctx tc s o cs) :
-      SegCorr ctx tc s (id :: o) (.mapScope mp body :: cs)
+      SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
 
 /-- The outcomes of the sequential SDFG run of `o` from `st` that match a
 tree run ending in `r` after the image of `o`, continuing with `rest`. -/
@@ -239,13 +267,14 @@ theorem leaf_inv {tc : TCtx} {full : List SNode} {gb : Bool} {n : SNode} {rest :
     cases R <;> simp [leafOut, Res.map] at this
 
 /-- A run of a map scope node. -/
-theorem mapScope_node_inv {tc : TCtx} {mp : MapNode} {body : List SNode} {cst : CSt} {res : Res NodeOut}
-    (h : STree.NodeExec tc {} (.mapScope mp body) cst res) :
-    (∃ e, mapSetupT tc {} mp cst = .err e ∧ res = .err e) ∨
-    (∃ ρ' pts e, mapSetupT tc {} mp cst = .ok (ρ', pts) ∧
+theorem mapScope_node_inv {tc : TCtx} {sc : SibCtx} {mp : MapNode} {body : List SNode} {cst : CSt}
+    {res : Res NodeOut}
+    (h : STree.NodeExec tc sc (.mapScope mp body) cst res) :
+    (∃ e, mapSetupT tc sc mp cst = .err e ∧ res = .err e) ∨
+    (∃ ρ' pts e, mapSetupT tc sc mp cst = .ok (ρ', pts) ∧
       STree.IterExec tc mp.params body (tc.privateTransients body) { cst with ρ := ρ' } pts (.err e) ∧
       res = .err e) ∨
-    ∃ ρ' pts logs, mapSetupT tc {} mp cst = .ok (ρ', pts) ∧
+    ∃ ρ' pts logs, mapSetupT tc sc mp cst = .ok (ρ', pts) ∧
       STree.IterExec tc mp.params body (tc.privateTransients body) { cst with ρ := ρ' } pts (.ok logs) ∧
       res = dataflowOut (scopeFinishT tc cst logs) := by
   generalize hn : SNode.mapScope mp body = n at h
@@ -259,12 +288,12 @@ theorem mapScope_node_inv {tc : TCtx} {mp : MapNode} {body : List SNode} {cst : 
   | _ => cases hn
 
 /-- A tree list starting with a map scope. -/
-theorem map_inv {tc : TCtx} {full : List SNode} {gb : Bool} {mp : MapNode} {body rest : List SNode} {cst : CSt}
-    {r : Res (TCtl × CSt)} (hx : STree.ListExec tc full gb {} (.mapScope mp body :: rest) cst r) :
-    (∃ e, mapSetupT tc {} mp cst = .err e ∧ r = .err e) ∨
-    (∃ ρ' pts e, mapSetupT tc {} mp cst = .ok (ρ', pts) ∧
+theorem map_inv {tc : TCtx} {full : List SNode} {gb : Bool} {sc : SibCtx} {mp : MapNode} {body rest : List SNode}
+    {cst : CSt} {r : Res (TCtl × CSt)} (hx : STree.ListExec tc full gb sc (.mapScope mp body :: rest) cst r) :
+    (∃ e, mapSetupT tc sc mp cst = .err e ∧ r = .err e) ∨
+    (∃ ρ' pts e, mapSetupT tc sc mp cst = .ok (ρ', pts) ∧
       STree.IterExec tc mp.params body (tc.privateTransients body) { cst with ρ := ρ' } pts (.err e) ∧ r = .err e) ∨
-    ∃ ρ' pts logs, mapSetupT tc {} mp cst = .ok (ρ', pts) ∧
+    ∃ ρ' pts logs, mapSetupT tc sc mp cst = .ok (ρ', pts) ∧
       STree.IterExec tc mp.params body (tc.privateTransients body) { cst with ρ := ρ' } pts (.ok logs) ∧
       ((∃ e, scopeFinishT tc cst logs = .err e ∧ r = .err e) ∨
         ∃ cst', scopeFinishT tc cst logs = .ok cst' ∧ STree.ListExec tc full gb {} rest cst' r) := by
@@ -307,6 +336,151 @@ theorem map_inv {tc : TCtx} {full : List SNode} {gb : Bool} {mp : MapNode} {body
     · cases he
     · obtain ⟨-, h₂, -⟩ := (fin hres).2 _ _ _ rfl
       cases h₂
+
+/-- Pending dynamic inputs (no stream), closed `if` chain. -/
+abbrev pendingSc (syms : List (Sym × Val)) : SibCtx := { pending := { syms } }
+
+/-- **A run of `DynScopeCopyNode`s**: reads the inputs under the scope's
+valuation into the pending symbols. -/
+theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+    {full : List SNode} {gb : Bool} {rest : List SNode} {r : Res (TCtl × CSt)} :
+    ∀ {keys : List InKey} {ds : List SNode}, DynNodes keys ds → (∀ k ∈ keys, k.conn ≠ "IN_stream") →
+      ∀ {acc : List (Sym × Val)} {cst : CSt}, STree.ListExec tc full gb (pendingSc acc) (ds ++ rest) cst r →
+      (∃ e, r = .err e ∧ dynReadAcc ctx cst.ρ acc keys cst.st = .err e) ∨
+      ∃ syms y, dynReadAcc ctx cst.ρ acc keys cst.st = .ok (syms, y) ∧ y.vals = [] ∧
+        STree.ListExec tc full gb (pendingSc syms) rest (cst.withSt y) r
+  | [], [], .nil, _, acc, cst, hx => .inr ⟨acc, cst.st, rfl, rfl, by rw [CSt.withSt_st]; exact hx⟩
+  | k :: ks, n :: ns, .cons ⟨m, hn, hk⟩ hns, hnot, acc, cst, hx => by
+    subst hn
+    have hk' : k.conn ≠ "IN_stream" := hnot k List.mem_cons_self
+    -- the node's step
+    have hstep : ∀ res, STree.NodeExec tc (pendingSc acc) (.dynScopeCopy k.conn m) cst res →
+        res = (readScalarData ctx cst.ρ k.data k.sub k.oob cst.st >>= fun (p : Option Val × St) =>
+          match p.1 with
+          | some v => Res.ok ((pendingSc (acc ++ [(k.conn, v)]) : SibCtx), TCtl.normal, cst.withSt p.2)
+          | none => Res.ok (pendingSc acc, TCtl.normal, cst.withSt p.2)) := by
+      intro res h
+      cases h with
+      | pendingErr hc _ => simp [SNode.consumesPending, SNode.isDynScopeCopy] at hc
+      | leaf _ h' =>
+        simp only [stepLeaf, Option.some.injEq] at h'
+        rw [← h']
+        simp only [execDynScopeCopy, hk', ↓reduceIte, TCtx.inData_none hcons]
+        rw [Ctx.leaf_eq he readScalarData (fun _ => rfl)]
+        rw [← hk]
+        simp only [Memlet.inKey]
+        cases readScalarData ctx cst.ρ m.data m.dataSubset m.allowOob cst.st with
+        | err e => rfl
+        | ok p =>
+          obtain ⟨v?, y⟩ := p
+          cases v? <;> rfl
+      | loop _ hl _ => simp [SNode.loop?] at hl
+    simp only [List.cons_append] at hx
+    cases hx with
+    | headErr h =>
+      have := hstep _ h
+      cases hrd : readScalarData ctx cst.ρ k.data k.sub k.oob cst.st with
+      | err e =>
+        rw [hrd] at this; cases this
+        exact .inl ⟨_, rfl, by simp only [dynReadAcc, hrd]; rfl⟩
+      | ok p =>
+        obtain ⟨v?, y⟩ := p
+        rw [hrd] at this
+        cases v? <;> cases this
+    | step h hr =>
+      have := hstep _ h
+      cases hrd : readScalarData ctx cst.ρ k.data k.sub k.oob cst.st with
+      | err e => rw [hrd] at this; cases this
+      | ok p =>
+        obtain ⟨v?, y⟩ := p
+        rw [hrd] at this
+        have hyv : y.vals = [] := by rw [readScalarData_vals hrd]; rfl
+        have hρ : (cst.withSt y).ρ = cst.ρ := rfl
+        have hst : (cst.withSt y).st = y := by
+          obtain ⟨m', l', v'⟩ := y
+          simp only at hyv
+          simp [CSt.withSt, CSt.st, hyv]
+        cases v? with
+        | some v =>
+          simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this
+          obtain ⟨rfl, -, rfl⟩ := this
+          rcases dscopies_run he hcons hns (fun k' hk'' => hnot k' (List.mem_cons_of_mem _ hk'')) hr with
+            ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx'⟩
+          · rw [hρ, hst] at hd
+            exact .inl ⟨e, rfl, by simp only [dynReadAcc, hrd, Res.ok_bind]; exact hd⟩
+          · rw [hρ, hst] at hd
+            refine .inr ⟨syms, y', by simp only [dynReadAcc, hrd, Res.ok_bind]; exact hd, hyv', ?_⟩
+            have : (cst.withSt y).withSt y' = cst.withSt y' := rfl
+            rwa [this] at hx'
+        | none =>
+          simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this
+          obtain ⟨rfl, -, rfl⟩ := this
+          rcases dscopies_run he hcons hns (fun k' hk'' => hnot k' (List.mem_cons_of_mem _ hk'')) hr with
+            ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx'⟩
+          · rw [hρ, hst] at hd
+            have hd' : dynReadAcc ctx cst.ρ acc (k :: ks) cst.st = .err e := by
+              simp only [dynReadAcc, hrd, Res.ok_bind, Option.map_none, Option.toList_none, List.append_nil]
+              exact hd
+            exact .inl ⟨e, rfl, hd'⟩
+          · rw [hρ, hst] at hd
+            have hd' : dynReadAcc ctx cst.ρ acc (k :: ks) cst.st = .ok (syms, y') := by
+              simp only [dynReadAcc, hrd, Res.ok_bind, Option.map_none, Option.toList_none, List.append_nil]
+              exact hd
+            refine .inr ⟨syms, y', hd', hyv', ?_⟩
+            have : (cst.withSt y).withSt y' = cst.withSt y' := rfl
+            rwa [this] at hx'
+    | jump h hc =>
+      have := hstep _ h
+      cases hrd : readScalarData ctx cst.ρ k.data k.sub k.oob cst.st with
+      | err e => rw [hrd] at this; cases this
+      | ok p =>
+        obtain ⟨v?, y⟩ := p
+        rw [hrd] at this
+        cases v? with
+        | some v =>
+          simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this
+          rw [this.2.1] at hc; cases hc
+        | none =>
+          simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this
+          rw [this.2.1] at hc; cases hc
+    | gotoResume h _ _ =>
+      have := hstep _ h
+      cases hrd : readScalarData ctx cst.ρ k.data k.sub k.oob cst.st with
+      | err e => rw [hrd] at this; cases this
+      | ok p =>
+        obtain ⟨v?, y⟩ := p
+        rw [hrd] at this
+        cases v? <;> simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this <;> cases this.2.1
+    | gotoEscape h _ =>
+      have := hstep _ h
+      cases hrd : readScalarData ctx cst.ρ k.data k.sub k.oob cst.st with
+      | err e => rw [hrd] at this; cases this
+      | ok p =>
+        obtain ⟨v?, y⟩ := p
+        rw [hrd] at this
+        cases v? <;> simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this <;> cases this.2.1
+
+/-- **Map set-up with dynamic inputs** in the SDFG. -/
+theorem mapSetup_dyn {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {mp : MapNode} {keys : List InKey}
+    (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (st : St) :
+    mapSetup ctx ρ s n mp st = (dynReadAcc ctx ρ [] keys st >>= fun p =>
+      (ctx.rangePoints (Valuation.setAll ρ p.1) p.2.mem mp.range).map fun pts => (Valuation.setAll ρ p.1, p.2, pts)) := by
+  unfold mapSetup
+  rw [bindDynamicInputs_eq hkeys hok]
+  cases dynReadAcc ctx ρ [] keys st with
+  | err e => rfl
+  | ok p =>
+    simp only [Res.map, Res.ok_bind]
+    cases ctx.rangePoints (Valuation.setAll ρ p.1) p.2.mem mp.range <;> rfl
+
+/-- **Map set-up with pending dynamic inputs** in the tree. -/
+theorem mapSetupT_dyn {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) {mp : MapNode}
+    (syms : List (Sym × Val)) (cst : CSt) :
+    mapSetupT tc (pendingSc syms) mp cst =
+      (ctx.rangePoints (Valuation.setAll cst.ρ syms) cst.mem mp.range).map fun pts => (Valuation.setAll cst.ρ syms, pts) := by
+  simp only [mapSetupT, Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
+  rw [Ctx.leaf_eq he Ctx.rangePoints (fun _ => rfl)]
+  cases ctx.rangePoints (Valuation.setAll cst.ρ syms) cst.mem mp.range <;> rfl
 
 /-! ## Matching -/
 
@@ -598,65 +772,96 @@ theorem SegCorr.matched {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc
         rw [← execCode_eq he hcons cst.ρ hsh hki hko hd hdT, I_eq he]
         simp [execSimple, hk, hr]
     simp only [stepLeaf, this]
-  | @map id n o cs mp oM full body hn hk hdyn hto hdir hpriv _ _ ihb ih =>
+  | @map id n o cs mp oM full body keys ds hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih =>
     intro full' gb rest cst r st hx hrel
     have hn' := List.mem_of_find?_eq_some hn
-    have hsetT := mapSetupT_eq (mp := mp) he cst
-    have hset := mapSetup_eq (ctx := ctx) cst.ρ (mp := mp) hdyn st.forNode
-    have hmem : st.forNode.mem = cst.mem := hrel.1
-    rw [hmem] at hset
     apply SeqOut.cons hn
-    rcases map_inv hx with ⟨e, hs, rfl⟩ | ⟨ρ', pts, e, hs, hi, rfl⟩ | ⟨ρ', pts, logs, hs, hi, hfin⟩
-    · rw [hsetT] at hs
-      cases hp : ctx.rangePoints cst.ρ cst.mem mp.range with
-      | ok _ => rw [hp] at hs; cases hs
+    have hx₁ : STree.ListExec tc full' gb (pendingSc []) (ds ++ (.mapScope mp body :: (cs ++ rest))) cst r := by
+      simpa only [List.append_assoc, List.cons_append] using hx
+    have hshift : cst.st = st.forNode.shift cst.log := hrel.forNode_shift
+    rcases dscopies_run he hcons hds (fun k hk' => (hok.2 k hk').1) hx₁ with
+      ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx₂⟩
+    · rw [hshift, dynReadAcc_shift] at hd
+      cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
+      | ok _ => rw [hd₀] at hd; cases hd
       | err e' =>
-        rw [hp] at hs hset; cases hs
-        exact .inr (.inl ⟨_, rfl, .mapSetupErr hk hset⟩)
-    · rw [hsetT] at hs
-      cases hp : ctx.rangePoints cst.ρ cst.mem mp.range with
-      | err _ => rw [hp] at hs; cases hs
-      | ok pts' =>
-        rw [hp] at hs hset
-        simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
-        obtain ⟨rfl, rfl⟩ := hs
-        rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) (pre := { cst with ρ := cst.ρ }) (st₁ := st.forNode)
-            hmem hrel.2.2 hi with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl, -⟩
-        · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
-        · cases he'; exact .inr (.inl ⟨_, rfl, .mapIterErr hk hset hy⟩)
-        · cases hl
-    · rw [hsetT] at hs
-      cases hp : ctx.rangePoints cst.ρ cst.mem mp.range with
-      | err _ => rw [hp] at hs; cases hs
-      | ok pts' =>
-        rw [hp] at hs hset
-        simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
-        obtain ⟨rfl, rfl⟩ := hs
-        rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) (pre := { cst with ρ := cst.ρ }) (st₁ := st.forNode)
-            hmem hrel.2.2 hi with ⟨e', hu, hy⟩ | ⟨e', he', -⟩ | ⟨logs', hl, hy⟩
-        · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
-        · cases he'
-        · cases hl
-          have hfinS := scopeFinish_shift ctx cst.log st.forNode logs
-          rw [← hrel.forNode_shift] at hfinS
-          rw [scopeFinishT_eq he, hfinS] at hfin
-          cases hy' : scopeFinish ctx st.forNode logs with
+        rw [hd₀] at hd; cases hd
+        exact .inr (.inl ⟨_, rfl, .mapSetupErr hk (by rw [mapSetup_dyn hkeys hok, hd₀]; rfl)⟩)
+    · rw [hshift, dynReadAcc_shift] at hd
+      cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
+      | err _ => rw [hd₀] at hd; cases hd
+      | ok p =>
+        obtain ⟨syms₀, y⟩ := p
+        rw [hd₀] at hd
+        simp only [Res.map, St.shiftR, Prod.map, _root_.id, Res.ok.injEq, Prod.mk.injEq] at hd
+        obtain ⟨rfl, rfl⟩ := hd
+        have hyv : y.vals = [] := hyv'
+        have hset := mapSetup_dyn (ρ := cst.ρ) (mp := mp) hkeys hok st.forNode
+        rw [hd₀] at hset
+        simp only [Res.ok_bind] at hset
+        have hsetT := mapSetupT_dyn he (mp := mp) syms₀ (cst.withSt (y.shift cst.log))
+        have hm₂ : (cst.withSt (y.shift cst.log)).mem = y.mem := rfl
+        have hρ₂ : (cst.withSt (y.shift cst.log)).ρ = cst.ρ := rfl
+        rw [hm₂, hρ₂] at hsetT
+        rcases map_inv hx₂ with ⟨e, hs, rfl⟩ | ⟨ρ', pts, e, hs, hi, rfl⟩ | ⟨ρ', pts, logs, hs, hi, hfin⟩
+        · rw [hsetT] at hs
+          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
+          | ok _ => rw [hp] at hs; cases hs
           | err e' =>
-            rw [hy'] at hfin
-            rcases hfin with ⟨e'', hf, rfl⟩ | ⟨cst', hf, -⟩
-            · cases hf; exact .inr (.inl ⟨_, rfl, hy' ▸ NodeExec.mapScope hk hset hy⟩)
-            · cases hf
-          | ok y =>
-            rw [hy'] at hfin
-            rcases hfin with ⟨e'', hf, -⟩ | ⟨cst', hf, hx'⟩
-            · cases hf
-            · simp only [Res.map, Res.ok.injEq] at hf
-              subst hf
-              have hyv : y.vals = [] := by
-                obtain ⟨-, hyd⟩ := scopeFinish_ok hy'
-                rw [hyd]; simpa [St.forNode] using hrel.2.2
-              exact .inr (.inr ⟨y, hy' ▸ NodeExec.mapScope hk hset hy,
-                ih (cst := cst.withSt (y.shift cst.log)) hx' (hrel.afterNode hyv ⟨rfl, rfl⟩)⟩)
+            rw [hp] at hs hset; cases hs
+            exact .inr (.inl ⟨_, rfl, .mapSetupErr hk hset⟩)
+        · rw [hsetT] at hs
+          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
+          | err _ => rw [hp] at hs; cases hs
+          | ok pts' =>
+            rw [hp] at hs hset
+            simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
+            obtain ⟨rfl, rfl⟩ := hs
+            rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr)
+                (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
+                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl, -⟩
+            · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
+            · cases he'; exact .inr (.inl ⟨_, rfl, .mapIterErr hk hset hy⟩)
+            · cases hl
+        · rw [hsetT] at hs
+          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
+          | err _ => rw [hp] at hs; cases hs
+          | ok pts' =>
+            rw [hp] at hs hset
+            simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
+            obtain ⟨rfl, rfl⟩ := hs
+            rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr)
+                (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
+                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', -⟩ | ⟨logs', hl, hy⟩
+            · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
+            · cases he'
+            · cases hl
+              have hst₂ : (cst.withSt (y.shift cst.log)).st = y.shift cst.log := by
+                obtain ⟨m', l', v'⟩ := y
+                simp only at hyv
+                simp [CSt.withSt, CSt.st, St.shift, hyv]
+              have hfinS := scopeFinish_shift ctx cst.log y logs
+              rw [← hst₂] at hfinS
+              rw [scopeFinishT_eq he, hfinS] at hfin
+              cases hy' : scopeFinish ctx y logs with
+              | err e' =>
+                rw [hy'] at hfin
+                rcases hfin with ⟨e'', hf, rfl⟩ | ⟨cst', hf, -⟩
+                · cases hf; exact .inr (.inl ⟨_, rfl, hy' ▸ NodeExec.mapScope hk hset hy⟩)
+                · cases hf
+              | ok y₂ =>
+                rw [hy'] at hfin
+                rcases hfin with ⟨e'', hf, -⟩ | ⟨cst', hf, hx'⟩
+                · cases hf
+                · simp only [Res.map, Res.ok.injEq] at hf
+                  subst hf
+                  have hyv₂ : y₂.vals = [] := by
+                    obtain ⟨-, hyd⟩ := scopeFinish_ok hy'
+                    rw [hyd]; simpa [St.step] using hyv
+                  have hc : ((cst.withSt (y.shift cst.log)).withSt (y₂.shift cst.log)) = cst.withSt (y₂.shift cst.log) := rfl
+                  rw [hc] at hx'
+                  exact .inr (.inr ⟨y₂, hy' ▸ NodeExec.mapScope hk hset hy,
+                    ih (cst := cst.withSt (y₂.shift cst.log)) hx' (hrel.afterNode hyv₂ ⟨rfl, rfl⟩)⟩)
 
 end Matched
 
