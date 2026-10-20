@@ -167,13 +167,14 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (.taskletNode t ins outs :: cs)
-  | library {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {l : LibNode}
+  | library {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {l l' : LibNode}
       {props : List (String × String)} {ins outs : MemletMap}
-      (hn : s.node? id = some n) (hk : n.kind = .library l) (hsh : s.CodeShape n)
+      (hn : s.node? id = some n) (hk : n.kind = .library l) (hl : l'.classpath = l.classpath ∧ l'.reduce = l.reduce)
+      (hsh : s.CodeShape n)
       (hki : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2)
       (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
-      SegCorr ctx tc s (id :: o) (.libraryCall l props ins outs :: cs)
+      SegCorr ctx tc s (id :: o) (.libraryCall l' props ins outs :: cs)
   | map {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {oM full : List NodeId}
       {body : List SNode}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
@@ -579,12 +580,13 @@ theorem SegCorr.sim {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o
       rw [← execCode_eq he hcons cst.ρ hsh hki hko hd hdT, I_eq he]
       simp [execSimple, hk]
     simp only [stepLeaf, this]
-  | @library id n o cs l props ins outs hn hk hsh hki hko hd hdT _ ih =>
+  | @library id n o cs l l' props ins outs hn hk hl hsh hki hko hd hdT _ ih =>
     intro full gb rest cst r st hx hrel
     refine leaf_node h hn (by simp [DNode.isSimple, hk]) ?_ hx hrel (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
-    have : ∀ X, execLibraryT tc cst.ρ l ins outs X = execSimple ctx cst.ρ s n X := by
+    have : ∀ X, execLibraryT tc cst.ρ l' ins outs X = execSimple ctx cst.ρ s n X := by
       intro X
       unfold execLibraryT
+      rw [hl.2, hl.1]
       cases hr : l.reduce with
       | some props' =>
         simp only []

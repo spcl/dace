@@ -24,6 +24,11 @@ representations:
   scopes (`scopesOk?`), one normal run of a state makes every run normal
   with the same memory, whatever topological orders the scopes take
   (`StateExec.det`); `tests/DetCheck.lean` checks the hypotheses on the corpus.
+  SDFG / schedule-tree pairs (`Equiv/Corr*`, `lake exe dace-equiv stree
+  <sdfg.json> <stree.json>`): the checker `Corr.corr?` is proven sound
+  (`Corr.corr?_exec`: every run of the tree is a run of the SDFG or the SDFG
+  may be undefined; `Corr.corr?_refines`: `Refines t g` for a supported SDFG);
+  `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 

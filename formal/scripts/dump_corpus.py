@@ -52,12 +52,14 @@ def save(sdfg: dace.SDFG, out_dir: str, name: str) -> str:
         f.write(dace.serialize.dumps(_scrub_paths(sdfg.to_json())))
         # End with a newline like the other generated JSON files.
         f.write("\n")
-    _save_stree(sdfg, out_dir, name)
+    # The tree of the SDFG as stored: reloading fixes the edge order to the file's (in-memory edge order may differ,
+    # and the formal pair checker matches the tree against the stored SDFG).
+    _save_stree(dace.SDFG.from_file(path), out_dir, name)
     return path
 
 
 def _save_stree(sdfg: dace.SDFG, out_dir: str, name: str) -> None:
-    """Write ``<name>.stree.json`` and ``<name>.stree.txt`` for the given SDFG.
+    """Write ``<name>.stree.json`` and ``<name>.stree.txt`` for the given (stored) SDFG.
 
     The schedule tree is built from a copy (``in_place=False``) so that the SDFG that was dumped as ``<name>.sdfg.json``
     is left unchanged.

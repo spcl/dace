@@ -231,3 +231,14 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.StateExec.det
 #print axioms Dace.StateExec.no_err
 #print axioms Dace.scopesOk?_sound
+
+-- M5a: SDFG / schedule-tree pair checker
+#print axioms Dace.Corr.execCode_eq
+#print axioms Dace.Corr.execCopiesInto_eq
+#print axioms Dace.Corr.SegCorr.sim
+#print axioms Dace.Corr.StateCorr.sim
+#print axioms Dace.Corr.ProgCorr.exec
+#print axioms Dace.Corr.ProgCorr.refines
+#print axioms Dace.Corr.corrCheck_sound
+#print axioms Dace.Corr.corr?_exec
+#print axioms Dace.Corr.corr?_refines

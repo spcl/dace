@@ -8,7 +8,15 @@ Verified checks on SDFGs (and, later, equivalence of IR pairs):
 
 ```
 lake exe dace-equiv racefree [--emit-obligations DIR] <sdfg.json>...
+lake exe dace-equiv stree <sdfg.json> <stree.json>
 ```
+
+`stree` runs the pair checker `Corr.corr?` (`Dace.Equiv.CorrCheck`) on an
+SDFG and its schedule tree and prints `REFINES` (every run of the tree is a
+run of the SDFG, or the SDFG may end in undefined behavior: theorem
+`Dace.Corr.corr?_exec`; `Refines t g` for a supported SDFG:
+`Dace.Corr.corr?_refines`, exit `0`) or `UNKNOWN: <reason>` (outside the
+checker's fragment, exit `1`).
 
 `racefree` runs the static race check `raceFree?` (`Dace.Equiv.RaceFree`),
 whose `true` answer is proven to imply `RaceFree` (`raceFree?_sound`), and
@@ -55,10 +63,24 @@ def raceFreeMain (emit : Option String) (paths : List String) : IO UInt32 := do
           code := 1
   return code
 
+def streeMain (sp tp : String) : IO UInt32 := do
+  match ← SDFG.Json.readSDFG sp, ← readSTree tp with
+  | .error e, _ => IO.println s!"ERROR {sp}: cannot import SDFG: {e}"; return 1
+  | _, .error e => IO.println s!"ERROR {tp}: cannot import schedule tree: {e}"; return 1
+  | .ok g, .ok t =>
+    match Corr.corrCheck g t with
+    | .ok () =>
+      IO.println s!"REFINES {tp} {sp} (theorem Dace.Corr.corr?_exec)"
+      return 0
+    | .error m =>
+      IO.println s!"UNKNOWN {tp} {sp}: {m}"
+      return 1
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | "racefree" :: "--emit-obligations" :: dir :: paths@(_ :: _) => raceFreeMain (some dir) paths
   | "racefree" :: paths@(_ :: _) => raceFreeMain none paths
+  | ["stree", sp, tp] => streeMain sp tp
   | _ =>
-    IO.eprintln "usage: dace-equiv racefree [--emit-obligations DIR] <sdfg.json>..."
+    IO.eprintln "usage: dace-equiv racefree [--emit-obligations DIR] <sdfg.json>...\n       dace-equiv stree <sdfg.json> <stree.json>"
     return 2

@@ -51,6 +51,8 @@ import Dace.Equiv.ScopeBody
 import Dace.Equiv.Det
 import Dace.Equiv.CorrLeaf
 import Dace.Equiv.CorrSim
+import Dace.Equiv.Corr
+import Dace.Equiv.CorrCheck
 
 /-!
 # DaCe formal semantics
