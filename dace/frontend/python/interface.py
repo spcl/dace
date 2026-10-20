@@ -306,7 +306,7 @@ class TaskletMetaclass(type):
 
     def __enter__(self):
         # Parse and run tasklet
-        frame = inspect.stack()[1][0]
+        frame = inspect.currentframe().f_back
         filename = inspect.getframeinfo(frame, context=0).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
         tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
@@ -344,7 +344,7 @@ class tasklet(metaclass=TaskletMetaclass):
             raise NotImplementedError("Cannot run non-Python tasklet in Python")
 
         # Parse and run tasklet
-        frame = inspect.stack()[1][0]
+        frame = inspect.currentframe().f_back
         filename = inspect.getframeinfo(frame, context=0).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
         tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
