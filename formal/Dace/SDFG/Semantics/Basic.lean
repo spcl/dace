@@ -67,6 +67,7 @@ inductive ErrReason where
 messages start with `unsupported` (`scripts/difftest.py` reports them as
 SKIP). -/
 def ErrReason.toString : ErrReason → String
+  | .race (.unordered a b w) => s!"data race between the unordered nodes {a} and {b}: {repr w}"
   | .race e => s!"data race: {repr e}"
   | .stuckPop l => s!"pop from an empty queue at {repr l}"
   | .undefinedExpr e => s!"undefined expression '{e}'"
@@ -87,6 +88,19 @@ def ErrReason.kind : ErrReason → String
   | .taskletUndefined _ | .libraryUndefined _ => "uninterpreted"
   | .malformed _ => "malformed"
   | _ => "ub"
+
+/-- The constructor name of an error (printed by `dace-interp` as
+`reason`, matched by the `expect_error` entries of `scripts/difftest.py`). -/
+def ErrReason.tag : ErrReason → String
+  | .race _ => "race"
+  | .stuckPop _ => "stuckPop"
+  | .undefinedExpr _ => "undefinedExpr"
+  | .undefinedSubset _ => "undefinedSubset"
+  | .unsetRef _ => "unsetRef"
+  | .taskletUndefined _ => "taskletUndefined"
+  | .libraryUndefined _ => "libraryUndefined"
+  | .unsupported _ => "unsupported"
+  | .malformed _ => "malformed"
 
 /-- Is the error undefined behavior (anything refines it)?  False exactly for
 `malformed` and `unsupported` (`Decisions.md#D59`). -/

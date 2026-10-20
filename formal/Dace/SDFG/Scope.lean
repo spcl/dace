@@ -271,7 +271,9 @@ def isTopologicalOrder (s : State) (ids : List NodeId) (order : List NodeId) : B
   order.length = ids.length && ids.all order.contains && order.Nodup && s.respectsEdges order
 
 /-- A deterministic topological order of the given nodes (Kahn's algorithm,
-ties broken by node order).  Returns `none` if the subgraph is cyclic. -/
+ties broken by node order).  Returns `none` if the subgraph is cyclic; a
+self-loop edge is a cycle (`nx.find_cycle` in `SDFGState.has_cycles`,
+`Decisions.md#D62`). -/
 def topoOrder (s : State) (ids : List NodeId) : Option (List NodeId) :=
   let rec go (fuel : Nat) (placed : List NodeId) (remaining : List NodeId) : Option (List NodeId) :=
     match fuel with
@@ -281,11 +283,24 @@ def topoOrder (s : State) (ids : List NodeId) : Option (List NodeId) :=
       | [] => some placed.reverse
       | _ =>
         let ready := remaining.filter fun n =>
-          (s.inEdges n).all fun e => !remaining.contains e.src || e.src = n
+          (s.inEdges n).all fun e => !remaining.contains e.src
         match ready with
         | [] => none
         | r :: _ => go fuel (r :: placed) (remaining.erase r)
   go (ids.length + 1) [] ids
+
+/-! ## Happens-before within a state -/
+
+/-- Destinations of the out-edges of a node (dependency edges included). -/
+def succs (s : State) (id : NodeId) : List NodeId := (s.outEdges id).map (·.dst)
+
+/-- Is there a non-empty path of edges from `a` to `b` (rule H1 of
+`doc/sdfg/synchronization.rst`: dataflow and dependency edges order their
+endpoints)?  Every node reached is an edge destination, which bounds the
+closure.  On acyclic states the relation is irreflexive
+(`State.reaches_irrefl`). -/
+def reaches (s : State) (a b : NodeId) : Bool :=
+  (s.succs a).any fun c => (closure s.succs (s.edges.length + 1) c).contains b
 
 end State
 

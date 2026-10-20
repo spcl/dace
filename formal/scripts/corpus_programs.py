@@ -364,3 +364,41 @@ def args_consume_sum(seed: int = 0) -> dict:
 
 
 PROGRAMS.append(("consume_sum", _BuiltProgram("consume_sum", _build_consume_sum), args_consume_sum))
+
+#: Programs whose formal semantics is an error, per intermediate representation (``"sdfg"``/``"stree"``): the error
+#: reason (``ErrReason.tag``, printed by ``dace-interp`` as ``reason``) the Lean interpreter must report.  DaCe still
+#: runs these programs (with a result it does not define); ``difftest.py --record`` stores the entry in
+#: ``<name>.expected.json`` and ``--check`` passes on the expected error.  Representations not listed are compared by
+#: value as usual.
+EXPECTED_ERRORS: dict = {}
+
+
+def _build_unordered_writes() -> dace.SDFG:
+    """Two tasklets that no path orders both write ``A[0]`` through the same access node.
+
+    A happens-before race (``Decisions.md#D61``): DaCe emits the tasklets in some topological order and the result
+    depends on it, the formal SDFG semantics reports ``race``.  The schedule tree fixes one order (its sibling list is
+    sequential) and is compared by value.
+    """
+    sdfg = dace.SDFG("unordered_writes")
+    sdfg.add_array("X", [2], dace.float64)
+    sdfg.add_array("A", [2], dace.float64)
+    state = sdfg.add_state("main")
+    x = state.add_read("X")
+    a = state.add_write("A")
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = x")
+    second = state.add_tasklet("second", {"x"}, {"y"}, "y = 2 * x")
+    state.add_edge(x, None, first, "x", dace.Memlet("X[0]"))
+    state.add_edge(x, None, second, "x", dace.Memlet("X[1]"))
+    state.add_edge(first, "y", a, None, dace.Memlet("A[0]"))
+    state.add_edge(second, "y", a, None, dace.Memlet("A[0]"))
+    return sdfg
+
+
+def args_unordered_writes(seed: int = 0) -> dict:
+    r = _rng(17, seed)
+    return dict(X=r.random(2), A=np.zeros(2))
+
+
+PROGRAMS.append(("unordered_writes", _BuiltProgram("unordered_writes", _build_unordered_writes), args_unordered_writes))
+EXPECTED_ERRORS["unordered_writes"] = {"sdfg": "race"}

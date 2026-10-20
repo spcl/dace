@@ -33,7 +33,7 @@ namespace Dace
 structure Sound (fuel : Nat) : Prop where
   node : ∀ {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {st : St} {r : Res St},
     execNode fuel ctx ρ s n st = some r → NodeExec ctx ρ s n st r
-  seq : ∀ {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st : St} {r : Res St},
+  seq : ∀ {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st : St} {r : Res (St × List (NodeId × Log))},
     execSeq fuel ctx ρ s ids st = some r → SeqExec ctx ρ s ids st r
   ordered : ∀ {ctx : Ctx} {ρ : Valuation} {s : State} {all direct : List NodeId} {st : St} {r : Res St},
     execOrdered fuel ctx ρ s all direct st = some r → OrderedExec ctx ρ s all direct st r
@@ -126,7 +126,8 @@ theorem execNode_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation
       next ρ₂ m₂ g₂ hr => cases h; exact .nested hk hs (ih.sdfg hr)
 
 theorem execSeq_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId}
-    {st : St} {r : Res St} (h : execSeq (fuel + 1) ctx ρ s ids st = some r) : SeqExec ctx ρ s ids st r := by
+    {st : St} {r : Res (St × List (NodeId × Log))} (h : execSeq (fuel + 1) ctx ρ s ids st = some r) :
+    SeqExec ctx ρ s ids st r := by
   simp only [execSeq] at h
   split at h
   · cases h; exact .nil
@@ -136,7 +137,11 @@ theorem execSeq_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation}
       split at h
       · cases h
       next e he => cases h; exact .headErr hn (ih.node he)
-      next st' he => exact .cons hn (ih.node he) (ih.seq h)
+      next st' he =>
+        split at h
+        · cases h
+        next e hr => cases h; exact .tailErr hn (ih.node he) (ih.seq hr)
+        next st₂ tr hr => cases h; exact .cons hn (ih.node he) (ih.seq hr)
 
 theorem execOrdered_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation} {s : State}
     {all direct : List NodeId} {st : St} {r : Res St}
@@ -149,7 +154,14 @@ theorem execOrdered_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuat
     · cases h
     next order _ =>
       split at h
-      next ho => exact .run ho hp (ih.seq h)
+      next ho =>
+        split at h
+        · cases h
+        next e hs => cases h; exact .seqErr ho hp (ih.seq hs)
+        next st₂ tr hs =>
+          split at h
+          next hf => cases h; exact .run ho hp (ih.seq hs) hf
+          next hf => cases h; exact .hbRace ho hp (ih.seq hs) (bool_eq_false_of_not hf)
       · cases h
 
 theorem execIter_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId}
@@ -353,7 +365,7 @@ theorem execNode_sound (fuel : Nat) {ctx : Ctx} {ρ : Valuation} {s : State} {n 
   (sound fuel).node h
 
 theorem execSeq_sound (fuel : Nat) {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st : St}
-    {r : Res St} (h : execSeq fuel ctx ρ s ids st = some r) : SeqExec ctx ρ s ids st r :=
+    {r : Res (St × List (NodeId × Log))} (h : execSeq fuel ctx ρ s ids st = some r) : SeqExec ctx ρ s ids st r :=
   (sound fuel).seq h
 
 theorem execOrdered_sound (fuel : Nat) {ctx : Ctx} {ρ : Valuation} {s : State} {all direct : List NodeId}

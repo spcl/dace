@@ -677,4 +677,49 @@ def stateFinish (ctx : Ctx) (cst : CSt) (logs : List Log) : Res (Ctl × CSt) :=
   | .ok m' => .ok (.normal, { cst with mem := m', log := cst.log.seq (Log.unionAll logs) })
   | .error e => .err (.race e)
 
+/-! ## Sequential executions and happens-before races (`Decisions.md#D61`)
+
+The nodes of one sequential execution (a scope body or a state component)
+run one after the other in some topological order, each from the current
+local view with an **empty** log; its own log (*delta*) is recorded in the
+execution's *trace* and appended to the accumulated log with `Log.seq`.
+Two nodes of the trace that no path of the state orders (`State.reaches`)
+must not have conflicting deltas (`Log.conflicts`, the conflict notion of
+`merge`): such a pair is a race (`doc/sdfg/synchronization.rst`, Execution
+Model), whatever order the execution happened to pick.  The delta of a scope
+entry contains its whole scope execution, so nodes of nested scopes are
+covered by their entry. -/
+
+/-- The state a node of a sequential execution starts from: the current
+local view and code→code values, with an empty log. -/
+def St.forNode (st : St) : St := { st with log := Log.empty }
+
+/-- Continue a sequential execution at `st` after a node that ended in
+`st'` (whose log is the node's delta): accumulate the delta. -/
+def St.afterNode (st st' : St) : St := { st' with log := st.log.seq st'.log }
+
+namespace State
+
+/-- Two trace entries race: their deltas conflict and neither node reaches
+the other. -/
+def hbConflict (s : State) (x y : NodeId × Log) : Bool :=
+  Log.conflicts x.2 y.2 && !s.reaches x.1 y.1 && !s.reaches y.1 x.1
+
+/-- No two entries of the trace race (`Log.pairwiseFree` restricted to the
+pairs that the state leaves unordered). -/
+def hbFree (s : State) : List (NodeId × Log) → Bool
+  | [] => true
+  | x :: xs => xs.all (fun y => !s.hbConflict x y) && s.hbFree xs
+
+/-- The first racing pair of a trace, as the reported error
+(`MergeError.unordered a b w` with a witness `w` of the conflict). -/
+def hbWitness (s : State) : List (NodeId × Log) → MergeError
+  | [] => .race default
+  | x :: xs =>
+    match xs.find? (fun y => s.hbConflict x y) with
+    | some y => .unordered x.1 y.1 (Merge.witness x.2 y.2)
+    | none => s.hbWitness xs
+
+end State
+
 end Dace

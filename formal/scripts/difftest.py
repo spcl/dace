@@ -17,7 +17,11 @@ For every ``formal/tests/corpus/<base>[.variant].sdfg.json`` this script either
   Lean interpreter does not model (exit 2, or an ``unsupported`` error such as a
   library node without a model:
   ``{"error": "unsupported library node '...'", "kind": "unsupported"}``) is
-  reported as SKIP.
+  reported as SKIP.  A program listed in ``corpus_programs.EXPECTED_ERRORS``
+  (e.g. a happens-before race, whose DaCe output is not defined) records
+  ``"expect_error": {"<ir>": "<reason>"}`` in its ``expected.json``; for that
+  IR the check passes exactly when ``dace-interp`` reports an error with that
+  ``reason`` (``ErrReason.tag``), other IRs are compared by value.
 
 When neither mode is given, the script records if any expected file is missing
 and checks otherwise.
@@ -55,8 +59,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from corpus_programs import EXPECTED_ERRORS, PROGRAMS  # noqa: E402
+
 import dace  # noqa: E402
-from corpus_programs import PROGRAMS  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CORPUS = os.path.normpath(os.path.join(HERE, "..", "tests", "corpus"))
@@ -192,10 +197,10 @@ def record(corpus: str, only, seed: int = 0) -> int:
             os.path.join(corpus, f"{name}.inputs.json"),
             {"program": base, "sdfg": sdfg_fname, "symbols": syms, "containers": inputs_containers},
         )
-        dump_json(
-            os.path.join(corpus, f"{name}.expected.json"),
-            {"program": base, "sdfg": sdfg_fname, "containers": expected_containers},
-        )
+        expected_obj = {"program": base, "sdfg": sdfg_fname, "containers": expected_containers}
+        if base in EXPECTED_ERRORS:
+            expected_obj["expect_error"] = EXPECTED_ERRORS[base]
+        dump_json(os.path.join(corpus, f"{name}.expected.json"), expected_obj)
 
         # Cheap NumPy cross-check for a few programs.
         ref = sanity_reference(base, args)
@@ -240,6 +245,22 @@ def unsupported_error(stdout: str) -> str | None:
     if isinstance(message, str) and result.get("kind") in ("unsupported", "uninterpreted"):
         return message
     return None
+
+
+def error_reason(stdout: str) -> str | None:
+    """Return the reason (``ErrReason.tag``, e.g. ``"race"``) of a semantic error reported by the interpreter.
+
+    :param stdout: The standard output of ``dace-interp``.
+    :return: The reason, or ``None`` if the output is not an error report.
+    """
+    try:
+        result = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(result, dict) or "error" not in result:
+        return None
+    reason = result.get("reason")
+    return reason if isinstance(reason, str) else None
 
 
 def compare_containers(got: dict, expected: dict, tol_scale: float):
@@ -308,6 +329,23 @@ def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
             capture_output=True,
             text=True,
         )
+
+        with open(expected_path) as f:
+            expected = json.load(f)
+
+        # A program whose formal semantics is an error for this IR (``corpus_programs.EXPECTED_ERRORS``, e.g. a
+        # happens-before race): DaCe's output is not defined, the interpreter must report exactly that error.
+        expected_reason = expected.get("expect_error", {}).get(ir)
+        if expected_reason is not None:
+            reason = error_reason(proc.stdout) if proc.returncode == 1 else None
+            if reason == expected_reason:
+                print(f"PASS   {name}: expected {expected_reason}")
+            else:
+                got = f"error reason {reason!r}" if reason is not None else f"exit {proc.returncode}"
+                print(f"FAIL   {name}: expected error {expected_reason!r}, got {got}")
+                failures += 1
+            continue
+
         if proc.returncode == 2:
             print(f"SKIP   {name}: dace-interp {ir} not implemented (exit 2)")
             continue
@@ -325,9 +363,6 @@ def check(corpus: str, only, tol_scale: float, ir: str = "sdfg") -> int:
             print(f"FAIL   {name}: dace-interp stdout is not JSON ({exc})")
             failures += 1
             continue
-
-        with open(expected_path) as f:
-            expected = json.load(f)
 
         if "error" in result:
             print(f"FAIL   {name}: dace-interp reported semantic error {result['error']!r} but a value was expected")

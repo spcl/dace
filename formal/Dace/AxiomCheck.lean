@@ -71,6 +71,13 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.State.topoOrder_spec
 #print axioms Dace.State.isTopologicalOrder_perm
 
+-- R0.5: happens-before races (reachability, trace logs).
+#print axioms Dace.State.reaches_iff
+#print axioms Dace.State.reaches_irrefl
+#print axioms Dace.SeqExec.log_eq
+#print axioms Dace.SeqExec.log_eq_seqAll
+#print axioms Dace.SeqExec.log_eq_seqAll_empty
+
 -- R2.1–R2.3: facts, polynomial normal form, certificate checking.
 #print axioms Dace.Constraints.satisfies_empty
 #print axioms Dace.toPoly?_sound

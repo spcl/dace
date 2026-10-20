@@ -121,6 +121,10 @@ inductive MergeError where
   | race (l : Loc)
   | aliasRace (n : Name)
   | queueRace (l : Loc)
+  /-- Conflicting accesses `w` of the nodes `a` and `b` of one sequential
+      execution that no path of the state orders (a happens-before race,
+      `Decisions.md#D61`). -/
+  | unordered (a b : Nat) (w : MergeError)
   deriving Repr, Inhabited
 
 namespace Merge
@@ -153,6 +157,23 @@ def findConflict : List Log → Option (Log × Log)
 
 end Merge
 
+/-- A witness of the conflict between two logs (`Log.conflicts g h`): a
+location one writes and the other accesses, a doubly bound alias, or a queue
+accessed exclusively. -/
+def Merge.witness (g h : Log) : MergeError :=
+  match g.writeLocs.find? (fun l => h.writeLocs.contains l || h.reads.contains l || h.wcrLocs.contains l) with
+  | some l => .race l
+  | none =>
+    match h.writeLocs.find? (fun l => g.reads.contains l || g.wcrLocs.contains l) with
+    | some l => .race l
+    | none =>
+      match g.aliasSets.find? (fun (n, _) => h.aliasSets.any fun (n', _) => n = n') with
+      | some (n, _) => .aliasRace n
+      | none =>
+        match (g.exclusiveQueues ++ h.exclusiveQueues).head? with
+        | some l => .queueRace l
+        | none => .race default
+
 /-- Merge the logs of parallel executions onto the initial memory `m₀`. -/
 def merge (w : WcrSem) (m₀ : Mem) (gs : List Log) : Except MergeError Mem :=
   if Log.pairwiseFree gs then
@@ -160,20 +181,7 @@ def merge (w : WcrSem) (m₀ : Mem) (gs : List Log) : Except MergeError Mem :=
     .ok (Merge.applyQueues (Merge.applyAliases (Merge.applyWcrs w (Merge.applyWrites m₀ u.writes) u.wcrs) u.aliasSets) u.queues)
   else
     match Merge.findConflict gs with
-    | some (g, h) =>
-      -- report a witness location
-      match g.writeLocs.find? (fun l => h.writeLocs.contains l || h.reads.contains l || h.wcrLocs.contains l) with
-      | some l => .error (.race l)
-      | none =>
-        match h.writeLocs.find? (fun l => g.reads.contains l || g.wcrLocs.contains l) with
-        | some l => .error (.race l)
-        | none =>
-          match g.aliasSets.find? (fun (n, _) => h.aliasSets.any fun (n', _) => n = n') with
-          | some (n, _) => .error (.aliasRace n)
-          | none =>
-            match (g.exclusiveQueues ++ h.exclusiveQueues).head? with
-            | some l => .error (.queueRace l)
-            | none => .error (.race default)
+    | some (g, h) => .error (Merge.witness g h)
     | none => .error (.race default)
 
 /-! ## Lemmas -/

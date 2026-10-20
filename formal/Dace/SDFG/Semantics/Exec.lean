@@ -1,5 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.SDFG.Semantics.Leaf
+import Dace.Core.MergeLemmas
 
 /-!
 # SDFG semantics: the execution relations
@@ -18,8 +19,8 @@ the absence of a derivation.
 | Relation | Meaning |
 |----------|---------|
 | `NodeExec ctx ρ s n st r` | node `n` of state `s`, from `st` to `r` |
-| `SeqExec ctx ρ s ids st r` | the nodes `ids` in this order |
-| `OrderedExec ctx ρ s all direct st r` | view prologue, then the `direct` nodes in some topological order of `all` |
+| `SeqExec ctx ρ s ids st r` | the nodes `ids` in this order, each from an empty log; `r` carries the trace of their deltas |
+| `OrderedExec ctx ρ s all direct st r` | view prologue, then the `direct` nodes in some topological order of `all`, free of happens-before races |
 | `IterExec ctx ρ s entry params priv pre pts r` | the map iterations `pts`, each from `pre`, yielding their logs |
 | `ConsumeTasks ctx ρ s entry c l np priv pre q r` | the consume tasks on queue `q`: logs, remaining queue, deferred pushes |
 | `CompsExec ctx ρ s m comps r` | the concurrent components of a state, each from `m` |
@@ -35,7 +36,11 @@ Results are `Res St` for dataflow, `Res (Ctl × CSt)` for control flow and
 `Res (Valuation × Mem × Log)` for SDFG invocations.  Dataflow results carry
 the *local* memory view and a log; the logs of parallel executions (map
 iterations, consume tasks, state components) are merged commutatively by
-`merge` (`Decisions.md#D3`, `#D4`), which is where races surface.
+`merge` (`Decisions.md#D3`, `#D4`), which is where races between parallel
+executions surface.  Within one sequential execution, every node's own log
+delta is recorded in a trace (`SeqExec`); two nodes that no path of the
+state orders must not have conflicting deltas (`State.hbFree`), otherwise
+the execution is a race (`OrderedExec.hbRace`, `Decisions.md#D61`).
 -/
 
 set_option autoImplicit false
@@ -108,35 +113,61 @@ inductive NodeExec : Ctx → Valuation → State → DNode → St → Res St →
       (hr : SDFGExec ctx' ρ' st₁.mem inner (.ok (ρ₂, m₂, g₂))) :
       NodeExec ctx ρ s n st (nestedFinish ctx' ρ' s n aliased st₁ m₂ g₂)
 
-/-- Sequential execution of a list of nodes in the given order. -/
-inductive SeqExec : Ctx → Valuation → State → List NodeId → St → Res St → Prop where
+/-- Sequential execution of a list of nodes in the given order.  Each node
+runs from the current state with an empty log (`St.forNode`); the result is
+the final state, whose log accumulates the nodes' deltas (`St.afterNode`),
+and the *trace*: every node with its own delta, in execution order
+(`Decisions.md#D61`). -/
+inductive SeqExec : Ctx → Valuation → State → List NodeId → St → Res (St × List (NodeId × Log)) → Prop where
   | nil {ctx : Ctx} {ρ : Valuation} {s : State} {st : St} :
-      SeqExec ctx ρ s [] st (.ok st)
+      SeqExec ctx ρ s [] st (.ok (st, []))
   | missing {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {st : St}
       (h : s.node? id = none) :
       SeqExec ctx ρ s (id :: rest) st (.err (.malformed s!"unknown node {id}"))
   | headErr {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {n : DNode} {st : St}
       {e : ErrReason}
-      (h : s.node? id = some n) (hn : NodeExec ctx ρ s n st (.err e)) :
+      (h : s.node? id = some n) (hn : NodeExec ctx ρ s n st.forNode (.err e)) :
       SeqExec ctx ρ s (id :: rest) st (.err e)
-  | cons {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {n : DNode} {st st' : St}
-      {r : Res St}
-      (h : s.node? id = some n) (hn : NodeExec ctx ρ s n st (.ok st')) (hr : SeqExec ctx ρ s rest st' r) :
-      SeqExec ctx ρ s (id :: rest) st r
+  | tailErr {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {n : DNode} {st st' : St}
+      {e : ErrReason}
+      (h : s.node? id = some n) (hn : NodeExec ctx ρ s n st.forNode (.ok st'))
+      (hr : SeqExec ctx ρ s rest (st.afterNode st') (.err e)) :
+      SeqExec ctx ρ s (id :: rest) st (.err e)
+  | cons {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {n : DNode} {st st' st₂ : St}
+      {tr : List (NodeId × Log)}
+      (h : s.node? id = some n) (hn : NodeExec ctx ρ s n st.forNode (.ok st'))
+      (hr : SeqExec ctx ρ s rest (st.afterNode st') (.ok (st₂, tr))) :
+      SeqExec ctx ρ s (id :: rest) st (.ok (st₂, (id, st'.log) :: tr))
 
 /-- Execution of the `direct` nodes of a scope (or component) in some
 topological order of `all` (the scope's nodes including nested ones, so
 that paths through nested scopes order their endpoints), after the view
-prologue (`Decisions.md#D31`). -/
+prologue (`Decisions.md#D31`).  The execution is defined only if no two of
+its nodes that the state leaves unordered have conflicting deltas
+(`State.hbFree`); otherwise it is a race (`Decisions.md#D61`). -/
 inductive OrderedExec : Ctx → Valuation → State → List NodeId → List NodeId → St → Res St → Prop where
   | prologueErr {ctx : Ctx} {ρ : Valuation} {s : State} {all direct : List NodeId} {st : St} {e : ErrReason}
       (hp : bindViews ctx ρ s direct st = .err e) :
       OrderedExec ctx ρ s all direct st (.err e)
-  | run {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ : St} {r : Res St}
+  | seqErr {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ : St} {e : ErrReason}
       (ho : s.isTopologicalOrder all order = true)
       (hp : bindViews ctx ρ s direct st = .ok st₁)
-      (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ r) :
-      OrderedExec ctx ρ s all direct st r
+      (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.err e)) :
+      OrderedExec ctx ρ s all direct st (.err e)
+  | hbRace {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ st₂ : St}
+      {tr : List (NodeId × Log)}
+      (ho : s.isTopologicalOrder all order = true)
+      (hp : bindViews ctx ρ s direct st = .ok st₁)
+      (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.ok (st₂, tr)))
+      (hf : s.hbFree tr = false) :
+      OrderedExec ctx ρ s all direct st (.err (.race (s.hbWitness tr)))
+  | run {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ st₂ : St}
+      {tr : List (NodeId × Log)}
+      (ho : s.isTopologicalOrder all order = true)
+      (hp : bindViews ctx ρ s direct st = .ok st₁)
+      (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.ok (st₂, tr)))
+      (hf : s.hbFree tr = true) :
+      OrderedExec ctx ρ s all direct st (.ok st₂)
 
 /-- The iterations of a map, each from the pre-map state `pre`, yielding
 their logs without the scope's private transients. -/
@@ -382,9 +413,54 @@ def SDFG.Exec (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (r : Res 
 
 /-! ## Sanity lemmas -/
 
-theorem SeqExec_nil {ctx : Ctx} {ρ : Valuation} {s : State} {st : St} {r : Res St}
-    (h : SeqExec ctx ρ s [] st r) : r = .ok st := by
+/-- Sequential composition with the empty log is the identity. -/
+theorem Log.seq_empty (g : Log) : g.seq Log.empty = g := by
+  cases g; simp [Log.seq, Log.empty]
+
+/-- Sequential composition of a list of logs, in order. -/
+def Log.seqAll : List Log → Log
+  | [] => Log.empty
+  | g :: gs => g.seq (Log.seqAll gs)
+
+theorem SeqExec_nil {ctx : Ctx} {ρ : Valuation} {s : State} {st : St} {r : Res (St × List (NodeId × Log))}
+    (h : SeqExec ctx ρ s [] st r) : r = .ok (st, []) := by
   cases h; rfl
+
+/-- The log of a sequential execution is the initial log followed by the
+deltas of its trace, in order. -/
+theorem SeqExec.log_eq {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st st₂ : St}
+    {tr : List (NodeId × Log)} (h : SeqExec ctx ρ s ids st (.ok (st₂, tr))) :
+    st₂.log = tr.foldl (fun g x => g.seq x.2) st.log := by
+  induction ids generalizing st st₂ tr with
+  | nil => cases h; rfl
+  | cons id rest ih =>
+    cases h with
+    | cons _ _ hr =>
+      have h' := ih hr
+      rw [h']
+      rfl
+
+/-- The same, with the trace's deltas composed first: the log is the
+initial log followed by `Log.seqAll` of the trace (by `Log.seq_assoc`), so
+that, for an execution starting with an empty log, it is exactly the
+sequential composition of the nodes' deltas. -/
+theorem SeqExec.log_eq_seqAll {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st st₂ : St}
+    {tr : List (NodeId × Log)} (h : SeqExec ctx ρ s ids st (.ok (st₂, tr))) :
+    st₂.log = st.log.seq (Log.seqAll (tr.map (·.2))) := by
+  rw [h.log_eq]
+  clear h
+  generalize st.log = L
+  induction tr generalizing L with
+  | nil => simp [Log.seqAll, Log.seq_empty]
+  | cons x xs ih =>
+    simp only [List.foldl_cons, List.map_cons, Log.seqAll]
+    rw [ih, Log.seq_assoc]
+
+theorem SeqExec.log_eq_seqAll_empty {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st st₂ : St}
+    {tr : List (NodeId × Log)} (h : SeqExec ctx ρ s ids st.forNode (.ok (st₂, tr))) :
+    st₂.log = Log.seqAll (tr.map (·.2)) := by
+  rw [h.log_eq_seqAll]
+  exact Log.empty_seq _
 
 theorem IterExec_nil {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId} {params : List Sym}
     {priv : List Name} {pre : St} {r : Res (List Log)}
@@ -399,9 +475,6 @@ theorem CondExec_nil {ctx : Ctx} {cst : CSt} {r : Res (Ctl × CSt)}
     (h : CondExec ctx cst [] r) : r = .ok (.normal, cst) := by
   cases h; rfl
 
-/-- Sequential composition with the empty log is the identity. -/
-theorem Log.seq_empty (g : Log) : g.seq Log.empty = g := by
-  cases g; simp [Log.seq, Log.empty]
 
 theorem Log.unionAll_nil : Log.unionAll [] = Log.empty := rfl
 

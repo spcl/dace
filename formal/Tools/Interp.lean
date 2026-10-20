@@ -17,10 +17,12 @@ The inputs file has the format produced by `scripts/difftest.py --record`
 (`symbols`, `containers` with `dtype`/`shape`/row-major `data`).  On success
 the tool prints `{"containers": {...}}` with every non-transient container of
 the program and exits with `0`; a semantic error prints
-`{"error": "...", "kind": k}` and exits with `1`, where `k` is the error class
-(`ErrReason.kind`: `ub`, `malformed` or `unsupported`, `Decisions.md#D59`) or
-`tool` for import/read-back failures and missing outcomes; usage errors and
-unsupported IR kinds exit with `2`.
+`{"error": "...", "kind": k, "reason": r}` and exits with `1`, where `k` is the
+error class (`ErrReason.kind`: `ub`, `malformed` or `unsupported`,
+`Decisions.md#D59`) or `tool` for import/read-back failures and missing
+outcomes, and `r` the error's constructor (`ErrReason.tag`, e.g. `race`;
+`tool` for the tool's own failures); usage errors and unsupported IR kinds
+exit with `2`.
 
 Containers are laid out in memory exactly as the semantics addresses them:
 element `idx` of container `n` lives at `Loc.elem n o` with `o` computed by
@@ -266,8 +268,8 @@ def parseOptions : List String → Except String Options
 def usage : String :=
   "usage: dace-interp (sdfg <sdfg.json> | stree <stree.json>) <inputs.json> [--fuel N]"
 
-def errorExit (msg : String) (kind : String := "tool") : IO UInt32 := do
-  IO.println ("{\"error\": " ++ jstr msg ++ ", \"kind\": " ++ jstr kind ++ "}")
+def errorExit (msg : String) (kind : String := "tool") (reason : String := "tool") : IO UInt32 := do
+  IO.println ("{\"error\": " ++ jstr msg ++ ", \"kind\": " ++ jstr kind ++ ", \"reason\": " ++ jstr reason ++ "}")
   return 1
 
 /-- Shared driver of both IR kinds: read the inputs, lay them out in memory
@@ -284,7 +286,7 @@ def runProgram (ctx : Ctx) (inputsPath : String) (opts : Options)
     | .error e => IO.eprintln s!"dace-interp: cannot build memory: {e}"; return 2
   match run ρ₀ m₀ opts.fuel with
   | none => errorExit "out of fuel (or no outcome exists)"
-  | some (.err e) => errorExit (toString e) e.kind
+  | some (.err e) => errorExit (toString e) e.kind e.tag
   | some (.ok m) =>
     match renderContainers ctx ρ₀ ins m with
     | .ok out => IO.println out; return 0

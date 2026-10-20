@@ -19,9 +19,11 @@ each deterministically, as a refinement:
   `State.topoOrder all` (Kahn's algorithm, ties broken by node order).  The
   computed order is re-checked with `State.isTopologicalOrder` (the premise
   of `OrderedExec.run`) so that soundness does not depend on the internals
-  of `topoOrder`.  A cyclic body, or an `all` the check rejects (duplicate
-  node ids, self-loop edges), has no derivation in the relation and yields
-  `none`.
+  of `topoOrder`.  A cyclic body (self-loop edges included), or an `all` the
+  check rejects (duplicate node ids), has no derivation in the relation and
+  yields `none`.  The trace of the chosen order is checked for
+  happens-before races (`State.hbFree`, `Decisions.md#D61`); the check does
+  not depend on the order chosen except through the nodes' deltas.
 * **Interstate edge** (`RegionAt.step`, `Decisions.md#D2`): the first true
   edge in `Region.outEdges` order, as the code generator does.
 * **Consume processing element** (`ConsumeTasks.step`, `Decisions.md#D38`):
@@ -71,22 +73,28 @@ def execNode (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (
         | some (.ok (_, m₂, g₂)) => some (nestedFinish ctx' ρ' s n aliased st₁ m₂ g₂)
 
 /-- Mirror of `SeqExec`. -/
-def execSeq (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List NodeId) (st : St) : Option (Res St) :=
+def execSeq (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List NodeId) (st : St) :
+    Option (Res (St × List (NodeId × Log))) :=
   match fuel with
   | 0 => none
   | fuel + 1 =>
     match ids with
-    | [] => some (.ok st)
+    | [] => some (.ok (st, []))
     | id :: rest =>
       match s.node? id with
       | none => some (.err (.malformed s!"unknown node {id}"))
       | some n =>
-        match execNode fuel ctx ρ s n st with
+        match execNode fuel ctx ρ s n st.forNode with
         | none => none
         | some (.err e) => some (.err e)
-        | some (.ok st') => execSeq fuel ctx ρ s rest st'
+        | some (.ok st') =>
+          match execSeq fuel ctx ρ s rest (st.afterNode st') with
+          | none => none
+          | some (.err e) => some (.err e)
+          | some (.ok (st₂, tr)) => some (.ok (st₂, (id, st'.log) :: tr))
 
-/-- Mirror of `OrderedExec`; the topological order is `State.topoOrder all`. -/
+/-- Mirror of `OrderedExec`; the topological order is `State.topoOrder all`,
+and the trace of the sequential execution is checked with `State.hbFree`. -/
 def execOrdered (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (all direct : List NodeId) (st : St) :
     Option (Res St) :=
   match fuel with
@@ -98,7 +106,12 @@ def execOrdered (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (all direc
       match s.topoOrder all with
       | none => none
       | some order =>
-        if s.isTopologicalOrder all order then execSeq fuel ctx ρ s (order.filter direct.contains) st₁
+        if s.isTopologicalOrder all order then
+          match execSeq fuel ctx ρ s (order.filter direct.contains) st₁ with
+          | none => none
+          | some (.err e) => some (.err e)
+          | some (.ok (st₂, tr)) =>
+            if s.hbFree tr then some (.ok st₂) else some (.err (.race (s.hbWitness tr)))
         else none
 
 /-- Mirror of `IterExec`. -/
@@ -312,7 +325,7 @@ theorem execSeq_zero (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List NodeId
   simp [execSeq]
 
 theorem execSeq_nil (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (st : St) :
-    execSeq (fuel + 1) ctx ρ s [] st = some (.ok st) := by
+    execSeq (fuel + 1) ctx ρ s [] st = some (.ok (st, [])) := by
   simp [execSeq]
 
 theorem execIter_nil (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (entry : NodeId) (params : List Sym)
@@ -329,7 +342,8 @@ theorem execCond_nil (fuel : Nat) (ctx : Ctx) (cst : CSt) :
   simp [execCond]
 
 /-- The empty node list is executed as `SeqExec.nil` derives it. -/
-theorem execSeq_nil_sound (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (st : St) {r : Res St}
+theorem execSeq_nil_sound (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (st : St)
+    {r : Res (St × List (NodeId × Log))}
     (h : execSeq (fuel + 1) ctx ρ s [] st = some r) : SeqExec ctx ρ s [] st r := by
   rw [execSeq_nil] at h
   cases h

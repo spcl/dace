@@ -66,6 +66,14 @@ same for the Python scripts).
   `unsupported library node` error (a library node without a model, e.g.
   `matmul_lib`'s `MatMul`); a missing `lake` skips everything. The run exits
   non-zero if any file FAILs.
+- Expected errors: a program whose formal semantics is an error although DaCe
+  runs it (e.g. `unordered_writes`, a happens-before race, `Decisions.md#D61`)
+  is listed in `EXPECTED_ERRORS` of `scripts/corpus_programs.py` as
+  `{"<ir>": "<reason>"}`. `--record` copies the entry into
+  `<name>.expected.json` as `"expect_error"`; `--check --ir <ir>` then passes
+  exactly when `dace-interp` reports an error with that `reason` (the tool
+  prints `{"error": …, "kind": …, "reason": …}`, `reason` = `ErrReason.tag`),
+  while IRs not listed are compared by value as usual.
 
 With no mode flag it records when any expected file is missing, else checks.
 Options: `--only name…`, `--corpus DIR`, `--seed S` (record), `--tol-scale` (check).
@@ -87,7 +95,8 @@ The input/expected JSON format (the Lean reader is written against it):
 `containers` holds every non-transient array plus any `__return*`. DaCe `Scalar`
 descriptors use `shape: []` with a one-element `data`; dtype strings are NumPy
 names. `symbols` is the SDFG's free symbols plus explicit symbol args.
-`expected.json` has the same shape but only `program`/`sdfg`/`containers`.
+`expected.json` has the same shape but only `program`/`sdfg`/`containers` (and
+`expect_error` for the programs listed in `EXPECTED_ERRORS`).
 
 ## Schedule tree JSON
 

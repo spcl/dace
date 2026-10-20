@@ -822,7 +822,7 @@ theorem isTopologicalOrder_perm {ids o : List NodeId} (hids : ids.Nodup)
   have hsub' : ids ⊆ o := fun x hx => by simpa using hsub x hx
   exact ((List.subperm_of_subset hids hsub').perm_of_length_le (by omega)).symm
 
-theorem topoOrder_go_spec {ids : List NodeId} (hids : ids.Nodup) (hloop : ∀ e ∈ s.edges, e.src ≠ e.dst) :
+theorem topoOrder_go_spec {ids : List NodeId} (hids : ids.Nodup) :
     ∀ (fuel : Nat) (placed remaining o : List NodeId),
       (placed.reverse ++ remaining).Perm ids →
       (∀ e ∈ s.edges, e.dst ∈ placed → e.src ∉ remaining) →
@@ -852,10 +852,15 @@ theorem topoOrder_go_spec {ids : List NodeId} (hids : ids.Nodup) (hloop : ∀ e 
     · split at h
       · cases h
       · next r rest hready =>
-        have hr : r ∈ remaining.filter (fun n => (s.inEdges n).all fun e => !remaining.contains e.src || e.src = n) := by
+        have hr : r ∈ remaining.filter (fun n => (s.inEdges n).all fun e => !remaining.contains e.src) := by
           rw [hready]; exact List.mem_cons_self ..
         simp only [List.mem_filter, List.all_eq_true] at hr
         obtain ⟨hrm, hrin⟩ := hr
+        -- no in-edge of `r` comes from a remaining node (in particular, no self-loop on `r`)
+        have hrin' : ∀ e ∈ s.edges, e.dst = r → e.src ∉ remaining := by
+          intro e he hed
+          have := hrin e (List.mem_filter.mpr ⟨he, by simpa using hed⟩)
+          simpa using this
         have hnd : (placed.reverse ++ remaining).Nodup := hperm.nodup_iff.mpr hids
         have hrP : r ∉ placed.reverse := by
           intro h'
@@ -866,13 +871,7 @@ theorem topoOrder_go_spec {ids : List NodeId} (hids : ids.Nodup) (hloop : ∀ e 
         · intro e he hed hes
           have hes' := List.mem_of_mem_erase hes
           rcases List.mem_cons.mp hed with hed | hed
-          · have hin : e ∈ s.inEdges r := List.mem_filter.mpr ⟨he, by simpa using hed⟩
-            have := hrin e hin
-            simp only [Bool.or_eq_true, Bool.not_eq_true', List.contains_eq_mem, decide_eq_false_iff_not,
-              decide_eq_true_eq] at this
-            rcases this with h1 | h1
-            · exact h1 hes'
-            · exact hloop e he (h1.trans hed.symm)
+          · exact hrin' e he hed hes'
           · exact hdst e he hed hes'
         · intro e he i j hi hj
           rw [List.reverse_cons, idxOf?_append_singleton] at hi hj
@@ -892,15 +891,89 @@ theorem topoOrder_go_spec {ids : List NodeId} (hids : ids.Nodup) (hloop : ∀ e 
           · split at hi
             · next hsr =>
               split at hj
-              · next hdr => exact (hloop e he (hsr.symm.trans hdr)).elim
+              · next hdr => exact (hrin' e he hdr.symm (hsr ▸ hrm)).elim
               · cases hj
             · cases hi
 
-/-- **Specification of `topoOrder`**: on duplicate-free node lists of a state
-without self-loops, Kahn's algorithm returns a topological order. -/
-theorem topoOrder_spec {ids o : List NodeId} (hids : ids.Nodup) (hloop : ∀ e ∈ s.edges, e.src ≠ e.dst)
+/-- **Specification of `topoOrder`**: on duplicate-free node lists, Kahn's
+algorithm returns a topological order (a self-loop makes it fail, as it
+should, `Decisions.md#D62`). -/
+theorem topoOrder_spec {ids o : List NodeId} (hids : ids.Nodup)
     (h : s.topoOrder ids = some o) : s.isTopologicalOrder ids o = true :=
-  topoOrder_go_spec hids hloop _ [] ids o (by simp) (by simp) (by simp) h
+  topoOrder_go_spec hids _ [] ids o (by simp) (by simp) (by simp) h
+
+/-! ## Reachability -/
+
+/-- One edge from `x` to `y`. -/
+def Edge (s : State) (x y : NodeId) : Prop := ∃ e ∈ s.edges, e.src = x ∧ e.dst = y
+
+theorem mem_succs {x y : NodeId} : y ∈ s.succs x ↔ s.Edge x y := by
+  simp only [succs, outEdges, List.mem_map, List.mem_filter, decide_eq_true_eq, Edge]
+  constructor
+  · rintro ⟨e, ⟨he, hs⟩, hd⟩; exact ⟨e, he, hs, hd⟩
+  · rintro ⟨e, he, hs, hd⟩; exact ⟨e, ⟨he, hs⟩, hd⟩
+
+theorem stepRel_succs : StepRel s.succs = s.Edge := by
+  funext x y; exact propext mem_succs
+
+/-- **Specification of `reaches`**: a non-empty path of edges. -/
+theorem reaches_iff {a b : NodeId} : s.reaches a b = true ↔ Relation.TransGen s.Edge a b := by
+  have hU : ∀ c, ∀ x, ∀ y ∈ s.succs x, y ∈ c :: s.edges.map (·.dst) := by
+    intro c x y hy
+    obtain ⟨e, he, _, hd⟩ := mem_succs.mp hy
+    exact List.mem_cons_of_mem _ (List.mem_map.mpr ⟨e, he, hd⟩)
+  have hcl : ∀ c, b ∈ closure s.succs (s.edges.length + 1) c ↔ Relation.ReflTransGen s.Edge c b := by
+    intro c
+    rw [← stepRel_succs]
+    exact mem_closure _ (hU c) (List.mem_cons_self ..) (by simp)
+  simp only [reaches, List.any_eq_true, List.contains_eq_mem, decide_eq_true_eq, hcl, mem_succs]
+  constructor
+  · rintro ⟨c, hac, hcb⟩; exact Relation.TransGen.head' hac hcb
+  · intro h
+    obtain ⟨c, hac, hcb⟩ := Relation.TransGen.head'_iff.mp h
+    exact ⟨c, hac, hcb⟩
+
+/-- Along a path, the positions in a topological order of all edge endpoints
+increase. -/
+theorem idxOf?_lt_of_transGen {o : List NodeId} (hresp : s.respectsEdges o = true)
+    (hmem : ∀ e ∈ s.edges, e.src ∈ o ∧ e.dst ∈ o) {a b : NodeId} (h : Relation.TransGen s.Edge a b) :
+    ∃ i j, o.idxOf? a = some i ∧ o.idxOf? b = some j ∧ i < j := by
+  have hedge : ∀ x y, s.Edge x y → ∃ i j, o.idxOf? x = some i ∧ o.idxOf? y = some j ∧ i < j := by
+    rintro x y ⟨e, he, rfl, rfl⟩
+    obtain ⟨hs, hd⟩ := hmem e he
+    obtain ⟨i, hi⟩ := Option.isSome_iff_exists.mp (List.isSome_idxOf?.mpr hs)
+    obtain ⟨j, hj⟩ := Option.isSome_iff_exists.mp (List.isSome_idxOf?.mpr hd)
+    have := List.all_eq_true.mp hresp e he
+    simp only [hi, hj, decide_eq_true_eq] at this
+    exact ⟨i, j, hi, hj, this⟩
+  induction h with
+  | single hab => exact hedge _ _ hab
+  | tail _ hbc ih =>
+    obtain ⟨i, j, hi, hj, hij⟩ := ih
+    obtain ⟨j', k, hj', hk, hjk⟩ := hedge _ _ hbc
+    rw [hj] at hj'
+    cases hj'
+    exact ⟨i, k, hi, hk, by omega⟩
+
+/-- On a state whose nodes have a topological order (the acyclicity check of
+`WF.checkState`) and whose edges connect existing nodes, `reaches` is
+irreflexive: no node happens before itself. -/
+theorem reaches_irrefl {o : List NodeId} (hnd : (s.nodes.map (·.id)).Nodup)
+    (htopo : s.topoOrder (s.nodes.map (·.id)) = some o)
+    (hend : ∀ e ∈ s.edges, e.src ∈ s.nodes.map (·.id) ∧ e.dst ∈ s.nodes.map (·.id)) (a : NodeId) :
+    s.reaches a a = false := by
+  have hto := topoOrder_spec hnd htopo
+  have hperm := isTopologicalOrder_perm hnd hto
+  simp only [isTopologicalOrder, Bool.and_eq_true] at hto
+  cases hr : s.reaches a a with
+  | false => rfl
+  | true =>
+    obtain ⟨i, j, hi, hj, hij⟩ :=
+      idxOf?_lt_of_transGen hto.2 (fun e he => ⟨hperm.symm.subset (hend e he).1, hperm.symm.subset (hend e he).2⟩)
+        (reaches_iff.mp hr)
+    rw [hi] at hj
+    cases hj
+    exact absurd hij (Nat.lt_irrefl _)
 
 end State
 
