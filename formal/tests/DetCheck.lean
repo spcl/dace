@@ -10,7 +10,10 @@ generating the corpus (`scripts/dump_corpus.py`).
   fragment `seqPure?` are counted.
 * A map scope made non-convex by an extra dependency edge from its exit
   back to its entry (a path leaving the scope and re-entering it) is
-  rejected. -/
+  rejected.
+* The programs passing the whole-program check `SDFG.det?`
+  (`Dace.Equiv.DetProg`: every state in the fragment with convex scopes)
+  are counted; a program passes exactly when all its states do. -/
 
 open Dace
 
@@ -36,12 +39,22 @@ def main : IO Unit := do
   let mut states := 0
   let mut inFrag := 0
   let mut maps := 0
+  let mut progs := 0
+  let mut detProgs := 0
   for f in files.qsort (fun a b => a.toString < b.toString) do
     let name := (f.fileName.getD "").replace ".sdfg.json" ""
     match ← SDFG.Json.readSDFG f with
     | .error e => IO.println s!"IMPORT FAIL {name}: {e}"; bad := bad + 1
     | .ok g =>
       let ctx := checkCtx g
+      progs := progs + 1
+      let d := g.det?
+      if d then detProgs := detProgs + 1
+      let all := g.top.allStates.all fun s => seqPure? ctx s && scopesOk? s
+      if d != all then
+        IO.println s!"FAIL   {name}: SDFG.det? {d} but all states pass: {all}"
+        bad := bad + 1
+      IO.println s!"prog   {name} SDFG.det? {d}"
       for s in g.top.allStates do
         states := states + 1
         let sp := seqPure? ctx s
@@ -58,7 +71,7 @@ def main : IO Unit := do
               bad := bad + 1
           | none => pure ()
         IO.println s!"ok     {name} [{s.label}] seqPure? {sp}"
-  IO.println s!"{states} states ({inFrag} in the fragment), {maps} maps, {bad} failures"
+  IO.println s!"{states} states ({inFrag} in the fragment), {maps} maps, {progs} programs ({detProgs} pass SDFG.det?), {bad} failures"
   if bad > 0 then throw <| IO.userError s!"{bad} determinism checks failed"
 
 #eval main

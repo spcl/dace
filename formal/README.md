@@ -23,7 +23,12 @@ representations:
   Determinism (`Equiv/Det`): on the fragment `seqPure?` with convex map
   scopes (`scopesOk?`), one normal run of a state makes every run normal
   with the same memory, whatever topological orders the scopes take
-  (`StateExec.det`); `tests/DetCheck.lean` checks the hypotheses on the corpus.
+  (`StateExec.det`).  Control flow is deterministic (several true interstate
+  edges are undefined behavior), so this lifts to programs (`Equiv/DetProg`):
+  for a lawful WCR semantics, a program passing `SDFG.det?` (every state in
+  the fragment) with a normal outcome has no other outcome, in particular no
+  race (`SDFG.Exec.det`, `SDFG.Exec.no_err`); `tests/DetCheck.lean` checks
+  the hypotheses on the corpus.
   SDFG / schedule-tree pairs (`Equiv/Corr*`, `lake exe dace-equiv stree
   <sdfg.json> <stree.json>`): the checker `Corr.corr?` is proven sound
   (`Corr.corr?_exec`: every run of the tree is a run of the SDFG or the SDFG

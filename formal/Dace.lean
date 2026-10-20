@@ -49,6 +49,7 @@ import Dace.SDFG.Clean
 import Dace.Equiv.RaceFree
 import Dace.Equiv.ScopeBody
 import Dace.Equiv.Det
+import Dace.Equiv.DetProg
 import Dace.Equiv.CorrLeaf
 import Dace.Equiv.CorrMatch
 import Dace.Equiv.Corr
