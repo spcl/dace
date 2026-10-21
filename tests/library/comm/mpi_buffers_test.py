@@ -472,6 +472,66 @@ def test_waitall_statuses_are_a_stack_array_of_the_request_count():
     assert "MPI_Waitall(n, _request, _statuses);" in code
 
 
+def _allreduce_within_sdfg(name: str, out: str) -> dace.SDFG:
+    """An Allreduce of ``x[0:4]`` into the subset ``out`` of the same array ``x(8)``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [8], dace.float64)
+    state = sdfg.add_state()
+    allreduce = comm.Allreduce("allreduce")
+    allreduce.implementation = "MPI"
+    state.add_edge(state.add_read("x"), None, allreduce, "_inbuffer", Memlet("x[0:4]"))
+    state.add_edge(allreduce, "_outbuffer", state.add_write("x"), None, Memlet(f"x[{out}]"))
+    return sdfg
+
+
+def test_an_allreduce_between_disjoint_subsets_is_not_in_place():
+    code = _code(_allreduce_within_sdfg("allreduce_disjoint", "4:8"))
+    assert "MPI_IN_PLACE" not in code
+
+
+def test_an_allreduce_between_overlapping_subsets_is_refused():
+    with pytest.raises(ValueError, match="overlapping"):
+        _code(_allreduce_within_sdfg("allreduce_overlapping", "2:6"))
+
+
+@pytest.mark.mpi
+def test_an_allreduce_into_another_subset_of_its_input_array():
+    world = _world()
+    rank = world.Get_rank()
+    x = np.concatenate([np.full(4, rank + 1.0), np.zeros(4)])
+    _compile_in_turn(_allreduce_within_sdfg("mpi_allreduce_disjoint", "4:8"), world)(x=x)
+    total = sum(r + 1.0 for r in range(world.Get_size()))
+    assert np.array_equal(x, np.concatenate([np.full(4, rank + 1.0), np.full(4, total)]))
+
+
+@pytest.mark.mpi
+def test_a_reduce_scatter_into_one_element():
+    world = _world()
+    size, rank = world.Get_size(), world.Get_rank()
+    sdfg = dace.SDFG("mpi_reduce_scatter_one_element")
+    sdfg.add_array("x", [size], dace.float64)
+    sdfg.add_array("y", [2], dace.float64)
+    state = sdfg.add_state()
+    reduce_scatter = comm.ReduceScatter("reduce_scatter")
+    reduce_scatter.implementation = "MPI"
+    state.add_edge(state.add_read("x"), None, reduce_scatter, "_inbuffer", Memlet(f"x[0:{size}]"))
+    state.add_edge(reduce_scatter, "_outbuffer", state.add_write("y"), None, Memlet("y[1]"))
+    x = np.arange(size, dtype=np.float64) + rank
+    y = np.zeros(2)
+    _compile_in_turn(sdfg, world)(x=x, y=y)
+    assert np.array_equal(y, [0, sum(rank + r for r in range(size))])
+
+
+def test_the_overlap_schedule_resolves_implementations_as_expansion_does():
+    from types import SimpleNamespace
+
+    from dace.libraries.comm import schedule
+
+    with dace.config.set_temporary("library", "comm", "default_implementation", value="NCCL"):
+        assert not schedule._on_gpu_streams(SimpleNamespace(node=comm.CommRank("rank")))  # Only MPI implements it
+        assert schedule._on_gpu_streams(SimpleNamespace(node=comm.Allreduce("allreduce")))
+
+
 if __name__ == "__main__":
     test_a_column_major_buffer_moves_in_place()
     test_a_column_major_section_packs_in_column_major_order()
@@ -505,3 +565,8 @@ if __name__ == "__main__":
     test_a_strided_section_is_sent_and_received("C")
     test_a_strided_section_is_sent_and_received("F")
     test_waitall_statuses_are_a_stack_array_of_the_request_count()
+    test_an_allreduce_between_disjoint_subsets_is_not_in_place()
+    test_an_allreduce_between_overlapping_subsets_is_refused()
+    test_an_allreduce_into_another_subset_of_its_input_array()
+    test_a_reduce_scatter_into_one_element()
+    test_the_overlap_schedule_resolves_implementations_as_expansion_does()

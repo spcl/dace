@@ -5,7 +5,7 @@ import dace.sdfg.nodes
 from dace import dtypes
 from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, expanded_input_connectors
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, touches_gpu_memory
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -22,14 +22,7 @@ class ExpandWaitMPI(ExpandTransformation):
             MPI_Wait(_request, &_s);
             """
         code += _status_code(node, parent_state, "_s.MPI_TAG", "_s.MPI_SOURCE")
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
+        tasklet = comm_tasklet(node, parent_state, code)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
@@ -50,24 +43,13 @@ class ExpandWaitNCCL(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         code = _nccl_wait_code(node, parent_state, parent_sdfg) + _status_code(node, parent_state, "-1", "-1")
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return tasklet
+        return comm_tasklet(node, parent_state, code)
 
 
 def _nccl_wait_code(node: dace.sdfg.nodes.LibraryNode, state, sdfg) -> str:
     """The NCCL wait of ``node``: on the device, on the stream of the node if it is connected to GPU memory (so
     that code generation keeps it on a stream and orders the readers of the buffers after it), else on the host."""
-    on_stream = any(
-        e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
-        for e in state.all_edges(node)
-    )
+    on_stream = touches_gpu_memory(node, sdfg, state)
     return "__state->nccl->Wait(__dace_current_stream);\n" if on_stream else "__state->nccl->Wait();\n"
 
 
@@ -143,14 +125,7 @@ class ExpandWaitallMPI(ExpandTransformation):
         parent_state.add_edge(
             node, "_statuses", parent_state.add_write(statuses), None, Memlet.from_array(statuses, desc)
         )
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            f"MPI_Waitall({sym2cpp(count)}, _request, _statuses);",
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
+        tasklet = comm_tasklet(node, parent_state, f"MPI_Waitall({sym2cpp(count)}, _request, _statuses);")
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
@@ -169,15 +144,7 @@ class ExpandWaitallNCCL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            _nccl_wait_code(node, parent_state, parent_sdfg),
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return tasklet
+        return comm_tasklet(node, parent_state, _nccl_wait_code(node, parent_state, parent_sdfg))
 
 
 @dace.library.node

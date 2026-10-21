@@ -8,12 +8,12 @@ from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
     buffer_pointer,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
-    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -49,7 +49,7 @@ class ExpandBcastMPI(ExpandTransformation):
             f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count_str}, {mpi_dtype_str}, _root, {comm}",
         )
         code += "_outbuffer = _inbuffer;"
-        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion

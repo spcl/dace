@@ -49,7 +49,12 @@ def _is_comm(node: tn.ScheduleTreeNode) -> bool:
 def _on_gpu_streams(node: tn.ScheduleTreeNode) -> bool:
     """Whether a communication node runs on GPU streams (NCCL or RCCL), which order it with the work around it on
     the device. A state of its own would make the host wait for it at the end of the state."""
-    implementation = node.node.implementation or Config.get("library", "comm", "default_implementation")
+    libnode = node.node
+    implementation = (
+        libnode.implementation
+        or type(libnode).default_implementation
+        or Config.get("library", "comm", "default_implementation")
+    )
     return implementation == "NCCL"
 
 

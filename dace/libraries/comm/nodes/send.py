@@ -7,10 +7,10 @@ from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
     buffer_pointer,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     mpi_communicator,
-    mpi_tasklet,
     mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
@@ -41,7 +41,7 @@ class ExpandSendMPI(ExpandTransformation):
                 """
         code += free
 
-        return mpi_tasklet(node, parent_state, code)
+        return comm_tasklet(node, parent_state, code)
 
 
 @dace.library.expansion

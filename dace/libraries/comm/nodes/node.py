@@ -82,8 +82,8 @@ def int_array(name: str, values: Sequence, ctype: str = "int", static: bool = Fa
     return f"{storage}{ctype} {name}[{len(values)}];\n{assignments}"
 
 
-def mpi_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:
-    """The tasklet of an MPI expansion that runs ``code``."""
+def comm_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:
+    """The tasklet of a communication expansion that runs the C++ ``code``."""
     return nodes.Tasklet(
         node.name,
         expanded_input_connectors(node, state),
@@ -209,13 +209,18 @@ def validate_nonblocking_buffer(node: nodes.Node, sdfg: SDFG, state: SDFGState, 
         )
 
 
+def touches_gpu_memory(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> bool:
+    """Whether ``node`` is connected to a container in GPU memory, which gives its tasklet a GPU stream."""
+    return any(
+        e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
+        for e in state.all_edges(node)
+    )
+
+
 def gpu_buffers_ready(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
     """The code that makes the host wait for the GPU stream of the tasklet of ``node`` before an MPI call on its
     buffers in GPU memory (GPU-aware MPI): the host call is not ordered with the kernels that write or read them."""
-    if any(
-        e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
-        for e in state.all_edges(node)
-    ):
+    if touches_gpu_memory(node, sdfg, state):
         return f"DACE_GPU_CHECK({common.get_gpu_backend()}StreamSynchronize(__dace_current_stream));\n"
     return ""
 
@@ -328,6 +333,24 @@ def pack_noncontiguous_buffers(
         state.remove_edge(edge)
 
 
+def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether the input and output buffers of ``node`` are the same memory, communicated in place (``MPI_IN_PLACE``).
+    Disjoint subsets of one container are two buffers; overlapping, different ones are refused, as MPI forbids
+    aliased buffers."""
+    inp = sdutil.in_edge_with_name(node, state, "_inbuffer").data
+    out = sdutil.out_edge_with_name(node, state, "_outbuffer").data
+    if inp.data != out.data:
+        return False
+    if inp.subset == out.subset:
+        return True
+    if subsets.intersects(inp.subset, out.subset) is False:
+        return False
+    raise ValueError(
+        f'{type(node).__name__} "{node.label}" reads {inp.data}[{inp.subset}] and writes the overlapping '
+        f"{out.data}[{out.subset}]: use the same subset for an in-place operation, or disjoint ones"
+    )
+
+
 def mpi_collective(node: nodes.LibraryNode, name: str, args: str) -> str:
     """
     The call of the MPI collective ``name`` (e.g., ``Allreduce``) with the arguments ``args``. For a nonblocking
@@ -428,14 +451,7 @@ def nccl_tasklet(
         """
     if blocking:
         code += "__state->nccl->Launch();\n"
-    tasklet = nodes.Tasklet(
-        node.name,
-        expanded_input_connectors(node, state),
-        node.out_connectors,
-        code,
-        language=dtypes.Language.CPP,
-        side_effects=True,
-    )
+    tasklet = comm_tasklet(node, state, code)
     if isinstance(node, NonblockingCommNode) and node.nonblocking:
         if sdfg is None:
             raise ValueError("The tasklet of a nonblocking NCCL collective needs its SDFG")
@@ -507,8 +523,7 @@ class NonblockingCommNode(CommNode):
         Checks what an MPI expansion of a nonblocking node needs: a connected ``_request`` output, and contiguous
         non-scalar buffers, since the operation completes at its ``Wait``, after a packed output would have been
         copied back (see :func:`pack_noncontiguous_buffers`), a packed input freed, and a scalar's copy in the tasklet
-        gone. (NCCL needs neither: the copies of packed
-        buffers are ordered on the stream of the node.)
+        gone. (NCCL needs neither: the copies of packed buffers are ordered on the stream of the node.)
         """
         if not self.nonblocking:
             return

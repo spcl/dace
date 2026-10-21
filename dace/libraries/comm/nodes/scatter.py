@@ -6,11 +6,11 @@ from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
     buffer_pointer,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     input_descriptor_name,
     mpi_communicator,
-    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -40,12 +40,12 @@ class ExpandScatterMPI(ExpandTransformation):
             + f"""
             int _commsize;
             MPI_Comm_size({comm}, &_commsize);
-            MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
+            MPI_Scatter({buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer")}, ({in_count_str})/_commsize, {in_mpi_dtype_str},
                         {buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer")}, {out_count_str}, {out_mpi_dtype_str},
                         _root, {comm});
             """
         )
-        return mpi_tasklet(node, parent_state, code)
+        return comm_tasklet(node, parent_state, code)
 
 
 @library.expansion
@@ -142,7 +142,7 @@ class ExpandBlockScatterMPI(ExpandTransformation):
                 }}
             """
 
-        return mpi_tasklet(node, parent_state, code)
+        return comm_tasklet(node, parent_state, code)
 
 
 @library.node

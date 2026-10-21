@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, integer_input, mpi_communicator, mpi_tasklet
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, integer_input, mpi_communicator
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -12,7 +12,7 @@ class ExpandAbortMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate(parent_sdfg, parent_state)
-        return mpi_tasklet(node, parent_state, f"MPI_Abort({mpi_communicator(node, parent_state)}, int(_errorcode));")
+        return comm_tasklet(node, parent_state, f"MPI_Abort({mpi_communicator(node, parent_state)}, int(_errorcode));")
 
 
 @library.node

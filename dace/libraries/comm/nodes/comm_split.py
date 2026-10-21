@@ -3,10 +3,10 @@ from dace import library
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    comm_tasklet,
     communicator_output,
     integer_input,
     mpi_communicator,
-    mpi_tasklet,
 )
 from dace.transformation.transformation import ExpandTransformation
 
@@ -24,7 +24,7 @@ class ExpandCommSplitMPI(ExpandTransformation):
             MPI_Comm_split({comm}, int(_color), int(_key), &__newcomm);
             _newcomm = (long long)(__newcomm);
             """
-        return mpi_tasklet(node, parent_state, code)
+        return comm_tasklet(node, parent_state, code)
 
 
 @library.node

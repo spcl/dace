@@ -8,16 +8,17 @@ from dace.libraries.comm.nodes.node import (
     NonblockingCommNode,
     buffer_pointer,
     by_reference,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     mpi_average,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
-    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
+    same_buffer,
     scaled,
     validate_nccl_buffers,
 )
@@ -57,7 +58,7 @@ class ExpandAllreduceMPI(ExpandTransformation):
             f"{buffer}, {outptr}, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
         code += mpi_average(node.op, outptr, count_str, comm)
-        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion
@@ -106,19 +107,14 @@ class Allreduce(NonblockingCommNode):
         """
 
         inbuffer, outbuffer = None, None
-        inpname, outname = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
-                outname = e.data.data
                 outbuffer = sdfg.arrays[e.data.data]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
-                inpname = e.data.data
                 inbuffer = sdfg.arrays[e.data.data]
 
-        in_place = False
-        if inpname == outname:
-            in_place = True
+        in_place = same_buffer(self, state)
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):

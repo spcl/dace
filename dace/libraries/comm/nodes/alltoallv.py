@@ -9,12 +9,13 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    buffer_pointer,
+    comm_tasklet,
     gpu_buffers_ready,
     int_array,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
-    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -57,10 +58,11 @@ class ExpandAlltoallvMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Alltoallv",
-            f"_inbuffer, __send_counts, __send_displs, {mpi_dtype_str}, _outbuffer, __recv_counts, __recv_displs, "
+            f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, __send_counts, __send_displs, {mpi_dtype_str}, "
+            f"{buffer_pointer(node, parent_sdfg, parent_state, '_outbuffer')}, __recv_counts, __recv_displs, "
             f"{mpi_dtype_str}, {comm}",
         )
-        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, integer_output, mpi_communicator, mpi_tasklet
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, integer_output, mpi_communicator
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -13,7 +13,7 @@ class ExpandCommSizeMPI(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate(parent_sdfg, parent_state)
         comm = mpi_communicator(node, parent_state)
-        return mpi_tasklet(node, parent_state, f"int __size;\nMPI_Comm_size({comm}, &__size);\n_size = __size;\n")
+        return comm_tasklet(node, parent_state, f"int __size;\nMPI_Comm_size({comm}, &__size);\n_size = __size;\n")
 
 
 @library.node

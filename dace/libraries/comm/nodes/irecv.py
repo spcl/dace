@@ -2,15 +2,15 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import dtypes
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     mpi_communicator,
-    mpi_tasklet,
+    mpi_request_connector,
     mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
@@ -44,12 +44,9 @@ class ExpandIrecvMPI(ExpandTransformation):
         count_str = vector_count or count_str
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         code += free
-        tasklet = mpi_tasklet(node, parent_state, code)
+        tasklet = comm_tasklet(node, parent_state, code)
 
-        conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
-        tasklet.out_connectors = conn
-        return tasklet
+        return mpi_request_connector(tasklet)
 
 
 @dace.library.expansion

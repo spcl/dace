@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, mpi_communicator, mpi_tasklet
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, mpi_communicator
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -11,7 +11,7 @@ class ExpandBarrierMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        return mpi_tasklet(node, parent_state, f"MPI_Barrier({mpi_communicator(node, parent_state)});")
+        return comm_tasklet(node, parent_state, f"MPI_Barrier({mpi_communicator(node, parent_state)});")
 
 
 @library.node

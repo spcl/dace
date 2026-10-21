@@ -7,12 +7,12 @@ from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
     buffer_pointer,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
-    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -48,10 +48,10 @@ class ExpandAllgatherMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Allgather",
-            f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, "
+            f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {in_count_str}, {in_mpi_dtype_str}, {buffer_pointer(node, parent_sdfg, parent_state, '_outbuffer')}, {out_count_str}/_commsize, "
             f"{out_mpi_dtype_str}, {comm}",
         )
-        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion

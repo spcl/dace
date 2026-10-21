@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, communicator_output, integer_input, mpi_tasklet
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, communicator_output, integer_input
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -12,7 +12,7 @@ class ExpandCommF2cMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate(parent_sdfg, parent_state)
-        return mpi_tasklet(node, parent_state, "_handle = (long long)(MPI_Comm_f2c((MPI_Fint)(_fcomm)));\n")
+        return comm_tasklet(node, parent_state, "_handle = (long long)(MPI_Comm_f2c((MPI_Fint)(_fcomm)));\n")
 
 
 @library.node

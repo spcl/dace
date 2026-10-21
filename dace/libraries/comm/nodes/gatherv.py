@@ -5,11 +5,11 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     buffer_pointer,
+    comm_tasklet,
     count_expression,
     gpu_buffers_ready,
     int_array,
     mpi_communicator,
-    mpi_tasklet,
     pack_noncontiguous_buffers,
 )
 from dace.sdfg import utils as sdutil
@@ -30,11 +30,12 @@ class ExpandGathervMPI(ExpandTransformation):
         code += int_array("__recv_counts", node.recv_counts)
         code += int_array("__recv_displs", node.displacements())
         code += (
-            f"MPI_Gatherv({buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count}, {utils.MPI_DDT(inbuffer.dtype.base_type)}, _outbuffer, "
+            f"MPI_Gatherv({buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count}, {utils.MPI_DDT(inbuffer.dtype.base_type)}, "
+            f"{buffer_pointer(node, parent_sdfg, parent_state, '_outbuffer')}, "
             f"__recv_counts, __recv_displs, {utils.MPI_DDT(outbuffer.dtype.base_type)}, int(_root), "
             f"{mpi_communicator(node, parent_state)});\n"
         )
-        return mpi_tasklet(node, parent_state, code)
+        return comm_tasklet(node, parent_state, code)
 
 
 @library.node
