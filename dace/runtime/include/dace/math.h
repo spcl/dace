@@ -64,6 +64,26 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   return exponent;
 }
 
+// Fortran ``SCALE(x, n)`` — return ``x * 2^n``.  Matches C's
+// ``std::ldexp`` exactly.  Templated so the same name covers
+// f32 / f64 operands without the frontend having to specialise.
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
+    return std::ldexp(x, n);
+}
+
+// Fortran ``EXPONENT(x)`` — return the integer exponent ``e`` such
+// that ``x = mantissa * 2^e`` with ``0.5 <= |mantissa| < 1``.
+// Equivalent to ``std::frexp``'s second result; ``ilogb(x) + 1`` for
+// finite ``x``.  Provide as ``ilogb`` so the bridge's runtime-call
+// recognition can map ``_FortranAExponent*`` to a single short name.
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
+    int e = 0;
+    std::frexp(x, &e);
+    return e;
+}
+
 // Implement to support Fortran's intrinsic NINT - round, but return an integer
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
@@ -378,6 +398,12 @@ template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_flo
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
 }
+// Mixed operand types promote to their common type.
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_floor<T>((T)numerator, (T)denominator);
+}
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator, const std::complex<T>& denominator) {
     std::complex<T> quotient = numerator / denominator;
@@ -437,6 +463,24 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& deno
 template<typename T1, typename T2>
 static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
     return py_mod(numerator, denominator);
+}
+
+// ``logical_left_shift(x, n)`` / ``logical_right_shift(x, n)`` — Fortran
+// ``ISHFT`` building blocks.  flang lowers ``ISHFT`` to ``arith.shli`` for a
+// left shift and ``arith.shrui`` for a right shift, where the right shift is
+// *logical* (zero-fill), unlike C++ ``>>`` on a signed integer, which
+// sign-extends.  Both shift the operand as an unsigned bit pattern so a
+// negative operand zero-fills on the right shift and neither relies on the
+// signed-shift behaviour C++ leaves implementation-defined.  (Fortran's
+// arithmetic right shift maps directly to ``arith.shrsi`` -> ``>>`` and
+// needs no helper.)  Templated so one call covers every integer kind.
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const T& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) << n);
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& x, const T& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) >> n);
 }
 
 // Computes C/C++ divmod (std::div)
@@ -677,6 +721,25 @@ namespace dace
         static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
+
+        // Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real
+        // / imaginary part of a complex value.  ``cppunparse`` maps the
+        // tasklet-body spellings ``re(_in)`` / ``im(_in)`` here so a complex
+        // connector's component is read directly.  Generic over
+        // ``std::complex`` / ``thrust::complex`` (both expose ``.real()`` /
+        // ``.imag()``); the trailing ``decltype`` constrains it to complex
+        // types.
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real())
+        {
+            return z.real();
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag())
+        {
+            return z.imag();
+        }
+
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
         {

@@ -194,3 +194,27 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+
+# Fortran / flang / object build artifacts (test f2py / -emit-hlfir runs).
+*.mod
+*.smod
+*.hlfir
+*.o
+
+# pytest-xdist per-worker DaCe caches (.dacecache_gw0, ...) and any
+# nested .dacecache* — build artifacts, never committed.
+.dacecache*
+# Stray in-repo-root cmake build output (the bridge builds under
+# dace/frontend/hlfir/build; these only appear from an accidental
+# top-level cmake invocation).
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/Makefile
+/lib*.a
+
+# Local secrets / tokens
+.mtoken
+
+# Local Claude Code settings
+.claude/
