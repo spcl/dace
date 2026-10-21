@@ -86,11 +86,8 @@ def test_opteinsum_sym():
         return np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
-    try:
-        einsumtest(A, B, C, D, E)
-        raise AssertionError("Exception should have been raised")
-    except ValueError:
-        print("Exception successfully caught")
+    result = einsumtest(A, B, C, D, E)
+    assert np.allclose(result, np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E))
 
 
 def test_opteinsum():

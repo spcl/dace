@@ -4,7 +4,6 @@
 from itertools import chain, combinations
 from string import ascii_letters
 
-import numpy as np
 import sympy
 
 import dace
@@ -223,17 +222,15 @@ def create_einsum_sdfg(
     )[0]
 
 
-def _build_einsum_views(tensors: str, dimension_dict: dict) -> list[np.ndarray]:
-    """
-    Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
-    Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
-    """
-    views = []
-    terms = tensors.split("->")[0].split(",")
-    for term in terms:
-        dims = [dimension_dict[x] for x in term]
-        views.append(np.random.rand(*dims))
-    return views
+#: Stand-in extents of symbolic dimensions for the contraction path: a ``SMALL`` symbol and any other one.
+PATH_SMALL_EXTENT, PATH_LARGE_EXTENT = 16, 4096
+
+
+def _path_extent(extent, facts) -> int:
+    """``extent`` as an integer for :func:`opt_einsum.contract_path`: its value, else a stand-in by scale."""
+    if not symbolic.issymbolic(extent):
+        return int(extent)
+    return PATH_SMALL_EXTENT if symbolic.is_small(extent, facts) else PATH_LARGE_EXTENT
 
 
 def _create_einsum_internal(
@@ -278,30 +275,23 @@ def _create_einsum_internal(
                 raise ValueError("Dimension mismatch in einsum expression")
             chardict[char] = shp
 
-    if optimize:
-        # Try to import opt_einsum
-        try:
-            import opt_einsum as oe
-        except (ModuleNotFoundError, NameError, ImportError):
-            raise ImportError('To optimize einsum expressions, please install the "opt_einsum" package.')
+    if optimize or len(einsum.inputs) > 2:
+        # More than two operands contract pairwise along opt_einsum's path, each pair a GEMM-shaped step: one fused
+        # nest over every index costs the product of all extents (seissol's three-operand contraction, 8x the
+        # multiply-adds). Symbolic extents get stand-in sizes (a SMALL symbol small, any other large) for the path.
+        import opt_einsum as oe  # a dace dependency
 
-        for char, shp in chardict.items():
-            if symbolic.issymbolic(shp):
-                raise ValueError(
-                    "Einsum optimization cannot be performed "
-                    f'on symbolically-sized array dimension "{shp}" '
-                    f'for subscript character "{char}"'
-                )
+        facts = sdfg.facts()
+        sizes = {char: _path_extent(shp, facts) for char, shp in chardict.items()}
+        terms = einsum_string.split("->")[0].split(",")
+        shapes = [tuple(sizes[char] for char in term) for term in terms]
+        _, path_info = oe.contract_path(einsum_string, *shapes, shapes=True)
 
-        # Create optimal contraction path
-        # noinspection PyTypeChecker
-        _, path_info = oe.contract_path(einsum_string, *_build_einsum_views(einsum_string, chardict))
-
-        input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
+        input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
         result_node = None
-
-        # Follow path and create a chain of operation SDFG states
-        for pair, nonfree, expr, after, blas in path_info.contraction_list:
+        steps = path_info.contraction_list
+        for step, (pair, _, expr, _, _) in enumerate(steps):
+            last = step == len(steps) - 1
             result, result_node = _create_einsum_internal(
                 sdfg,
                 state,
@@ -310,18 +300,17 @@ def _create_einsum_internal(
                 arrays[pair[1]],
                 dtype=dtype,
                 optimize=False,
-                output=None,
-                output_name=output_name,
+                output=output if last else None,
+                output_name=output_name if last else None,
                 nodes=input_nodes,
-                init_output=init_output,
-                alpha=alpha,
-                beta=beta,
+                init_output=init_output if last else None,
+                alpha=alpha if last else 1.0,
+                beta=beta if last else 0.0,
             )
             arrays = [a for i, a in enumerate(arrays) if i not in pair] + [result]
             input_nodes[result] = result_node
 
         return arrays[0], result_node
-        # END of einsum optimization
 
     # An operand may repeat (``np.einsum('ik,ik->i', a, a)``): read it ONCE, otherwise the extra
     # ``add_read`` the comprehension drops on the floor stays behind as an isolated node.

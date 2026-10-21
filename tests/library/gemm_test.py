@@ -8,6 +8,7 @@ import pytest
 
 import dace
 from dace.libraries.blas import Gemm
+from dace.library import change_default
 
 M = dace.symbol("M")
 K = dace.symbol("K")
@@ -22,8 +23,6 @@ O = dace.symbol("O")
 )
 def test_gemm_no_c(implementation):
 
-    Gemm.default_implementation = implementation
-
     @dace.program
     def simple_gemm(A: dace.float64[10, 15], B: dace.float64[15, 3]):
         return A @ B
@@ -31,10 +30,9 @@ def test_gemm_no_c(implementation):
     A = np.random.rand(10, 15)
     B = np.random.rand(15, 3)
 
-    result = simple_gemm(A, B)
+    with change_default(Gemm, implementation):
+        result = simple_gemm(A, B)
     assert np.allclose(result, A @ B)
-
-    Gemm.default_implementation = None
 
 
 def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, alpha, beta, implementation, sdfg_name):

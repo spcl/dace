@@ -15,10 +15,10 @@ from dace import dtypes
 from dace.frontend.common.einsum import create_einsum_sdfg
 
 #: Contractions no (batched) GEMM covers, so each takes the mapped path: an elementwise product
-#: and a three-operand chain.
+#: and a broadcast product.
 CONTRACTIONS = {
     "elementwise": ("ij,ij->ij", {"A": [2, 3], "B": [2, 3], "out": [2, 3]}),
-    "three_operand": ("ij,jk,kl->il", {"A": [2, 3], "B": [3, 4], "C": [4, 5], "out": [2, 5]}),
+    "broadcast": ("ij,j->ij", {"A": [2, 3], "B": [3], "out": [2, 3]}),
 }
 
 
@@ -61,3 +61,15 @@ def test_the_reset_map_is_scheduled_with_the_contraction():
     sdfg = einsum_graph("elementwise", dtypes.StorageType.GPU_Global)
     resets = [schedule for label, schedule in map_schedules(sdfg) if "reset" in label]
     assert resets and all(s == dtypes.ScheduleType.GPU_Device for s in resets), map_schedules(sdfg)
+
+
+def test_a_three_operand_chain_contracts_pairwise():
+    """More than two operands contract pairwise, each pair a GEMM: no mapped nest over every index."""
+    sdfg = dace.SDFG("einsum_three_operand_chain")
+    for name, shape in {"A": [2, 3], "B": [3, 4], "C": [4, 5], "out": [2, 5]}.items():
+        sdfg.add_array(name, shape, dace.float64)
+    state = sdfg.add_state()
+    create_einsum_sdfg(sdfg, state, "ij,jk,kl->il", "A", "B", "C", output="out")
+    libraries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)]
+    assert len(libraries) == 2, libraries
+    assert not map_schedules(sdfg)
