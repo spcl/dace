@@ -17,16 +17,7 @@ from dace.libraries import comm
 from dace.libraries.comm import utils
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
-
-
-def _compile_in_turn(sdfg: dace.SDFG, world):
-    """Compiles on one rank after the other: the ranks share the build folder."""
-    compiled = None
-    for r in range(world.Get_size()):
-        if r == world.Get_rank():
-            compiled = sdfg.compile()
-        world.Barrier()
-    return compiled
+from dace.sdfg import utils as sdfg_utils
 
 
 def _world():
@@ -151,7 +142,7 @@ def test_a_nonblocking_allreduce_of_a_scalar():
     world = _world()
     result = np.zeros(1)
     sdfg = _iallreduce_scalar_sdfg("mpi_iallreduce_scalar")
-    _compile_in_turn(sdfg, world)(value=np.array([world.Get_rank() + 1.0]), result=result)
+    sdfg_utils.distributed_compile(sdfg, world)(value=np.array([world.Get_rank() + 1.0]), result=result)
     assert result[0] == sum(r + 1 for r in range(world.Get_size()))
 
 
@@ -166,7 +157,7 @@ def test_an_allreduce_of_one_array_element():
     state.add_edge(state.add_read("x"), None, node, "_inbuffer", Memlet("x[1]"))
     state.add_edge(node, "_outbuffer", state.add_write("x"), None, Memlet("x[1]"))
     x = np.array([0.0, world.Get_rank() + 1.0, 0.0])
-    _compile_in_turn(sdfg, world)(x=x)
+    sdfg_utils.distributed_compile(sdfg, world)(x=x)
     assert np.array_equal(x, [0.0, sum(r + 1 for r in range(world.Get_size())), 0.0])
 
 
@@ -193,7 +184,7 @@ def test_a_gather_into_a_strided_buffer():
     rank = world.Get_rank()
     x = np.full(2, rank + 1, np.float64)
     out = np.full((4, 2), -1.0)
-    _compile_in_turn(_gather_sdfg("mpi_gather_strided"), world)(x=x, out=out, root=np.zeros(1, np.int32))
+    sdfg_utils.distributed_compile(_gather_sdfg("mpi_gather_strided"), world)(x=x, out=out, root=np.zeros(1, np.int32))
     if rank == 0:  # The output is undefined off the root
         assert np.array_equal(out, [[-1, 1], [-1, 1], [-1, 2], [-1, 2]])
 
@@ -213,7 +204,7 @@ def test_a_reduce_into_a_strided_buffer():
     state.add_edge(state.add_read("root"), None, reduce, "_root", Memlet("root[0]"))
     state.add_edge(reduce, "_outbuffer", state.add_write("out"), None, Memlet("out[0:4, 1]"))
     out = np.full((4, 2), -1.0)
-    _compile_in_turn(sdfg, world)(x=np.full(4, rank + 1.0), out=out, root=np.zeros(1, np.int32))
+    sdfg_utils.distributed_compile(sdfg, world)(x=np.full(4, rank + 1.0), out=out, root=np.zeros(1, np.int32))
     if rank == 0:  # The output is undefined off the root
         expected = np.full((4, 2), -1.0)
         expected[:, 1] = sum(r + 1 for r in range(world.Get_size()))
@@ -269,7 +260,7 @@ def test_an_allreduce_of_a_scalar(op: str, in_place: bool):
     node.implementation = "MPI"
     sdfg = _scalar_reduction_sdfg(f"mpi_allreduce_scalar_{op.lower()}_{in_place}", node, in_place)
     result = np.zeros(1)
-    _compile_in_turn(sdfg, world)(s=float(world.Get_rank() + 1), result=result)
+    sdfg_utils.distributed_compile(sdfg, world)(s=float(world.Get_rank() + 1), result=result)
     total = sum(r + 1 for r in range(world.Get_size()))
     assert result[0] == (total / world.Get_size() if op == "avg" else total)
 
@@ -281,7 +272,9 @@ def test_a_reduce_of_a_scalar():
     node.implementation = "MPI"
     sdfg = _scalar_reduction_sdfg("mpi_reduce_scalar", node, in_place=False)
     result = np.zeros(1)
-    _compile_in_turn(sdfg, world)(s=float(world.Get_rank() + 1), result=result, root=np.zeros(1, np.int32))
+    sdfg_utils.distributed_compile(sdfg, world)(
+        s=float(world.Get_rank() + 1), result=result, root=np.zeros(1, np.int32)
+    )
     if world.Get_rank() == 0:
         assert result[0] == sum(r + 1 for r in range(world.Get_size()))
 
@@ -341,7 +334,7 @@ def test_an_allreduce_of_complex_numbers(dtype):
     state.add_edge(state.add_read("x"), None, node, "_inbuffer", Memlet("x[0:4]"))
     state.add_edge(node, "_outbuffer", state.add_write("x"), None, Memlet("x[0:4]"))
     x = np.full(4, complex(world.Get_rank() + 1, 1), dtype=dtype)
-    _compile_in_turn(sdfg, world)(x=x)
+    sdfg_utils.distributed_compile(sdfg, world)(x=x)
     size = world.Get_size()
     assert np.allclose(x, complex(sum(r + 1 for r in range(size)), size))
 
@@ -399,7 +392,7 @@ def test_a_strided_section_is_sent_and_received(order: str):
     sdfg = _send_recv_sdfg(f"mpi_send_recv_section_{order}", strides, "0:2, 1:4", "2:4, 0:3")
     a = np.array(np.arange(16, dtype=np.float64).reshape(4, 4), order=order)
     b = np.zeros((4, 4), order=order)
-    compiled = _compile_in_turn(sdfg, world)
+    compiled = sdfg_utils.distributed_compile(sdfg, world)
     if rank < 2:
         peer = np.array([1 - rank], np.int32)
         compiled(a=a, b=b, peer=peer, tag=np.array([7], np.int32), rank=np.array([rank], np.int32))
@@ -448,7 +441,7 @@ def test_an_allreduce_into_another_subset_of_its_input_array():
     world = _world()
     rank = world.Get_rank()
     x = np.concatenate([np.full(4, rank + 1.0), np.zeros(4)])
-    _compile_in_turn(_allreduce_within_sdfg("mpi_allreduce_disjoint", "4:8"), world)(x=x)
+    sdfg_utils.distributed_compile(_allreduce_within_sdfg("mpi_allreduce_disjoint", "4:8"), world)(x=x)
     total = sum(r + 1.0 for r in range(world.Get_size()))
     assert np.array_equal(x, np.concatenate([np.full(4, rank + 1.0), np.full(4, total)]))
 
@@ -467,7 +460,7 @@ def test_a_reduce_scatter_into_one_element():
     state.add_edge(reduce_scatter, "_outbuffer", state.add_write("y"), None, Memlet("y[1]"))
     x = np.arange(size, dtype=np.float64) + rank
     y = np.zeros(2)
-    _compile_in_turn(sdfg, world)(x=x, y=y)
+    sdfg_utils.distributed_compile(sdfg, world)(x=x, y=y)
     assert np.array_equal(y, [0, sum(rank + r for r in range(size))])
 
 

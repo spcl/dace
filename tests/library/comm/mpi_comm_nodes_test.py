@@ -8,16 +8,7 @@ import dace
 from dace.libraries import comm
 from dace.libraries.comm import communicators
 from dace.memlet import Memlet
-
-
-def _compile_in_turn(sdfg: dace.SDFG, world):
-    """Compiles on one rank after the other: the ranks share the build folder."""
-    compiled = None
-    for r in range(world.Get_size()):
-        if r == world.Get_rank():
-            compiled = sdfg.compile()
-        world.Barrier()
-    return compiled
+from dace.sdfg import utils as sdfg_utils
 
 
 def _world():
@@ -55,7 +46,7 @@ def test_comm_rank_and_size():
     state.add_node(comm.Barrier("barrier"))
 
     rank, size = np.full(1, -1, np.int32), np.full(1, -1, np.int32)
-    _compile_in_turn(sdfg, world)(rank=rank, size=size)
+    sdfg_utils.distributed_compile(sdfg, world)(rank=rank, size=size)
     assert rank[0] == world.Get_rank()
     assert size[0] == world.Get_size()
 
@@ -75,7 +66,7 @@ def test_comm_rank_of_an_external_communicator():
     _write(state, node, "_rank", "rank")
 
     rank = np.full(1, -1, np.int32)
-    _compile_in_turn(sdfg, world)(rank=rank, handle=communicators.mpi_handle(reversed_world))
+    sdfg_utils.distributed_compile(sdfg, world)(rank=rank, handle=communicators.mpi_handle(reversed_world))
     assert rank[0] == world.Get_size() - 1 - world.Get_rank()
     reversed_world.Free()
 
@@ -103,7 +94,7 @@ def test_comm_split_of_a_fortran_handle():
 
     rank = world.Get_rank()
     subrank_out = np.full(1, -1, np.int32)
-    _compile_in_turn(sdfg, world)(
+    sdfg_utils.distributed_compile(sdfg, world)(
         fcomm=np.array([world.py2f()], np.int32),
         color=np.array([rank % 2], np.int32),
         key=np.array([rank], np.int32),
@@ -136,7 +127,7 @@ def test_gatherv_with_counts_read_at_run_time():
     procs, rank = world.Get_size(), world.Get_rank()
     counts = np.arange(1, procs + 1, dtype=np.int32)
     recv = np.full(int(counts.sum()), -1.0)
-    _compile_in_turn(_gatherv_sdfg("mpi_gatherv", procs), world)(
+    sdfg_utils.distributed_compile(_gatherv_sdfg("mpi_gatherv", procs), world)(
         send=np.full(rank + 1, float(rank)),
         recv=recv,
         counts=counts,
@@ -155,7 +146,7 @@ def test_gatherv_at_explicit_displacements():
     procs, rank = world.Get_size(), world.Get_rank()
     recv = np.full(2 * procs, -1.0)
     sdfg = _gatherv_sdfg("mpi_gatherv_displs", procs, displs=[2 * r for r in range(procs)])
-    _compile_in_turn(sdfg, world)(
+    sdfg_utils.distributed_compile(sdfg, world)(
         send=np.full(1, float(rank)),
         recv=recv,
         counts=np.ones(procs, np.int32),

@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import itertools
+
 from dace import library, properties, symbolic
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
@@ -68,18 +70,12 @@ class Gatherv(CommNode):
         """The offset in the output of each process's elements."""
         if self.recv_displs is not None:
             return list(self.recv_displs)
-        offsets, offset = [], 0
-        for count in self.recv_counts:
-            offsets.append(offset)
-            offset = offset + count
-        return offsets
+        return [0, *itertools.accumulate(self.recv_counts[:-1])]
 
     @property
     def free_symbols(self) -> set[str]:
-        result = super().free_symbols
-        for value in (*(self.recv_counts or ()), *(self.recv_displs or ())):
-            result.update(str(s) for s in symbolic.pystr_to_symbolic(value).free_symbols)
-        return result
+        values = (*(self.recv_counts or ()), *(self.recv_displs or ()))
+        return super().free_symbols | {str(s) for v in values for s in symbolic.symlist(v)}
 
     def validate(self, sdfg, state):
         """
