@@ -35,10 +35,8 @@ class ExpandIrecvMPI(ExpandTransformation):
             raise NotImplementedError
 
         comm = mpi_communicator(node, parent_state)
-        vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        vector_code, mpi_dtype_str, count_str, free = mpi_vector_datatype(ddt, mpi_dtype_str, count_str)
         code = gpu_buffers_ready(node, parent_sdfg, parent_state) + vector_code
-        mpi_dtype_str = vector or mpi_dtype_str
-        count_str = vector_count or count_str
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         code += free
         tasklet = comm_tasklet(node, parent_state, code)

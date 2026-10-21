@@ -160,12 +160,12 @@ def gpu_buffers_ready(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
     return ""
 
 
-def mpi_vector_datatype(ddt: dict | None) -> tuple[str, str, str, str]:
-    """(create code, datatype, count, free code) of the vector ``ddt`` (see
-    :func:`dace.libraries.comm.utils.create_vector_ddt`), created per call as its sizes may be symbols; all empty
-    without ``ddt``."""
+def mpi_vector_datatype(ddt: dict | None, mpi_dtype: str, count: str) -> tuple[str, str, str, str]:
+    """(create code, datatype, count, free code) of a point-to-point buffer: the vector ``ddt`` (see
+    :func:`dace.libraries.comm.utils.create_vector_ddt`), created per call as its sizes may be symbols, or
+    ``mpi_dtype`` and ``count`` without it."""
     if ddt is None:
-        return "", "", "", ""
+        return "", mpi_dtype, count, ""
     create = f"""
         MPI_Datatype __vector;
         MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &__vector);

@@ -42,7 +42,6 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        outptr = "_outbuffer"
         buffer = "_inbuffer"
         code = gpu_buffers_ready(node, parent_sdfg, parent_state)
         if in_place:
@@ -51,9 +50,9 @@ class ExpandAllreduceMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Allreduce",
-            f"{buffer}, {outptr}, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
+            f"{buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
-        code += mpi_average(node.op, outptr, count_str, comm)
+        code += mpi_average(node.op, "_outbuffer", count_str, comm)
         return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 

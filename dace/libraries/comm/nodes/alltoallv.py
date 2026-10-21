@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
 from collections.abc import Sequence
 
 import dace.library
@@ -26,13 +27,11 @@ from dace.transformation.transformation import ExpandTransformation
 def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str, persistent: bool = False) -> str:
     """C++ arrays ``<name>_counts`` and ``<name>_displs`` (exclusive prefix sums) of ``counts`` times ``factor``,
     ``static`` if ``persistent`` (for arrays that must outlive the code, e.g., of a nonblocking operation)."""
-    storage = "static " if persistent else ""
-    return f"""
-        {int_array(f"{name}_counts", [symbolic.pystr_to_symbolic(c) * factor for c in counts], ctype, persistent)}
-        {storage}{ctype} {name}_displs[{len(counts)}];
-        {name}_displs[0] = 0;
-        for (int __i = 1; __i < {len(counts)}; ++__i) {name}_displs[__i] = {name}_displs[__i - 1] + {name}_counts[__i - 1];
-        """
+    values = [symbolic.pystr_to_symbolic(c) * factor for c in counts]
+    displacements = [0, *itertools.accumulate(values[:-1])]
+    return int_array(f"{name}_counts", values, ctype, persistent) + int_array(
+        f"{name}_displs", displacements, ctype, persistent
+    )
 
 
 @dace.library.expansion
@@ -57,8 +56,7 @@ class ExpandAlltoallvMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Alltoallv",
-            f"_inbuffer, __send_counts, __send_displs, {mpi_dtype_str}, "
-            f"_outbuffer, __recv_counts, __recv_displs, "
+            f"_inbuffer, __send_counts, __send_displs, {mpi_dtype_str}, _outbuffer, __recv_counts, __recv_displs, "
             f"{mpi_dtype_str}, {comm}",
         )
         return mpi_request_connector(comm_tasklet(node, parent_state, code))

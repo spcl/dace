@@ -38,10 +38,8 @@ class ExpandIsendMPI(ExpandTransformation):
         comm = mpi_communicator(node, parent_state)
         code = "" if node.nosync else gpu_buffers_ready(node, parent_sdfg, parent_state)
 
-        vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        vector_code, mpi_dtype_str, count_str, free = mpi_vector_datatype(ddt, mpi_dtype_str, count_str)
         code += vector_code
-        mpi_dtype_str = vector or mpi_dtype_str
-        count_str = vector_count or count_str
         code += f"MPI_Isend(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
         code += free
 

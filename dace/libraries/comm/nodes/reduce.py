@@ -29,10 +29,6 @@ class ExpandReduceMPI(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
-        inptr, outptr = (
-            "_inbuffer",
-            "_outbuffer",
-        )
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
@@ -48,13 +44,13 @@ class ExpandReduceMPI(ExpandTransformation):
                 if (__comm_rank == _root) {{
             """
             code += f"""
-                    MPI_Reduce(MPI_IN_PLACE, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
+                    MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
                 }} else {{
             """
-        code += f"MPI_Reduce({inptr}, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
+        code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
         if in_place:
             code += "}"
-        code += mpi_average(node.op, outptr, count_str, comm, root="_root")
+        code += mpi_average(node.op, "_outbuffer", count_str, comm, root="_root")
         return comm_tasklet(node, parent_state, code)
 
 

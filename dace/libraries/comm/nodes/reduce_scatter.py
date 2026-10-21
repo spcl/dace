@@ -41,14 +41,12 @@ class ExpandReduceScatterMPI(ExpandTransformation):
             raise NotImplementedError(
                 "The average of a nonblocking MPI reduction: reduce the sum and divide after the Wait"
             )
-        inptr = "_inbuffer"
-        outptr = "_outbuffer"
         code = gpu_buffers_ready(node, parent_sdfg, parent_state) + mpi_collective(
             node,
             "Reduce_scatter_block",
-            f"{inptr}, {outptr}, {out_count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
+            f"_inbuffer, _outbuffer, {out_count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
-        code += mpi_average(node.op, outptr, out_count_str, comm)
+        code += mpi_average(node.op, "_outbuffer", out_count_str, comm)
         return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
