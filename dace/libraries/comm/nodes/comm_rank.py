@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, integer_output, mpi_communicator
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, mpi_communicator, validate_integer_connector
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -27,4 +27,4 @@ class CommRank(CommNode):
         super().__init__(name, *args, inputs=set(), outputs={"_rank"}, **kwargs)
 
     def validate(self, sdfg, state):
-        integer_output(self, sdfg, state, "_rank")
+        validate_integer_connector(self, sdfg, state, "_rank")

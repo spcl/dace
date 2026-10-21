@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, communicator_output, integer_input
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, validate_integer_connector
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -24,11 +24,10 @@ class CommF2c(CommNode):
 
     implementations = {"MPI": ExpandCommF2cMPI}
     default_implementation = "MPI"
-    outputs_mpi_communicator = True
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_fcomm"}, outputs={"_handle"}, **kwargs)
 
     def validate(self, sdfg, state):
-        integer_input(self, sdfg, state, "_fcomm")
-        communicator_output(self, sdfg, state, "_handle")
+        validate_integer_connector(self, sdfg, state, "_fcomm")
+        validate_integer_connector(self, sdfg, state, "_handle")

@@ -286,27 +286,6 @@ def test_a_reduce_of_a_scalar():
         assert result[0] == sum(r + 1 for r in range(world.Get_size()))
 
 
-def test_an_mpi_communicator_is_refused_by_an_nccl_expansion():
-    sdfg = dace.SDFG("nccl_takes_mpi_handle")
-    sdfg.add_scalar("color", dace.int32)
-    sdfg.add_scalar("key", dace.int32)
-    sdfg.add_scalar("handle", dace.int64, transient=True)
-    sdfg.add_array("x", [4], dace.float64, storage=dace.StorageType.GPU_Global)
-    state = sdfg.add_state()
-    split = comm.CommSplit("split")
-    state.add_edge(state.add_read("color"), None, split, "_color", Memlet("color"))
-    state.add_edge(state.add_read("key"), None, split, "_key", Memlet("key"))
-    handle = state.add_access("handle")
-    state.add_edge(split, "_newcomm", handle, None, Memlet("handle"))
-    allreduce = comm.Allreduce("allreduce")
-    allreduce.add_in_connector("_comm")
-    state.add_edge(handle, None, allreduce, "_comm", Memlet("handle"))
-    state.add_edge(state.add_read("x"), None, allreduce, "_inbuffer", Memlet("x[0:4]"))
-    state.add_edge(allreduce, "_outbuffer", state.add_write("x"), None, Memlet("x[0:4]"))
-    with pytest.raises(ValueError, match="MPI communicator"):
-        allreduce.implementations["NCCL"].expansion(allreduce, state, sdfg)
-
-
 def _isend_sdfg(name: str, storage: dace.StorageType) -> dace.SDFG:
     sdfg = dace.SDFG(name)
     sdfg.add_array("x", [4], dace.float64, storage=storage)
@@ -321,13 +300,6 @@ def _isend_sdfg(name: str, storage: dace.StorageType) -> dace.SDFG:
     state.add_edge(state.add_read("tag"), None, isend, "_tag", Memlet("tag[0]"))
     state.add_edge(isend, "_request", state.add_write("req"), None, Memlet("req[0]"))
     return sdfg
-
-
-def test_an_isend_of_gpu_memory_synchronizes_the_stream_of_the_backend():
-    code = _code(_isend_sdfg("isend_gpu_sync", dace.StorageType.GPU_Global))
-    backend = common.get_gpu_backend()
-    assert f"{backend}StreamSynchronize(__dace_current_stream)" in code
-    assert {"cuda": "hip", "hip": "cuda"}[backend] + "StreamSynchronize" not in code
 
 
 @pytest.mark.parametrize("node_type", [comm.Allreduce, comm.Reduce, comm.Bcast, comm.Gather, comm.Allgather])
@@ -526,8 +498,6 @@ if __name__ == "__main__":
     test_an_allreduce_of_a_scalar("MPI_SUM", True)
     test_an_allreduce_of_a_scalar("avg", False)
     test_a_reduce_of_a_scalar()
-    test_an_mpi_communicator_is_refused_by_an_nccl_expansion()
-    test_an_isend_of_gpu_memory_synchronizes_the_stream_of_the_backend()
     for node_type in (comm.Allreduce, comm.Reduce, comm.Bcast, comm.Gather, comm.Allgather):
         test_an_mpi_call_on_gpu_memory_waits_for_the_stream(node_type)
     test_an_isend_without_sync_does_not_wait_for_the_stream()

@@ -4,9 +4,8 @@ from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
     comm_tasklet,
-    communicator_output,
-    integer_input,
     mpi_communicator,
+    validate_integer_connector,
 )
 from dace.transformation.transformation import ExpandTransformation
 
@@ -37,12 +36,11 @@ class CommSplit(CommNode):
 
     implementations = {"MPI": ExpandCommSplitMPI}
     default_implementation = "MPI"
-    outputs_mpi_communicator = True
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_color", "_key"}, outputs={"_newcomm"}, **kwargs)
 
     def validate(self, sdfg, state):
-        integer_input(self, sdfg, state, "_color")
-        integer_input(self, sdfg, state, "_key")
-        communicator_output(self, sdfg, state, "_newcomm")
+        validate_integer_connector(self, sdfg, state, "_color")
+        validate_integer_connector(self, sdfg, state, "_key")
+        validate_integer_connector(self, sdfg, state, "_newcomm")

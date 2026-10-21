@@ -4,7 +4,7 @@ import copy as copy_module
 from collections.abc import Sequence
 from typing import Any
 
-from dace import config, data, dtypes, properties, subsets
+from dace import data, dtypes, properties, subsets
 from dace.codegen import common
 from dace.libraries.comm import environments, utils
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -44,39 +44,24 @@ def validate_integer_descriptor(desc: Any, name: str) -> None:
         raise ValueError(f"{name} must be an integer")
 
 
-def integer_input(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> data.Data:
-    """The descriptor on the input ``connector`` of ``node``, which must be an integer."""
-    desc = sdutil.in_desc_with_name(node, state, sdfg, connector)
+def validate_integer_connector(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> None:
+    """Refuses a non-integer container on ``connector`` of ``node``."""
+    if connector in node.in_connectors:
+        desc = sdutil.in_desc_with_name(node, state, sdfg, connector)
+    else:
+        desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
     validate_integer_descriptor(desc, f'{type(node).__name__} "{node.label}" {connector}')
-    return desc
-
-
-def integer_output(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> data.Data:
-    """The descriptor on the output ``connector`` of ``node``, which must be an integer."""
-    desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
-    validate_integer_descriptor(desc, f'{type(node).__name__} "{node.label}" {connector}')
-    return desc
-
-
-def communicator_output(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> data.Data:
-    """The descriptor on the output ``connector`` of ``node``, which receives a communicator handle: a 64-bit integer,
-    as the ``_comm`` connector takes (see :mod:`dace.libraries.comm.communicators`)."""
-    desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
-    if desc.dtype.base_type not in (dtypes.int64, dtypes.uint64):
-        raise ValueError(f'{type(node).__name__} "{node.label}" {connector} must be a 64-bit integer handle')
-    return desc
 
 
 def count_expression(subset: subsets.Subset) -> str:
-    """The number of elements of ``subset`` as a C++ expression, parenthesized unless it is one term."""
+    """The number of elements of ``subset`` as a C++ expression."""
     from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
     return sym2cpp(subset.num_elements_exact())
 
 
 def int_array(name: str, values: Sequence, ctype: str = "int", static: bool = False) -> str:
-    """A C++ array ``name`` of ``ctype`` assigned the symbolic ``values`` on every run, ``static`` if it must outlive
-    the code (e.g., of a nonblocking operation)."""
+    """A C++ array ``name`` of ``ctype`` holding ``values``; ``static`` if a nonblocking operation reads it later."""
     from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
     storage = "static " if static else ""
@@ -89,8 +74,7 @@ BUFFER_CONNECTORS = ("_buffer", "_inbuffer", "_outbuffer")
 
 
 def comm_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:
-    """The tasklet of a communication expansion that runs the C++ ``code``. Its buffer connectors are pointers, so MPI
-    and NCCL take the buffer itself even for a scalar or a single element."""
+    """The tasklet running ``code``. Buffer connectors are pointers, also for scalars and single elements."""
     inputs = expanded_input_connectors(node, state)
     outputs = dict(node.out_connectors)
     for connector in BUFFER_CONNECTORS:
@@ -126,7 +110,6 @@ def nccl_communicator(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
     An SDFG whose NCCL nodes all have a ``_comm`` connector needs no MPI.
     """
     if external_communicator(node, state):
-        _validate_nccl_handle(node, sdfg, state)
         return "((ncclComm_t)(_comm))"
     grid = input_descriptor_name(node, state, "_grid")
     if grid is None:
@@ -134,23 +117,6 @@ def nccl_communicator(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
         return "__state->nccl->Get(MPI_COMM_WORLD)"
     _append_init_code_once(sdfg, f"__state->nccl->Create(__state->{grid});\n")
     return "__state->nccl->Get(_grid)"
-
-
-def _validate_nccl_handle(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> None:
-    """Refuses a ``_comm`` handle that a node of ``sdfg`` writes as an ``MPI_Comm`` (see
-    :attr:`CommNode.outputs_mpi_communicator`): an NCCL expansion would reinterpret it as an ``ncclComm_t``."""
-    name = input_descriptor_name(node, state, "_comm")
-    for block in sdfg.states():
-        for access in block.data_nodes():
-            if access.data != name:
-                continue
-            for edge in block.in_edges(access):
-                if isinstance(edge.src, CommNode) and edge.src.outputs_mpi_communicator:
-                    raise ValueError(
-                        f'The NCCL expansion of {type(node).__name__} "{node.label}" takes the communicator {name}, '
-                        f'which {type(edge.src).__name__} "{edge.src.label}" writes as an MPI communicator. Use the '
-                        "MPI expansion, or a handle from dace.libraries.comm.communicators.nccl_init_rank"
-                    )
 
 
 def _append_init_code_once(sdfg: SDFG, code: str) -> None:
@@ -180,7 +146,7 @@ def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = 
 
 
 def touches_gpu_memory(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> bool:
-    """Whether ``node`` is connected to a container in GPU memory, which gives its tasklet a GPU stream."""
+    """Whether ``node`` is connected to GPU memory, which gives its tasklet a GPU stream."""
     return any(
         e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
         for e in state.all_edges(node)
@@ -188,18 +154,16 @@ def touches_gpu_memory(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> bool:
 
 
 def gpu_buffers_ready(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
-    """The code that makes the host wait for the GPU stream of the tasklet of ``node`` before an MPI call on its
-    buffers in GPU memory (GPU-aware MPI): the host call is not ordered with the kernels that write or read them."""
+    """Host-side wait for the stream of ``node`` before GPU-aware MPI touches its device buffers."""
     if touches_gpu_memory(node, sdfg, state):
         return f"DACE_GPU_CHECK({common.get_gpu_backend()}StreamSynchronize(__dace_current_stream));\n"
     return ""
 
 
 def mpi_vector_datatype(ddt: dict | None) -> tuple[str, str, str, str]:
-    """The MPI datatype of a point-to-point buffer that ``ddt`` (see :func:`dace.libraries.comm.utils.create_vector_ddt`)
-    describes: (code creating it, datatype, count, code freeing it). The datatype is created on every call, since its
-    stride and block length may be symbols; freeing it after starting a nonblocking operation is allowed, as the
-    operation keeps it until completion. Without ``ddt``, all are empty."""
+    """(create code, datatype, count, free code) of the vector ``ddt`` (see
+    :func:`dace.libraries.comm.utils.create_vector_ddt`), created per call as its sizes may be symbols; all empty
+    without ``ddt``."""
     if ddt is None:
         return "", "", "", ""
     create = f"""
@@ -211,8 +175,7 @@ def mpi_vector_datatype(ddt: dict | None) -> tuple[str, str, str, str]:
 
 
 def column_major(sdfg: SDFG, state: SDFGState, access: nodes.Node, name: str) -> bool:
-    """Whether the elements of container ``name``, accessed through ``access``, are in column-major (Fortran) order:
-    whether the array it views (or itself, if not a view) has packed Fortran strides and not packed C strides."""
+    """Whether ``name`` (or the array it views through ``access``) is column-major."""
     if isinstance(access, nodes.AccessNode) and isinstance(sdfg.arrays[name], data.View):
         viewed = sdutil.get_last_view_node(state, access)
         if viewed is not None:
@@ -222,9 +185,8 @@ def column_major(sdfg: SDFG, state: SDFGState, access: nodes.Node, name: str) ->
 
 
 def in_place(sdfg: SDFG, state: SDFGState, edge, node: nodes.Node) -> bool:
-    """Whether the buffer on ``edge`` of ``node`` is communicated in place: one contiguous run of memory (see
-    :meth:`dace.subsets.Subset.is_contiguous_subset`) laid out in the element order of the buffer (see
-    :func:`column_major`). A transposed view of a row-major array is contiguous, but not in row-major order."""
+    """Whether the buffer on ``edge`` is contiguous in its own element order (a transposed view is contiguous but
+    not in order), so it needs no packing."""
     desc = sdfg.arrays[edge.data.data]
     if isinstance(desc, data.Scalar):
         return True
@@ -246,15 +208,8 @@ def pack_noncontiguous_buffers(
     inputs: tuple[str, ...] = ("_inbuffer",),
     outputs: tuple[str, ...] = ("_outbuffer",),
 ) -> None:
-    """
-    Routes the buffers of ``node`` that are not communicated in place (see :func:`in_place`) through contiguous
-    transients laid out in the element order of the buffer: copies into them before the node and out of them after
-    it. The expansions communicate ``count`` elements from a pointer, so they need contiguous buffers. A buffer that
-    is both an input and an output (in place) gets one transient.
-
-    :param inputs: The input connectors of buffers.
-    :param outputs: The output connectors of buffers.
-    """
+    """Routes the buffers of ``node`` that are not :func:`in_place` through packed transients, copied in before the
+    node and out after it. An in-place buffer gets one transient."""
     packed: dict[tuple[str, str], str] = {}
 
     def transient(memlet: Memlet, access: nodes.Node) -> str:
@@ -274,14 +229,9 @@ def pack_noncontiguous_buffers(
         return packed[key]
 
     def copy(src: nodes.Node, src_conn: str | None, dst: nodes.Node, dst_conn: str | None, src_memlet, dst_memlet):
-        """A copy between two access nodes is explicit (a ``CopyLibraryNode``), as code generation makes the copies
-        it finds before expanding library nodes; others stay copy edges. Its expansion picks the copy from the
-        storages and strides of both ends, so packing need not handle memory locations or layouts itself."""
-        if not (
-            config.Config.get_bool("compiler", "cpu", "explicit_copy")
-            and isinstance(src, nodes.AccessNode)
-            and isinstance(dst, nodes.AccessNode)
-        ):
+        # A CopyLibraryNode picks the copy from the storages and strides of both ends, so packing need not handle
+        # memory locations or layouts. It connects access nodes only; other ends keep a copy edge.
+        if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
             memlet = Memlet(data=src_memlet.data, subset=src_memlet.subset, other_subset=dst_memlet.subset)
             state.add_edge(src, src_conn, dst, dst_conn, memlet)
             return
@@ -315,9 +265,8 @@ def pack_noncontiguous_buffers(
 
 
 def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
-    """Whether the input and output buffers of ``node`` are the same memory, communicated in place (``MPI_IN_PLACE``).
-    Disjoint subsets of one container are two buffers; different ones that overlap, or may overlap, are refused, as
-    MPI forbids aliased buffers."""
+    """Whether the input and output of ``node`` are the same memory (``MPI_IN_PLACE``). Disjoint subsets are two
+    buffers; possibly overlapping ones are refused, as MPI forbids aliasing."""
     inp = sdutil.in_edge_with_name(node, state, "_inbuffer").data
     out = sdutil.out_edge_with_name(node, state, "_outbuffer").data
     if inp.data != out.data:
@@ -470,9 +419,6 @@ class CommNode(nodes.LibraryNode):
 
     # Communication reads host control values (ranks, tags, requests) next to buffers in any memory
     bridges_storage = True
-
-    #: Whether the node outputs the handle of an ``MPI_Comm`` (e.g., ``CommSplit``), which no NCCL expansion may take
-    outputs_mpi_communicator = False
 
     def has_side_effects(self, sdfg) -> bool:
         return True

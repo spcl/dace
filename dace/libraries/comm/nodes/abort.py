@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import library
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, integer_input, mpi_communicator
+from dace.libraries.comm.nodes.node import CommNode, comm_tasklet, mpi_communicator, validate_integer_connector
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -26,4 +26,4 @@ class Abort(CommNode):
         super().__init__(name, *args, inputs={"_errorcode"}, outputs=set(), **kwargs)
 
     def validate(self, sdfg, state):
-        integer_input(self, sdfg, state, "_errorcode")
+        validate_integer_connector(self, sdfg, state, "_errorcode")
