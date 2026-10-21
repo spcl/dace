@@ -328,7 +328,7 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
     threaded = fftw3.threaded(transform.double)
-    # A threaded FFTW plans for the team the program runs (pocketfft's ``workers``); inside a parallel region, one.
+    # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region
     team = (
         f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
         f"{prefix}_plan_with_nthreads(__threads);"
