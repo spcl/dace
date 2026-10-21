@@ -74,6 +74,14 @@ class PropertyTests(unittest.TestCase):
 
         self.assertEqual(sdfg.arrays[memlet.data], arr0)
 
+    def test_symbolic_property_keeps_sympy_float(self):
+        third = sp.Float(1 / 3)
+        memlet = dace.Memlet("A[0]")
+        memlet.volume = third
+        self.assertEqual(float(memlet.volume), 1 / 3)
+        memlet.volume = 2 * third
+        self.assertEqual(float(memlet.volume), 2 / 3)
+
 
 if __name__ == "__main__":
     unittest.main()

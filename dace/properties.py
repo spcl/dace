@@ -1289,7 +1289,8 @@ class SymbolicProperty(Property):
     def __set__(self, obj, val):
         if val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str)):
             raise TypeError(f"Property {self.attr_name} must be a literal or symbolic expression, got: {type(val)}")
-        if isinstance(val, (Number, str)):
+        # A sympy number is already symbolic: parsing ``str(val)`` would round a float to 15 digits
+        if isinstance(val, (Number, str)) and not isinstance(val, sp.Basic):
             val = SymbolicProperty.from_string(str(val))
 
         super().__set__(obj, val)
