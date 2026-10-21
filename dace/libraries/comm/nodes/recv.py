@@ -2,11 +2,10 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     NcclExpansion,
-    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_communicator,
@@ -17,13 +16,10 @@ from dace.libraries.comm.nodes.node import (
     validate_integer_descriptor,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandRecvMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandRecvMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str, buffer_offset, ddt), src, tag = node.validate(parent_sdfg, parent_state)
@@ -35,7 +31,7 @@ class ExpandRecvMPI(ExpandTransformation):
         mpi_dtype_str = vector or mpi_dtype_str
         count_str = vector_count or count_str
         code += (
-            f"MPI_Recv({buffer_pointer(buffer, '_buffer')}, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {mpi_communicator(node, parent_state)}, "
+            f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {mpi_communicator(node, parent_state)}, "
             "MPI_STATUS_IGNORE);"
         )
         code += free

@@ -3,9 +3,9 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     NcclExpansion,
     count_expression,
     expanded_input_connectors,
@@ -17,15 +17,11 @@ from dace.libraries.comm.nodes.node import (
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
-    validate_nonblocking_buffer,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandIrecvMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandIrecvMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str, buffer_offset, ddt), src, tag = node.validate(parent_sdfg, parent_state)
@@ -36,7 +32,6 @@ class ExpandIrecvMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        validate_nonblocking_buffer(node, buffer)
         code, vector, vector_count, free = mpi_vector_datatype(ddt)
         mpi_dtype_str = vector or mpi_dtype_str
         count_str = vector_count or count_str

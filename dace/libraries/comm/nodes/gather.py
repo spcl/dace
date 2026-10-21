@@ -4,8 +4,8 @@ from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     NcclExpansion,
-    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     input_descriptor_name,
@@ -23,9 +23,7 @@ from dace.utils import prod as _prod
 
 
 @library.expansion
-class ExpandGatherMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandGatherMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state, preserved=("_outbuffer",))
@@ -39,7 +37,7 @@ class ExpandGatherMPI(ExpandTransformation):
         code = f"""
             int _commsize;
             MPI_Comm_size({comm}, &_commsize);
-            MPI_Gather({buffer_pointer(inbuffer, "_inbuffer")}, {in_count_str}, {in_mpi_dtype_str},
+            MPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
                        _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str},
                        _root, {comm});
             """

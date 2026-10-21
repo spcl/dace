@@ -5,8 +5,9 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import symbolic
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
+    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
     expanded_input_connectors,
@@ -18,7 +19,6 @@ from dace.libraries.comm.nodes.node import (
     pack_noncontiguous_buffers,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str, persistent: bool = False) -> str:
@@ -40,10 +40,8 @@ def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: s
 
 
 @dace.library.expansion
-class ExpandAlltoallvMPI(ExpandTransformation):
+class ExpandAlltoallvMPI(MpiExpansion):
     """Exchanges with ``MPI_Alltoallv``."""
-
-    environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

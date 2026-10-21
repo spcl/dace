@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
+    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
     count_expression,
@@ -16,13 +17,10 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandAlltoallMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandAlltoallMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate_nonblocking(parent_sdfg, parent_state)

@@ -2,11 +2,11 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
+    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
-    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_collective,
@@ -18,13 +18,10 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandAllgatherMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandAllgatherMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate_nonblocking(parent_sdfg, parent_state)
@@ -44,7 +41,7 @@ class ExpandAllgatherMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Allgather",
-            f"{buffer_pointer(inbuffer, '_inbuffer')}, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, "
+            f"_inbuffer, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, "
             f"{out_mpi_dtype_str}, {comm}",
         )
         tasklet = dace.sdfg.nodes.Tasklet(

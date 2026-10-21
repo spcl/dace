@@ -2,11 +2,11 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     NcclExpansion,
-    buffer_pointer,
     count_expression,
     mpi_average,
     mpi_communicator,
@@ -17,18 +17,14 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandReduceMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandReduceMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state, preserved=("_outbuffer",))
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
-        inptr, outptr = buffer_pointer(inbuffer, "_inbuffer"), buffer_pointer(outbuffer, "_outbuffer")
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
@@ -37,8 +33,6 @@ class ExpandReduceMPI(ExpandTransformation):
         op = utils.mpi_op(node.op)
 
         code = ""
-        if in_place and isinstance(outbuffer, dace.data.Scalar):
-            code += "_outbuffer = _inbuffer;\n"  # The tasklet holds the scalar twice
         if in_place:
             code += f"""
                 int __comm_rank;
@@ -46,13 +40,13 @@ class ExpandReduceMPI(ExpandTransformation):
                 if (__comm_rank == _root) {{
             """
             code += f"""
-                    MPI_Reduce(MPI_IN_PLACE, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
+                    MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
                 }} else {{
             """
-        code += f"MPI_Reduce({inptr}, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
+        code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
         if in_place:
             code += "}"
-        code += mpi_average(node.op, outptr, count_str, comm, root="_root")
+        code += mpi_average(node.op, "_outbuffer", count_str, comm, root="_root")
         return mpi_tasklet(node, parent_state, code)
 
 

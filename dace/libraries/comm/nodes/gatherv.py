@@ -2,16 +2,16 @@
 from collections.abc import Sequence
 
 from dace import data, library, properties, symbolic
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     count_expression,
     mpi_communicator,
     mpi_tasklet,
     pack_noncontiguous_buffers,
 )
 from dace.sdfg import utils as sdutil
-from dace.transformation.transformation import ExpandTransformation
 
 
 def int_array(name: str, values: Sequence) -> str:
@@ -23,9 +23,7 @@ def int_array(name: str, values: Sequence) -> str:
 
 
 @library.expansion
-class ExpandGathervMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandGathervMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         # The root places the blocks at the displacements of the output: only the input moves to a packed copy

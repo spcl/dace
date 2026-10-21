@@ -105,18 +105,49 @@ def test_a_nonblocking_collective_takes_a_column_major_buffer():
     node.validate_nonblocking(sdfg, state)
 
 
-def test_a_nonblocking_collective_refuses_a_scalar():
-    sdfg = dace.SDFG("iallreduce_scalar")
-    sdfg.add_scalar("s", dace.float64)
-    sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"))
-    state = sdfg.add_state()
+def _iallreduce_scalar_sdfg(name: str) -> dace.SDFG:
+    """A nonblocking Allreduce of the scalar ``s`` in place, and its Wait in the next state."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_array("value", [1], dace.float64)
+    sdfg.add_array("result", [1], dace.float64)
+    sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
+    start = sdfg.add_state("start")
+    s = start.add_access("s")
+    start.add_nedge(start.add_read("value"), s, Memlet("value[0] -> s[0]"))
     node = comm.Allreduce("allreduce")
+    node.implementation = "MPI"
     node.nonblocking = True
-    state.add_edge(state.add_read("s"), None, node, "_inbuffer", Memlet("s"))
-    state.add_edge(node, "_outbuffer", state.add_write("s"), None, Memlet("s"))
-    state.add_edge(node, "_request", state.add_write("req"), None, Memlet("req[0]"))
-    with pytest.raises(ValueError, match="scalar"):
-        node.validate_nonblocking(sdfg, state)
+    node.add_out_connector("_request")
+    start.add_edge(s, None, node, "_inbuffer", Memlet("s"))
+    start.add_edge(node, "_outbuffer", start.add_write("s"), None, Memlet("s"))
+    start.add_edge(node, "_request", start.add_write("req"), None, Memlet("req[0]"))
+    wait_state = sdfg.add_state_after(start, "wait")
+    wait = comm.Wait("wait")
+    wait.implementation = "MPI"
+    wait.remove_out_connector("_stat_tag")
+    wait.remove_out_connector("_stat_source")
+    wait_state.add_edge(wait_state.add_read("req"), None, wait, "_request", Memlet("req[0]"))
+    done = sdfg.add_state_after(wait_state, "done")
+    done.add_nedge(done.add_read("s"), done.add_write("result"), Memlet("s[0] -> result[0]"))
+    return sdfg
+
+
+def test_a_scalar_buffer_is_passed_as_a_pointer_to_the_scalar():
+    sdfg = _iallreduce_scalar_sdfg("iallreduce_scalar_pointer")
+    sdfg.expand_library_nodes()
+    code = sdfg.generate_code()[0].clean_code
+    assert "double* _inbuffer = &s;" in code
+    assert "double* _outbuffer = &s;" in code
+
+
+@pytest.mark.mpi
+def test_a_nonblocking_allreduce_of_a_scalar():
+    world = _world()
+    result = np.zeros(1)
+    sdfg = _iallreduce_scalar_sdfg("mpi_iallreduce_scalar")
+    _compile_in_turn(sdfg, world)(value=np.array([world.Get_rank() + 1.0]), result=result)
+    assert result[0] == sum(r + 1 for r in range(world.Get_size()))
 
 
 def _gather_sdfg(name: str) -> dace.SDFG:
@@ -389,7 +420,8 @@ if __name__ == "__main__":
     test_a_column_major_section_packs_in_column_major_order()
     test_a_transposed_view_of_a_row_major_array_packs_in_row_major_order()
     test_a_nonblocking_collective_takes_a_column_major_buffer()
-    test_a_nonblocking_collective_refuses_a_scalar()
+    test_a_scalar_buffer_is_passed_as_a_pointer_to_the_scalar()
+    test_a_nonblocking_allreduce_of_a_scalar()
     test_a_packed_root_output_starts_from_the_values_of_the_buffer()
     test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged()
     test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged()

@@ -2,8 +2,9 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
+    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
     count_expression,
@@ -18,14 +19,11 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandReduceScatterMPI(ExpandTransformation):
+class ExpandReduceScatterMPI(MpiExpansion):
     """Reduces and scatters with ``MPI_Reduce_scatter_block``."""
-
-    environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

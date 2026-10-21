@@ -4,9 +4,9 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
 from dace.codegen import common
-from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     NcclExpansion,
     count_expression,
     expanded_input_connectors,
@@ -18,15 +18,11 @@ from dace.libraries.comm.nodes.node import (
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
-    validate_nonblocking_buffer,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandIsendMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandIsendMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str, buffer_offset, ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
@@ -37,7 +33,6 @@ class ExpandIsendMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        validate_nonblocking_buffer(node, buffer)
         code = ""
         if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
             code += f"{common.get_gpu_backend()}StreamSynchronize(__dace_current_stream);\n"

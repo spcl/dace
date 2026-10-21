@@ -4,8 +4,8 @@ from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    MpiExpansion,
     NcclExpansion,
-    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     input_descriptor_name,
@@ -23,9 +23,7 @@ from dace.utils import prod as _prod
 
 
 @library.expansion
-class ExpandScatterMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandScatterMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
@@ -40,7 +38,7 @@ class ExpandScatterMPI(ExpandTransformation):
             int _commsize;
             MPI_Comm_size({comm}, &_commsize);
             MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
-                        {buffer_pointer(outbuffer, "_outbuffer")}, {out_count_str}, {out_mpi_dtype_str},
+                        _outbuffer, {out_count_str}, {out_mpi_dtype_str},
                         _root, {comm});
             """
         return mpi_tasklet(node, parent_state, code)

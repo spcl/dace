@@ -160,22 +160,6 @@ def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = 
         """
 
 
-def buffer_pointer(desc: data.Data, connector: str) -> str:
-    """The pointer to the buffer on ``connector`` of an MPI tasklet: the address of a scalar, which the tasklet holds
-    by value, else the connector itself."""
-    return f"&{connector}" if isinstance(desc, data.Scalar) else connector
-
-
-def validate_nonblocking_buffer(node: nodes.Node, desc: data.Data) -> None:
-    """Refuses a scalar buffer of a nonblocking operation: its tasklet holds a copy, which is gone before the
-    ``Wait``."""
-    if isinstance(desc, data.Scalar):
-        raise ValueError(
-            f'The nonblocking {type(node).__name__} "{node.label}" cannot communicate a scalar, of which its tasklet '
-            "holds a copy that is gone before the Wait. Use a one-element array"
-        )
-
-
 def mpi_vector_datatype(ddt: dict | None) -> tuple[str, str, str, str]:
     """The MPI datatype of a point-to-point buffer that ``ddt`` (see :func:`dace.libraries.comm.utils.create_vector_ddt`)
     describes: (code creating it, datatype, count, code freeing it). The datatype is created on every call, since its
@@ -418,6 +402,32 @@ def nccl_tasklet(
     return tasklet
 
 
+#: Connectors of communicated buffers
+BUFFER_CONNECTORS = ("_inbuffer", "_outbuffer", "_buffer")
+
+
+class MpiExpansion(ExpandTransformation):
+    """Base class of the MPI expansions of nodes that communicate buffers. A buffer is passed to MPI as a pointer: the
+    connectors of scalar buffers become pointers to the scalars themselves, not to copies in the tasklet, so that
+    blocking calls write the scalar and nonblocking ones still point at it at their ``Wait``."""
+
+    environments = [environments.mpi.MPI]
+
+    @staticmethod
+    def postprocessing(sdfg, state, expansion):
+        for edge in state.in_edges(expansion):
+            _point_at_scalar(sdfg, edge, edge.dst_conn, expansion.in_connectors)
+        for edge in state.out_edges(expansion):
+            _point_at_scalar(sdfg, edge, edge.src_conn, expansion.out_connectors)
+
+
+def _point_at_scalar(sdfg: SDFG, edge, connector: str | None, connectors: dict) -> None:
+    if connector in BUFFER_CONNECTORS and edge.data.data is not None:
+        desc = sdfg.arrays[edge.data.data]
+        if isinstance(desc, data.Scalar):
+            connectors[connector] = dtypes.pointer(desc.dtype)
+
+
 class NcclExpansion(ExpandTransformation):
     """Base class of the NCCL expansions. An expansion that communicates over a communicator it bootstraps over MPI
     (that of the world or of a process grid, see :func:`nccl_communicator`) also uses the MPI environment; one whose
@@ -478,9 +488,8 @@ class NonblockingCommNode(CommNode):
     def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
         """
         Checks what an MPI expansion of a nonblocking node needs: a connected ``_request`` output, and contiguous
-        non-scalar buffers, since the operation completes at its ``Wait``, after a packed output would have been
-        copied back (see :func:`pack_noncontiguous_buffers`), a packed input freed, and a scalar's copy in the tasklet
-        gone. (NCCL needs neither: the copies of packed
+        buffers, since the operation completes at its ``Wait``, after a packed output would have been copied back
+        (see :func:`pack_noncontiguous_buffers`) and a packed input freed. (NCCL needs neither: the copies of packed
         buffers are ordered on the stream of the node.)
         """
         if not self.nonblocking:
@@ -491,7 +500,6 @@ class NonblockingCommNode(CommNode):
             connector = edge.dst_conn if edge.dst is self else edge.src_conn
             if connector not in ("_inbuffer", "_outbuffer"):
                 continue
-            validate_nonblocking_buffer(self, sdfg.arrays[edge.data.data])
             if not in_place(sdfg, state, edge, self):
                 raise ValueError(
                     f'The nonblocking {type(self).__name__} "{self.label}" requires contiguous buffers, but '

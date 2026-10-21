@@ -3,11 +3,11 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.comm import environments, utils
+from dace.libraries.comm import utils
 from dace.libraries.comm.nodes.node import (
+    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
-    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_collective,
@@ -19,13 +19,10 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
-from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandBcastMPI(ExpandTransformation):
-    environments = [environments.mpi.MPI]
-
+class ExpandBcastMPI(MpiExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate_nonblocking(parent_sdfg, parent_state)
@@ -42,9 +39,7 @@ class ExpandBcastMPI(ExpandTransformation):
             comm = "__comm"
 
         code = init + "\n"
-        code += mpi_collective(
-            node, "Bcast", f"{buffer_pointer(buffer, '_inbuffer')}, {count_str}, {mpi_dtype_str}, _root, {comm}"
-        )
+        code += mpi_collective(node, "Bcast", f"_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm}")
         code += "_outbuffer = _inbuffer;"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
