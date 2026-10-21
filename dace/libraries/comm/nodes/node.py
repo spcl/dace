@@ -225,7 +225,7 @@ def pack_noncontiguous_buffers(
                 find_new_name=True,
             )
             if column_major(sdfg, state, access, memlet.data):
-                packed_desc.strides = packed_desc._get_packed_fortran_strides()
+                packed_desc.set_strides_from_layout(*range(len(packed_desc.shape)))
         return packed[key]
 
     def copy(src: nodes.Node, src_conn: str | None, dst: nodes.Node, dst_conn: str | None, src_memlet, dst_memlet):
