@@ -374,11 +374,6 @@ def nest_state_subgraph(
         if datadesc.transient and dname not in other_nodes:
             subgraph_transients.add(dname)
 
-    # All transients of edges between code nodes are also added to nested graph
-    for edge in subgraph.edges():
-        if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
-            subgraph_transients.add(edge.data.data)
-
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = set()
@@ -439,15 +434,17 @@ def nest_state_subgraph(
         output_names[edge] = new_name
     ###################
 
-    # Add scope symbols to the nested SDFG
+    # Add scope symbols to the nested SDFG with their original data types
     symbols_at_top = state.symbols_defined_at(top_scopenode)
-    defined_vars = {
-        symbolic.pystr_to_symbolic(s) for s in (state.symbols_defined_at(top_scopenode).keys() | sdfg.symbols)
-    }
-    for v in defined_vars:
+    if isinstance(top_scopenode, nodes.EntryNode):
+        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
+    for v in symbols_at_top.keys() | sdfg.symbols.keys():
+        if v in nsdfg.symbols:
+            continue
         if v in sdfg.symbols:
-            sym = sdfg.symbols[v]
-            nsdfg.add_symbol(v, sym.dtype)
+            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
+        elif v in symbols_at_top:
+            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():
@@ -1597,23 +1594,6 @@ def redirect_edge(
         new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn or edge.dst_conn, memlet
     )
     return new_edge
-
-
-def replace_code_to_code_edges(sdfg: SDFG):
-    """
-    Adds access nodes between all code->code edges in each state.
-
-    :param sdfg: The SDFG to process.
-    """
-    for state in sdfg.states():
-        for edge in state.edges():
-            if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
-                continue
-            # Add access nodes
-            aname = state.add_access(edge.data.data)
-            state.add_edge(edge.src, edge.src_conn, aname, None, edge.data)
-            state.add_edge(aname, None, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-            state.remove_edge(edge)
 
 
 def make_map_internal_write_external(

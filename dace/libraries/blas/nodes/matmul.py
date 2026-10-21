@@ -247,7 +247,15 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                     cin = False
                 else:
                     warnings.warn(f"Unsupported WCR in output of MatMul library node: {c[0].data.wcr}")
-            gemm = Gemm(node.name + "gemm", location=node.location, alpha=node.alpha, beta=beta, cin=cin)
+            gemm = Gemm(
+                node.name + "gemm",
+                location=node.location,
+                alpha=node.alpha,
+                beta=beta,
+                cin=cin,
+                transA=node.transA,
+                transB=node.transB,
+            )
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
             # Batched matrix multiplication with broadcasting support
@@ -263,7 +271,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
-            result = Gemv(node.name + "gemv", location=node.location)
+            result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
         elif len(size_a) == 1 and len(size_b) == 2:
             # Vector and matrix -> GEMV with transposed matrix
             from dace.libraries.blas.nodes.gemv import Gemv
@@ -272,7 +280,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
-            result = Gemv(node.name + "gemvt", location=node.location, transA=True)
+            result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
@@ -316,7 +324,12 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
         desc="A scalar which will be multiplied with C before adding C",
     )
 
-    def __init__(self, name, location=None, alpha=1, beta=0):
+    transA = properties.Property(dtype=bool, default=False, desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, default=False, desc="Whether to transpose B before multiplying")
+
+    def __init__(self, name, location=None, alpha=1, beta=0, transA=False, transB=False):
         self.alpha = alpha
         self.beta = beta
+        self.transA = transA
+        self.transB = transB
         super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
