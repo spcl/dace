@@ -18,7 +18,6 @@ from dace.libraries.comm.nodes.node import (
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
-    validate_nonblocking_buffer,
 )
 from dace.transformation.transformation import ExpandTransformation
 
@@ -36,8 +35,6 @@ class ExpandIrecvMPI(ExpandTransformation):
             raise NotImplementedError
 
         comm = mpi_communicator(node, parent_state)
-
-        validate_nonblocking_buffer(node, parent_sdfg, parent_state, "_buffer")
         vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
         code = gpu_buffers_ready(node, parent_sdfg, parent_state) + vector_code
         mpi_dtype_str = vector or mpi_dtype_str

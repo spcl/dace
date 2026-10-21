@@ -5,7 +5,6 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
-    buffer_pointer,
     comm_tasklet,
     count_expression,
     gpu_buffers_ready,
@@ -40,8 +39,8 @@ class ExpandGatherMPI(ExpandTransformation):
             + f"""
             int _commsize;
             MPI_Comm_size({comm}, &_commsize);
-            MPI_Gather({buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer")}, {in_count_str}, {in_mpi_dtype_str},
-                       {buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer")}, ({out_count_str})/_commsize, {out_mpi_dtype_str},
+            MPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
+                       _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str},
                        _root, {comm});
             """
         )

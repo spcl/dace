@@ -6,7 +6,6 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    buffer_pointer,
     comm_tasklet,
     count_expression,
     gpu_buffers_ready,
@@ -42,8 +41,8 @@ class ExpandReduceScatterMPI(ExpandTransformation):
             raise NotImplementedError(
                 "The average of a nonblocking MPI reduction: reduce the sum and divide after the Wait"
             )
-        inptr = buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer")
-        outptr = buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer")
+        inptr = "_inbuffer"
+        outptr = "_outbuffer"
         code = gpu_buffers_ready(node, parent_sdfg, parent_state) + mpi_collective(
             node,
             "Reduce_scatter_block",

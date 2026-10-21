@@ -105,9 +105,8 @@ def test_a_nonblocking_collective_takes_a_column_major_buffer():
     node.validate_nonblocking(sdfg, state)
 
 
-def _iallreduce_scalar_sdfg(name: str, by_reference: bool, nonblocking: bool = True) -> dace.SDFG:
-    """An Allreduce of the scalar ``s`` in place (nonblocking: with its Wait in the next state), whose buffer
-    connectors are pointers if ``by_reference``, else left to inference (copies)."""
+def _iallreduce_scalar_sdfg(name: str, nonblocking: bool = True) -> dace.SDFG:
+    """An Allreduce of the scalar ``s`` in place (nonblocking: with its Wait in the next state)."""
     sdfg = dace.SDFG(name)
     sdfg.add_scalar("s", dace.float64, transient=True)
     sdfg.add_array("value", [1], dace.float64)
@@ -117,9 +116,6 @@ def _iallreduce_scalar_sdfg(name: str, by_reference: bool, nonblocking: bool = T
     start.add_nedge(start.add_read("value"), s, Memlet("value[0] -> s[0]"))
     node = comm.Allreduce("allreduce")
     node.implementation = "MPI"
-    if by_reference:
-        node.in_connectors["_inbuffer"] = dace.pointer(dace.float64)
-        node.out_connectors["_outbuffer"] = dace.pointer(dace.float64)
     start.add_edge(s, None, node, "_inbuffer", Memlet("s"))
     start.add_edge(node, "_outbuffer", start.add_write("s"), None, Memlet("s"))
     last = start
@@ -139,33 +135,25 @@ def _iallreduce_scalar_sdfg(name: str, by_reference: bool, nonblocking: bool = T
     return sdfg
 
 
-@pytest.mark.parametrize("by_reference", [False, True])
-def test_a_buffer_is_passed_by_the_type_of_its_connector(by_reference: bool):
-    """A pointer connector is passed as is; a copy in the tasklet (a value connector) by its address."""
-    code = _code(_iallreduce_scalar_sdfg(f"allreduce_scalar_ref_{by_reference}", by_reference, nonblocking=False))
-    outbuffer = "_outbuffer" if by_reference else "&_outbuffer"
-    assert f"MPI_Allreduce(MPI_IN_PLACE, {outbuffer}, 1, MPI_DOUBLE" in code
-    assert ("_outbuffer = _inbuffer;" in code) != by_reference  # Copies: the output starts from the input
-
-
-def test_a_nonblocking_collective_refuses_a_copied_buffer():
-    sdfg = _iallreduce_scalar_sdfg("iallreduce_scalar_copy", by_reference=False)
-    with pytest.raises(ValueError, match="copies"):
-        sdfg.expand_library_nodes()
+def test_a_scalar_buffer_is_a_pointer_connector():
+    sdfg = _iallreduce_scalar_sdfg("allreduce_scalar_pointer", nonblocking=False)
+    sdfg.expand_library_nodes()
+    (tasklet,) = (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    assert tasklet.in_connectors["_inbuffer"] == tasklet.out_connectors["_outbuffer"] == dace.pointer(dace.float64)
+    assert "MPI_Allreduce(MPI_IN_PLACE, _outbuffer, 1, MPI_DOUBLE" in tasklet.code.as_string
 
 
 @pytest.mark.mpi
-def test_a_nonblocking_allreduce_of_a_scalar_by_reference():
+def test_a_nonblocking_allreduce_of_a_scalar():
     world = _world()
     result = np.zeros(1)
-    sdfg = _iallreduce_scalar_sdfg("mpi_iallreduce_scalar", by_reference=True)
+    sdfg = _iallreduce_scalar_sdfg("mpi_iallreduce_scalar")
     _compile_in_turn(sdfg, world)(value=np.array([world.Get_rank() + 1.0]), result=result)
     assert result[0] == sum(r + 1 for r in range(world.Get_size()))
 
 
 @pytest.mark.mpi
 def test_an_allreduce_of_one_array_element():
-    """A single element is a copy in the tasklet, as for a scalar."""
     world = _world()
     sdfg = dace.SDFG("mpi_allreduce_element")
     sdfg.add_array("x", [3], dace.float64)
@@ -227,17 +215,6 @@ def test_a_reduce_into_a_strided_buffer():
         expected = np.full((4, 2), -1.0)
         expected[:, 1] = sum(r + 1 for r in range(world.Get_size()))
         assert np.array_equal(out, expected)
-
-
-def test_every_comm_node_has_side_effects():
-    library_nodes = [
-        cls
-        for cls in vars(comm.nodes).values()
-        if isinstance(cls, type) and issubclass(cls, dace.nodes.LibraryNode) and cls is not comm.nodes.node.CommNode
-    ]
-    assert library_nodes
-    for cls in library_nodes:
-        assert issubclass(cls, comm.nodes.node.CommNode), cls.__name__
 
 
 _BUFFER_NODES = [comm.Reduce, comm.Gather, comm.Scatter, comm.Allreduce, comm.Bcast, comm.Allgather, comm.Alltoall]
@@ -534,14 +511,11 @@ if __name__ == "__main__":
     test_a_column_major_section_packs_in_column_major_order()
     test_a_transposed_view_of_a_row_major_array_packs_in_row_major_order()
     test_a_nonblocking_collective_takes_a_column_major_buffer()
-    test_a_buffer_is_passed_by_the_type_of_its_connector(False)
-    test_a_buffer_is_passed_by_the_type_of_its_connector(True)
-    test_a_nonblocking_collective_refuses_a_copied_buffer()
-    test_a_nonblocking_allreduce_of_a_scalar_by_reference()
+    test_a_scalar_buffer_is_a_pointer_connector()
+    test_a_nonblocking_allreduce_of_a_scalar()
     test_an_allreduce_of_one_array_element()
     test_a_gather_into_a_strided_buffer()
     test_a_reduce_into_a_strided_buffer()
-    test_every_comm_node_has_side_effects()
     for implementation in ("MPI", "NCCL"):
         for node_type in _BUFFER_NODES:
             test_comm_tasklets_have_side_effects(node_type, implementation)

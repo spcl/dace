@@ -6,7 +6,6 @@ from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
-    buffer_pointer,
     comm_tasklet,
     count_expression,
     gpu_buffers_ready,
@@ -37,7 +36,7 @@ class ExpandSendMPI(ExpandTransformation):
         mpi_dtype_str = vector or mpi_dtype_str
         count_str = vector_count or count_str
         code += f"""
-                MPI_Send({buffer_pointer(node, parent_sdfg, parent_state, "_buffer")}, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
+                MPI_Send(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
                 """
         code += free
 

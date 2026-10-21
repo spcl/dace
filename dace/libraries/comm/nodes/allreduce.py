@@ -6,8 +6,6 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    buffer_pointer,
-    by_reference,
     comm_tasklet,
     count_expression,
     gpu_buffers_ready,
@@ -44,13 +42,11 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        outptr = buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer")
-        buffer = buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer")
+        outptr = "_outbuffer"
+        buffer = "_inbuffer"
         code = gpu_buffers_ready(node, parent_sdfg, parent_state)
         if in_place:
             buffer = "MPI_IN_PLACE"
-            if not by_reference(node, parent_sdfg, parent_state, "_outbuffer"):
-                code += "_outbuffer = _inbuffer;\n"  # The tasklet holds copies: the output starts from the input
 
         code += mpi_collective(
             node,

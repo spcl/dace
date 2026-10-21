@@ -6,8 +6,6 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
-    buffer_pointer,
-    by_reference,
     comm_tasklet,
     count_expression,
     gpu_buffers_ready,
@@ -32,8 +30,8 @@ class ExpandReduceMPI(ExpandTransformation):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
         inptr, outptr = (
-            buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer"),
-            buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer"),
+            "_inbuffer",
+            "_outbuffer",
         )
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
@@ -43,8 +41,6 @@ class ExpandReduceMPI(ExpandTransformation):
         op = utils.mpi_op(node.op)
 
         code = gpu_buffers_ready(node, parent_sdfg, parent_state)
-        if in_place and not by_reference(node, parent_sdfg, parent_state, "_outbuffer"):
-            code += "_outbuffer = _inbuffer;\n"  # The tasklet holds copies: the output starts from the input
         if in_place:
             code += f"""
                 int __comm_rank;

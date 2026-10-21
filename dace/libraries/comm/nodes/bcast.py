@@ -7,7 +7,6 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    buffer_pointer,
     comm_tasklet,
     count_expression,
     gpu_buffers_ready,
@@ -46,9 +45,8 @@ class ExpandBcastMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Bcast",
-            f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count_str}, {mpi_dtype_str}, _root, {comm}",
+            f"_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm}",
         )
-        code += "_outbuffer = _inbuffer;"
         return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
@@ -66,7 +64,7 @@ class ExpandBcastNCCL(NcclExpansion):
         nccl_type, factor = utils.nccl_transfer_type(buffer.dtype.base_type)
         comm = nccl_communicator(node, parent_sdfg, parent_state)
         body = (
-            f"DACE_NCCL_CHECK(ncclBroadcast({buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {buffer_pointer(node, parent_sdfg, parent_state, '_outbuffer')}, {scaled(count_str, factor)}, "
+            f"DACE_NCCL_CHECK(ncclBroadcast(_inbuffer, _outbuffer, {scaled(count_str, factor)}, "
             f"{nccl_type}, int(_root), __comm, __dace_current_stream));"
         )
         return nccl_tasklet(node, parent_state, comm, body, sdfg=parent_sdfg)

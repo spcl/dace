@@ -82,16 +82,21 @@ def int_array(name: str, values: Sequence, ctype: str = "int", static: bool = Fa
     return f"{storage}{ctype} {name}[{len(values)}];\n{assignments}"
 
 
+#: The connectors of the buffers a communication node sends or receives
+BUFFER_CONNECTORS = ("_buffer", "_inbuffer", "_outbuffer")
+
+
 def comm_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:
-    """The tasklet of a communication expansion that runs the C++ ``code``."""
-    return nodes.Tasklet(
-        node.name,
-        expanded_input_connectors(node, state),
-        node.out_connectors,
-        code,
-        language=dtypes.Language.CPP,
-        side_effects=True,
-    )
+    """The tasklet of a communication expansion that runs the C++ ``code``. Its buffer connectors are pointers, so MPI
+    and NCCL take the buffer itself even for a scalar or a single element."""
+    inputs = expanded_input_connectors(node, state)
+    outputs = dict(node.out_connectors)
+    for connector in BUFFER_CONNECTORS:
+        if connector in inputs:
+            inputs[connector] = dtypes.pointer(sdutil.in_desc_with_name(node, state, state.sdfg, connector).dtype)
+        if connector in outputs:
+            outputs[connector] = dtypes.pointer(sdutil.out_desc_with_name(node, state, state.sdfg, connector).dtype)
+    return nodes.Tasklet(node.name, inputs, outputs, code, language=dtypes.Language.CPP, side_effects=True)
 
 
 def external_communicator(node: nodes.Node, state: SDFGState) -> bool:
@@ -170,43 +175,6 @@ def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = 
             }}
         }}
         """
-
-
-def connector_type(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> dtypes.typeclass:
-    """The type of ``connector`` of ``node``. An untyped connector gets the type code generation infers from its
-    memlet: a value for a host scalar or a single element, the tasklet then holding a copy, else a pointer."""
-    from dace.sdfg import infer_types  # avoid import loop
-
-    if connector in node.in_connectors:
-        if node.in_connectors[connector].type is None:
-            edge = next(state.in_edges_by_connector(node, connector))
-            node.in_connectors[connector] = infer_types.infer_in_connector_type(sdfg, state, node, edge)
-        return node.in_connectors[connector]
-    if node.out_connectors[connector].type is None:
-        node.out_connectors[connector] = infer_types.infer_out_connector_type(sdfg, state, node, connector)
-    return node.out_connectors[connector]
-
-
-def by_reference(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> bool:
-    """Whether the tasklet of ``node`` refers to the buffer on ``connector`` through a pointer, rather than holding a
-    copy of it (see :func:`connector_type`)."""
-    return isinstance(connector_type(node, sdfg, state, connector), dtypes.pointer)
-
-
-def buffer_pointer(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> str:
-    """The pointer to the buffer on ``connector`` that MPI and NCCL take: the connector if it is a pointer, else the
-    address of the copy the tasklet holds."""
-    return connector if by_reference(node, sdfg, state, connector) else f"&{connector}"
-
-
-def validate_nonblocking_buffer(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> None:
-    """Refuses a buffer of a nonblocking operation that its tasklet copies (see :func:`connector_type`): the copy is
-    gone before the ``Wait``."""
-    if not by_reference(node, sdfg, state, connector):
-        raise ValueError(
-            f'The nonblocking {type(node).__name__} "{node.label}" cannot communicate {connector}, which its tasklet '
-            "copies and which is gone before the Wait. Type the connector as a pointer"
-        )
 
 
 def touches_gpu_memory(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> bool:
@@ -521,9 +489,9 @@ class NonblockingCommNode(CommNode):
     def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
         """
         Checks what an MPI expansion of a nonblocking node needs: a connected ``_request`` output, and contiguous
-        non-scalar buffers, since the operation completes at its ``Wait``, after a packed output would have been
-        copied back (see :func:`pack_noncontiguous_buffers`), a packed input freed, and a scalar's copy in the tasklet
-        gone. (NCCL needs neither: the copies of packed buffers are ordered on the stream of the node.)
+        buffers, since the operation completes at its ``Wait``, after a packed output would have been copied back
+        (see :func:`pack_noncontiguous_buffers`) and a packed input freed. (NCCL needs neither: the copies of packed
+        buffers are ordered on the stream of the node.)
         """
         if not self.nonblocking:
             return
@@ -533,7 +501,6 @@ class NonblockingCommNode(CommNode):
             connector = edge.dst_conn if edge.dst is self else edge.src_conn
             if connector not in ("_inbuffer", "_outbuffer"):
                 continue
-            validate_nonblocking_buffer(self, sdfg, state, connector)
             if not in_place(sdfg, state, edge, self):
                 raise ValueError(
                     f'The nonblocking {type(self).__name__} "{self.label}" requires contiguous buffers, but '
