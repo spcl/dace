@@ -335,8 +335,8 @@ def pack_noncontiguous_buffers(
 
 def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
     """Whether the input and output buffers of ``node`` are the same memory, communicated in place (``MPI_IN_PLACE``).
-    Disjoint subsets of one container are two buffers; overlapping, different ones are refused, as MPI forbids
-    aliased buffers."""
+    Disjoint subsets of one container are two buffers; different ones that overlap, or may overlap, are refused, as
+    MPI forbids aliased buffers."""
     inp = sdutil.in_edge_with_name(node, state, "_inbuffer").data
     out = sdutil.out_edge_with_name(node, state, "_outbuffer").data
     if inp.data != out.data:
@@ -346,7 +346,7 @@ def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
     if subsets.intersects(inp.subset, out.subset) is False:
         return False
     raise ValueError(
-        f'{type(node).__name__} "{node.label}" reads {inp.data}[{inp.subset}] and writes the overlapping '
+        f'{type(node).__name__} "{node.label}" reads {inp.data}[{inp.subset}] and writes the (possibly) overlapping '
         f"{out.data}[{out.subset}]: use the same subset for an in-place operation, or disjoint ones"
     )
 
