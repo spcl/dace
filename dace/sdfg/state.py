@@ -2519,7 +2519,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     break
             else:
                 other_outgoing = False
-                edge.src.remove_out_connector(edge.src_conn)
+                if edge.src_conn is not None:
+                    edge.src.remove_out_connector(edge.src_conn)
 
             # Check if there are any other edges entering the destination node
             # that use the same connector
@@ -2529,7 +2530,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     break
             else:
                 other_incoming = False
-                edge.dst.remove_in_connector(edge.dst_conn)
+                if edge.dst_conn is not None:
+                    edge.dst.remove_in_connector(edge.dst_conn)
 
             if isinstance(edge.src, nd.EntryNode):
                 # If removing this edge orphans the entry node, replace the
