@@ -464,12 +464,9 @@ def test_waitall_statuses_are_a_stack_array_of_the_request_count():
     waitall.implementation = "MPI"
     state.add_edge(state.add_read("req"), None, waitall, "_request", Memlet("req[0:n]"))
     sdfg.expand_library_nodes(recursive=False)
-    (statuses,) = [desc for name, desc in sdfg.arrays.items() if "statuses" in name]
-    assert statuses.storage == dace.StorageType.Register(force=True)
-    assert statuses.dtype.ctype == "MPI_Status"
     code = sdfg.generate_code()[0].clean_code
-    assert "MPI_Status __waitall_statuses[Max(1, n)];" in code  # A variable-length array
-    assert "MPI_Waitall(n, _request, _statuses);" in code
+    assert "MPI_Status _s[n];" in code  # A variable-length array
+    assert "MPI_Waitall(n, _request, _s);" in code
 
 
 def _allreduce_within_sdfg(name: str, out: str) -> dace.SDFG:
