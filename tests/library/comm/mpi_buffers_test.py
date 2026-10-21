@@ -163,6 +163,28 @@ def test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged():
     assert np.array_equal(out, expected)
 
 
+@pytest.mark.mpi
+def test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged():
+    world = _world()
+    rank = world.Get_rank()
+    sdfg = dace.SDFG("mpi_reduce_strided")
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("out", [4, 2], dace.float64)
+    sdfg.add_array("root", [1], dace.int32)
+    state = sdfg.add_state()
+    reduce = comm.Reduce("reduce")
+    reduce.implementation = "MPI"
+    state.add_edge(state.add_read("x"), None, reduce, "_inbuffer", Memlet("x[0:4]"))
+    state.add_edge(state.add_read("root"), None, reduce, "_root", Memlet("root[0]"))
+    state.add_edge(reduce, "_outbuffer", state.add_write("out"), None, Memlet("out[0:4, 1]"))
+    out = np.full((4, 2), -1.0)
+    _compile_in_turn(sdfg, world)(x=np.full(4, rank + 1.0), out=out, root=np.zeros(1, np.int32))
+    expected = np.full((4, 2), -1.0)
+    if rank == 0:
+        expected[:, 1] = sum(r + 1 for r in range(world.Get_size()))
+    assert np.array_equal(out, expected)
+
+
 @pytest.mark.parametrize("node_type", [comm.Reduce, comm.Gather, comm.Scatter])
 def test_rooted_collective_tasklets_have_side_effects(node_type):
     """A process whose output no one reads still takes part: dead-dataflow elimination must keep the call."""
@@ -351,6 +373,7 @@ if __name__ == "__main__":
     test_a_nonblocking_collective_refuses_a_scalar()
     test_a_packed_root_output_starts_from_the_values_of_the_buffer()
     test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged()
+    test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged()
     test_rooted_collective_tasklets_have_side_effects(comm.Reduce)
     test_rooted_collective_tasklets_have_side_effects(comm.Gather)
     test_rooted_collective_tasklets_have_side_effects(comm.Scatter)
