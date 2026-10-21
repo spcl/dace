@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
@@ -17,10 +17,13 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandAlltoallMPI(MpiExpansion):
+class ExpandAlltoallMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate_nonblocking(parent_sdfg, parent_state)
@@ -34,11 +37,14 @@ class ExpandAlltoallMPI(MpiExpansion):
 
         comm = mpi_communicator(node, parent_state)
 
-        code = f"""
+        code = (
+            gpu_buffers_ready(node, parent_sdfg, parent_state)
+            + f"""
             int size;
             MPI_Comm_size({comm}, &size);
             int sendrecv_amt = {in_count_str} / size;
             """
+        )
         code += mpi_collective(
             node,
             "Alltoall",

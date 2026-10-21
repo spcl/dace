@@ -5,12 +5,12 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import symbolic
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
@@ -19,6 +19,7 @@ from dace.libraries.comm.nodes.node import (
     pack_noncontiguous_buffers,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str, persistent: bool = False) -> str:
@@ -40,8 +41,10 @@ def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: s
 
 
 @dace.library.expansion
-class ExpandAlltoallvMPI(MpiExpansion):
+class ExpandAlltoallvMPI(ExpandTransformation):
     """Exchanges with ``MPI_Alltoallv``."""
+
+    environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -53,7 +56,8 @@ class ExpandAlltoallvMPI(MpiExpansion):
         mpi_dtype_str = utils.MPI_DDT(inbuffer.dtype.base_type)
         comm = mpi_communicator(node, parent_state)
         # A nonblocking exchange reads the counts and displacements until it completes: they outlive the tasklet
-        code = _counts_and_displacements("__send", node.send_counts, 1, "int", node.nonblocking)
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
+        code += _counts_and_displacements("__send", node.send_counts, 1, "int", node.nonblocking)
         code += _counts_and_displacements("__recv", node.recv_counts, 1, "int", node.nonblocking)
         code += mpi_collective(
             node,

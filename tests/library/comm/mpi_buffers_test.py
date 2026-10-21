@@ -105,49 +105,78 @@ def test_a_nonblocking_collective_takes_a_column_major_buffer():
     node.validate_nonblocking(sdfg, state)
 
 
-def _iallreduce_scalar_sdfg(name: str) -> dace.SDFG:
-    """A nonblocking Allreduce of the scalar ``s`` in place, and its Wait in the next state."""
+def _iallreduce_scalar_sdfg(name: str, by_reference: bool, nonblocking: bool = True) -> dace.SDFG:
+    """An Allreduce of the scalar ``s`` in place (nonblocking: with its Wait in the next state), whose buffer
+    connectors are pointers if ``by_reference``, else left to inference (copies)."""
     sdfg = dace.SDFG(name)
     sdfg.add_scalar("s", dace.float64, transient=True)
     sdfg.add_array("value", [1], dace.float64)
     sdfg.add_array("result", [1], dace.float64)
-    sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
     start = sdfg.add_state("start")
     s = start.add_access("s")
     start.add_nedge(start.add_read("value"), s, Memlet("value[0] -> s[0]"))
     node = comm.Allreduce("allreduce")
     node.implementation = "MPI"
-    node.nonblocking = True
-    node.add_out_connector("_request")
+    if by_reference:
+        node.in_connectors["_inbuffer"] = dace.pointer(dace.float64)
+        node.out_connectors["_outbuffer"] = dace.pointer(dace.float64)
     start.add_edge(s, None, node, "_inbuffer", Memlet("s"))
     start.add_edge(node, "_outbuffer", start.add_write("s"), None, Memlet("s"))
-    start.add_edge(node, "_request", start.add_write("req"), None, Memlet("req[0]"))
-    wait_state = sdfg.add_state_after(start, "wait")
-    wait = comm.Wait("wait")
-    wait.implementation = "MPI"
-    wait.remove_out_connector("_stat_tag")
-    wait.remove_out_connector("_stat_source")
-    wait_state.add_edge(wait_state.add_read("req"), None, wait, "_request", Memlet("req[0]"))
-    done = sdfg.add_state_after(wait_state, "done")
+    last = start
+    if nonblocking:
+        node.nonblocking = True
+        node.add_out_connector("_request")
+        sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
+        start.add_edge(node, "_request", start.add_write("req"), None, Memlet("req[0]"))
+        last = sdfg.add_state_after(start, "wait")
+        wait = comm.Wait("wait")
+        wait.implementation = "MPI"
+        wait.remove_out_connector("_stat_tag")
+        wait.remove_out_connector("_stat_source")
+        last.add_edge(last.add_read("req"), None, wait, "_request", Memlet("req[0]"))
+    done = sdfg.add_state_after(last, "done")
     done.add_nedge(done.add_read("s"), done.add_write("result"), Memlet("s[0] -> result[0]"))
     return sdfg
 
 
-def test_a_scalar_buffer_is_passed_as_a_pointer_to_the_scalar():
-    sdfg = _iallreduce_scalar_sdfg("iallreduce_scalar_pointer")
-    sdfg.expand_library_nodes()
-    code = sdfg.generate_code()[0].clean_code
-    assert "double* _inbuffer = &s;" in code
-    assert "double* _outbuffer = &s;" in code
+@pytest.mark.parametrize("by_reference", [False, True])
+def test_a_buffer_is_passed_by_the_type_of_its_connector(by_reference: bool):
+    """A pointer connector is passed as is; a copy in the tasklet (a value connector) by its address."""
+    code = _code(_iallreduce_scalar_sdfg(f"allreduce_scalar_ref_{by_reference}", by_reference, nonblocking=False))
+    outbuffer = "_outbuffer" if by_reference else "&_outbuffer"
+    assert f"MPI_Allreduce(MPI_IN_PLACE, {outbuffer}, 1, MPI_DOUBLE" in code
+    assert ("_outbuffer = _inbuffer;" in code) != by_reference  # Copies: the output starts from the input
+
+
+def test_a_nonblocking_collective_refuses_a_copied_buffer():
+    sdfg = _iallreduce_scalar_sdfg("iallreduce_scalar_copy", by_reference=False)
+    with pytest.raises(ValueError, match="copies"):
+        sdfg.expand_library_nodes()
 
 
 @pytest.mark.mpi
-def test_a_nonblocking_allreduce_of_a_scalar():
+def test_a_nonblocking_allreduce_of_a_scalar_by_reference():
     world = _world()
     result = np.zeros(1)
-    sdfg = _iallreduce_scalar_sdfg("mpi_iallreduce_scalar")
+    sdfg = _iallreduce_scalar_sdfg("mpi_iallreduce_scalar", by_reference=True)
     _compile_in_turn(sdfg, world)(value=np.array([world.Get_rank() + 1.0]), result=result)
     assert result[0] == sum(r + 1 for r in range(world.Get_size()))
+
+
+@pytest.mark.mpi
+def test_an_allreduce_of_one_array_element():
+    """A single element is a copy in the tasklet, as for a scalar."""
+    world = _world()
+    sdfg = dace.SDFG("mpi_allreduce_element")
+    sdfg.add_array("x", [3], dace.float64)
+    state = sdfg.add_state()
+    node = comm.Allreduce("allreduce")
+    node.implementation = "MPI"
+    state.add_edge(state.add_read("x"), None, node, "_inbuffer", Memlet("x[1]"))
+    state.add_edge(node, "_outbuffer", state.add_write("x"), None, Memlet("x[1]"))
+    x = np.array([0.0, world.Get_rank() + 1.0, 0.0])
+    _compile_in_turn(sdfg, world)(x=x)
+    assert np.array_equal(x, [0.0, sum(r + 1 for r in range(world.Get_size())), 0.0])
 
 
 def _gather_sdfg(name: str) -> dace.SDFG:
@@ -333,8 +362,52 @@ def _isend_sdfg(name: str, storage: dace.StorageType) -> dace.SDFG:
 def test_an_isend_of_gpu_memory_synchronizes_the_stream_of_the_backend():
     code = _code(_isend_sdfg("isend_gpu_sync", dace.StorageType.GPU_Global))
     backend = common.get_gpu_backend()
-    assert f"{backend}StreamSynchronize(__dace_current_stream);" in code
+    assert f"{backend}StreamSynchronize(__dace_current_stream)" in code
     assert {"cuda": "hip", "hip": "cuda"}[backend] + "StreamSynchronize" not in code
+
+
+@pytest.mark.parametrize("node_type", [comm.Allreduce, comm.Reduce, comm.Bcast, comm.Gather, comm.Allgather])
+def test_an_mpi_call_on_gpu_memory_waits_for_the_stream(node_type):
+    """GPU-aware MPI reads and writes device memory from the host: the kernels before it must have finished."""
+    sdfg = dace.SDFG(f"mpi_gpu_sync_{node_type.__name__.lower()}")
+    sdfg.add_array("x", [4], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("y", [8], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("root", [1], dace.int32)
+    state = sdfg.add_state()
+    node = node_type(node_type.__name__.lower())
+    node.implementation = "MPI"
+    state.add_edge(state.add_read("x"), None, node, "_inbuffer", Memlet("x[0:4]"))
+    if "_root" in node.in_connectors:
+        state.add_edge(state.add_read("root"), None, node, "_root", Memlet("root[0]"))
+    out = "x" if node_type is comm.Bcast else "y"
+    state.add_edge(node, "_outbuffer", state.add_write(out), None, Memlet(f"{out}[0:4]"))
+    code = _code(sdfg)
+    sync = code.index(f"{common.get_gpu_backend()}StreamSynchronize(__dace_current_stream)")
+    assert sync < code.index("MPI_")
+
+
+def test_an_isend_without_sync_does_not_wait_for_the_stream():
+    sdfg = _isend_sdfg("isend_gpu_nosync", dace.StorageType.GPU_Global)
+    next(n for n in sdfg.start_state.nodes() if isinstance(n, comm.Isend)).nosync = True
+    assert "StreamSynchronize" not in _code(sdfg)
+
+
+@pytest.mark.mpi
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+def test_an_allreduce_of_complex_numbers(dtype):
+    world = _world()
+    name = np.dtype(dtype).name
+    sdfg = dace.SDFG(f"mpi_allreduce_{name}")
+    sdfg.add_array("x", [4], dace.dtypes.dtype_to_typeclass(dtype))
+    state = sdfg.add_state()
+    node = comm.Allreduce("allreduce")
+    node.implementation = "MPI"
+    state.add_edge(state.add_read("x"), None, node, "_inbuffer", Memlet("x[0:4]"))
+    state.add_edge(node, "_outbuffer", state.add_write("x"), None, Memlet("x[0:4]"))
+    x = np.full(4, complex(world.Get_rank() + 1, 1), dtype=dtype)
+    _compile_in_turn(sdfg, world)(x=x)
+    size = world.Get_size()
+    assert np.allclose(x, complex(sum(r + 1 for r in range(size)), size))
 
 
 def _send_recv_sdfg(name: str, strides: list, sent: str, received: str) -> dace.SDFG:
@@ -420,8 +493,11 @@ if __name__ == "__main__":
     test_a_column_major_section_packs_in_column_major_order()
     test_a_transposed_view_of_a_row_major_array_packs_in_row_major_order()
     test_a_nonblocking_collective_takes_a_column_major_buffer()
-    test_a_scalar_buffer_is_passed_as_a_pointer_to_the_scalar()
-    test_a_nonblocking_allreduce_of_a_scalar()
+    test_a_buffer_is_passed_by_the_type_of_its_connector(False)
+    test_a_buffer_is_passed_by_the_type_of_its_connector(True)
+    test_a_nonblocking_collective_refuses_a_copied_buffer()
+    test_a_nonblocking_allreduce_of_a_scalar_by_reference()
+    test_an_allreduce_of_one_array_element()
     test_a_packed_root_output_starts_from_the_values_of_the_buffer()
     test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged()
     test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged()
@@ -435,6 +511,11 @@ if __name__ == "__main__":
     test_a_reduce_of_a_scalar()
     test_an_mpi_communicator_is_refused_by_an_nccl_expansion()
     test_an_isend_of_gpu_memory_synchronizes_the_stream_of_the_backend()
+    for node_type in (comm.Allreduce, comm.Reduce, comm.Bcast, comm.Gather, comm.Allgather):
+        test_an_mpi_call_on_gpu_memory_waits_for_the_stream(node_type)
+    test_an_isend_without_sync_does_not_wait_for_the_stream()
+    test_an_allreduce_of_complex_numbers(np.complex64)
+    test_an_allreduce_of_complex_numbers(np.complex128)
     test_a_strided_send_creates_and_frees_its_datatype_on_every_call()
     test_a_vector_datatype_runs_along_the_unit_stride([4, 1], "3", "2", "4")
     test_a_vector_datatype_runs_along_the_unit_stride([1, 4], "2", "3", "4")

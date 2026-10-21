@@ -1,17 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from collections.abc import Sequence
 
-from dace import data, library, properties, symbolic
-from dace.libraries.comm import utils
+from dace import library, properties, symbolic
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
-    MpiExpansion,
+    buffer_pointer,
     count_expression,
+    gpu_buffers_ready,
     mpi_communicator,
     mpi_tasklet,
     pack_noncontiguous_buffers,
 )
 from dace.sdfg import utils as sdutil
+from dace.transformation.transformation import ExpandTransformation
 
 
 def int_array(name: str, values: Sequence) -> str:
@@ -23,19 +25,20 @@ def int_array(name: str, values: Sequence) -> str:
 
 
 @library.expansion
-class ExpandGathervMPI(MpiExpansion):
+class ExpandGathervMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         # The root places the blocks at the displacements of the output: only the input moves to a packed copy
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state, outputs=())
         inbuffer, outbuffer = node.validate(parent_sdfg, parent_state)
         count = count_expression(sdutil.in_edge_with_name(node, parent_state, "_inbuffer").data.subset)
-        # A scalar input is a value in the tasklet, not a pointer
-        reference = "&" if isinstance(inbuffer, data.Scalar) else ""
-        code = int_array("__recv_counts", node.recv_counts)
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
+        code += int_array("__recv_counts", node.recv_counts)
         code += int_array("__recv_displs", node.displacements())
         code += (
-            f"MPI_Gatherv({reference}_inbuffer, {count}, {utils.MPI_DDT(inbuffer.dtype.base_type)}, _outbuffer, "
+            f"MPI_Gatherv({buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count}, {utils.MPI_DDT(inbuffer.dtype.base_type)}, _outbuffer, "
             f"__recv_counts, __recv_displs, {utils.MPI_DDT(outbuffer.dtype.base_type)}, int(_root), "
             f"{mpi_communicator(node, parent_state)});\n"
         )

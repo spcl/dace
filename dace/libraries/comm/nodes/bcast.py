@@ -3,13 +3,14 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
@@ -19,10 +20,13 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandBcastMPI(MpiExpansion):
+class ExpandBcastMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate_nonblocking(parent_sdfg, parent_state)
@@ -38,8 +42,12 @@ class ExpandBcastMPI(MpiExpansion):
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 
-        code = init + "\n"
-        code += mpi_collective(node, "Bcast", f"_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm}")
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state) + init + "\n"
+        code += mpi_collective(
+            node,
+            "Bcast",
+            f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count_str}, {mpi_dtype_str}, _root, {comm}",
+        )
         code += "_outbuffer = _inbuffer;"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
@@ -64,10 +72,9 @@ class ExpandBcastNCCL(NcclExpansion):
         if node.fcomm:
             raise NotImplementedError("The NCCL expansion of Bcast does not support Fortran communicators")
         nccl_type, factor = utils.nccl_transfer_type(buffer.dtype.base_type)
-        ref = "&" if isinstance(buffer, dace.data.Scalar) else ""
         comm = nccl_communicator(node, parent_sdfg, parent_state)
         body = (
-            f"DACE_NCCL_CHECK(ncclBroadcast({ref}_inbuffer, {ref}_outbuffer, {scaled(count_str, factor)}, "
+            f"DACE_NCCL_CHECK(ncclBroadcast({buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {buffer_pointer(node, parent_sdfg, parent_state, '_outbuffer')}, {scaled(count_str, factor)}, "
             f"{nccl_type}, int(_root), __comm, __dace_current_stream));"
         )
         return nccl_tasklet(node, parent_state, comm, body, sdfg=parent_sdfg)

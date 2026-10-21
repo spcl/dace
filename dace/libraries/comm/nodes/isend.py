@@ -3,13 +3,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.codegen import common
+from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
-    MpiExpansion,
     NcclExpansion,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_communicator,
     mpi_vector_datatype,
     nccl_communicator,
@@ -18,11 +18,15 @@ from dace.libraries.comm.nodes.node import (
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
+    validate_nonblocking_buffer,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandIsendMPI(MpiExpansion):
+class ExpandIsendMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str, buffer_offset, ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
@@ -33,9 +37,8 @@ class ExpandIsendMPI(MpiExpansion):
 
         comm = mpi_communicator(node, parent_state)
 
-        code = ""
-        if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
-            code += f"{common.get_gpu_backend()}StreamSynchronize(__dace_current_stream);\n"
+        validate_nonblocking_buffer(node, parent_sdfg, parent_state, "_buffer")
+        code = "" if node.nosync else gpu_buffers_ready(node, parent_sdfg, parent_state)
 
         vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
         code += vector_code

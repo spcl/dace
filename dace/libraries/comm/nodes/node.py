@@ -3,6 +3,7 @@
 from typing import Any
 
 from dace import data, dtypes, properties, subsets
+from dace.codegen import common
 from dace.libraries.comm import environments, utils
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -158,6 +159,54 @@ def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = 
             }}
         }}
         """
+
+
+def connector_type(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> dtypes.typeclass:
+    """The type of ``connector`` of ``node``. An untyped connector gets the type code generation infers from its
+    memlet: a value for a host scalar or a single element, the tasklet then holding a copy, else a pointer."""
+    from dace.sdfg import infer_types  # avoid import loop
+
+    if connector in node.in_connectors:
+        if node.in_connectors[connector].type is None:
+            edge = next(state.in_edges_by_connector(node, connector))
+            node.in_connectors[connector] = infer_types.infer_in_connector_type(sdfg, state, node, edge)
+        return node.in_connectors[connector]
+    if node.out_connectors[connector].type is None:
+        node.out_connectors[connector] = infer_types.infer_out_connector_type(sdfg, state, node, connector)
+    return node.out_connectors[connector]
+
+
+def by_reference(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> bool:
+    """Whether the tasklet of ``node`` refers to the buffer on ``connector`` through a pointer, rather than holding a
+    copy of it (see :func:`connector_type`)."""
+    return isinstance(connector_type(node, sdfg, state, connector), dtypes.pointer)
+
+
+def buffer_pointer(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> str:
+    """The pointer to the buffer on ``connector`` that MPI and NCCL take: the connector if it is a pointer, else the
+    address of the copy the tasklet holds."""
+    return connector if by_reference(node, sdfg, state, connector) else f"&{connector}"
+
+
+def validate_nonblocking_buffer(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> None:
+    """Refuses a buffer of a nonblocking operation that its tasklet copies (see :func:`connector_type`): the copy is
+    gone before the ``Wait``."""
+    if not by_reference(node, sdfg, state, connector):
+        raise ValueError(
+            f'The nonblocking {type(node).__name__} "{node.label}" cannot communicate {connector}, which its tasklet '
+            "copies and which is gone before the Wait. Type the connector as a pointer"
+        )
+
+
+def gpu_buffers_ready(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
+    """The code that makes the host wait for the GPU stream of the tasklet of ``node`` before an MPI call on its
+    buffers in GPU memory (GPU-aware MPI): the host call is not ordered with the kernels that write or read them."""
+    if any(
+        e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
+        for e in state.all_edges(node)
+    ):
+        return f"DACE_GPU_CHECK({common.get_gpu_backend()}StreamSynchronize(__dace_current_stream));\n"
+    return ""
 
 
 def mpi_vector_datatype(ddt: dict | None) -> tuple[str, str, str, str]:
@@ -402,32 +451,6 @@ def nccl_tasklet(
     return tasklet
 
 
-#: Connectors of communicated buffers
-BUFFER_CONNECTORS = ("_inbuffer", "_outbuffer", "_buffer")
-
-
-class MpiExpansion(ExpandTransformation):
-    """Base class of the MPI expansions of nodes that communicate buffers. A buffer is passed to MPI as a pointer: the
-    connectors of scalar buffers become pointers to the scalars themselves, not to copies in the tasklet, so that
-    blocking calls write the scalar and nonblocking ones still point at it at their ``Wait``."""
-
-    environments = [environments.mpi.MPI]
-
-    @staticmethod
-    def postprocessing(sdfg, state, expansion):
-        for edge in state.in_edges(expansion):
-            _point_at_scalar(sdfg, edge, edge.dst_conn, expansion.in_connectors)
-        for edge in state.out_edges(expansion):
-            _point_at_scalar(sdfg, edge, edge.src_conn, expansion.out_connectors)
-
-
-def _point_at_scalar(sdfg: SDFG, edge, connector: str | None, connectors: dict) -> None:
-    if connector in BUFFER_CONNECTORS and edge.data.data is not None:
-        desc = sdfg.arrays[edge.data.data]
-        if isinstance(desc, data.Scalar):
-            connectors[connector] = dtypes.pointer(desc.dtype)
-
-
 class NcclExpansion(ExpandTransformation):
     """Base class of the NCCL expansions. An expansion that communicates over a communicator it bootstraps over MPI
     (that of the world or of a process grid, see :func:`nccl_communicator`) also uses the MPI environment; one whose
@@ -488,8 +511,9 @@ class NonblockingCommNode(CommNode):
     def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
         """
         Checks what an MPI expansion of a nonblocking node needs: a connected ``_request`` output, and contiguous
-        buffers, since the operation completes at its ``Wait``, after a packed output would have been copied back
-        (see :func:`pack_noncontiguous_buffers`) and a packed input freed. (NCCL needs neither: the copies of packed
+        non-scalar buffers, since the operation completes at its ``Wait``, after a packed output would have been
+        copied back (see :func:`pack_noncontiguous_buffers`), a packed input freed, and a scalar's copy in the tasklet
+        gone. (NCCL needs neither: the copies of packed
         buffers are ordered on the stream of the node.)
         """
         if not self.nonblocking:
@@ -500,6 +524,7 @@ class NonblockingCommNode(CommNode):
             connector = edge.dst_conn if edge.dst is self else edge.src_conn
             if connector not in ("_inbuffer", "_outbuffer"):
                 continue
+            validate_nonblocking_buffer(self, sdfg, state, connector)
             if not in_place(sdfg, state, edge, self):
                 raise ValueError(
                     f'The nonblocking {type(self).__name__} "{self.label}" requires contiguous buffers, but '

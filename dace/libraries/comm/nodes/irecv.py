@@ -3,12 +3,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
-    MpiExpansion,
     NcclExpansion,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_communicator,
     mpi_vector_datatype,
     nccl_communicator,
@@ -17,11 +18,15 @@ from dace.libraries.comm.nodes.node import (
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
+    validate_nonblocking_buffer,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandIrecvMPI(MpiExpansion):
+class ExpandIrecvMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str, buffer_offset, ddt), src, tag = node.validate(parent_sdfg, parent_state)
@@ -32,7 +37,9 @@ class ExpandIrecvMPI(MpiExpansion):
 
         comm = mpi_communicator(node, parent_state)
 
-        code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        validate_nonblocking_buffer(node, parent_sdfg, parent_state, "_buffer")
+        vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state) + vector_code
         mpi_dtype_str = vector or mpi_dtype_str
         count_str = vector_count or count_str
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"

@@ -2,12 +2,14 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
-    MpiExpansion,
     NcclExpansion,
+    buffer_pointer,
+    by_reference,
     count_expression,
+    gpu_buffers_ready,
     mpi_average,
     mpi_communicator,
     mpi_tasklet,
@@ -17,14 +19,21 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandReduceMPI(MpiExpansion):
+class ExpandReduceMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state, preserved=("_outbuffer",))
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
+        inptr, outptr = (
+            buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer"),
+            buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer"),
+        )
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
@@ -32,7 +41,9 @@ class ExpandReduceMPI(MpiExpansion):
         comm = mpi_communicator(node, parent_state)
         op = utils.mpi_op(node.op)
 
-        code = ""
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
+        if in_place and not by_reference(node, parent_sdfg, parent_state, "_outbuffer"):
+            code += "_outbuffer = _inbuffer;\n"  # The tasklet holds copies: the output starts from the input
         if in_place:
             code += f"""
                 int __comm_rank;
@@ -40,13 +51,13 @@ class ExpandReduceMPI(MpiExpansion):
                 if (__comm_rank == _root) {{
             """
             code += f"""
-                    MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
+                    MPI_Reduce(MPI_IN_PLACE, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
                 }} else {{
             """
-        code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
+        code += f"MPI_Reduce({inptr}, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
         if in_place:
             code += "}"
-        code += mpi_average(node.op, "_outbuffer", count_str, comm, root="_root")
+        code += mpi_average(node.op, outptr, count_str, comm, root="_root")
         return mpi_tasklet(node, parent_state, code)
 
 

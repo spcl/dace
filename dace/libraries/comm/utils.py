@@ -10,9 +10,9 @@ def MPI_DDT(dtype):
     elif dtype == dace.dtypes.float64:
         mpi_dtype_str = "MPI_DOUBLE"
     elif dtype == dace.dtypes.complex64:
-        mpi_dtype_str = "MPI_COMPLEX"
+        mpi_dtype_str = "MPI_C_FLOAT_COMPLEX"
     elif dtype == dace.dtypes.complex128:
-        mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
+        mpi_dtype_str = "MPI_C_DOUBLE_COMPLEX"
     elif dtype == dace.dtypes.bool_:
         mpi_dtype_str = "MPI_C_BOOL"
     elif dtype == dace.dtypes.int8:

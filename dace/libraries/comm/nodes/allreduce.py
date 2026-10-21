@@ -2,13 +2,15 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
+    buffer_pointer,
+    by_reference,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_average,
     mpi_collective,
     mpi_communicator,
@@ -19,10 +21,13 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandAllreduceMPI(MpiExpansion):
+class ExpandAllreduceMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate_nonblocking(parent_sdfg, parent_state)
@@ -38,16 +43,20 @@ class ExpandAllreduceMPI(MpiExpansion):
 
         comm = mpi_communicator(node, parent_state)
 
-        buffer = "_inbuffer"
+        outptr = buffer_pointer(node, parent_sdfg, parent_state, "_outbuffer")
+        buffer = buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer")
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
         if in_place:
             buffer = "MPI_IN_PLACE"
+            if not by_reference(node, parent_sdfg, parent_state, "_outbuffer"):
+                code += "_outbuffer = _inbuffer;\n"  # The tasklet holds copies: the output starts from the input
 
-        code = mpi_collective(
+        code += mpi_collective(
             node,
             "Allreduce",
-            f"{buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
+            f"{buffer}, {outptr}, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
-        code += mpi_average(node.op, "_outbuffer", count_str, comm)
+        code += mpi_average(node.op, outptr, count_str, comm)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),

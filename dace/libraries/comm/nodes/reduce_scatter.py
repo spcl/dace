@@ -2,13 +2,13 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    MpiExpansion,
     NcclExpansion,
     NonblockingCommNode,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_average,
     mpi_collective,
     mpi_communicator,
@@ -19,11 +19,14 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandReduceScatterMPI(MpiExpansion):
+class ExpandReduceScatterMPI(ExpandTransformation):
     """Reduces and scatters with ``MPI_Reduce_scatter_block``."""
+
+    environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -38,7 +41,7 @@ class ExpandReduceScatterMPI(MpiExpansion):
             raise NotImplementedError(
                 "The average of a nonblocking MPI reduction: reduce the sum and divide after the Wait"
             )
-        code = mpi_collective(
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state) + mpi_collective(
             node,
             "Reduce_scatter_block",
             f"_inbuffer, _outbuffer, {out_count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",

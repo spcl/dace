@@ -2,12 +2,14 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
-    MpiExpansion,
     NcclExpansion,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
+    gpu_buffers_ready,
     mpi_communicator,
     mpi_vector_datatype,
     nccl_communicator,
@@ -16,10 +18,13 @@ from dace.libraries.comm.nodes.node import (
     validate_integer_descriptor,
     validate_nccl_buffers,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
-class ExpandSendMPI(MpiExpansion):
+class ExpandSendMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str, buffer_offset, ddt), dest, tag = node.validate(parent_sdfg, parent_state)
@@ -27,11 +32,12 @@ class ExpandSendMPI(MpiExpansion):
 
         if buffer.dtype.veclen > 1:
             raise (NotImplementedError)
-        code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state) + vector_code
         mpi_dtype_str = vector or mpi_dtype_str
         count_str = vector_count or count_str
         code += f"""
-                MPI_Send(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
+                MPI_Send({buffer_pointer(node, parent_sdfg, parent_state, "_buffer")}, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
                 """
         code += free
 

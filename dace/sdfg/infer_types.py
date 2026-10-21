@@ -54,6 +54,45 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     return ctype
 
 
+def infer_in_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode, e) -> dtypes.typeclass:
+    """
+    Infers the type of the input connector of a code node that the edge ``e`` enters.
+
+    :param sdfg: The SDFG to infer in.
+    :param state: The state in which the code node resides.
+    :param node: The code node.
+    :param e: The edge into the connector.
+    :return: The connector type.
+    """
+    cname = e.dst_conn
+    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
+    if e.data.data is not None:
+        allocated_as_scalar = sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global
+    else:
+        allocated_as_scalar = True
+
+    # If nested SDFG, try to use internal array type
+    if isinstance(node, nodes.NestedSDFG):
+        # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
+        # to use the `allocated_as_scalar` check here.
+        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
+        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
+        dtype = node.sdfg.arrays[cname].dtype
+        return dtype if scalar or struct else dtypes.pointer(dtype)
+    if e.data.data is not None:  # Obtain type from memlet
+        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        if isinstance(node, nodes.LibraryNode):
+            scalar &= allocated_as_scalar
+        dtype = sdfg.arrays[e.data.data].dtype
+        return dtype if scalar else dtypes.pointer(dtype)
+    # Code->Code
+    src_edge = state.memlet_path(e)[0]
+    sconn = src_edge.src.out_connectors[src_edge.src_conn]
+    if sconn.type is None:
+        raise TypeError(f'Ambiguous or uninferable type in connector "{sconn}" of node "{src_edge.src}"')
+    return sconn
+
+
 def infer_connector_types(sdfg: SDFG):
     """
     Infers connector types throughout an SDFG and its nested SDFGs in-place.
@@ -70,35 +109,7 @@ def infer_connector_types(sdfg: SDFG):
                     continue
 
                 if node.in_connectors[cname].type is None:
-                    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
-                    if e.data.data is not None:
-                        allocated_as_scalar = sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global
-                    else:
-                        allocated_as_scalar = True
-
-                    # If nested SDFG, try to use internal array type
-                    if isinstance(node, nodes.NestedSDFG):
-                        # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
-                        # to use the `allocated_as_scalar` check here.
-                        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
-                        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
-                        dtype = node.sdfg.arrays[cname].dtype
-                        ctype = dtype if scalar or struct else dtypes.pointer(dtype)
-                    elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
-                        if isinstance(node, nodes.LibraryNode):
-                            scalar &= allocated_as_scalar
-                        dtype = sdfg.arrays[e.data.data].dtype
-                        ctype = dtype if scalar else dtypes.pointer(dtype)
-                    else:  # Code->Code
-                        src_edge = state.memlet_path(e)[0]
-                        sconn = src_edge.src.out_connectors[src_edge.src_conn]
-                        if sconn.type is None:
-                            raise TypeError(
-                                f'Ambiguous or uninferable type in connector "{sconn}" of node "{src_edge.src}"'
-                            )
-                        ctype = sconn
-                    node.in_connectors[cname] = ctype
+                    node.in_connectors[cname] = infer_in_connector_type(sdfg, state, node, e)
 
             # Try to infer outputs from output edges
             for e in state.out_edges(node):
