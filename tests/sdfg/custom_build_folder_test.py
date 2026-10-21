@@ -203,5 +203,19 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
         del csdfg
 
 
+def test_distributed_compile_broadcasts_a_hashing_failure(monkeypatch):
+    """Rank 0 failing to hash its SDFG still broadcasts the failure, so the other ranks do not wait forever."""
+
+    def fail():
+        raise RuntimeError("cannot hash")
+
+    sdfg = dace.SDFG("unhashable")
+    monkeypatch.setattr(sdfg, "hash_sdfg", fail)
+    builder = OneRankOfAJob(0)
+    with pytest.raises(RuntimeError, match="cannot hash"):
+        sdfg_utils.distributed_compile(sdfg, builder)
+    assert builder.broadcast == (None, None, "RuntimeError: cannot hash")
+
+
 if __name__ == "__main__":
     print("Must be called using `pytest`.")

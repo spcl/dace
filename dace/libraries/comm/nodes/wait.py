@@ -3,8 +3,10 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import CommNode, expanded_input_connectors
+from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -127,21 +129,34 @@ class ExpandWaitallMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         count = node.validate(parent_sdfg, parent_state)
-        code = f"""
-            MPI_Status _s[{count}];
-            MPI_Waitall({count}, _request, _s);
-            """
+        # One status per request, on the stack (a variable-length array if the count is symbolic)
+        status_type = dtypes.opaque("MPI_Status")
+        statuses, desc = parent_sdfg.add_array(
+            f"__{node.label}_statuses",
+            [count],
+            status_type,
+            storage=dtypes.StorageType.Register(force=True),
+            transient=True,
+            find_new_name=True,
+        )
+        node.add_out_connector("_statuses")
+        parent_state.add_edge(
+            node, "_statuses", parent_state.add_write(statuses), None, Memlet.from_array(statuses, desc)
+        )
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
-            code,
+            f"MPI_Waitall({sym2cpp(count)}, _request, _statuses);",
             language=dace.dtypes.Language.CPP,
             side_effects=True,
         )
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
+        tasklet.out_connectors = {
+            c: (dtypes.pointer(status_type) if c == "_statuses" else t) for c, t in tasklet.out_connectors.items()
+        }
         return tasklet
 
 

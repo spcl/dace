@@ -37,6 +37,7 @@ class CommSplit(CommNode):
 
     implementations = {"MPI": ExpandCommSplitMPI}
     default_implementation = "MPI"
+    outputs_mpi_communicator = True
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_color", "_key"}, outputs={"_newcomm"}, **kwargs)

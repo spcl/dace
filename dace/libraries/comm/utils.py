@@ -13,6 +13,12 @@ def MPI_DDT(dtype):
         mpi_dtype_str = "MPI_COMPLEX"
     elif dtype == dace.dtypes.complex128:
         mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
+    elif dtype == dace.dtypes.bool_:
+        mpi_dtype_str = "MPI_C_BOOL"
+    elif dtype == dace.dtypes.int8:
+        mpi_dtype_str = "MPI_SIGNED_CHAR"
+    elif dtype == dace.dtypes.uint8:
+        mpi_dtype_str = "MPI_UNSIGNED_CHAR"
     elif dtype == dace.dtypes.int16:
         mpi_dtype_str = "MPI_SHORT"
     elif dtype == dace.dtypes.int32:
@@ -47,12 +53,14 @@ def create_vector_ddt(memlet, data):
         return None
     if len(data.shape) != 2:
         raise ValueError("Dimensionality of access not supported atm.")
+    # Rows run along the dimension of unit stride: the last of a row-major array, the first of a column-major one
+    inner, outer = (0, 1) if data.is_packed_fortran_strides() and not data.is_packed_c_strides() else (1, 0)
     ddt = dict()
     sizes = memlet.subset.size_exact()
-    ddt["blocklen"] = sym2cpp(sizes[-1])
+    ddt["blocklen"] = sym2cpp(sizes[inner])
     ddt["oldtype"] = str(MPI_DDT(data.dtype))
-    ddt["count"] = sym2cpp(memlet.subset.num_elements_exact() / sizes[-1])
-    ddt["stride"] = sym2cpp(data.strides[0])
+    ddt["count"] = sym2cpp(memlet.subset.num_elements_exact() / sizes[inner])
+    ddt["stride"] = sym2cpp(data.strides[outer])
     return ddt
 
 

@@ -192,49 +192,6 @@ def test_counts_are_cpp_expressions():
     assert "//" not in _expanded_code(bcast, sdfg, state)
 
 
-def _fortran_allreduce_sdfg(name: str, element_order: str, nonblocking: bool = False) -> dace.SDFG:
-    """An in-place Allreduce of a column-major (Fortran) ``a(3, 4)``."""
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("a", [3, 4], dace.float64, strides=[1, 3])
-    state = sdfg.add_state()
-    allreduce = comm.Allreduce("allreduce")
-    allreduce.element_order = element_order
-    allreduce.nonblocking = nonblocking
-    state.add_edge(state.add_read("a"), None, allreduce, "_inbuffer", Memlet("a[0:3, 0:4]"))
-    state.add_edge(allreduce, "_outbuffer", state.add_write("a"), None, Memlet("a[0:3, 0:4]"))
-    if nonblocking:
-        sdfg.add_array("req", [1], dace.dtypes.opaque("MPI_Request"))
-        state.add_edge(allreduce, "_request", state.add_write("req"), None, Memlet("req[0]"))
-    return sdfg
-
-
-@pytest.mark.parametrize("element_order, packed", [("row_major", True), ("memory", False)])
-def test_a_column_major_buffer_moves_in_place_in_memory_order(element_order: str, packed: bool):
-    sdfg = _fortran_allreduce_sdfg(f"fortran_allreduce_{element_order}", element_order)
-    sdfg.expand_library_nodes(recursive=False)
-    assert any("_packed" in name for name in sdfg.arrays) == packed
-
-
-def test_a_nonblocking_collective_takes_a_column_major_buffer_in_memory_order():
-    sdfg = _fortran_allreduce_sdfg("fortran_iallreduce", "memory", nonblocking=True)
-    state = sdfg.start_state
-    node = next(n for n in state.nodes() if isinstance(n, comm.Allreduce))
-    node.validate_nonblocking(sdfg, state)
-    with pytest.raises(ValueError, match="contiguous"):
-        node.element_order = "row_major"
-        node.validate_nonblocking(sdfg, state)
-
-
-@pytest.mark.mpi
-def test_a_column_major_allreduce_in_memory_order():
-    world = _world()
-    a = np.asfortranarray(np.arange(12, dtype=np.float64).reshape(3, 4) * (world.Get_rank() + 1))
-    sdfg = _fortran_allreduce_sdfg("mpi_fortran_allreduce", "memory")
-    _compile_in_turn(sdfg, world)(a=a)
-    scale = sum(r + 1 for r in range(world.Get_size()))
-    assert np.array_equal(a, np.arange(12, dtype=np.float64).reshape(3, 4) * scale)
-
-
 def test_abort_over_the_world():
     sdfg = dace.SDFG("mpi_abort")
     state = sdfg.add_state()
@@ -252,8 +209,4 @@ if __name__ == "__main__":
     test_gatherv_with_counts_read_at_run_time()
     test_gatherv_at_explicit_displacements()
     test_counts_are_cpp_expressions()
-    test_a_column_major_buffer_moves_in_place_in_memory_order("row_major", True)
-    test_a_column_major_buffer_moves_in_place_in_memory_order("memory", False)
-    test_a_nonblocking_collective_takes_a_column_major_buffer_in_memory_order()
-    test_a_column_major_allreduce_in_memory_order()
     test_abort_over_the_world()

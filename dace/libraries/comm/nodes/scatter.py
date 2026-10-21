@@ -5,10 +5,12 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     input_descriptor_name,
     mpi_communicator,
+    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -38,17 +40,10 @@ class ExpandScatterMPI(ExpandTransformation):
             int _commsize;
             MPI_Comm_size({comm}, &_commsize);
             MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
-                        _outbuffer, {out_count_str}, {out_mpi_dtype_str},
+                        {buffer_pointer(outbuffer, "_outbuffer")}, {out_count_str}, {out_mpi_dtype_str},
                         _root, {comm});
             """
-        tasklet = nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dtypes.Language.CPP,
-        )
-        return tasklet
+        return mpi_tasklet(node, parent_state, code)
 
 
 @library.expansion
@@ -151,6 +146,7 @@ class ExpandBlockScatterMPI(ExpandTransformation):
             node.out_connectors,
             code,
             language=dtypes.Language.CPP,
+            side_effects=True,
         )
         return tasklet
 

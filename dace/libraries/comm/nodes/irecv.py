@@ -10,12 +10,14 @@ from dace.libraries.comm.nodes.node import (
     count_expression,
     expanded_input_connectors,
     mpi_communicator,
+    mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
     nccl_request,
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
+    validate_nonblocking_buffer,
 )
 from dace.transformation.transformation import ExpandTransformation
 
@@ -34,29 +36,19 @@ class ExpandIrecvMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        code = ""
-        if ddt is not None:
-            code = f"""static MPI_Datatype newtype;
-                        static int init=1;
-                        if (init) {{
-                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
-                           MPI_Type_commit(&newtype);
-                           init = 0;
-                        }}
-                            """
-            mpi_dtype_str = "newtype"
-            count_str = "1"
-        buffer_offset = 0  # this is here because the frontend already changes the pointer
+        validate_nonblocking_buffer(node, buffer)
+        code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        mpi_dtype_str = vector or mpi_dtype_str
+        count_str = vector_count or count_str
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
-        if ddt is not None:
-            code += """// MPI_Type_free(&newtype);
-            """
+        code += free
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
+            side_effects=True,
         )
 
         conn = tasklet.out_connectors

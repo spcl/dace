@@ -6,9 +6,11 @@ from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_communicator,
+    mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
     nccl_tasklet,
@@ -29,32 +31,21 @@ class ExpandRecvMPI(ExpandTransformation):
 
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
-        code = ""
-        if ddt is not None:
-            code = f""" static MPI_Datatype newtype;
-                        static int init=1;
-                        if (init) {{
-                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
-                           MPI_Type_commit(&newtype);
-                           init=0;
-                        }}
-                            """
-            mpi_dtype_str = "newtype"
-            count_str = "1"
-        buffer_offset = 0  # this is here because the frontend already changes the ptr
+        code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        mpi_dtype_str = vector or mpi_dtype_str
+        count_str = vector_count or count_str
         code += (
-            f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {mpi_communicator(node, parent_state)}, "
+            f"MPI_Recv({buffer_pointer(buffer, '_buffer')}, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {mpi_communicator(node, parent_state)}, "
             "MPI_STATUS_IGNORE);"
         )
-        if ddt is not None:
-            code += """// MPI_Type_free(&newtype);
-            """
+        code += free
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
+            side_effects=True,
         )
         return tasklet
 

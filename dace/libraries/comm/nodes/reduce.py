@@ -6,10 +6,11 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
+    buffer_pointer,
     count_expression,
-    expanded_input_connectors,
     mpi_average,
     mpi_communicator,
+    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -25,8 +26,9 @@ class ExpandReduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state, preserved=("_outbuffer",))
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
+        inptr, outptr = buffer_pointer(inbuffer, "_inbuffer"), buffer_pointer(outbuffer, "_outbuffer")
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
@@ -35,6 +37,8 @@ class ExpandReduceMPI(ExpandTransformation):
         op = utils.mpi_op(node.op)
 
         code = ""
+        if in_place and isinstance(outbuffer, dace.data.Scalar):
+            code += "_outbuffer = _inbuffer;\n"  # The tasklet holds the scalar twice
         if in_place:
             code += f"""
                 int __comm_rank;
@@ -42,21 +46,14 @@ class ExpandReduceMPI(ExpandTransformation):
                 if (__comm_rank == _root) {{
             """
             code += f"""
-                    MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
+                    MPI_Reduce(MPI_IN_PLACE, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});
                 }} else {{
             """
-        code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
+        code += f"MPI_Reduce({inptr}, {outptr}, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
         if in_place:
             code += "}"
-        code += mpi_average(node.op, "_outbuffer", count_str, comm, root="_root")
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-        )
-        return tasklet
+        code += mpi_average(node.op, outptr, count_str, comm, root="_root")
+        return mpi_tasklet(node, parent_state, code)
 
 
 @dace.library.expansion

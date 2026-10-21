@@ -6,6 +6,7 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_average,
@@ -40,16 +41,20 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        buffer = "_inbuffer"
+        outptr = buffer_pointer(outbuffer, "_outbuffer")
+        buffer = buffer_pointer(inbuffer, "_inbuffer")
+        code = ""
         if in_place:
             buffer = "MPI_IN_PLACE"
+            if isinstance(outbuffer, dace.data.Scalar):
+                code += "_outbuffer = _inbuffer;\n"  # The tasklet holds the scalar twice
 
-        code = mpi_collective(
+        code += mpi_collective(
             node,
             "Allreduce",
-            f"{buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
+            f"{buffer}, {outptr}, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
-        code += mpi_average(node.op, "_outbuffer", count_str, comm)
+        code += mpi_average(node.op, outptr, count_str, comm)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),

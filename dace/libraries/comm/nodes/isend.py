@@ -3,6 +3,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.codegen import common
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
@@ -10,12 +11,14 @@ from dace.libraries.comm.nodes.node import (
     count_expression,
     expanded_input_connectors,
     mpi_communicator,
+    mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
     nccl_request,
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
+    validate_nonblocking_buffer,
 )
 from dace.transformation.transformation import ExpandTransformation
 
@@ -34,29 +37,17 @@ class ExpandIsendMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
+        validate_nonblocking_buffer(node, buffer)
         code = ""
-
         if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
-            code += """
-            cudaStreamSynchronize(__dace_current_stream);
-            """
+            code += f"{common.get_gpu_backend()}StreamSynchronize(__dace_current_stream);\n"
 
-        if ddt is not None:
-            code += f"""static MPI_Datatype newtype;
-                        static int init=1;
-                        if (init) {{
-                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
-                           MPI_Type_commit(&newtype);
-                           init=0;
-                        }}
-                            """
-            mpi_dtype_str = "newtype"
-            count_str = "1"
-        buffer_offset = 0
-        code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
-        if ddt is not None:
-            code += """// MPI_Type_free(&newtype);
-            """
+        vector_code, vector, vector_count, free = mpi_vector_datatype(ddt)
+        code += vector_code
+        mpi_dtype_str = vector or mpi_dtype_str
+        count_str = vector_count or count_str
+        code += f"MPI_Isend(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
+        code += free
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,

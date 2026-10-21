@@ -78,7 +78,9 @@ class ExpandRedistribute(ExpandTransformation):
 
         """
 
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP, side_effects=True
+        )
         return tasklet
 
 

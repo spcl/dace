@@ -24,6 +24,7 @@ class CommF2c(CommNode):
 
     implementations = {"MPI": ExpandCommF2cMPI}
     default_implementation = "MPI"
+    outputs_mpi_communicator = True
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_fcomm"}, outputs={"_handle"}, **kwargs)

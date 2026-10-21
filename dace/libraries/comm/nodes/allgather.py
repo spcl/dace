@@ -6,6 +6,7 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_collective,
@@ -43,7 +44,7 @@ class ExpandAllgatherMPI(ExpandTransformation):
         code += mpi_collective(
             node,
             "Allgather",
-            f"_inbuffer, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, "
+            f"{buffer_pointer(inbuffer, '_inbuffer')}, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, "
             f"{out_mpi_dtype_str}, {comm}",
         )
         tasklet = dace.sdfg.nodes.Tasklet(

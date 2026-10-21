@@ -5,10 +5,12 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     input_descriptor_name,
     mpi_communicator,
+    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -26,7 +28,7 @@ class ExpandGatherMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state, preserved=("_outbuffer",))
         (inbuffer, in_count_str), (outbuffer, out_count_str), root = node.validate(parent_sdfg, parent_state)
         in_mpi_dtype_str = utils.MPI_DDT(inbuffer.dtype.base_type)
         out_mpi_dtype_str = utils.MPI_DDT(outbuffer.dtype.base_type)
@@ -37,18 +39,11 @@ class ExpandGatherMPI(ExpandTransformation):
         code = f"""
             int _commsize;
             MPI_Comm_size({comm}, &_commsize);
-            MPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
+            MPI_Gather({buffer_pointer(inbuffer, "_inbuffer")}, {in_count_str}, {in_mpi_dtype_str},
                        _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str},
                        _root, {comm});
             """
-        tasklet = nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dtypes.Language.CPP,
-        )
-        return tasklet
+        return mpi_tasklet(node, parent_state, code)
 
 
 @library.expansion
@@ -155,6 +150,7 @@ class ExpandBlockGatherMPI(ExpandTransformation):
             node.out_connectors,
             code,
             language=dtypes.Language.CPP,
+            side_effects=True,
         )
         return tasklet
 

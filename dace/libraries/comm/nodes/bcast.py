@@ -7,6 +7,7 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    buffer_pointer,
     count_expression,
     expanded_input_connectors,
     mpi_collective,
@@ -30,28 +31,9 @@ class ExpandBcastMPI(ExpandTransformation):
         node.validate_nonblocking(parent_sdfg, parent_state)
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (buffer, count_str), root = node.validate(parent_sdfg, parent_state)
-        dtype = buffer.dtype.base_type
-        mpi_dtype_str = "MPI_BYTE"
-        if dtype == dtypes.float32:
-            mpi_dtype_str = "MPI_FLOAT"
-        elif dtype == dtypes.float64:
-            mpi_dtype_str = "MPI_DOUBLE"
-        elif dtype == dtypes.complex64:
-            mpi_dtype_str = "MPI_COMPLEX"
-        elif dtype == dtypes.complex128:
-            mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
-        elif dtype == dtypes.int32:
-            mpi_dtype_str = "MPI_INT"
-        elif dtype == dtypes.int64:
-            mpi_dtype_str = "MPI_LONG_LONG"
-        else:
-            raise NotImplementedError("The datatype " + str(dtype) + " is not supported!")
+        mpi_dtype_str = utils.MPI_DDT(buffer.dtype.base_type)
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
-
-        ref = ""
-        if isinstance(buffer, dace.data.Scalar):
-            ref = "&"
 
         init = ""
         comm = mpi_communicator(node, parent_state)
@@ -60,7 +42,9 @@ class ExpandBcastMPI(ExpandTransformation):
             comm = "__comm"
 
         code = init + "\n"
-        code += mpi_collective(node, "Bcast", f"{ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm}")
+        code += mpi_collective(
+            node, "Bcast", f"{buffer_pointer(buffer, '_inbuffer')}, {count_str}, {mpi_dtype_str}, _root, {comm}"
+        )
         code += "_outbuffer = _inbuffer;"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
