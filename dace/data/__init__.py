@@ -67,9 +67,6 @@ from dace.data.creation import (
 # Ctypes interoperability
 from dace.data.ctypes_interop import make_ctypes_argument
 
-# Import utility function from utils (for backward compatibility)
-from dace.utils import find_new_name
-
 __all__ = [
     # Core classes
     "Data",
@@ -114,5 +111,4 @@ __all__ = [
     "make_array_from_descriptor",
     "make_reference_from_descriptor",
     "make_ctypes_argument",
-    "find_new_name",
 ]

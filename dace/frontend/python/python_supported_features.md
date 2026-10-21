@@ -104,7 +104,7 @@ Supported
 
 ### 6.7 Binary arithmetic operations
 Supported. Notable differences compared to the expected Python result:
-- Modulo operator always returns a natural number (like in C/C++)
+- The modulo operator follows Python's (floored) semantics; it is emitted as `PyMod`
 
 ### 6.8 Shifting operations
 Only integral types supported.

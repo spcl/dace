@@ -20,7 +20,7 @@ from dace import dtypes
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardResult
-from dace.data import Reference, Structure, find_new_name
+from dace.data import Reference, Structure
 from dace.sdfg import SDFGState, nodes
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ class DaceNodeBackwardImplementations:
                 #     continue
 
                 # (1)
-                new_name = find_new_name(name + "_forwarded", self.bwd_engine.sdfg.arrays)
+                new_name = dace.utils.find_new_name(name + "_forwarded", self.bwd_engine.sdfg.arrays)
                 if new_name in self.bwd_engine.sdfg.arrays or new_name in self.bwd_engine.backward_input_arrays:
                     raise AutoDiffException(f"Attempted to create array with name '{new_name}', but it already existed")
 
@@ -127,7 +127,7 @@ class DaceNodeBackwardImplementations:
         for conn in nsdfg.in_connectors.keys():
             if conn in nsdfg.sdfg.symbols:
                 # We need to add a new symbol and create a mapping
-                new_symbol = find_new_name(conn, nsdfg.sdfg.symbols)
+                new_symbol = dace.utils.find_new_name(conn, nsdfg.sdfg.symbols)
                 nsdfg.sdfg.add_symbol(new_symbol, nsdfg.sdfg.symbols[conn])
                 nsdfg.sdfg.replace(conn, new_symbol)
                 nsdfg.symbol_mapping[new_symbol] = conn
@@ -389,7 +389,7 @@ class DaceNodeBackwardImplementations:
             if len(required_gradients) == 0:
                 # for this we need to assing a zero to the gradient output
                 # pick a name for the input gradient
-                rev_input_grad_name = find_new_name(output_conn + "_gradient", rev_inputs)
+                rev_input_grad_name = dace.utils.find_new_name(output_conn + "_gradient", rev_inputs)
                 result.given_grad_names[output_conn] = rev_input_grad_name
 
                 # zero out the gradient
@@ -403,7 +403,7 @@ class DaceNodeBackwardImplementations:
 
                 if inp not in result.required_grad_names:
                     # pick a name for the gradient
-                    rev_output_grad_name = find_new_name(inp + "_gradient", rev_outputs)
+                    rev_output_grad_name = dace.utils.find_new_name(inp + "_gradient", rev_outputs)
                     result.required_grad_names[inp] = rev_output_grad_name
                     rev_outputs.add(rev_output_grad_name)
                 else:
@@ -443,7 +443,7 @@ class DaceNodeBackwardImplementations:
 
                 if output_conn not in result.given_grad_names:
                     # pick a name for the input gradient
-                    rev_input_grad_name = find_new_name(output_conn + "_gradient", rev_inputs)
+                    rev_input_grad_name = dace.utils.find_new_name(output_conn + "_gradient", rev_inputs)
                     result.given_grad_names[output_conn] = rev_input_grad_name
                 else:
                     rev_input_grad_name = result.given_grad_names[output_conn]
