@@ -1945,9 +1945,10 @@ def extract_map_dims(
 
 
 def small_map_axes(state: SDFGState, map_entry: nodes.MapEntry, resolver: SymbolResolver) -> list[bool]:
-    """Per parameter of ``map_entry``, whether its range spans ``SMALL`` symbols only, at the facts around the map."""
+    """Per parameter of ``map_entry``, whether its extent is too small to share out
+    (:func:`~dace.symbolic.is_small_extent`), at the facts around the map."""
     facts = resolver.facts_at(state, map_entry)
-    return [symbolic.is_small(end - begin, facts) for begin, end, _ in map_entry.map.range.ranges]
+    return [symbolic.is_small_extent(end - begin + 1, facts) for begin, end, _ in map_entry.map.range.ranges]
 
 
 def isolate_small_map_axes(

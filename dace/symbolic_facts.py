@@ -590,6 +590,19 @@ def is_small(expr: sympy.Expr, facts: Facts) -> bool:
     return bool(names) and names <= facts.small
 
 
+#: A literal extent below this is as small as a ``SMALL`` symbol for a schedule: too few iterations to share out.
+SMALL_CONSTANT_EXTENT = 64
+
+
+def is_small_extent(expr: sympy.Expr, facts: Facts) -> bool:
+    """Whether a scheduled extent is too small to share out: ``SMALL`` (:func:`is_small`), or a literal below
+    :data:`SMALL_CONSTANT_EXTENT`. For schedules only: the canonical form stays parallel over literals."""
+    expr = sympy.sympify(expr)
+    if expr.is_number:
+        return bool(expr < SMALL_CONSTANT_EXTENT)
+    return is_small(expr, facts)
+
+
 def is_large(expr: sympy.Expr, facts: Facts) -> bool:
     """Whether ``expr`` grows with a ``DEFAULT`` parameter: every term naming one has a positive coefficient, and it
     names parameters only."""

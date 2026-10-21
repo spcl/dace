@@ -19,7 +19,7 @@ from dace.libraries.blas.blas_helpers import (
 )
 from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
 from dace.ordered import OrderedSet
-from dace.symbolic import equal, equal_valued, symstr
+from dace.symbolic import equal, equal_valued, is_small_extent, symstr
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -58,6 +58,28 @@ def refuse_broadcast_batches(node, state, sdfg) -> None:
                 'this expansion walks a fixed batch stride. Use the "pure" implementation, or '
                 "materialize both operands at the same batch shape."
             )
+
+
+def shares_out_batch(node, state, sdfg) -> bool:
+    """Whether a CPU BLAS lowering runs its batch loop as an OpenMP team, one single-core GEMM per element.
+
+    Only a top-level node whose schedule is an OpenMP team does, and only over a batch that is not ``SMALL``: a
+    re-entered node or a ``SMALL`` batch keeps the loop sequential, each threaded BLAS call then the parallel axis.
+    Inside the team an OpenMP OpenBLAS runs each call on one thread (a pthreads build already does,
+    ``DeferOpenBlasThreadsToOpenMP``).
+
+    :param node: The library node being expanded.
+    :param state: The state the node lives in.
+    :param sdfg: The SDFG the state belongs to.
+    """
+    from dace.transformation.auto.auto_optimize import libnode_is_sequential, libnode_runs_multicore  # import cycle
+
+    if libnode_is_sequential(node, state, sdfg) or not libnode_runs_multicore(node):
+        return False
+    (_, _, shape_a, strides_a, _, _), (_, _, shape_b, strides_b, _, _), _ = _get_matmul_operands(node, state, sdfg)
+    cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+    bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b, cdesc.shape, cdesc.strides)
+    return bool(bopt) and not is_small_extent(bopt["b"], sdfg.facts())
 
 
 def format_scalar_literal(value, ctype: "dtypes.typeclass") -> str:
@@ -346,9 +368,10 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
         # Adaptations for MKL/BLAS API
         opt["ta"] = "CblasNoTrans" if opt["ta"] == "N" else "CblasTrans"
         opt["tb"] = "CblasNoTrans" if opt["tb"] == "N" else "CblasTrans"
+        opt["pragma"] = "#pragma omp parallel for\n        " if shares_out_batch(node, state, sdfg) else ""
 
         code = """
-        {decls}for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+        {decls}{pragma}for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
             cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
                          (({dtype}*){x}) + __ib*{stride_a}, {lda},
                          (({dtype}*){y}) + __ib*{stride_b}, {ldb},

@@ -554,9 +554,48 @@ def libnode_runs_multicore(node: nodes.LibraryNode) -> bool:
     return node.schedule in (dtypes.ScheduleType.Default, *dtypes.CPU_SCHEDULES)
 
 
+def libnode_domain_small(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether every memlet of ``node`` moves a ``SMALL`` volume (:func:`~dace.symbolic.is_small_extent`): a
+    library node is a map over a blackbox, with no inner domain to share out instead.
+
+    :param node: The library node.
+    :param state: The state containing ``node``.
+    """
+    facts = state.sdfg.facts()
+    volumes = [edge.data.volume for edge in state.all_edges(node) if not edge.data.is_empty()]
+    return bool(volumes) and all(symbolic.is_small_extent(volume, facts) for volume in volumes)
+
+
+def libnode_reads_data_segment(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether a sequential loop encloses ``node`` and a memlet volume of it is read from data (a CSR row): a handful
+    of elements per entry that nothing bounds at compile time, as for a map
+    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`, rule 3).
+
+    :param node: The library node.
+    :param state: The state containing ``node``.
+    """
+    from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+        data_derived,
+        in_sequential_loop,
+    )  # Avoid an import cycle.
+
+    if not in_sequential_loop(state):
+        return False
+    names = {
+        str(free)
+        for edge in state.all_edges(node)
+        if not edge.data.is_empty()
+        for free in symbolic.free_symbols_and_functions(edge.data.volume)
+    }
+    return bool(names) and data_derived(state.sdfg, names)
+
+
 def libnode_is_sequential(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
-    """Whether ``node`` is re-entered inside an outer parallel/repeated scope and so must NOT open
-    its own (nested) parallel region -- it lowers to its efficient single-core expansion instead.
+    """Whether ``node`` must NOT open its own parallel region -- it lowers to its efficient single-core expansion
+    instead. A library node follows the rules of a map over a blackbox: sequential under a parallel parent map, over a
+    ``SMALL`` domain (:func:`libnode_domain_small`), or over a data segment under a sequential loop
+    (:func:`libnode_reads_data_segment`). A sequential loop alone is no reason: it multiplies the fork and the work
+    alike, and under a parent that is sequential because it is small the node IS the axis of parallelism.
 
     The storage-derived ``node.schedule`` is NOT a reliable signal here:
     :func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types` sets a library node's
@@ -564,8 +603,7 @@ def libnode_is_sequential(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG)
     ``ScheduleType.CPU_Multicore``), NOT from the parallelism of the enclosing scope, so a ``Reduce``
     nested in a parallel map can carry ``CPU_Multicore`` and would then wrongly open a nested
     ``#pragma omp parallel`` per outer iteration -- the "constant parallel reductions" catastrophe.
-    Determine sequentiality from SCOPE instead: a libnode is sequential if it has a parallel parent
-    map or an enclosing loop (both re-enter it).
+    Determine sequentiality from SCOPE instead.
 
     A ``NestedSDFG`` node carries no ``schedule`` of its own, so "lives inside a sequential nested
     SDFG" is not a distinct case to probe for:
@@ -577,19 +615,16 @@ def libnode_is_sequential(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG)
     :param node: The library node to classify.
     :param state: The state containing ``node``.
     :param sdfg: The root SDFG.
-    :returns: True if ``node`` is re-entered by an enclosing parallel map or loop.
+    :returns: True if ``node`` runs on one core.
     """
-    from dace.sdfg.state import LoopRegion  # Avoid an import cycle at module load.
-
     if node.schedule == dtypes.ScheduleType.Sequential:
         return True
     for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state):
-        if isinstance(scope, nodes.MapEntry):
-            if scope.map.schedule != dtypes.ScheduleType.Sequential:
-                return True
-        elif isinstance(scope, LoopRegion) and getattr(node, "serial_on_loop_reentry", True):
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule != dtypes.ScheduleType.Sequential:
             return True
-    return False
+    if libnode_domain_small(node, state):
+        return True
+    return node.serial_on_loop_reentry and libnode_reads_data_segment(node, state)
 
 
 def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:

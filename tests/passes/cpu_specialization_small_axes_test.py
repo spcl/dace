@@ -132,6 +132,31 @@ def test_without_small_symbols_nothing_changes():
     assert map_nest(sdfg) == [(["b", "i"], PAR)]
 
 
+def test_a_literal_small_axis_moves_into_an_inner_sequential_map():
+    """A literal extent below ``SMALL_CONSTANT_EXTENT`` is as small as a ``SMALL`` symbol: no symbol is declared."""
+    sdfg = dace.SDFG("cpu_literal_block_first")
+    sdfg.add_symbol("nproma", dace.int64)
+    sdfg.add_array("A", [NBLKS, "nproma"], dace.float64)
+    sdfg.add_array("B", [NBLKS, "nproma"], dace.float64)
+    state = sdfg.add_state("compute")
+    state.add_mapped_tasklet(
+        "scale",
+        {"b": f"0:{NBLKS}", "i": "0:nproma"},
+        {"x": dace.Memlet("A[b, i]")},
+        "y = 2.0 * x + 1.0",
+        {"y": dace.Memlet("B[b, i]")},
+        schedule=PAR,
+        external_edges=True,
+    )
+    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert map_nest(sdfg) == [(["i"], PAR), (["b"], SEQ)]
+    A = np.random.default_rng(11).random((NBLKS, NPROMA))
+    B = np.zeros_like(A)
+    sdfg(A=A, B=B, nproma=NPROMA)
+    np.testing.assert_allclose(B, 2.0 * A + 1.0)
+
+
 def test_cpu_specialize_never_shares_out_a_block_axis():
     for sdfg in (one_map("cpu_spec_one_map"), nested_maps("cpu_spec_nested")):
         for entry in (e for e, _ in sdfg.all_nodes_recursive() if isinstance(e, nodes.MapEntry)):
@@ -183,5 +208,6 @@ if __name__ == "__main__":
     test_a_row_map_whose_range_reads_the_block_is_left_alone()
     test_a_block_map_without_a_large_axis_is_left_alone()
     test_without_small_symbols_nothing_changes()
+    test_a_literal_small_axis_moves_into_an_inner_sequential_map()
     test_cpu_specialize_never_shares_out_a_block_axis()
     test_a_library_expansion_never_shares_out_a_block_axis()

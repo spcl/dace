@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import re
+
 import numpy as np
 import pytest
 
@@ -424,7 +426,85 @@ def test_batchmm_symbolic_alpha_pure():
     np.testing.assert_allclose(z, 2.5 * (x @ y), rtol=1e-12)
 
 
+#: The OpenBLAS lowering's batch loop under an OpenMP team.
+SHARED_BATCH = re.compile(r"#pragma omp parallel for\s+for \(int __ib = 0;")
+
+
+def lowered_code(program) -> str:
+    with change_default(blas, "OpenBLAS"):
+        sdfg = program.to_sdfg()
+        return sdfg.generate_code()[0].clean_code
+
+
+@pytest.mark.lapack
+def test_a_top_level_batched_matmul_shares_out_its_batch():
+    """A top-level node over a batch that is not SMALL runs one single-core GEMM per element in an OpenMP team."""
+    b, m, n, k = (dace.symbol(s) for s in "bmnk")
+
+    @dace.program
+    def top_bmm(A: dace.float64[b, m, k], B: dace.float64[b, k, n], C: dace.float64[b, m, n]):
+        C[:] = A @ B
+
+    assert SHARED_BATCH.search(lowered_code(top_bmm))
+    rng = np.random.default_rng(3)
+    A, B = rng.random((64, 3, 40)), rng.random((64, 40, 2))
+    C = np.zeros((64, 3, 2))
+    with change_default(blas, "OpenBLAS"):
+        top_bmm(A=A, B=B, C=C)
+    np.testing.assert_allclose(C, A @ B)
+
+
+@pytest.mark.lapack
+def test_an_einsum_batched_matmul_at_top_level_shares_out_its_batch():
+    """The Einsum's expansion nests the BatchedMatMul two SDFGs down; it still runs at the Einsum's schedule
+    (examinimd: ``np.sum(w[:, :, None] * d, axis=1)`` ran 10976 single GEMMs in a row)."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def rowsum(w: dace.float64[N, N], d: dace.float64[N, N, 3], out: dace.float64[N, 3]):
+        out[:] = np.einsum("ij,ijk->ik", w, d)
+
+    assert SHARED_BATCH.search(lowered_code(rowsum))
+    rng = np.random.default_rng(5)
+    w, d = rng.random((96, 96)), rng.random((96, 96, 3))
+    out = np.zeros((96, 3))
+    with change_default(blas, "OpenBLAS"):
+        rowsum(w=w, d=d, out=out)
+    np.testing.assert_allclose(out, np.einsum("ij,ijk->ik", w, d))
+
+
+@pytest.mark.lapack
+def test_a_small_batch_keeps_the_sequential_loop():
+    """A literal batch below ``SMALL_CONSTANT_EXTENT`` leaves the threaded BLAS call as the parallel axis."""
+    m, n, k = (dace.symbol(s) for s in "mnk")
+
+    @dace.program
+    def small_batch(A: dace.float64[4, m, k], B: dace.float64[4, k, n], C: dace.float64[4, m, n]):
+        C[:] = A @ B
+
+    code = lowered_code(small_batch)
+    assert "__ib" in code
+    assert not SHARED_BATCH.search(code)
+
+
+@pytest.mark.lapack
+def test_a_batched_matmul_under_a_sequential_loop_shares_out_its_batch():
+    """A sequential loop is no reason to run the node on one core: under it the node is the axis of parallelism."""
+    m, n, k = (dace.symbol(s) for s in "mnk")
+
+    @dace.program
+    def looped(A: dace.float64[64, m, k], B: dace.float64[64, k, n], C: dace.float64[64, m, n], T: dace.int64):
+        for _ in range(T):
+            C[:] = C + A @ B
+
+    assert SHARED_BATCH.search(lowered_code(looped))
+
+
 if __name__ == "__main__":
+    test_a_top_level_batched_matmul_shares_out_its_batch()
+    test_an_einsum_batched_matmul_at_top_level_shares_out_its_batch()
+    test_a_small_batch_keeps_the_sequential_loop()
+    test_a_batched_matmul_under_a_sequential_loop_shares_out_its_batch()
     test_batchmm("pure", dace.float32)
     test_batchmm("pure", dace.float64)
     test_batchmm("MKL", dace.float32)

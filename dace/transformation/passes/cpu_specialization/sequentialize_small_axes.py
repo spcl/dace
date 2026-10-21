@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CPU specialization of a parallel map over a ``SMALL`` axis: the ``SMALL`` axes become an inner sequential map.
 
-A symbol declared ``SMALL`` (``nblks``) is a handful, much smaller than every other size. The CPU code generator
+A symbol declared ``SMALL`` (``nblks``) or a literal extent below ``SMALL_CONSTANT_EXTENT`` is a handful, much
+smaller than every other size. The CPU code generator
 shares out the first parameter of a map, so a parallel map over ``(b, i)`` with ``b`` in ``range(nblks)`` gives
 ``nblks`` threads a block each and leaves the others idle. This pass keeps the axes that are not ``SMALL``, in their
 order, in the parallel map and runs the ``SMALL`` ones in an inner ``Sequential`` map: the same iteration space, with
@@ -38,10 +39,8 @@ class SequentializeSmallAxes(ppl.Pass):
 
         :param sdfg: the SDFG to specialize, in place.
         :param _pipeline_results: unused.
-        :returns: how many maps were split, or ``None`` if none were; nothing is unless a ``SMALL`` symbol is declared.
+        :returns: how many maps were split, or ``None`` if none were.
         """
-        if not any(nested.symbol_repo.small for nested in sdfg.all_sdfgs_recursive()):
-            return None
         candidates = [
             (node, state)
             for node, state in sdfg.all_nodes_recursive()

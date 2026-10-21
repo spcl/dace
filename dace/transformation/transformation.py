@@ -744,13 +744,34 @@ def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.
             expansion.add_out_connector(conn, dtype=ctype)
 
 
+def adopt_top_level_schedule(expansion: SDFG, schedule: ScheduleType) -> None:
+    """Give the ``Default`` top-level maps and library nodes of an expansion, through top-level nested SDFGs, the
+    expanded node's ``schedule``: they ARE the node, not scopes nested under it. Inferred as nested, a top-level
+    Einsum's BatchedMatMul was ``Sequential`` and ran its batch on one thread.
+
+    :param expansion: the nested SDFG of an expansion.
+    :param schedule: the schedule of the library node it replaces.
+    """
+    for block in expansion.nodes():
+        if not isinstance(block, SDFGState):
+            continue
+        scopes = block.scope_dict()
+        for inner in block.nodes():
+            if scopes[inner] is not None:
+                continue
+            if isinstance(inner, (nd.EntryNode, nd.LibraryNode)) and inner.schedule is ScheduleType.Default:
+                inner.schedule = schedule
+            elif isinstance(inner, nd.NestedSDFG):
+                adopt_top_level_schedule(inner.sdfg, schedule)
+
+
 def share_out_no_small_axis(expansion: SDFG) -> None:
     """Move the ``SMALL`` axes of the ``CPU_Multicore`` maps a library expansion just made into an inner
     sequential map, as
     :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` does
     for the maps that exist before code generation. A library node expands at code generation, after that
     pass: velocity_tendencies at one block filled each ``(nblks, nlev, nproma)`` temporary in a map shared out
-    over ``nblks``, on one thread. Nothing changes unless a ``SMALL`` symbol is declared.
+    over ``nblks``, on one thread. A literal extent below ``SMALL_CONSTANT_EXTENT`` is ``SMALL`` too.
 
     :param expansion: the nested SDFG of an expansion, already in its parent and with its schedules inferred.
     """
@@ -764,8 +785,6 @@ def share_out_no_small_axis(expansion: SDFG) -> None:
         for node in state.nodes()
         if isinstance(node, nd.MapEntry) and node.map.schedule == ScheduleType.CPU_Multicore
     ]
-    if not candidates or not resolver.facts_at(candidates[0][1]).small:
-        return
     for entry, state in candidates:
         isolate_small_map_axes(state, entry, resolver)
 
@@ -856,6 +875,7 @@ class ExpandTransformation(PatternTransformation):
         # Fix nested schedules and aliasing
         if isinstance(expansion, nd.NestedSDFG):
             dealias.integrate_nested_sdfg(expansion.sdfg)
+            adopt_top_level_schedule(expansion.sdfg, node.schedule)
             infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [*enclosing, node.schedule], True)
             share_out_no_small_axis(expansion.sdfg)
 
