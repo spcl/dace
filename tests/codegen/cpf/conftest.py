@@ -274,7 +274,7 @@ def assert_every_gpu_name_is_declared(code: str, label: str = "cpf") -> None:
     declared = set()
     for line in code.splitlines():
         text = line.strip()
-        for lead in ("using ", "static constexpr gpuError_t "):
+        for lead in ("using ", "inline constexpr gpuError_t "):
             if text.startswith(lead):
                 rest = text[len(lead) :].split("=")[0].split()[0].strip()
                 declared.add(rest)

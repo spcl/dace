@@ -24,6 +24,8 @@ from typing import Any
 
 import dace
 from dace import cpf_lowering, data, dtypes, library, properties, subsets
+from dace.codegen import common
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -70,7 +72,8 @@ def call_site(node: "ExternalCall", state: dace.SDFGState) -> CallSite:
         site.descriptors[edge.dst_conn] = desc
         if isinstance(desc, data.Scalar):
             site.scalars[edge.dst_conn] = None
-        if one_element(edge.data):
+        # device memory reaches the library as the device pointer, never as a host copy of its element
+        if one_element(edge.data) and desc.storage not in GPU_RESIDENT_STORAGES:
             site.by_value[edge.dst_conn] = None
     for edge in state.out_edges(node):
         if edge.src_conn is None or edge.data.data is None:
@@ -78,7 +81,11 @@ def call_site(node: "ExternalCall", state: dace.SDFGState) -> CallSite:
         site.outputs[data_name(edge.src_conn)] = None
         site.descriptors[edge.src_conn] = state.sdfg.arrays[edge.data.data]
         # a dynamic non-WCR output stays a pointer
-        if one_element(edge.data) and not (edge.data.dynamic and edge.data.wcr is None):
+        if (
+            one_element(edge.data)
+            and not (edge.data.dynamic and edge.data.wcr is None)
+            and site.descriptors[edge.src_conn].storage not in GPU_RESIDENT_STORAGES
+        ):
             site.by_value[edge.src_conn] = None
     return site
 
@@ -223,11 +230,27 @@ class ExpandExternCall(ExpandTransformation):
             )
         # ``extern "C"`` is a C++ construct; a CPF C unit already has C's linkage.
         linkage = "" if cpf_lowering.standalone_c() else 'extern "C" '
+        call = f"{node.symbol}({', '.join(call_args)});"
+        if node.schedule in dtypes.GPU_SCHEDULES:
+            # The library launches on a stream of its own: it starts once the SDFG's stream wrote its inputs, and
+            # its successors start once every stream is done
+            backend = common.get_gpu_backend()
+            call = (
+                f"DACE_GPU_CHECK({backend}StreamSynchronize(__dace_current_stream));\n{call}\n"
+                f"DACE_GPU_CHECK({backend}DeviceSynchronize());"
+            )
+        # a container the call takes by pointer is a pointer connector, so no one-element memlet reads it by value
+        site = call_site(node, parent_state)
+        pointers = {
+            conn: dtypes.pointer(desc.dtype)
+            for conn, desc in site.descriptors.items()
+            if conn not in site.by_value and conn not in site.scalars
+        }
         return nodes.Tasklet(
             node.name,
-            node.in_connectors,
-            node.out_connectors,
-            f"{node.symbol}({', '.join(call_args)});",
+            {conn: pointers.get(conn, ctype) for conn, ctype in node.in_connectors.items()},
+            {conn: pointers.get(conn, ctype) for conn, ctype in node.out_connectors.items()},
+            call,
             language=dtypes.Language.CPP,
             code_global=f"{linkage}void {node.symbol}({signature});",
             side_effects=True,

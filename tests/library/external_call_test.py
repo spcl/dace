@@ -60,6 +60,12 @@ def total(a: dace.float64[N], out: dace.float64[1]):
 
 
 @dace.program
+def first_doubled(a: dace.float64[N], out: dace.float64[1]):
+    for i in dace.map[0:1]:
+        out[i] = a[i] * 2.0
+
+
+@dace.program
 def strided_sum(a: dace.float64[N], out: dace.float64[1], inc: dace.int64):
     s = 0.0
     for i in range(N - 1):
@@ -206,6 +212,40 @@ def test_a_read_only_scalar_crosses_the_call_by_value(tmp_path):
     sdfg(a=a, alpha=0.5, b=b, N=SIZE)
 
     assert np.array_equal(b, a * 0.5 + 1.0)
+
+
+def extern_call_tasklet(call: external_call.ExternalCall, sdfg: dace.SDFG) -> nodes.Tasklet:
+    """``call`` expanded with ExternCall (a library path is only named, never linked here), as its tasklet."""
+    call.lib_path, call.implementation = "libnot_linked.a", "ExternCall"
+    state = next(state for state in sdfg.states() if call in state.nodes())
+    call.expand(state)
+    return next(node for node in state.nodes() if isinstance(node, nodes.Tasklet) and node.label == call.name)
+
+
+@pytest.mark.parametrize("storage,by_pointer", [(dace.StorageType.Default, False), (dace.StorageType.GPU_Global, True)])
+def test_device_memory_reaches_the_call_as_its_pointer_never_a_host_copy(storage, by_pointer):
+    """A one-element host container crosses as the address of its element; on the device that element is not
+    readable from the host, so the call takes the device pointer itself."""
+    sdfg, (call,) = outlined(first_doubled, f"extcall_first_{storage.name}")
+    sdfg.arrays["out"].storage = storage
+
+    tasklet = extern_call_tasklet(call, sdfg)
+
+    assert isinstance(tasklet.out_connectors["_out_out"], dace.pointer) is by_pointer
+    assert ("&_out_out" in tasklet.code.as_string) is not by_pointer
+
+
+def test_a_gpu_scheduled_call_is_ordered_after_the_sdfg_stream_and_before_its_successors():
+    sdfg, (call,) = outlined(scale, "extcall_scale_gpu")
+    call.schedule = dace.ScheduleType.GPU_Device
+
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
+        code = extern_call_tasklet(call, sdfg).code.as_string
+
+    lines = code.splitlines()
+    assert lines[0] == "DACE_GPU_CHECK(cudaStreamSynchronize(__dace_current_stream));"
+    assert lines[1].startswith(f"{call.symbol}(")
+    assert lines[2] == "DACE_GPU_CHECK(cudaDeviceSynchronize());"
 
 
 def test_data_read_and_written_is_one_pointer_parameter(tmp_path):

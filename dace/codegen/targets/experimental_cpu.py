@@ -56,9 +56,10 @@ INDEX_CTYPES = {"int64": "int64_t", "int32": "int32_t"}
 INDEX_FUNCTION_QUALIFIER = "static DACE_HDFI constexpr"
 # Constant ``<array>_size`` qualifier: ``consteval`` folds the extent at compile time (C++20).
 SIZE_CONSTEVAL_QUALIFIER = "static DACE_HDFI consteval"
-# Standalone output has no ``types.h`` defining ``DACE_HDFI``, so its host expansion is written out.
-STANDALONE_INDEX_FUNCTION_QUALIFIER = "static constexpr inline"
-STANDALONE_SIZE_CONSTEVAL_QUALIFIER = "static consteval inline"
+# Standalone output has no ``types.h`` defining ``DACE_HDFI``, so its host expansion is written out; nvcc warns
+# about an unreferenced internal function, and a unit need not use every helper.
+STANDALONE_INDEX_FUNCTION_QUALIFIER = "[[maybe_unused]] static constexpr inline"
+STANDALONE_SIZE_CONSTEVAL_QUALIFIER = "[[maybe_unused]] static consteval inline"
 # C has no constexpr functions; gcc and clang emit the same code for this and a macro at -O1 and up.
 STANDALONE_C_INDEX_FUNCTION_QUALIFIER = "static inline"
 # Identifier tokens of code without an AST here; over-matching only costs a refusal.

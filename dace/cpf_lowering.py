@@ -1216,22 +1216,22 @@ DEVICE_TYPES: dict[Dialect, str] = {
 using gpuStream_t = hipStream_t;
 using gpuEvent_t = hipEvent_t;
 using gpuError_t = hipError_t;
-static constexpr gpuError_t gpuSuccess = hipSuccess;
-static constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
+inline constexpr gpuError_t gpuSuccess = hipSuccess;
+inline constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
 """,
     Dialect.STANDALONE_CUDA: """\
 using gpuStream_t = cudaStream_t;
 using gpuEvent_t = cudaEvent_t;
 using gpuError_t = cudaError_t;
-static constexpr gpuError_t gpuSuccess = cudaSuccess;
-static constexpr gpuError_t gpuErrorMemoryAllocation = cudaErrorMemoryAllocation;
+inline constexpr gpuError_t gpuSuccess = cudaSuccess;
+inline constexpr gpuError_t gpuErrorMemoryAllocation = cudaErrorMemoryAllocation;
 """,
 }
 
 DEVICE_CORE: str = """\
 
 //: A failed GPU call ends the program, naming the call site.
-static inline void cpf_gpu_check(gpuError_t status, const char *file = __builtin_FILE(), int line = __builtin_LINE()) {
+[[maybe_unused]] static inline void cpf_gpu_check(gpuError_t status, const char *file = __builtin_FILE(), int line = __builtin_LINE()) {
     if (status != gpuSuccess) {
         fprintf(stderr, "%s:%d: GPU error %d (%s)\\n", file, line, (int)status, gpuGetErrorString(status));
         abort();
