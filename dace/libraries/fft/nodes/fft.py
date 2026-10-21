@@ -162,7 +162,7 @@ def vendor_fft_sdfg(
     layout the vendor cannot address even staged falls back to the ``pure`` expansion, with a warning naming the
     backend.
     """
-    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, real_of  # avoid loop
+    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, is_unit, real_of  # avoid loop
 
     inverse = isinstance(node, IFFT)
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
@@ -210,7 +210,7 @@ def vendor_fft_sdfg(
     # Divide in floating point: ``1/N`` over an integer extent symbol is C integer division.
     scale = (
         ""
-        if str(node.factor) == "1"
+        if is_unit(node.factor)
         else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor)})"
     )
 
@@ -327,7 +327,7 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
-    threaded = fftw3.threaded()
+    threaded = fftw3.threaded(transform.double)
     # A threaded FFTW plans for the team the program runs (pocketfft's ``workers``); inside a parallel region, one.
     team = (
         f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
@@ -461,6 +461,8 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
         direction = dialect.inverse if transform.inverse else f"{dialect.enum}FORWARD"
         # The cache is shared by every transform, so the key ends with the transform type.
         key += [str(int(transform.real_input) + 2 * int(transform.real_output)), str(int(transform.double))]
+        # A plan's work area serves one transform at a time: each stream gets its own plan
+        key.append("(long long)reinterpret_cast<uintptr_t>(__dace_current_stream)")
         check = (
             f"auto __check = [](const char *what, {dialect.api}Result result) {{ "
             f'if (result != {dialect.enum}SUCCESS) throw std::runtime_error(std::string("{dialect.name} ") + '

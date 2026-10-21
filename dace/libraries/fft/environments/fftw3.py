@@ -6,9 +6,9 @@ import ctypes.util
 import dace.library
 
 
-def threaded() -> bool:
-    """Whether FFTW's OpenMP planner (``fftw_plan_with_nthreads``) is linked."""
-    return ctypes.util.find_library("fftw3_omp") is not None
+def threaded(double: bool) -> bool:
+    """Whether the OpenMP planner of FFTW's double (``fftw3_omp``) or single (``fftw3f_omp``) precision is linked."""
+    return ctypes.util.find_library("fftw3_omp" if double else "fftw3f_omp") is not None
 
 
 @dace.library.environment

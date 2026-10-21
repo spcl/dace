@@ -80,6 +80,12 @@ def floating_text(factor: dace.symbolic.SymbolicType) -> str:
     return FloatingPrinter().doprint(dace.symbolic.pystr_to_symbolic(factor))
 
 
+def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
+    """Whether ``factor`` is the number one, as ``1`` or ``1.0``."""
+    value = dace.symbolic.pystr_to_symbolic(factor)
+    return bool(value.is_Number) and float(value) == 1.0
+
+
 def complex_of(real: dace.typeclass) -> dace.typeclass:
     """The complex type with ``real``'s precision; a complex type is its own."""
     return {dace.float32: dace.complex64, dace.float64: dace.complex128}.get(real, real)
@@ -138,7 +144,7 @@ def add_dft_axis_state(
     line[axis] = f"0:{dace.symbolic.symstr(shape[axis])}"
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
-    scale = "" if str(factor) == "1" else f"o *= {real}({floating_text(factor)});"
+    scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor)});"
     # The angle's integer part is reduced modulo the length first, as an FFT's twiddle factors are
     code = f"""
 {element.ctype} sum({real}(0), {real}(0));

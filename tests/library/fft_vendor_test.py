@@ -19,7 +19,8 @@ from dace import dtypes
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.fft.nodes import FFT, IFFT
-from dace.libraries.fft.nodes.fft import GpuFftLayout, Transform, fftw3_call, gpu_fft_layout
+from dace.libraries.fft.gpu_dialect import CUFFT
+from dace.libraries.fft.nodes.fft import GpuFftLayout, Transform, fftw3_call, gpu_fft_call, gpu_fft_layout
 
 N = dace.symbol("N")
 
@@ -413,12 +414,13 @@ def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch):
     installed = {"fftw3", "fftw3_omp", "fftw3f"}
     monkeypatch.setattr(fftw3.ctypes.util, "find_library", lambda lib: f"lib{lib}.so" if lib in installed else None)
     assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-    assert fftw3.threaded()
+    assert fftw3.threaded(double=True)
+    assert not fftw3.threaded(double=False)
 
 
 @pytest.mark.parametrize("threaded", [True, False])
 def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
-    monkeypatch.setattr(fftw3, "threaded", lambda: threaded)
+    monkeypatch.setattr(fftw3, "threaded", lambda double: threaded)
     desc = dace.data.Array(dace.complex128, [64])
     code = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
     assert ("fftw_plan_with_nthreads(__threads)" in code) == threaded
@@ -498,3 +500,29 @@ def test_the_normalization_folds_into_the_staging_copy():
     x = np.random.default_rng(3).standard_normal(40)
     got = run_without_fallback(compile_with(inverse_of_a_real_input, "FFTW3"), x=x.copy(), N=40)
     np.testing.assert_allclose(got, np.fft.ifft(x), rtol=1e-12, atol=1e-12)
+
+
+def test_a_unit_factor_adds_no_normalization_pass():
+    """The default ``factor`` of a node built through the API is ``1.0``: the transform's output is not scaled."""
+    sdfg = dace.SDFG("fft_default_factor")
+    state = sdfg.add_state()
+    sdfg.add_array("x", [64], dace.complex128)
+    sdfg.add_array("y", [64], dace.complex128)
+    node = FFT("fft")
+    node.implementation = "FFTW3"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet("x[0:64]"))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet("y[0:64]"))
+    sdfg.expand_library_nodes(recursive=False)
+    nested = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    labels = [n.label for st in nested.states() for n in st.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert labels == ["fftw3_fft"]
+
+
+def test_a_gpu_plan_is_cached_per_stream():
+    """A plan's work area serves one transform at a time, so two streams never share a plan."""
+    desc = dace.data.Array(dace.complex128, [64], storage=dtypes.StorageType.GPU_Global)
+    code = gpu_fft_call(CUFFT)(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
+    key = next(line for line in code.splitlines() if "__key[" in line and "=" in line)
+    assert "__dace_current_stream" in key
+
