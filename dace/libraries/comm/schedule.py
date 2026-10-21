@@ -19,7 +19,7 @@ import dataclasses
 
 import sympy
 
-from dace import data
+from dace import data, subsets
 from dace.config import Config
 from dace.libraries.comm.nodes import Irecv, Isend, Wait, Waitall
 from dace.libraries.comm.nodes.node import CommNode, NonblockingCommNode
@@ -183,19 +183,28 @@ def _slice(candidates: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode, acc
 def _wait_for_buffers_in_flight(children: list[tn.ScheduleTreeNode], accesses, root, aliases) -> None:
     """A wait accesses the buffers of the starts whose requests it completes: no node may write their inputs, or
     access their outputs, before the wait."""
-    in_flight: dict[str, list[_Access]] = {}
+    in_flight: dict[str, list[tuple[object, _Access]]] = {}
     for child in children:
         if is_start(child):
             for connector, memlet in _items(child.out_memlets):
                 if connector == "_request":
-                    # Every start into the container: a wait may complete any of its elements
-                    in_flight.setdefault(_resolve(memlet.data, root, aliases), []).append(accesses[id(child)])
+                    request = _resolve(memlet.data, root, aliases)
+                    in_flight.setdefault(request, []).append((_own_subset(memlet, request), accesses[id(child)]))
         elif is_wait(child):
             access = accesses[id(child)]
             for memlet in child.input_memlets(root):
-                for start in in_flight.get(_resolve(memlet.data, root, aliases), []):
-                    access.reads |= start.reads
-                    access.writes |= start.writes
+                request = _resolve(memlet.data, root, aliases)
+                waited = _own_subset(memlet, request)
+                for started, start in in_flight.get(request, []):
+                    # A wait completes the starts whose requests lie in its subset of the requests
+                    if waited is None or started is None or subsets.intersects(waited, started) is not False:
+                        access.reads |= start.reads
+                        access.writes |= start.writes
+
+
+def _own_subset(memlet, container: str):
+    """The subset of ``container`` that ``memlet`` accesses, or None if it accesses it through a view."""
+    return memlet.subset if memlet.data == container else None
 
 
 def _items(memlets) -> list[tuple[str | None, object]]:
