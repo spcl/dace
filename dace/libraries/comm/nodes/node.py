@@ -259,7 +259,6 @@ def pack_noncontiguous_buffers(
     state: SDFGState,
     inputs: tuple[str, ...] = ("_inbuffer",),
     outputs: tuple[str, ...] = ("_outbuffer",),
-    preserved: tuple[str, ...] = (),
 ) -> None:
     """
     Routes the buffers of ``node`` that are not communicated in place (see :func:`in_place`) through contiguous
@@ -269,12 +268,8 @@ def pack_noncontiguous_buffers(
 
     :param inputs: The input connectors of buffers.
     :param outputs: The output connectors of buffers.
-    :param preserved: The output connectors whose buffers are not written on every process (e.g., the output of a
-                      ``Gather`` off its root): their transients are also copied into, so that the copy back writes
-                      the values they had.
     """
     packed: dict[tuple[str, str], str] = {}
-    copied_in: set[str] = set()
 
     def transient(memlet: Memlet, access: nodes.Node) -> str:
         key = (memlet.data, str(memlet.subset))
@@ -302,7 +297,6 @@ def pack_noncontiguous_buffers(
         if edge.dst_conn not in inputs or in_place(sdfg, state, edge, node):
             continue
         name = transient(edge.data, edge.src)
-        copied_in.add(name)
         access = copy_in(edge.src, edge.src_conn, edge.data, name)
         state.remove_edge(edge)
         state.add_edge(access, None, node, edge.dst_conn, Memlet.from_array(name, sdfg.arrays[name]))
@@ -311,17 +305,6 @@ def pack_noncontiguous_buffers(
             continue
         name = transient(edge.data, edge.dst)
         full = subsets.Range.from_array(sdfg.arrays[name])
-        if edge.src_conn in preserved and name not in copied_in:  # An in-place buffer is copied in already
-            original = state.add_access(edge.data.data)
-            node.add_in_connector(f"__{edge.src_conn}_preserved")
-            preserved_access = copy_in(original, None, edge.data, name)
-            state.add_edge(
-                preserved_access,
-                None,
-                node,
-                f"__{edge.src_conn}_preserved",
-                Memlet.from_array(name, sdfg.arrays[name]),
-            )
         access = state.add_access(name)
         state.add_edge(node, edge.src_conn, access, None, Memlet.from_array(name, sdfg.arrays[name]))
         state.add_edge(

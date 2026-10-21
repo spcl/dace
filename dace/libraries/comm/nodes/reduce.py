@@ -28,7 +28,7 @@ class ExpandReduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        pack_noncontiguous_buffers(node, parent_sdfg, parent_state, preserved=("_outbuffer",))
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
         inptr, outptr = (
             buffer_pointer(node, parent_sdfg, parent_state, "_inbuffer"),

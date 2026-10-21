@@ -194,22 +194,8 @@ def _gather_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def test_a_packed_root_output_starts_from_the_values_of_the_buffer():
-    sdfg = _gather_sdfg("gather_preserves")
-    sdfg.expand_library_nodes(recursive=False)
-    state = sdfg.start_state
-    copies = [
-        (e.src.data, e.dst.data)
-        for e in state.edges()
-        if isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
-    ]
-    packed = next(name for name in sdfg.arrays if "_packed" in name)
-    assert ("out", packed) in copies  # Before the gather
-    assert (packed, "out") in copies  # After it
-
-
 @pytest.mark.mpi
-def test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged():
+def test_a_gather_into_a_strided_buffer():
     world = _world()
     if world.Get_size() != 2:
         pytest.skip("Gathers two elements from each of two processes")
@@ -217,14 +203,12 @@ def test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged():
     x = np.full(2, rank + 1, np.float64)
     out = np.full((4, 2), -1.0)
     _compile_in_turn(_gather_sdfg("mpi_gather_strided"), world)(x=x, out=out, root=np.zeros(1, np.int32))
-    expected = np.full((4, 2), -1.0)
-    if rank == 0:
-        expected[:, 1] = [1, 1, 2, 2]
-    assert np.array_equal(out, expected)
+    if rank == 0:  # The output is undefined off the root
+        assert np.array_equal(out, [[-1, 1], [-1, 1], [-1, 2], [-1, 2]])
 
 
 @pytest.mark.mpi
-def test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged():
+def test_a_reduce_into_a_strided_buffer():
     world = _world()
     rank = world.Get_rank()
     sdfg = dace.SDFG("mpi_reduce_strided")
@@ -239,10 +223,10 @@ def test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged():
     state.add_edge(reduce, "_outbuffer", state.add_write("out"), None, Memlet("out[0:4, 1]"))
     out = np.full((4, 2), -1.0)
     _compile_in_turn(sdfg, world)(x=np.full(4, rank + 1.0), out=out, root=np.zeros(1, np.int32))
-    expected = np.full((4, 2), -1.0)
-    if rank == 0:
+    if rank == 0:  # The output is undefined off the root
+        expected = np.full((4, 2), -1.0)
         expected[:, 1] = sum(r + 1 for r in range(world.Get_size()))
-    assert np.array_equal(out, expected)
+        assert np.array_equal(out, expected)
 
 
 def test_every_comm_node_has_side_effects():
@@ -498,9 +482,8 @@ if __name__ == "__main__":
     test_a_nonblocking_collective_refuses_a_copied_buffer()
     test_a_nonblocking_allreduce_of_a_scalar_by_reference()
     test_an_allreduce_of_one_array_element()
-    test_a_packed_root_output_starts_from_the_values_of_the_buffer()
-    test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged()
-    test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged()
+    test_a_gather_into_a_strided_buffer()
+    test_a_reduce_into_a_strided_buffer()
     test_every_comm_node_has_side_effects()
     for implementation in ("MPI", "NCCL"):
         for node_type in _BUFFER_NODES:
