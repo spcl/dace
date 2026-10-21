@@ -136,7 +136,10 @@ def _state_if() -> tn.ScheduleTreeRoot:
     first = sdfg.add_state(is_start_block=True)
     second = sdfg.add_state()
     _write_tasklet(second, "1", "A[0]")
+    third = sdfg.add_state()
+    _write_tasklet(third, "2", "A[0]")
     sdfg.add_edge(first, second, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(first, third, dace.InterstateEdge("N <= 0"))
     return sdfg.as_schedule_tree()
 
 

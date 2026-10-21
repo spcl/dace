@@ -618,6 +618,70 @@ PROGRAMS.append(
 )
 
 
+def _build_sink_states() -> dace.SDFG:
+    """Two terminal states selected by complementary conditions (no common end state).
+
+    The tree must not fall through from the first terminal state into the second.
+    """
+    sdfg = dace.SDFG("sink_states")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    one = sdfg.add_state("one")
+    two = sdfg.add_state("two")
+    for state, value in ((one, 1), (two, 2)):
+        tasklet = state.add_tasklet("put", {}, {"a"}, f"a = {value}")
+        state.add_edge(tasklet, "a", state.add_write("A"), None, dace.Memlet("A[0]"))
+    sdfg.add_edge(start, one, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(start, two, dace.InterstateEdge("N <= 0"))
+    return sdfg
+
+
+def args_sink_states(seed: int = 0) -> dict:
+    return dict(A=np.zeros(1), N=4)
+
+
+PROGRAMS.append(("sink_states", _BuiltProgram("sink_states", _build_sink_states), args_sink_states))
+
+
+def _build_loop_conditional_edge() -> dace.SDFG:
+    """A loop body whose first state has a single conditional out-edge to a second state.
+
+    If the condition does not hold, only the iteration ends; the loop and the code after it continue.
+    """
+    sdfg = dace.SDFG("loop_conditional_edge")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("done", [1], dace.float64)
+    loop = dace.sdfg.state.LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    for state, name in ((first, "A"), (second, "B")):
+        tasklet = state.add_tasklet("put", {}, {"a"}, "a = 1")
+        state.add_edge(tasklet, "a", state.add_write(name), None, dace.Memlet(f"{name}[i]"))
+    loop.add_edge(first, second, dace.InterstateEdge("i % 2 == 0"))
+    after = sdfg.add_state("after")
+    tasklet = after.add_tasklet("put", {}, {"a"}, "a = 1")
+    after.add_edge(tasklet, "a", after.add_write("done"), None, dace.Memlet("done[0]"))
+    sdfg.add_edge(loop, after, dace.InterstateEdge())
+    return sdfg
+
+
+def args_loop_conditional_edge(seed: int = 0) -> dict:
+    return dict(A=np.zeros(6), B=np.zeros(6), done=np.zeros(1), N=6)
+
+
+PROGRAMS.append(
+    (
+        "loop_conditional_edge",
+        _BuiltProgram("loop_conditional_edge", _build_loop_conditional_edge),
+        args_loop_conditional_edge,
+    )
+)
+
+
 def _build_regions() -> dace.SDFG:
     """A named region (a ``NamedRegionScope``) followed by a plain region (inlined by ``sdfg_to_tree``)."""
     sdfg = dace.SDFG("regions")
