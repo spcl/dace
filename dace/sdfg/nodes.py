@@ -1384,6 +1384,14 @@ class Map:
         desc="Vectorize the innermost loop with an OpenMP simd clause",
         serialize_if=lambda m: m.omp_simd,
     )
+    omp_range_privatize = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="Give each thread a private copy of only the span of a scatter-reduced array its chunk writes "
+        "(set by RangePrivatizeScatterReductions)",
+        serialize_if=lambda m: m.omp_range_privatize,
+    )
 
     gpu_block_size = ListProperty(
         element_type=int,

@@ -38,6 +38,9 @@ from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 from dace.sdfg.validation import validate_memlet_data
 from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
+from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
+    range_private_accumulators,
+)
 
 if TYPE_CHECKING:
     from dace.codegen.targets.cuda import CUDACodeGen
@@ -526,6 +529,22 @@ _REDUCTION_TO_OMP_OP = {
     dtypes.ReductionType.Bitwise_Xor: "^",
 }
 
+#: C++ identity of each operator a range-privatized scatter (``CPUCodeGen._range_private_targets``) combines,
+#: formatted with the element type ``t``.
+_RANGE_PRIVATE_IDENTITY = {
+    dtypes.ReductionType.Sum: "{t}(0)",
+    dtypes.ReductionType.Product: "{t}(1)",
+    dtypes.ReductionType.Min: "(std::numeric_limits<{t}>::has_infinity ? std::numeric_limits<{t}>::infinity() "
+    ": std::numeric_limits<{t}>::max())",
+    dtypes.ReductionType.Max: "(std::numeric_limits<{t}>::has_infinity ? -std::numeric_limits<{t}>::infinity() "
+    ": std::numeric_limits<{t}>::lowest())",
+    dtypes.ReductionType.Logical_And: "{t}(1)",
+    dtypes.ReductionType.Logical_Or: "{t}(0)",
+    dtypes.ReductionType.Bitwise_And: "{t}(~{t}(0))",
+    dtypes.ReductionType.Bitwise_Or: "{t}(0)",
+    dtypes.ReductionType.Bitwise_Xor: "{t}(0)",
+}
+
 #: Complex element types an OpenMP array/scalar reduction can target -- only via a
 #: ``#pragma omp declare reduction`` (OpenMP has no built-in reduction for complex).
 _COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
@@ -727,6 +746,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # strictly wasted work (and would be incorrect in the rare case
         # the OMP runtime privatizes-by-value rather than by-pointer).
         self._omp_reduction_scope_stack = []
+        self._range_private_maps = {}
+        self._range_private_count = 0
         #: Per sequential-map scope: ``{data name: {'var', 'op', 'subset', 'target'}}`` for WCR
         #: accumulators hoisted into a local scalar for the duration of the loop nest. Pushed by
         #: ``_generate_MapEntry``, read by ``write_and_resolve_expr``, drained by ``_generate_MapExit``.
@@ -3711,15 +3732,153 @@ class CPUCodeGen(TargetCodeGenerator):
             out.append((op_str, clause_target, oedge.dst.data, declare))
         return one_section_per_array(out, whole_targets)
 
+    def _range_private_targets(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> dict[str, tuple]:
+        """The scatter reductions of a ``Map.omp_range_privatize`` map that lower range-privatized,
+        as ``{data name: (reduction type, ScatterIndexSources)}``; none in a CPF unit."""
+        if not map_entry.map.omp_range_privatize or cpf_lowering.standalone():
+            return {}
+        return {
+            name: plan
+            for name, plan in range_private_accumulators(state, map_entry).items()
+            if self.ptr(name, sdfg.arrays[name], sdfg).isidentifier()
+        }
+
+    def _open_range_private(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        node: nodes.MapEntry,
+        targets: dict[str, tuple],
+        function_stream: CodeIOStream,
+        result: CodeIOStream,
+        cfg: ControlFlowRegion,
+        state_id: int,
+    ) -> dict:
+        """Open the parallel region of a range-privatized map: the index pre-pass over each thread's
+        static chunk, then a private span per accumulator shadowing its pointer. Returns the plan
+        :meth:`_close_range_private` combines."""
+        function_stream.write("#include <omp.h>\n#include <limits>\n#include <vector>", cfg, state_id, node)
+        prefix = f"__rp{self._range_private_count}"
+        self._range_private_count += 1
+        groups: dict[tuple, list[str]] = {}
+        for name, (_redtype, sources) in targets.items():
+            reads = []
+            for array, index in sources.reads:
+                element = cpp.cpp_array_expr(
+                    sdfg, mmlt.Memlet(data=array, subset=subsets.Range([(i, i, 1) for i in index])), codegen=self
+                )
+                reads.append(f"(int64_t)({element})")
+            groups.setdefault((sources.loops, tuple(OrderedSet(reads))), []).append(name)
+
+        nthreads = str(node.map.omp_num_threads) if node.map.omp_num_threads > 0 else "omp_get_max_threads()"
+        lines = [f"const int {prefix}_nt = {nthreads};"]
+        lines += [f"std::vector<int64_t> {prefix}_span{g}(2 * {prefix}_nt);" for g in range(len(groups))]
+        lines += [f"#pragma omp parallel num_threads({prefix}_nt)", "{"]
+        collapse = f" collapse({node.map.collapse})" if node.map.collapse > 1 else ""
+        plan = {"prefix": prefix, "groups": [], "names": set(targets)}
+        for g, ((loops, reads), names) in enumerate(groups.items()):
+            lo, hi = f"{prefix}_lo{g}", f"{prefix}_hi{g}"
+            lines.append(
+                f"int64_t {lo} = std::numeric_limits<int64_t>::max(), {hi} = std::numeric_limits<int64_t>::min();"
+            )
+            lines.append(f"#pragma omp for schedule(static) nowait{collapse}")
+            nest = [(node, state)] + [(entry, state) for entry in loops]
+            depth = 0
+            for entry, st in nest:
+                for var, (begin, end, step), ctype in zip(
+                    entry.map.params, entry.map.range, self.map_loop_ctypes(sdfg, st, entry)
+                ):
+                    lines.append(
+                        f"for ({ctype} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; "
+                        f"{var} += {cpp.sym2cpp(step)}) {{"
+                    )
+                    depth += 1
+            for read in reads:
+                lines.append(
+                    f"{{ const int64_t {prefix}_v = {read}; {lo} = std::min({lo}, {prefix}_v); "
+                    f"{hi} = std::max({hi}, {prefix}_v); }}"
+                )
+            lines += ["}"] * depth
+            accumulators = []
+            for name in names:
+                desc = sdfg.arrays[name]
+                ptr, ctype = self.ptr(name, desc, sdfg), desc.dtype.ctype
+                redtype = targets[name][0]
+                identity = _RANGE_PRIVATE_IDENTITY[redtype].format(t=ctype)
+                row = cpp.sym2cpp(desc.strides[0])
+                lines += [
+                    f"{ctype}* const {prefix}_shared_{ptr} = {ptr};",
+                    f"std::vector<{ctype}> {prefix}_priv_{ptr}"
+                    f"({hi} >= {lo} ? ({hi} - {lo} + 1) * ({row}) : 0, {identity});",
+                    f"{ctype}* {ptr} = {hi} >= {lo} ? {prefix}_priv_{ptr}.data() - {lo} * ({row}) : {prefix}_shared_{ptr};",
+                ]
+                credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
+                accumulators.append((ptr, f"dace::wcr_fixed<{credtype}, {ctype}>", row))
+            plan["groups"].append((g, accumulators))
+        result.write("\n".join(lines), cfg, state_id, node)
+        return plan
+
+    def _close_range_private(
+        self, plan: dict, result: CodeIOStream, cfg: ControlFlowRegion, state_id: int, node: nodes.MapExit
+    ) -> None:
+        """Combine each thread's private spans into the shared accumulators and close the region:
+        plain where no other thread's span reaches, atomic elsewhere."""
+        p = plan["prefix"]
+        lines = [f"const int {p}_t = omp_get_thread_num(), {p}_T = omp_get_num_threads();"]
+        for g, _accumulators in plan["groups"]:
+            lines.append(f"{p}_span{g}[2 * {p}_t] = {p}_lo{g}; {p}_span{g}[2 * {p}_t + 1] = {p}_hi{g};")
+        lines.append("#pragma omp barrier")
+        for g, accumulators in plan["groups"]:
+            lo, hi, a, b = f"{p}_lo{g}", f"{p}_hi{g}", f"{p}_a{g}", f"{p}_b{g}"
+            lines += [
+                f"int64_t {a} = {lo}, {b} = {hi};",
+                f"for (int {p}_s = 0; {p}_s < {p}_t; ++{p}_s) {a} = std::max({a}, {p}_span{g}[2 * {p}_s + 1] + 1);",
+                f"for (int {p}_s = {p}_t + 1; {p}_s < {p}_T; ++{p}_s) {b} = std::min({b}, {p}_span{g}[2 * {p}_s] - 1);",
+                f"const int64_t {p}_e0{g} = {a} <= {b} ? {a} : {hi} + 1, {p}_e1{g} = {a} <= {b} ? {b} + 1 : {hi} + 1;",
+            ]
+            for ptr, functor, row in accumulators:
+                shared, priv, i = f"{p}_shared_{ptr}", f"{p}_priv_{ptr}", f"{p}_i"
+                parts = [
+                    (lo, f"{p}_e0{g}", "reduce_atomic"),
+                    (f"{p}_e0{g}", f"{p}_e1{g}", "reduce"),
+                    (f"{p}_e1{g}", f"{hi} + 1", "reduce_atomic"),
+                ]
+                lines.append(f"if ({hi} >= {lo}) {{")
+                for begin, end, update in parts:
+                    lines.append(
+                        f"for (int64_t {i} = ({begin}) * ({row}); {i} < ({end}) * ({row}); ++{i}) "
+                        f"{functor}::{update}({shared} + {i}, {priv}[{i} - {lo} * ({row})]);"
+                    )
+                lines.append("}")
+        lines.append("}")
+        result.write("\n".join(lines), cfg, state_id, node)
+
+    def _accumulates_into_privatized_array(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """Whether ``map_entry``'s body, nested SDFGs included, has a WCR write to an accumulator an enclosing
+        range-privatized map holds a private span of."""
+        privatized = {name for plan in self._range_private_maps.values() for name in plan["names"]}
+        if not privatized:
+            return False
+        scope = state.scope_subgraph(map_entry, include_entry=False, include_exit=True)
+        edges = list(scope.edges())
+        for node in scope.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                edges += [e for nested in node.sdfg.all_sdfgs_recursive() for st in nested.states() for e in st.edges()]
+        return any(e.data.wcr is not None and e.data.data in privatized for e in edges)
+
     def renders_simd(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         """Whether ``map_entry``'s loop carries ``simd``: ``MarkSIMDMaps`` marked it and, in a standalone
         unit, no accumulation in its body falls back to an ``omp atomic`` form.
 
         A ``simd`` region and the fallback's atomics do not mix well; vexx_k's complex scatter reaches one
         through the nested SDFG its loop calls. A write this map tree-reduces is not a fallback.
+        Nor does a loop take ``simd`` that accumulates into an enclosing map's range-privatized span: those
+        scatter writes are plain read-modify-writes, so its lanes would race on a repeated index.
         """
-        if not map_entry.map.omp_simd or not cpf_lowering.standalone():
-            return map_entry.map.omp_simd
+        if not map_entry.map.omp_simd or self._accumulates_into_privatized_array(sdfg, state, map_entry):
+            return False
+        if not cpf_lowering.standalone():
+            return True
         covered = set()
         if map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(
             self.experimental_codegen
@@ -3755,6 +3914,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result = callsite_stream
         map_header = ""
+        range_private = {}
 
         # Encapsulate map with a C scope
         needs_brace = self.map_scope_needs_brace(sdfg, state_dfg, node)
@@ -3785,12 +3945,22 @@ class CPUCodeGen(TargetCodeGenerator):
         if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
             # OpenMP header
             in_persistent = False
+            omp_reductions = []
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(
+                self.experimental_codegen
+            ):
+                omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                 in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
+                if not in_persistent:
+                    range_private = self._range_private_targets(sdfg, state_dfg, node)
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
                     # TODO(later): barriers and map_header += " nowait"
+                elif range_private:
+                    # The region opens in the range-privatized prelude; both of its loops share this schedule.
+                    map_header += "#pragma omp for schedule(static) nowait"
                 else:
                     map_header += "#pragma omp parallel for"
 
@@ -3798,7 +3968,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 map_header += "#pragma omp parallel"
 
             # OpenMP schedule properties
-            if not in_persistent:
+            if not in_persistent and not range_private:
                 if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                     schedule = " schedule("
                     if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
@@ -3833,13 +4003,11 @@ class CPUCodeGen(TargetCodeGenerator):
             # reduce is what makes reductions in parallel maps fast. The covered targets are pushed
             # onto ``_omp_reduction_scope_stack`` so the downstream ``write_and_resolve_expr`` skips
             # the now-redundant ``reduce_atomic``.
-            omp_reductions = []
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(
-                self.experimental_codegen
-            ):
-                omp_reductions = self._collect_omp_reductions(sdfg, state_dfg, node)
+            if omp_reductions:
                 declares = []
                 for op_str, clause_target, _dname, declare in omp_reductions:
+                    if _dname in range_private:
+                        continue
                     map_header += f" reduction({op_str}:{clause_target})"
                     if declare is not None and declare not in declares:
                         declares.append(declare)
@@ -3853,14 +4021,21 @@ class CPUCodeGen(TargetCodeGenerator):
             # marked one is the innermost. Stamp its verdict onto the pragma the map already has;
             # a covered reduction composes with it, the clause already sanctions reassociation
             # inside the combining op, so vector partials are legal.
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and self.renders_simd(sdfg, state_dfg, node):
+            # A range-privatized scatter accumulates without a per-lane copy, so its loop takes no ``simd``.
+            if (
+                node.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                and not range_private
+                and self.renders_simd(sdfg, state_dfg, node)
+            ):
                 head, sep, rest = map_header.partition(" for")
                 map_header = f"{head}{sep} simd{rest}"
 
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
             # target data name so the nested WCR write's covered-check (``memlet.data in
             # frame``) skips the now-redundant atomic and accumulates into the private copy.
-            self._omp_reduction_scope_stack.append({dname: op for op, _ct, dname, _dec in omp_reductions})
+            frame = {dname: op for op, _ct, dname, _dec in omp_reductions}
+            frame.update({name: redtype for name, (redtype, _sources) in range_private.items()})
+            self._omp_reduction_scope_stack.append(frame)
 
         # A sequential map's WCR accumulator lives in a local scalar for the loop's duration --
         # same arithmetic, same order, one load and one store instead of one pair per iteration.
@@ -3894,6 +4069,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     node,
                 )
 
+        if range_private:
+            self._range_private_maps[node.map] = self._open_range_private(
+                sdfg, state_dfg, node, range_private, function_stream, result, cfg, state_id
+            )
         result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
@@ -4003,6 +4182,9 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             for _ in map_node.map.range:
                 result.write("}", cfg, state_id, node)
+        range_private = self._range_private_maps.pop(map_node.map, None)
+        if range_private:
+            self._close_range_private(range_private, result, cfg, state_id, node)
 
         result.write(outer_stream.getvalue())
 

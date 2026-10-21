@@ -44,7 +44,10 @@ Order within the stage, and why:
 7. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
    -- gives the transfers step 6 just sequentialized their single ``memcpy`` / ``memset`` back, so
    the parallel-by-default copy expansion costs nothing when the cost model refuses it.
-8. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
+8. :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
+   -- after the schedules are final: a parallel map scattering into an array through data-dependent
+   indices gives each thread a private copy of only the rows its chunk writes, not of the whole array.
+9. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
 
 The two terminal hygiene passes run again at the end because this stage builds states and indices
@@ -62,6 +65,9 @@ from dace.transformation.passes.canonicalize.normalize_floor_division import Nor
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
+from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
+    RangePrivatizeScatterReductions,
+)
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
     RecomputeOversizedIntermediates,
 )
@@ -105,6 +111,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     # After the schedules are final: only a body that stays a parallel map is if-converted.
     IfConvertParallelMapBodies().apply_pass(sdfg, {})
+    RangePrivatizeScatterReductions().apply_pass(sdfg, {})
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
 
