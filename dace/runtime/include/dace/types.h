@@ -36,6 +36,7 @@
     #include <cuda_bf16.h>
     #include <cuda_fp8.h>
     #include <thrust/complex.h>
+    #define DACE_THRUST_COMPLEX
     #include "cuda/multidim_gbar.cuh"
 
     // Workaround so that the native low-precision types are scalars (for reductions)
@@ -54,6 +55,11 @@
     #include <hip/hip_fp16.h>
     #include <hip/hip_bf16.h>
     #include <hip/hip_fp8.h>
+    // rocThrust, the AMD port. Optional: without it the complex types below fall back to std.
+    #if __has_include(<thrust/complex.h>)
+        #include <thrust/complex.h>
+        #define DACE_THRUST_COMPLEX
+    #endif
 
     namespace std {
         template <> struct is_scalar<half> : std::integral_constant<bool, true> {};
@@ -109,9 +115,13 @@ namespace dace
     typedef double float64;
 
     #if defined(__CUDACC__) || defined(__HIPCC__)
-    #ifdef __CUDACC__
+    // std::complex is not usable in device code, so thrust's is preferred wherever it exists.
+    #ifdef DACE_THRUST_COMPLEX
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
+    #else
+    typedef std::complex<float> complex64;
+    typedef std::complex<double> complex128;
     #endif
     // GPU native low-precision types. Bit-identical to the CPU structs below (checked next).
     // e4m3fn == the OCP finite E4M3 (max +-448): __nv_fp8_e4m3 / __hip_fp8_e4m3, NOT the fnuz form.
