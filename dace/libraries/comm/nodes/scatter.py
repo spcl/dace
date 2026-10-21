@@ -1,9 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library
+from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
+    count_expression,
     expanded_input_connectors,
     input_descriptor_name,
     mpi_communicator,
@@ -14,7 +16,6 @@ from dace.libraries.comm.nodes.node import (
     validate_nccl_buffers,
 )
 from dace.sdfg import nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.utils import prod as _prod
 
@@ -104,12 +105,10 @@ class Scatter(CommNode):
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
+                out_count_str = count_expression(data.subset)
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(data.subset)
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root
 
@@ -136,13 +135,13 @@ class ExpandBlockScatterMPI(ExpandTransformation):
 
         code = f"""
             if (__state->{scatter_grid}_valid) {{
-                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _scatter_grid);
+                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {sym2cpp(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _scatter_grid);
             }}
         """
         if bcast_grid:
             code += f"""
                 if (__state->{bcast_grid}_valid) {{
-                    MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _bcast_grid);
+                    MPI_Bcast(_out_buffer, {sym2cpp(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _bcast_grid);
                 }}
             """
 

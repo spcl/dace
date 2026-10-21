@@ -250,14 +250,14 @@ def test_collective_expansions():
 
 def test_point_to_point_expansions():
     code = expanded_code(make_send_recv())
-    assert "ncclSend(_buffer, 4*n, ncclFloat64, int(_dest)" in code
-    assert "ncclRecv(_buffer, 4*n, ncclFloat64, int(_src)" in code
+    assert "ncclSend(_buffer, (4 * n), ncclFloat64, int(_dest)" in code
+    assert "ncclRecv(_buffer, (4 * n), ncclFloat64, int(_src)" in code
     assert code.count("__state->nccl->Launch();") == 2
 
 
 def test_strided_point_to_point_moves_rows():
     code = expanded_code(make_send_recv(columns="1:3"))
-    assert "for (long long __row = 0; __row < (8)/2; ++__row)" in code
+    assert "for (long long __row = 0; __row < 4; ++__row)" in code
     assert "ncclSend(_buffer + __row * (n), 2, ncclFloat64" in code
 
 

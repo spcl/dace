@@ -6,6 +6,7 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    count_expression,
     expanded_input_connectors,
     mpi_collective,
     mpi_communicator,
@@ -104,11 +105,9 @@ class Allgather(NonblockingCommNode):
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
+                out_count_str = count_expression(data.subset)
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(data.subset)
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str)

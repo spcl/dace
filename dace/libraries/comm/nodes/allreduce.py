@@ -6,6 +6,7 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    count_expression,
     expanded_input_connectors,
     mpi_average,
     mpi_collective,
@@ -123,7 +124,6 @@ class Allreduce(NonblockingCommNode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset)
 
         return (inbuffer, count_str), outbuffer, in_place

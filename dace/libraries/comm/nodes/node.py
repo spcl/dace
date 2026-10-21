@@ -8,6 +8,7 @@ from dace import data, dtypes, properties, subsets
 from dace.libraries.comm import environments, utils
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -39,6 +40,48 @@ def validate_integer_descriptor(desc: Any, name: str) -> None:
         raise ValueError(f"{name} connector is missing")
     if desc.dtype.base_type not in dtypes.INTEGER_TYPES:
         raise ValueError(f"{name} must be an integer")
+
+
+def integer_input(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> data.Data:
+    """The descriptor on the input ``connector`` of ``node``, which must be an integer."""
+    desc = sdutil.in_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f'{type(node).__name__} "{node.label}" {connector}')
+    return desc
+
+
+def integer_output(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> data.Data:
+    """The descriptor on the output ``connector`` of ``node``, which must be an integer."""
+    desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f'{type(node).__name__} "{node.label}" {connector}')
+    return desc
+
+
+def communicator_output(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> data.Data:
+    """The descriptor on the output ``connector`` of ``node``, which receives a communicator handle: a 64-bit integer,
+    as the ``_comm`` connector takes (see :mod:`dace.libraries.comm.communicators`)."""
+    desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
+    if desc.dtype.base_type not in (dtypes.int64, dtypes.uint64):
+        raise ValueError(f'{type(node).__name__} "{node.label}" {connector} must be a 64-bit integer handle')
+    return desc
+
+
+def count_expression(subset: subsets.Subset) -> str:
+    """The number of elements of ``subset`` as a C++ expression, parenthesized unless it is one term."""
+    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
+
+    return sym2cpp(subset.num_elements_exact())
+
+
+def mpi_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:
+    """The tasklet of an MPI expansion that runs ``code``."""
+    return nodes.Tasklet(
+        node.name,
+        expanded_input_connectors(node, state),
+        node.out_connectors,
+        code,
+        language=dtypes.Language.CPP,
+        side_effects=True,
+    )
 
 
 def external_communicator(node: nodes.Node, state: SDFGState) -> bool:
@@ -151,7 +194,7 @@ def pack_noncontiguous_buffers(
         return packed[key]
 
     for edge in list(state.in_edges(node)):
-        if edge.dst_conn not in inputs or _contiguous_memlet(sdfg, edge.data):
+        if edge.dst_conn not in inputs or _contiguous_memlet(sdfg, edge.data, node):
             continue
         name = transient(edge.data)
         full = subsets.Range.from_array(sdfg.arrays[name])
@@ -166,7 +209,7 @@ def pack_noncontiguous_buffers(
         state.remove_edge(edge)
         state.add_edge(access, None, node, edge.dst_conn, Memlet.from_array(name, sdfg.arrays[name]))
     for edge in list(state.out_edges(node)):
-        if edge.src_conn not in outputs or _contiguous_memlet(sdfg, edge.data):
+        if edge.src_conn not in outputs or _contiguous_memlet(sdfg, edge.data, node):
             continue
         name = transient(edge.data)
         full = subsets.Range.from_array(sdfg.arrays[name])
@@ -182,9 +225,15 @@ def pack_noncontiguous_buffers(
         state.remove_edge(edge)
 
 
-def _contiguous_memlet(sdfg: SDFG, memlet: Memlet) -> bool:
+def _contiguous_memlet(sdfg: SDFG, memlet: Memlet, node: "CommNode") -> bool:
+    """Whether ``memlet`` is communicated in place: one run of memory in the element order of ``node`` (see
+    :attr:`CommNode.element_order`)."""
     desc = sdfg.arrays[memlet.data]
-    return isinstance(desc, data.Scalar) or row_major_contiguous(memlet.subset, desc)
+    if isinstance(desc, data.Scalar):
+        return True
+    if node.element_order == "memory":
+        return memlet.subset.is_contiguous_subset(desc)
+    return row_major_contiguous(memlet.subset, desc)
 
 
 def mpi_collective(node: nodes.LibraryNode, name: str, args: str) -> str:
@@ -317,6 +366,7 @@ class NcclExpansion(ExpandTransformation):
             expansion.environments = set(expansion.environments) | {environments.mpi.MPI.full_class_path()}
 
 
+@properties.make_properties
 class CommNode(nodes.LibraryNode):
     """
     Abstract class representing a communication library node.
@@ -329,6 +379,15 @@ class CommNode(nodes.LibraryNode):
     holding the handle of an ``MPI_Comm`` (MPI) or ``ncclComm_t`` (NCCL) that matches its implementation. Without
     one, it communicates over its process grid (``_grid``) or the world.
     """
+
+    element_order = properties.Property(
+        dtype=str,
+        default="row_major",
+        choices=["row_major", "memory"],
+        category="Semantics",
+        desc="Order in which a buffer's elements are communicated: row_major (C order; any other layout moves "
+        "through a packed copy) or memory (as laid out, so a column-major buffer moves in place, as in Fortran MPI)",
+    )
 
     # Communication reads host control values (ranks, tags, requests) next to buffers in any memory
     bridges_storage = True
@@ -371,7 +430,7 @@ class NonblockingCommNode(CommNode):
             raise ValueError(f'The nonblocking {type(self).__name__} "{self.label}" has no _request output')
         for edge in state.in_edges(self) + state.out_edges(self):
             connector = edge.dst_conn if edge.dst is self else edge.src_conn
-            if connector in ("_inbuffer", "_outbuffer") and not _contiguous_memlet(sdfg, edge.data):
+            if connector in ("_inbuffer", "_outbuffer") and not _contiguous_memlet(sdfg, edge.data, self):
                 raise ValueError(
                     f'The nonblocking {type(self).__name__} "{self.label}" requires contiguous buffers, but '
                     f"{edge.data.data} is not"

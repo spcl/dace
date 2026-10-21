@@ -6,6 +6,7 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    count_expression,
     expanded_input_connectors,
     mpi_average,
     mpi_collective,
@@ -112,7 +113,7 @@ class ReduceScatter(NonblockingCommNode):
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
-                out_count_str = "*".join(str(s) for s in e.data.subset.size_exact())
+                out_count_str = count_expression(e.data.subset)
         if inbuffer is None or outbuffer is None:
             raise ValueError(f'ReduceScatter "{self.label}" needs an input and an output buffer')
         return inbuffer, (outbuffer, out_count_str)

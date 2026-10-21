@@ -2,11 +2,12 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import dtypes, symbolic
+from dace import dtypes
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
+    count_expression,
     expanded_input_connectors,
     mpi_collective,
     mpi_communicator,
@@ -132,7 +133,6 @@ class Bcast(NonblockingCommNode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [symbolic.symstr(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset)
 
         return (inbuffer, count_str), root

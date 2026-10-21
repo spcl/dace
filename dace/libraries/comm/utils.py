@@ -41,15 +41,18 @@ def is_access_contiguous(memlet, data):
 
 
 def create_vector_ddt(memlet, data):
+    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
+
     if is_access_contiguous(memlet, data):
         return None
     if len(data.shape) != 2:
         raise ValueError("Dimensionality of access not supported atm.")
     ddt = dict()
-    ddt["blocklen"] = str(memlet.subset.size_exact()[-1])
+    sizes = memlet.subset.size_exact()
+    ddt["blocklen"] = sym2cpp(sizes[-1])
     ddt["oldtype"] = str(MPI_DDT(data.dtype))
-    ddt["count"] = "(" + str(memlet.subset.num_elements_exact()) + ")" + "/" + str(ddt["blocklen"])
-    ddt["stride"] = str(data.strides[0])
+    ddt["count"] = sym2cpp(memlet.subset.num_elements_exact() / sizes[-1])
+    ddt["stride"] = sym2cpp(data.strides[0])
     return ddt
 
 
