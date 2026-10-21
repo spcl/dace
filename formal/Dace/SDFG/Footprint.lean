@@ -304,6 +304,9 @@ theorem read_step {st st' : St} {n : Name} {idx : Idx} {oob : Bool} {v : Val}
     (h : st.read ctx ρ n idx oob = .ok (v, st')) (hq : ctx.ElemOk ρ m₀ P.read n idx oob) : St.Step m₀ P st st' := by
   unfold St.read at h
   obtain ⟨l, hl, h⟩ := Res.bind_eq_ok.1 h
+  dsimp only at h
+  split at h
+  · cases h
   rw [Res.pure_eq_ok] at h
   cases h
   obtain ⟨d, off, hd, ho, hb, rfl⟩ := Ctx.loc_ok hl
@@ -1170,7 +1173,7 @@ theorem IterExec.fp_logs {ρ : Valuation} {s : State} {entry : NodeId} {params :
   | .headErr _, hr, _, _ => by cases hr
   | .tailErr _ _, hr, _, _ => by cases hr
   | .cons (i := i) hb hrest, hr, hinc, hal => by
-    have h₁ := OrderedExec.fp_step hb rfl hinc hal
+    have h₁ := OrderedExec.fp_step hb rfl hinc (by simpa [iterStart] using hal)
     have h₂ := IterExec.fp_logs hrest rfl hinc hal
     cases hr
     intro g hg

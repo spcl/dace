@@ -456,6 +456,32 @@ PROGRAMS.append(
 )
 
 
+def _build_uninit_read() -> dace.SDFG:
+    """``B[0] = T[0]`` where the transient ``T`` is never written.
+
+    A fresh transient is uninitialized and reading it is undefined behavior in both formal semantics
+    (``Decisions.md#D68``); the generated code reads whatever the allocation holds.
+    """
+    sdfg = dace.SDFG("uninit_read")
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("T", [1], dace.float64, transient=True)
+    state = sdfg.add_state("main")
+    tr = state.add_read("T")
+    b = state.add_write("B")
+    t = state.add_tasklet("get", {"x"}, {"y"}, "y = x")
+    state.add_edge(tr, None, t, "x", dace.Memlet("T[0]"))
+    state.add_edge(t, "y", b, None, dace.Memlet("B[0]"))
+    return sdfg
+
+
+def args_uninit_read(seed: int = 0) -> dict:
+    return dict(B=np.zeros(1))
+
+
+PROGRAMS.append(("uninit_read", _BuiltProgram("uninit_read", _build_uninit_read), args_uninit_read))
+EXPECTED_ERRORS["uninit_read"] = {"sdfg": "uninitRead", "stree": "uninitRead"}
+
+
 def _build_write_outside(name: str) -> dace.SDFG:
     """A tasklet writes ``b[2]`` through a pointer output connector bound to ``B[1:3]``.
 

@@ -125,7 +125,7 @@ theorem step {w : WcrSem} (hl : w.Lawful) {a b : St} {δ' δ : Log} (h : St.Eqv 
   refine of_eq ?_ h.2.1 (h.log.seq hδ)
   simp only [St.step_mem, h.1, hδ.1.apply_eq w hl]
 
-theorem iterStart {a b : St} (h : St.Eqv a b) : Dace.iterStart a = Dace.iterStart b := by
+theorem iterStart {a b : St} (h : St.Eqv a b) (priv : List Name) : Dace.iterStart priv a = Dace.iterStart priv b := by
   simp only [Dace.iterStart, h.1, h.2.1]
 
 end St.Eqv

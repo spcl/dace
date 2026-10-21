@@ -203,7 +203,7 @@ theorem read_shift (st : St) (n : Name) (idx : Idx) (oob : Bool) :
     (st.shift L).read ctx ρ n idx oob = (st.read ctx ρ n idx oob).map (shiftR L) := by
   unfold read
   simp only [shift_mem]
-  exact Res.bind_shift' _ fun l => by simp [Res.map]
+  exact Res.bind_shift' _ fun l => by split <;> simp_all [Res.map]
 
 theorem readMany_shift (st : St) (n : Name) (pts : List Idx) (oob : Bool) :
     (st.shift L).readMany ctx ρ n pts oob = (st.readMany ctx ρ n pts oob).map (shiftR L) := by
@@ -632,14 +632,14 @@ theorem nestedFinish_shift (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode
   refine List.foldlM_res_comm (St.shift L) _ (fun st e => ?_) _ _
   split
   · split
-    · exact Res.bind_shift' _ fun l => rfl
+    · exact Res.bind_shift' _ fun l => by split <;> rfl
     · rfl
   · rfl
 
-@[simp] theorem iterStart_shift (pre : St) : iterStart (pre.shift L) = iterStart pre := rfl
+@[simp] theorem iterStart_shift (priv : List Name) (pre : St) : iterStart priv (pre.shift L) = iterStart priv pre := rfl
 
-@[simp] theorem taskStart_shift (s : State) (entry : NodeId) (c : ConsumeNode) (l : Loc) (pre : St) (q : List Val) :
-    taskStart ctx s entry c l (pre.shift L) q = taskStart ctx s entry c l pre q := rfl
+@[simp] theorem taskStart_shift (s : State) (entry : NodeId) (c : ConsumeNode) (l : Loc) (priv : List Name) (pre : St)
+    (q : List Val) : taskStart ctx s entry c l priv (pre.shift L) q = taskStart ctx s entry c l priv pre q := rfl
 
 theorem trueEdges_shift (rg : Region) (cst : CSt) (bid : BlockId) :
     trueEdges ctx rg (cst.shift L) bid = trueEdges ctx rg cst bid := rfl
@@ -673,7 +673,7 @@ variable {ctx : Ctx} {ρ : Valuation} {s : State}
 
 /-- The map iterations depend on the pre-map state only through `iterStart`. -/
 theorem IterExec.of_iterStart_eq {entry : NodeId} {params : List Sym} {priv : List Name} {pre pre' : St}
-    {pts : List Idx} {r : Res (List Log)} (he : iterStart pre' = iterStart pre) :
+    {pts : List Idx} {r : Res (List Log)} (he : iterStart priv pre' = iterStart priv pre) :
     IterExec ctx ρ s entry params priv pre pts r → IterExec ctx ρ s entry params priv pre' pts r
   | .nil => .nil
   | .headErr hb => .headErr (he ▸ hb)

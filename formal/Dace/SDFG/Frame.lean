@@ -371,11 +371,15 @@ theorem bindInData_array_foot (d : Name) (sub : Option Subset) (oob : Bool) (pts
     simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at hr
     obtain ⟨rfl, rfl⟩ := hr
     unfold St.readMany at hrm
-    obtain ⟨ls, hf, -, rfl⟩ := St.readMany_ok ctx ρ pts [] st vs st₁ hrm
+    obtain ⟨ls, hf, -, rfl, hd⟩ := St.readMany_ok ctx ρ pts [] st vs st₁ hrm
     refine ⟨{ reads := ls.map st.mem.resolve }, ⟨rfl, rfl⟩, rfl, fun st₂ hag hv => ?_⟩
     have hf₂ : List.Forall₂ (fun p l => ctx.loc ρ st₂.mem d p oob = .ok l) pts ls :=
       hf.imp fun p l hl => (ctx.loc_congr ρ hag.1 d p oob).trans hl
-    have hrm₂ := St.readMany_of_forall₂ ctx ρ pts ls [] st₂ hf₂
+    have hd₂ : ∀ l ∈ ls, (st₂.mem.read l).isUndef = false := fun l hl => by
+      simp only [Mem.read, Mem.resolve_congr hag.1 l]
+      rw [hag.2 _ (List.mem_map_of_mem hl)]
+      exact hd l hl
+    have hrm₂ := St.readMany_of_forall₂ ctx ρ pts ls [] st₂ hf₂ hd₂
     have hres : ls.map st₂.mem.resolve = ls.map st.mem.resolve :=
       List.map_congr_left fun l _ => Mem.resolve_congr hag.1 l
     dsimp only
@@ -820,12 +824,12 @@ theorem IterExec.frame {ρ : Valuation} {entry : NodeId} {params : List Sym} {pr
       rcases List.mem_cons.1 hg with rfl | hg
       · rw [Log.dropNames_nil]; exact Log.Plain.empty.seq hpl
       · exact hpls g hg
-    · have h₁ : Mem.Agree δ.reads (iterStart pre₂).mem (iterStart pre).mem := by
+    · have h₁ : Mem.Agree δ.reads (iterStart [] pre₂).mem (iterStart [] pre).mem := by
         refine ⟨hag.1, fun l hl => hag.2 l (Log.mem_unionAll_reads List.mem_cons_self ?_)⟩
         simpa [Log.dropNames_nil, St.step, iterStart, Log.empty_seq] using hl
       have h₂ : Mem.Agree (Log.unionAll _).reads pre₂.mem pre.mem := ⟨hag.1, fun l hl => hag.2 l (by
           simp only [Log.unionAll, List.flatMap_cons, List.mem_append] at hl ⊢; exact .inr hl)⟩
-      have hc := IterExec.cons (hδ (iterStart pre₂) h₁ hv) (hit pre₂ h₂ hv)
+      have hc := IterExec.cons (hδ (iterStart [] pre₂) h₁ hv) (hit pre₂ h₂ hv)
       exact hc
 
 end

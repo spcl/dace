@@ -56,7 +56,6 @@ def _rng(*dims):
     )
 
 
-
 def test_stree_propagation_forloop():
     N = dace.symbol("N")
 

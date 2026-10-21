@@ -541,7 +541,8 @@ def mapSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (mp : MapNode)
   pure (ρ', st, pts)
 
 /-- Initial state of one iteration/task: the pre-scope memory, an empty log. -/
-def iterStart (pre : St) : St := { mem := pre.mem, log := Log.empty, vals := pre.vals }
+def iterStart (priv : List Name) (pre : St) : St :=
+  { mem := pre.mem.allocAll priv, log := Log.empty, vals := pre.vals }
 
 /-- Merge the logs of the parallel executions of a scope onto the pre-scope
 state (`Decisions.md#D3`). -/
@@ -591,9 +592,9 @@ def chunkMemName (ctx : Ctx) (s : State) (entry : NodeId) : Option Name :=
 /-- Initial state of a consume task: the pre-scope memory with the queue
 advanced past the chunk and the chunk written to its container
 (`Decisions.md#D38`). -/
-def taskStart (ctx : Ctx) (s : State) (entry : NodeId) (c : ConsumeNode) (l : Loc) (pre : St) (q : List Val) :
-    St :=
-  let m := pre.mem.setQueue l (q.drop c.chunksize)
+def taskStart (ctx : Ctx) (s : State) (entry : NodeId) (c : ConsumeNode) (l : Loc) (priv : List Name) (pre : St)
+    (q : List Val) : St :=
+  let m := (pre.mem.allocAll priv).setQueue l (q.drop c.chunksize)
   { mem := match chunkMemName ctx s entry with
       | some name => m.writeChunk name (q.take c.chunksize)
       | none => m,
@@ -698,7 +699,9 @@ def nestedFinish (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (aliased
       match s.dstEndpoint e with
       | .code key => do
         let l ← ctx'.loc ρ' m₂ c []
-        pure (st.setVal key (m₂.read l))
+        match (m₂.read l).defined? with
+        | some v => pure (st.setVal key v)
+        | none => .err (.uninitRead c [])
       | _ => pure st
     | _, _ => pure st) st
 

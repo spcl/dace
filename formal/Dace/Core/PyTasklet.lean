@@ -67,6 +67,7 @@ def castToInt : Val → Int
   | .rat q => q.num.tdiv (q.den : Int)   -- `Int./` is Euclidean; C casts truncate toward zero
   | .float f => (f.toInt64).toInt
   | .bool b => if b then 1 else 0
+  | .undef => 0
 
 /-- Coerce an assigned value to an output connector's declared dtype. -/
 def coerce : Dtype → Val → Val

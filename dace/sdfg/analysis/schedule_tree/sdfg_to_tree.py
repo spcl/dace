@@ -612,9 +612,7 @@ def _unstructured_end_label(region: ControlFlowRegion, minted_labels: set[str]) 
     return label
 
 
-def _structured_chain_schedule_tree(
-    region: ControlFlowRegion, minted_labels: set[str]
-) -> list[tn.ScheduleTreeNode]:
+def _structured_chain_schedule_tree(region: ControlFlowRegion, minted_labels: set[str]) -> list[tn.ScheduleTreeNode]:
     """
     Converts a region without branching edges to a linear sequence of nodes.
 
@@ -705,7 +703,9 @@ def _block_schedule_tree(block: ControlFlowBlock, minted_labels: set[str] | None
 
     if isinstance(block, ConditionalBlock):
         result: list[tn.ScheduleTreeNode] = []
-        if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1], minted_labels))
+        if_node = tn.IfScope(
+            condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1], minted_labels)
+        )
         result.append(if_node)
         for cond, branch_body in block.branches[1:]:
             if cond is not None:

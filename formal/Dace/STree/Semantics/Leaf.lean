@@ -136,7 +136,8 @@ def mapSetupT (tc : TCtx) (sc : SibCtx) (mp : MapNode) (cst : CSt) : Res (Valuat
     pure (ρ', pts)
 
 /-- Initial state of one iteration/task: the pre-scope memory, an empty log. -/
-def iterStartT (pre : CSt) (ρ : Valuation) : CSt := { ρ, mem := pre.mem, log := Log.empty }
+def iterStartT (priv : List Name) (pre : CSt) (ρ : Valuation) : CSt :=
+  { ρ, mem := pre.mem.allocAll priv, log := Log.empty }
 
 /-- The log contributed by one map iteration: its effects without the
 scope's private transients; control flow may not leave the iteration. -/
@@ -163,8 +164,9 @@ def consumeSetupT (tc : TCtx) (sc : SibCtx) (c : ConsumeNode) (cst : CSt) : Res 
 
 /-- Initial state of a consume task (`Decisions.md#D38`): the queue advanced
 past the chunk, the chunk written to its container (`taskStart`). -/
-def taskStartT (tc : TCtx) (d : Name) (c : ConsumeNode) (l : Loc) (pre : CSt) (ρ : Valuation) (q : List Val) : CSt :=
-  { ρ, mem := (pre.mem.setQueue l (q.drop c.chunksize)).writeChunk (tc.chunkMemName d) (q.take c.chunksize),
+def taskStartT (tc : TCtx) (d : Name) (c : ConsumeNode) (l : Loc) (priv : List Name) (pre : CSt) (ρ : Valuation)
+    (q : List Val) : CSt :=
+  { ρ, mem := ((pre.mem.allocAll priv).setQueue l (q.drop c.chunksize)).writeChunk (tc.chunkMemName d) (q.take c.chunksize),
     log := Log.empty }
 
 /-- The log and deferred pushes contributed by one consume task. -/
@@ -227,7 +229,13 @@ def programOutcome : Res (TCtl × CSt) → Res Mem
   | .ok (.cont, _) => .err (.malformed "break/continue escaping the program")
   | .ok (.goto l, _) => .err (.malformed s!"goto '{l}' escaping the schedule tree")
 
-/-- Initial control-flow state: the valuation extended by the constants. -/
-def rootStart (t : STree) (ρ₀ : Valuation) (m₀ : Mem) : CSt := { ρ := t.toSDFG.withConstants ρ₀, mem := m₀ }
+/-- The memory names defined at the start of a run of `t`: its arguments
+and `External` transients (`Decisions.md#D68`). -/
+def STree.keepAtStart (t : STree) (n : Name) : Bool := t.containers.any fun (a, d) => a == n && d.definedAtStart
+
+/-- The state a run of `t` starts from: the constants in the valuation,
+everything but the arguments and `External` transients uninitialized. -/
+def rootStart (t : STree) (ρ₀ : Valuation) (m₀ : Mem) : CSt :=
+  { ρ := t.toSDFG.withConstants ρ₀, mem := m₀.restrict t.keepAtStart }
 
 end Dace

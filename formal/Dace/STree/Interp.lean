@@ -156,7 +156,7 @@ def execIter (fuel : Nat) (tc : TCtx) (params : List Sym) (body : List SNode) (p
     match pts with
     | [] => some (.ok [])
     | i :: rest =>
-      match execList fuel tc body false {} body (iterStartT pre (pre.ρ.bindIdx params i)) with
+      match execList fuel tc body false {} body (iterStartT priv pre (pre.ρ.bindIdx params i)) with
       | none => none
       | some res =>
         match iterLog priv res with
@@ -184,7 +184,7 @@ def execConsume (fuel : Nat) (tc : TCtx) (ρ : Valuation) (c : ConsumeNode) (d :
         match (0 ≤ (0 : Int) && (0 : Int) < np) with
         | true =>
           match execList fuel (tc.consuming d) body false {} body
-                  (taskStartT tc d c l pre (Valuation.set ρ c.peIndex (.int 0)) q) with
+                  (taskStartT tc d c l priv pre (Valuation.set ρ c.peIndex (.int 0)) q) with
           | none => none
           | some res =>
             match taskOutcome priv l res with

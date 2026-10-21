@@ -32,7 +32,7 @@ namespace Dace
 /-- Reasons for an erroneous outcome.  Three classes (`Decisions.md#D59`):
 
 * **undefined behavior** (`race`, `stuckPop`, `undefinedExpr`,
-  `undefinedSubset`, `unsetRef`, `outOfBounds`, `outsideSubset`, `taskletUndefined`): the
+  `undefinedSubset`, `unsetRef`, `outOfBounds`, `outsideSubset`, `uninitRead`, `taskletUndefined`): the
   program is valid
   but this execution has no defined result;
 * `malformed`: situations that well-formedness (`SDFG.WF`, `STree.check`)
@@ -58,6 +58,8 @@ inductive ErrReason where
   /-- Element write through a pointer output connector outside the points
   of the memlet's subset (`Decisions.md#D67`). -/
   | outsideSubset (n : Name) (idx : Idx)
+  /-- Element read of an uninitialized cell (`Decisions.md#D68`). -/
+  | uninitRead (n : Name) (idx : Idx)
   /-- The tasklet interpretation is undefined for these inputs. -/
   | taskletUndefined (label : String)
   /-- The library-node interpretation (`Interp.library`) is undefined for
@@ -85,6 +87,7 @@ def ErrReason.toString : ErrReason → String
   | .unsetRef n => s!"reference '{n}' accessed before it was set"
   | .outOfBounds n idx => s!"out-of-bounds access {idx} of '{n}'"
   | .outsideSubset n idx => s!"write {idx} of '{n}' outside the memlet subset"
+  | .uninitRead n idx => s!"read of the uninitialized element {idx} of '{n}'"
   | .taskletUndefined label => s!"tasklet '{label}' is undefined for its inputs"
   | .libraryUndefined cp => s!"library node '{cp}' is undefined for its inputs"
   | .ambiguousTransition b => s!"several outgoing interstate edges of block {b} are true"
@@ -112,6 +115,7 @@ def ErrReason.tag : ErrReason → String
   | .unsetRef _ => "unsetRef"
   | .outOfBounds _ _ => "outOfBounds"
   | .outsideSubset _ _ => "outsideSubset"
+  | .uninitRead _ _ => "uninitRead"
   | .taskletUndefined _ => "taskletUndefined"
   | .libraryUndefined _ => "libraryUndefined"
   | .ambiguousTransition _ => "ambiguousTransition"
@@ -277,7 +281,7 @@ def exprInterp (ctx : Ctx) (ρ : Valuation) (m : Mem) : ExprInterp :=
   { ctx.I.expr with
     readData := fun n idx =>
       match ctx.loc ρ m n idx with
-      | .ok l => some (m.read l)
+      | .ok l => (m.read l).defined?
       | .err _ => none }
 
 /-- Valuation extended by scalar containers named bare in expressions
@@ -290,7 +294,7 @@ def val (ctx : Ctx) (ρ : Valuation) (m : Mem) : Valuation :=
       | some d =>
         if d.isScalar then
           match ctx.loc ρ m x [] with
-          | .ok l => some (m.read l)
+          | .ok l => (m.read l).defined?
           | .err _ => none
         else none
       | none => none
@@ -356,7 +360,9 @@ def setVal (st : St) (key : NodeId × Conn) (v : Val) : St :=
 `allow_oob` flag of the memlet the read goes through (`Decisions.md#D65`). -/
 def read (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (idx : Idx) (oob : Bool) : Res (Val × St) := do
   let l ← ctx.loc ρ st.mem n idx oob
-  pure (st.mem.read l, st.logged { reads := [st.mem.resolve l] })
+  let v := st.mem.read l
+  if v.isUndef then .err (.uninitRead n idx)
+  else pure (v, st.logged { reads := [st.mem.resolve l] })
 
 /-- Read several elements in order. -/
 def readMany (ctx : Ctx) (ρ : Valuation) (st : St) (n : Name) (pts : List Idx) (oob : Bool) :
@@ -591,6 +597,58 @@ def isViewDef (ctx : Ctx) (s : State) (e : DEdge) : Bool :=
    | none => false)
 
 end Ctx
+
+/-! ## Program start (`Decisions.md#D68`) -/
+
+/-- Is the container defined at program start: a non-transient container
+(an argument) or an `External` transient? -/
+def DataDesc.definedAtStart (d : DataDesc) : Bool := !d.transient || d.lifetime == .external
+
+mutual
+
+/-- Memory names of the `External` transients of an SDFG invoked under the
+memory-name prefix `pfx` and of the SDFGs nested in it (`Ctx.enter`). -/
+def SDFG.externalNames (pfx : String) : SDFG → List Name
+  | ⟨_, arrays, _, _, _, top, _⟩ =>
+    (arrays.filter fun (_, d) => d.transient && d.lifetime == .external).map (pfx ++ ·.1) ++
+      Region.externalNames pfx top
+
+def Region.externalNames (pfx : String) : Region → List Name
+  | ⟨_, _, blocks, _, _⟩ => Blocks.externalNames pfx blocks
+
+def Blocks.externalNames (pfx : String) : List Block → List Name
+  | [] => []
+  | b :: bs => Block.externalNames pfx b ++ Blocks.externalNames pfx bs
+
+def Block.externalNames (pfx : String) : Block → List Name
+  | .state ⟨_, nodes, _, _⟩ => DNodes.externalNames pfx nodes
+  | .region r => Region.externalNames pfx r
+  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.externalNames pfx body
+  | .cond _ brs => Branches.externalNames pfx brs
+  | .breakBlock | .continueBlock | .returnBlock => []
+
+def Branches.externalNames (pfx : String) : List (Option Expr × Region) → List Name
+  | [] => []
+  | (_, r) :: rest => Region.externalNames pfx r ++ Branches.externalNames pfx rest
+
+def DNodes.externalNames (pfx : String) : List DNode → List Name
+  | [] => []
+  | ⟨id, _, _, _, _, kind⟩ :: ns => NodeKind.externalNames pfx id kind ++ DNodes.externalNames pfx ns
+
+def NodeKind.externalNames (pfx : String) (id : NodeId) : NodeKind → List Name
+  | .nested g _ _ => SDFG.externalNames (pfx ++ g.name ++ "#" ++ toString id ++ "/") g
+  | _ => []
+
+end
+
+/-- The memory names defined at the start of a run of `g`: its arguments
+and the `External` transients at any nesting depth. -/
+def SDFG.keepAtStart (g : SDFG) (n : Name) : Bool :=
+  g.arrays.any (fun (a, d) => a == n && d.definedAtStart) || (SDFG.externalNames "" g).contains n
+
+/-- The memory a run of `g` starts from: everything but its arguments and
+`External` transients is uninitialized. -/
+def SDFG.startMem (g : SDFG) (m : Mem) : Mem := m.restrict g.keepAtStart
 
 /-! ## Private transients of a scope -/
 

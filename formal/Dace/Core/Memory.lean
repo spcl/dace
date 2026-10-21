@@ -162,6 +162,42 @@ theorem read_write_other (m : Mem) (l l' : Loc) (v : Val) (h : m.resolve l' ≠ 
   simp [read, write, resolve, resolveFuel_set_cells] at *
   exact Function.update_of_ne h _ _
 
+/-! ### Allocation (`Decisions.md#D68`) -/
+
+/-- Allocate the container stored under memory name `name`: all its cells
+become uninitialized and its queues empty.  Alias bindings are unchanged. -/
+def alloc (m : Mem) (name : Name) : Mem :=
+  { m with cells := fun l => if l.name = name then .undef else m.cells l,
+           queues := fun l => if l.name = name then [] else m.queues l }
+
+/-- Allocate several containers. -/
+def allocAll (m : Mem) (names : List Name) : Mem := names.foldl alloc m
+
+/-- Keep only the containers whose memory names satisfy `keep`; every other
+location is uninitialized with an empty queue (program start). -/
+def restrict (m : Mem) (keep : Name → Bool) : Mem :=
+  { m with cells := fun l => if keep l.name then m.cells l else .undef,
+           queues := fun l => if keep l.name then m.queues l else [] }
+
+@[simp] theorem alloc_aliases (m : Mem) (name : Name) : (m.alloc name).aliases = m.aliases := rfl
+
+@[simp] theorem allocAll_aliases (m : Mem) (names : List Name) : (m.allocAll names).aliases = m.aliases := by
+  induction names generalizing m with
+  | nil => rfl
+  | cons n ns ih => exact (ih (m.alloc n)).trans rfl
+
+@[simp] theorem allocAll_nil (m : Mem) : m.allocAll [] = m := rfl
+
+theorem resolveFuel_aliases {m m' : Mem} (h : m.aliases = m'.aliases) (n : Nat) (l : Loc) :
+    m.resolveFuel n l = m'.resolveFuel n l := by
+  induction n generalizing l with
+  | zero => rfl
+  | succ n ih => simp only [resolveFuel, h, ih]
+
+@[simp] theorem resolve_allocAll (m : Mem) (names : List Name) (l : Loc) :
+    (m.allocAll names).resolve l = m.resolve l :=
+  resolveFuel_aliases (allocAll_aliases m names) 64 l
+
 end Mem
 
 end Dace

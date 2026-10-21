@@ -75,11 +75,15 @@ def _inward_and_wcr_sdfg() -> dace.SDFG:
     read_a = state.add_read("A")
     tmp = state.add_access("tmp")
     write_b = state.add_write("B")
-    state.add_memlet_path(read_a, entry, tmp,
-                          memlet=dace.Memlet("A[i, 0:3]", other_subset=dace.subsets.Range([(0, 2, 1)])))
-    state.add_memlet_path(tmp, exit_, write_b,
-                          memlet=dace.Memlet("B[0:3]", wcr="lambda a, b: a + b",
-                                             other_subset=dace.subsets.Range([(0, 2, 1)])))
+    state.add_memlet_path(
+        read_a, entry, tmp, memlet=dace.Memlet("A[i, 0:3]", other_subset=dace.subsets.Range([(0, 2, 1)]))
+    )
+    state.add_memlet_path(
+        tmp,
+        exit_,
+        write_b,
+        memlet=dace.Memlet("B[0:3]", wcr="lambda a, b: a + b", other_subset=dace.subsets.Range([(0, 2, 1)])),
+    )
     sdfg.validate()
     return sdfg
 

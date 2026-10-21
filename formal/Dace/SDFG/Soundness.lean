@@ -435,7 +435,7 @@ theorem execSDFG_sound (fuel : Nat) {ctx : Ctx} {ρ : Valuation} {m : Mem} {g : 
 theorem SDFG.run_sound (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (fuel : Nat) {r : Res Mem}
     (h : SDFG.run I g ρ₀ m₀ fuel = some r) : SDFG.Exec I g ρ₀ m₀ r := by
   unfold SDFG.run at h
-  cases hx : execSDFG fuel { I, g, pfx := "" } ρ₀ m₀ g with
+  cases hx : execSDFG fuel { I, g, pfx := "" } ρ₀ (g.startMem m₀) g with
   | none => rw [hx] at h; cases h
   | some res =>
     rw [hx] at h

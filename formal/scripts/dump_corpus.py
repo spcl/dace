@@ -24,8 +24,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import dace  # noqa: E402
 from corpus_programs import PROGRAMS  # noqa: E402
+
+import dace  # noqa: E402
 from dace.sdfg.analysis.schedule_tree import serialize as stree_serialize  # noqa: E402
 from dace.transformation.dataflow import MapTiling  # noqa: E402
 

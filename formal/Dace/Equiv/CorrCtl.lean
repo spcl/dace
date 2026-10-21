@@ -977,6 +977,8 @@ def sctx (I : Interp) (g : SDFG) : Ctx := { I, g, pfx := "" }
 structure ProgCorr (I : Interp) (g : SDFG) (t : STree) : Prop where
   arrays : t.containers = g.arrays
   consts : t.toSDFG.withConstants = g.withConstants
+  /-- Both programs start from the same memory (`Decisions.md#D68`). -/
+  start : t.keepAtStart = g.keepAtStart
   reg : RegCorr (sctx I g) (TCtx.ofTree I t) g.top g.top.start t.children
 
 /-- **Programs**: every outcome of the tree is an outcome of the SDFG, or the
@@ -987,8 +989,8 @@ theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) 
   obtain ⟨res, hx, rfl⟩ := ht
   have he : (TCtx.ofTree I t).ctx.erase = (sctx I g).erase :=
     Ctx.erase_eq_of rfl rfl (by simp [TCtx.ofTree, STree.toSDFG, sctx, hc.arrays])
-  have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := m₀ } := by
-    simp [rootStart, hc.consts]
+  have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := g.startMem m₀ } := by
+    simp [rootStart, hc.consts, hc.start, SDFG.startMem]
   rw [hstart] at hx
   rcases (hc.reg.matched he rfl HeadOk.nil (ListExec.append_nil hx)).toOut with
     ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩

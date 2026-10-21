@@ -860,9 +860,9 @@ by a run of an iteration of the old body, comparing the logs without the
 map's private transients. -/
 def BodyMatchedE (ctx : Ctx) (s' s : State) (M : NodeId) : Prop :=
   ∀ (ρ : Valuation) (pre : St) (r' : Res St),
-    OrderedExec ctx ρ s' (s'.scopeNodes M) (s'.directChildren (some M)) (iterStart pre) r' →
+    OrderedExec ctx ρ s' (s'.scopeNodes M) (s'.directChildren (some M)) (iterStart (ctx.privateTransients s M) pre) r' →
       MatchedE (fun a' a => Log.Le (a'.log.dropNames (ctx.privateTransients s M)) (a.log.dropNames (ctx.privateTransients s M)))
-        (OrderedExec ctx ρ s (s.scopeNodes M) (s.directChildren (some M)) (iterStart pre)) r'
+        (OrderedExec ctx ρ s (s.scopeNodes M) (s.directChildren (some M)) (iterStart (ctx.privateTransients s M) pre)) r'
 
 /-! ## The matching -/
 

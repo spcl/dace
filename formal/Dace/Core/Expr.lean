@@ -46,9 +46,22 @@ inductive Val where
   | rat (q : ℚ)
   | float (f : Float)
   | bool (b : Bool)
+  /-- Content of an uninitialized cell (`Decisions.md#D68`): never the
+  result of a computation; reading it is undefined behavior. -/
+  | undef
   deriving Inhabited, Repr
 
 namespace Val
+
+/-- Is this the content of an uninitialized cell? -/
+def isUndef : Val → Bool
+  | undef => true
+  | _ => false
+
+/-- The value of a cell, `none` when uninitialized. -/
+def defined? : Val → Option Val
+  | undef => none
+  | v => some v
 
 /-- Floats are compared bitwise so that `Val` has a lawful boolean equality. -/
 def beq : Val → Val → Bool
@@ -75,18 +88,20 @@ def toBool? : Val → Option Bool
   | int v => some (v != 0)
   | rat q => some (q != 0)
   | float f => some (f != 0.0)
+  | undef => none
 
 def toRat? : Val → Option ℚ
   | int v => some v
   | rat q => some q
   | bool b => some (if b then 1 else 0)
-  | float _ => none
+  | float _ | undef => none
 
 def toFloat : Val → Float
   | int v => Float.ofInt v
   | rat q => Float.ofInt q.num / Float.ofNat q.den
   | float f => f
   | bool b => if b then 1.0 else 0.0
+  | undef => 0.0
 
 def isFloat : Val → Bool
   | float _ => true
@@ -364,6 +379,7 @@ def floatArith (op : BinOp) (a b : Float) : Option Val :=
 
 def arith (op : BinOp) (x y : Val) : Option Val :=
   match x, y with
+  | .undef, _ | _, .undef => none
   | .int a, .int b => intArith op a b
   | .bool a, .bool b =>
     match op with
@@ -413,6 +429,7 @@ def unary (op : UnOp) : Val → Option Val
     | .not => some (.bool (!b))
     | .bitNot => some (.bool (!b))
     | .abs | .floor | .ceil => some (.int (if b then 1 else 0))
+  | .undef => none
 
 end Eval
 

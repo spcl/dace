@@ -2168,4 +2168,3 @@ def _tighten_clipped_tiles(
     if not changed:
         return prop_subset
     return subsets.Range(new_ranges)
-

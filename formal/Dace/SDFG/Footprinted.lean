@@ -589,20 +589,37 @@ namespace St
 
 variable (ctx : Ctx) (ρ : Valuation)
 
-theorem readAt_foot (w : WcrSem) (l : Loc) :
-    FootA w (fun st => .ok (st.mem.read l, st.logged { reads := [st.mem.resolve l] })) := by
+/-- The checked element read at a location (the body of `St.read`). -/
+def readAt (st : St) (n : Name) (idx : Idx) (l : Loc) : Res (Val × St) :=
+  if (st.mem.read l).isUndef then .err (.uninitRead n idx)
+  else .ok (st.mem.read l, st.logged { reads := [st.mem.resolve l] })
+
+theorem read_eq (st : St) (n : Name) (idx : Idx) (oob : Bool) :
+    st.read ctx ρ n idx oob = (ctx.loc ρ st.mem n idx oob >>= fun l => st.readAt n idx l) := rfl
+
+theorem readAt_foot (w : WcrSem) (n : Name) (idx : Idx) (l : Loc) :
+    FootA w (fun st => st.readAt n idx l) := by
   intro st a st' h
-  simp only [Res.ok_inj, Prod.mk.injEq] at h
-  obtain ⟨rfl, rfl⟩ := h
-  refine ⟨{ reads := [st.mem.resolve l] }, ⟨rfl, rfl⟩, rfl, fun st₂ hag hv => ?_⟩
-  have hr : st₂.mem.resolve l = st.mem.resolve l := Mem.resolve_congr hag.1 l
-  simp only [Mem.read, hr, hag.2 _ List.mem_cons_self, Res.ok_inj, Prod.mk.injEq, true_and]
-  rfl
+  dsimp only at h
+  unfold readAt at h
+  split at h
+  · cases h
+  · rename_i hu
+    simp only [Res.ok_inj, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    refine ⟨{ reads := [st.mem.resolve l] }, ⟨rfl, rfl⟩, rfl, fun st₂ hag hv => ?_⟩
+    have hr : st₂.mem.resolve l = st.mem.resolve l := Mem.resolve_congr hag.1 l
+    have hc : st₂.mem.read l = st.mem.read l := by
+      simp only [Mem.read, hr, hag.2 _ List.mem_cons_self]
+    dsimp only
+    unfold readAt
+    rw [if_neg (by rw [hc]; exact hu), hc, hr]
+    rfl
 
 theorem read_foot (w : WcrSem) (n : Name) (idx : Idx) (oob : Bool) :
     FootA w (fun st => st.read ctx ρ n idx oob) :=
   FootA.bind_det (h := fun st => ctx.loc ρ st.mem n idx oob) (fun _ _ ha => ctx.loc_congr ρ ha _ _ _)
-    (fun l => readAt_foot w l)
+    (fun l => readAt_foot w n idx l)
 
 theorem writeAt_foot (w : WcrSem) (l : Loc) (v : Val) :
     Foot w (fun st => .ok
@@ -671,11 +688,12 @@ theorem readMany_ok {n : Name} {oob : Bool} :
         let (v, st) ← st.read ctx ρ n p oob
         pure (acc ++ [v], st)) (acc, st) = .ok (vs, st') →
       ∃ ls : List Loc, List.Forall₂ (fun p l => ctx.loc ρ st.mem n p oob = .ok l) pts ls ∧
-        vs = acc ++ ls.map st.mem.read ∧ st' = st.logged { reads := ls.map st.mem.resolve }
+        vs = acc ++ ls.map st.mem.read ∧ st' = st.logged { reads := ls.map st.mem.resolve } ∧
+        ∀ l ∈ ls, (st.mem.read l).isUndef = false
   | [], acc, st, vs, st', h => by
     simp only [List.foldlM_nil, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
-    exact ⟨[], .nil, by simp, by simp [logged_reads_nil]⟩
+    exact ⟨[], .nil, by simp, by simp [logged_reads_nil], by simp⟩
   | p :: ps, acc, st, vs, st', h => by
     simp only [List.foldlM_cons] at h
     cases hl : ctx.loc ρ st.mem n p oob with
@@ -683,25 +701,36 @@ theorem readMany_ok {n : Name} {oob : Bool} :
       simp only [read, hl] at h
       cases h
     | ok l =>
-      simp only [read, hl] at h
-      obtain ⟨ls, hf, hv, hs⟩ := readMany_ok ps _ _ vs st' h
-      refine ⟨l :: ls, .cons hl hf, by rw [hv]; simp [logged], ?_⟩
-      rw [hs, logged_reads_logged]
-      rfl
+      cases hu : (st.mem.read l).isUndef with
+      | true => simp only [read, hl, hu, Res.ok_bind, if_true, Res.err_bind] at h; cases h
+      | false =>
+        simp only [read, hl, hu, Res.ok_bind, Bool.false_eq_true, if_false, Res.pure_eq] at h
+        obtain ⟨ls, hf, hv, hs, hd⟩ := readMany_ok ps _ _ vs st' h
+        refine ⟨l :: ls, .cons hl hf, by rw [hv]; simp [logged], ?_, ?_⟩
+        · rw [hs, logged_reads_logged]
+          rfl
+        · intro l' hl'
+          rcases List.mem_cons.1 hl' with rfl | hl'
+          · exact hu
+          · have := hd l' hl'
+            simpa [logged] using this
 
 /-- Conversely, `readMany` succeeds when all its points have locations. -/
 theorem readMany_of_forall₂ {n : Name} {oob : Bool} :
     ∀ (pts : List Idx) (ls : List Loc) (acc : List Val) (st : St),
       List.Forall₂ (fun p l => ctx.loc ρ st.mem n p oob = .ok l) pts ls →
+      (∀ l ∈ ls, (st.mem.read l).isUndef = false) →
       pts.foldlM (fun (acc, st) p => do
         let (v, st) ← st.read ctx ρ n p oob
         pure (acc ++ [v], st)) (acc, st) =
         .ok (acc ++ ls.map st.mem.read, st.logged { reads := ls.map st.mem.resolve })
-  | [], [], acc, st, .nil => by simp [logged_reads_nil]
-  | p :: ps, l :: ls, acc, st, .cons hl hf => by
+  | [], [], acc, st, .nil, _ => by simp [logged_reads_nil]
+  | p :: ps, l :: ls, acc, st, .cons hl hf, hd => by
     have e := readMany_of_forall₂ ps ls (acc ++ [st.mem.read l]) (st.logged { reads := [st.mem.resolve l] }) hf
+      (fun l' hl' => by simpa [logged] using hd l' (List.mem_cons_of_mem _ hl'))
     rw [logged_reads_logged] at e
-    simp only [List.foldlM_cons, read, hl]
+    simp only [List.foldlM_cons, read, hl, hd l List.mem_cons_self, Res.ok_bind, Bool.false_eq_true, if_false,
+      Res.pure_eq]
     refine Eq.trans ?_ (e.trans ?_)
     · rfl
     · simp [logged]

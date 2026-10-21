@@ -279,7 +279,13 @@ def compare_containers(got: dict, expected: dict, tol_scale: float):
         got_entry = got[cname]
         try:
             exp_arr = entry_to_array(exp_entry)
-            got_arr = entry_to_array({"dtype": exp_entry["dtype"], "shape": got_entry.get("shape", exp_entry["shape"]), "data": got_entry["data"]})
+            got_arr = entry_to_array(
+                {
+                    "dtype": exp_entry["dtype"],
+                    "shape": got_entry.get("shape", exp_entry["shape"]),
+                    "data": got_entry["data"],
+                }
+            )
         except Exception as exc:  # noqa: BLE001
             problems.append(f"{cname}: cannot parse ({exc})")
             continue
@@ -394,7 +400,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--record", action="store_true", help="record inputs/expected by running DaCe")
-    mode.add_argument("--check", "--lean", dest="check", action="store_true", help="run the Lean interpreter and compare")
+    mode.add_argument(
+        "--check", "--lean", dest="check", action="store_true", help="run the Lean interpreter and compare"
+    )
     parser.add_argument("--only", nargs="*", default=None, help="subset of corpus names or program bases")
     parser.add_argument("--corpus", default=DEFAULT_CORPUS, help="corpus directory (default: formal/tests/corpus)")
     parser.add_argument(

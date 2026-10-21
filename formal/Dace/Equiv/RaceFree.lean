@@ -407,7 +407,7 @@ theorem IterExec.fp_pairs {ctx : Ctx} {m₀ : Mem} {ρ : Valuation} {s : State} 
   | _, _, _, .tailErr _ _, hr => by cases hr
   | _, _, _, .cons hb hrest, hr => by
     cases hr
-    exact .cons (((OrderedExec.fp_step hb rfl hinc hal).2 Log.Within.empty).dropShared hna _)
+    exact .cons (((OrderedExec.fp_step hb rfl hinc (by simpa [iterStart] using hal)).2 Log.Within.empty).dropShared hna _)
       (IterExec.fp_pairs hinc hal hna hrest rfl)
 
 theorem forall₂_mem_right {α β : Type} {R : α → β → Prop} :
@@ -668,7 +668,7 @@ theorem IterExec.clean {ρ : Valuation} {entry : NodeId} {params : List Sym} {pr
   | .nil, _, _, _ => Res.Clean.ok _
   | .headErr hb, hC, hna, hok => by
     obtain ⟨G', rfl⟩ := bodyOk_succ hok
-    exact Res.Clean.err_of rfl (OrderedExec.clean hb (hC _ (List.mem_cons_self ..)) hna hok)
+    exact Res.Clean.err_of rfl (OrderedExec.clean hb (hC _ (List.mem_cons_self ..)) (by simpa [NoAlias, iterStart] using hna) hok)
   | .tailErr _ hr, hC, hna, hok => IterExec.clean hr (fun i hi => hC i (List.mem_cons_of_mem _ hi)) hna hok
   | .cons _ _, _, _, _ => Res.Clean.ok _
 

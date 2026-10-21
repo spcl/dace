@@ -191,17 +191,17 @@ inductive IterExec : TCtx → List Sym → List SNode → List Name → CSt → 
       IterExec tc params body priv pre [] (.ok [])
   | headErr {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt} {i : Idx}
       {rest : List Idx} {res : Res (TCtl × CSt)} {e : ErrReason}
-      (hb : ListExec tc body false {} body (iterStartT pre (pre.ρ.bindIdx params i)) res)
+      (hb : ListExec tc body false {} body (iterStartT priv pre (pre.ρ.bindIdx params i)) res)
       (he : iterLog priv res = .err e) :
       IterExec tc params body priv pre (i :: rest) (.err e)
   | tailErr {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt} {i : Idx}
       {rest : List Idx} {res : Res (TCtl × CSt)} {g : Log} {e : ErrReason}
-      (hb : ListExec tc body false {} body (iterStartT pre (pre.ρ.bindIdx params i)) res)
+      (hb : ListExec tc body false {} body (iterStartT priv pre (pre.ρ.bindIdx params i)) res)
       (hl : iterLog priv res = .ok g) (hr : IterExec tc params body priv pre rest (.err e)) :
       IterExec tc params body priv pre (i :: rest) (.err e)
   | cons {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt} {i : Idx}
       {rest : List Idx} {res : Res (TCtl × CSt)} {g : Log} {logs : List Log}
-      (hb : ListExec tc body false {} body (iterStartT pre (pre.ρ.bindIdx params i)) res)
+      (hb : ListExec tc body false {} body (iterStartT priv pre (pre.ρ.bindIdx params i)) res)
       (hl : iterLog priv res = .ok g) (hr : IterExec tc params body priv pre rest (.ok logs)) :
       IterExec tc params body priv pre (i :: rest) (.ok (g :: logs))
 
@@ -225,7 +225,7 @@ inductive ConsumeTasks : TCtx → Valuation → ConsumeNode → Name → List SN
       (hc : consumeCond tc.ctx ρ c pre.mem l q = .ok true) (hq : q.isEmpty = false)
       (hp : (0 ≤ p && p < np) = true)
       (hb : ListExec (tc.consuming d) body false {} body
-              (taskStartT tc d c l pre (Valuation.set ρ c.peIndex (.int p)) q) res)
+              (taskStartT tc d c l priv pre (Valuation.set ρ c.peIndex (.int p)) q) res)
       (he : taskOutcome priv l res = .err e) :
       ConsumeTasks tc ρ c d body l np priv pre q (.err e)
   | restErr {tc : TCtx} {ρ : Valuation} {c : ConsumeNode} {d : Name} {body : List SNode} {l : Loc} {np : Int}
@@ -234,7 +234,7 @@ inductive ConsumeTasks : TCtx → Valuation → ConsumeNode → Name → List SN
       (hc : consumeCond tc.ctx ρ c pre.mem l q = .ok true) (hq : q.isEmpty = false)
       (hp : (0 ≤ p && p < np) = true)
       (hb : ListExec (tc.consuming d) body false {} body
-              (taskStartT tc d c l pre (Valuation.set ρ c.peIndex (.int p)) q) res)
+              (taskStartT tc d c l priv pre (Valuation.set ρ c.peIndex (.int p)) q) res)
       (ho : taskOutcome priv l res = .ok (g, pushed))
       (hr : ConsumeTasks tc ρ c d body l np priv pre (q.drop c.chunksize) (.err e)) :
       ConsumeTasks tc ρ c d body l np priv pre q (.err e)
@@ -244,7 +244,7 @@ inductive ConsumeTasks : TCtx → Valuation → ConsumeNode → Name → List SN
       (hc : consumeCond tc.ctx ρ c pre.mem l q = .ok true) (hq : q.isEmpty = false)
       (hp : (0 ≤ p && p < np) = true)
       (hb : ListExec (tc.consuming d) body false {} body
-              (taskStartT tc d c l pre (Valuation.set ρ c.peIndex (.int p)) q) res)
+              (taskStartT tc d c l priv pre (Valuation.set ρ c.peIndex (.int p)) q) res)
       (ho : taskOutcome priv l res = .ok (g, pushed))
       (hr : ConsumeTasks tc ρ c d body l np priv pre (q.drop c.chunksize) (.ok (logs, rest, pushed'))) :
       ConsumeTasks tc ρ c d body l np priv pre q (.ok (g :: logs, rest, pushed ++ pushed'))

@@ -647,6 +647,8 @@ end CheckSound
 /-- The checker. -/
 def corrCheck (g : SDFG) (t : STree) : Except String Unit :=
   if t.containers ≠ g.arrays then .error "the descriptor repositories differ"
+  else if !(SDFG.externalNames "" g).all (fun n => g.arrays.any fun (a, d) => a == n && d.definedAtStart) then
+    .error "External transients of nested SDFGs are not compared yet"
   else if t.constants.isEmpty && g.constants.isEmpty then
     match regCheck (checkCtx g) (TCtx.ofTree Interp.uninterpreted t) (3 * Region.size g.top + 3) g.top g.top.start
         t.children with
@@ -721,6 +723,19 @@ end WithI
 
 /-! ## Main theorems -/
 
+/-- When every `External` name of the SDFG is one of its own containers
+defined at start, the tree with the same repository keeps the same names. -/
+theorem keepAtStart_eq {g : SDFG} {t : STree} (ha : t.containers = g.arrays)
+    (he : (SDFG.externalNames "" g).all (fun n => g.arrays.any fun (a, d) => a == n && d.definedAtStart) = true) :
+    t.keepAtStart = g.keepAtStart := by
+  funext n
+  simp only [STree.keepAtStart, SDFG.keepAtStart, ha]
+  cases hx : (SDFG.externalNames "" g).contains n with
+  | false => simp
+  | true =>
+    have := List.all_eq_true.1 he n (List.elem_iff.1 hx)
+    simp [this]
+
 /-- **Soundness of the checker.** -/
 theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I : Interp) : ProgCorr I g t := by
   unfold corrCheck at h
@@ -728,20 +743,25 @@ theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I :
   · cases h
   · rename_i ha
     split at h
-    · rename_i hc
-      simp only [Bool.and_eq_true, List.isEmpty_iff] at hc
-      refine ⟨by simpa using ha, ?_, ?_⟩
-      · funext ρ x
-        simp [SDFG.withConstants, STree.toSDFG, hc.1, hc.2]
-      · split at h
-        · rename_i hr
-          obtain ⟨pre, hpre, hc⟩ := regCheck_sound _ _ _ _ _ hr
-          rw [List.append_nil] at hpre
-          subst hpre
-          exact RegCorr.withI Interp.uninterpreted I hc
-        · cases h
-        · cases h
     · cases h
+    · rename_i hex
+      simp only [Bool.not_eq_true', Bool.not_eq_false] at hex
+      split at h
+      · rename_i hc
+        simp only [Bool.and_eq_true, List.isEmpty_iff] at hc
+        have ha' : t.containers = g.arrays := by simpa using ha
+        refine ⟨ha', ?_, keepAtStart_eq ha' (by simpa using hex), ?_⟩
+        · funext ρ x
+          simp [SDFG.withConstants, STree.toSDFG, hc.1, hc.2]
+        · split at h
+          · rename_i hr
+            obtain ⟨pre, hpre, hc⟩ := regCheck_sound _ _ _ _ _ hr
+            rw [List.append_nil] at hpre
+            subst hpre
+            exact RegCorr.withI Interp.uninterpreted I hc
+          · cases h
+          · cases h
+      · cases h
 
 theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) : ProgCorr I g t := by
   unfold corr? at h

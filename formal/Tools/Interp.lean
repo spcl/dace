@@ -122,6 +122,7 @@ def fmtVal : Val → String
   | .bool b => if b then "true" else "false"
   | .float f => fmtFloat f
   | .rat q => fmtFloat (Val.toFloat (.rat q))
+  | .undef => "null"
 
 /-- Convert a JSON element to the value of a container of NumPy dtype `dtype`. -/
 def valOfJson (dtype : String) (j : Json) : Except String Val :=

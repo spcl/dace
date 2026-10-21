@@ -27,6 +27,7 @@ Custom lambdas are evaluated; if the evaluation is undefined the contribution
 degrades to `new` (`Decisions.md#D26`). -/
 def applyWith (I : ExprInterp) : WcrSem := fun op old new =>
   let bin (b : BinOp) : Val := (Eval.arith b old new).getD new
+  if old.isUndef then .undef else
   match op with
   | sum => bin .add
   | product => bin .mul
@@ -52,5 +53,9 @@ end WcrOp
 (`doc/sdfg/ir.rst:429-443`): contributions can be folded in any order. -/
 structure WcrSem.Lawful (w : WcrSem) : Prop where
   comm_assoc : ∀ op (a x y : Val), w op (w op a x) y = w op (w op a y) x
+  /-- A contribution onto an uninitialized cell leaves it uninitialized: the
+  operator reads the indeterminate old value, so any later read of the cell is
+  undefined (`Decisions.md#D68`). -/
+  undef_absorb : ∀ op (v : Val), w op .undef v = .undef
 
 end Dace

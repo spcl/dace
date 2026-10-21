@@ -124,7 +124,7 @@ def execIter (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (entry : Node
     | [] => some (.ok [])
     | i :: rest =>
       match execOrdered fuel ctx (ρ.bindIdx params i) s (s.scopeNodes entry) (s.directChildren (some entry))
-              (iterStart pre) with
+              (iterStart priv pre) with
       | none => none
       | some (.err e) => some (.err e)
       | some (.ok st) =>
@@ -146,7 +146,7 @@ def execConsume (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (entry : N
       if q.isEmpty then none
       else if (0 ≤ (0 : Int) && (0 : Int) < np) then
         match execOrdered fuel ctx (Valuation.set ρ c.peIndex (.int 0)) s (s.scopeNodes entry)
-                (s.directChildren (some entry)) (taskStart ctx s entry c l pre q) with
+                (s.directChildren (some entry)) (taskStart ctx s entry c l priv pre q) with
         | none => none
         | some (.err e) => some (.err e)
         | some (.ok st) =>
@@ -317,7 +317,7 @@ end
 the symbol valuation `ρ₀` and memory `m₀` with the given fuel.  `none` =
 fuel exhausted (or no outcome exists). -/
 def SDFG.run (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (fuel : Nat) : Option (Res Mem) :=
-  (execSDFG fuel { I, g, pfx := "" } ρ₀ m₀ g).map fun res => res.map fun x => x.2.1
+  (execSDFG fuel { I, g, pfx := "" } ρ₀ (g.startMem m₀) g).map fun res => res.map fun x => x.2.1
 
 /-! ## Sanity lemmas -/
 

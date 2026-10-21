@@ -1138,19 +1138,136 @@ theorem Region.countMentions_setBlockAt (t : Name) {i : BlockId} {b b' : Block}
       exact Region.countMentions_setChild t hc (Region.countMentions_setBlockAt t hx p c h)
     · cases h
 
+/-! ## `External` transients of nested SDFGs -/
+
+@[simp] theorem Block.externalNames_state (pfx : String) (s : State) :
+    Block.externalNames pfx (.state s) = DNodes.externalNames pfx s.nodes := by
+  cases s; rfl
+
+theorem Blocks.externalNames_set (pfx : String) :
+    ∀ {bs : List Block} {j : Nat} {x x' : Block}, bs[j]? = some x →
+      Block.externalNames pfx x' = Block.externalNames pfx x →
+        Blocks.externalNames pfx (bs.set j x') = Blocks.externalNames pfx bs
+  | [], _, _, _, h, _ => by simp at h
+  | y :: bs, 0, x, x', h, hx => by
+    simp only [List.getElem?_cons_zero, Option.some.injEq] at h
+    subst h
+    simp [Blocks.externalNames, hx]
+  | y :: bs, j + 1, x, x', h, hx => by
+    simp only [List.getElem?_cons_succ] at h
+    simp [Blocks.externalNames, Blocks.externalNames_set pfx h hx]
+
+theorem Branches.externalNames_set (pfx : String) :
+    ∀ {brs : List (Option Expr × Region)} {k : Nat} {e : Option Expr} {c c' : Region}, brs[k]? = some (e, c) →
+      Region.externalNames pfx c' = Region.externalNames pfx c →
+        Branches.externalNames pfx (brs.set k (e, c')) = Branches.externalNames pfx brs
+  | [], _, _, _, _, h, _ => by simp at h
+  | y :: brs, 0, e, c, c', h, hx => by
+    simp only [List.getElem?_cons_zero, Option.some.injEq] at h
+    subst h
+    simp [Branches.externalNames, hx]
+  | y :: brs, k + 1, e, c, c', h, hx => by
+    obtain ⟨c₀, r₀⟩ := y
+    simp only [List.getElem?_cons_succ] at h
+    simp [Branches.externalNames, Branches.externalNames_set pfx h hx]
+
+theorem Region.externalNames_setBlocks (pfx : String) {r : Region} {j : BlockId} {x x' : Block}
+    (hj : r.block? j = some x) (hx : Block.externalNames pfx x' = Block.externalNames pfx x) :
+    Region.externalNames pfx { r with blocks := r.blocks.set j x' } = Region.externalNames pfx r := by
+  obtain ⟨_, _, blocks, _, edges⟩ := r
+  simp only [Region.externalNames]
+  rw [Blocks.externalNames_set pfx hj hx]
+
+theorem Region.externalNames_setChild (pfx : String) {r : Region} {st : PathStep} {c c' : Region}
+    (hc : r.child? st = some c) (h : Region.externalNames pfx c' = Region.externalNames pfx c) :
+    Region.externalNames pfx (r.setChild c' st) = Region.externalNames pfx r := by
+  cases st with
+  | sub j =>
+    simp only [Region.child?] at hc
+    split at hc
+    · rename_i c₀ hj
+      cases hc
+      simp only [Region.setChild, hj]
+      exact Region.externalNames_setBlocks pfx hj (by simp [Block.externalNames, h])
+    · cases hc
+  | body j =>
+    simp only [Region.child?] at hc
+    split at hc
+    · rename_i l hj
+      cases hc
+      simp only [Region.setChild, hj]
+      refine Region.externalNames_setBlocks pfx hj ?_
+      obtain ⟨_, _, _, _, _, _, _, _⟩ := l
+      simp only [Block.externalNames] at h ⊢
+      rw [h]
+    · cases hc
+  | branch j k =>
+    simp only [Region.child?] at hc
+    split at hc
+    · rename_i lb brs hj
+      obtain ⟨⟨e, c₀⟩, hk, rfl⟩ := Option.map_eq_some_iff.1 hc
+      simp only [Region.setChild, hj, hk]
+      exact Region.externalNames_setBlocks pfx hj (by simp [Block.externalNames, Branches.externalNames_set pfx hk h])
+    · cases hc
+
+theorem Region.externalNames_setBlockAt (pfx : String) {i : BlockId} {b b' : Block}
+    (hx : Block.externalNames pfx b' = Block.externalNames pfx b) :
+    ∀ (p : List PathStep) (r : Region), r.blockAt? p i = some b →
+      Region.externalNames pfx (r.setBlockAt p i b') = Region.externalNames pfx r
+  | [], r, h => Region.externalNames_setBlocks pfx h hx
+  | st :: p, r, h => by
+    simp only [Region.blockAt?] at h
+    split at h
+    · rename_i c hc
+      simp only [Region.setBlockAt, hc]
+      exact Region.externalNames_setChild pfx hc (Region.externalNames_setBlockAt pfx hx p c h)
+    · cases h
+
+/-- Replacing a block by one with the same nested `External` transients keeps
+the start memory (`Decisions.md#D68`). -/
+theorem SDFG.startMem_setBlockAt {g : SDFG} {p : List PathStep} {i : BlockId} {b b' : Block}
+    (hat : g.top.blockAt? p i = some b) (hx : Block.externalNames "" b' = Block.externalNames "" b) :
+    (g.setBlockAt p i b').startMem = g.startMem := by
+  have he : SDFG.externalNames "" (g.setBlockAt p i b') = SDFG.externalNames "" g := by
+    obtain ⟨_, _, _, _, _, top, _⟩ := g
+    simp only [SDFG.setBlockAt, SDFG.externalNames]
+    rw [Region.externalNames_setBlockAt "" hx p top hat]
+  have hk : (g.setBlockAt p i b').keepAtStart = g.keepAtStart := by
+    funext n
+    simp only [SDFG.keepAtStart, he]
+    rfl
+  funext m
+  simp only [SDFG.startMem, hk]
+
 /-- Is every transient of `g` with `Scope` lifetime mentioned equally often by
-`b'` and `b` (`Region.countMentions`)?  Then replacing `b` by `b'` keeps
-every private-transient set of `g` (`Ctx.agree_setBlockAt`). -/
+`b'` and `b` (`Region.countMentions`), and do both have the same nested
+`External` transients?  Then replacing `b` by `b'` keeps every
+private-transient set of `g` (`Ctx.agree_setBlockAt`) and the start memory. -/
 def sameTransientMentions? (g : SDFG) (b' b : Block) : Bool :=
-  g.arrays.all fun (t, d) =>
-    !(d.transient && decide (d.lifetime = .scope)) || Block.countMentions t b' == Block.countMentions t b
+  (g.arrays.all fun (t, d) =>
+    !(d.transient && decide (d.lifetime = .scope)) || Block.countMentions t b' == Block.countMentions t b) &&
+  Block.externalNames "" b' == Block.externalNames "" b
+
+theorem sameTransientMentions?_counts {g : SDFG} {b' b : Block} (h : sameTransientMentions? g b' b = true) :
+    (g.arrays.all fun (t, d) =>
+      !(d.transient && decide (d.lifetime = .scope)) || Block.countMentions t b' == Block.countMentions t b) = true := by
+  unfold sameTransientMentions? at h
+  simp only [Bool.and_eq_true] at h
+  exact h.1
+
+theorem sameTransientMentions?_externals {g : SDFG} {b' b : Block} (h : sameTransientMentions? g b' b = true) :
+    Block.externalNames "" b' = Block.externalNames "" b := by
+  unfold sameTransientMentions? at h
+  simp only [Bool.and_eq_true, beq_iff_eq] at h
+  exact h.2
 
 theorem sameTransientMentions?_symm {g g' : SDFG} {b' b : Block} (ha : g'.arrays = g.arrays)
     (h : sameTransientMentions? g b' b = true) : sameTransientMentions? g' b b' = true := by
   unfold sameTransientMentions? at h ⊢
   rw [ha]
-  refine List.all_eq_true.2 fun x hx => ?_
-  have := List.all_eq_true.1 h x hx
+  simp only [Bool.and_eq_true, beq_iff_eq] at h ⊢
+  refine ⟨List.all_eq_true.2 fun x hx => ?_, h.2.symm⟩
+  have := List.all_eq_true.1 h.1 x hx
   simp only [Bool.or_eq_true, beq_iff_eq] at this ⊢
   exact this.imp id Eq.symm
 
@@ -1163,7 +1280,7 @@ theorem Ctx.agree_setBlockAt {I : Interp} {pfx : String} {g : SDFG} {p : List Pa
   refine ⟨rfl, fun s entry => ?_⟩
   unfold Ctx.privateTransients
   refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
-  have h := List.all_eq_true.1 hm (t, d) hmem
+  have h := List.all_eq_true.1 (sameTransientMentions?_counts hm) (t, d) hmem
   simp only at h ⊢
   split
   · rename_i hsc
@@ -1177,7 +1294,7 @@ theorem Ctx.agree_setBlockAt {I : Interp} {pfx : String} {g : SDFG} {p : List Pa
 /-! ## Congruence for SDFGs -/
 
 theorem SDFG.Exec.intro {I : Interp} {g : SDFG} {ρ₀ : Valuation} {m₀ : Mem} {res : Res (Valuation × Mem × Log)}
-    (h : SDFGExec { I, g, pfx := "" } ρ₀ m₀ g res) : SDFG.Exec I g ρ₀ m₀ (res.map fun x => x.2.1) :=
+    (h : SDFGExec { I, g, pfx := "" } ρ₀ (g.startMem m₀) g res) : SDFG.Exec I g ρ₀ m₀ (res.map fun x => x.2.1) :=
   ⟨res, h, rfl⟩
 
 /-- Every run of the SDFG with the block replaced is matched (`MatchedE`) (with
@@ -1187,6 +1304,7 @@ theorem Congr.exec_matchedE {g : SDFG} {p : List PathStep} {i : BlockId} {b' b :
     (hs : BlockMatchedE { I, g, pfx := "" } b' b) {ρ₀ : Valuation} {m₀ : Mem} {r : Res Mem}
     (hr : SDFG.Exec I (g.setBlockAt p i b') ρ₀ m₀ r) : MatchedE Eq (SDFG.Exec I g ρ₀ m₀) r := by
   obtain ⟨res, hres, rfl⟩ := hr
+  rw [SDFG.startMem_setBlockAt hat (sameTransientMentions?_externals hm)] at hres
   have hres := SDFGExec.congr (Ctx.agree_setBlockAt (I := I) (pfx := "") hat hm) hres
   have hreg := Congr.region_setBlockAt hs p g.top hat
   cases hres with
@@ -1293,7 +1411,7 @@ without nodes (e.g. the same state renamed), at any path. -/
 theorem Congr.emptyState {g : SDFG} {p : List PathStep} {i : BlockId} {s s' : State}
     (hat : g.top.blockAt? p i = some (.state s)) (hs : s.nodes = []) (hs' : s'.nodes = [])
     (hsup : Supported g.prog) : Equiv (g.setBlockAt p i (.state s')).prog g.prog :=
-  Congr.blockEquiv hat (by simp [sameTransientMentions?, Block.countMentions, hs, hs'])
+  Congr.blockEquiv hat (by simp [sameTransientMentions?, Block.countMentions, hs, hs', DNodes.externalNames])
     (fun _ _ => emptyState_matchedE hs' hs) (fun _ _ => emptyState_matchedE hs hs') hsup
 
 /-- The sub-region "`s`, then an empty state" (an unconditional edge without
@@ -1383,6 +1501,12 @@ theorem state_thenEmpty_matchedE : ∀ cst r', BlockExec ctx cst (.state s) r' �
 
 end ThenEmpty
 
+theorem Block.externalNames_thenEmpty (s : State) :
+    Block.externalNames "" (.region s.thenEmpty) = Block.externalNames "" (.state s) := by
+  cases s
+  simp only [State.thenEmpty, Region.externalNames, Blocks.externalNames, Block.externalNames, DNodes.externalNames,
+    List.append_nil]
+
 theorem Block.countMentions_thenEmpty (t : Name) (s : State) :
     Block.countMentions t (.region s.thenEmpty) = Block.countMentions t (.state s) := by
   have : (Expr.lit (.bool true)).mentions t = false := rfl
@@ -1393,7 +1517,7 @@ theorem Block.countMentions_thenEmpty (t : Name) (s : State) :
 theorem Congr.splitEmpty {g : SDFG} {p : List PathStep} {i : BlockId} {s : State}
     (hat : g.top.blockAt? p i = some (.state s)) (hsup : Supported g.prog) :
     Equiv (g.setBlockAt p i (.region s.thenEmpty)).prog g.prog :=
-  Congr.blockEquiv hat (by simp [sameTransientMentions?, Block.countMentions_thenEmpty])
+  Congr.blockEquiv hat (by simp [sameTransientMentions?, Block.countMentions_thenEmpty, Block.externalNames_thenEmpty])
     (fun _ _ => thenEmpty_matchedE) (fun _ _ => state_thenEmpty_matchedE) hsup
 
 /-- **Instance 2 (state merge)**: the sub-region "a state, then an empty
@@ -1401,7 +1525,7 @@ state" is equivalent to the state alone. -/
 theorem Congr.mergeEmpty {g : SDFG} {p : List PathStep} {i : BlockId} {s : State}
     (hat : g.top.blockAt? p i = some (.region s.thenEmpty)) (hsup : Supported g.prog) :
     Equiv (g.setBlockAt p i (.state s)).prog g.prog :=
-  Congr.blockEquiv hat (by simp [sameTransientMentions?, Block.countMentions_thenEmpty])
+  Congr.blockEquiv hat (by simp [sameTransientMentions?, Block.countMentions_thenEmpty, Block.externalNames_thenEmpty])
     (fun _ _ => state_thenEmpty_matchedE) (fun _ _ => thenEmpty_matchedE) hsup
 
 end Dace

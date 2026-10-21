@@ -684,8 +684,10 @@ class WhileScope(LoopScope):
         result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
         result.update(
             super().input_memlets(
-                root, keep_locals=keep_locals, disallow_propagation=self._unpropagated_locals(disallow_propagation),
-                **kwargs
+                root,
+                keep_locals=keep_locals,
+                disallow_propagation=self._unpropagated_locals(disallow_propagation),
+                **kwargs,
             )
         )
         return result
@@ -699,8 +701,10 @@ class WhileScope(LoopScope):
         **kwargs,
     ) -> MemletSet:
         return super().output_memlets(
-            root, keep_locals=keep_locals, disallow_propagation=self._unpropagated_locals(disallow_propagation),
-            **kwargs
+            root,
+            keep_locals=keep_locals,
+            disallow_propagation=self._unpropagated_locals(disallow_propagation),
+            **kwargs,
         )
 
 
@@ -732,8 +736,10 @@ class DoWhileScope(LoopScope):
         result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
         result.update(
             super().input_memlets(
-                root, keep_locals=keep_locals, disallow_propagation=self._unpropagated_locals(disallow_propagation),
-                **kwargs
+                root,
+                keep_locals=keep_locals,
+                disallow_propagation=self._unpropagated_locals(disallow_propagation),
+                **kwargs,
             )
         )
         return result
@@ -747,8 +753,10 @@ class DoWhileScope(LoopScope):
         **kwargs,
     ) -> MemletSet:
         return super().output_memlets(
-            root, keep_locals=keep_locals, disallow_propagation=self._unpropagated_locals(disallow_propagation),
-            **kwargs
+            root,
+            keep_locals=keep_locals,
+            disallow_propagation=self._unpropagated_locals(disallow_propagation),
+            **kwargs,
         )
 
 

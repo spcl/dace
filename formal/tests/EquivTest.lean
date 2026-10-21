@@ -14,7 +14,7 @@ open Dace
 /-- A lawful interpretation (every WCR keeps the old value). -/
 def lawfulI : Interp := { Interp.uninterpreted with wcr := fun _ a _ => a }
 
-theorem lawfulI_lawful : lawfulI.Lawful := ⟨fun _ _ _ _ => rfl⟩
+theorem lawfulI_lawful : lawfulI.Lawful := ⟨fun _ _ _ _ => rfl, fun _ _ => rfl⟩
 
 /-- The initial memory of the counterexamples: all cells `0`. -/
 def m0 : Mem := Mem.empty (.int 0)

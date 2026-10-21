@@ -46,7 +46,10 @@ theorem keepsVals_read (ctx : Ctx) (ρ : Valuation) (n : Name) (idx : Idx) (oob 
   | err e => rw [hl] at h; cases h
   | ok l =>
     rw [hl] at h
-    simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
+    simp only [Res.ok_bind] at h
+    split at h
+    · cases h
+    simp only [Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at h
     rw [← h.2]; rfl
 
 theorem St.store_vals {ctx : Ctx} {ρ : Valuation} {st st' : St} {n : Name} {idx : Idx} {oob : Bool}
@@ -619,21 +622,21 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
       (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
       (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
       ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs) := by
-  have hrel : ∀ i, StRel (iterStart st₁) (iterStartT pre (pre.ρ.bindIdx mp.params i)) :=
-    fun i => ⟨hm, rfl, hv⟩
-  have hp : ∀ ρ', bindViews ctx ρ' s (s.directChildren (some n.id)) (iterStart st₁) = .ok (iterStart st₁) :=
+  have hrel : ∀ i, StRel (iterStart (ctx.privateTransients s n.id) st₁) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) :=
+    fun i => ⟨by simp only [iterStart, iterStartT, hm, hpriv], rfl, hv⟩
+  have hp : ∀ ρ', bindViews ctx ρ' s (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
     fun ρ' => bindViews_eq ρ' h _ _
   -- the body of one iteration
   have hbody : ∀ (i : Idx) {res : Res (TCtl × CSt)},
-      STree.ListExec tc body false {} body (iterStartT pre (pre.ρ.bindIdx mp.params i)) res →
+      STree.ListExec tc body false {} body (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res →
       (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
-        (s.directChildren (some n.id)) (iterStart st₁) (.err e)) ∨
+        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
       (∃ e, res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
-        (s.directChildren (some n.id)) (iterStart st₁) (.err e)) ∨
+        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
       ∃ st', OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
-        (iterStart st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧ st'.log = cst'.log := by
+        (iterStart (ctx.privateTransients s n.id) st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧ st'.log = cst'.log := by
     intro i res hb
-    have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT pre (pre.ρ.bindIdx mp.params i)) res := by
+    have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res := by
       rw [List.append_nil]; exact hb
     rcases ihb hb' (hrel i) with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, -, hst⟩
     · rw [← hdir] at hs
