@@ -15,6 +15,7 @@ import dace
 from dace.codegen import common
 from dace.libraries import comm
 from dace.libraries.comm import utils
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 
 
@@ -89,6 +90,8 @@ def test_a_column_major_section_packs_in_column_major_order():
     sdfg.expand_library_nodes(recursive=False)
     (packed,) = _packed(sdfg)
     assert packed.is_packed_fortran_strides() and not packed.is_packed_c_strides()
+    copies = [n for n in sdfg.start_state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 2  # Packed before the node, unpacked after it
 
 
 def test_a_transposed_view_of_a_row_major_array_packs_in_row_major_order():

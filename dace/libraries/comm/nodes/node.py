@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy as copy_module
 from collections.abc import Sequence
 from typing import Any
 
-from dace import data, dtypes, properties, subsets
+from dace import config, data, dtypes, properties, subsets
 from dace.codegen import common
 from dace.libraries.comm import environments, utils
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -271,32 +273,43 @@ def pack_noncontiguous_buffers(
                 packed_desc.strides = packed_desc._get_packed_fortran_strides()
         return packed[key]
 
-    def copy_in(src: nodes.Node, src_conn: str | None, memlet: Memlet, name: str) -> nodes.AccessNode:
-        access = state.add_access(name)
-        full = subsets.Range.from_array(sdfg.arrays[name])
-        state.add_edge(src, src_conn, access, None, Memlet(data=memlet.data, subset=memlet.subset, other_subset=full))
-        return access
+    def copy(src: nodes.Node, src_conn: str | None, dst: nodes.Node, dst_conn: str | None, src_memlet, dst_memlet):
+        """A copy between two access nodes is explicit (a ``CopyLibraryNode``), as code generation makes the copies
+        it finds before expanding library nodes; others stay copy edges. Its expansion picks the copy from the
+        storages and strides of both ends, so packing need not handle memory locations or layouts itself."""
+        if not (
+            config.Config.get_bool("compiler", "cpu", "explicit_copy")
+            and isinstance(src, nodes.AccessNode)
+            and isinstance(dst, nodes.AccessNode)
+        ):
+            memlet = Memlet(data=src_memlet.data, subset=src_memlet.subset, other_subset=dst_memlet.subset)
+            state.add_edge(src, src_conn, dst, dst_conn, memlet)
+            return
+        copy_node = CopyLibraryNode(f"copy_{src_memlet.data}_to_{dst_memlet.data}")
+        state.add_edge(src, src_conn, copy_node, CopyLibraryNode.INPUT_CONNECTOR_NAME, src_memlet)
+        state.add_edge(copy_node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, dst_conn, dst_memlet)
 
     for edge in list(state.in_edges(node)):
         if edge.dst_conn not in inputs or in_place(sdfg, state, edge, node):
             continue
         name = transient(edge.data, edge.src)
-        access = copy_in(edge.src, edge.src_conn, edge.data, name)
+        access, full = state.add_access(name), Memlet.from_array(name, sdfg.arrays[name])
+        copy(edge.src, edge.src_conn, access, None, Memlet(data=edge.data.data, subset=edge.data.subset), full)
         state.remove_edge(edge)
-        state.add_edge(access, None, node, edge.dst_conn, Memlet.from_array(name, sdfg.arrays[name]))
+        state.add_edge(access, None, node, edge.dst_conn, copy_module.deepcopy(full))
     for edge in list(state.out_edges(node)):
         if edge.src_conn not in outputs or in_place(sdfg, state, edge, node):
             continue
         name = transient(edge.data, edge.dst)
-        full = subsets.Range.from_array(sdfg.arrays[name])
-        access = state.add_access(name)
-        state.add_edge(node, edge.src_conn, access, None, Memlet.from_array(name, sdfg.arrays[name]))
-        state.add_edge(
+        access, full = state.add_access(name), Memlet.from_array(name, sdfg.arrays[name])
+        state.add_edge(node, edge.src_conn, access, None, full)
+        copy(
             access,
             None,
             edge.dst,
             edge.dst_conn,
-            Memlet(data=name, subset=full, other_subset=edge.data.subset),
+            copy_module.deepcopy(full),
+            Memlet(data=edge.data.data, subset=edge.data.subset),
         )
         state.remove_edge(edge)
 
