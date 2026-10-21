@@ -54,12 +54,13 @@ jobs:
 
     - name: Install the bench over the checkout
       # The bench pins dace to a spcl/dace@extended commit in its own ``[tool.uv.sources]``, so installing it
-      # pulls that commit over the branch under test. Reinstalling the checkout with ``--no-deps`` puts it back.
+      # pulls that commit over the branch under test. Reinstalling the checkout with ``--no-deps`` puts it back;
+      # ``--reinstall-package`` because uv otherwise counts the pin's equal version as already satisfied.
       # ``setup-dace`` puts the synced ``.venv`` on PATH, so every step below runs in that environment.
       working-directory: hpcagent-bench
       run: |
         uv pip install -e .
-        uv pip install --no-deps -e "$GITHUB_WORKSPACE"
+        uv pip install --no-deps --reinstall-package dace -e "$GITHUB_WORKSPACE"
 
     - name: The bench must measure the checkout
       # Same cwd as the sweep: from the repo root the checkout would shadow site-packages and the check
