@@ -185,20 +185,39 @@ def test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged():
     assert np.array_equal(out, expected)
 
 
-@pytest.mark.parametrize("node_type", [comm.Reduce, comm.Gather, comm.Scatter])
-def test_rooted_collective_tasklets_have_side_effects(node_type):
+def test_every_comm_node_has_side_effects():
+    library_nodes = [
+        cls
+        for cls in vars(comm.nodes).values()
+        if isinstance(cls, type) and issubclass(cls, dace.nodes.LibraryNode) and cls is not comm.nodes.node.CommNode
+    ]
+    assert library_nodes
+    for cls in library_nodes:
+        assert issubclass(cls, comm.nodes.node.CommNode), cls.__name__
+
+
+_BUFFER_NODES = [comm.Reduce, comm.Gather, comm.Scatter, comm.Allreduce, comm.Bcast, comm.Allgather, comm.Alltoall]
+
+
+@pytest.mark.parametrize("node_type", _BUFFER_NODES)
+@pytest.mark.parametrize("implementation", ["MPI", "NCCL"])
+def test_comm_tasklets_have_side_effects(node_type, implementation: str):
     """A process whose output no one reads still takes part: dead-dataflow elimination must keep the call."""
-    node = node_type(f"{node_type.__name__.lower()}")
-    sdfg = dace.SDFG(f"side_effects_{node_type.__name__.lower()}")
-    sdfg.add_array("x", [4], dace.float64)
-    sdfg.add_array("y", [4], dace.float64)
+    name = f"side_effects_{node_type.__name__.lower()}_{implementation.lower()}"
+    storage = dace.StorageType.GPU_Global if implementation == "NCCL" else dace.StorageType.Default
+    node = node_type(node_type.__name__.lower())
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [4], dace.float64, storage=storage)
+    sdfg.add_array("y", [8], dace.float64, storage=storage)
     sdfg.add_array("root", [1], dace.int32)
     state = sdfg.add_state()
     state.add_edge(state.add_read("x"), None, node, "_inbuffer", Memlet("x[0:4]"))
-    state.add_edge(state.add_read("root"), None, node, "_root", Memlet("root[0]"))
-    state.add_edge(node, "_outbuffer", state.add_write("y"), None, Memlet("y[0:4]"))
-    tasklet = node.implementations["MPI"].expansion(node, state, sdfg)
-    assert tasklet.side_effects
+    if "_root" in node.in_connectors:
+        state.add_edge(state.add_read("root"), None, node, "_root", Memlet("root[0]"))
+    out = "x" if node_type is comm.Bcast else "y"  # Bcast is in place
+    state.add_edge(node, "_outbuffer", state.add_write(out), None, Memlet(f"{out}[0:4]"))
+    expansion = node.implementations[implementation].expansion(node, state, sdfg)
+    assert expansion.side_effects
 
 
 def _scalar_reduction_sdfg(name: str, node: dace.nodes.LibraryNode, in_place: bool) -> dace.SDFG:
@@ -374,9 +393,10 @@ if __name__ == "__main__":
     test_a_packed_root_output_starts_from_the_values_of_the_buffer()
     test_a_gather_into_a_strided_buffer_leaves_other_ranks_unchanged()
     test_a_reduce_into_a_strided_buffer_leaves_other_ranks_unchanged()
-    test_rooted_collective_tasklets_have_side_effects(comm.Reduce)
-    test_rooted_collective_tasklets_have_side_effects(comm.Gather)
-    test_rooted_collective_tasklets_have_side_effects(comm.Scatter)
+    test_every_comm_node_has_side_effects()
+    for implementation in ("MPI", "NCCL"):
+        for node_type in _BUFFER_NODES:
+            test_comm_tasklets_have_side_effects(node_type, implementation)
     test_an_allreduce_of_a_scalar("MPI_SUM", False)
     test_an_allreduce_of_a_scalar("MPI_SUM", True)
     test_an_allreduce_of_a_scalar("avg", False)
