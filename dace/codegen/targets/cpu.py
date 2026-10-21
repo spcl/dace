@@ -1706,7 +1706,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f"{atype} {restrict} {aname}" for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         arguments += [
             f"{node.sdfg.symbols[aname].as_arg(aname)}"
             for aname in sorted(node.symbol_mapping.keys())
@@ -1719,7 +1719,7 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ["__state"]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         args = ", ".join(
             prepend
             + [argval for _, _, argval in memlet_references]
