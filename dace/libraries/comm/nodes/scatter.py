@@ -7,7 +7,6 @@ from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     buffer_pointer,
     count_expression,
-    expanded_input_connectors,
     gpu_buffers_ready,
     input_descriptor_name,
     mpi_communicator,
@@ -18,7 +17,6 @@ from dace.libraries.comm.nodes.node import (
     scaled,
     validate_nccl_buffers,
 )
-from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.utils import prod as _prod
 
@@ -144,15 +142,7 @@ class ExpandBlockScatterMPI(ExpandTransformation):
                 }}
             """
 
-        tasklet = nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return tasklet
+        return mpi_tasklet(node, parent_state, code)
 
 
 @library.node

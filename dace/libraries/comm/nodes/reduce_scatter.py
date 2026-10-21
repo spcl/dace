@@ -7,12 +7,12 @@ from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
     count_expression,
-    expanded_input_connectors,
     gpu_buffers_ready,
     mpi_average,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
+    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -47,15 +47,7 @@ class ExpandReduceScatterMPI(ExpandTransformation):
             f"_inbuffer, _outbuffer, {out_count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
         code += mpi_average(node.op, "_outbuffer", out_count_str, comm)
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion

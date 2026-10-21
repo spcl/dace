@@ -8,9 +8,9 @@ from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
     count_expression,
-    expanded_input_connectors,
     gpu_buffers_ready,
     mpi_communicator,
+    mpi_tasklet,
     mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
@@ -47,14 +47,7 @@ class ExpandIsendMPI(ExpandTransformation):
         code += f"MPI_Isend(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
         code += free
 
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
+        tasklet = mpi_tasklet(node, parent_state, code)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.int32 if c == "_dest" else t) for c, t in conn.items()}
         tasklet.in_connectors = conn

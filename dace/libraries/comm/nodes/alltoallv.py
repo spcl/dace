@@ -9,11 +9,12 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    expanded_input_connectors,
     gpu_buffers_ready,
+    int_array,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
+    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -25,18 +26,12 @@ from dace.transformation.transformation import ExpandTransformation
 def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str, persistent: bool = False) -> str:
     """C++ arrays ``<name>_counts`` and ``<name>_displs`` (exclusive prefix sums) of ``counts`` times ``factor``,
     ``static`` if ``persistent`` (for arrays that must outlive the code, e.g., of a nonblocking operation)."""
-    values = [
-        f"({symbolic.symstr(c, cpp_mode=True)}) * {factor}" if factor != 1 else symbolic.symstr(c, cpp_mode=True)
-        for c in counts
-    ]
     storage = "static " if persistent else ""
-    assignments = "".join(f"{name}_counts[{i}] = ({ctype})({v});\n" for i, v in enumerate(values))
     return f"""
-        {storage}{ctype} {name}_counts[{len(values)}];
-        {storage}{ctype} {name}_displs[{len(values)}];
-        {assignments}
+        {int_array(f"{name}_counts", [symbolic.pystr_to_symbolic(c) * factor for c in counts], ctype, persistent)}
+        {storage}{ctype} {name}_displs[{len(counts)}];
         {name}_displs[0] = 0;
-        for (int __i = 1; __i < {len(values)}; ++__i) {name}_displs[__i] = {name}_displs[__i - 1] + {name}_counts[__i - 1];
+        for (int __i = 1; __i < {len(counts)}; ++__i) {name}_displs[__i] = {name}_displs[__i - 1] + {name}_counts[__i - 1];
         """
 
 
@@ -65,15 +60,7 @@ class ExpandAlltoallvMPI(ExpandTransformation):
             f"_inbuffer, __send_counts, __send_displs, {mpi_dtype_str}, _outbuffer, __recv_counts, __recv_displs, "
             f"{mpi_dtype_str}, {comm}",
         )
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion

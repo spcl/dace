@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+from collections.abc import Sequence
 from typing import Any
 
 from dace import data, dtypes, properties, subsets
@@ -69,6 +70,16 @@ def count_expression(subset: subsets.Subset) -> str:
     from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
     return sym2cpp(subset.num_elements_exact())
+
+
+def int_array(name: str, values: Sequence, ctype: str = "int", static: bool = False) -> str:
+    """A C++ array ``name`` of ``ctype`` assigned the symbolic ``values`` on every run, ``static`` if it must outlive
+    the code (e.g., of a nonblocking operation)."""
+    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
+
+    storage = "static " if static else ""
+    assignments = "".join(f"{name}[{i}] = ({ctype})({sym2cpp(v)});\n" for i, v in enumerate(values))
+    return f"{storage}{ctype} {name}[{len(values)}];\n{assignments}"
 
 
 def mpi_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:

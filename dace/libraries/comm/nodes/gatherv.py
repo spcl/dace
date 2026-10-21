@@ -1,5 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from collections.abc import Sequence
 
 from dace import library, properties, symbolic
 from dace.libraries.comm import environments, utils
@@ -8,20 +7,13 @@ from dace.libraries.comm.nodes.node import (
     buffer_pointer,
     count_expression,
     gpu_buffers_ready,
+    int_array,
     mpi_communicator,
     mpi_tasklet,
     pack_noncontiguous_buffers,
 )
 from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
-
-
-def int_array(name: str, values: Sequence) -> str:
-    """A C++ ``int`` array ``name`` holding the symbolic ``values``."""
-    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
-
-    entries = ", ".join(f"(int)({sym2cpp(v)})" for v in values)
-    return f"int {name}[{len(values)}] = {{{entries}}};\n"
 
 
 @library.expansion

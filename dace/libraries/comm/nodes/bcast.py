@@ -9,11 +9,11 @@ from dace.libraries.comm.nodes.node import (
     NonblockingCommNode,
     buffer_pointer,
     count_expression,
-    expanded_input_connectors,
     gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
+    mpi_tasklet,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -49,15 +49,7 @@ class ExpandBcastMPI(ExpandTransformation):
             f"{buffer_pointer(node, parent_sdfg, parent_state, '_inbuffer')}, {count_str}, {mpi_dtype_str}, _root, {comm}",
         )
         code += "_outbuffer = _inbuffer;"
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(mpi_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion
