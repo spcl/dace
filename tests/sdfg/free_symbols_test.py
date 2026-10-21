@@ -428,6 +428,50 @@ def test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symb
     assert "k" not in sdfg.free_symbols
 
 
+def test_array_used_only_in_a_guard_keeps_its_stride_symbol():
+    """An array referenced only by a ConditionalBlock guard is still used, so its stride survives."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+
+    sdfg = dace.SDFG("used_codeblock_array")
+    sdfg.add_symbol("S", dace.int32)
+    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
+    sdfg.add_scalar("acc", dace.int32, transient=True)
+
+    loop = LoopRegion("loop", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("A[0, k] == 1"), branch)
+    set_one = branch.add_state("set_one", is_start_block=True)
+    t = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
+    set_one.add_edge(t, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
+    sdfg.validate()
+
+    assert "S" in sdfg.used_symbols(all_symbols=False)
+    assert "S" in sdfg.init_signature()
+
+
+def test_a_symbol_both_arms_of_an_if_else_assign_is_not_free():
+    """``if a[0] > 0: k = 1 else: k = 0`` assigns ``k`` on every path, so the read after the join never sees the
+    caller's ``k``: it is not free."""
+    sdfg = symbol_sdfg("if_else_assignment")
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
+    for label, condition, value in (("then", dace.sdfg.state.CodeBlock("a[0] > 0"), "1"), ("else", None, "0")):
+        arm = dace.sdfg.state.ControlFlowRegion(label, sdfg=sdfg, parent=block)
+        arm.add_edge(
+            arm.add_state(f"{label}_first", is_start_block=True),
+            arm.add_state(f"{label}_second"),
+            dace.InterstateEdge(assignments={"k": value}),
+        )
+        block.add_branch(condition, arm)
+    sdfg.add_node(block, is_start_block=True)
+    sdfg.add_edge(block, read_into(sdfg, "join", "k"), dace.InterstateEdge())
+
+    assert "k" not in sdfg.free_symbols
+
+
 if __name__ == "__main__":
     test_single_state()
     test_state_subgraph()
@@ -446,3 +490,5 @@ if __name__ == "__main__":
     test_a_symbol_one_branch_assigns_and_the_join_reads_stays_free()
     test_a_symbol_assigned_on_every_path_before_its_read_is_not_free()
     test_a_cpp_tasklet_local_listed_in_ignored_symbols_is_not_a_read_of_the_symbol()
+    test_array_used_only_in_a_guard_keeps_its_stride_symbol()
+    test_a_symbol_both_arms_of_an_if_else_assign_is_not_free()
