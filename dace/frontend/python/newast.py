@@ -17,7 +17,7 @@ import numpy
 import sympy
 
 import dace
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, utils
 from dace import sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
@@ -2740,7 +2740,7 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_region.sdfg._labels = {s.label for s in loop_region.sdfg.all_control_flow_blocks()}
             for block in test_region_copy.all_control_flow_blocks():
                 block.sdfg = loop_region.sdfg
-                block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
+                block.label = utils.find_new_name(block.label, loop_region.sdfg._labels)
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
@@ -5194,7 +5194,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.symbols:
             return name
 
-        if name in __builtins__:
+        if name in __builtins__ or name in replacements.operators.MODULO_CALLS:
             return name
 
         if name not in self.scope_vars:
@@ -5636,6 +5636,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
+            # A call returns its single result in a list
+            if isinstance(scalar, list) and len(scalar) == 1:
+                scalar = scalar[0]
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 if isinstance(self.sdfg.arrays[scalar], data.Scalar):
                     return self.promote_scalar_to_symbol(scalar, key=node_str)
