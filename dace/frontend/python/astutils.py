@@ -12,6 +12,7 @@ from typing import Any
 import astunparse
 import numpy
 import sympy
+from sympy.printing.pycode import PythonCodePrinter
 
 from dace import symbolic
 
@@ -248,6 +249,15 @@ class ExtUnparser(astunparse.Unparser):
         self.write("]")
 
 
+class SDFGPythonPrinter(PythonCodePrinter):
+    """Python source of a SymPy expression in an SDFG's own spelling: a bare ``%`` there is C's truncating modulo,
+    so SymPy's floored ``Mod`` prints as ``PyMod``."""
+
+    def _print_Mod(self, expr):
+        left, right = (self._print(arg) for arg in expr.args)
+        return f"PyMod({left}, {right})"
+
+
 def unparse(node):
     """Unparses an AST node to a Python string, chomping trailing newline."""
     if node is None:
@@ -260,7 +270,7 @@ def unparse(node):
     # functions (``int_floor``, ``int_ceil``, ...) verbatim; without it sympy has no printer
     # method for them and raises instead of unparsing.
     if isinstance(node, sympy.Basic):
-        return sympy.printing.pycode(node, allow_unknown_functions=True)
+        return SDFGPythonPrinter({"allow_unknown_functions": True}).doprint(node)
     # Support for numerical constants
     if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)

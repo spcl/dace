@@ -43,8 +43,15 @@ from dace.sdfg.state import LoopRegion, SDFGState
 #: The prelude functions SymPy prints, which a kernel calls under the dialect's own name.
 HELPERS = ("int_floor", "int_ceil", "ipow", "Min", "Max", "Abs", "py_mod", "c_mod")
 #: The other spellings of a helper: the C++ runtime's name of the floored division, which vectorizer bounds carry,
-#: and SymPy's name of the floored modulo.
-HELPER_ALIASES = {"py_floor": "int_floor", "Mod": "py_mod"}
+#: SymPy's and the frontends' names of the floored modulo, and Fortran's truncating MOD.
+HELPER_ALIASES = {
+    "py_floor": "int_floor",
+    "Mod": "py_mod",
+    "PyMod": "py_mod",
+    "FtnModulo": "py_mod",
+    "CMod": "c_mod",
+    "FtnMod": "c_mod",
+}
 HELPER_CALL = re.compile(rf"\b({'|'.join((*HELPERS, *HELPER_ALIASES))})\(")
 #: The lane index ``__l<k>`` of a per-lane expression of a tile node.
 LANE = re.compile(r"__l(\d+)")

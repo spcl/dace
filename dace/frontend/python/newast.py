@@ -4532,8 +4532,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 return folded
         # Obtain a string representation
         result = self.visit(arg)
-        if isinstance(result, (list, tuple)):
-            if len(result) == 1 and isinstance(result[0], (str, slice)):
+        if isinstance(result, (list, tuple)) and len(result) == 1:
+            # A call returns its single result in a list; a list literal stays a list
+            if isinstance(result[0], (str, slice)) or (
+                isinstance(arg, ast.Call) and isinstance(result[0], (Number, sympy.Basic))
+            ):
                 return result[0]
         return result
 

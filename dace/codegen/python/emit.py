@@ -66,8 +66,8 @@ def c_mod(a, b):
     return np.fmod(a, b)
 
 
-CMod = c_mod
-Mod = py_mod
+CMod = FtnMod = c_mod
+Mod = PyMod = FtnModulo = py_mod
 
 
 Min, Max, Abs = min, max, abs

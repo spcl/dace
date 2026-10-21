@@ -248,6 +248,22 @@ def test_a_python_program_modulo_in_a_condition_floors():
     assert out[0] == 1
 
 
+@dace.program
+def cast_of_a_symbolic_modulo(a: dace.float64[N], S: dace.int64):
+    for i in range(N):
+        a[i] = float((i - S) * 7 % N)
+
+
+def test_a_cast_of_a_symbolic_modulo_floors():
+    """``float(...)`` of a symbolic ``%`` takes the expression, not the call's result list, and keeps Python's
+    floored rounding for a negative dividend."""
+    a = np.zeros(8)
+
+    cast_of_a_symbolic_modulo(a=a, S=5, N=8)
+
+    np.testing.assert_array_equal(a, [float((i - 5) * 7 % 8) for i in range(8)])
+
+
 if __name__ == "__main__":
     for name, dtype, nptype in DTYPES:
         test_modulo_agrees_with_numpy(name, dtype, nptype, "host")
@@ -273,3 +289,4 @@ if __name__ == "__main__":
     test_a_python_program_modulo_in_a_condition_floors()
     test_a_python_program_calls_each_modulo_spelling_like_a_builtin()
     test_a_call_in_a_subscript_indexes_with_its_result()
+    test_a_cast_of_a_symbolic_modulo_floors()
