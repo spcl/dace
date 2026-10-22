@@ -12,7 +12,8 @@ loop whose only conflicting writes are WCR ones is a map (the WCR stays atomic a
 leaves such an update alone inside its own map -- every map index addresses one element, so the map has no conflict
 of its own -- which is right until an enclosing loop is to be lifted.
 
-Only the container a refused loop names is rewritten, and only its in-place updates through a top-level map; a WCR
+Only the container a refused loop names is rewritten, and only its in-place updates by a free tasklet or one in a
+top-level map; a WCR
 that does not let the loop map after all is conflict-free and ``RevertNonReductionWCR`` restores it.
 """
 
@@ -38,12 +39,11 @@ def refused_container(sdfg: SDFG, loop: LoopRegion) -> str | None:
 
 
 def in_place_update(sdfg: SDFG, state: SDFGState, name: str) -> AugAssignToWCR | None:
-    """One matched ``X -> map -> tasklet -> map -> X`` update of ``name`` in ``state`` that may become WCR."""
+    """One matched ``X -> [map ->] tasklet [-> map] -> X`` update of ``name`` in ``state`` that may become WCR."""
     for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
         entry = state.entry_node(tasklet)
-        if entry is None or state.entry_node(entry) is not None:
+        if entry is not None and state.entry_node(entry) is not None:
             continue
-        exit_node = state.exit_node(entry)
         ins = [e for e in state.in_edges(tasklet) if not e.data.is_empty() and e.data.data == name]
         outs = [e for e in state.out_edges(tasklet) if not e.data.is_empty() and e.data.data == name]
         if len(ins) != 1 or len(outs) != 1:
@@ -52,21 +52,20 @@ def in_place_update(sdfg: SDFG, state: SDFGState, name: str) -> AugAssignToWCR |
         target = state.memlet_path(outs[0])[-1].dst
         if not (isinstance(source, nodes.AccessNode) and isinstance(target, nodes.AccessNode)):
             continue
+        # A free tasklet (``f[j] = f[j] - d`` inside a pair loop) or one in a top-level map
+        match = {
+            AugAssignToWCR.input: state.node_id(source),
+            AugAssignToWCR.tasklet: state.node_id(tasklet),
+            AugAssignToWCR.output: state.node_id(target),
+        }
+        expr = 0
+        if entry is not None:
+            match[AugAssignToWCR.map_entry] = state.node_id(entry)
+            match[AugAssignToWCR.map_exit] = state.node_id(state.exit_node(entry))
+            expr = 1
         xform = AugAssignToWCR()
-        xform.setup_match(
-            sdfg,
-            state.parent_graph.cfg_id,
-            state.block_id,
-            {
-                AugAssignToWCR.input: state.node_id(source),
-                AugAssignToWCR.map_entry: state.node_id(entry),
-                AugAssignToWCR.tasklet: state.node_id(tasklet),
-                AugAssignToWCR.map_exit: state.node_id(exit_node),
-                AugAssignToWCR.output: state.node_id(target),
-            },
-            1,
-        )
-        if xform.can_be_applied(state, 1, sdfg, permissive=True):
+        xform.setup_match(sdfg, state.parent_graph.cfg_id, state.block_id, match, expr)
+        if xform.can_be_applied(state, expr, sdfg, permissive=True):
             return xform
     return None
 

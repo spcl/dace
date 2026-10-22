@@ -4280,8 +4280,9 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._map_scope_braced.pop(self.map_scope_key(cfg, state_id, state_dfg, map_node), True):
             callsite_stream.write("}", cfg, state_id, node)
 
-        # Pop the OMP-reduction scope frame pushed by the matching MapEntry.
-        if self._omp_reduction_scope_stack:
+        # Pop the OMP-reduction scope frame the matching MapEntry pushed -- only a parallel one does: a sequential
+        # map inside a range-private nested SDFG would otherwise pop the nest's frame.
+        if map_node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
             self._omp_reduction_scope_stack.pop()
 
     def _generate_ConsumeEntry(

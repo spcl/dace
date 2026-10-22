@@ -35,5 +35,29 @@ def test_a_box_loop_accumulating_at_data_offsets_maps_and_matches():
     assert np.allclose(out, want)
 
 
+@dace.program
+def scatter(idx: dace.int64[NB], vals: dace.float64[NB, P, Q], out: dace.float64[NT]):
+    for b in range(NB):
+        s = np.sum(vals[b, :, :])
+        out[idx[b]] = out[idx[b]] + s
+
+
+def test_a_scatter_of_one_element_per_iteration_maps_and_matches():
+    """A free tasklet's ``out[idx[b]] = out[idx[b]] + s`` (gromacs's pair forces): repeated indices accumulate."""
+    sdfg = scatter.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="cpu")
+    assert not [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    rng = np.random.default_rng(1)
+    idx = np.array([3, 1, 3, 0, 7, 1], dtype=np.int64)
+    vals = rng.random((6, 2, 3))
+    out = rng.random(9)
+    want = out.copy()
+    for b in range(6):
+        want[idx[b]] += vals[b].sum()
+    sdfg(idx=idx, vals=vals, out=out, NB=6, P=2, Q=3, NT=9)
+    assert np.allclose(out, want)
+
+
 if __name__ == "__main__":
     test_a_box_loop_accumulating_at_data_offsets_maps_and_matches()
+    test_a_scatter_of_one_element_per_iteration_maps_and_matches()
