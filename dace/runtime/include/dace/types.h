@@ -36,7 +36,6 @@
     #include <cuda_bf16.h>
     #include <cuda_fp8.h>
     #include <thrust/complex.h>
-    #define DACE_THRUST_COMPLEX
     #include "cuda/multidim_gbar.cuh"
 
     // Workaround so that the native low-precision types are scalars (for reductions)
@@ -55,11 +54,8 @@
     #include <hip/hip_fp16.h>
     #include <hip/hip_bf16.h>
     #include <hip/hip_fp8.h>
-    // rocThrust, the AMD port. Optional: without it the complex types below fall back to std.
-    #if __has_include(<thrust/complex.h>)
-        #include <thrust/complex.h>
-        #define DACE_THRUST_COMPLEX
-    #endif
+    // rocThrust, part of every ROCm installation
+    #include <thrust/complex.h>
 
     namespace std {
         template <> struct is_scalar<half> : std::integral_constant<bool, true> {};
@@ -114,8 +110,8 @@ namespace dace
     typedef float float32;
     typedef double float64;
 
-    // std::complex is not usable in device code, so thrust's is preferred wherever it exists.
-    #ifdef DACE_THRUST_COMPLEX
+    // std::complex is not usable in device code: a GPU compiler takes thrust's, host code std's (same layout)
+    #if defined(__CUDACC__) || defined(__HIPCC__)
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
     #else
