@@ -558,6 +558,12 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> round(const std::complex<T>& a) 
   return std::complex<T>(round(a.real()), round(a.imag()));
 }
 
+// Rounds to nearest integer, halfway cases to even like numpy.rint (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> nearbyint(const std::complex<T>& a) {
+    return std::complex<T>(nearbyint(a.real()), nearbyint(a.imag()));
+}
+
 // Returns an indication of the sign of a number
 // For non-complex numbers: -1 if x < 0, 0 if x == 0, 1 if x > 1
 // For complex numbers: sign(x.real) + 0j if x.real !=0, else sign(x.imag) + 0j
