@@ -37,7 +37,7 @@ from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
 from dace.sdfg import infer_types, memlet_utils, nodes
 from dace.sdfg.narrowing import as_range
-from dace.sdfg.state import ConditionalBlock, SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import helpers as xfh
 from dace.transformation.auto.auto_optimize import (
     apply_cpu_library_parallelism,
@@ -62,6 +62,7 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+    assigned_in_enclosing_loop,
     release_one_trip_maps,
 )
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
@@ -441,6 +442,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
     if device == dtypes.DeviceType.CPU:
         force_map_scoped_registers(sdfg)
+        force_loop_scoped_registers(sdfg)
     else:
         pool_gpu_transients(sdfg)
 
@@ -515,6 +517,52 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
         if in_map or (len(scopes) == 1 and next(iter(scopes))[1] is not None):
             desc.storage = dtypes.StorageType.Register(force=True)
             pinned += 1
+    return pinned
+
+
+def innermost_loop(state: SDFGState) -> LoopRegion | None:
+    """The innermost ``LoopRegion`` of ``state``'s own SDFG enclosing it."""
+    region = state.parent_graph
+    while region is not None and not isinstance(region, (LoopRegion, SDFG)):
+        region = region.parent_graph
+    return region if isinstance(region, LoopRegion) else None
+
+
+def force_loop_scoped_registers(sdfg: SDFG) -> int:
+    """Pin to a stack VLA every transient array allocated once per iteration of a sequential loop whose size names
+    only ``SMALL`` sizes and values that iteration assigns (warpx's ``order + 2 - dil[ip]`` stencil scratch, a
+    ``new``/``delete`` pair per particle otherwise). A size the loop does not move is left to the heap.
+
+    :returns: the number of arrays pinned, nested SDFGs included.
+    """
+    pinned = 0
+    resolver = SymbolResolver()
+    for sd in sdfg.all_sdfgs_recursive():
+        homes: dict[str, set[SDFGState]] = {}
+        for state in sd.states():
+            for node in state.data_nodes():
+                homes.setdefault(node.data, set()).add(state)
+        for name, desc in sd.arrays.items():
+            if not (
+                type(desc) is dt.Array
+                and desc.transient
+                and desc.lifetime == dtypes.AllocationLifetime.Scope
+                and desc.storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+                and symbolic.issymbolic(desc.total_size)
+                and name in homes
+            ):
+                continue
+            states = sorted(homes[name], key=lambda st: st.label)
+            loop = innermost_loop(states[0])
+            if loop is None or any(innermost_loop(st) is not loop for st in states[1:]):
+                continue
+            if any(outermost_map(st, n) is not None for st in states for n in st.data_nodes() if n.data == name):
+                continue
+            names = {str(free) for free in symbolic.pystr_to_symbolic(desc.total_size).free_symbols}
+            local = assigned_in_enclosing_loop(states[0], names)
+            if local and names - local <= resolver.facts_at(states[0]).small:
+                desc.storage = dtypes.StorageType.Register(force=True)
+                pinned += 1
     return pinned
 
 
