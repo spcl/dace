@@ -4210,8 +4210,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     # ``#pragma omp simd`` must immediately precede the ``for``; ``None`` means
                     # ``MarkSIMDMaps`` did not mark this map.
                     result.write(pragma, cfg, state_id, node)
+                bound = cpp.sym2cpp(end + 1)
+                # A range is integral: a ``pow`` bound would compare as floating point, which OpenMP rejects
+                if symbolic.has_symbolic_power(end):
+                    bound = f"{loop_ctypes[i]}({bound})"
                 result.write(
-                    "for (%s; %s < %s; %s += %s) {\n" % (init, var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    "for (%s; %s < %s; %s += %s) {\n" % (init, var, bound, var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,

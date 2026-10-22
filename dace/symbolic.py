@@ -1164,6 +1164,16 @@ def evaluate(expr: SymbolicType | int | float, symbols: dict[symbol | str, int |
     return expr.subs(syms)
 
 
+def has_symbolic_power(value) -> bool:
+    """Whether ``value`` raises to a power that is not an integer literal: ``2**k`` prints as a ``pow`` call whose
+    C++ result is floating point even where every operand is an integer."""
+    if isinstance(value, SymExpr):
+        value = value.expr
+    if not isinstance(value, sympy.Basic):
+        return False
+    return any(not power.exp.is_Integer for power in value.atoms(sympy.Pow))
+
+
 def issymbolic(value, constants=None):
     """Returns True if an expression is symbolic with respect to its contents
     and a given dictionary of constant values."""
