@@ -50,12 +50,11 @@ def per_iteration_scratch(name: str, extent: str, small: bool) -> dace.SDFG:
 
 @pytest.mark.parametrize("small", [True, False])
 def test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small):
-    """``K + 2 - c`` with ``c`` read per iteration and ``K`` SMALL: a VLA, not a ``new``/``delete`` per iteration.
-    With ``K`` of the default scale the size is unbounded and stays on the heap."""
+    """``K + 2 - c`` with ``c`` read per iteration: a VLA, not a ``new``/``delete`` per iteration, whatever ``K``."""
     sdfg = per_iteration_scratch(f"loop_vla_{small}", "K + 2 - c", small)
     finalize_transient_storage(sdfg, dtypes.DeviceType.CPU)
     storage = sdfg.arrays["tmp"].storage
-    assert (storage == dtypes.StorageType.Register and storage.force) is small
+    assert storage == dtypes.StorageType.Register and storage.force
     n, k = 50, 3
     rng = np.random.default_rng(0)
     d, w = rng.integers(0, 2, n), rng.random(n)
@@ -65,13 +64,15 @@ def test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small):
     assert np.allclose(out, ref)
 
 
-def test_a_scratch_the_loop_does_not_resize_stays_on_the_heap():
+def test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call():
     sdfg = per_iteration_scratch("loop_invariant_scratch", "N", small=True)
     finalize_transient_storage(sdfg, dtypes.DeviceType.CPU)
-    assert sdfg.arrays["tmp"].storage != dtypes.StorageType.Register
+    desc = sdfg.arrays["tmp"]
+    assert desc.storage != dtypes.StorageType.Register
+    assert desc.lifetime in (dtypes.AllocationLifetime.SDFG, dtypes.AllocationLifetime.Persistent)
 
 
 if __name__ == "__main__":
     for small in [True, False]:
         test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small)
-    test_a_scratch_the_loop_does_not_resize_stays_on_the_heap()
+    test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call()

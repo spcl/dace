@@ -529,26 +529,25 @@ def innermost_loop(state: SDFGState) -> LoopRegion | None:
 
 
 def force_loop_scoped_registers(sdfg: SDFG) -> int:
-    """Pin to a stack VLA every transient array allocated once per iteration of a sequential loop whose size names
-    only ``SMALL`` sizes and values that iteration assigns (warpx's ``order + 2 - dil[ip]`` stencil scratch, a
-    ``new``/``delete`` pair per particle otherwise). A size the loop does not move is left to the heap.
+    """Take every transient array a sequential loop allocates once per iteration off the per-iteration heap: one the
+    iteration sizes (warpx's ``order + 2 - dil[ip]`` stencil scratch, a ``new``/``delete`` pair per particle
+    otherwise) becomes a stack VLA, one of a size fixed on entry to the program is allocated once per call.
 
-    :returns: the number of arrays pinned, nested SDFGs included.
+    :returns: the number of arrays moved, nested SDFGs included.
     """
-    pinned = 0
-    resolver = SymbolResolver()
+    moved = 0
     for sd in sdfg.all_sdfgs_recursive():
         homes: dict[str, set[SDFGState]] = {}
         for state in sd.states():
             for node in state.data_nodes():
                 homes.setdefault(node.data, set()).add(state)
+        assigned = {lhs for edge in sd.all_interstate_edges() for lhs in edge.data.assignments}
         for name, desc in sd.arrays.items():
             if not (
                 type(desc) is dt.Array
                 and desc.transient
                 and desc.lifetime == dtypes.AllocationLifetime.Scope
                 and desc.storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
-                and symbolic.issymbolic(desc.total_size)
                 and name in homes
             ):
                 continue
@@ -559,11 +558,14 @@ def force_loop_scoped_registers(sdfg: SDFG) -> int:
             if any(outermost_map(st, n) is not None for st in states for n in st.data_nodes() if n.data == name):
                 continue
             names = {str(free) for free in symbolic.pystr_to_symbolic(desc.total_size).free_symbols}
-            local = assigned_in_enclosing_loop(states[0], names)
-            if local and names - local <= resolver.facts_at(states[0]).small:
+            if assigned_in_enclosing_loop(states[0], names):
                 desc.storage = dtypes.StorageType.Register(force=True)
-                pinned += 1
-    return pinned
+            elif sd is sdfg and not names & assigned:
+                desc.lifetime = dtypes.AllocationLifetime.SDFG
+            else:
+                continue
+            moved += 1
+    return moved
 
 
 def fed_by_producer_map(state: SDFGState, node: nodes.LibraryNode) -> bool:
