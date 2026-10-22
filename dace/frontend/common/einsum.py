@@ -196,6 +196,57 @@ def plain_coefficient(value):
     return value
 
 
+def _bmm_orders(einsum_string: str, sizes: dict[str, int]) -> tuple[int, int, tuple[str, str, str]] | None:
+    """A two-operand contraction as a batched GEMM: which operand is the GEMM's ``A``, which its ``B``, and their
+    index orders ``(batch, a-free, summed)``, ``(batch, summed, b-free)`` and ``(batch, a-free, b-free)``. Batch and
+    free indices keep the output's order, summed ones the larger operand's; of the two operand roles, the one that
+    transposes fewer elements. ``None`` when no batched GEMM computes it (a repeated index, a summed index private to
+    one operand, a batched dot) or when nothing is summed: a broadcast product is elementwise, a map."""
+    terms, out = einsum_string.split("->")
+    terms = terms.split(",")
+    if any(len(set(t)) != len(t) for t in (*terms, out)) or (set(terms[0]) ^ set(terms[1])) - set(out):
+        return None
+
+    def volume(term: str) -> int:
+        return prod(sizes[c] for c in term)
+
+    larger = max(terms, key=volume)
+    summed = [c for c in larger if c not in out]
+    if not summed:
+        return None
+    best = None
+    for first, second in ((0, 1), (1, 0)):
+        a, b = terms[first], terms[second]
+        batch = [c for c in out if c in a and c in b]
+        a_free = [c for c in out if c in a and c not in b]
+        b_free = [c for c in out if c in b and c not in a]
+        if batch and not a_free and not b_free:
+            return None
+        orders = ("".join(batch + a_free + summed), "".join(batch + summed + b_free), "".join(batch + a_free + b_free))
+        if not EinsumParser("%s,%s->%s" % orders).is_bmm():
+            continue
+        moved = sum(volume(t) for t, o in zip((a, b, out), orders) if t != o)
+        if best is None or moved < best[0]:
+            best = (moved, first, second, orders)
+    return best and best[1:]
+
+
+def _permuted(sdfg: SDFG, state: SDFGState, node: AccessNode, term: str, order: str) -> AccessNode:
+    """``node``, indexed by ``term``, as a transient indexed by ``order``: a ``TensorTranspose`` unless they agree."""
+    if term == order:
+        return node
+    from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+
+    desc = sdfg.arrays[node.data]
+    axes = [term.index(c) for c in order]
+    name, tdesc = sdfg.add_temp_transient([desc.shape[i] for i in axes], desc.dtype, storage=desc.storage)
+    transpose = TensorTranspose("einsum_transpose", axes)
+    result = state.add_access(name)
+    state.add_edge(node, None, transpose, "_inp_tensor", Memlet.from_array(node.data, desc))
+    state.add_edge(transpose, "_out_tensor", result, None, Memlet.from_array(name, tdesc))
+    return result
+
+
 def create_einsum_sdfg(
     sdfg: SDFG,
     state: SDFGState,
@@ -279,13 +330,15 @@ def _create_einsum_internal(
         # More than two operands contract pairwise along opt_einsum's path, each pair a GEMM-shaped step: one fused
         # nest over every index costs the product of all extents (seissol's three-operand contraction, 8x the
         # multiply-adds). Symbolic extents get stand-in sizes (a SMALL symbol small, any other large) for the path.
+        # As ``np.einsum(optimize=True)``, no intermediate outgrows the largest operand: seissol's FLOP-optimal path
+        # builds a 3x-larger-than-input intermediate whose transposes and re-reads cost more than the FLOPs saved.
         import opt_einsum as oe  # a dace dependency
 
         facts = sdfg.facts()
         sizes = {char: _path_extent(shp, facts) for char, shp in chardict.items()}
         terms = einsum_string.split("->")[0].split(",")
         shapes = [tuple(sizes[char] for char in term) for term in terms]
-        _, path_info = oe.contract_path(einsum_string, *shapes, shapes=True)
+        _, path_info = oe.contract_path(einsum_string, *shapes, shapes=True, memory_limit="max_input")
 
         input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
         result_node = None
@@ -374,6 +427,43 @@ def _create_einsum_internal(
         )
 
     # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
+    elif (
+        len(arrays) == 2
+        and not einsum.is_bmm()
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
+        and (orders := _bmm_orders(einsum_string, {c: _path_extent(s, sdfg.facts()) for c, s in chardict.items()}))
+        and (orders[2][2] == einsum.output or symbolic.equal_valued(0, beta))
+    ):
+        # Transpose-transpose-GEMM: permute the operands into a batched GEMM's index order, never a scalar nest
+        # over every index (seissol's ``qpkl,blq->bkp``).
+        first, second, (a_order, b_order, c_order) = orders
+        a = _permuted(sdfg, state, input_nodes[arrays[first]], einsum.inputs[first], a_order)
+        b = _permuted(sdfg, state, input_nodes[arrays[second]], einsum.inputs[second], b_order)
+        bmm = f"{a_order},{b_order}->{c_order}"
+        if c_order == einsum.output:
+            return _create_einsum_internal(
+                sdfg,
+                state,
+                bmm,
+                a.data,
+                b.data,
+                dtype=dtype,
+                output=output,
+                nodes={a.data: a, b.data: b},
+                init_output=init_output,
+                alpha=alpha,
+                beta=beta,
+            )
+        from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+
+        product, product_node = _create_einsum_internal(
+            sdfg, state, bmm, a.data, b.data, dtype=dtype, nodes={a.data: a, b.data: b}, alpha=alpha, beta=0.0
+        )
+        transpose = TensorTranspose("einsum_transpose", [c_order.index(c) for c in einsum.output])
+        c = state.add_write(output)
+        state.add_edge(product_node, None, transpose, "_inp_tensor", Memlet.from_array(product, sdfg.arrays[product]))
+        state.add_edge(transpose, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
     elif not einsum.is_bmm() or any(sdfg.arrays[array].dtype != dtype for array in arrays):
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)

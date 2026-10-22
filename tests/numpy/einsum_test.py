@@ -5,6 +5,7 @@ import pytest
 import dace
 from dace import symbolic
 from dace.libraries.blas import MatMul
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -589,18 +590,55 @@ def test_einsum_libnode_ordering_edge():
     assert np.allclose(sdfg(A, B), A @ B)
 
 
+def contraction_nodes(sdfg: dace.SDFG) -> set[str]:
+    """The library and map nodes a contraction lowered to."""
+    return {
+        type(node).__name__
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, (MatMul, TensorTranspose, dace.nodes.MapEntry))
+    }
+
+
 def test_contraction_with_summed_indices_in_different_orders_matches_numpy():
-    """``ijk,kj->i`` sums ``jk`` in A but ``kj`` in B: one flattened GEMM K cannot express both orders."""
+    """``ijk,kj->i`` sums ``jk`` in A but ``kj`` in B: B is transposed to ``jk`` so one flattened GEMM K reads both."""
 
     @dace.program
     def einsumtest(A: dace.float64[3, 4, 5], B: dace.float64[5, 4]):
         return np.einsum("ijk,kj->i", A, B)
 
     sdfg = einsumtest.to_sdfg()
-    assert not any(isinstance(node, MatMul) for node, _ in sdfg.all_nodes_recursive())
+    assert contraction_nodes(sdfg) == {"MatMul", "TensorTranspose"}
     rng = np.random.default_rng(7)
     A, B = rng.random((3, 4, 5)), rng.random((5, 4))
     assert np.allclose(sdfg(A=A, B=B), np.einsum("ijk,kj->i", A, B))
+
+
+def test_a_contraction_in_no_gemm_order_transposes_the_small_operand():
+    """seissol's ``qpkl,blq->bkp``: ``lq`` is contracted in ``I``'s order, so only the small ``T`` is transposed."""
+
+    @dace.program
+    def einsumtest(T: dace.float64[3, 3, 4, 5], I: dace.float64[40, 5, 3]):
+        return np.einsum("qpkl,blq->bkp", T, I)
+
+    sdfg = einsumtest.to_sdfg()
+    assert contraction_nodes(sdfg) == {"MatMul", "TensorTranspose"}
+    transposed = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TensorTranspose)]
+    assert len(transposed) == 1
+    rng = np.random.default_rng(3)
+    T, I = rng.random((3, 3, 4, 5)), rng.random((40, 5, 3))
+    assert np.allclose(sdfg(T=T, I=I), np.einsum("qpkl,blq->bkp", T, I))
+
+
+def test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product():
+    @dace.program
+    def einsumtest(A: dace.float64[6, 7, 8], B: dace.float64[8, 9]):
+        return np.einsum("aik,kj->aji", A, B)
+
+    sdfg = einsumtest.to_sdfg()
+    assert contraction_nodes(sdfg) == {"MatMul", "TensorTranspose"}
+    rng = np.random.default_rng(5)
+    A, B = rng.random((6, 7, 8)), rng.random((8, 9))
+    assert np.allclose(sdfg(A=A, B=B), np.einsum("aik,kj->aji", A, B))
 
 
 if __name__ == "__main__":
@@ -626,3 +664,5 @@ if __name__ == "__main__":
     test_einsum_shape_check_equalizes_symbols()
     test_lift_einsum_leaves_a_copy_map_alone()
     test_contraction_with_summed_indices_in_different_orders_matches_numpy()
+    test_a_contraction_in_no_gemm_order_transposes_the_small_operand()
+    test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
