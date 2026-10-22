@@ -418,10 +418,27 @@ class SymbolRepo:
         )
 
 
+def declared_assumptions(sdfg: "SDFG") -> list[Relation]:
+    """The signs and relations declared of the symbols ``sdfg`` takes: what the caller promised, which the program
+    checks on every call alongside the orders proofs took from the scales."""
+    taken = {name for name in sdfg.used_symbols(all_symbols=False) if not name.startswith("__dace")}
+    params = sdfg.symbol_repo.params
+    declared = [
+        predicate_relation(predicate, symbolic.symbol(name))
+        for name, named in params.predicates.items()
+        if name in taken
+        for predicate in sorted(named, key=lambda predicate: predicate.name)
+    ]
+    declared += [relation for relation in params.relations if relation_names(relation) <= taken]
+    return declared
+
+
 def program_assumptions(sdfg: "SDFG") -> list[Relation]:
     """The runtime assumptions of ``sdfg`` and of the SDFGs nested in it, over the symbols of ``sdfg``, in a fixed
-    order: nested ones are translated through each nesting node's symbol mapping, and constants are substituted."""
-    assumptions = OrderedSet(sdfg.symbol_repo.runtime_assumptions)
+    order: the declared ones (:func:`declared_assumptions`) first, nested ones translated through each nesting node's
+    symbol mapping, and constants substituted."""
+    assumptions = OrderedSet(declared_assumptions(sdfg))
+    assumptions.update(sdfg.symbol_repo.runtime_assumptions)
     for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
@@ -446,7 +463,7 @@ def assumption_check(name: str, params: str, assumptions: list[Relation], readab
                 f"Runtime assumption {relation_text(relation)} names {sorted(unreadable)}, which {name} does not take"
             )
         lhs, rhs = (symbolic.symstr(side, cpp_mode=True) for side in (relation.lhs, relation.rhs))
-        lines.append(f"    if (!({lhs} < {rhs})) return {index};")
+        lines.append(f"    if (!({relation_cpp(relation.kind, lhs, rhs)})) return {index};")
     body = "\n".join(lines)
     return f"""
 DACE_EXPORTED int __dace_check_assumptions_{name}({params})
@@ -457,5 +474,23 @@ DACE_EXPORTED int __dace_check_assumptions_{name}({params})
 """
 
 
+#: How each relation kind reads, ``MUCH_LT`` checked as the order it implies.
+RELATION_OPERATORS = {
+    RelationKind.LT: "<",
+    RelationKind.LE: "<=",
+    RelationKind.EQ: "==",
+    RelationKind.NE: "!=",
+    RelationKind.MUCH_LT: "<",
+}
+
+
+def relation_cpp(kind: RelationKind, lhs: str, rhs: str) -> str:
+    if kind is RelationKind.DIVIDES:
+        return f"({lhs}) == 0 ? ({rhs}) == 0 : ({rhs}) % ({lhs}) == 0"
+    return f"({lhs}) {RELATION_OPERATORS[kind]} ({rhs})"
+
+
 def relation_text(relation: Relation) -> str:
-    return f"{relation.lhs} < {relation.rhs}"
+    if relation.kind is RelationKind.DIVIDES:
+        return f"{relation.lhs} divides {relation.rhs}"
+    return f"{relation.lhs} {RELATION_OPERATORS[relation.kind]} {relation.rhs}"

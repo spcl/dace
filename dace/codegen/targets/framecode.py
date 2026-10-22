@@ -347,7 +347,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                     sdfg,
                 )
 
-        # The orders proofs took from symbol scales; init refuses symbol values that break one
+        # What the caller declared of the symbols and the orders proofs took from their scales; init refuses symbol
+        # values that break one
         assumptions = program_assumptions(sdfg)
         if assumptions:
             readable = {name for name in self.free_symbols(sdfg) if not name.startswith("__dace")}
