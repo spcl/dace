@@ -42,6 +42,10 @@ from dace.sdfg import tasklet_validation as tval
 from dace.sdfg.type_inference import infer_iteration_symbol_type, infer_types
 from dace.symbolic import issymbolic, pystr_to_symbolic
 
+#: Reserved implementation of every library node, including ones defined outside DaCe: a tasklet
+#: written by a language model (see :mod:`dace.libraries.ai`). Not stored in ``implementations``.
+AI_IMPLEMENTATION_NAME = "ai"
+
 # -----------------------------------------------------------------------------
 
 
@@ -1760,9 +1764,18 @@ class LibraryNode(CodeNode):
                     # Otherwise we don't know how to expand
                     if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
-        if target_implementation not in self.implementations.keys():
-            raise KeyError(f"Unknown implementation for node {type(self).__name__}: {target_implementation}")
-        transformation_type = type(self).implementations[target_implementation]
+        if target_implementation == AI_IMPLEMENTATION_NAME:
+            from dace.libraries.ai.expansion import ExpandAI  # Avoid a cyclic import
+
+            transformation_type = ExpandAI.for_node_class(type(self))
+        elif target_implementation not in self.implementations.keys():
+            raise KeyError(
+                "Unknown implementation for node {}: {}. Available implementations: {}".format(
+                    type(self).__name__, target_implementation, ", ".join(sorted(self.available_implementations()))
+                )
+            )
+        else:
+            transformation_type = type(self).implementations[target_implementation]
         cfg_id = actual_state.parent_graph.cfg_id
         state_id = actual_state.block_id
         subgraph = {transformation_type._match_node: actual_state.node_id(self)}
@@ -1776,9 +1789,53 @@ class LibraryNode(CodeNode):
 
     @classmethod
     def register_implementation(cls, name, transformation_type):
-        """Register an implementation to belong to this library node type."""
+        """
+        Register an implementation to belong to this library node type.
+
+        :param name: Name of the implementation, other than the reserved ``'ai'``.
+        :param transformation_type: The ``ExpandTransformation`` subclass implementing it.
+        :raises ValueError: If ``name`` is the reserved AI implementation name.
+        """
+        if name == AI_IMPLEMENTATION_NAME:
+            raise ValueError(
+                f'"{AI_IMPLEMENTATION_NAME}" is a reserved implementation name. Register '
+                f"{transformation_type.__name__} for {cls.__name__} under a different name."
+            )
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+    @classmethod
+    def available_implementations(cls) -> set[str]:
+        """
+        :return: The registered implementations and the reserved ``'ai'`` implementation.
+        """
+        return set(cls.implementations.keys()) | {AI_IMPLEMENTATION_NAME}
+
+    def generate_prompt(self, state: "dace.sdfg.state.SDFGState") -> str:
+        """
+        Returns the prompt of the ``'ai'`` implementation for this node, to be answered with any
+        model and passed to :meth:`read_prompt_response` (see also :func:`dace.libraries.ai.generate_prompts`).
+
+        :param state: The state containing this node.
+        :return: The prompt, including the response format.
+        """
+        from dace.libraries.ai import exchange  # Avoid a cyclic import
+
+        return exchange.generate_prompt(self, state)
+
+    def read_prompt_response(self, state: "dace.sdfg.state.SDFGState", response: str) -> "Tasklet":
+        """
+        Expands this node with a reply to :meth:`generate_prompt`. The code is compile-checked, and
+        a failure raises an error.
+
+        :param state: The state containing this node.
+        :param response: The model's reply, a single JSON object.
+        :return: The tasklet that replaced this node.
+        :raises AIExpansionError: If the reply cannot be interpreted or does not compile.
+        """
+        from dace.libraries.ai import exchange  # Avoid a cyclic import
+
+        return exchange.read_prompt_response(self, state, response)
 
     @property
     def free_symbols(self) -> set[str]:
