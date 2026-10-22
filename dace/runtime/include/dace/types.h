@@ -114,7 +114,6 @@ namespace dace
     typedef float float32;
     typedef double float64;
 
-    #if defined(__CUDACC__) || defined(__HIPCC__)
     // std::complex is not usable in device code, so thrust's is preferred wherever it exists.
     #ifdef DACE_THRUST_COMPLEX
     typedef thrust::complex<float> complex64;
@@ -123,6 +122,8 @@ namespace dace
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
     #endif
+
+    #if defined(__CUDACC__) || defined(__HIPCC__)
     // GPU native low-precision types. Bit-identical to the CPU structs below (checked next).
     // e4m3fn == the OCP finite E4M3 (max +-448): __nv_fp8_e4m3 / __hip_fp8_e4m3, NOT the fnuz form.
     typedef half float16;
@@ -138,9 +139,6 @@ namespace dace
     static_assert(sizeof(float16) == 2 && sizeof(bfloat16) == 2, "16-bit low-precision must be 2 bytes");
     static_assert(sizeof(float8_e4m3fn) == 1 && sizeof(float8_e5m2) == 1, "fp8 must be 1 byte");
     #else
-    typedef std::complex<float> complex64;
-    typedef std::complex<double> complex128;
-
     static constexpr uint32_t dace_f2u(float f) { return std::bit_cast<uint32_t>(f); }
     static constexpr float dace_u2f(uint32_t u) { return std::bit_cast<float>(u); }
 

@@ -12,7 +12,6 @@
 #include "nan.h"
 #include "types.h"
 
-
 // dace::math: A namespace that contains typeless math functions
 
 // Math functions that are Python/sympy built-ins and must reside outside
