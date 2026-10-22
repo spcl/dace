@@ -523,6 +523,16 @@ def test_re_entered_transfer_collapses_to_libc(kind, implementation):
     assert node.implementation == implementation
 
 
+def test_a_re_entered_copy_out_of_a_stack_array_is_sequential():
+    """warpx's per-particle copy-back from its VLA scratch: a host-level ``Register`` array is host memory, so the
+    copy is the same re-entered transfer as one out of the heap (a fork/join per particle otherwise, 27 s -> 71 s)."""
+    sdfg, node = transfer_sdfg("copy_from_stack_in_loop", "N", "copy", subset="0:it + 1")
+    sdfg.arrays["src"].transient = True
+    sdfg.arrays["src"].storage = dtypes.StorageType.Register
+    SpecializeCpuTransfers().apply_pass(sdfg, {})
+    assert node.schedule == dtypes.ScheduleType.Sequential
+
+
 @pytest.mark.parametrize("kind", ["copy", "memset"])
 def test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it(kind):
     """bicgstab's per-iteration ``N``-element memsets: every entry is the same size, so the entry count cancels

@@ -68,6 +68,16 @@ def copy_endpoints(node, state):
     return inp, in_subset, out, out_subset
 
 
+def host_storages(node, state) -> frozenset[dtypes.StorageType]:
+    """The storages host code at ``node`` dereferences: ``Register`` too outside device code, where a register array
+    is a stack array (a loop's VLA scratch)."""
+    from dace.sdfg.scope import is_devicelevel_gpu
+
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        return HOST_STORAGES
+    return HOST_STORAGES | {dtypes.StorageType.Register}
+
+
 def copy_is_host(node, state) -> bool:
     """Whether both endpoints of a copy live in host memory.
 
@@ -76,7 +86,7 @@ def copy_is_host(node, state) -> bool:
     :returns: ``True`` if no endpoint is device-resident.
     """
     inp, _in_subset, out, _out_subset = copy_endpoints(node, state)
-    return {inp.storage, out.storage} <= HOST_STORAGES
+    return {inp.storage, out.storage} <= host_storages(node, state)
 
 
 def copy_is_one_memcpy(node, state) -> bool:
@@ -110,7 +120,7 @@ def memset_is_host(node, state) -> bool:
     :returns: ``True`` if the destination is host-resident.
     """
     _out_name, out, _out_subset = node.validate(state.sdfg, state)
-    return out.storage in HOST_STORAGES
+    return out.storage in host_storages(node, state)
 
 
 def memset_is_one_memset(node, state) -> bool:
