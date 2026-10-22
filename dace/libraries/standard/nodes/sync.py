@@ -19,7 +19,8 @@ class SyncScope(enum.Enum):
     BLOCK = "block"
     #: Every thread of the grid, which a cooperative launch keeps resident
     GRID = "grid"
-    #: The host waits for the work of the stream connected to :data:`STREAM_CONNECTOR`
+    #: The host waits for the work of the stream connected to :data:`STREAM_CONNECTOR`, or of the default stream
+    #: (``nullptr``) when none is, as a kernel without a stream launches on it
     STREAM = "stream"
     #: The host waits for all work of the device
     DEVICE = "device"
@@ -31,15 +32,16 @@ STREAM_CONNECTOR = "__stream"
 GPU_STREAM = dtypes.opaque("gpuStream_t")
 
 
-def sync_code(scope: SyncScope, backend: str, mask: str | None = None) -> str:
+def sync_code(scope: SyncScope, backend: str, mask: str | None = None, stream: str = "nullptr") -> str:
     """The code of a barrier of ``scope`` for the ``cuda`` or ``hip`` backend.
 
     :param scope: The threads that wait for each other.
     :param backend: The GPU backend.
     :param mask: The lanes of a warp barrier, or ``None`` for the whole warp.
+    :param stream: The stream a stream barrier waits for.
     """
     if scope == SyncScope.STREAM:
-        return f"DACE_GPU_CHECK({backend}StreamSynchronize({STREAM_CONNECTOR}));"
+        return f"DACE_GPU_CHECK({backend}StreamSynchronize({stream}));"
     if scope == SyncScope.DEVICE:
         return f"DACE_GPU_CHECK({backend}DeviceSynchronize());"
     if scope == SyncScope.BLOCK:
@@ -62,7 +64,8 @@ class Sync(nodes.LibraryNode):
     stream or the whole device.
 
     The node orders what runs before and after it in the control flow, so it is the only node of its state. Only a
-    stream barrier has a connector: :data:`STREAM_CONNECTOR`, which takes the stream.
+    stream barrier takes a connector: :data:`STREAM_CONNECTOR`, typed :data:`GPU_STREAM`, which the pass wiring the
+    streams adds; without it, the barrier waits for the default stream.
     """
 
     implementations = {}
@@ -77,8 +80,6 @@ class Sync(nodes.LibraryNode):
         super().__init__(name, **kwargs)
         self.scope = scope
         self.mask = mask
-        if scope == SyncScope.STREAM:
-            self.add_in_connector(STREAM_CONNECTOR, GPU_STREAM)
 
     def has_side_effects(self, sdfg) -> bool:
         return True
@@ -87,19 +88,18 @@ class Sync(nodes.LibraryNode):
         if self.mask is not None and self.scope != SyncScope.WARP:
             raise ValueError(f"Sync {self.name}: only a warp barrier takes a mask")
         expected = {STREAM_CONNECTOR} if self.scope == SyncScope.STREAM else set()
-        if set(self.in_connectors) != expected or self.out_connectors:
+        if not set(self.in_connectors) <= expected or self.out_connectors:
             raise ValueError(
                 f"Sync {self.name}: a {self.scope.value} barrier takes the in-connectors {expected or '{}'}"
             )
-        if self.scope == SyncScope.STREAM and state.in_degree(self) != 1:
-            raise ValueError(f"Sync {self.name}: a stream barrier needs its stream connected to {STREAM_CONNECTOR}")
 
 
 def _expand(node: Sync, state: dace.SDFGState, backend: str) -> nodes.Tasklet:
+    wired = any(e.dst_conn == STREAM_CONNECTOR for e in state.in_edges(node))
+    stream = STREAM_CONNECTOR if wired else "nullptr"
     tasklet = nodes.Tasklet(
         node.name,
-        inputs=dict(node.in_connectors),
-        code=sync_code(node.scope, backend, node.mask),
+        code=sync_code(node.scope, backend, node.mask, stream),
         language=dace.Language.CPP,
         side_effects=True,
     )
