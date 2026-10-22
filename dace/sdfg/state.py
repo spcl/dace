@@ -411,14 +411,6 @@ class BlockGraphView:
         pass
 
 
-#: Descriptor symbol memo, armed only for the span of ONE region-wide symbol walk. Access nodes
-#: share descriptors -- 686 nodes over 301 descriptors on npbench channel_flow -- so the same
-#: ``desc.used_symbols()`` is recomputed several times per walk. Sound because a walk only reads:
-#: nothing it does can change a descriptor, and every descriptor stays alive in ``sdfg.arrays`` for
-#: the duration, so the ``id`` keys cannot be recycled underneath it.
-_DESC_SYMBOLS_MEMO: dict[tuple[int, bool], set[str]] | None = None
-
-
 def memlet_path_is_the_edge(edge: MultiConnectorEdge[mm.Memlet], state: "SDFGState") -> bool:
     """Whether ``edge`` alone is its memlet path: an empty memlet, or a ``GPU_Device`` map exit handing the
     kernel's stream to a ``gpuStream_t`` access node (explicit stream handling), which moves no data."""
@@ -811,6 +803,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         sdfg = state.sdfg
         new_symbols = set()
         freesyms = set()
+        # Containers whose descriptor symbols were added: access nodes of one container share its descriptor
+        described = set()
 
         # Free symbols from nodes
         for n in self.nodes():
@@ -818,16 +812,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 new_symbols |= n.new_symbol_names(sdfg, self)
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
-                desc = n.desc(sdfg)
-                if _DESC_SYMBOLS_MEMO is None:
-                    freesyms |= set(map(str, desc.used_symbols(all_symbols)))
-                else:
-                    key = (id(desc), all_symbols)
-                    cached = _DESC_SYMBOLS_MEMO.get(key)
-                    if cached is None:
-                        cached = set(map(str, desc.used_symbols(all_symbols)))
-                        _DESC_SYMBOLS_MEMO[key] = cached
-                    freesyms |= cached
+                if n.data not in described:
+                    described.add(n.data)
+                    freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
             elif isinstance(n, nd.Tasklet):
                 if n.language == dtypes.Language.Python:
                     # Consider callbacks defined as symbols as free
@@ -3029,11 +3016,11 @@ class SymbolResolver:
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
     around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
-    data descriptors, is genuinely per SDFG and is reused as such. Only the state asked about last
-    is kept, one per SDFG: callers resolve the nodes of one state together, and a copy of every
-    symbol for every state of a large SDFG costs gigabytes (QE ``h_psi``: 14478 states of about
-    12500 symbols each). The same holds for the scope resolved last. A resolver is only valid while the symbols, data
-    descriptors, control flow regions, inter-state edges and scopes stay unchanged.
+    data descriptors, is genuinely per SDFG and is reused as such. Only the state and the scope
+    asked about last are kept, one per SDFG: callers resolve the nodes of one state and one scope
+    together, and a copy of every symbol for every state of a large SDFG costs gigabytes. A resolver
+    is only valid while the symbols, data descriptors, control flow regions, inter-state edges and
+    scopes stay unchanged.
     """
 
     def __init__(self, sdfg: Optional["SDFG"] = None, sdfg_symbols: dict[str, dtypes.typeclass] | None = None) -> None:
@@ -4020,40 +4007,12 @@ class AbstractControlFlowRegion(
         with_contents: bool = True,
         partially_defined: set | None = None,
     ) -> tuple[set[str], set[str], set[str]]:
+        """``partially_defined`` holds the symbols in ``defined_syms`` that only some paths assign (one arm of a
+        conditional): a read of one still needs the caller's value."""
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
-
-        global _DESC_SYMBOLS_MEMO
-        armed_memo = _DESC_SYMBOLS_MEMO is None  # outermost walk owns it
-        if armed_memo:
-            _DESC_SYMBOLS_MEMO = {}
-        try:
-            return self._used_symbols_walk(
-                all_symbols,
-                defined_syms,
-                free_syms,
-                used_before_assignment,
-                keep_defined_in_mapping,
-                with_contents,
-                set() if partially_defined is None else partially_defined,
-            )
-        finally:
-            if armed_memo:
-                _DESC_SYMBOLS_MEMO = None
-
-    def _used_symbols_walk(
-        self,
-        all_symbols,
-        defined_syms,
-        free_syms,
-        used_before_assignment,
-        keep_defined_in_mapping,
-        with_contents,
-        partially_defined: set,
-    ) -> tuple[set[str], set[str], set[str]]:
-        """``partially_defined`` holds the symbols in ``defined_syms`` that only some paths assign (one arm of a
-        conditional): a read of one still needs the caller's value."""
+        partially_defined = set() if partially_defined is None else partially_defined
         if with_contents:
             try:
                 ordered_blocks = self.bfs_nodes(self.start_block)

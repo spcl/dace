@@ -137,9 +137,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                                 node.code_exit.as_string, sdfg.symbols.keys(), node.ignored_symbols
                             )
             else:
-                # A region's recursive free_symbols re-walks blocks this loop visits anyway, and its
-                # extra work -- subtracting symbols the region itself defines -- can only shrink a
-                # union every enclosed block already contributes to. Only its own meta symbols are new.
+                # The blocks inside a region are visited themselves: walking them again for every enclosing region
+                # repeats the whole nest once per nesting level
                 result |= block.used_symbols(all_symbols=True, with_contents=False)
 
         for e in sdfg.all_interstate_edges():

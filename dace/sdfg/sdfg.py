@@ -4,6 +4,7 @@ import collections
 import contextlib
 import copy
 import ctypes
+import functools
 import gzip
 import json
 import os
@@ -17,7 +18,6 @@ import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from functools import lru_cache
 from hashlib import md5, sha256
 from numbers import Integral
 from typing import (
@@ -431,10 +431,10 @@ class LogicalGroup:
         return ret
 
 
-@lru_cache(maxsize=16384, typed=True)
+@functools.lru_cache(maxsize=16384, typed=True)
 def assignment_rhs_symbol_names(rhs: str) -> frozenset[str]:
-    """Names read by one interstate-edge assignment RHS; a pure function of the text, so memoized."""
-    return frozenset(str(s) for s in dace.symbolic.symbols_in_ast(ast.parse(rhs)))
+    """The names an interstate-edge assignment reads: a function of its text alone, which every symbol walk asks for."""
+    return frozenset(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
 
 
 @make_properties

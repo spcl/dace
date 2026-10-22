@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -452,6 +452,25 @@ def test_folding_a_dead_view_chain_does_not_leave_its_source_isolated():
     assert np.array_equal(out, [1, 1, 1, 1]), out
 
 
+def test_remove_unused_scalars() -> None:
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [10], dace.float32)
+    sdfg.add_array("B", [10], dace.float32)
+    sdfg.add_scalar("tmp", dace.int32, transient=True)
+
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "copy",
+        {"i": dace.subsets.Range.from_string("0:10")},
+        code="a = b; t=1",
+        inputs={"a": dace.Memlet("A[i]")},
+        outputs={"b": dace.Memlet("B[i]"), "t": dace.Memlet("tmp[0]")},
+        external_edges=True,
+    )
+    sdfg.simplify()
+    assert "tmp" not in sdfg.arrays
+
+
 if __name__ == "__main__":
     test_redundant_simple()
     test_merge_simple()
@@ -461,3 +480,4 @@ if __name__ == "__main__":
     test_source_merge_preserves_carrier_raw_order_on_sibling_transient()
     test_slice_view_fold_preserves_anti_dependence_on_output()
     test_slice_view_fold_still_removes_a_safe_view()
+    test_remove_unused_scalars()
