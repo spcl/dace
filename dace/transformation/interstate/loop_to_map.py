@@ -1454,7 +1454,7 @@ class LoopToMap(xf.MultiStateTransformation):
         """Whether the dependence test waives conflicts on container ``name``: all of them under ``permissive``,
         else only the ``contract_arrays`` a caller set, whose writes a runtime contract check guards (the scatter
         targets of :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`)."""
-        return permissive or name in self.contract_arrays
+        return permissive or name in self.contract_arrays or name in loop_analysis.conflict_free_writes(self.loop)
 
     def probe_resolver(self) -> SymbolResolver:
         """The resolver a probe derives its facts with: the ``symbol_resolver`` a pass probing many loops shares
@@ -1557,7 +1557,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if loop_analysis.loop_provably_at_most_one_iteration(self.loop):
             return True
         # Independent by construction (a map lowered to this loop, or a piece of one): nothing to prove.
-        if self.loop.known_parallel:
+        if loop_analysis.is_known_parallel(self.loop):
             return True
 
         # Collect symbol reads and writes from inter-state assignments. The read-before-assigned

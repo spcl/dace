@@ -42,6 +42,7 @@ from dace.properties import (
     DebugInfoProperty,
     DictProperty,
     EnumProperty,
+    ListProperty,
     Property,
     SubsetProperty,
     SymbolicProperty,
@@ -4264,10 +4265,28 @@ class LoopRegion(ControlFlowRegion):
     known_parallel = Property(
         dtype=bool,
         default=False,
-        desc="If True, the iterations are independent by construction (a map lowered to this loop, or a piece of "
-        "one); ``LoopToMap`` lifts it without a dependence test. A pass that restructures the iteration space keeps "
-        "it only where independence provably survives (``LoopFusion``).",
+        desc="If True, the iterations were independent by construction (a map lowered to this loop, or a piece of "
+        "one) when ``known_parallel_signature`` was taken; it holds only while the loop still matches it "
+        "(``loop_analysis.is_known_parallel``), and ``LoopToMap`` then lifts it without a dependence test.",
         serialize_if=lambda loop: loop.known_parallel,
+    )
+    known_parallel_signature = Property(
+        dtype=str,
+        default="",
+        desc="The header and body of the loop when it was marked known-parallel",
+        serialize_if=lambda loop: bool(loop.known_parallel_signature),
+    )
+    conflict_free_writes = ListProperty(
+        element_type=str,
+        desc="Containers whose writes no two iterations collide on (the containers the map this loop came from "
+        "wrote); they hold while the header still matches ``conflict_free_header``, whatever the body becomes.",
+        serialize_if=lambda loop: bool(loop.conflict_free_writes),
+    )
+    conflict_free_header = Property(
+        dtype=str,
+        default="",
+        desc="The loop header when ``conflict_free_writes`` was recorded",
+        serialize_if=lambda loop: bool(loop.conflict_free_header),
     )
 
     def __init__(

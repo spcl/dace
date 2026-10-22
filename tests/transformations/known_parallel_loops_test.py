@@ -10,6 +10,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 
 N = dace.symbol("N")
@@ -57,10 +58,24 @@ def lowered(program) -> tuple[dace.SDFG, list[LoopRegion]]:
 def test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test():
     """``B[idx[i]]`` is a scatter no dependence test clears; the map it came from says it is independent."""
     sdfg, loops = lowered(permute)
-    assert len(loops) == 1 and loops[0].known_parallel
+    assert len(loops) == 1 and loops[0].known_parallel and "B" in loop_analysis.conflict_free_writes(loops[0])
     assert LoopToMap.can_be_applied_to(loops[0].sdfg, loop=loops[0])
     loops[0].known_parallel = False
+    loops[0].conflict_free_writes = []
     assert not LoopToMap.can_be_applied_to(loops[0].sdfg, loop=loops[0])
+
+
+def test_a_rewritten_body_keeps_the_conflict_free_writes_and_a_new_header_drops_both_marks():
+    """A body rewrite cannot make two iterations' scatters collide, so ``B`` stays conflict-free; a header swap (an
+    interchange) means another iteration space, for which nothing was ever known."""
+    sdfg, loops = lowered(permute)
+    loop = loops[0]
+    loop_analysis.mark_known_parallel(loop, {"B"})
+    loop.add_state("rewritten")
+    assert not loop_analysis.is_known_parallel(loop)
+    assert loop_analysis.conflict_free_writes(loop) == {"B"}
+    loop.update_statement = dace.properties.CodeBlock(f"{loop.loop_variable} = {loop.loop_variable} + 2")
+    assert not loop_analysis.conflict_free_writes(loop)
 
 
 def fuse(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> None:
@@ -160,6 +175,7 @@ def test_adjacent_halves_fuse_side_by_side_once_normalized_and_stay_known_parall
 
 if __name__ == "__main__":
     test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test()
+    test_a_rewritten_body_keeps_the_conflict_free_writes_and_a_new_header_drops_both_marks()
     test_fusing_two_known_parallel_loops_at_the_same_point_stays_known_parallel()
     test_fusing_a_read_behind_carries_a_dependence_and_drops_the_mark()
     test_a_known_parallel_loop_does_not_fuse_with_a_sequential_one()

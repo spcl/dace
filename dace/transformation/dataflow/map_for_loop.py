@@ -264,6 +264,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
         # End of dynamic input range
 
+        # Its iterations stay independent unless the map was already sequential
+        parallel = map_entry.map.schedule != dtypes.ScheduleType.Sequential
         # Create a loop inside the nested SDFG
         loop_region = LoopRegion(
             "loop_" + map_entry.map.label,
@@ -272,7 +274,6 @@ class MapToForLoop(transformation.SingleStateTransformation):
             f"{loop_idx} = {replace_param(loop_from)}",
             f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
         )
-        loop_region.known_parallel = map_entry.map.schedule != dtypes.ScheduleType.Sequential
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)
         loop_region.add_node(nstate, is_start_block=True)
@@ -371,4 +372,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
                 # (it was reparented, not destroyed).
                 self.nsdfg = None
 
+        if parallel:
+            from dace.transformation.passes.analysis import loop_analysis  # Avoid import loop
+
+            written = {n.data for st in loop_region.states() for n in st.data_nodes() if st.in_degree(n) > 0}
+            loop_analysis.mark_known_parallel(loop_region, written)
         return node, nstate

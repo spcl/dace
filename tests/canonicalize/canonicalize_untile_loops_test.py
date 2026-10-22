@@ -1004,12 +1004,10 @@ def test_map_tiled_3level_untiles_on_the_pass_defaults():
     assert np.allclose(b, ref)
 
 
-def test_map_roundtrip_declined_when_a_map_would_not_come_back():
-    """The auto round trip lowers EVERY Map, so it is taken only when every one of them re-lifts.
-
-    Here a scatter Map sits beside the tiled nest: ``LoopToMap`` cannot re-derive it (the index
-    array is not provably a permutation), so taking the trip would trade the tiling for lost
-    parallelism. The pass must leave the SDFG alone instead."""
+def test_map_roundtrip_brings_a_scatter_map_back_as_a_map():
+    """The auto round trip lowers EVERY Map and re-lifts every one. A scatter Map beside the tiled nest is independent
+    by contract (it was a Map), so it comes back a Map even though ``LoopToMap`` could not prove its index array a
+    permutation."""
 
     @dace.program
     def tiled_plus_scatter(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], idx: dace.int64[N]):
@@ -1020,9 +1018,15 @@ def test_map_roundtrip_declined_when_a_map_would_not_come_back():
             c[idx[i]] = a[i] * 3.0
 
     sdfg = tiled_plus_scatter.to_sdfg(simplify=True)
-    maps_before = _count_maps(sdfg)
-    assert UntileLoops().apply_pass(sdfg, {}) is None, "the declined round trip must not touch the SDFG"
-    assert _count_maps(sdfg) == maps_before and _count_loops(sdfg) == 0, "no Map may be left as a loop"
+    assert UntileLoops().apply_pass(sdfg, {}) is not None
+    assert _count_loops(sdfg) == 0, "no Map may be left as a loop"
+    n = 32
+    a, idx = np.random.rand(n), np.random.permutation(n)
+    b, c = np.zeros(n), np.zeros(n)
+    sdfg(a=a, b=b, c=c, idx=idx, N=n)
+    ref = np.zeros(n)
+    ref[idx] = a * 3.0
+    assert np.allclose(b, a * 2.0) and np.allclose(c, ref)
 
 
 # The remainder clamp -- ``min(i + K, <parent limit>)``.
@@ -1166,7 +1170,7 @@ if __name__ == "__main__":
     for family_member in sorted(_TILED_FAMILY):
         test_tiled_stencil_corpus_untiles_to_the_canonical_nest(family_member)
     test_map_tiled_3level_untiles_on_the_pass_defaults()
-    test_map_roundtrip_declined_when_a_map_would_not_come_back()
+    test_map_roundtrip_brings_a_scatter_map_back_as_a_map()
     test_a_clamped_two_level_tile_collapses_to_the_flat_stencil()
     test_a_clamped_tile_with_swapped_inner_axes_collapses()
     test_a_four_level_cascade_of_nested_clamps_collapses_completely()

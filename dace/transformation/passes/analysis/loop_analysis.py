@@ -3,6 +3,8 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
+import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -26,6 +28,71 @@ if TYPE_CHECKING:
     # module scope would close that cycle from the other side.
     from dace.properties import CodeBlock
     from dace.sdfg.sdfg import SDFG
+
+
+def loop_header_signature(loop: LoopRegion) -> str:
+    """The iterator and range of ``loop``, as text."""
+    parts = [loop.loop_variable or ""]
+    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        parts.append(code.as_string if code is not None else "")
+    return "|".join(parts)
+
+
+def loop_signature(loop: LoopRegion) -> str:
+    """A digest of ``loop``'s header and of everything its body does: two loops share it only if their dataflow,
+    tasklet code and control flow read the same."""
+    from dace.sdfg import nodes  # Avoid import loop
+    from dace.sdfg.state import SDFGState
+
+    lines = [loop_header_signature(loop)]
+
+    def region(cfg) -> None:
+        for block in cfg.all_control_flow_blocks():
+            lines.append(f"{type(block).__name__} {block.label}")
+            if isinstance(block, ConditionalBlock):
+                lines.extend(cond.as_string if cond is not None else "else" for cond, _ in block.branches)
+            if isinstance(block, LoopRegion) and block is not loop:
+                lines.append(loop_header_signature(block))
+            if not isinstance(block, SDFGState):
+                continue
+            for node in block.nodes():
+                lines.append(f"{type(node).__name__} {node}")
+                if isinstance(node, nodes.Tasklet):
+                    lines.append(node.code.as_string)
+                elif isinstance(node, nodes.NestedSDFG):
+                    lines.append(str(sorted(node.symbol_mapping.items())))
+                    region(node.sdfg)
+            for edge in block.edges():
+                lines.append(f"{edge.src}:{edge.src_conn}->{edge.dst}:{edge.dst_conn} {edge.data} {edge.data.wcr}")
+        for edge in cfg.all_interstate_edges():
+            lines.append(f"{edge.data.condition.as_string} {sorted(edge.data.assignments.items())}")
+
+    region(loop)
+    return hashlib.sha1("\n".join(lines).encode()).hexdigest()
+
+
+def mark_known_parallel(loop: LoopRegion, conflict_free: Iterable[str] = ()) -> None:
+    """Records that ``loop``'s iterations are independent as it stands now, and that its writes to the
+    ``conflict_free`` containers never collide under its current header."""
+    loop.known_parallel = True
+    loop.known_parallel_signature = loop_signature(loop)
+    names = sorted(set(conflict_free))
+    if names:
+        loop.conflict_free_writes = names
+        loop.conflict_free_header = loop_header_signature(loop)
+
+
+def is_known_parallel(loop: LoopRegion) -> bool:
+    """Whether ``loop`` is known-parallel and unchanged since it was marked: a pass that rewrites its body or header
+    (an interchange swapping headers, a WCR turned into an explicit update) leaves it to the dependence test."""
+    return loop.known_parallel and loop.known_parallel_signature == loop_signature(loop)
+
+
+def conflict_free_writes(loop: LoopRegion) -> frozenset[str]:
+    """The containers whose writes no two iterations of ``loop`` collide on, while its header is the one recorded."""
+    if not loop.conflict_free_writes or loop.conflict_free_header != loop_header_signature(loop):
+        return frozenset()
+    return frozenset(loop.conflict_free_writes)
 
 
 def symbol_use_sites(sdfg: "SDFG") -> tuple[dict[str, set[int]], set[str]]:

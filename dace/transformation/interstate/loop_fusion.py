@@ -128,8 +128,9 @@ class LoopFusion(transformation.MultiStateTransformation):
         # for every other caller.
         if not allow_doall_fuse and (self._is_doall(sdfg, first) or self._is_doall(sdfg, second)):
             return False
-        if self.dont_mix_known_parallel and first.known_parallel != second.known_parallel:
-            if not self._is_doall(sdfg, second if first.known_parallel else first):
+        known1, known2 = loop_analysis.is_known_parallel(first), loop_analysis.is_known_parallel(second)
+        if self.dont_mix_known_parallel and known1 != known2:
+            if not self._is_doall(sdfg, second if known1 else first):
                 return False
         return self._fusion_legal(first, second, acc1, acc2)
 
@@ -140,20 +141,24 @@ class LoopFusion(transformation.MultiStateTransformation):
         # NodeNotFoundError. `first` survives the merge (only `second` is spliced out), so the reference
         # stays valid.
         first, second = self.first, self.second
-        if self.dont_mix_known_parallel and first.known_parallel != second.known_parallel:
-            # ``can_be_applied`` proved the other loop parallel.
-            first.known_parallel = second.known_parallel = True
-        # Known-parallel survives a merge of two known-parallel loops whose bodies meet at the same iteration only.
-        keeps_parallel = (
-            first.known_parallel
-            and second.known_parallel
-            and self._same_iteration_only(
-                first, second, required(self._body_accesses(first)), required(self._body_accesses(second))
-            )
-        )
+        known1, known2 = loop_analysis.is_known_parallel(first), loop_analysis.is_known_parallel(second)
+        # ``can_be_applied`` proved the unmarked one parallel when ``dont_mix_known_parallel`` let a mixed pair through.
+        promoted = self.dont_mix_known_parallel and known1 != known2
+        # Known-parallel survives a merge of two parallel loops whose bodies meet at the same iteration only.
+        acc1, acc2 = required(self._body_accesses(first)), required(self._body_accesses(second))
+        keeps_parallel = (known1 and known2 or promoted) and self._same_iteration_only(first, second, acc1, acc2)
+        # A container stays collision-free only if one body alone writes it: two scatters into it may meet.
+        free1, free2 = loop_analysis.conflict_free_writes(first), loop_analysis.conflict_free_writes(second)
+        conflict_free = (free1 - set(acc2[1])) | (free2 - set(acc1[1]))
         self._merge(sdfg, graph, first, second)
-        first.known_parallel = keeps_parallel
         self._contract_localized_intermediates(sdfg, first)
+        first.known_parallel = False
+        first.conflict_free_writes = []
+        if keeps_parallel:
+            loop_analysis.mark_known_parallel(first, conflict_free)
+        elif conflict_free:
+            first.conflict_free_writes = sorted(conflict_free)
+            first.conflict_free_header = loop_analysis.loop_header_signature(first)
 
     # legality kernel (shared source of truth; the FuseLoops pass calls this transformation)
 
