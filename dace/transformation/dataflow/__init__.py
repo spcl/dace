@@ -9,6 +9,7 @@ from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion_vertical import MapFusionVertical
+from .map_fusion_in_place import MapFusionInPlace
 from .map_fusion_horizontal import MapFusionHorizontal
 from .map_fusion import MapFusion
 from .map_fission import MapFission
