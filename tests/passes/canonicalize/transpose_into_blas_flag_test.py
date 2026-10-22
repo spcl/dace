@@ -27,7 +27,9 @@ def test_a_transposed_gemm_operand_is_read_in_place():
     it by its flag."""
 
     @dace.program
-    def nonlocal_apply(beta: dace.float64[G, P], psi: dace.float64[G, S], dij: dace.float64[P, P], out: dace.float64[G, S]):
+    def nonlocal_apply(
+        beta: dace.float64[G, P], psi: dace.float64[G, S], dij: dace.float64[P, P], out: dace.float64[G, S]
+    ):
         overlap = beta.T @ psi
         out[:] = beta @ (dij @ overlap)
 

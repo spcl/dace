@@ -61,7 +61,7 @@ def iota_fill(sdfg: SDFG, name: str) -> tuple[str, ast.AST] | None:
     if len(entry.map.params) != 1 or entry.map.range.ranges[0] != (0, desc.shape[0] - 1, 1):
         return None
     param = entry.map.params[0]
-    inner = [e for e in state.in_edges(exit_node) if e.dst_conn == "IN_" + outer.src_conn[len("OUT_"):]]
+    inner = [e for e in state.in_edges(exit_node) if e.dst_conn == "IN_" + outer.src_conn[len("OUT_") :]]
     if len(inner) != 1 or not isinstance(inner[0].src, nodes.Tasklet):
         return None
     tasklet, memlet = inner[0].src, inner[0].data

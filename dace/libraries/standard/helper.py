@@ -48,6 +48,7 @@ def single_core_expansion(pure: type) -> type:
     ExpandSingleCore.__name__ = ExpandSingleCore.__qualname__ = f"{pure.__name__}SingleCore"
     return library.expansion(ExpandSingleCore)
 
+
 def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageType:
     """
     Return the storage a cuSOLVER/LAPACK status scalar (``devInfo``) should use so that it stays

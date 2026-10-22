@@ -164,7 +164,9 @@ def assigned_in_enclosing_loop(state: SDFGState, names: set[str]) -> set[str]:
     return assigned
 
 
-def data_segment(state: SDFGState, entry: nodes.MapEntry, small: frozenset[str] = frozenset()) -> tuple[str, str] | None:
+def data_segment(
+    state: SDFGState, entry: nodes.MapEntry, small: frozenset[str] = frozenset()
+) -> tuple[str, str] | None:
     """``(begin, end)`` of the first dimension of ``entry`` whose two ends are both read from data, or whose ends
     name only constants, ``small`` sizes and values an enclosing loop's iteration reads from data (``0:cnt`` with
     ``cnt = indptr[i + 1] - indptr[i]``, ``0:order + 2 - d`` with ``d = dl[ip]``), if any. A range a loop variable

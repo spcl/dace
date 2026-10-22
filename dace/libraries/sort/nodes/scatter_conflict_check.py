@@ -335,7 +335,13 @@ class ScatterConflictCheck(nodes.LibraryNode):
     #: :class:`ExpandCUDA`. Declared so an offloader does not move them with the rest of the state.
     host_connectors = frozenset({OUTPUT_CONNECTOR_NAME, SCRATCH_CONNECTOR_NAME})
 
-    implementations = {"Auto": ExpandAuto, "CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure, "sequential": single_core_expansion(ExpandPure)}
+    implementations = {
+        "Auto": ExpandAuto,
+        "CPU": ExpandCPU,
+        "CUDA": ExpandCUDA,
+        "pure": ExpandPure,
+        "sequential": single_core_expansion(ExpandPure),
+    }
     default_implementation = "Auto"
 
     def __init__(self, name: str = "ScatterConflictCheck", *args, **kwargs):
