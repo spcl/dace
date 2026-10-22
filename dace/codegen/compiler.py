@@ -1232,6 +1232,8 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
     if script is not None:
         process.stdin.write(script)
         process.stdin.close()
+        # communicate() would flush the closed pipe (ValueError on Python 3.12).
+        process.stdin = None
     output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
