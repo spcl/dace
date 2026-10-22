@@ -30,6 +30,7 @@ from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
@@ -142,6 +143,41 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
     return prio
 
 
+#: The fast lowerings canonicalize selects on the CPU when their library is present.
+CPU_FAST_IMPLEMENTATIONS = ("OpenBLAS", "FFTW3", "HPTT", "TTGT", "CPU")
+
+
+class SilentPureLowering(RuntimeError):
+    """A top-level library node is left on its serial ``pure`` loop although a fast lowering exists for it."""
+
+
+def refuse_silent_pure(sdfg: SDFG, device: dtypes.DeviceType) -> None:
+    """Raise :class:`SilentPureLowering` for every top-level library node selection left on ``pure`` whose type has
+    one of the device's fast lowerings: its library is missing on this host (``HPTT_ROOT`` unset, no OpenBLAS) or
+    the selection missed it. Nodes in a parallel region or a kernel take their single-core / in-kernel lowering, and a
+    GEMM no BLAS call addresses takes its direct-indexing expansion: both are deliberate."""
+    fast = (
+        set(find_fast_library(device)) - {"pure"} if device == dtypes.DeviceType.GPU else set(CPU_FAST_IMPLEMENTATIONS)
+    )
+    silent = []
+    for node, state in sdfg.all_nodes_recursive():
+        if not isinstance(node, nodes.LibraryNode) or not node.auto_select_implementation:
+            continue
+        if (node.implementation or node.default_implementation) != "pure":
+            continue
+        vendors = sorted(fast & set(type(node).implementations))
+        if not vendors or isinstance(node, Gemm) and not blas_addresses(node, state):
+            continue
+        if libnode_is_sequential(node, state, state.sdfg) or libnode_is_device_code(node, state, state.sdfg):
+            continue
+        silent.append(f"{type(node).__name__} {node.label!r} (fast lowerings: {', '.join(vendors)})")
+    if silent:
+        raise SilentPureLowering(
+            "canonicalize left library nodes on their serial 'pure' loop; install the library or fix the selection: "
+            + "; ".join(silent)
+        )
+
+
 def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """``node`` sits inside a GPU kernel, so whatever it lowers to has to be device code.
 
@@ -232,6 +268,11 @@ def canonicalize_set_fast_implementations(
                 if libnode_is_device_code(node, state, sdfg)
                 else ("CUDA" if "CUDA" in impls else node.implementation)
             )
+            continue
+        # A CPU tensor transpose a parallel region encloses runs single-core: the in-thread loop, not an HPTT plan
+        # per call (cp2k_grid_integrate's per-task transposes: 19 s through HPTT, 4 s in-thread).
+        if device == dtypes.DeviceType.CPU and sequential and isinstance(node, TensorTranspose):
+            node.implementation = "sequential"
             continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
         # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
@@ -839,6 +880,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
         cpu_specialize(sdfg, break_anti_dependence=break_anti_dependence, validate=False)
 
     canonicalize_set_fast_implementations(sdfg, device)
+    refuse_silent_pure(sdfg, device)
     if device == dtypes.DeviceType.GPU:
         pin_span_copies(sdfg)
     # Select the fast implementation per library node but DO NOT expand here: a library

@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 
-import multiprocessing
 import warnings
 from collections.abc import Sequence
 from numbers import Number
@@ -76,6 +75,21 @@ class ExpandPure(ExpandTransformation):
 
 
 @library.expansion
+class ExpandSequential(ExpandTransformation):
+    """The single-core lowering: one in-thread loop nest, for a node a parallel region encloses."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        sdfg = ExpandPure.expansion(node, parent_state, parent_sdfg)
+        for entry, _ in sdfg.all_nodes_recursive():
+            if isinstance(entry, nodes.MapEntry):
+                entry.map.schedule = dtypes.ScheduleType.Sequential
+        return sdfg
+
+
+@library.expansion
 class ExpandHPTT(ExpandTransformation):
     """
     Implements the TensorTranspose library node using the High-Performance Tensor Transpose Library (HPTT).
@@ -104,8 +118,9 @@ class ExpandHPTT(ExpandTransformation):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = sym2cpp(node.alpha)
         beta = sym2cpp(node.beta)
-        # The complex entry points take whether to conjugate A right after alpha
+        # The complex entry points take whether to conjugate A right after alpha, and C99 complex pointers
         conj_a = "false, " if dchar in ("c", "z") else ""
+        ctype = {"c": "float _Complex", "z": "double _Complex"}.get(dchar)
         # A tasklet's connectors may not share a name with a container or symbol of its SDFG, and TensorDot's TTGT
         # expansion puts this node into an SDFG holding its own ``_out_tensor``: rename a clashing connector.
         inp = parent_sdfg._find_new_name("_inp_tensor")
@@ -114,10 +129,12 @@ class ExpandHPTT(ExpandTransformation):
             edge.dst_conn = inp
         for edge in parent_state.out_edges_by_connector(node, "_out_tensor"):
             edge.src_conn = out
+        inp_arg = f"reinterpret_cast<const {ctype}*>({inp})" if ctype else inp
+        out_arg = f"reinterpret_cast<{ctype}*>({out})" if ctype else out
         code = f"""
             int perm[{len(inp_shape)}] = {{{axes}}};
             int size[{len(inp_shape)}] = {{{shape}}};
-            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}{inp}, size, NULL, {beta}, {out}, NULL, {multiprocessing.cpu_count()}, 1);
+            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}{inp_arg}, size, NULL, {beta}, {out_arg}, NULL, omp_get_max_threads(), 1);
         """
 
         return nodes.Tasklet(
@@ -143,10 +160,9 @@ class ExpandGPUTensor(ExpandTransformation):
     where modesA is the identity [0, 1, ..., n-1] and modesC encodes the
     axis permutation.
 
-    NOTE: beta != 0 is not supported by either vendor's permute (the signature is
-    ``(handle, plan, alpha, A, B, stream)`` -- out-of-place ``B = alpha*op(A)``,
-    no beta term). For C = alpha * perm(A) + beta * C, use ExpandPure or
-    the elementwise-binary entry point.
+    Neither vendor's permute takes a beta (``(handle, plan, alpha, A, B, stream)``, out-of-place
+    ``B = alpha*op(A)``), so ``C = alpha*perm(A) + beta*C`` permutes into a scratch tensor and an
+    elementwise map folds it onto ``C``.
     See https://docs.nvidia.com/cuda/cutensor/latest/api/cutensor.html#cutensorpermute
     """
 
@@ -159,17 +175,47 @@ class ExpandGPUTensor(ExpandTransformation):
     fastest_mode_first = False
 
     @classmethod
+    def permute_then_fold_beta(cls, node, inp_tensor, out_tensor, inp_shape, out_shape) -> dace.SDFG:
+        """``C = alpha*perm(A) + beta*C`` as this vendor's permute into a scratch tensor, then a device map
+        ``C = scratch + beta*C``."""
+        sdfg = dace.SDFG(f"{node.label}_beta_sdfg")
+        _, inp_arr = sdfg.add_array(
+            "_inp_tensor", inp_shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides
+        )
+        _, out_arr = sdfg.add_array(
+            "_out_tensor", out_shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides
+        )
+        _, tmp_arr = sdfg.add_array("_permuted", out_shape, out_tensor.dtype, out_tensor.storage, transient=True)
+        state = sdfg.add_state(f"{node.label}_state")
+        permute = TensorTranspose(f"{node.label}_permute", list(node.axes), alpha=node.alpha)
+        permute.implementation = next(k for k, v in TensorTranspose.implementations.items() if v is cls)
+        tmp = state.add_access("_permuted")
+        state.add_edge(
+            state.add_read("_inp_tensor"), None, permute, "_inp_tensor", dace.Memlet.from_array("_inp_tensor", inp_arr)
+        )
+        state.add_edge(permute, "_out_tensor", tmp, None, dace.Memlet.from_array("_permuted", tmp_arr))
+        params = [f"__i{i}" for i in range(len(out_shape))]
+        index = ",".join(params)
+        state.add_mapped_tasklet(
+            f"{node.label}_fold_beta",
+            {p: f"0:{s}" for p, s in zip(params, out_shape)},
+            {"_p": dace.Memlet(f"_permuted[{index}]"), "_c": dace.Memlet(f"_out_tensor[{index}]")},
+            f"_out = _p + {node.beta} * _c",
+            {"_out": dace.Memlet(f"_out_tensor[{index}]")},
+            schedule=dtypes.ScheduleType.GPU_Device,
+            input_nodes={"_permuted": tmp},
+            external_edges=True,
+        )
+        return sdfg
+
+    @classmethod
     def expansion(cls, node, parent_state, parent_sdfg):
         from dace.codegen.common import sym2cpp  # Avoid import loop
 
         inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
-            raise NotImplementedError(
-                f"{cls.vendor} permute does not support beta != 0. Its signature is "
-                "(handle, plan, alpha, A, B, stream) -- out-of-place B = alpha*op(A), no "
-                "beta term. Use the 'pure' expansion for C = alpha*perm(A) + beta*C."
-            )
+            return cls.permute_then_fold_beta(node, inp_tensor, out_tensor, inp_shape, out_shape)
 
         ndim = len(inp_shape)
         dtype = inp_tensor.dtype.base_type
@@ -396,6 +442,7 @@ class TensorTranspose(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandPure,
+        "sequential": ExpandSequential,
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
         "hipTENSOR": ExpandHipTensor,

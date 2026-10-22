@@ -256,7 +256,7 @@ def _transpose(
             raise ValueError("axes don't match array")
         axes = tuple(axes)
 
-    if axes == (0,):  # Special (degenerate) case for 1D "transposition"
+    if axes == tuple(range(len(axes))):  # The identity permutation: numpy returns the array itself, as a view
         return inpname
 
     restype = arr1.dtype
@@ -280,16 +280,6 @@ def _transpose(
         state.add_edge(acc1, None, tasklet, "_inp", Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, "_out", acc2, None, Memlet.from_array(outname, arr2))
     else:  # Tensor transpose
-        modes = len(arr1.shape)
-        idx = axes.index(0)
-        # Special case of tensor transposition: matrix transpose + reshape
-        if axes[idx:] == list(range(modes - idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
-            rows = data._prod([arr1.shape[axes[i]] for i in range(idx, len(arr1.shape))])
-            cols = data._prod([arr1.shape[axes[i]] for i in range(idx)])
-            matrix = _ndarray_reshape(pv, sdfg, state, inpname, [rows, cols])
-            trans_matrix = _transpose(pv, sdfg, state, matrix)
-            return _ndarray_reshape(pv, sdfg, state, trans_matrix, [arr1.shape[i] for i in axes])
-
         read = state.add_read(inpname)
         write = state.add_write(outname)
         from dace.libraries.linalg import TensorTranspose  # Avoid import loop
