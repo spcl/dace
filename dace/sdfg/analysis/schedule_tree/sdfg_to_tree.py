@@ -8,9 +8,8 @@ from collections import defaultdict
 import networkx as nx
 
 import dace
-from dace import data, symbolic, utils
+from dace import data, subsets, symbolic, utils
 from dace.frontend.python import astutils
-from dace.frontend.python.astutils import negate_expr
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
@@ -405,23 +404,25 @@ def _prepare_schedule_tree_edges(
             if not isinstance(dst, (dace.nodes.AccessNode, dace.nodes.EntryNode)):
                 continue
 
-            # If the edge destination is the innermost node, it is a downward-pointing path
-            is_target_dst = e.dst is dst
-
-            innermost_node = dst if is_target_dst else src
-            outermost_node = src if is_target_dst else dst
-
-            # Normalize memlets to their innermost node, or source->destination if it is a same-scope edge
-            if e.src is src and e.dst is dst:
-                outermost_node = src
-                innermost_node = dst
-
             if isinstance(dst, dace.nodes.EntryNode):
                 # Special case: dynamic map range has no data
                 result[e] = tn.DynScopeCopyNode(target=e.dst_conn, memlet=e.data)
             else:
-                target_name = innermost_node.data
-                new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
+                # A copy always writes into the destination container (``dst``) and reads from the source container
+                # (``src``). The schedule-tree ``CopyNode`` names the destination as its ``target`` and normalizes the
+                # memlet to the source, with ``other_subset`` holding the destination subset. This holds regardless of
+                # direction: inward (outer array -> inner node), outward (inner node -> scope exit -> outer array), and
+                # same-scope (node -> node) edges.
+                target_name = dst.data
+                new_memlet = normalize_memlet(sdfg, state, e, src.data)
+                if new_memlet._is_data_src is False and new_memlet.data == src.data == dst.data:
+                    # A copy within one container (``A -> A``) whose memlet is written on the destination side is
+                    # left as is by ``normalize_memlet``; turn it around so that ``memlet.subset`` is the read subset
+                    read_subset = new_memlet.src_subset
+                    if read_subset is None:
+                        read_subset = subsets.Range.from_array(sdfg.arrays[src.data])
+                    new_memlet.subset, new_memlet.other_subset = read_subset, new_memlet.dst_subset
+                    new_memlet._is_data_src = True
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
             scope = state.entry_node(e.dst if mtree.downwards else e.src)
@@ -571,41 +572,84 @@ def _bind_exits_to_label(scope: tn.ScheduleTreeScope, state: SDFGState, node: nd
     scope.add_child(tn.StateLabel(state=label))
 
 
-def _isedge_schedule_tree(
-    edge: gr.Edge[InterstateEdge], emit_goto_for_successors: bool = False
-) -> list[tn.ScheduleTreeNode]:
-    result: list[tn.ScheduleTreeNode] = []
-    for aname, aval in edge.data.assignments.items():
-        assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
-        result.append(assign_node)
+def _edge_assignments(edge: gr.Edge[InterstateEdge]) -> list[tn.ScheduleTreeNode]:
+    """
+    Returns the assignments of an interstate edge as assignment nodes.
 
-    edge_body: list[tn.ScheduleTreeNode] = []
-    if emit_goto_for_successors:
-        goto_node = tn.GotoNode(target=edge.dst.label)
-        edge_body.append(goto_node)
+    :param edge: The interstate edge.
+    :return: A list of assignment nodes, one per assigned symbol.
+    """
+    return [tn.AssignNode(name=aname, value=CodeBlock(aval)) for aname, aval in edge.data.assignments.items()]
 
+
+def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge]) -> list[tn.ScheduleTreeNode]:
+    """
+    Converts an interstate edge in unstructured control flow to a jump to its destination.
+
+    The assignments of a conditional edge are placed inside the conditional, as they apply only if the edge is taken
+    (the condition is evaluated before any of the assignments).
+
+    :param edge: The interstate edge.
+    :return: The nodes that apply the assignments and jump to the destination label.
+    """
+    body: list[tn.ScheduleTreeNode] = _edge_assignments(edge) + [tn.GotoNode(target=edge.dst.label)]
     if edge.data.is_unconditional():
-        result.extend(edge_body)
-    else:
-        # The edge carries a condition, thus the successor is not necessarily executed.
-        if emit_goto_for_successors:
-            # This indicates that we are in unstructured control flow, so a goto for all successors is placed
-            # regardless. No goto needs to be placed for the exit.
-            state_if_node = tn.StateIfScope(condition=edge.data.condition, children=edge_body)
-        else:
-            # If not emitting gotos for successors, this indicates that we are in structured control flow. In this case,
-            # rather than hiding any successors behind a condition, we create a return / exit goto node that is executed
-            # if the inverse of the condition holds, i.e., the successor is NOT executed.
-            exit_goto = tn.GotoNode(target=None)
-            state_if_node = tn.StateIfScope(
-                condition=CodeBlock([negate_expr(edge.data.condition)]), children=[exit_goto]
-            )
-        result.append(state_if_node)
-
-    return result
+        return body
+    return [tn.StateIfScope(condition=edge.data.condition, children=body)]
 
 
-def _block_schedule_tree(block: ControlFlowBlock) -> list[tn.ScheduleTreeNode]:
+def _unstructured_end_label(region: ControlFlowRegion, minted_labels: set[str]) -> str:
+    """
+    Returns a unique label name for the end of a general block.
+
+    :param region: The region that is converted to a general block.
+    :param minted_labels: The end labels already created in this tree, which is updated.
+    :return: A label name that does not clash with any control flow block label or other end label.
+    """
+    existing = {b.label for b in region.sdfg.root_sdfg.all_control_flow_blocks(recursive=True)} | minted_labels
+    label = utils.find_new_name(f"__end_{region.label}", existing)
+    minted_labels.add(label)
+    return label
+
+
+def _structured_chain_schedule_tree(
+    region: ControlFlowRegion, minted_labels: set[str]
+) -> list[tn.ScheduleTreeNode]:
+    """
+    Converts a region without branching edges to a linear sequence of nodes.
+
+    A block with a single conditional out-edge ends the region if the condition does not hold, so the rest of the chain
+    (including the edge's assignments) is nested in a conditional.
+
+    :param region: The region to convert.
+    :param minted_labels: The end labels already created in this tree.
+    :return: The nodes of the region's blocks and transitions.
+    """
+    # Collect the chain of blocks and the single edge following each, then fold from the back
+    chain: list[tuple[ControlFlowBlock, gr.Edge[InterstateEdge] | None]] = []
+    pivot = region.start_block
+    while pivot is not None:
+        oedges = region.out_edges(pivot)
+        edge = oedges[0] if len(oedges) == 1 else None
+        chain.append((pivot, edge))
+        pivot = edge.dst if edge is not None else None
+
+    rest: list[tn.ScheduleTreeNode] = []
+    for block, edge in reversed(chain):
+        nodes = _block_schedule_tree(block, minted_labels)
+        if edge is not None:
+            transition = _edge_assignments(edge) + rest
+            if edge.data.is_unconditional():
+                nodes.extend(transition)
+            else:
+                nodes.append(tn.IfScope(condition=edge.data.condition, children=transition))
+        rest = nodes
+    return rest
+
+
+def _block_schedule_tree(block: ControlFlowBlock, minted_labels: set[str] | None = None) -> list[tn.ScheduleTreeNode]:
+    if minted_labels is None:
+        minted_labels = set()
     if isinstance(block, ControlFlowRegion):
         children: list[tn.ScheduleTreeNode] = []
 
@@ -616,25 +660,27 @@ def _block_schedule_tree(block: ControlFlowBlock) -> list[tn.ScheduleTreeNode]:
             # first, and falling off the end of a block exits the GBlock.
             subnodes: list[tn.ScheduleTreeNode] = []
             start_block = block.start_block
-            for n in [start_block] + [n for n in block.nodes() if n is not start_block]:
+            order = [start_block] + [n for n in block.nodes() if n is not start_block]
+            end_label: str | None = None
+            for i, n in enumerate(order):
                 subnodes.append(tn.StateLabel(state=n))
-                subnodes.extend(_block_schedule_tree(n))
+                subnodes.extend(_block_schedule_tree(n, minted_labels))
+                oedges = block.out_edges(n)
                 # Conditional transitions come first, such that an unconditional transition does not shadow them
-                for oe in sorted(block.out_edges(n), key=lambda e: e.data.is_unconditional()):
-                    subnodes.extend(_isedge_schedule_tree(oe, emit_goto_for_successors=True))
+                for oe in sorted(oedges, key=lambda e: e.data.is_unconditional()):
+                    subnodes.extend(_isedge_schedule_tree(oe))
+                # If no edge is taken, the region ends instead of falling through to the next label
+                if i < len(order) - 1 and not any(oe.data.is_unconditional() for oe in oedges):
+                    if end_label is None:
+                        end_label = _unstructured_end_label(block, minted_labels)
+                    subnodes.append(tn.GotoNode(target=end_label))
+            if end_label is not None:
+                subnodes.append(tn.StateLabel(state=end_label))
             gblock = tn.GBlock(children=subnodes)
             children = [gblock]
         else:
             # No unstructured control flow present - traverse in a linear fashion.
-            pivot = block.start_block
-            while pivot is not None:
-                children.extend(_block_schedule_tree(pivot))
-                oedges = block.out_edges(pivot)
-                if len(oedges) == 1:
-                    pivot = oedges[0].dst
-                    children.extend(_isedge_schedule_tree(oedges[0], emit_goto_for_successors=False))
-                else:
-                    pivot = None
+            children = _structured_chain_schedule_tree(block, minted_labels)
 
         # Function call regions derive from named regions, but are flattened like any other region
         if isinstance(block, NamedRegion) and not isinstance(block, FunctionCallRegion):
@@ -659,14 +705,14 @@ def _block_schedule_tree(block: ControlFlowBlock) -> list[tn.ScheduleTreeNode]:
 
     if isinstance(block, ConditionalBlock):
         result: list[tn.ScheduleTreeNode] = []
-        if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1]))
+        if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1], minted_labels))
         result.append(if_node)
         for cond, branch_body in block.branches[1:]:
             if cond is not None:
-                elif_node = tn.ElifScope(condition=cond, children=_block_schedule_tree(branch_body))
+                elif_node = tn.ElifScope(condition=cond, children=_block_schedule_tree(branch_body, minted_labels))
                 result.append(elif_node)
             else:
-                else_node = tn.ElseScope(children=_block_schedule_tree(branch_body))
+                else_node = tn.ElseScope(children=_block_schedule_tree(branch_body, minted_labels))
                 result.append(else_node)
         return result
 

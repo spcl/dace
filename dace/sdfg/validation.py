@@ -10,6 +10,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import networkx as nx
+import sympy
 
 from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo
@@ -556,6 +557,86 @@ def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
                 state_id,
                 eid,
             )
+
+
+def _warn_wcr_read_in_parallel_scope(state: "dace.sdfg.SDFGState", scope: dict) -> None:
+    """
+    Warns about code nodes that read a location their own parallel-scope iteration contributed to through a
+    write-conflict resolution (WCR).
+
+    In a pattern such as ``map { tasklet1 --(wcr)--> C[i] --> tasklet2 }``, ``tasklet2`` performs an ordinary load of
+    ``C[i]`` after its iteration contributed to it with a WCR. If other iterations contribute to the same location, the
+    load observes an arbitrary, partially-reduced value, i.e., a data race. The rule is conservative and only emits a
+    warning:
+
+    * An access node ``n`` is considered only if at least one of its in-edges carries a memlet with a WCR.
+    * ``n`` must lie inside a parallel scope: the innermost enclosing scope that is either a ``MapEntry`` whose
+      schedule is not ``Sequential`` or a ``ConsumeEntry``.
+    * No warning is emitted if the data of ``n`` is private to an iteration of that scope, i.e., it is a transient with
+      ``Scope`` lifetime whose every access node in the SDFG is in this state and inside that scope.
+    * A warning is emitted if a non-empty out-edge of ``n`` (followed through nested scope entries via its memlet tree)
+      ends at a ``CodeNode`` (``Tasklet``, ``NestedSDFG`` or ``LibraryNode``), unless the read subset provably does not
+      intersect any WCR-written subset.
+
+    :param state: The state to check.
+    :param scope: The scope dictionary of ``state`` (see ``SDFGState.scope_dict``).
+    """
+    from dace.sdfg import nodes as nd  # Avoid import loops
+
+    def is_parallel(entry: nd.EntryNode) -> bool:
+        if isinstance(entry, nd.ConsumeEntry):
+            return True
+        return isinstance(entry, nd.MapEntry) and entry.map.schedule != dtypes.ScheduleType.Sequential
+
+    def is_inside(node: nd.Node, entry: nd.EntryNode) -> bool:
+        parent = scope.get(node)
+        while parent is not None:
+            if parent is entry:
+                return True
+            parent = scope.get(parent)
+        return False
+
+    sdfg = state.sdfg
+    for node in state.data_nodes():
+        wcr_subsets = [e.data.dst_subset for e in state.in_edges(node) if e.data.wcr is not None]
+        if not wcr_subsets:
+            continue
+
+        # Innermost enclosing parallel scope
+        entry = scope.get(node)
+        while entry is not None and not is_parallel(entry):
+            entry = scope.get(entry)
+        if entry is None:
+            continue
+
+        # Data private to an iteration is not shared with other iterations
+        desc = sdfg.arrays[node.data]
+        if desc.transient and desc.lifetime == dtypes.AllocationLifetime.Scope:
+            if all(
+                other_state is state and is_inside(other, entry)
+                for other_state in sdfg.states()
+                for other in other_state.data_nodes()
+                if other.data == node.data
+            ):
+                continue
+
+        for out_edge in state.out_edges(node):
+            if out_edge.data.is_empty():
+                continue
+            read_subset = out_edge.data.src_subset
+            if read_subset is not None and all(
+                wcr_subset is not None and subsets.intersects(wcr_subset, read_subset) is False
+                for wcr_subset in wcr_subsets
+            ):
+                continue
+            readers = [leaf.dst for leaf in state.memlet_tree(out_edge).leaves() if isinstance(leaf.dst, nd.CodeNode)]
+            if readers:
+                warnings.warn(
+                    f'Potential data race in state "{state.label}": "{readers[0]}" reads "{node.data}" after a '
+                    f'write-conflict resolution into it inside parallel scope "{entry}". Other iterations may '
+                    f"contribute to the same location, so the read can observe a partially-reduced value"
+                )
+                break
 
 
 def validate_state(
@@ -1163,7 +1244,9 @@ def validate_state(
             else:
                 dst_expr = e.data.dst_subset.num_elements()
 
-            if symbolic.inequal_symbols(src_expr, dst_expr):
+            if symbolic.inequal_symbols(src_expr, dst_expr) and not _equal_under_positive_steps(
+                src_expr, dst_expr, _enclosing_map_steps(state, scope, e)
+            ):
                 error = InvalidSDFGEdgeError(
                     "Dimensionality mismatch between src/dst subsets", state.parent_graph, state_id, eid
                 )
@@ -1188,6 +1271,8 @@ def validate_state(
                 if e.dst_conn == "set":
                     continue
                 raise error
+
+    _warn_wcr_read_in_parallel_scope(state, scope)
 
     if Config.get_bool("experimental.check_race_conditions"):
         node_labels = []
@@ -1413,6 +1498,41 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
             locinfo += f"\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}"
 
         return f"{self.message} (at state {state.label}{edgestr}){locinfo}"
+
+
+def _enclosing_map_steps(state: "SDFGState", scope: dict, edge) -> set[str]:
+    """Names of the symbols appearing as steps of the map ranges enclosing either endpoint of ``edge``."""
+    from dace.sdfg import nodes as nd
+
+    steps: set[str] = set()
+    for endpoint in (edge.src, edge.dst):
+        entry = endpoint if isinstance(endpoint, nd.MapEntry) else scope.get(endpoint)
+        while entry is not None:
+            if isinstance(entry, nd.MapEntry):
+                for _, _, step in entry.map.range.ranges:
+                    if symbolic.issymbolic(step):
+                        steps |= {str(s) for s in step.free_symbols}
+            entry = scope.get(entry)
+    return steps
+
+
+def _equal_under_positive_steps(a, b, step_names: set[str]) -> bool:
+    """
+    Whether ``a`` and ``b`` are equal once the given map-step symbols are assumed positive.
+
+    A well-formed map has a positive step (a non-positive step is an empty scope), so element counts that
+    differ only by identities such as ``ceiling((s * ceiling(x / s) - s + 1) / s) == ceiling(x / s)`` are equal.
+    """
+    if not step_names or not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
+        return False
+    positive = {
+        s: sympy.Symbol(s.name, integer=True, positive=True)
+        for s in (a.free_symbols | b.free_symbols)
+        if s.name in step_names
+    }
+    if not positive:
+        return False
+    return (a.subs(positive) - b.subs(positive)).simplify() == 0
 
 
 def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
