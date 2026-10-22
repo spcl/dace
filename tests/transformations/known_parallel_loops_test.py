@@ -10,6 +10,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 
 N = dace.symbol("N")
 
@@ -34,6 +35,14 @@ def read_behind(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
         B[i] = A[i] + 1.0
     for i in dace.map[1:N]:
         C[i] = B[i - 1] * 2.0
+
+
+@dace.program
+def shifted_halves(A: dace.float64[3 * N]):
+    for i in dace.map[0:N]:
+        A[i + N] = A[i] + 1.0
+    for i in dace.map[N : 2 * N]:
+        A[i + N] = A[i] + 1.0
 
 
 def lowered(program) -> tuple[dace.SDFG, list[LoopRegion]]:
@@ -131,6 +140,24 @@ def test_mixing_is_allowed_when_the_option_is_off():
     assert len(fused) == 1 and not fused[0].known_parallel
 
 
+def test_adjacent_halves_fuse_side_by_side_once_normalized_and_stay_known_parallel():
+    """``[0, N)`` and ``[N, 2N)`` of ``A[i + N] = A[i] + 1``: concatenated, iteration ``i + N`` reads iteration ``i``'s
+    write; normalized to ``[0, N)`` and fused side by side, each iteration reads only its own."""
+    sdfg, loops = lowered(shifted_halves)
+    NormalizeLoopAndMapOrigin().apply_pass(sdfg, {})
+    loops = sorted(loops, key=lambda loop: loop.parent_graph.node_id(loop))
+    fuse(sdfg, *loops)
+    fused = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert len(fused) == 1 and fused[0].known_parallel
+    n = 8
+    A = np.random.rand(3 * n)
+    ref = A.copy()
+    ref[n : 2 * n] = ref[:n] + 1.0
+    ref[2 * n :] = ref[n : 2 * n] + 1.0
+    sdfg(A=A, N=n)
+    assert np.allclose(A, ref)
+
+
 if __name__ == "__main__":
     test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test()
     test_fusing_two_known_parallel_loops_at_the_same_point_stays_known_parallel()
@@ -138,3 +165,4 @@ if __name__ == "__main__":
     test_a_known_parallel_loop_does_not_fuse_with_a_sequential_one()
     test_a_known_parallel_loop_fuses_with_a_provably_parallel_one_which_becomes_known_parallel()
     test_mixing_is_allowed_when_the_option_is_off()
+    test_adjacent_halves_fuse_side_by_side_once_normalized_and_stay_known_parallel()

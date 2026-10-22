@@ -368,6 +368,10 @@ class LoopFusion(transformation.MultiStateTransformation):
         if second.loop_variable and second.loop_variable != ivar:
             r2 = self._rename_ivar(r2, second.loop_variable, ivar)
             w2 = self._rename_ivar(w2, second.loop_variable, ivar)
+
+        def apart(a, b) -> bool:
+            return self._apart(first, a, b)
+
         arrays = (set(r1) | set(w1)) & (set(r2) | set(w2))
         for arr in arrays:
             # A dependence whose subset could not be resolved (None) is refused rather than dropped --
@@ -381,7 +385,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             for write in w1.get(arr, []):
                 for read in r2.get(arr, []):
                     cls = classifier.dep_class(read, write, ivar, facts=facts)[0]
-                    if cls not in ("RAW", "none"):
+                    if cls not in ("RAW", "none") and not apart(read, write):
                         return False
             # anti: a value read in body1 must not have been overwritten earlier in the fused sweep by
             # body2 (read-behind of body2's write). 'invariant' is refused for the mirror reason: fused,
@@ -390,15 +394,37 @@ class LoopFusion(transformation.MultiStateTransformation):
             for read in r1.get(arr, []):
                 for write in w2.get(arr, []):
                     cls = classifier.dep_class(read, write, ivar, facts=facts)[0]
-                    if cls not in ("WAR", "none"):
+                    if cls not in ("WAR", "none") and not apart(read, write):
                         return False
             # output: writes from both bodies must hit the same cell each iteration, else the last-writer
             # order differs between fused and unfused.
             for wa in w1.get(arr, []):
                 for wb in w2.get(arr, []):
-                    if not self._same_point(wa, wb):
+                    if not self._same_point(wa, wb) and not apart(wa, wb):
                         return False
         return True
+
+    @staticmethod
+    def _swept(sub, ivar: str, lo, hi) -> subsets.Range | None:
+        """The box ``sub`` covers as ``ivar`` runs over ``[lo, hi]``, for bounds affine in ``ivar`` with a constant
+        coefficient; ``None`` otherwise."""
+        if sub is None or lo is None or hi is None:
+            return None
+        itersym = symbolic.symbol(ivar)
+        ranges = []
+        for begin, end, step in sub.ndrange():
+            if step != 1:
+                return None
+            bounds = []
+            for bound, pick_low in ((begin, True), (end, False)):
+                expr = symbolic.pystr_to_symbolic(str(bound))
+                coeff = expr.diff(itersym)
+                if coeff.free_symbols or expr.diff(itersym, 2) != 0:
+                    return None
+                low, high = (lo, hi) if coeff >= 0 else (hi, lo)
+                bounds.append(expr.subs(itersym, low if pick_low else high))
+            ranges.append((bounds[0], bounds[1], 1))
+        return subsets.Range(ranges)
 
     def _same_iteration_only(
         self,
@@ -417,9 +443,21 @@ class LoopFusion(transformation.MultiStateTransformation):
         for arr in (set(w1) & (set(r2) | set(w2))) | (set(w2) & set(r1)):
             pairs = [(a, b) for a in w1.get(arr, []) for b in r2.get(arr, []) + w2.get(arr, [])]
             pairs += [(a, b) for a in r1.get(arr, []) for b in w2.get(arr, [])]
-            if any(a is None or b is None or not self._same_point(a, b) for a, b in pairs):
+            if any(
+                a is None or b is None or not (self._same_point(a, b) or self._apart(first, a, b)) for a, b in pairs
+            ):
                 return False
         return True
+
+    def _apart(self, loop: LoopRegion, a, b) -> bool:
+        """Whether ``a`` and ``b``, each swept over ``loop``'s whole range, touch no common element: no dependence
+        between them in either order. Asked inside the loop, where its range is nonempty."""
+        ivar = loop.loop_variable
+        lo, hi = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+        sa, sb = self._swept(a, ivar, lo, hi), self._swept(b, ivar, lo, hi)
+        if sa is None or sb is None:
+            return False
+        return sa.intersects(sb, SymbolResolver().facts_at(loop)) is symbolic.Truth.FALSE
 
     @staticmethod
     def _same_point(a, b) -> bool:
