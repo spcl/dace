@@ -1392,6 +1392,14 @@ class Map:
         "(set by RangePrivatizeScatterReductions)",
         serialize_if=lambda m: m.omp_range_privatize,
     )
+    proven_independent = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="Its iterations are proven independent by a proof the scope's memlets cannot show (a segment-confined "
+        "or wavefront lift); schedule inference does not re-check them",
+        serialize_if=lambda m: m.proven_independent,
+    )
 
     gpu_block_size = ListProperty(
         element_type=int,

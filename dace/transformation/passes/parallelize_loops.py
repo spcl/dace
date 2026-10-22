@@ -342,6 +342,7 @@ class ParallelizeLoops(ppl.Pass):
                 if isinstance(node, nodes.MapEntry) and node.map.params == [itervar] and node.map.range[0][1] == end
             ]
             for node in lifted:
+                node.map.proven_independent = proven
                 if last is not None and last != end:
                     # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
                     # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).

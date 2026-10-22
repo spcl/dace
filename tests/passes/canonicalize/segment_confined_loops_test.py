@@ -135,6 +135,9 @@ def test_a_component_loop_lifts_behind_its_entry_guard_and_computes_the_referenc
     guards = [n for n, parent in sdfg.all_nodes_recursive() if tutil.is_abort_guard(n) and n.label.startswith("check_")]
     assert {g.label for g in guards} >= {"check_monotone", "check_member"}
     finalize_for_target(sdfg, "cpu")
+    # The proof is the entry guard, not the memlets: schedule inference must not take the region back (nfa_frontier
+    # ran its 2190 components on one thread, 155 s against numba's 8 s).
+    assert [entry.map.schedule for entry in segment_maps(sdfg)] == [dace.ScheduleType.CPU_Multicore]
     comp_ptr, row_ptr, col_idx, start_ptr, start_idx = graph()
     visits, sizes = np.zeros(row_ptr.size - 1, np.int64), np.zeros(comp_ptr.size - 1, np.int64)
     sdfg(

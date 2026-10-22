@@ -590,10 +590,11 @@ def _set_default_schedule_in_scope(
                     local_child_schedule = child_schedule
                 # An OpenMP team over a loop-carried dependency is a data race, and the wrong answer
                 # it gives is silent. Never CHOOSE that schedule here; an explicit one is the
-                # author's to defend.
+                # author's to defend, and so is a proof the memlets cannot show (``proven_independent``).
                 if (
                     local_child_schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
                     and isinstance(node, nodes.MapEntry)
+                    and not node.map.proven_independent
                     and map_scope_carries_dependency(state, node)
                 ):
                     local_child_schedule = dtypes.ScheduleType.Sequential
