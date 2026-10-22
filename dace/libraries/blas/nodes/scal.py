@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -48,56 +48,13 @@ def scal_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = No
     return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", scalars + call)
 
 
-@library.expansion
-class ExpandScalOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return scal_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandScalMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return scal_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandScalCuBLAS(ExpandTransformation):
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return scal_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
-
-
-@library.expansion
-class ExpandScalRocBLAS(ExpandTransformation):
-    environments = [environments.rocblas.rocBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return scal_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
-
-
 @library.node
 class Scal(nodes.LibraryNode):
     """BLAS ``?scal``: ``_res = a * _x`` for vectors."""
 
     implementations = {
         "pure": ExpandScalPure,
-        "OpenBLAS": ExpandScalOpenBLAS,
-        "MKL": ExpandScalMKL,
-        "cuBLAS": ExpandScalCuBLAS,
-        "rocBLAS": ExpandScalRocBLAS,
+        **gpu_dialect.vendor_expansions("Scal", scal_call),
     }
     default_implementation = None
 
