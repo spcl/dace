@@ -15,7 +15,13 @@ from dace import memlet as mmlt
 from dace.codegen import compiler_family, cppunparse
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.common import codeblock_to_cpp, emits_tree_reductions, sym2cpp, update_persistent_desc
+from dace.codegen.common import (
+    codeblock_to_cpp,
+    emits_tree_reductions,
+    sym2cpp,
+    unparse_interstate_edge,
+    update_persistent_desc,
+)
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator, make_absolute
@@ -38,9 +44,7 @@ from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 from dace.sdfg.validation import validate_memlet_data
 from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
-from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
-    range_private_accumulators,
-)
+from dace.transformation.passes.cpu_specialization import range_privatize_scatter_reductions as rpsr
 
 if TYPE_CHECKING:
     from dace.codegen.targets.cuda import CUDACodeGen
@@ -529,22 +533,6 @@ _REDUCTION_TO_OMP_OP = {
     dtypes.ReductionType.Bitwise_Xor: "^",
 }
 
-#: C++ identity of each operator a range-privatized scatter (``CPUCodeGen._range_private_targets``) combines,
-#: formatted with the element type ``t``.
-_RANGE_PRIVATE_IDENTITY = {
-    dtypes.ReductionType.Sum: "{t}(0)",
-    dtypes.ReductionType.Product: "{t}(1)",
-    dtypes.ReductionType.Min: "(std::numeric_limits<{t}>::has_infinity ? std::numeric_limits<{t}>::infinity() "
-    ": std::numeric_limits<{t}>::max())",
-    dtypes.ReductionType.Max: "(std::numeric_limits<{t}>::has_infinity ? -std::numeric_limits<{t}>::infinity() "
-    ": std::numeric_limits<{t}>::lowest())",
-    dtypes.ReductionType.Logical_And: "{t}(1)",
-    dtypes.ReductionType.Logical_Or: "{t}(0)",
-    dtypes.ReductionType.Bitwise_And: "{t}(~{t}(0))",
-    dtypes.ReductionType.Bitwise_Or: "{t}(0)",
-    dtypes.ReductionType.Bitwise_Xor: "{t}(0)",
-}
-
 #: Complex element types an OpenMP array/scalar reduction can target -- only via a
 #: ``#pragma omp declare reduction`` (OpenMP has no built-in reduction for complex).
 _COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
@@ -748,6 +736,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._omp_reduction_scope_stack = []
         self._range_private_maps = {}
         self._range_private_count = 0
+        #: Per range-privatized scope: ``{data name: flag variable or None}``, the flag naming whether a thread
+        #: updates the shared rows atomically instead (None: it never does).
+        self._range_private_flags = []
         #: Per sequential-map scope: ``{data name: {'var', 'op', 'subset', 'target'}}`` for WCR
         #: accumulators hoisted into a local scalar for the duration of the loop nest. Pushed by
         #: ``_generate_MapEntry``, read by ``write_and_resolve_expr``, drained by ``_generate_MapExit``.
@@ -1920,6 +1911,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if acc is not None and str(memlet.subset) == str(acc["subset"]):
                 return f"{acc['var']} = {acc['var']} {acc['op']} ({inname})"
         _omp_covered = any(memlet.data in frame for frame in self._omp_reduction_scope_stack)
+        # A range-privatized accumulator a thread may instead update in place: atomic under its flag.
+        rp_flag = self._range_private_flag(memlet.data) if _omp_covered else None
+        if rp_flag is not None and isinstance(dtype, dtypes.vector):
+            _omp_covered, nc = False, False
         atomic = "" if (nc or _omp_covered) else "_atomic"
         wcr_desc = sdfg.arrays[memlet.data]
         ptrname = self.ptr(memlet.data, wcr_desc, sdfg)
@@ -1954,6 +1949,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # matches the reduction runtime's ``::min`` / ``::max`` bit-for-bit.
         if _omp_covered:
             omp_op = _REDUCTION_TO_OMP_OP.get(redtype)
+            if rp_flag is not None:
+                credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
+                return (
+                    f"({rp_flag} ? (void)dace::wcr_fixed<{credtype}, {wcr_desc.dtype.ctype}>::reduce_atomic("
+                    f"{ptr}, {inname}) : (void)(*({ptr}) = *({ptr}) {omp_op} ({inname})))"
+                )
             if omp_op in ("+", "*", "&", "|", "^", "&&", "||"):
                 return f"*({ptr}) = *({ptr}) {omp_op} ({inname})"
 
@@ -3183,7 +3184,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, cfg.cfg_id, state_id, dfg.node_id(node))
 
         code_already_generated = False
-        if unique_functions and not inline:
+        if unique_functions and not inline and not self._range_private_flags:
             # Dedup is per OUTPUT FILE, not per whole build: _current_tu_key names the TU being emitted
             # right now (id(self) -- the frame .cpp -- unless split_nsdfg_translation_units re-points it
             # at a nest's own .cpp). Keying on it means an inner nest shared by two split top-level nests
@@ -3219,6 +3220,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # Arguments are input connectors, output connectors, and symbols
         codegen = self.calling_codegen
         memlet_references = codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state_dfg, node)
+        # Inside a range-privatized region the body writes accumulators by a flag the region owns, so
+        # the nest takes the flags and is never shared with a call site outside.
+        range_private = self._range_private_nest(state_dfg, node)
+        flags = list(OrderedSet(f for f in range_private.values() if f is not None))
+        if flags and not inline:
+            memlet_references += [("bool", f, f) for f in flags]
 
         # Emit this nest into its OWN translation unit? Only for a nest that is already a standalone
         # function and whose CONTAINING SDFG is the root (``sdfg.parent is None``) -- so each top-level
@@ -3323,6 +3330,9 @@ class CPUCodeGen(TargetCodeGenerator):
         outer_tu_key = self._current_tu_key
         if do_split:
             self._current_tu_key = sdfg_label
+        if range_private:
+            self._omp_reduction_scope_stack.append(dict.fromkeys(range_private))
+            self._range_private_flags.append(range_private)
         try:
             if not unique_functions or not code_already_generated:
                 if not inline:
@@ -3407,6 +3417,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     function_stream.write(nested_stream.getvalue())
         finally:
             self._current_tu_key = outer_tu_key
+            if range_private:
+                self._omp_reduction_scope_stack.pop()
+                self._range_private_flags.pop()
 
         self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
@@ -3574,6 +3587,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # contribution where the atomic the conflict check asks for would not.
             if cpp.is_write_conflicted(state, iedge, sdfg_schedule=self._toplevel_schedule):
                 continue
+            # A range-privatized accumulator a thread may update atomically in place is shared too.
+            if self._range_private_flag(iedge.data.data) is not None:
+                continue
             path = state.memlet_path(iedge)
             if not path or not isinstance(path[0].src, nodes.Tasklet):
                 continue
@@ -3739,9 +3755,68 @@ class CPUCodeGen(TargetCodeGenerator):
             return {}
         return {
             name: plan
-            for name, plan in range_private_accumulators(state, map_entry).items()
+            for name, plan in rpsr.range_private_accumulators(state, map_entry).items()
             if self.ptr(name, sdfg.arrays[name], sdfg).isidentifier()
         }
+
+    #: ``(operator, element types)`` whose update ``wcr_fixed`` emits as an ``omp atomic`` on the host.
+    _HOST_ATOMIC_UPDATES = (
+        ({dtypes.ReductionType.Sum, dtypes.ReductionType.Product}, {dtypes.float32, dtypes.float64}),
+        (
+            {
+                dtypes.ReductionType.Sum,
+                dtypes.ReductionType.Product,
+                dtypes.ReductionType.Bitwise_And,
+                dtypes.ReductionType.Bitwise_Or,
+                dtypes.ReductionType.Bitwise_Xor,
+            },
+            {dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64}
+            | {dtypes.uint8, dtypes.uint16, dtypes.uint32, dtypes.uint64},
+        ),
+    )
+
+    def _range_private_site(self, sdfg: SDFG, stmts: tuple, types: dict, row: str) -> list[str]:
+        """C++ of a statement tree of :class:`rpsr.ScatterIndexSources`; ``row`` formats a written row."""
+
+        def expr(e) -> str:
+            if isinstance(e, str):
+                return unparse_interstate_edge(e, sdfg, symbols=types, codegen=self._frame)
+            return cpp.sym2cpp(e)
+
+        lines = []
+        for stmt in stmts:
+            if isinstance(stmt, rpsr.Let):
+                lines.append(f"const {stmt.dtype.ctype} {stmt.name} = {expr(stmt.expr)};")
+            elif isinstance(stmt, rpsr.Row):
+                lines.append(row.format(expr(stmt.expr)))
+            elif isinstance(stmt, rpsr.Guard):
+                lines += [f"if ({expr(stmt.cond)}) {{", *self._range_private_site(sdfg, stmt.body, types, row), "}"]
+            elif isinstance(stmt, rpsr.Loop):
+                v = stmt.var
+                lines.append(
+                    f"for ({stmt.dtype.ctype} {v} = {expr(stmt.init)}; {expr(stmt.cond)}; {v} = {expr(stmt.update)}) {{"
+                )
+                lines += [*self._range_private_site(sdfg, stmt.body, types, row), "}"]
+            else:
+                for v, dtype, (begin, end, step) in zip(stmt.vars, stmt.dtypes, stmt.ranges):
+                    lines.append(
+                        f"for ({dtype.ctype} {v} = {expr(begin)}; {v} < {expr(end + 1)}; {v} += {expr(step)}) {{"
+                    )
+                lines += [*self._range_private_site(sdfg, stmt.body, types, row), *["}"] * len(stmt.vars)]
+        return lines
+
+    @staticmethod
+    def _range_private_locals(stmts: tuple, types: dict) -> dict:
+        for stmt in stmts:
+            if isinstance(stmt, rpsr.Let):
+                types[stmt.name] = stmt.dtype
+            elif isinstance(stmt, rpsr.Loop):
+                types[stmt.var] = stmt.dtype
+            elif isinstance(stmt, rpsr.MapLoop):
+                types.update(zip(stmt.vars, stmt.dtypes))
+            if isinstance(stmt, (rpsr.Loop, rpsr.MapLoop, rpsr.Guard)):
+                CPUCodeGen._range_private_locals(stmt.body, types)
+        return types
 
     def _open_range_private(
         self,
@@ -3755,108 +3830,100 @@ class CPUCodeGen(TargetCodeGenerator):
         state_id: int,
     ) -> dict:
         """Open the parallel region of a range-privatized map: the index pre-pass over each thread's
-        static chunk, then a private span per accumulator shadowing its pointer. Returns the plan
+        static chunk, then each accumulator's private rows shadowing its pointer. Returns the plan
         :meth:`_close_range_private` combines."""
-        function_stream.write("#include <omp.h>\n#include <limits>\n#include <vector>", cfg, state_id, node)
+        function_stream.write("#include <omp.h>\n#include <dace/range_private.h>", cfg, state_id, node)
         prefix = f"__rp{self._range_private_count}"
         self._range_private_count += 1
         groups: dict[tuple, list[str]] = {}
         for name, (_redtype, sources) in targets.items():
-            reads = []
-            for array, index in sources.reads:
-                element = cpp.cpp_array_expr(
-                    sdfg, mmlt.Memlet(data=array, subset=subsets.Range([(i, i, 1) for i in index])), codegen=self
-                )
-                reads.append(f"(int64_t)({element})")
-            groups.setdefault((sources.loops, tuple(OrderedSet(reads))), []).append(name)
+            groups.setdefault(sources.sites, []).append(name)
 
         nthreads = str(node.map.omp_num_threads) if node.map.omp_num_threads > 0 else "omp_get_max_threads()"
         lines = [f"const int {prefix}_nt = {nthreads};"]
-        lines += [f"std::vector<int64_t> {prefix}_span{g}(2 * {prefix}_nt);" for g in range(len(groups))]
-        lines += [f"#pragma omp parallel num_threads({prefix}_nt)", "{"]
-        collapse = f" collapse({node.map.collapse})" if node.map.collapse > 1 else ""
-        plan = {"prefix": prefix, "groups": [], "names": set(targets)}
-        for g, ((loops, reads), names) in enumerate(groups.items()):
-            lo, hi = f"{prefix}_lo{g}", f"{prefix}_hi{g}"
+        plan = {"prefix": prefix, "accumulators": [], "flags": {}}
+        for name, (redtype, _sources) in targets.items():
+            desc = sdfg.arrays[name]
+            ptr = self.ptr(name, desc, sdfg)
+            atomic = any(redtype in ops and desc.dtype in types for ops, types in self._HOST_ATOMIC_UPDATES)
+            credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
             lines.append(
-                f"int64_t {lo} = std::numeric_limits<int64_t>::max(), {hi} = std::numeric_limits<int64_t>::min();"
+                f"dace::range_private::Accumulator<{credtype}, {desc.dtype.ctype}, {str(atomic).lower()}> "
+                f"{prefix}_{ptr}({prefix}_nt, {cpp.sym2cpp(desc.shape[0])}, {cpp.sym2cpp(desc.strides[0])});"
+            )
+            plan["accumulators"].append(ptr)
+            plan["flags"][name] = f"{prefix}_atomic_{ptr}" if atomic else None
+        lines += [
+            f"#pragma omp parallel num_threads({prefix}_nt)",
+            "{",
+            f"const int {prefix}_t = omp_get_thread_num();",
+        ]
+        collapse = f" collapse({node.map.collapse})" if node.map.collapse > 1 else ""
+        ctypes = self.map_loop_ctypes(sdfg, state, node)
+        for g, (sites, names) in enumerate(groups.items()):
+            lo, hi, count = f"{prefix}_lo{g}", f"{prefix}_hi{g}", f"{prefix}_n{g}"
+            lines.append(
+                f"int64_t {lo} = std::numeric_limits<int64_t>::max(), "
+                f"{hi} = std::numeric_limits<int64_t>::min(), {count} = 0;"
             )
             lines.append(f"#pragma omp for schedule(static) nowait{collapse}")
-            nest = [(node, state)] + [(entry, state) for entry in loops]
-            depth = 0
-            for entry, st in nest:
-                for var, (begin, end, step), ctype in zip(
-                    entry.map.params, entry.map.range, self.map_loop_ctypes(sdfg, st, entry)
-                ):
-                    lines.append(
-                        f"for ({ctype} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; "
-                        f"{var} += {cpp.sym2cpp(step)}) {{"
-                    )
-                    depth += 1
-            for read in reads:
+            for var, (begin, end, step), ctype in zip(node.map.params, node.map.range, ctypes):
                 lines.append(
-                    f"{{ const int64_t {prefix}_v = {read}; {lo} = std::min({lo}, {prefix}_v); "
-                    f"{hi} = std::max({hi}, {prefix}_v); }}"
+                    f"for ({ctype} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; "
+                    f"{var} += {cpp.sym2cpp(step)}) {{"
                 )
-            lines += ["}"] * depth
-            accumulators = []
+            row = (
+                f"{{{{ const int64_t {prefix}_v = (int64_t)({{}}); {lo} = std::min({lo}, {prefix}_v); "
+                f"{hi} = std::max({hi}, {prefix}_v); ++{count}; }}}}"
+            )
+            for site in sites:
+                types = self._range_private_locals(site, {})
+                lines += ["{", *self._range_private_site(sdfg, site, types, row), "}"]
+            lines += ["}"] * len(node.map.params)
             for name in names:
                 desc = sdfg.arrays[name]
                 ptr, ctype = self.ptr(name, desc, sdfg), desc.dtype.ctype
-                redtype = targets[name][0]
-                identity = _RANGE_PRIVATE_IDENTITY[redtype].format(t=ctype)
-                row = cpp.sym2cpp(desc.strides[0])
+                flag = f"{prefix}_atomic_{ptr}"
                 lines += [
                     f"{ctype}* const {prefix}_shared_{ptr} = {ptr};",
-                    f"std::vector<{ctype}> {prefix}_priv_{ptr}"
-                    f"({hi} >= {lo} ? ({hi} - {lo} + 1) * ({row}) : 0, {identity});",
-                    f"{ctype}* {ptr} = {hi} >= {lo} ? {prefix}_priv_{ptr}.data() - {lo} * ({row}) : {prefix}_shared_{ptr};",
+                    f"bool {flag};",
+                    f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, {lo}, {hi}, {count}, {flag});",
                 ]
-                credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-                accumulators.append((ptr, f"dace::wcr_fixed<{credtype}, {ctype}>", row))
-            plan["groups"].append((g, accumulators))
         result.write("\n".join(lines), cfg, state_id, node)
         return plan
 
     def _close_range_private(
         self, plan: dict, result: CodeIOStream, cfg: ControlFlowRegion, state_id: int, node: nodes.MapExit
     ) -> None:
-        """Combine each thread's private spans into the shared accumulators and close the region:
-        plain where no other thread's span reaches, atomic elsewhere."""
+        """Fold every thread's private rows into the shared accumulators once all bodies are done, and
+        close the region."""
         p = plan["prefix"]
-        lines = [f"const int {p}_t = omp_get_thread_num(), {p}_T = omp_get_num_threads();"]
-        for g, _accumulators in plan["groups"]:
-            lines.append(f"{p}_span{g}[2 * {p}_t] = {p}_lo{g}; {p}_span{g}[2 * {p}_t + 1] = {p}_hi{g};")
-        lines.append("#pragma omp barrier")
-        for g, accumulators in plan["groups"]:
-            lo, hi, a, b = f"{p}_lo{g}", f"{p}_hi{g}", f"{p}_a{g}", f"{p}_b{g}"
-            lines += [
-                f"int64_t {a} = {lo}, {b} = {hi};",
-                f"for (int {p}_s = 0; {p}_s < {p}_t; ++{p}_s) {a} = std::max({a}, {p}_span{g}[2 * {p}_s + 1] + 1);",
-                f"for (int {p}_s = {p}_t + 1; {p}_s < {p}_T; ++{p}_s) {b} = std::min({b}, {p}_span{g}[2 * {p}_s] - 1);",
-                f"const int64_t {p}_e0{g} = {a} <= {b} ? {a} : {hi} + 1, {p}_e1{g} = {a} <= {b} ? {b} + 1 : {hi} + 1;",
-            ]
-            for ptr, functor, row in accumulators:
-                shared, priv, i = f"{p}_shared_{ptr}", f"{p}_priv_{ptr}", f"{p}_i"
-                parts = [
-                    (lo, f"{p}_e0{g}", "reduce_atomic"),
-                    (f"{p}_e0{g}", f"{p}_e1{g}", "reduce"),
-                    (f"{p}_e1{g}", f"{hi} + 1", "reduce_atomic"),
-                ]
-                lines.append(f"if ({hi} >= {lo}) {{")
-                for begin, end, update in parts:
-                    lines.append(
-                        f"for (int64_t {i} = ({begin}) * ({row}); {i} < ({end}) * ({row}); ++{i}) "
-                        f"{functor}::{update}({shared} + {i}, {priv}[{i} - {lo} * ({row})]);"
-                    )
-                lines.append("}")
-        lines.append("}")
+        lines = ["#pragma omp barrier", "{", f"const int {p}_T = omp_get_num_threads();"]
+        lines += [f"{p}_{ptr}.combine({p}_t, {p}_T, {p}_shared_{ptr});" for ptr in plan["accumulators"]]
+        lines += ["}", "}"]
         result.write("\n".join(lines), cfg, state_id, node)
+
+    def _range_private_flag(self, name: str) -> str | None:
+        """The variable telling whether a thread updates the range-privatized ``name`` atomically, if it may."""
+        for flags in reversed(self._range_private_flags):
+            if name in flags:
+                return flags[name]
+        return None
+
+    def _range_private_nest(self, state: SDFGState, node: nodes.NestedSDFG) -> dict[str, str | None]:
+        """``{connector: flag or None}`` of the outputs of ``node`` that write a range-privatized accumulator."""
+        if not self._range_private_flags:
+            return {}
+        out = {}
+        for e in state.out_edges(node):
+            if e.src_conn is not None and any(e.data.data in flags for flags in self._range_private_flags):
+                out[e.src_conn] = self._range_private_flag(e.data.data)
+        return out
 
     def _accumulates_into_privatized_array(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         """Whether ``map_entry``'s body, nested SDFGs included, has a WCR write to an accumulator an enclosing
         range-privatized map holds a private span of."""
-        privatized = {name for plan in self._range_private_maps.values() for name in plan["names"]}
+        privatized = {name for flags in self._range_private_flags for name in flags}
         if not privatized:
             return False
         scope = state.scope_subgraph(map_entry, include_entry=False, include_exit=True)
@@ -4070,9 +4137,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
 
         if range_private:
-            self._range_private_maps[node.map] = self._open_range_private(
+            plan = self._open_range_private(
                 sdfg, state_dfg, node, range_private, function_stream, result, cfg, state_id
             )
+            self._range_private_maps[node.map] = plan
+            self._range_private_flags.append(plan["flags"])
         result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
@@ -4184,6 +4253,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write("}", cfg, state_id, node)
         range_private = self._range_private_maps.pop(map_node.map, None)
         if range_private:
+            self._range_private_flags.pop()
             self._close_range_private(range_private, result, cfg, state_id, node)
 
         result.write(outer_stream.getvalue())
