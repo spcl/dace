@@ -377,6 +377,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
        never collapsed to one shared copy; on GPU it also resets non-atomic WCR edges.
     4. **Map-scoped transients -> forced registers on CPU** (:func:`force_map_scoped_registers`): an
        array allocated per map iteration is pinned to the stack, a symbolically sized one as a VLA.
+    5. **Device transients -> the stream-ordered memory pool on GPU** (:func:`pool_gpu_transients`).
 
     A persistent size-1 WCR accumulator would land as ``__state->x`` -- not a valid OpenMP
     ``reduction(op:var)`` lvalue, so the parallel reduction fails to compile. Revert each promoted
@@ -439,6 +440,27 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
     if device == dtypes.DeviceType.CPU:
         force_map_scoped_registers(sdfg)
+    else:
+        pool_gpu_transients(sdfg)
+
+
+def pool_gpu_transients(sdfg: SDFG) -> int:
+    """Allocate every device transient array (views and External ones excepted) from the stream-ordered memory
+    pool; returns how many containers were marked."""
+    marked = 0
+    for nested in sdfg.all_sdfgs_recursive():
+        for desc in nested.arrays.values():
+            if (
+                desc.transient
+                and isinstance(desc, dt.Array)
+                and not isinstance(desc, dt.View)
+                and desc.storage == dtypes.StorageType.GPU_Global
+                and desc.lifetime != dtypes.AllocationLifetime.External
+                and not desc.pool
+            ):
+                desc.pool = True
+                marked += 1
+    return marked
 
 
 def map_reduces_into(sdfg: SDFG, name: str) -> bool:
