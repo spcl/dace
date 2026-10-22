@@ -2621,7 +2621,9 @@ class OffloadToAccelerator(ppl.Pass):
 
         A taskloop or host map is host code by decision, and ``host_level_scopes`` lifts from INSIDE
         it, so it bounds the partitions like device work does: left out, closing a partition would
-        drag its whole body -- device-wide library calls included -- into a kernel.
+        drag its whole body -- device-wide library calls included -- into a kernel. So is a library
+        node :meth:`assign_schedules` left off the device: a caller kept it on the host, and wrapped,
+        its host expansion would run inside a one-thread kernel.
         """
         self.stage_host_pin_reads(sdfg, state, scope_entry)
         scope_children = state.scope_children()
@@ -2630,6 +2632,7 @@ class OffloadToAccelerator(ppl.Pass):
             node
             for node in members
             if self.is_device_work(node)
+            or isinstance(node, nodes.LibraryNode)
             or (
                 isinstance(node, nodes.MapEntry)
                 and (node in self.taskloops or node in self._host_map_entries or node in self._host_pinned)

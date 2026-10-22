@@ -5,6 +5,7 @@ Structural tests: they assert which schedule each map came out with, so they do 
 The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
 """
 
+import numpy as np
 import pytest
 
 import dace
@@ -349,3 +350,33 @@ def test_an_index_read_the_propagation_cannot_see_moves_at_most_its_subset():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@dace.program
+def scaled_total(A: dace.float64[NB], B: dace.float64[NB], C: dace.float64[1]):
+    for i in dace.map[0:NB]:
+        B[i] = A[i] * 2.0
+    C[0] = np.sum(B)
+
+
+class HostLibraryNodes(OffloadToAccelerator):
+    """Keeps every library node on the host, as NestForge keeps a kernel placed on the CPU."""
+
+    def assign_schedules(self, sdfg: dace.SDFG, host_level: bool = True) -> None:
+        super().assign_schedules(sdfg, host_level)
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.LibraryNode):
+                node.schedule = dace.ScheduleType.CPU_Multicore
+
+
+def test_a_library_node_kept_on_the_host_beside_a_kernel_is_not_wrapped_into_one():
+    sdfg = scaled_total.to_sdfg(simplify=True)
+    ppl.Pipeline([HostLibraryNodes()]).apply_pass(sdfg, {})
+
+    placed = [
+        (node, state.entry_node(node))
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.LibraryNode)
+    ]
+
+    assert [(node.schedule, entry) for node, entry in placed] == [(dace.ScheduleType.CPU_Multicore, None)]
