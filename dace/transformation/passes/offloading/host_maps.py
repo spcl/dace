@@ -2,18 +2,16 @@
 """Maps that stay on the host so the maps under them become the kernels (ICON's ``nblks`` over ``nproma``/``nlev``)."""
 
 import itertools
-from typing import Any
 from collections.abc import Iterable
+from typing import Any
 
 import sympy
-
 from ordered_set import OrderedSet
 
-from dace import subsets, symbolic
-from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import subsets, symbolic
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: ``False``/``None``/``[]``: no host maps; ``True``: derive them; a list: these map labels or ``MapEntry`` nodes.
 HostMapSpec = bool | list[str | nodes.MapEntry] | None
@@ -113,7 +111,7 @@ def find_host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet[nodes.Ma
 def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet[str]:
     """Containers touched by top-level tasklets, interstate edges and loop or branch conditions under ``region``."""
     touched: OrderedSet[str] = OrderedSet()
-    for state in region.all_states():
+    for state in region.states():
         scopes = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, nodes.Tasklet) and scopes[node] is None:
@@ -165,7 +163,7 @@ def pinnable_maps(sdfg: SDFG, loop: LoopRegion) -> OrderedSet | None:
     """The maps of ``loop`` to keep on the host, or None when ``loop`` is a device loop."""
     host = host_code_containers(sdfg, loop)
     candidates: OrderedSet = OrderedSet()
-    for state in loop.all_states():
+    for state in loop.states():
         work = [n for n in state.scope_children()[None] if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))]
         for node in work:
             if len(work) != 1 or not isinstance(node, nodes.MapEntry):
