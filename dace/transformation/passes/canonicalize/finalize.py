@@ -50,6 +50,7 @@ from dace.transformation.auto.auto_optimize import (
 )
 from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.canonicalize.beta_fold import BetaFold
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
@@ -880,8 +881,12 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     else:
         cpu_specialize(sdfg, break_anti_dependence=break_anti_dependence, validate=False)
 
+    # ``X = X + T`` onto the contraction writing ``T``: once on the lifted nodes, once on the BLAS nodes the
+    # selection specializes them to, before either expands to a call.
+    BetaFold().apply_pass(sdfg, {})
     transposes_as_blas_flags(sdfg)
     canonicalize_set_fast_implementations(sdfg, device)
+    BetaFold().apply_pass(sdfg, {})
     refuse_silent_pure(sdfg, device)
     if device == dtypes.DeviceType.GPU:
         pin_span_copies(sdfg)
