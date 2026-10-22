@@ -5,8 +5,7 @@
 #include <complex>
 #include "types.h"
 
-#ifdef __CUDACC__
-    #include <thrust/complex.h>
+#ifdef DACE_THRUST_COMPLEX
     #define dace_conj thrust::conj
 
     template<typename T>

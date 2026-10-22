@@ -12,9 +12,6 @@
 #include "nan.h"
 #include "types.h"
 
-#ifdef __CUDACC__
-    #include <thrust/complex.h>
-#endif
 
 // dace::math: A namespace that contains typeless math functions
 
@@ -693,7 +690,7 @@ namespace dace
             return (T)std::expm1(a);
         }
 
-#ifdef __CUDACC__
+#ifdef DACE_THRUST_COMPLEX
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b)
         {
@@ -987,7 +984,7 @@ namespace dace
             return std::exp(a);
         }
 
-        #ifdef __CUDACC__
+        #ifdef DACE_THRUST_COMPLEX
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> exp(const thrust::complex<T>& a)
         {
@@ -1001,7 +998,7 @@ namespace dace
             return std::conj(a);
         }
 
-        #ifdef __CUDACC__
+        #ifdef DACE_THRUST_COMPLEX
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a)
         {
