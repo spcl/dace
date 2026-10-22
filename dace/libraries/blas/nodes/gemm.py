@@ -597,6 +597,50 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandGemmLIBXSMM(ExpandTransformation):
+    """``libxsmm_?gemm``: a JIT-generated kernel for a small real GEMM, no per-call buffer allocation or threading
+    (cp2k_grid_integrate's per-task contractions: OpenBLAS spends 41% in ``blas_memory_alloc``/``free`` there).
+    LIBXSMM calls the BLAS ``?gemm_`` for a shape it does not generate; a complex GEMM takes the OpenBLAS call."""
+
+    environments = [environments.libxsmm.LIBXSMM, environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        dtype = adesc.dtype.base_type
+        if dtype not in (dace.float32, dace.float64):
+            return ExpandGemmOpenBLAS.expansion(node, state, sdfg)
+        func = to_blastype(dtype.type).lower() + "gemm"
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+        opt = _get_codegen_gemm_opts(
+            node,
+            state,
+            sdfg,
+            adesc,
+            bdesc,
+            cdesc,
+            f"{dtype.ctype}({node.alpha})",
+            f"{dtype.ctype}({node.beta})",
+            dtype.ctype,
+            func,
+        )
+        scalars = _coeff_conn_descs(node, state, sdfg)
+        code = _cblas_coeff("__alpha", "_alpha", node.alpha, scalars.get("_alpha"), dtype) + _cblas_coeff(
+            "__beta", "_beta", node.beta, scalars.get("_beta"), dtype
+        )
+        code += (
+            "const char __ta = '{ta}', __tb = '{tb}';\n"
+            "const libxsmm_blasint __m = {M}, __n = {N}, __k = {K}, __lda = {lda}, __ldb = {ldb}, __ldc = {ldc};\n"
+            "libxsmm_{func}(&__ta, &__tb, &__m, &__n, &__k, &__alpha, {x}, &__lda, {y}, &__ldb, &__beta, _c, &__ldc);"
+        ).format_map(opt)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
+
+
+@dace.library.expansion
 class ExpandGemmMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
@@ -1000,6 +1044,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "rowwise": ExpandGemmPureRowWise,
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
+        "LIBXSMM": ExpandGemmLIBXSMM,
         "cuBLAS": ExpandGemmCuBLAS,
         "CUDA (block strided)": ExpandGemmCUDABlock,
         "rocBLAS": ExpandGemmRocBLAS,

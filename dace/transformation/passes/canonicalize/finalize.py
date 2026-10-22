@@ -25,7 +25,7 @@ import os
 from dace import SDFG, Memlet, dtypes, subsets, symbolic
 from dace import data as dt
 from dace.config import Config
-from dace.libraries.blas.environments import openblas
+from dace.libraries.blas.environments import libxsmm, openblas
 from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
@@ -182,6 +182,12 @@ def refuse_silent_pure(sdfg: SDFG, device: dtypes.DeviceType) -> None:
         )
 
 
+def gemm_dtype(node: Gemm, state: SDFGState) -> dtypes.typeclass:
+    """The element type of ``node``'s ``A`` operand."""
+    edge = next(e for e in state.in_edges(node) if e.dst_conn == "_a")
+    return state.sdfg.arrays[edge.data.data].dtype.base_type
+
+
 def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """``node`` sits inside a GPU kernel, so whatever it lowers to has to be device code.
 
@@ -277,6 +283,17 @@ def canonicalize_set_fast_implementations(
         # per call (cp2k_grid_integrate's per-task transposes: 19 s through HPTT, 4 s in-thread).
         if device == dtypes.DeviceType.CPU and sequential and isinstance(node, TensorTranspose):
             node.implementation = "sequential"
+            continue
+        # A real GEMM a parallel region encloses is one small product per iteration: a LIBXSMM kernel, not an
+        # OpenBLAS call, whose per-call buffer allocation contends across the threads (cp2k_grid_integrate).
+        if (
+            device == dtypes.DeviceType.CPU
+            and sequential
+            and isinstance(node, Gemm)
+            and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
+            and libxsmm.LIBXSMM.is_installed()
+        ):
+            node.implementation = "LIBXSMM"
             continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
         # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
