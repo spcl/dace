@@ -899,11 +899,12 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
 
 
 def _format_float(value: float) -> str:
-    # ``repr`` for finite Python floats is the shortest decimal that
-    # round-trips through ``float()`` -- guaranteed idempotent under
-    # save->load->save and at most 17 significant digits for fp64.
+    # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
     f = float(value)
-    s = repr(f)
+    s = f"{f:.15g}"
+    if float(s) != f:
+        # 15 significant digits do not round-trip every double (``0.1 + 0.2``)
+        s = repr(f)
     if "e" in s or "E" in s:
         return s
     if "." not in s:
@@ -1749,12 +1750,7 @@ def sympy_numeric_fix(expr):
     """Fix for printing out integers as floats with ".00000000".
     Converts the float constants in a given expression to integers."""
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
-        # Preserve a finite float -- sympy.Float, Python float, or numpy float --
-        # so an integer-valued float like 1.0 stays 1.0 and is never collapsed to
-        # int 1 below: that would change its type (min(x, 1) mixes double and int)
-        # and round-trip through SymPy as a mistyped Min/Max. 0.0 was only spared by
-        # the ``expr != 0`` clause; a Python float 1.0 hit the int() collapse.
-        # Non-finite values (+-1.8e308 -> inf) fall through to the overflow path.
+        # A finite float stays a float: ``1.0`` collapsed to ``1`` turns ``min(x, 1.0)`` into a mixed int/double Min
         if isinstance(expr, (sympy.Float, float, numpy.floating)) and math.isfinite(float(expr)):
             return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
         try:
@@ -4233,9 +4229,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # integer-valued float stays floating-point (``5.0``, not ``5``).
         nf = sympy_numeric_fix(expr)
         if not math.isfinite(float(nf)):
-            # Exceeds a C double (e.g. Fortran ``HUGE``): keep sympy's shortest
-            # decimal rather than overflowing to ``inf`` (rendered as ``inf.0``).
-            return super()._print_Float(nf)
+            # Beyond a double (Fortran ``HUGE``): sympy's own decimal, not ``inf``
+            return super()._print_Float(expr)
         return _format_float(float(nf))
 
     def _print_TypedConstant(self, expr):

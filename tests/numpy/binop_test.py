@@ -26,14 +26,22 @@ def test_div(A: dace.float64[5, 5], B: dace.float64[5, 5]):
     return A / B
 
 
-# A // B is not implemented correctly in dace for negative numbers
-@compare_numpy_output(non_zero=True, positive=True)
+@compare_numpy_output(non_zero=True)
 def test_floordiv(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A // B
 
 
-# A % B is not implemented correctly in dace for negative numbers
-@compare_numpy_output(non_zero=True, positive=True)
+@compare_numpy_output(non_zero=True)
+def test_floordiv_float(A: dace.float64[5, 5], B: dace.float64[5, 5]):
+    return A // B
+
+
+@compare_numpy_output()
+def test_floordiv_by_literal(A: dace.int64[5, 5]):
+    return A // -3
+
+
+@compare_numpy_output(non_zero=True)
 def test_mod(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A % B
 
@@ -184,6 +192,8 @@ if __name__ == "__main__":
     test_mult()
     test_div()
     test_floordiv()
+    test_floordiv_float()
+    test_floordiv_by_literal()
     test_mod()
     test_pow()
     test_matmult()
