@@ -19,12 +19,6 @@ namespace dace {
             return __shfl_up(value, delta);
         }
         __device__ __forceinline__ int first_lane(unsigned long long mask) { return __ffsll(mask) - 1; }
-        // A wavefront runs in lockstep; the fences order its shared memory accesses
-        __device__ __forceinline__ void sync() {
-            __builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront");
-            __builtin_amdgcn_wave_barrier();
-            __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");
-        }
         // A value the whole wavefront agrees on, in a scalar register: atomics to an address derived from it combine
         template <typename T> __device__ __forceinline__ T uniform(T value) {
             if constexpr (sizeof(T) == 8) {
@@ -46,29 +40,36 @@ namespace dace {
         }
         __device__ __forceinline__ int first_lane(unsigned int mask) { return __ffs(mask) - 1; }
         template <typename T> __device__ __forceinline__ T uniform(T value) { return value; }
-        __device__ __forceinline__ void sync() { __syncwarp(); }
 #endif
     }  // namespace dynmap_warp
 
     /**
      * Load-balances the iterations of a dynamic thread-block map over a one-dimensional thread block. Every thread
      * owns a range ``[start, end)`` of iterations of the item ``src``; the block executes the iterations of all ranges
-     * in rounds, in each of which a thread receives a strided batch of the iterations of one item:
+     * in rounds, in each of which a thread receives a strided batch of the iterations of one item. No step
+     * synchronizes: the caller places the barriers (``block`` for ``__syncthreads``, ``warp`` for ``__syncwarp``):
      *
-     *     cursor_type cursor = DynamicMap::begin(state, start, end, src);
-     *     while (DynamicMap::block_round(state, cursor, src, first, count, stride)) { batch(src, first, count, stride); }
-     *     while (DynamicMap::warp_round(state, cursor, src, first, count, stride)) { batch(...); }
+     *     cursor = DynamicMap::open(start, end, src); DynamicMap::reset(state); block;
+     *     do {
+     *         DynamicMap::block_elect(state, cursor); block;
+     *         more = DynamicMap::block_claim(state, cursor);
+     *         if (more) { block; DynamicMap::block_take(state, cursor, src, first, count, stride); block;
+     *                     batch(src, first, count, stride); }
+     *     } while (more);
+     *     if (LISTED) block;
+     *     do { more = DynamicMap::warp_round(state, cursor, src, first, count, stride); batch(...); } while (more);
+     *     if (LISTED) warp;
      *     do { more = DynamicMap::thread_round(state, cursor, src, first, count); batch(src, first, count, 1); }
      *     while (more);
+     *     if (LISTED) block;
      *
      * where ``batch`` runs the body for ``first + k * stride``, ``k < count``. Ranges of at least ``BLOCK_SIZE``
      * iterations are shared by the whole block, then ranges of at least a warp by their warp; the rest are either
      * spread over the warp one iteration per thread (``FINE_GRAINED``) or run by their thread. In the block and warp
      * rounds, the item is the same for the whole warp. The shared state is the range of the current block round and,
-     * fine-grained on CUDA, the list of the items each warp spreads; HIP's 64-wide warps find each item's owner by
-     * shuffles instead, as their lists would not fit in shared memory.
-     * ``begin`` and the block rounds synchronize the block, so every thread of the block calls them, out-of-range
-     * threads with an empty range; the warp and fine-grained rounds synchronize the warp. A body may not synchronize.
+     * fine-grained on CUDA (``LISTED``), the list of the items each warp spreads; HIP's 64-wide warps find each item's
+     * owner by shuffles instead, as their lists would not fit in shared memory. Every thread of the block takes every
+     * step, out-of-range threads with an empty range. A body may not synchronize.
      */
     template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename INDEX_TYPE = int32_t>
     struct DynamicMap {
@@ -106,55 +107,58 @@ namespace dace {
             INDEX_TYPE prefix, size, next;                  // fine-grained: the warp's items up to this thread's,
                                                             // all of them, and the first of the next round
             INDEX_TYPE start;                               // fine-grained on CUDA: the warp's part of the lists
+            bool won;                                       // whether the thread owns the range of the block round
         };
 
-        __device__ static cursor_type begin(shared_type& s, INDEX_TYPE start, INDEX_TYPE end, INDEX_TYPE src) {
-            // highest thread id is size - 1 thus no thread has this id
+        /// The cursor of a thread over its range ``[start, end)`` of the item ``src``.
+        __device__ static cursor_type open(INDEX_TYPE start, INDEX_TYPE end, INDEX_TYPE src) {
+            return cursor_type{start, end - start, src, 0, 0, 0, 0, false};
+        }
+
+        /// Starts the block rounds with no owner (the highest thread id is ``BLOCK_SIZE - 1``); a block barrier follows.
+        __device__ static void reset(shared_type& s) {
             if (threadIdx.x == 0) {
                 s.tb.owner = BLOCK_SIZE;
             }
-            __syncthreads();
-            return cursor_type{start, end - start, src, 0, 0, 0, 0};
         }
 
-        /// The batch of this thread of the next range of at least ``BLOCK_SIZE`` iterations, or false (for the whole
-        /// block) and an empty batch if none is left.
-        __device__ static bool block_round(shared_type& s, cursor_type& c, INDEX_TYPE& src, INDEX_TYPE& first,
-                                           INDEX_TYPE& count, INDEX_TYPE& stride) {
-            const INDEX_TYPE rank = threadIdx.x;
-            // every thread that has enough workload will compete for the memory, one thread will win the race
+        /// Every thread with at least ``BLOCK_SIZE`` iterations left competes for the block round; a block barrier
+        /// follows.
+        __device__ static void block_elect(shared_type& s, const cursor_type& c) {
             if (c.local_size >= BLOCK_SIZE) {
-                s.tb.owner = rank;
+                s.tb.owner = threadIdx.x;
             }
-            __syncthreads();
+        }
+
+        /// Whether a thread won the block round (the same for the whole block); the winner publishes its range, which
+        /// ``block_take`` reads after a block barrier.
+        __device__ static bool block_claim(shared_type& s, cursor_type& c) {
             const INDEX_TYPE owner = s.tb.owner;
-            if (owner == BLOCK_SIZE) {
-                if constexpr (LISTED) {
-                    // The lists overlap the owner: every thread reads it before a warp writes them
-                    __syncthreads();
-                }
-                count = 0;
-                return false;
-            }
-            // The winner writes their range into the state and resets the owner for the next round
-            if (owner == rank) {
+            c.won = owner == static_cast<INDEX_TYPE>(threadIdx.x);
+            if (c.won) {
                 s.tb.src = c.local_src;
                 s.tb.start = c.local_start;
                 s.tb.size = c.local_size;
-                s.tb.owner = BLOCK_SIZE;
                 c.local_size = 0;
             }
-            __syncthreads();
+            return owner != BLOCK_SIZE;
+        }
+
+        /// The batch of this thread of the published range; the winner resets the owner, which every thread read
+        /// before the barrier. A block barrier follows, before the next election.
+        __device__ static void block_take(shared_type& s, cursor_type& c, INDEX_TYPE& src, INDEX_TYPE& first,
+                                          INDEX_TYPE& count, INDEX_TYPE& stride) {
             src = dynmap_warp::uniform(s.tb.src);
             const INDEX_TYPE start = dynmap_warp::uniform(s.tb.start), size = dynmap_warp::uniform(s.tb.size);
-            // Everyone reads the range before the next election may overwrite it
-            __syncthreads();
-            batch(start, size, rank, BLOCK_SIZE, first, count, stride);
-            return true;
+            if (c.won) {
+                s.tb.owner = BLOCK_SIZE;
+            }
+            batch(start, size, threadIdx.x, BLOCK_SIZE, first, count, stride);
         }
 
         /// The batch of this thread of the next range of its warp of at least a warp of iterations, or false (for the
-        /// whole warp) and an empty batch if none is left.
+        /// whole warp) and an empty batch if none is left; then, fine-grained, the warp lists its remaining items,
+        /// which a warp barrier publishes on CUDA.
         __device__ static bool warp_round(shared_type& s, cursor_type& c, INDEX_TYPE& src, INDEX_TYPE& first,
                                           INDEX_TYPE& count, INDEX_TYPE& stride) {
             const INDEX_TYPE lane = threadIdx.x % WARP_SIZE;
@@ -245,7 +249,6 @@ namespace dace {
                     s.fg.src[offset + i] = c.local_src;
                     s.fg.data[offset + i] = c.local_start + i;
                 }
-                dynmap_warp::sync();
                 c.start = warp_offset;
             }
         }

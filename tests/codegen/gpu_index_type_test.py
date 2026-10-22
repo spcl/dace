@@ -219,7 +219,7 @@ def test_dynamic_map(step: int):
     # The queue, its shared state (fine-grained: two lists of 32 * 32 indices per warp) and the batches of the
     # dynamic map all take the 64-bit index type
     assert "__shared__ int64_t __dace_dynmap_state[4096];" in code
-    assert "dace::DynamicMap<true, 64, 32, int64_t>::block_round(" in code
+    assert "dace::DynamicMap<true, 64, 32, int64_t>::block_claim(" in code
     if step == 1:
         assert "for (int64_t j = __dace_dynmap_first_sym;" in code
     else:
@@ -243,13 +243,22 @@ def test_dynamic_map_default_types():
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = _cuda_code(sdfg)
     assert "__shared__ int __dace_dynmap_state[8192];" in code
-    assert "dace::DynamicMap<true, 128, 32, int>::block_round(" in code
+    assert "dace::DynamicMap<true, 128, 32, int>::block_claim(" in code
 
 
 def test_chiplet_distribution():
     code = _cuda_code(_one_dimensional(N), backend="hip", chiplet_number=6)
-    assert "((static_cast<int64_t>(blockIdx.x) % 6) * " in code
-    assert " + static_cast<int64_t>(blockIdx.x) / 6)" in code
+    block = "(static_cast<int64_t>(blockIdx.y) * static_cast<int64_t>(gridDim.x) + static_cast<int64_t>(blockIdx.x))"
+    assert f"(({block} % 6) * " in code
+    assert f" + {block} / 6)" in code
+
+
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip(backend: str):
+    """An AMD dispatch covers fewer than 2**31 blocks and 2**32 threads per grid dimension."""
+    code = _cuda_code(_one_dimensional(N), backend=backend)
+    split = "__dace_row, int_ceil(__dace_blocks, __dace_row), 1" in code
+    assert split == (backend == "hip")
 
 
 def test_configured_64bit_index_type_widens_registers():
@@ -338,6 +347,8 @@ if __name__ == "__main__":
     test_dynamic_map(2)
     test_dynamic_map_default_types()
     test_chiplet_distribution()
+    test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip("cuda")
+    test_grids_beyond_31_bits_of_threads_spread_over_rows_on_hip("hip")
     test_configured_64bit_index_type_widens_registers()
     test_indices_beyond_32_bits()
     test_block_index_products_beyond_32_bits()
