@@ -168,6 +168,9 @@ class MapFission(transformation.SingleStateTransformation):
                 continue
             ((other, subset_of),) = [(n, get) for n, get in ends if n is not border[0]]
             subset = subset_of(e, state)
+            # An inner map writing or reading the border transient names no other container: no copy to pair.
+            if subset is None and isinstance(other, (nodes.EntryNode, nodes.ExitNode)):
+                continue
             if subset is not None and placed is not None:
                 subset = placed(other.data, subset)
             if subset is None or not MapFission.map_dimensions_lead(subset, params):
