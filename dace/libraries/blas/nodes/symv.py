@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -76,46 +76,6 @@ def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = No
     return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", scalars + call)
 
 
-@library.expansion
-class ExpandSymvOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandSymvMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandSymvCuBLAS(ExpandTransformation):
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
-
-
-@library.expansion
-class ExpandSymvRocBLAS(ExpandTransformation):
-    environments = [environments.rocblas.rocBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
-
-
 @library.node
 class Symv(nodes.LibraryNode):
     """BLAS ``?symv``: ``_yout = alpha * _A @ _x + beta * _yin`` for a symmetric ``_A`` of which only the upper
@@ -123,10 +83,7 @@ class Symv(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandSymvPure,
-        "OpenBLAS": ExpandSymvOpenBLAS,
-        "MKL": ExpandSymvMKL,
-        "cuBLAS": ExpandSymvCuBLAS,
-        "rocBLAS": ExpandSymvRocBLAS,
+        **gpu_dialect.vendor_expansions("Symv", symv_call),
     }
     default_implementation = None
 

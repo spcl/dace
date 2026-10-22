@@ -10,7 +10,7 @@ from dace import library
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -110,46 +110,6 @@ def ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y) -> 
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", code)
 
 
-@library.expansion
-class ExpandGerOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return ger_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandGerMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return ger_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandGerCuBLAS(ExpandTransformation):
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return ger_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
-
-
-@library.expansion
-class ExpandGerRocBLAS(ExpandTransformation):
-    environments = [environments.rocblas.rocBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return ger_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
-
-
 @library.node
 class Ger(LibraryNode):
     """
@@ -163,10 +123,7 @@ class Ger(LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandGerPure,
-        "OpenBLAS": ExpandGerOpenBLAS,
-        "MKL": ExpandGerMKL,
-        "cuBLAS": ExpandGerCuBLAS,
-        "rocBLAS": ExpandGerRocBLAS,
+        **gpu_dialect.vendor_expansions("Ger", ger_call),
     }
     default_implementation = None
 

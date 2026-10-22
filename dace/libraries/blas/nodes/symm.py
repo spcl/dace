@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -83,46 +83,6 @@ def symm_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = No
     return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call)
 
 
-@library.expansion
-class ExpandSymmOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symm_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandSymmMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symm_call(node, parent_state, parent_sdfg)
-
-
-@library.expansion
-class ExpandSymmCuBLAS(ExpandTransformation):
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symm_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
-
-
-@library.expansion
-class ExpandSymmRocBLAS(ExpandTransformation):
-    environments = [environments.rocblas.rocBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symm_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
-
-
 @library.node
 class Symm(nodes.LibraryNode):
     """BLAS ``?symm``: ``_Cout = alpha * _A @ _B + beta * _Cin``, or ``alpha * _B @ _A + beta * _Cin`` with ``side``,
@@ -130,10 +90,7 @@ class Symm(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandSymmPure,
-        "OpenBLAS": ExpandSymmOpenBLAS,
-        "MKL": ExpandSymmMKL,
-        "cuBLAS": ExpandSymmCuBLAS,
-        "rocBLAS": ExpandSymmRocBLAS,
+        **gpu_dialect.vendor_expansions("Symm", symm_call),
     }
     default_implementation = None
 

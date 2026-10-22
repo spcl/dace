@@ -9,8 +9,9 @@ The two are not a prefix substitution of each other: cuBLAS is camel-case with u
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dace import dtypes
-from dace.libraries.blas import blas_helpers
+from dace import dtypes, library
+from dace.libraries.blas import blas_helpers, environments
+from dace.transformation.transformation import ExpandTransformation
 
 
 class GpuBlasDialect(NamedTuple):
@@ -55,7 +56,9 @@ ROCBLAS = GpuBlasDialect(
     pointer_host="rocblas_pointer_mode_host",
     pointer_device="rocblas_pointer_mode_device",
     func=lambda letter, routine: f"rocblas_{letter.lower()}{routine.lower()}",
-    ctype=blas_helpers.rocblas_type,
+    ctype=lambda cuda_type: {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(
+        cuda_type, cuda_type
+    ),
     op=lambda trans: "rocblas_operation_transpose" if trans else "rocblas_operation_none",
     fill=lambda upper: "rocblas_fill_upper" if upper else "rocblas_fill_lower",
     side=lambda right: "rocblas_side_right" if right else "rocblas_side_left",
@@ -121,3 +124,29 @@ def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call
         + f"{d.check_error}({routine_call});\n"
         + f"{d.check_error}({d.set_pointer_mode}({d.handle}, {d.pointer_device}));\n"
     )
+
+
+def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTransformation]]:
+    """The OpenBLAS, MKL, cuBLAS and rocBLAS expansions of a node, each validating the node and returning
+    ``call(node, state, sdfg, dialect, environment)``; the CPU libraries get no dialect, as both are CBLAS."""
+    backends = {
+        "OpenBLAS": (environments.openblas.OpenBLAS, None),
+        "MKL": (environments.intel_mkl.IntelMKL, None),
+        "cuBLAS": (environments.cublas.cuBLAS, CUBLAS),
+        "rocBLAS": (environments.rocblas.rocBLAS, ROCBLAS),
+    }
+    expansions = {}
+    for implementation, (environment, dialect) in backends.items():
+
+        def expansion(node, parent_state, parent_sdfg, *, _dialect=dialect, _environment=environment, **kwargs):
+            node.validate(parent_sdfg, parent_state)
+            return call(node, parent_state, parent_sdfg, _dialect, _environment if _dialect else None)
+
+        name = f"Expand{node_name}{implementation[0].upper()}{implementation[1:]}"
+        attributes = {
+            "environments": [environment],
+            "expansion": staticmethod(expansion),
+            "__module__": call.__module__,
+        }
+        expansions[implementation] = library.expansion(type(name, (ExpandTransformation,), attributes))
+    return expansions
