@@ -1397,6 +1397,16 @@ def symbols_assigned_before_use(
     return symbols_that_may_be_used
 
 
+def innermost_loop(block: ControlFlowBlock) -> LoopRegion | None:
+    """The innermost loop region enclosing ``block`` within its SDFG, or ``None``."""
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            return region
+        region = region.parent_graph
+    return None
+
+
 def spans_small_symbols(loop: LoopRegion, facts: symbolic.Facts | None = None) -> bool:
     """Whether ``loop``'s iteration range spans ``SMALL`` symbols only (``range(nblks)``), at the facts inside it."""
     start, end = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
@@ -1515,9 +1525,12 @@ class LoopToMap(xf.MultiStateTransformation):
         if step_direction(step, facts) is None:
             return False
 
-        # Loops containing break, continue, or returns may not be turned into a map.
+        # Loops containing a return, or a break / continue of their own, may not be turned into a map. A break
+        # or continue of a nested loop leaves only that loop.
         for blk in self.loop.all_control_flow_blocks():
-            if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
+            if isinstance(blk, ReturnBlock) or (
+                isinstance(blk, (BreakBlock, ContinueBlock)) and innermost_loop(blk) is self.loop
+            ):
                 if not permissive:
                     return refuse(f"loop body contains a {type(blk).__name__}")
 
