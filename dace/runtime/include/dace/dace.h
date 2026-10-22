@@ -28,6 +28,7 @@
 #include "reduction.h"
 #include "serialization.h"
 #include "stream.h"
+#include "ttranspose.h"
 #include "types.h"
 #include "vector.h"
 

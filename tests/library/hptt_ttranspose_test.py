@@ -79,16 +79,64 @@ def test_a_top_level_hptt_call_uses_the_openmp_team():
 
 
 def test_the_sequential_transpose_is_one_in_thread_loop():
-    """The single-core lowering a node inside a parallel region takes: a sequential loop, no library call."""
+    """The single-core lowering a node inside a parallel region takes: the blocked in-thread kernel, no map and no
+    library call."""
     sdfg, state, node = transpose_sdfg("transpose_sequential", dace.float64)
     node.implementation = "sequential"
     sdfg.expand_library_nodes()
-    entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
-    assert entries and all(e.map.schedule == dace.ScheduleType.Sequential for e in entries)
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    code = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert any("dace::linalg::transpose_blocked<double, 3>" in c for c in code), code
     x = np.random.default_rng(2).random((4, 8, 3))
     y = np.zeros((3, 4, 8))
     sdfg(x=x, y=y)
     np.testing.assert_allclose(y, np.transpose(x, (2, 0, 1)))
+
+
+@pytest.mark.parametrize(
+    "shape, axes",
+    [((70, 45), (1, 0)), ((5, 40, 33), (2, 0, 1)), ((5, 40, 33), (0, 2, 1)), ((3, 4, 37, 35), (3, 1, 0, 2))],
+)
+@pytest.mark.parametrize("dtype, beta", [(dace.float64, 0), (dace.float32, 0.5), (dace.complex128, 0)])
+def test_the_sequential_transpose_matches_numpy(shape, axes, dtype, beta):
+    """Tiles cross the extents unevenly (70 x 45 over 32 x 32), the contiguous axes coincide or not, beta reads."""
+    out_shape = tuple(shape[a] for a in axes)
+    sdfg = dace.SDFG(f"seq_transpose_{len(shape)}_{''.join(map(str, axes))}_{dtype.to_string()}_{int(beta * 2)}")
+    sdfg.add_array("x", shape, dtype)
+    sdfg.add_array("y", out_shape, dtype)
+    state = sdfg.add_state()
+    node = TensorTranspose("transpose", axes=list(axes), beta=beta)
+    node.implementation = "sequential"
+    state.add_node(node)
+    full = lambda dims: ", ".join(f"0:{d}" for d in dims)
+    state.add_edge(state.add_read("x"), None, node, "_inp_tensor", dace.Memlet(f"x[{full(shape)}]"))
+    state.add_edge(node, "_out_tensor", state.add_write("y"), None, dace.Memlet(f"y[{full(out_shape)}]"))
+    rng = np.random.default_rng(3)
+    npdt = dtype.type
+    x = rng.random(shape).astype(npdt)
+    y = rng.random(out_shape).astype(npdt)
+    expected = np.transpose(x, axes) + beta * y
+    sdfg(x=x, y=y)
+    np.testing.assert_allclose(y, expected, rtol=1e-6 if dtype == dace.float32 else 1e-14)
+
+
+def test_the_sequential_transpose_writes_a_slice_of_a_larger_output():
+    """The output strides are the container's: a transpose into columns 2:7 of a wider array."""
+    sdfg = dace.SDFG("seq_transpose_slice")
+    sdfg.add_array("x", [5, 40], dace.float64)
+    sdfg.add_array("y", [40, 9], dace.float64)
+    state = sdfg.add_state()
+    node = TensorTranspose("transpose", axes=[1, 0])
+    node.implementation = "sequential"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp_tensor", dace.Memlet("x[0:5, 0:40]"))
+    state.add_edge(node, "_out_tensor", state.add_write("y"), None, dace.Memlet("y[0:40, 2:7]"))
+    x = np.random.default_rng(4).random((5, 40))
+    y = np.zeros((40, 9))
+    sdfg(x=x, y=y)
+    expected = np.zeros((40, 9))
+    expected[:, 2:7] = x.T
+    np.testing.assert_array_equal(y, expected)
 
 
 if __name__ == "__main__":
@@ -100,4 +148,5 @@ if __name__ == "__main__":
         test_a_complex_hptt_transpose_compiles_and_matches_numpy()
     test_a_top_level_hptt_call_uses_the_openmp_team()
     test_the_sequential_transpose_is_one_in_thread_loop()
+    test_the_sequential_transpose_writes_a_slice_of_a_larger_output()
     test_hptt_inside_an_sdfg_that_names_its_output_out_tensor_validates()

@@ -75,6 +75,50 @@ class ExpandPure(ExpandTransformation):
 
 
 @library.expansion
+class ExpandSequential(ExpandTransformation):
+    """One core's transpose for a node a parallel region encloses: ``dace::linalg::transpose_blocked`` tiles the
+    axis contiguous in the input with the one contiguous in the output, so both stream through cache lines (the
+    pure map walks the input order and scatters every write). A memlet whose rank differs from its container's
+    takes the pure map."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        from dace.codegen.common import sym2cpp  # Avoid import loop
+
+        inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
+        rank = len(inp_shape)
+        if rank != len(inp_tensor.strides) or len(out_shape) != len(out_tensor.strides) or rank < 2:
+            return single_core_expansion(ExpandPure).expansion(node, parent_state, parent_sdfg)
+        out_stride_of_input = [None] * rank
+        for k, axis in enumerate(node.axes):
+            out_stride_of_input[axis] = out_tensor.strides[k]
+        ctype = out_tensor.dtype.ctype
+        inp = parent_sdfg._find_new_name("_inp_tensor")
+        out = parent_sdfg._find_new_name("_out_tensor")
+        for edge in parent_state.in_edges_by_connector(node, "_inp_tensor"):
+            edge.dst_conn = inp
+        for edge in parent_state.out_edges_by_connector(node, "_out_tensor"):
+            edge.src_conn = out
+        listed = lambda values: ", ".join(f"int64_t({sym2cpp(v)})" for v in values)
+        code = f"""
+            const int64_t __shape[{rank}] = {{{listed(inp_shape)}}};
+            const int64_t __in_strides[{rank}] = {{{listed(inp_tensor.strides)}}};
+            const int64_t __out_strides[{rank}] = {{{listed(out_stride_of_input)}}};
+            dace::linalg::transpose_blocked<{ctype}, {rank}>({inp}, {out}, __shape, __in_strides, __out_strides,
+                                                         {ctype}({sym2cpp(node.alpha)}), {ctype}({sym2cpp(node.beta)}));
+        """
+        return nodes.Tasklet(
+            node.name,
+            {inp: node.in_connectors["_inp_tensor"]},
+            {out: node.out_connectors["_out_tensor"]},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
+
+
+@library.expansion
 class ExpandHPTT(ExpandTransformation):
     """
     Implements the TensorTranspose library node using the High-Performance Tensor Transpose Library (HPTT).
@@ -427,7 +471,7 @@ class TensorTranspose(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandPure,
-        "sequential": single_core_expansion(ExpandPure),
+        "sequential": ExpandSequential,
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
         "hipTENSOR": ExpandHipTensor,
