@@ -1518,9 +1518,6 @@ class LoopToMap(xf.MultiStateTransformation):
                 if not permissive:
                     return refuse(f"loop body contains a {type(blk).__name__}")
 
-        # A map lowered to this loop: its iterations are independent by construction, so no conflict is tested.
-        permissive = permissive or self.loop.known_parallel
-
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
@@ -1558,6 +1555,9 @@ class LoopToMap(xf.MultiStateTransformation):
         # segment a range split leaves behind (e.g. the ``{x}`` clamp of the s1113 broadcast split),
         # where the dependence analysis has nothing to prove. The structural guards above still gate.
         if loop_analysis.loop_provably_at_most_one_iteration(self.loop):
+            return True
+        # Independent by construction (a map lowered to this loop, or a piece of one): nothing to prove.
+        if self.loop.known_parallel:
             return True
 
         # Collect symbol reads and writes from inter-state assignments. The read-before-assigned

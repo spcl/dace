@@ -103,8 +103,38 @@ def test_a_known_parallel_loop_does_not_fuse_with_a_sequential_one():
     assert not instance.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True)
 
 
+def test_a_known_parallel_loop_fuses_with_a_provably_parallel_one_which_becomes_known_parallel():
+    """True with False: the False loop is proven parallel, so it is marked known-parallel and the pair fuses as two
+    known-parallel loops."""
+    sdfg, loops = lowered(same_point)
+    first, second = sorted(loops, key=lambda loop: loop.parent_graph.node_id(loop))
+    second.known_parallel = False
+    fuse(sdfg, first, second)
+    fused = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert len(fused) == 1 and fused[0].known_parallel
+
+
+def test_mixing_is_allowed_when_the_option_is_off():
+    sdfg, loops = lowered(same_point)
+    first, second = sorted(loops, key=lambda loop: loop.parent_graph.node_id(loop))
+    second.known_parallel = False
+    second.pinned_sequential = True
+    instance = LoopFusion()
+    instance.dont_mix_known_parallel = False
+    graph = first.parent_graph
+    instance.setup_match(
+        sdfg, graph.cfg_id, -1, {LoopFusion.first: graph.node_id(first), LoopFusion.second: graph.node_id(second)}, 0
+    )
+    assert instance.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True)
+    instance.apply(graph, sdfg)
+    fused = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert len(fused) == 1 and not fused[0].known_parallel
+
+
 if __name__ == "__main__":
     test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test()
     test_fusing_two_known_parallel_loops_at_the_same_point_stays_known_parallel()
     test_fusing_a_read_behind_carries_a_dependence_and_drops_the_mark()
     test_a_known_parallel_loop_does_not_fuse_with_a_sequential_one()
+    test_a_known_parallel_loop_fuses_with_a_provably_parallel_one_which_becomes_known_parallel()
+    test_mixing_is_allowed_when_the_option_is_off()

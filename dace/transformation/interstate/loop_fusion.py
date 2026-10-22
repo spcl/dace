@@ -35,7 +35,7 @@ the buffer-reclaim ``MapFusionVertical`` does for maps, decided here on the loop
 
 import copy
 
-from dace import SDFG, subsets, symbolic
+from dace import SDFG, properties, subsets, symbolic
 from dace import data as dt
 from dace.optionals import required
 from dace.sdfg import nodes
@@ -57,6 +57,7 @@ from dace.transformation.passes.iteration_domain import loop_trip_count, same_tr
 from dace.transformation.passes.loop_fission import _linear_blocks, _single_compute_state
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class LoopFusion(transformation.MultiStateTransformation):
     """Fuse one consecutive same-range sequential sibling loop pair into a single loop.
@@ -72,6 +73,13 @@ class LoopFusion(transformation.MultiStateTransformation):
 
     first = transformation.PatternNode(LoopRegion)
     second = transformation.PatternNode(LoopRegion)
+
+    dont_mix_known_parallel = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Fuse a known-parallel loop with one that is not only if that one is provably parallel (it is then "
+        "marked known-parallel before the merge): fusing it with a sequential loop serializes independent work.",
+    )
 
     @classmethod
     def expressions(cls):
@@ -120,11 +128,8 @@ class LoopFusion(transformation.MultiStateTransformation):
         # for every other caller.
         if not allow_doall_fuse and (self._is_doall(sdfg, first) or self._is_doall(sdfg, second)):
             return False
-        # A known-parallel loop fuses with another only if that one is parallel too: fusing it with a sequential
-        # loop serializes iterations independent by construction.
-        if first.known_parallel != second.known_parallel:
-            other = second if first.known_parallel else first
-            if not self._is_doall(sdfg, other):
+        if self.dont_mix_known_parallel and first.known_parallel != second.known_parallel:
+            if not self._is_doall(sdfg, second if first.known_parallel else first):
                 return False
         return self._fusion_legal(first, second, acc1, acc2)
 
@@ -135,12 +140,13 @@ class LoopFusion(transformation.MultiStateTransformation):
         # NodeNotFoundError. `first` survives the merge (only `second` is spliced out), so the reference
         # stays valid.
         first, second = self.first, self.second
-        # Known-parallel survives only if both loops are parallel and each body's iteration touches only what the
-        # other's same iteration does.
+        if self.dont_mix_known_parallel and first.known_parallel != second.known_parallel:
+            # ``can_be_applied`` proved the other loop parallel.
+            first.known_parallel = second.known_parallel = True
+        # Known-parallel survives a merge of two known-parallel loops whose bodies meet at the same iteration only.
         keeps_parallel = (
-            (first.known_parallel or second.known_parallel)
-            and (first.known_parallel or self._is_doall(sdfg, first))
-            and (second.known_parallel or self._is_doall(sdfg, second))
+            first.known_parallel
+            and second.known_parallel
             and self._same_iteration_only(
                 first, second, required(self._body_accesses(first)), required(self._body_accesses(second))
             )
