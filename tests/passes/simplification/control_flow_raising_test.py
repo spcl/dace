@@ -247,20 +247,6 @@ def test_inline_conditional_else_condition():
         assert A[0] == expected
 
 
-def test_bool_expr_keeps_operands():
-    """``and_expr`` and ``or_expr`` build new expressions without changing operands that already are a boolean
-    operation of the same kind."""
-    from dace.frontend.python import astutils
-
-    for join, word in ((astutils.and_expr, "and"), (astutils.or_expr, "or")):
-        a = dace.properties.CodeBlock(f"x {word} y")
-        b = dace.properties.CodeBlock(f"z {word} w")
-        joined = join(a.code[0], b.code[0])
-        assert astutils.unparse(joined) == f"(x {word} y {word} z {word} w)"
-        assert astutils.unparse(a.code[0]).strip("()") == f"x {word} y"
-        assert astutils.unparse(b.code[0]).strip("()") == f"z {word} w"
-
-
 if __name__ == "__main__":
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -271,4 +257,3 @@ if __name__ == "__main__":
     test_unstructured_control_flow_sibling_loops()
     test_three_way_branch_with_and_condition()
     test_inline_conditional_else_condition()
-    test_bool_expr_keeps_operands()

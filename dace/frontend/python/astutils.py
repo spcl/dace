@@ -398,13 +398,12 @@ def or_expr(node_a, node_b):
 
 
 def _bool_expr(node_a, node_b, op: type[ast.boolop]):
-    """Generates ``node_a op node_b`` for ``op`` in (``ast.And``, ``ast.Or``) without modifying either operand."""
     if type(node_a) is not type(node_b):
         raise ValueError("Node types do not match")
 
     # Support for SymPy expressions
     if isinstance(node_a, sympy.Basic):
-        return sympy.And(node_a, node_b) if op is ast.And else sympy.Or(node_a, node_b)
+        return (sympy.And if op is ast.And else sympy.Or)(node_a, node_b)
     # Support for numerical constants
     if isinstance(node_a, (numbers.Number, numpy.bool_)):
         return str(node_a and node_b) if op is ast.And else str(node_a or node_b)
@@ -420,9 +419,9 @@ def _bool_expr(node_a, node_b, op: type[ast.boolop]):
 
     if isinstance(node_a, (list, tuple)):
         if len(node_a) > 1:
-            raise ValueError(f"{op.__name__.lower()}_expr only expects single expressions, got: {node_a}")
+            raise ValueError(f"and_expr only expects single expressions, got: {node_a}")
         if len(node_b) > 1:
-            raise ValueError(f"{op.__name__.lower()}_expr only expects single expressions, got: {node_b}")
+            raise ValueError(f"and_expr only expects single expressions, got: {node_b}")
         expr_a = node_a[0]
         expr_b = node_b[0]
     else:
@@ -434,16 +433,19 @@ def _bool_expr(node_a, node_b, op: type[ast.boolop]):
     if isinstance(expr_b, ast.Expr):
         expr_b = expr_b.value
 
-    # Flatten operands that already are the same operation
-    values = []
-    for expr in (expr_a, expr_b):
-        if isinstance(expr, ast.BoolOp) and isinstance(expr.op, op):
-            values.extend(copy_tree(v) for v in expr.values)
-        else:
-            values.append(copy_tree(expr))
-    newexpr = ast.Expr(value=ast.BoolOp(op=op(), values=values))
-    newexpr = ast.copy_location(newexpr, expr_a)
-    return ast.fix_missing_locations(newexpr)
+    if isinstance(expr_a, ast.BoolOp) and expr_a.op == ast.And:
+        # If the first expression is already a BoolOp, append the second expression
+        expr_a.values.append(copy_tree(expr_b))
+        return ast.fix_missing_locations(expr_a)
+    elif isinstance(expr_b, ast.BoolOp) and expr_b.op == ast.And:
+        # If the second expression is already a BoolOp, append the first expression
+        expr_b.values.insert(0, copy_tree(expr_a))
+        return ast.fix_missing_locations(expr_b)
+    else:
+        # Otherwise, create a new BoolOp with both expressions
+        newexpr = ast.Expr(value=ast.BoolOp(op=op(), values=[copy_tree(expr_a), copy_tree(expr_b)]))
+        newexpr = ast.copy_location(newexpr, expr_a)
+        return ast.fix_missing_locations(newexpr)
 
 
 def copy_tree(node: ast.AST) -> ast.AST:
