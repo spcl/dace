@@ -36,41 +36,66 @@ def loop_header_signature(loop: LoopRegion) -> str:
     return "|".join([loop.loop_variable or "", *(code.as_string if code is not None else "" for code in codes)])
 
 
+def body_local_symbols(loop: LoopRegion) -> set[str]:
+    """The symbols ``loop``'s body defines: interstate assignments and the iterators of the loops inside it."""
+    local = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+    local |= {block.loop_variable for block in loop.all_control_flow_regions() if isinstance(block, LoopRegion)}
+    local.discard(loop.loop_variable)
+    return local
+
+
 def loop_signature(loop: LoopRegion) -> str:
-    """A digest of ``loop``'s header and of everything its body does: two loops share it only if their dataflow,
-    tasklet code and control flow read the same."""
-    from dace.sdfg import nodes  # Avoid import loop
-    from dace.sdfg.state import SDFGState
+    """A digest of ``loop``'s header and of the elements one iteration reads and writes: per container shared across
+    iterations, the subsets of its top-level accesses (map scopes and nested SDFGs through their propagated memlets)
+    and its WCR ops. A dimension that names a symbol the body defines is its full extent, so inlining a nested body,
+    renaming its blocks or moving a read through a body symbol keeps the digest; a rewrite that makes an iteration
+    touch another element does not."""
+    from dace import subsets  # Avoid import loop
 
-    lines = [loop_header_signature(loop)]
+    sdfg = loop.sdfg
+    local = body_local_symbols(loop)
+    states = list(loop.states())
+    inside = {node.data for state in states for node in state.data_nodes()}
+    inside |= {
+        memlet.data
+        for edge in loop.all_interstate_edges()
+        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True)
+    }
+    shared = {
+        name
+        for name in inside
+        if not sdfg.arrays[name].transient
+        or any(node.data == name for state in sdfg.states() if state not in states for node in state.data_nodes())
+    }
 
-    def region(cfg) -> None:
-        for block in cfg.all_control_flow_blocks():
-            lines.append(f"{type(block).__name__} {block.label}")
-            if isinstance(block, ConditionalBlock):
-                lines.extend(cond.as_string if cond is not None else "else" for cond, _ in block.branches)
-            if isinstance(block, LoopRegion) and block is not loop:
-                lines.append(loop_header_signature(block))
-            if not isinstance(block, SDFGState):
+    def per_iteration(name: str, subset) -> str:
+        if not isinstance(subset, subsets.Range):
+            return str(subset)
+        shape = sdfg.arrays[name].shape
+        ranges = [
+            (0, shape[dim] - 1, 1) if {str(free) for free in subsets.Range([rng]).free_symbols} & local else rng
+            for dim, rng in enumerate(subset.ranges)
+        ]
+        return str(subsets.Range(ranges))
+
+    lines = []
+    for state in states:
+        scopes = state.scope_dict()
+        for node in state.data_nodes():
+            if node.data not in shared or scopes[node] is not None:
                 continue
-            for node in block.nodes():
-                lines.append(f"{type(node).__name__} {node}")
-                if isinstance(node, nodes.Tasklet):
-                    lines.append(node.code.as_string)
-                elif isinstance(node, nodes.NestedSDFG):
-                    lines.append(str(sorted(node.symbol_mapping.items())))
-                    region(node.sdfg)
-            lines.extend(
-                f"{edge.src}:{edge.src_conn}->{edge.dst}:{edge.dst_conn} {edge.data} {edge.data.wcr}"
-                for edge in block.edges()
-            )
-        lines.extend(
-            f"{edge.data.condition.as_string} {sorted(edge.data.assignments.items())}"
-            for edge in cfg.all_interstate_edges()
-        )
-
-    region(loop)
-    return hashlib.sha1("\n".join(lines).encode()).hexdigest()
+            for edge in state.in_edges(node):
+                if not edge.data.is_empty():
+                    subset = edge.data.get_dst_subset(edge, state)
+                    lines.append(f"W {node.data} {per_iteration(node.data, subset)} {edge.data.wcr}")
+            for edge in state.out_edges(node):
+                if not edge.data.is_empty():
+                    lines.append(f"R {node.data} {per_iteration(node.data, edge.data.get_src_subset(edge, state))}")
+    for edge in loop.all_interstate_edges():
+        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True):
+            if memlet.data in shared:
+                lines.append(f"R {memlet.data} {per_iteration(memlet.data, memlet.subset)}")
+    return hashlib.sha1("\n".join([loop_header_signature(loop), *sorted(set(lines))]).encode()).hexdigest()
 
 
 def mark_known_parallel(loop: LoopRegion, conflict_free: Iterable[str] = ()) -> None:

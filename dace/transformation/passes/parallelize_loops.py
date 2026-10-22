@@ -316,10 +316,13 @@ class ParallelizeLoops(ppl.Pass):
         xform._pipeline_results = pipeline_results
         if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
             return False
-        if not proven and self.holds_back(xform, loop):
+        # A known-parallel loop is mapped as it is: no sibling chain holds it, and its scale is the CPU specialization's
+        # to settle.
+        known_parallel = loop_analysis.is_known_parallel(loop)
+        if not proven and not known_parallel and self.holds_back(xform, loop):
             return False
         # A proof of independence replaces the dependence test, not the scale rule: a SMALL loop stays sequential.
-        if proven and xform.keep_small_loops_sequential and spans_small_symbols(loop):
+        if proven and not known_parallel and xform.keep_small_loops_sequential and spans_small_symbols(loop):
             return False
         if before_apply is not None:
             before_apply()

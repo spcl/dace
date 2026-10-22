@@ -14,6 +14,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 
 N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -46,6 +47,12 @@ def shifted_halves(A: dace.float64[3 * N]):
         A[i + N] = A[i] + 1.0
 
 
+@dace.program
+def small_scatter(A: dace.float64[K], idx: dace.int64[K], B: dace.float64[K]):
+    for i in dace.map[0:K]:
+        B[idx[i]] = A[i]
+
+
 def lowered(program) -> tuple[dace.SDFG, list[LoopRegion]]:
     """``program``'s SDFG with every map lowered to a loop, adjacent loops as direct siblings."""
     sdfg = program.to_sdfg(simplify=True)
@@ -65,13 +72,29 @@ def test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test():
     assert not LoopToMap.can_be_applied_to(loops[0].sdfg, loop=loops[0])
 
 
+def test_a_known_parallel_loop_over_a_small_symbol_is_still_mapped():
+    """The SMALL-scale rule keeps a loop a loop only when its independence is unknown: a lowered map is mapped back,
+    and the CPU specialization decides whether it runs single-core."""
+    sdfg, loops = lowered(small_scatter)
+    sdfg.set_symbol_scale("K", dace.symbolic.Scale.SMALL)
+    options = {"keep_small_loops_sequential": True}
+    assert len(loops) == 1 and loop_analysis.is_known_parallel(loops[0])
+    assert LoopToMap.can_be_applied_to(loops[0].sdfg, options=options, loop=loops[0])
+    loops[0].known_parallel = False
+    assert not LoopToMap.can_be_applied_to(loops[0].sdfg, options=options, loop=loops[0])
+
+
 def test_a_rewritten_body_keeps_the_conflict_free_writes_and_a_new_header_drops_both_marks():
-    """A body rewrite cannot make two iterations' scatters collide, so ``B`` stays conflict-free; a header swap (an
+    """A body rewrite that keeps what an iteration touches keeps the mark; one that reads another iteration's element
+    drops it. Neither can make two iterations' scatters collide, so ``B`` stays conflict-free; a header swap (an
     interchange) means another iteration space, for which nothing was ever known."""
     sdfg, loops = lowered(permute)
     loop = loops[0]
     loop_analysis.mark_known_parallel(loop, {"B"})
     loop.add_state("rewritten")
+    assert loop_analysis.is_known_parallel(loop)
+    ahead = loop.add_state("read_ahead")
+    ahead.add_edge(ahead.add_read("A"), None, ahead.add_write("B"), None, dace.Memlet("A[i + 1]", other_subset="i"))
     assert not loop_analysis.is_known_parallel(loop)
     assert loop_analysis.conflict_free_writes(loop) == {"B"}
     loop.update_statement = dace.properties.CodeBlock(f"{loop.loop_variable} = {loop.loop_variable} + 2")
@@ -175,6 +198,7 @@ def test_adjacent_halves_fuse_side_by_side_once_normalized_and_stay_known_parall
 
 if __name__ == "__main__":
     test_a_lowered_map_is_known_parallel_and_lifts_without_a_dependence_test()
+    test_a_known_parallel_loop_over_a_small_symbol_is_still_mapped()
     test_a_rewritten_body_keeps_the_conflict_free_writes_and_a_new_header_drops_both_marks()
     test_fusing_two_known_parallel_loops_at_the_same_point_stays_known_parallel()
     test_fusing_a_read_behind_carries_a_dependence_and_drops_the_mark()

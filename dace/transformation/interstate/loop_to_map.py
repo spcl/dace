@@ -1505,7 +1505,10 @@ class LoopToMap(xf.MultiStateTransformation):
             return refuse(f"loop bounds are not integer types - result_type={t}")
 
         facts = self.probe_resolver().facts_at(self.loop)
-        if self.keep_small_loops_sequential and spans_small_symbols(self.loop, facts):
+        # A loop known parallel since it was marked is mapped whatever its scale: the CPU specialization sequentializes
+        # a small map, a loop it never sees.
+        known_parallel = loop_analysis.is_known_parallel(self.loop)
+        if self.keep_small_loops_sequential and not known_parallel and spans_small_symbols(self.loop, facts):
             return refuse(f"loop range {start}..{end} spans SMALL symbols only")
 
         # A map runs its range upwards: a loop is mapped only when the direction of its step is known
@@ -1557,7 +1560,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if loop_analysis.loop_provably_at_most_one_iteration(self.loop):
             return True
         # Independent by construction (a map lowered to this loop, or a piece of one): nothing to prove.
-        if loop_analysis.is_known_parallel(self.loop):
+        if known_parallel:
             return True
 
         # Collect symbol reads and writes from inter-state assignments. The read-before-assigned
