@@ -216,12 +216,14 @@ def test_persistent_map():
 @pytest.mark.parametrize("step", [1, 2])
 def test_dynamic_map(step: int):
     code = _cuda_code(_spmv(step), dynamic_map_block_size="64,1,1")
-    # The scheduling state (two arrays of 32 * 32 indices per warp) fits in static shared memory
+    # The queue, its shared state (fine-grained: two lists of 32 * 32 indices per warp) and the batches of the
+    # dynamic map all take the 64-bit index type
     assert "__shared__ int64_t __dace_dynmap_state[4096];" in code
-    assert "int64_t __dace_dynmap_begin = 0, __dace_dynmap_end = 0;" in code
-    assert "dace::DynamicMap<true, 64, 32, int64_t>::schedule(" in code
-    if step != 1:
-        assert re.search(r"int64_t j = \w+ \+ 2 \* j_idx;", code)
+    assert "dace::DynamicMap<true, 64, 32, int64_t>::block_round(" in code
+    if step == 1:
+        assert "for (int64_t j = __dace_dynmap_first_sym;" in code
+    else:
+        assert re.search(r"for \(int64_t j = \(\(2 \* __dace_dynmap_first_sym\) \+ \w+\);", code)
 
 
 def test_dynamic_map_default_types():
@@ -241,8 +243,7 @@ def test_dynamic_map_default_types():
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = _cuda_code(sdfg)
     assert "__shared__ int __dace_dynmap_state[8192];" in code
-    assert "unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;" in code
-    assert "dace::DynamicMap<true, 128>::schedule(" in code
+    assert "dace::DynamicMap<true, 128, 32, int>::block_round(" in code
 
 
 def test_chiplet_distribution():
