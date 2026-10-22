@@ -163,18 +163,33 @@ def find_match(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegi
 def upward_exposed_reads(st: SDFGState) -> set:
     """Containers ``st`` reads before writing -- the only reads repetition can change.
 
-    Ordering edges carry nothing, so they decide neither side.
+    An ordering edge carries no data, but it does order: a read node that a writer of the same container precedes
+    (through data or ordering edges) reads the value written in ``st``.
 
     :param st: The state to inspect.
     :returns: The names read before being written in ``st``.
     """
-    exposed = set()
+    writers: dict[str, list[nodes.AccessNode]] = {}
+    readers: list[nodes.AccessNode] = []
     for n in st.data_nodes():
-        if any(not e.data.is_empty() for e in st.out_edges(n)) and not any(
-            not e.data.is_empty() for e in st.in_edges(n)
-        ):
-            exposed.add(n.data)
-    return exposed
+        if any(not e.data.is_empty() for e in st.in_edges(n)):
+            writers.setdefault(n.data, []).append(n)
+        elif any(not e.data.is_empty() for e in st.out_edges(n)):
+            readers.append(n)
+    return {n.data for n in readers if not writers.get(n.data) or not preceded_by(st, n, writers[n.data])}
+
+
+def preceded_by(st: SDFGState, node: nodes.Node, candidates: list[nodes.AccessNode]) -> bool:
+    """Whether a node of ``candidates`` reaches ``node`` in ``st``."""
+    wanted, seen, frontier = set(candidates), {node}, [node]
+    while frontier:
+        for edge in st.in_edges(frontier.pop()):
+            if edge.src in wanted:
+                return True
+            if edge.src not in seen:
+                seen.add(edge.src)
+                frontier.append(edge.src)
+    return False
 
 
 def _state_writes(st: SDFGState) -> set:

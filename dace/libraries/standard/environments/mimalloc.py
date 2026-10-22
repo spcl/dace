@@ -40,8 +40,12 @@ class MiMalloc:
 
     @staticmethod
     def cmake_libraries():
+        """The library to link: its path, else the loader's file name (``-l:libmimalloc.so.3``), as a runtime-only
+        install has no ``libmimalloc.so`` for ``-lmimalloc`` to find."""
         path = MiMalloc.library_path()
-        return [path] if path is not None and os.path.isabs(path) else ["mimalloc"]
+        if path is None:
+            return ["mimalloc"]
+        return [path] if os.path.isabs(path) else [f"-l:{path}"]
 
     @staticmethod
     def enabled() -> bool:

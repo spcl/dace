@@ -14,7 +14,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
+from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop, upward_exposed_reads
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -309,3 +309,28 @@ def test_push_refuses_a_guard_that_reads_the_loop_variable():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_a_read_an_ordering_edge_puts_after_its_writer_is_not_upward_exposed():
+    """Canonicalization reads a scalar through a second access node ordered after its writer by an empty memlet.
+    Counting that read as exposed made MapLoopInterchange call the scalar loop-carried (spcl/NestForge#29)."""
+    sdfg = dace.SDFG("ordered_scalar_read")
+    sdfg.add_array("x", [1], dace.float64)
+    sdfg.add_array("y", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    sdfg.add_scalar("u", dace.float64, transient=True)
+    state = sdfg.add_state()
+    write = state.add_tasklet("write", {"a": None}, {"b": None}, "b = a")
+    state.add_edge(state.add_read("x"), None, write, "a", dace.Memlet("x[0]"))
+    written = state.add_access("t")
+    state.add_edge(write, "b", written, None, dace.Memlet("t[0]"))
+    read_again = state.add_access("t")
+    state.add_nedge(written, read_again, dace.Memlet())
+    use = state.add_tasklet("use", {"a": None, "c": None}, {"b": None}, "b = a + c")
+    state.add_edge(read_again, None, use, "a", dace.Memlet("t[0]"))
+    state.add_edge(state.add_read("u"), None, use, "c", dace.Memlet("u[0]"))
+    state.add_edge(use, "b", state.add_write("y"), None, dace.Memlet("y[0]"))
+
+    exposed = upward_exposed_reads(state)
+
+    assert exposed == {"x", "u"}, exposed

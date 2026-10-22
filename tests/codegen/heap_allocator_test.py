@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``compiler.cpu.heap_allocator``: CPU heap arrays from mimalloc, or from aligned ``operator new``."""
 
+import ctypes.util
 import subprocess
 
 import numpy as np
@@ -55,3 +56,12 @@ if __name__ == "__main__":
     if MiMalloc.library_path() is not None:
         test_heap_arrays_come_from_mimalloc()
     test_the_system_allocator_links_no_mimalloc()
+
+
+def test_a_runtime_only_mimalloc_is_linked_by_its_file_name(monkeypatch):
+    """A runtime-only install has ``libmimalloc.so.3`` but no ``libmimalloc.so``: ``-lmimalloc`` failed to link
+    every program (``cannot find -lmimalloc``) once ``auto`` had found the library."""
+    monkeypatch.delenv("MIMALLOC_ROOT", raising=False)
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: "libmimalloc.so.3")
+
+    assert MiMalloc.cmake_libraries() == ["-l:libmimalloc.so.3"]
