@@ -73,8 +73,8 @@ def loop_signature(loop: LoopRegion) -> str:
             return str(subset)
         shape = sdfg.arrays[name].shape
         ranges = [
-            (0, shape[dim] - 1, 1) if {str(free) for free in subsets.Range([rng]).free_symbols} & local else rng
-            for dim, rng in enumerate(subset.ranges)
+            (0, extent - 1, 1) if {str(free) for free in subsets.Range([rng]).free_symbols} & local else rng
+            for extent, rng in zip(shape, subset.ranges)
         ]
         return str(subsets.Range(ranges))
 
@@ -84,17 +84,22 @@ def loop_signature(loop: LoopRegion) -> str:
         for node in state.data_nodes():
             if node.data not in shared or scopes[node] is not None:
                 continue
-            for edge in state.in_edges(node):
-                if not edge.data.is_empty():
-                    subset = edge.data.get_dst_subset(edge, state)
-                    lines.append(f"W {node.data} {per_iteration(node.data, subset)} {edge.data.wcr}")
-            for edge in state.out_edges(node):
-                if not edge.data.is_empty():
-                    lines.append(f"R {node.data} {per_iteration(node.data, edge.data.get_src_subset(edge, state))}")
-    for edge in loop.all_interstate_edges():
-        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True):
-            if memlet.data in shared:
-                lines.append(f"R {memlet.data} {per_iteration(memlet.data, memlet.subset)}")
+            lines.extend(
+                f"W {node.data} {per_iteration(node.data, edge.data.get_dst_subset(edge, state))} {edge.data.wcr}"
+                for edge in state.in_edges(node)
+                if not edge.data.is_empty()
+            )
+            lines.extend(
+                f"R {node.data} {per_iteration(node.data, edge.data.get_src_subset(edge, state))}"
+                for edge in state.out_edges(node)
+                if not edge.data.is_empty()
+            )
+    lines.extend(
+        f"R {memlet.data} {per_iteration(memlet.data, memlet.subset)}"
+        for edge in loop.all_interstate_edges()
+        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True)
+        if memlet.data in shared
+    )
     return hashlib.sha1("\n".join([loop_header_signature(loop), *sorted(set(lines))]).encode()).hexdigest()
 
 
