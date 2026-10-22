@@ -80,6 +80,7 @@ class Wait(CommNode):
         "NCCL": ExpandWaitNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
@@ -146,6 +147,7 @@ class Waitall(CommNode):
         "NCCL": ExpandWaitallNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")

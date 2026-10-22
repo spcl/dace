@@ -87,6 +87,7 @@ class Isend(CommNode):
         "NCCL": ExpandIsendNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     nosync = dace.properties.Property(
         dtype=bool, default=False, category="Scheduling", desc="Do not sync if memory is on GPU"

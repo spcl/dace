@@ -62,6 +62,7 @@ class Recv(CommNode):
         "NCCL": ExpandRecvNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer"}, **kwargs)

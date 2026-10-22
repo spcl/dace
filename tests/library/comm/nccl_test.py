@@ -164,6 +164,12 @@ def make_ring_exchange(dtype=dace.float64) -> dace.SDFG:
     return sdfg
 
 
+def make_barrier() -> dace.SDFG:
+    sdfg = dace.SDFG("nccl_barrier")
+    sdfg.add_state().add_node(comm.Barrier("barrier"))
+    return sdfg
+
+
 def use_nccl(sdfg: dace.SDFG) -> dace.SDFG:
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, comm.nodes.node.CommNode):
@@ -182,6 +188,7 @@ def expanded_code(sdfg: dace.SDFG) -> str:
 
 def test_portable_nodes_follow_the_configured_implementation():
     for node_type in (
+        comm.Barrier,
         comm.Send,
         comm.Recv,
         comm.Isend,
@@ -209,6 +216,14 @@ def test_allreduce_expansion():
     assert "__state->nccl->Get(MPI_COMM_WORLD)" in code
     assert "__state->nccl->Begin();" in code and "__state->nccl->Launch();" in code
     assert "__dace_current_stream" in code
+
+
+def test_barrier_expansion():
+    sdfg = make_barrier()
+    code = expanded_code(sdfg)
+    assert "ncclAllReduce(_inbuffer, _outbuffer, 1, ncclUint8, ncclSum" in code
+    buffer = sdfg.arrays["barrier_buffer"]
+    assert buffer.storage == GPU and buffer.transient and buffer.total_size == 1
 
 
 def test_reduction_operators():
@@ -447,6 +462,13 @@ def test_ring_exchange():
 
 @pytest.mark.gpu
 @pytest.mark.mpi
+def test_barrier():
+    world, _ = _setup_ranks()
+    _compile(make_barrier(), world)()
+
+
+@pytest.mark.gpu
+@pytest.mark.mpi
 def test_frontend_allreduce_with_configured_nccl():
     from mpi4py import MPI
 
@@ -470,6 +492,7 @@ def test_frontend_allreduce_with_configured_nccl():
 if __name__ == "__main__":
     test_portable_nodes_follow_the_configured_implementation()
     test_allreduce_expansion()
+    test_barrier_expansion()
     test_reduction_operators()
     test_complex_sum_reduces_components()
     test_untyped_data_moves_as_bytes()
@@ -490,4 +513,5 @@ if __name__ == "__main__":
     test_send_recv("0:n")
     test_send_recv("1:3")
     test_ring_exchange()
+    test_barrier()
     test_frontend_allreduce_with_configured_nccl()

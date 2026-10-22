@@ -15,6 +15,7 @@ import dace
 from dace.codegen import common
 from dace.libraries import comm
 from dace.libraries.comm import utils
+from dace.libraries.comm.nodes.node import NonblockingCommNode
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdfg_utils
@@ -214,10 +215,36 @@ def test_a_reduce_into_a_strided_buffer():
 _BUFFER_NODES = [comm.Reduce, comm.Gather, comm.Scatter, comm.Allreduce, comm.Bcast, comm.Allgather, comm.Alltoall]
 
 
+_SIDE_EFFECT_NODES = [
+    comm.Barrier,
+    comm.Wait,
+    comm.Waitall,
+    comm.Abort,
+    comm.CommSplit,
+    comm.CommFree,
+    comm.Send,
+    comm.Recv,
+    comm.Isend,
+    comm.Irecv,
+]
+
+
+def test_only_synchronizing_nodes_have_side_effects():
+    """Communicator management, synchronization, point-to-point and nonblocking operations keep their place; a
+    blocking collective only computes its outputs."""
+    for node_type in _SIDE_EFFECT_NODES:
+        assert node_type(node_type.__name__.lower()).has_side_effects(None), node_type
+    for node_type in [*_BUFFER_NODES, comm.CommRank, comm.CommSize, comm.CommF2c]:
+        node = node_type(node_type.__name__.lower())
+        assert not node.has_side_effects(None), node_type
+        if isinstance(node, NonblockingCommNode):
+            node.nonblocking = True
+            assert node.has_side_effects(None), node_type
+
+
 @pytest.mark.parametrize("node_type", _BUFFER_NODES)
 @pytest.mark.parametrize("implementation", ["MPI", "NCCL"])
-def test_comm_tasklets_have_side_effects(node_type, implementation: str):
-    """A process whose output no one reads still takes part: dead-dataflow elimination must keep the call."""
+def test_comm_tasklets_follow_the_side_effects_of_their_node(node_type, implementation: str):
     name = f"side_effects_{node_type.__name__.lower()}_{implementation.lower()}"
     storage = dace.StorageType.GPU_Global if implementation == "NCCL" else dace.StorageType.Default
     node = node_type(node_type.__name__.lower())
@@ -232,7 +259,7 @@ def test_comm_tasklets_have_side_effects(node_type, implementation: str):
     out = "x" if node_type is comm.Bcast else "y"  # Bcast is in place
     state.add_edge(node, "_outbuffer", state.add_write(out), None, Memlet(f"{out}[0:4]"))
     expansion = node.implementations[implementation].expansion(node, state, sdfg)
-    assert expansion.side_effects
+    assert expansion.side_effects is False
 
 
 def _scalar_reduction_sdfg(name: str, node: dace.nodes.LibraryNode, in_place: bool) -> dace.SDFG:
@@ -484,9 +511,10 @@ if __name__ == "__main__":
     test_an_allreduce_of_one_array_element()
     test_a_gather_into_a_strided_buffer()
     test_a_reduce_into_a_strided_buffer()
+    test_only_synchronizing_nodes_have_side_effects()
     for implementation in ("MPI", "NCCL"):
         for node_type in _BUFFER_NODES:
-            test_comm_tasklets_have_side_effects(node_type, implementation)
+            test_comm_tasklets_follow_the_side_effects_of_their_node(node_type, implementation)
     test_an_allreduce_of_a_scalar("MPI_SUM", False)
     test_an_allreduce_of_a_scalar("MPI_SUM", True)
     test_an_allreduce_of_a_scalar("avg", False)

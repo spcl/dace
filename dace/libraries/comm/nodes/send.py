@@ -62,6 +62,7 @@ class Send(CommNode):
         "NCCL": ExpandSendNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")

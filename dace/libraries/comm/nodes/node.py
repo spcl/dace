@@ -82,7 +82,8 @@ def comm_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.
             inputs[connector] = dtypes.pointer(sdutil.in_desc_with_name(node, state, state.sdfg, connector).dtype)
         if connector in outputs:
             outputs[connector] = dtypes.pointer(sdutil.out_desc_with_name(node, state, state.sdfg, connector).dtype)
-    return nodes.Tasklet(node.name, inputs, outputs, code, language=dtypes.Language.CPP, side_effects=True)
+    side_effects = node.has_side_effects(state.sdfg)
+    return nodes.Tasklet(node.name, inputs, outputs, code, language=dtypes.Language.CPP, side_effects=side_effects)
 
 
 def external_communicator(node: nodes.Node, state: SDFGState) -> bool:
@@ -420,8 +421,12 @@ class CommNode(nodes.LibraryNode):
     # Communication reads host control values (ranks, tags, requests) next to buffers in any memory
     bridges_storage = True
 
+    #: Whether the node acts beyond its outputs (creates or frees communicators, synchronizes, or uses its buffers
+    #: after returning), so transformations must neither remove nor reorder it
+    side_effects = False
+
     def has_side_effects(self, sdfg) -> bool:
-        return True
+        return self.side_effects
 
 
 @properties.make_properties
@@ -444,6 +449,9 @@ class NonblockingCommNode(CommNode):
         category="Semantics",
         desc="Start the operation and return; a Wait on the _request output completes it",
     )
+
+    def has_side_effects(self, sdfg) -> bool:
+        return self.nonblocking
 
     def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
         """
