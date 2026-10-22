@@ -422,7 +422,9 @@ def declared_assumptions(sdfg: "SDFG") -> list[Relation]:
     """The signs and relations declared of the symbols ``sdfg`` takes, its nested SDFGs' translated through each
     nesting node's symbol mapping: what the caller promised, which the program checks on every call alongside the
     orders proofs took from the scales. One naming a symbol bound inside (a loop iterator) has no value at the call."""
-    taken = {str(name) for name in sdfg.free_symbols if not str(name).startswith("__dace")}
+    # What the generated code passes (the used symbols), less what a scope binds inside (iterators)
+    free = {str(name) for name in sdfg.free_symbols}
+    taken = {name for name in sdfg.used_symbols(all_symbols=False) if name in free and not name.startswith("__dace")}
     params = sdfg.symbol_repo.params
     declared = OrderedSet(
         predicate_relation(predicate, symbolic.symbol(name))
