@@ -5,7 +5,9 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    expanded_input_connectors,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
@@ -35,25 +37,20 @@ class ExpandAlltoallMPI(ExpandTransformation):
 
         comm = mpi_communicator(node, parent_state)
 
-        code = f"""
+        code = (
+            gpu_buffers_ready(node, parent_sdfg, parent_state)
+            + f"""
             int size;
             MPI_Comm_size({comm}, &size);
             int sendrecv_amt = {in_count_str} / size;
             """
+        )
         code += mpi_collective(
             node,
             "Alltoall",
             f"_inbuffer, sendrecv_amt, {in_mpi_dtype_str}, _outbuffer, sendrecv_amt, {out_mpi_dtype_str}, {comm}",
         )
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion
@@ -108,11 +105,9 @@ class Alltoall(NonblockingCommNode):
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
+                out_count_str = count_expression(data.subset)
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(data.subset)
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str)

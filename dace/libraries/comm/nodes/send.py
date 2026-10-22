@@ -6,8 +6,11 @@ from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
-    expanded_input_connectors,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
     mpi_communicator,
+    mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
     nccl_tasklet,
@@ -28,35 +31,14 @@ class ExpandSendMPI(ExpandTransformation):
 
         if buffer.dtype.veclen > 1:
             raise (NotImplementedError)
-        code = ""
-        if ddt is not None:
-            code = f"""static MPI_Datatype newtype;
-                        static int init=1;
-                        if (init) {{
-                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
-                           MPI_Type_commit(&newtype);
-                           init=0;
-                        }}
-                            """
-            mpi_dtype_str = "newtype"
-            count_str = "1"
-        buffer_offset = 0
+        vector_code, mpi_dtype_str, count_str, free = mpi_vector_datatype(ddt, mpi_dtype_str, count_str)
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state) + vector_code
         code += f"""
-                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
+                MPI_Send(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
                 """
-        if ddt is not None:
-            code += """// MPI_Type_free(&newtype);
-            """
+        code += free
 
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return tasklet
+        return comm_tasklet(node, parent_state, code)
 
 
 @dace.library.expansion
@@ -80,6 +62,7 @@ class Send(CommNode):
         "NCCL": ExpandSendNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
@@ -111,8 +94,7 @@ class Send(CommNode):
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_buffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset)
                 # compute buffer offset
                 minelem = data.subset.min_element()
                 dims_data = sdfg.arrays[data.data].strides

@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
 from collections.abc import Sequence
 
 import dace.library
@@ -9,7 +10,9 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    expanded_input_connectors,
+    comm_tasklet,
+    gpu_buffers_ready,
+    int_array,
     mpi_collective,
     mpi_communicator,
     mpi_request_connector,
@@ -24,19 +27,11 @@ from dace.transformation.transformation import ExpandTransformation
 def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str, persistent: bool = False) -> str:
     """C++ arrays ``<name>_counts`` and ``<name>_displs`` (exclusive prefix sums) of ``counts`` times ``factor``,
     ``static`` if ``persistent`` (for arrays that must outlive the code, e.g., of a nonblocking operation)."""
-    values = [
-        f"({symbolic.symstr(c, cpp_mode=True)}) * {factor}" if factor != 1 else symbolic.symstr(c, cpp_mode=True)
-        for c in counts
-    ]
-    storage = "static " if persistent else ""
-    assignments = "".join(f"{name}_counts[{i}] = ({ctype})({v});\n" for i, v in enumerate(values))
-    return f"""
-        {storage}{ctype} {name}_counts[{len(values)}];
-        {storage}{ctype} {name}_displs[{len(values)}];
-        {assignments}
-        {name}_displs[0] = 0;
-        for (int __i = 1; __i < {len(values)}; ++__i) {name}_displs[__i] = {name}_displs[__i - 1] + {name}_counts[__i - 1];
-        """
+    values = [symbolic.pystr_to_symbolic(c) * factor for c in counts]
+    displacements = [0, *itertools.accumulate(values[:-1])]
+    return int_array(f"{name}_counts", values, ctype, persistent) + int_array(
+        f"{name}_displs", displacements, ctype, persistent
+    )
 
 
 @dace.library.expansion
@@ -55,7 +50,8 @@ class ExpandAlltoallvMPI(ExpandTransformation):
         mpi_dtype_str = utils.MPI_DDT(inbuffer.dtype.base_type)
         comm = mpi_communicator(node, parent_state)
         # A nonblocking exchange reads the counts and displacements until it completes: they outlive the tasklet
-        code = _counts_and_displacements("__send", node.send_counts, 1, "int", node.nonblocking)
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
+        code += _counts_and_displacements("__send", node.send_counts, 1, "int", node.nonblocking)
         code += _counts_and_displacements("__recv", node.recv_counts, 1, "int", node.nonblocking)
         code += mpi_collective(
             node,
@@ -63,15 +59,7 @@ class ExpandAlltoallvMPI(ExpandTransformation):
             f"_inbuffer, __send_counts, __send_displs, {mpi_dtype_str}, _outbuffer, __recv_counts, __recv_displs, "
             f"{mpi_dtype_str}, {comm}",
         )
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion

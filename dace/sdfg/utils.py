@@ -1823,8 +1823,8 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        digest = sdfg.hash_sdfg()
         try:
+            digest = sdfg.hash_sdfg()
             func = sdfg.compile(validate=validate)
             root_outcome = (sdfg.build_folder, digest, None)
         except Exception as ex:

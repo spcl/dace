@@ -187,6 +187,66 @@ def test_unstructured_control_flow_sibling_loops():
     assert np.allclose(B_test, B_valid)
 
 
+def _write_state(sdfg: dace.SDFG, label: str, value: int) -> dace.SDFGState:
+    state = sdfg.add_state(label)
+    tasklet = state.add_tasklet(label, {}, {"o"}, f"o = {value}")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    return state
+
+
+def test_three_way_branch_with_and_condition():
+    """The catch-all branch ``r != a and r != b`` of a three-way branch is neither turned into an always-taken return
+    nor rejected for not being a sympy Boolean."""
+    sdfg = dace.SDFG("three_way_branch_with_and_condition")
+    sdfg.add_array("A", [1], dace.int32)
+    for name in ("r", "a", "b"):
+        sdfg.add_symbol(name, dace.int32)
+    start = sdfg.add_state("start", is_start_block=True)
+    end = sdfg.add_state("end")
+    for value, condition in enumerate(("r == a", "r == b", "r != a and r != b"), start=1):
+        branch = _write_state(sdfg, f"branch_{value}", value)
+        sdfg.add_edge(start, branch, dace.InterstateEdge(condition))
+        sdfg.add_edge(branch, end, dace.InterstateEdge())
+
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
+    assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
+    for r, expected in ((3, 1), (5, 2), (7, 3)):
+        A = np.zeros((1,), np.int32)
+        sdfg(A=A, r=r, a=3, b=5)
+        assert A[0] == expected
+
+
+def test_inline_conditional_else_condition():
+    """Inlining a conditional block guards its else branch with the negation of the disjunction of the other
+    conditions, so that exactly one branch runs."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
+
+    sdfg = dace.SDFG("inline_conditional_else_condition")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_symbol("i", dace.int64)
+    conditional = ConditionalBlock("conditional")
+    sdfg.add_node(conditional, is_start_block=True)
+    for value, condition in enumerate(("i == 0", "i == 1", None), start=1):
+        region = ControlFlowRegion(f"branch_{value}", sdfg)
+        state = region.add_state(f"write_{value}", is_start_block=True)
+        tasklet = state.add_tasklet(f"write_{value}", {}, {"o"}, f"o = {value}")
+        state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+        conditional.add_branch(None if condition is None else CodeBlock(condition), region)
+
+    conditional.inline()
+
+    else_guard = next(
+        e.data.condition_sympy() for e in sdfg.all_interstate_edges() if e.dst.label.startswith("branch_3")
+    )
+    for i, expected in ((0, 1), (1, 2), (2, 3)):
+        assert bool(else_guard.subs("i", i)) == (expected == 3)
+        A = np.zeros((1,), np.int32)
+        sdfg(A=A, i=i)
+        assert A[0] == expected
+
+
 if __name__ == "__main__":
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -195,3 +255,5 @@ if __name__ == "__main__":
     test_elif_chain(False)
     test_elif_chain(True)
     test_unstructured_control_flow_sibling_loops()
+    test_three_way_branch_with_and_condition()
+    test_inline_conditional_else_condition()

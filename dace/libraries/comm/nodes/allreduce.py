@@ -6,7 +6,9 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    expanded_input_connectors,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
     mpi_average,
     mpi_collective,
     mpi_communicator,
@@ -14,6 +16,7 @@ from dace.libraries.comm.nodes.node import (
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
+    same_buffer,
     scaled,
     validate_nccl_buffers,
 )
@@ -40,24 +43,17 @@ class ExpandAllreduceMPI(ExpandTransformation):
         comm = mpi_communicator(node, parent_state)
 
         buffer = "_inbuffer"
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
         if in_place:
             buffer = "MPI_IN_PLACE"
 
-        code = mpi_collective(
+        code += mpi_collective(
             node,
             "Allreduce",
             f"{buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
         code += mpi_average(node.op, "_outbuffer", count_str, comm)
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion
@@ -106,24 +102,18 @@ class Allreduce(NonblockingCommNode):
         """
 
         inbuffer, outbuffer = None, None
-        inpname, outname = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
-                outname = e.data.data
                 outbuffer = sdfg.arrays[e.data.data]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
-                inpname = e.data.data
                 inbuffer = sdfg.arrays[e.data.data]
 
-        in_place = False
-        if inpname == outname:
-            in_place = True
+        in_place = same_buffer(self, state)
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset)
 
         return (inbuffer, count_str), outbuffer, in_place
