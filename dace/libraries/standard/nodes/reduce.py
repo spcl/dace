@@ -18,7 +18,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.libraries.standard import reduction_planner as red_planner
 from dace.libraries.standard.environments.cuda import CUDA
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, single_core_expansion
 from dace.properties import LambdaProperty, ListProperty, Property
 from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, graph, propagation, scope
 from dace.sdfg.state import SymbolResolver
@@ -2031,6 +2031,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "Auto": ExpandReduceAuto,
         "pure": ExpandReducePure,
+        "sequential": single_core_expansion(ExpandReducePure),
         "pure-seq": ExpandReducePureSequentialDim,
         "CPU": ExpandReduceOpenMP,
         "CUDA (device)": ExpandReduceCUDADevice,

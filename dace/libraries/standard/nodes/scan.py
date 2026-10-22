@@ -56,7 +56,7 @@ from dace.codegen.common import global_code_id, sym2cpp
 # ``dace.libraries.standard.nodes.scan`` <-> ``dace.libraries.sort.environments.cub``
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, schedule_dispatch
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, schedule_dispatch, single_core_expansion
 from dace.libraries.standard.pure_components import chain as chain_blocks
 from dace.libraries.standard.pure_components import counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
@@ -1804,6 +1804,7 @@ class Scan(nodes.LibraryNode):
         "CUDA": ExpandCUDA,
         "CUDA (block)": ExpandCUDABlock,
         "pure": ExpandPure,
+        "sequential": single_core_expansion(ExpandPure),
         "Auto": ExpandAuto,
     }
     default_implementation = "Auto"

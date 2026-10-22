@@ -32,7 +32,7 @@ its size):
 import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
-from dace.libraries.standard.helper import schedule_dispatch
+from dace.libraries.standard.helper import schedule_dispatch, single_core_expansion
 from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.optionals import required
@@ -335,7 +335,7 @@ class ScatterConflictCheck(nodes.LibraryNode):
     #: :class:`ExpandCUDA`. Declared so an offloader does not move them with the rest of the state.
     host_connectors = frozenset({OUTPUT_CONNECTOR_NAME, SCRATCH_CONNECTOR_NAME})
 
-    implementations = {"Auto": ExpandAuto, "CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure}
+    implementations = {"Auto": ExpandAuto, "CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure, "sequential": single_core_expansion(ExpandPure)}
     default_implementation = "Auto"
 
     def __init__(self, name: str = "ScatterConflictCheck", *args, **kwargs):

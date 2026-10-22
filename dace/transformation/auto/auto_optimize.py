@@ -683,9 +683,8 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
     if not sequential and not isinstance(node, (CopyLibraryNode, FillLibraryNode)):
         sequential = libnode_work_is_below_break_even(node, state)
     if isinstance(node, (Reduce, ArgReduce, Scan, ScatterConflictCheck)):
-        # ``pure-seq`` needs an ``identity`` a lifted node may not carry, so ``pure`` is the robust
-        # single-core choice (it lowers to a plain accumulate loop when Sequential).
-        node.implementation = "pure" if sequential else ("CPU" if "CPU" in impls else node.implementation)
+        # The single-core lowering, by name: the pure accumulate loop, pinned Sequential.
+        node.implementation = "sequential" if sequential else ("CPU" if "CPU" in impls else node.implementation)
     elif isinstance(node, CopyLibraryNode):
         node.implementation = select_copy_implementation(node, state) if sequential else "Auto"
     else:

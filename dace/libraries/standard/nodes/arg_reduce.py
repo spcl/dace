@@ -50,7 +50,7 @@ from collections.abc import Callable
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
-from dace.libraries.standard.helper import schedule_dispatch
+from dace.libraries.standard.helper import schedule_dispatch, single_core_expansion
 from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
 from dace.optionals import required
@@ -446,6 +446,7 @@ class ArgReduce(nodes.LibraryNode):
     implementations = {
         "Auto": ExpandArgReduceAuto,
         "pure": ExpandArgReducePure,
+        "sequential": single_core_expansion(ExpandArgReducePure),
         "CPU": ExpandArgReduceCPU,
         "CUDA": ExpandArgReduceCUDA,
         "CUDA (block)": ExpandArgReduceCUDABlock,

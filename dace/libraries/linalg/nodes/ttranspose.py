@@ -13,7 +13,7 @@ from dace.data import core as datacore
 from dace.libraries.blas import blas_helpers
 from dace.libraries.linalg import environments
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, single_core_expansion
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
@@ -71,21 +71,6 @@ class ExpandPure(ExpandTransformation):
             f"{node.label}_tasklet", map_rng, inputs, code, outputs, schedule=schedule, external_edges=True
         )
 
-        return sdfg
-
-
-@library.expansion
-class ExpandSequential(ExpandTransformation):
-    """The single-core lowering: one in-thread loop nest, for a node a parallel region encloses."""
-
-    environments = []
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
-        sdfg = ExpandPure.expansion(node, parent_state, parent_sdfg)
-        for entry, _ in sdfg.all_nodes_recursive():
-            if isinstance(entry, nodes.MapEntry):
-                entry.map.schedule = dtypes.ScheduleType.Sequential
         return sdfg
 
 
@@ -442,7 +427,7 @@ class TensorTranspose(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandPure,
-        "sequential": ExpandSequential,
+        "sequential": single_core_expansion(ExpandPure),
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
         "hipTENSOR": ExpandHipTensor,

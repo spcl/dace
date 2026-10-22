@@ -27,6 +27,27 @@ CPU_RESIDENT_STORAGES = frozenset(
 )
 
 
+def single_core_expansion(pure: type) -> type:
+    """The single-core lowering of a library node: ``pure``'s expansion with every map it emits ``Sequential``. Selected,
+    by name, for a node a parallel region encloses or one with too little work for a region of its own."""
+    from dace import library
+    from dace.transformation.transformation import ExpandTransformation
+
+    class ExpandSingleCore(ExpandTransformation):
+        environments = pure.environments
+
+        @staticmethod
+        def expansion(node, parent_state, parent_sdfg, *args, **kwargs):
+            result = pure.expansion(node, parent_state, parent_sdfg, *args, **kwargs)
+            if isinstance(result, dace.SDFG):
+                for entry, _ in result.all_nodes_recursive():
+                    if isinstance(entry, nodes.MapEntry):
+                        entry.map.schedule = dtypes.ScheduleType.Sequential
+            return result
+
+    ExpandSingleCore.__name__ = ExpandSingleCore.__qualname__ = f"{pure.__name__}SingleCore"
+    return library.expansion(ExpandSingleCore)
+
 def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageType:
     """
     Return the storage a cuSOLVER/LAPACK status scalar (``devInfo``) should use so that it stays

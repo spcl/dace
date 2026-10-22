@@ -76,7 +76,7 @@ def test_toplevel_non_team_schedule_takes_the_single_core_expansion():
     sdfg, state, node = build_toplevel_reduce(4096, dtypes.ScheduleType.SVE_Map)
     with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=THRESHOLD):
         assert apply_cpu_library_parallelism(node, state, sdfg) is True
-    assert node.implementation == "pure"
+    assert node.implementation == "sequential"
 
 
 def test_provably_small_toplevel_scan_stays_sequential():
@@ -85,7 +85,7 @@ def test_provably_small_toplevel_scan_stays_sequential():
     sdfg, state, node = build_toplevel_scan(8)
     with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=THRESHOLD):
         assert apply_cpu_library_parallelism(node, state, sdfg) is True
-    assert node.implementation == "pure"
+    assert node.implementation == "sequential"
 
 
 def test_symbolic_extent_scan_is_assumed_big_and_stays_parallel():
