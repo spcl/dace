@@ -205,13 +205,16 @@ class LowerDynamicThreadBlockMaps(ppl.Pass):
             if name not in threads.sdfg.symbols:
                 threads.sdfg.add_symbol(name, defined[name])
             threads.symbol_mapping.setdefault(name, name)
-        # The queue's state, which the dynamic maps of the kernel share one after the other
+        # The queue's state, which the dynamic maps of the kernel share one after the other. The other threads of the
+        # block write it, so it may not be ``__restrict__``: the compiler would forward a thread's own stores across
+        # the barriers.
         threads.sdfg.add_array(
             QUEUE_STATE,
             [queue_state_elements(fine_grained, block_size)],
             index_type,
             storage=dtypes.StorageType.GPU_Shared,
             transient=True,
+            may_alias=True,
         )
         listed = fine_grained and common.get_gpu_backend() != "hip"
         lowering = _KernelLowering(guard, param, queue, listed, index_type)
