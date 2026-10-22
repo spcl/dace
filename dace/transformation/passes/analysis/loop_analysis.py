@@ -45,8 +45,8 @@ def body_local_symbols(loop: LoopRegion) -> set[str]:
 
 
 def loop_signature(loop: LoopRegion) -> str:
-    """A digest of ``loop``'s header and of the elements one iteration reads and writes: per container shared across
-    iterations, the subsets of its top-level accesses (map scopes and nested SDFGs through their propagated memlets)
+    """A digest of ``loop``'s header and of the elements one iteration reads and writes: per non-transient container,
+    the subsets of its top-level accesses (map scopes and nested SDFGs through their propagated memlets)
     and its WCR ops. A dimension that names a symbol the body defines is its full extent, so inlining a nested body,
     renaming its blocks or moving a read through a body symbol keeps the digest; a rewrite that makes an iteration
     touch another element does not."""
@@ -55,18 +55,7 @@ def loop_signature(loop: LoopRegion) -> str:
     sdfg = loop.sdfg
     local = body_local_symbols(loop)
     states = list(loop.states())
-    inside = {node.data for state in states for node in state.data_nodes()}
-    inside |= {
-        memlet.data
-        for edge in loop.all_interstate_edges()
-        for memlet in edge.data.get_read_memlets(sdfg.arrays, include_scalars=True)
-    }
-    shared = {
-        name
-        for name in inside
-        if not sdfg.arrays[name].transient
-        or any(node.data == name for state in sdfg.states() if state not in states for node in state.data_nodes())
-    }
+    shared = {name for name, desc in sdfg.arrays.items() if not desc.transient}
 
     def per_iteration(name: str, subset) -> str:
         if not isinstance(subset, subsets.Range):
