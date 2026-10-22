@@ -1170,9 +1170,36 @@ def row_copy(a: dace.float64[_NC + 2, _NC], b: dace.float64[_NC + 2, _NC], c: da
         c[j, :] = u
 
 
-def _fission_matches_reference(program, shape):
+@dace.program
+def row_copy_through_inner_maps(
+    a: dace.float64[_NC + 2, _NC], b: dace.float64[_NC + 2, _NC], c: dace.float64[_NC + 2, _NC]
+):
+    for j in dace.map[0 : _NC + 2]:
+        t = np.empty([_NC], dace.float64)
+        for i in dace.map[0:_NC]:
+            t[i] = a[j, i] * 2.0
+        for i in dace.map[0:_NC]:
+            c[j, i] = t[i] + 1.0
+        b[j, :] = t
+
+
+@dace.program
+def column_copy_through_inner_maps(
+    a: dace.float64[_NC, _NC + 2], b: dace.float64[_NC, _NC + 2], c: dace.float64[_NC, _NC + 2]
+):
+    for j in dace.map[0 : _NC + 2]:
+        t = np.empty([_NC], dace.float64)
+        for i in dace.map[0:_NC]:
+            t[i] = a[i, j] * 2.0
+        for i in dace.map[0:_NC]:
+            c[i, j] = t[i] + 1.0
+        b[:, j] = t
+
+
+def _fission_matches_reference(program, shape, simplify=True):
     """Applies MapFission once and compares ``b`` and ``c`` against the unfissioned SDFG; returns the SDFG."""
-    sdfg = program.to_sdfg(simplify=True)
+    sdfg = program.to_sdfg(simplify=simplify)
+    sdfg.name = f"{sdfg.name}_{int(simplify)}"
     reference = copy.deepcopy(sdfg)
     reference.name = f"{sdfg.name}_reference"
 
@@ -1216,6 +1243,22 @@ def test_a_lifted_copy_of_a_transient_with_another_consumer_is_kept():
     assert copies == [("t", "b")]
 
 
+@pytest.mark.parametrize("program, shape", [(row_copy, (5, 3)), (column_copy, (3, 5))])
+def test_fission_of_a_nested_sdfg_folds_a_slice_view_that_moves_with_the_map(program, shape):
+    """The map body is a nested SDFG reading ``a`` through the view ``a[j, :]`` (``a[:, j]``). Fission widened the
+    view's memlet to all of ``a`` but not the view, so every iteration read the first row (column)."""
+    _fission_matches_reference(program, shape, simplify=False)
+
+
+@pytest.mark.parametrize(
+    "program, shape", [(row_copy_through_inner_maps, (5, 3)), (column_copy_through_inner_maps, (3, 5))]
+)
+def test_fission_widens_an_inner_connector_sharing_the_coordinates_of_a_widened_transient(program, shape):
+    """The inner maps' nested SDFGs index ``t`` directly (same descriptor as outside). Fission made each a view of the
+    one element ``t[j, i]`` and the inner ``t[i]`` then indexed past it; the connector is widened like ``t``."""
+    _fission_matches_reference(program, shape, simplify=False)
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1248,3 +1291,11 @@ if __name__ == "__main__":
     test_fission_keeps_copy_into_a_wider_array_valid()
     test_a_copy_taking_the_map_dimension_after_another_becomes_a_copy_map()
     test_a_lifted_copy_of_a_transient_with_another_consumer_is_kept()
+    test_fission_of_a_nested_sdfg_folds_a_slice_view_that_moves_with_the_map(row_copy, (5, 3))
+    test_fission_of_a_nested_sdfg_folds_a_slice_view_that_moves_with_the_map(column_copy, (3, 5))
+    test_fission_widens_an_inner_connector_sharing_the_coordinates_of_a_widened_transient(
+        row_copy_through_inner_maps, (5, 3)
+    )
+    test_fission_widens_an_inner_connector_sharing_the_coordinates_of_a_widened_transient(
+        column_copy_through_inner_maps, (3, 5)
+    )

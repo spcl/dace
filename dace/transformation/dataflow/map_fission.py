@@ -234,6 +234,74 @@ class MapFission(transformation.SingleStateTransformation):
         return found
 
     @staticmethod
+    def remove_iteration_slice_views(nsdfg: sd.SDFG, params: list[str]) -> bool:
+        """Folds every view in ``nsdfg`` whose window moves with the map parameters into the memlets that use it, as
+        fission widens the containers it reaches but not such a window. Returns whether all of them were folded."""
+        from dace.transformation.dataflow.redundant_array import RemoveSliceView  # Avoid import loop
+
+        for state in nsdfg.states():
+            for node in list(state.data_nodes()):
+                if not isinstance(node.desc(nsdfg), dt.View):
+                    continue
+                view_edge = sdutil.get_view_edge(state, node)
+                if view_edge is None or not set(params) & set(map(str, view_edge.data.free_symbols)):
+                    continue
+                if not RemoveSliceView.can_be_applied_to(nsdfg, view=node):
+                    return False
+                RemoveSliceView.apply_to(nsdfg, view=node, verify=False)
+        return True
+
+    @staticmethod
+    def widen_integrated_connectors(nsdfg_node: nodes.NestedSDFG, state, widened: dict, idx: list, ptypes: dict):
+        """Widens the connectors of ``nsdfg_node`` that share the coordinates of a container fission widened.
+
+        ``widened`` maps each widened container to ``(old descriptor, new descriptor, scalar-like)``. A connector whose
+        descriptor equals the old one indexes the container directly, so it takes the new descriptor and every memlet
+        inside gets the map indices ``idx`` in front, recursively.
+        """
+        inner_sdfg = nsdfg_node.sdfg
+        inner_widened = {}
+        for e in state.all_edges(nsdfg_node):
+            conn = e.dst_conn if e.dst is nsdfg_node else e.src_conn
+            if e.data.data not in widened or conn is None or conn not in inner_sdfg.arrays or conn in inner_widened:
+                continue
+            old, new, scalar_like = widened[e.data.data]
+            inner = inner_sdfg.arrays[conn]
+            if inner.transient or not inner.is_equivalent(old):
+                continue
+            desc = dcpy(new)
+            desc.transient = False
+            inner_sdfg.arrays[conn] = desc
+            inner_widened[conn] = (inner, desc, scalar_like)
+        if not inner_widened:
+            return
+        for p, ptype in ptypes.items():
+            if p not in nsdfg_node.symbol_mapping:
+                nsdfg_node.symbol_mapping[p] = p
+            if p not in inner_sdfg.symbols:
+                inner_sdfg.add_symbol(p, ptype)
+
+        def widen(subset: subsets.Range, scalar_like: bool) -> subsets.Range:
+            prefix = [(i, i, 1) for i in idx]
+            return subsets.Range(prefix if scalar_like else prefix + subset.ranges)
+
+        for inner_state in inner_sdfg.states():
+            for e in inner_state.edges():
+                if e.data.is_empty():
+                    continue
+                if e.data.data in inner_widened:
+                    e.data.subset = widen(e.data.subset, inner_widened[e.data.data][2])
+                elif e.data.other_subset is not None:
+                    path = inner_state.memlet_path(e)
+                    ends = {n.data for n in (path[0].src, path[-1].dst) if isinstance(n, nodes.AccessNode)}
+                    other = ends & set(inner_widened)
+                    if other:
+                        e.data.other_subset = widen(e.data.other_subset, inner_widened[other.pop()][2])
+            for node in inner_state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    MapFission.widen_integrated_connectors(node, inner_state, inner_widened, idx, ptypes)
+
+    @staticmethod
     def _outside_map(node, scope_dict, entry_nodes):
         """Returns True iff node is not in any of the scopes spanned by
         entry_nodes."""
@@ -312,6 +380,8 @@ class MapFission(transformation.SingleStateTransformation):
                     return False
 
             helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
+            if not self.remove_iteration_slice_views(nsdfg_node.sdfg, list(map_node.map.params)):
+                return False
 
             subgraphs = list(nsdfg_node.sdfg.nodes())
 
@@ -380,6 +450,7 @@ class MapFission(transformation.SingleStateTransformation):
         else:  # Map with nested SDFG
             nsdfg_node = self.nested_sdfg
             helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
+            MapFission.remove_iteration_slice_views(nsdfg_node.sdfg, list(map_entry.map.params))
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
             parent = nsdfg_node.sdfg
             parent_sdfg = parent.parent_sdfg
@@ -399,6 +470,7 @@ class MapFission(transformation.SingleStateTransformation):
 
         modified_arrays = set()
         scalar_like_arrays = set()
+        widened = {}  # Container -> (descriptor before widening, after, scalar-like)
 
         # Get map information
         outer_map: nodes.Map = map_entry.map
@@ -646,6 +718,7 @@ class MapFission(transformation.SingleStateTransformation):
                 if array in modified_arrays:
                     continue
                 desc = parent.arrays[array]
+                old_desc = dcpy(desc)
                 # Treat scalars and length-1 arrays as "scalar-like": their single
                 # degenerate dimension is replaced by the map dims rather than
                 # prepended, so the result is shape [extent] rather than
@@ -688,6 +761,7 @@ class MapFission(transformation.SingleStateTransformation):
                     desc.shape = list(mapsize) + list(desc.shape)
                     desc.offset = [0] * len(mapsize) + list(desc.offset)
                 modified_arrays.add(array)
+                widened[array] = (old_desc, desc, scalar_like)
 
             # Fill scope connectors so that memlets can be tracked below
             state.fill_scope_connectors()
@@ -791,12 +865,15 @@ class MapFission(transformation.SingleStateTransformation):
                                 else:
                                     e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
-        # A connector selecting one element of an augmented container becomes a view of it
+        # A connector sharing the coordinates of a widened container is widened alike; one selecting a window of it
+        # becomes a view of it
         for state in parent.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG) and any(
                     e.data.data in modified_arrays for e in state.all_edges(node)
                 ):
+                    ptypes = {p: state.symbols_defined_at(node)[p] for p in outer_map.params}
+                    MapFission.widen_integrated_connectors(node, state, widened, squeezed_idx, ptypes)
                     node.integrate_into_parent()
 
         # If nested SDFG, reconnect nodes around map and modify memlets
