@@ -29,7 +29,7 @@ def test_an_expanded_library_node_keeps_its_connector_order_without_warnings():
         warnings.simplefilter("error")
         sdfg.expand_library_nodes()
 
-    (nested,) = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)]
+    (nested,) = [node for node in sdfg.start_state.nodes() if isinstance(node, dace.nodes.NestedSDFG)]
     assert list(nested.in_connectors) == node_inputs
     assert list(nested.out_connectors) == node_outputs
     sdfg.validate()
