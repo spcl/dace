@@ -709,6 +709,25 @@ def configure_and_compile(
     return lib_path
 
 
+#: Longest single argument an ``exec`` passes on Linux (``MAX_ARG_STRLEN``, 128 KiB), with headroom.
+MAX_COMMAND_ARGUMENT = 1 << 16
+LONG_DEFINITION = re.compile(r'-D(\w+)(?::\w+)?="?(.*?)"?', re.DOTALL)
+
+
+def spill_long_definitions(cmake_command: list[str], folder: str) -> list[str]:
+    """``cmake_command`` with every ``-D`` definition too long for one ``exec`` argument moved into an initial-cache
+    script (``cmake -C``) written to ``folder``: a configure line naming hundreds of kernel libraries crosses it."""
+    long = [arg for arg in cmake_command if len(arg) > MAX_COMMAND_ARGUMENT and LONG_DEFINITION.fullmatch(arg)]
+    if not long:
+        return cmake_command
+    script = os.path.join(folder, "dace_long_definitions.cmake")
+    with open(script, "w") as fp:
+        for arg in long:
+            name, value = LONG_DEFINITION.fullmatch(arg).groups()
+            fp.write(f'set({name} [==[{value}]==] CACHE STRING "" FORCE)\n')
+    return [arg for arg in cmake_command if arg not in long] + [f'-C "{script}"']
+
+
 def cmake_configure_and_build(
     program_folder: str,
     program_name: str,
@@ -801,7 +820,7 @@ def cmake_configure_and_build(
     command_key = cache_key(
         *shape, *[f.replace(program_name, "$NAME") for f in files], *(newest_mtime(p) for p in cmake_sources)
     )
-    cmake_command = " ".join(cmake_command)
+    cmake_command = " ".join(spill_long_definitions(cmake_command, program_folder))
 
     ##############################################
     # Build. A recorded build for this exact shape replays directly; anything else -- no recording,
