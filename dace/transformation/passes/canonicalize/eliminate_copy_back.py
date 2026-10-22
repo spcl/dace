@@ -59,6 +59,9 @@ def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode) -> Copy
     map_exit, target = write.src, copy.dst
     if not isinstance(map_exit, nodes.MapExit) or not isinstance(target, nodes.AccessNode):
         return None
+    # An empty edge out of the map only orders the transient after it: no write to fold
+    if write.data.is_empty() or write.src_conn is None or not write.src_conn.startswith("OUT_"):
+        return None
     if target.data == transient.data or isinstance(sdfg.arrays[target.data], data.View) or copy.data.wcr is not None:
         return None
     if sum(1 for st in sdfg.states() for n in st.data_nodes() if n.data == transient.data) != 1:

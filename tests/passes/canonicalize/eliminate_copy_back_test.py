@@ -61,6 +61,24 @@ def test_a_read_of_the_neighbouring_element_keeps_the_copy_back():
     assert transients_copied_back(sdfg) == transients_copied_back(before)
 
 
+def test_a_transient_only_ordered_after_a_map_is_left_alone():
+    """``map -> (empty) -> t -> A``: the map orders ``t``'s copy and writes nothing into it (nbody's pipeline died on
+    the connector-less edge)."""
+    sdfg = dace.SDFG("ordered_copy_back")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_transient("t", [4], dace.float64)
+    state = sdfg.add_state()
+    _, _, exit_node = state.add_mapped_tasklet(
+        "fill", {"i": "0:4"}, {}, "o = 1.0", {"o": dace.Memlet("B[i]")}, external_edges=True
+    )
+    t = state.add_access("t")
+    state.add_nedge(exit_node, t, dace.Memlet())
+    state.add_nedge(t, state.add_write("A"), dace.Memlet("t[0:4] -> [0:4]"))
+    assert EliminateCopyBack().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_a_slice_update_writes_its_target_in_place()
     test_a_read_of_the_neighbouring_element_keeps_the_copy_back()
+    test_a_transient_only_ordered_after_a_map_is_left_alone()

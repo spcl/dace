@@ -33,7 +33,20 @@ def test_the_ceiling_of_a_symbolic_pow_still_rounds():
     assert "ceil" in symbolic.symstr(sympy.ceiling(R ** (K - 1)), cpp_mode=True)
 
 
+def test_an_ipow_and_its_pow_are_one_extent():
+    """A nested SDFG's descriptor kept ``ipow(Lb, 2)`` where its outer array had ``Lb**2``: ls3df_scf's TensorDot
+    expansion was refused as a non-equivalent connector."""
+    Lb = symbolic.symbol("Lb")
+    assert symbolic.equal(Lb**2, symbolic.ipow(Lb, 2)) is True
+    assert symbolic.equal(3 * Lb**2, 3 * symbolic.ipow(Lb, 2)) is True
+    assert symbolic.equal(Lb**2, symbolic.ipow(Lb, 3)) is not True
+    inner = dace.data.Array(dace.float64, [Lb, Lb, Lb], strides=[symbolic.ipow(Lb, 2), Lb, 1])
+    outer = dace.data.Array(dace.float64, [Lb, Lb, Lb], strides=[Lb**2, Lb, 1])
+    assert inner.is_equivalent(outer)
+
+
 if __name__ == "__main__":
     test_an_ipow_extent_is_integral()
     test_the_ceiling_of_an_ipow_prints_the_integer_itself()
     test_the_ceiling_of_a_symbolic_pow_still_rounds()
+    test_an_ipow_and_its_pow_are_one_extent()

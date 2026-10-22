@@ -5425,7 +5425,8 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | No
     if all(isinstance(arg, sympy.Basic) for arg in args):
         # relax_int_floor for the same reason: one extent reaches here as ``int_floor(x, y)`` from
         # the parser and as ``floor(x/y)`` from Python's ``//``, and sympy relates neither head.
-        args = [relax_int_floor(arg) for arg in equalize_symbols_across(*args)]
+        # ``ipow`` likewise: a size reaches one descriptor as ``Lb**2`` and its copy as ``ipow(Lb, 2)``.
+        args = [relax_int_floor(arg).replace(ipow, lambda b, e: b**e) for arg in equalize_symbols_across(*args)]
 
     if sympy.assumptions.global_assumptions:
         return ask_equal.__wrapped__(*args, is_length)
