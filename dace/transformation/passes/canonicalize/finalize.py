@@ -520,12 +520,15 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
     return pinned
 
 
-def innermost_loop(state: SDFGState) -> LoopRegion | None:
-    """The innermost ``LoopRegion`` of ``state``'s own SDFG enclosing it."""
+def enclosing_loops(state: SDFGState) -> list[LoopRegion]:
+    """The ``LoopRegion``\ s of ``state``'s own SDFG enclosing it, innermost first."""
+    loops = []
     region = state.parent_graph
-    while region is not None and not isinstance(region, (LoopRegion, SDFG)):
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            loops.append(region)
         region = region.parent_graph
-    return region if isinstance(region, LoopRegion) else None
+    return loops
 
 
 def force_loop_scoped_registers(sdfg: SDFG) -> int:
@@ -547,13 +550,17 @@ def force_loop_scoped_registers(sdfg: SDFG) -> int:
                 type(desc) is dt.Array
                 and desc.transient
                 and desc.lifetime == dtypes.AllocationLifetime.Scope
-                and desc.storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+                and (
+                    desc.storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+                    or (desc.storage == dtypes.StorageType.Register and not desc.storage.force)
+                )
                 and name in homes
             ):
                 continue
             states = sorted(homes[name], key=lambda st: st.label)
-            loop = innermost_loop(states[0])
-            if loop is None or any(innermost_loop(st) is not loop for st in states[1:]):
+            # The deepest loop enclosing every access: the one whose iterations allocate the array.
+            common = [loop for loop in enclosing_loops(states[0]) if all(loop in enclosing_loops(st) for st in states)]
+            if not common:
                 continue
             if any(outermost_map(st, n) is not None for st in states for n in st.data_nodes() if n.data == name):
                 continue

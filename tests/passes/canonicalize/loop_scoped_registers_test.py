@@ -72,7 +72,32 @@ def test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call():
     assert desc.lifetime in (dtypes.AllocationLifetime.SDFG, dtypes.AllocationLifetime.Persistent)
 
 
+def test_a_scratch_an_inner_loop_reads_goes_on_the_stack():
+    """warpx's cumulative sum reads the scratch in a scan loop nested in the particle loop: the particle loop still
+    allocates it once per iteration."""
+    sdfg = per_iteration_scratch("loop_vla_inner_scan", "K + 2 - c", small=True)
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    body = next(st for st in loop.nodes() if st.label == "body")
+    scan = LoopRegion("scan", "k < K + 2 - c", "k", "k = 0", "k = k + 1")
+    loop.add_node(scan)
+    loop.add_edge(body, scan, dace.InterstateEdge())
+    step = scan.add_state("step", is_start_block=True)
+    step.add_mapped_tasklet(
+        "scale",
+        {"z": "0:1"},
+        {"t": dace.Memlet("tmp[k]")},
+        "o = 2 * t",
+        {"o": dace.Memlet("tmp[k]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    finalize_transient_storage(sdfg, dtypes.DeviceType.CPU)
+    storage = sdfg.arrays["tmp"].storage
+    assert storage == dtypes.StorageType.Register and storage.force
+
+
 if __name__ == "__main__":
     for small in [True, False]:
         test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small)
     test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call()
+    test_a_scratch_an_inner_loop_reads_goes_on_the_stack()
