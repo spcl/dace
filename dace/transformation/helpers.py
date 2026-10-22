@@ -451,7 +451,7 @@ def nest_state_subgraph(
     if isinstance(top_scopenode, nodes.EntryNode):
         symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
     for v in symbols_at_top.keys() | sdfg.symbols.keys():
-        if v in nsdfg.symbols:
+        if v in nsdfg.symbols or v in bound_inside:
             continue
         if v in sdfg.symbols:
             nsdfg.add_symbol(v, sdfg.symbols[v].dtype)

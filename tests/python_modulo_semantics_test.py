@@ -102,10 +102,17 @@ def test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding():
 
 def test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod():
     """The two roundings agree there, so simplification sees a single form."""
-    k = dace.symbol("k", nonnegative=True)
-    m = dace.symbol("m", positive=True)
+    k, m = dace.symbol("k"), dace.symbol("m")
+    facts = symbolic.Facts(
+        (
+            symbolic.predicate_relation(symbolic.Predicate.NONNEGATIVE, k),
+            symbolic.predicate_relation(symbolic.Predicate.POSITIVE, m),
+        ),
+        frozenset({"k", "m"}),
+    )
 
-    assert isinstance(symbolic.pystr_to_symbolic("CMod(k, m)", symbol_map={"k": k, "m": m}), sympy.Mod)
+    remainder = symbolic.pystr_to_symbolic("CMod(k, m)", symbol_map={"k": k, "m": m})
+    assert isinstance(symbolic.simplify(remainder, facts), sympy.Mod)
 
 
 def elementwise_tasklet_sdfg(name: str, code: str, dtype) -> dace.SDFG:

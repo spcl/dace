@@ -2543,9 +2543,9 @@ class SDFG(ControlFlowRegion):
             #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
             used = _UsedNames(self)
-            name = dt.find_new_name(name, used).replace(".", "_")
+            name = utils.find_new_name(name, used).replace(".", "_")
             if name in used:
-                name = dt.find_new_name(name, used)
+                name = utils.find_new_name(name, used)
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
