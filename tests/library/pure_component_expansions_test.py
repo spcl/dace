@@ -244,7 +244,7 @@ def test_speed_driven_choices_keep_the_cpp_lowerings(node_type):
 @pytest.mark.parametrize(
     "node_type, lowerings",
     [
-        (ArgReduce, {"Auto", "CPU", "pure", "CUDA", "CUDA (block)"}),
+        (ArgReduce, {"Auto", "CPU", "pure", "sequential", "CUDA", "CUDA (block)"}),
         (FindFirst, {"Auto", "CPU", "CUDA", "CUDA (block)", "pure"}),
         (IntegerSort, {"CPU", "isocpp", "CUDA"}),
     ],

@@ -28,14 +28,14 @@ CPU_RESIDENT_STORAGES = frozenset(
 
 
 def host_storages(node: nodes.Node, state: "dace.SDFGState") -> frozenset[dtypes.StorageType]:
-    """The storages host code at ``node`` reads and writes directly: the CPU-resident ones, ``Default``, and
-    ``Register`` outside device code, where a register array is a stack array (a loop's VLA scratch)."""
+    """The storages host code at ``node`` reads and writes directly: the CPU-resident ones, plus ``Default`` and
+    ``Register`` outside device code. Both resolve by the enclosing scope, so inside a GPU kernel they are device
+    memory and outside it host memory (a register array is then a stack array, e.g. a loop's VLA scratch)."""
     from dace.sdfg.scope import is_devicelevel_gpu
 
-    host = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     if is_devicelevel_gpu(state.sdfg, state, node):
-        return host
-    return host | {dtypes.StorageType.Register}
+        return CPU_RESIDENT_STORAGES
+    return CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
 
 
 def single_core_expansion(pure: type) -> type:
