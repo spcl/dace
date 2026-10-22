@@ -65,7 +65,7 @@ class ExpandGerPure(ExpandTransformation):
 
         outshape = arrays["_res"].shape
         nsdfg_node = nodes.NestedSDFG(
-            node.label, sdfg, list(inputs), list(outputs), {"M": outshape[0], "N": outshape[1], "alpha": node.alpha}
+            node.label, sdfg, set(inputs), set(outputs), {"M": outshape[0], "N": outshape[1], "alpha": node.alpha}
         )
 
         return nsdfg_node
