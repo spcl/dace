@@ -139,6 +139,30 @@ def test_the_sequential_transpose_writes_a_slice_of_a_larger_output():
     np.testing.assert_array_equal(y, expected)
 
 
+def test_a_transpose_between_two_host_storages_validates():
+    """A forced register beside a heap temporary (TTGT inside a parallel map) is host to host; host to device is not."""
+    sdfg = dace.SDFG("host_storages_transpose")
+    sdfg.add_array("x", [3, 4], dace.float64)
+    sdfg.add_transient("r", [3, 4], dace.float64, storage=dace.StorageType.Register)
+    sdfg.add_array("y", [4, 3], dace.float64)
+    state = sdfg.add_state()
+    copy_in = state.add_access("r")
+    state.add_nedge(state.add_read("x"), copy_in, dace.Memlet("x[0:3, 0:4]"))
+    node = TensorTranspose("transpose", axes=[1, 0])
+    node.implementation = "sequential"
+    state.add_node(node)
+    state.add_edge(copy_in, None, node, "_inp_tensor", dace.Memlet("r[0:3, 0:4]"))
+    state.add_edge(node, "_out_tensor", state.add_write("y"), None, dace.Memlet("y[0:4, 0:3]"))
+    sdfg.validate()
+    x = np.random.default_rng(5).random((3, 4))
+    y = np.zeros((4, 3))
+    sdfg(x=x, y=y)
+    np.testing.assert_array_equal(y, x.T)
+    sdfg.arrays["y"].storage = dace.StorageType.GPU_Global
+    with pytest.raises(dace.sdfg.InvalidSDFGNodeError):
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_hptt_call_matches_the_signature_of_its_type(dace.float64, "dTensorTranspose(perm, 2, 1, _inp_tensor")
     test_an_hptt_call_matches_the_signature_of_its_type(
@@ -149,4 +173,5 @@ if __name__ == "__main__":
     test_a_top_level_hptt_call_uses_the_openmp_team()
     test_the_sequential_transpose_is_one_in_thread_loop()
     test_the_sequential_transpose_writes_a_slice_of_a_larger_output()
+    test_a_transpose_between_two_host_storages_validates()
     test_hptt_inside_an_sdfg_that_names_its_output_out_tensor_validates()

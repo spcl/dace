@@ -526,8 +526,10 @@ class TensorTranspose(nodes.LibraryNode):
         if inp_tensor.dtype != out_tensor.dtype:
             raise ValueError("The datatype of the input and output tensors must match.")
 
-        if inp_tensor.storage != out_tensor.storage:
-            raise ValueError("The storage of the input and output tensors must match.")
+        # One side of the device boundary: a register or stack operand next to a heap one is still host memory
+        # (TTGT's transposed temporary beside a forced register inside a parallel map).
+        if (inp_tensor.storage in GPU_RESIDENT_STORAGES) != (out_tensor.storage in GPU_RESIDENT_STORAGES):
+            raise ValueError("The input and output tensors must both reside on the host or both on the device.")
 
         if len(inp_shape) != len(out_shape):
             raise ValueError("The input and output tensors must have the same number of modes.")
