@@ -52,7 +52,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import SubgraphView, generate_element_id
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.symbol_repo import SymbolRepo
+from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_owners
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -168,20 +168,12 @@ def scope_bound_names(sdfg: "SDFG") -> set[str]:
     """The names a scope of ``sdfg`` binds (not those of its nested SDFGs): the variables of loops that initialize
     them, map and consume parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG
     symbol. A loop without an initializer iterates a variable defined outside it."""
-    names = {
-        region.loop_variable
-        for region in sdfg.all_control_flow_regions()
-        if isinstance(region, LoopRegion) and region.loop_variable and region.init_statement is not None
+    return {
+        name
+        for _, owner in scope_owners(sdfg)
+        if isinstance(owner, nd.EntryNode) or (isinstance(owner, LoopRegion) and owner.init_statement is not None)
+        for name in bound_names(owner)
     }
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nd.MapEntry):
-                names.update(node.map.params)
-            elif isinstance(node, nd.ConsumeEntry):
-                names.add(node.consume.pe_index)
-            if isinstance(node, nd.EntryNode):
-                names.update(conn for conn in node.in_connectors if not conn.startswith("IN_"))
-    return names
 
 
 def interstate_bound_names(sdfg: "SDFG") -> set[str]:
@@ -189,18 +181,15 @@ def interstate_bound_names(sdfg: "SDFG") -> set[str]:
     return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
 
 
-def _replace_dict_keys(d, old, new):
-    # Keys are names, but a replacement may be given as a symbolic expression
-    old = str(old)
-    new = str(new)
-    if old == new:
-        warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
-        return
-    if old in d:
+def _replace_dict_keys(d, renames: Mapping) -> None:
+    """Renames the keys of ``d`` all at once, so that a swap (``a -> b``, ``b -> a``) keeps both values. Keys are names,
+    but a replacement may be given as a symbolic expression."""
+    renames = {str(old): str(new) for old, new in renames.items() if str(old) != str(new) and str(old) in d}
+    values = {old: d.pop(old) for old in renames}
+    for old, new in renames.items():
         if new in d:
             warnings.warn(f'"{new}" already exists in SDFG')
-        d[new] = d[old]
-        del d[old]
+        d[new] = values[old]
 
 
 def _remove_dict_keys(d, old):
@@ -208,10 +197,10 @@ def _remove_dict_keys(d, old):
         del d[old]
 
 
-def _replace_dict_values(d, old, new):
+def _replace_dict_values(d, renames: Mapping[str, str]) -> None:
     for k, v in d.items():
-        if v == old:
-            d[k] = new
+        if v in renames:
+            d[k] = renames[v]
 
 
 def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
@@ -512,8 +501,7 @@ class InterstateEdge:
             return
 
         if replace_keys:
-            for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+            _replace_dict_keys(self.assignments, repl)
 
         # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
@@ -613,22 +601,19 @@ class _UsedNames:
     answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
     arrays, constants and symbols on every mint. Not a container in any other sense --
     it is deliberately not iterable, because there is no cheap order to iterate in. The names
-    scopes and interstate edges bind take a walk of the graph, made once per view, at the first
-    probe the declarations do not answer.
+    scopes and interstate edges bind come from :meth:`SDFG.bound_names`.
     """
 
-    __slots__ = ("sdfg", "bound")
+    __slots__ = ("sdfg",)
 
     def __init__(self, sdfg: "SDFG") -> None:
         self.sdfg = sdfg
-        self.bound: set[str] | None = None
 
     def __contains__(self, name: str) -> bool:
         if self.sdfg.is_name_declared(name):
             return True
-        if self.bound is None:
-            self.bound = scope_bound_names(self.sdfg) | interstate_bound_names(self.sdfg)
-        return name in self.bound
+        scoped, assigned = self.sdfg.bound_names()
+        return name in scoped or name in assigned
 
 
 @make_properties
@@ -751,6 +736,7 @@ class SDFG(ControlFlowRegion):
         self._propagate = propagate
         self._parent = parent
         self._symbol_repo = SymbolRepo()
+        self._bound_names: tuple[frozenset[str], frozenset[str]] | None = None
         # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
@@ -1102,7 +1088,7 @@ class SDFG(ControlFlowRegion):
             repldict_filtered = {k: v for k, v in repldict.items() if "." not in k}
             # Only an expression declares names, and never those of data or of a scope
             reserved = (
-                self.arrays.keys() | scope_bound_names(self) | interstate_bound_names(self)
+                self.arrays.keys() | self.bound_names()[0] | self.bound_names()[1]
                 if not all(validate_name(new_name) for new_name in repldict_filtered.values())
                 else set()
             )
@@ -1111,16 +1097,14 @@ class SDFG(ControlFlowRegion):
                 {name: symrepl[symbolic.pystr_to_symbolic(name)] for name in repldict_filtered},
                 reserved,
             )
-            for name, new_name in repldict_filtered.items():
-                if validate_name(new_name):
-                    _replace_dict_keys(self._arrays, name, new_name)
-                    _replace_dict_keys(self.constants_prop, name, new_name)
-                    _replace_dict_keys(self.callback_mapping, name, new_name)
-                    _replace_dict_values(self.callback_mapping, name, new_name)
-                else:
-                    _remove_dict_keys(self._arrays, name)
-                    _remove_dict_keys(self.constants_prop, name)
-                    _remove_dict_keys(self.callback_mapping, name)
+            renames = {name: new_name for name, new_name in repldict_filtered.items() if validate_name(new_name)}
+            for d in (self._arrays, self.constants_prop, self.callback_mapping):
+                _replace_dict_keys(d, renames)
+            _replace_dict_values(self.callback_mapping, renames)
+            for name in repldict_filtered.keys() - renames.keys():
+                _remove_dict_keys(self._arrays, name)
+                _remove_dict_keys(self.constants_prop, name)
+                _remove_dict_keys(self.callback_mapping, name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1162,7 +1146,7 @@ class SDFG(ControlFlowRegion):
         elif name in self.arrays:
             # Data constants are not checked, as they are linked to the data descriptors.
             raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        elif name not in self.symbols and name in scope_bound_names(self):
+        elif name not in self.symbols and name in self.bound_names()[0]:
             raise NameCollisionError(
                 f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
             )
@@ -1225,6 +1209,15 @@ class SDFG(ControlFlowRegion):
             return own
         nonnegative = [symbolic.predicate_relation(symbolic.Predicate.NONNEGATIVE, symbolic.symbol(n)) for n in extents]
         return own.with_relations(nonnegative)
+
+    def bound_names(self) -> tuple[frozenset[str], frozenset[str]]:
+        """The names this SDFG's scopes bind (see ``scope_bound_names``) and those its interstate edges assign, for
+        picking names that clash with neither. Cached until a node, block or edge is added to or removed from the
+        SDFG; a name bound by editing an existing map or edge in place is seen after the next such change. Facts and
+        validation walk the graph instead, as a stale name there would be unsound."""
+        if self._bound_names is None:
+            self._bound_names = (frozenset(scope_bound_names(self)), frozenset(interstate_bound_names(self)))
+        return self._bound_names
 
     @property
     def symbol_repo(self) -> SymbolRepo:
@@ -2559,7 +2552,7 @@ class SDFG(ControlFlowRegion):
                 return
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
             # assigns, which are not SDFG symbols
-            scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
+            scoped = sdfg.bound_names()[0] | sdfg.bound_names()[1] | bound_names
             # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
             # so a symbol name has one dtype in a process.
             for sym in new:

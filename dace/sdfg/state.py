@@ -1408,6 +1408,12 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def sdfg(self, sdfg: "SDFG"):
         self._sdfg = sdfg
 
+    def forget_bound_names(self) -> None:
+        """Drops the names the SDFG's scopes and interstate edges bind (``SDFG.bound_names``) after this graph changed."""
+        sdfg = self if isinstance(self, dace.SDFG) else self.sdfg
+        if sdfg is not None:
+            sdfg._bound_names = None
+
     @property
     def parent_graph(self) -> "ControlFlowRegion":
         return self._parent_graph
@@ -1520,10 +1526,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             elif isinstance(node, nd.ConsumeEntry):
                 self.sdfg.release_scope_bound_symbols([node.consume.pe_index])
         self._clear_scopedict_cache()
+        self.forget_bound_names()
         return super().add_node(node)
 
     def remove_node(self, node):
         self._clear_scopedict_cache()
+        self.forget_bound_names()
         super().remove_node(node)
 
     def add_edge(self, u, u_connector, v, v_connector, memlet):
@@ -1544,16 +1552,20 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             v.add_in_connector(v_connector, force=True)
 
         self._clear_scopedict_cache()
+        # A dynamic connector of a scope entry binds a name once connected
+        self.forget_bound_names()
         result = super().add_edge(u, u_connector, v, v_connector, memlet)
         memlet.try_initialize(self.sdfg, self, result)
         return result
 
     def remove_edge(self, edge):
         self._clear_scopedict_cache()
+        self.forget_bound_names()
         super().remove_edge(edge)
 
     def remove_edge_and_connectors(self, edge):
         self._clear_scopedict_cache()
+        self.forget_bound_names()
         super().remove_edge(edge)
         if edge.src_conn in edge.src.out_connectors:
             edge.src.remove_out_connector(edge.src_conn)
@@ -2782,6 +2794,15 @@ class SymbolResolver:
                     loop_analysis.get_loop_end(region),
                     loop_analysis.get_loop_stride(region),
                 )
+                if None not in bounds:
+                    # An interstate edge of the body that assigns the iterator or a symbol of the bounds ends what the
+                    # range says about the iterator
+                    assigned = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
+                    named = {region.loop_variable} | {
+                        str(free) for bound in bounds for free in sympy.sympify(bound).free_symbols
+                    }
+                    if assigned & named:
+                        bounds = (None, None, None)
                 scopes.append(
                     (
                         region,
@@ -2838,7 +2859,13 @@ class SymbolResolver:
         if nsdfg is None:
             return [], set(), set(), frozenset()
         outer = self.facts_at(sdfg.parent, nsdfg)
-        mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in nsdfg.symbol_mapping.items()}
+        # A symbol an interstate edge of ``sdfg`` assigns equals its mapped value on entry only
+        assigned = {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+        mapped = {
+            name: symbolic.pystr_to_symbolic(value)
+            for name, value in nsdfg.symbol_mapping.items()
+            if name not in assigned
+        }
         small = {name for name, value in mapped.items() if symbolic.is_small(value, outer)}
         unreadable = frozenset(
             name for name, value in mapped.items() if not {str(f) for f in value.free_symbols} <= outer.parameters
@@ -2847,14 +2874,7 @@ class SymbolResolver:
         names |= {str(free) for value in mapped.values() for free in value.free_symbols}
         # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
         renamed = {name: sympy.Symbol(f"outer:{name}") for name in names}
-        relations = [
-            symbolic.Relation(
-                relation.kind,
-                symbolic.replace_symbols(relation.lhs, renamed),
-                symbolic.replace_symbols(relation.rhs, renamed),
-            )
-            for relation in outer.relations
-        ]
+        relations = [relation.replaced(renamed) for relation in outer.relations]
         relations += [
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()
@@ -3187,7 +3207,12 @@ class AbstractControlFlowRegion(
             raise TypeError("Expected InterstateEdge, got " + str(type(data)))
         if dst is self._cached_start_block:
             self._cached_start_block = None
+        self.forget_bound_names()
         return super().add_edge(src, dst, data)
+
+    def remove_edge(self, edge):
+        self.forget_bound_names()
+        super().remove_edge(edge)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
         # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
@@ -3223,6 +3248,7 @@ class AbstractControlFlowRegion(
 
         super().add_node(node)
         self._cached_start_block = None
+        self.forget_bound_names()
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
             sdfg = self
@@ -3263,6 +3289,7 @@ class AbstractControlFlowRegion(
             start_block = None
         super().remove_node(node)
         self._cached_start_block = None
+        self.forget_bound_names()
         if start_block is node:
             self._start_block = None
         elif start_block is not None:

@@ -133,6 +133,15 @@ def test_a_cached_proof_records_its_assumption_in_every_sdfg():
     assert symbolic.simplify(sympy.Max(n1, N), unrecorded) == sympy.Max(n1, N)
 
 
+def test_a_scale_disproof_is_not_recorded_by_a_true_only_query():
+    """``provably_le`` acts on TRUE alone, so an order that only disproves its query is not checked at run time."""
+    sdfg = scaled_sdfg("scale_disproof")
+    assert not symbolic.provably_le(N, n1, sdfg.facts())
+    assert list(sdfg.symbol_repo.runtime_assumptions) == []
+    assert symbolic.provably_le(n1, N, sdfg.facts())
+    assert list(sdfg.symbol_repo.runtime_assumptions) == [Relation(RelationKind.LT, n1, N)]
+
+
 if __name__ == "__main__":
     test_small_symbols_are_much_less_than_default_ones()
     test_scales_prove_nothing_without_a_place_to_record()
@@ -143,3 +152,4 @@ if __name__ == "__main__":
     test_call_checks_the_assumed_orders()
     test_init_refuses_values_that_break_an_assumed_order()
     test_a_cached_proof_records_its_assumption_in_every_sdfg()
+    test_a_scale_disproof_is_not_recorded_by_a_true_only_query()

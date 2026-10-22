@@ -282,9 +282,8 @@ class SymbolRepo:
 
         :raise KeyError: If a relation of the parameters names an undeclared parameter.
         """
-        if at is None:
-            for name in sorted(relation_names(relation) - self.params.types.keys()):
-                raise KeyError(f'Symbol "{name}" is not declared')
+        if at is None and (undeclared := sorted(relation_names(relation) - self.params.types.keys())):
+            raise KeyError(f'Symbol "{undeclared[0]}" is not declared')
         if not isinstance(at, (LoopRegion, nodes.EntryNode, type(None))):
             raise NotImplementedError("Facts declared for the names an interstate edge assigns are not supported")
         scope = self.scope(at)
@@ -317,14 +316,7 @@ class SymbolRepo:
         rewrites the relations. A name replaced by an expression becomes relations over it; the free symbols of a
         parameter's expression that are not declared yet, nor ``reserved`` (data and scope-bound names), are declared
         with its dtype."""
-        self.runtime_assumptions = OrderedSet(
-            Relation(
-                relation.kind,
-                symbolic.replace_symbols(relation.lhs, replacements),
-                symbolic.replace_symbols(relation.rhs, replacements),
-            )
-            for relation in self.runtime_assumptions
-        )
+        self.runtime_assumptions = OrderedSet(relation.replaced(replacements) for relation in self.runtime_assumptions)
         # A parameter replaced by an expression has the scale of the expression
         self.small = OrderedSet(
             names.get(name, name) for name in self.small if name not in names or validate_name(names[name])
@@ -333,23 +325,22 @@ class SymbolRepo:
             names.get(name, name) for name in self.shape_declared if name not in names or validate_name(names[name])
         )
         for owner, scope in [(None, self.params), *self.scopes.items()]:
-            scope.relations = OrderedSet(
-                Relation(
-                    relation.kind,
-                    symbolic.replace_symbols(relation.lhs, replacements),
-                    symbolic.replace_symbols(relation.rhs, replacements),
-                )
-                for relation in scope.relations
-            )
-            for name, new_name in names.items():
-                if name not in scope.types:
-                    continue
-                dtype = scope.types.pop(name)
-                predicates = scope.predicates.pop(name, frozenset())
+            scope.relations = OrderedSet(relation.replaced(replacements) for relation in scope.relations)
+            # All names leave before any arrives, so that a swap (``a -> b``, ``b -> a``) keeps both declarations
+            leaving = {
+                name: (scope.types.pop(name), scope.predicates.pop(name, frozenset()))
+                for name in names
+                if name in scope.types
+            }
+            for name, (dtype, predicates) in leaving.items():
+                new_name = names[name]
                 if validate_name(new_name):
-                    scope.types[new_name] = dtype
-                    if predicates:
-                        scope.predicates[new_name] = predicates
+                    # A name merged into a declared one is that one: its declaration stays, and the merged name's
+                    # facts, which may not hold for it, are dropped
+                    if new_name not in scope.types:
+                        scope.types[new_name] = dtype
+                        if predicates:
+                            scope.predicates[new_name] = predicates
                     continue
                 replacement = replacements[name]
                 if not isinstance(replacement, sympy.Basic):
@@ -436,25 +427,9 @@ def program_assumptions(sdfg: "SDFG") -> list[Relation]:
             if not isinstance(node, nodes.NestedSDFG):
                 continue
             mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in node.symbol_mapping.items()}
-            assumptions.update(
-                [
-                    Relation(
-                        relation.kind,
-                        symbolic.replace_symbols(relation.lhs, mapped),
-                        symbolic.replace_symbols(relation.rhs, mapped),
-                    )
-                    for relation in program_assumptions(node.sdfg)
-                ]
-            )
+            assumptions.update([relation.replaced(mapped) for relation in program_assumptions(node.sdfg)])
     constants = {name: value for name, value in sdfg.constants.items() if name not in sdfg.arrays}
-    return [
-        Relation(
-            relation.kind,
-            symbolic.replace_symbols(relation.lhs, constants),
-            symbolic.replace_symbols(relation.rhs, constants),
-        )
-        for relation in assumptions
-    ]
+    return [relation.replaced(constants) for relation in assumptions]
 
 
 def assumption_check(name: str, params: str, assumptions: list[Relation], readable: set[str]) -> str:

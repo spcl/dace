@@ -127,6 +127,44 @@ def test_nothing_is_assumed_of_a_symbol_an_edge_reassigns():
     assert symbolic.ask(le("1", "N"), SymbolResolver().facts_at(second)) is symbolic.Truth.UNKNOWN
 
 
+def loop_assigning(assignments: dict[str, str]) -> tuple[dace.SDFG, dace.SDFGState]:
+    """A loop over ``i < N`` whose body assigns ``assignments`` on an interstate edge; returns the state after it."""
+    sdfg, loop = loop_sdfg()
+    after = loop.add_state("after")
+    loop.add_edge(loop.start_block, after, dace.InterstateEdge(assignments=assignments))
+    return sdfg, after
+
+
+@pytest.mark.parametrize("assignments", [{"i": "i + 100"}, {"N": "0"}])
+def test_loop_body_reassigning_the_iterator_or_a_bound_knows_no_range(assignments):
+    """After the body reassigns the iterator or a symbol of its bounds, the range no longer bounds the iterator."""
+    _, after = loop_assigning(assignments)
+    facts = SymbolResolver().facts_at(after)
+    assert symbolic.ask(le("i + 1", "N"), facts) is symbolic.Truth.UNKNOWN
+
+
+def test_loop_body_assigning_another_symbol_keeps_the_range():
+    _, after = loop_assigning({"k": "i"})
+    facts = SymbolResolver().facts_at(after)
+    assert symbolic.ask(le("i + 1", "N"), facts) is symbolic.Truth.TRUE
+
+
+def test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value():
+    """A mapped symbol equals the outer value on entry only: once an interstate edge of the nested SDFG assigns it,
+    what held for the outer value says nothing about it."""
+    outer = dace.SDFG("facts_at_reassigned_mapping")
+    outer.add_symbol("M", dace.int64, predicates=frozenset({symbolic.Predicate.NEGATIVE}))
+    inner = dace.SDFG("facts_at_reassigned_mapping_inner")
+    inner.add_symbol("N", dace.int64)
+    first = inner.add_state("first", is_start_block=True)
+    second = inner.add_state("second")
+    inner.add_edge(first, second, dace.InterstateEdge(assignments={"N": "10"}))
+    outer.add_state(is_start_block=True).add_nested_sdfg(inner, {}, {}, symbol_mapping={"N": "M"})
+
+    facts = SymbolResolver().facts_at(second)
+    assert symbolic.ask(le("N + 1", "0"), facts) is symbolic.Truth.UNKNOWN
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -139,3 +177,7 @@ if __name__ == "__main__":
     test_unsigned_symbol_is_nonnegative()
     test_inverted_loop_body_does_not_know_the_iterator_range()
     test_nothing_is_assumed_of_a_symbol_an_edge_reassigns()
+    test_loop_body_reassigning_the_iterator_or_a_bound_knows_no_range({"i": "i + 100"})
+    test_loop_body_reassigning_the_iterator_or_a_bound_knows_no_range({"N": "0"})
+    test_loop_body_assigning_another_symbol_keeps_the_range()
+    test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value()

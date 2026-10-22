@@ -986,12 +986,8 @@ class NestedSDFG(CodeNode):
             return
         facts = SymbolResolver().facts_at(state, self)
         for relation in checked:
-            outer = dace.symbolic.Relation(
-                relation.kind,
-                dace.symbolic.replace_symbols(relation.lhs, mapped),
-                dace.symbolic.replace_symbols(relation.rhs, mapped),
-            )
-            if dace.symbolic.ask(outer, facts) is not dace.symbolic.Truth.TRUE:
+            outer = relation.replaced(mapped)
+            if not dace.symbolic.holds(outer, facts):
                 raise ValueError(
                     f"{self.label} assumes {relation}, which is not provable for the mapped values {outer}"
                 )

@@ -1544,9 +1544,9 @@ class ProgramVisitor(ExtNodeVisitor):
         loop, start, stop, step = self.ended_loops[name]
         zero = sympy.Integer(0)
         facts = self.facts()
-        if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts) is symbolic.Truth.TRUE:
+        if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts):
             runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts)
-        elif symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts) is symbolic.Truth.TRUE:
+        elif symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts):
             runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts)
         else:
             runs = symbolic.Truth.UNKNOWN

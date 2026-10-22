@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Facts about symbols (sign predicates and relations) and the prover that answers questions under them."""
 
+import copy
 import enum
 import functools
 from collections.abc import Callable, Iterable
@@ -47,6 +48,12 @@ class Relation(NamedTuple):
     kind: RelationKind
     lhs: sympy.Expr
     rhs: sympy.Expr
+
+    def replaced(self, mapping) -> "Relation":
+        """This relation with the symbols of both sides replaced, as ``symbolic.replace_symbols`` does."""
+        return Relation(
+            self.kind, symbolic.replace_symbols(self.lhs, mapping), symbolic.replace_symbols(self.rhs, mapping)
+        )
 
 
 class Truth(enum.Enum):
@@ -153,11 +160,9 @@ class Facts:
 
     def recording(self, assumed: OrderedSet[Relation] | None) -> "Facts":
         """These facts, recording into ``assumed`` instead."""
-        copy = object.__new__(Facts)
-        for name in Facts.__slots__:
-            setattr(copy, name, getattr(self, name))
-        copy.assumed = assumed
-        return copy
+        recording = copy.copy(self)
+        recording.assumed = assumed
+        return recording
 
     # Determined by what it proves, so equal facts share cached proofs; where proofs are recorded is no part of it,
     # but whether they may be (scales prove nothing without) is
@@ -656,9 +661,20 @@ def prove(query: Relation, facts: Facts) -> Truth:
     return Truth.TRUE if answer else Truth.FALSE
 
 
+def holds(query: Relation, facts: Facts) -> bool:
+    """Whether the query is TRUE under the facts. The orders its proof took from the scales are recorded only then: a
+    caller that acts on TRUE alone does not rely on an order that only disproved the query."""
+    trial: OrderedSet[Relation] | None = None if facts.assumed is None else OrderedSet()
+    if ask(query, facts.recording(trial)) is not Truth.TRUE:
+        return False
+    if facts.assumed is not None and trial:
+        facts.assumed.update(trial)
+    return True
+
+
 def provably_nonnegative(expr: sympy.Expr, facts: Facts) -> bool:
-    return ask(Relation(RelationKind.LE, sympy.Integer(0), expr), facts) is Truth.TRUE
+    return holds(Relation(RelationKind.LE, sympy.Integer(0), expr), facts)
 
 
 def provably_le(lhs: sympy.Expr, rhs: sympy.Expr, facts: Facts) -> bool:
-    return ask(Relation(RelationKind.LE, lhs, rhs), facts) is Truth.TRUE
+    return holds(Relation(RelationKind.LE, lhs, rhs), facts)

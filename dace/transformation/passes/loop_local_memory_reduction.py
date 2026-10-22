@@ -285,7 +285,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             # A symbolic condition holds only where the facts prove it
             if issymbolic(cond):
                 relation = symbolic.comparison_relation(cond)
-                cond = relation is not None and symbolic.ask(relation, facts) is symbolic.Truth.TRUE
+                cond = relation is not None and symbolic.holds(relation, facts)
 
             # Take maximum from previous accesses into account
             try:

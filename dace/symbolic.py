@@ -27,6 +27,7 @@ from dace.symbolic_facts import (  # noqa: F401
     ask,
     cached_proof,
     comparison_relation,
+    holds,
     is_small,
     predicate_relation,
     provably_le,
