@@ -38,7 +38,6 @@ class Dummy(CommNode):
         "MPI": ExpandDummyMPI,
     }
     default_implementation = "MPI"
-    side_effects = True
 
     fields = dace.properties.ListProperty(default=[], element_type=str, category="Code Generation")
 
