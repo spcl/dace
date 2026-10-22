@@ -510,9 +510,7 @@ def libnode_work_is_below_break_even(node: nodes.LibraryNode, state: SDFGState) 
     Only a PROVABLY small count is sequential. A symbolic one is assumed big and stays parallel --
     reading "unknown" as "small" would single-thread every dynamically sized reduction and scan in
     the program, which is the opposite of the canonical form. The threshold is
-    ``compiler.cpu.parallel_min_work_per_region``, calibrated to the host by
-    :class:`~dace.transformation.passes.cpu_specialization.calibrate_thresholds.CalibrateCpuThresholds`
-    before this runs.
+    ``compiler.cpu.parallel_min_work_per_region``.
 
     :param node: the library node to classify.
     :param state: the state containing it.

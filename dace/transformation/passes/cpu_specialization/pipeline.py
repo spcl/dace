@@ -15,11 +15,10 @@ only fuse maps of equal schedule.
 
 Order within the stage, and why:
 
-1. :class:`~dace.transformation.passes.cpu_specialization.calibrate_thresholds.CalibrateCpuThresholds`
-   -- first, because both cost-model passes read fork/join thresholds out of the config and those
-   shipped as constants measured on one box. Calibrating to the host's own core count before anyone
-   reads them stops a 72-core machine inheriting an 8-core machine's break-even. A user-set value
-   is left alone.
+1. The fork/join thresholds are read from the config as they stand: the schema defaults unless pinned.
+   :class:`~dace.transformation.passes.cpu_specialization.calibrate_thresholds.CalibrateCpuThresholds`
+   derives them from the host when called explicitly; running it here would change the process-wide
+   config for every SDFG compiled after the first.
 2. :class:`~dace.transformation.passes.cpu_specialization.chunk_anti_dependence.ChunkAntiDependence`
    -- trades the device-neutral anti-dependence snapshot for per-chunk seam buffers;
    sequential-within-chunk is a CPU scheduling decision (the matcher refuses GPU maps). Before the
@@ -62,7 +61,6 @@ from dace.sdfg import infer_types
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
-from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
@@ -102,7 +100,6 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     hoist_invariant_guards(sdfg, require_full_hoist=False)
-    CalibrateCpuThresholds().apply_pass(sdfg, {})
     if break_anti_dependence:
         ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeOversizedIntermediates().apply_pass(sdfg, {})
