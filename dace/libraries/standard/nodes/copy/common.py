@@ -29,6 +29,14 @@ if TYPE_CHECKING:
 INPUT_CONNECTOR_NAME = "_cpy_in"
 OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
+MEMORY_ENGINE_DESC_INPUT_NAME = "_tma_desc_in"
+MEMORY_ENGINE_DESC_OUTPUT_NAME = "_tma_desc_out"
+MEMORY_ENGINE_GLOBAL_INPUT_NAME = "_tma_global"
+MEMORY_ENGINE_BARRIER_INPUT_NAME = "_tma_bar"
+MEMORY_ENGINE_BARRIER_OUTPUT_NAME = "_tma_bar_out"
+
+CUtensorMap = dace.dtypes.opaque("CUtensorMap")
+
 # TODO: keep these values up-to-date if support for new memory engines is added
 MEMORY_ENGINE_MAX_RANK = 5
 """Maximum tensor rank the memory engine supports."""
