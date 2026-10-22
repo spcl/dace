@@ -164,11 +164,11 @@ def assigned_in_enclosing_loop(state: SDFGState, names: set[str]) -> set[str]:
     return assigned
 
 
-def data_segment(state: SDFGState, entry: nodes.MapEntry) -> tuple[str, str] | None:
+def data_segment(state: SDFGState, entry: nodes.MapEntry, small: frozenset[str] = frozenset()) -> tuple[str, str] | None:
     """``(begin, end)`` of the first dimension of ``entry`` whose two ends are both read from data, or whose ends
-    name only constants and values an enclosing loop's iteration reads from data (``0:cnt`` with
-    ``cnt = indptr[i + 1] - indptr[i]``), if any. A range a loop variable or a size moves (``0:i``, a chunk
-    ``c:min(c + K, hit)``) is not one."""
+    name only constants, ``small`` sizes and values an enclosing loop's iteration reads from data (``0:cnt`` with
+    ``cnt = indptr[i + 1] - indptr[i]``, ``0:order + 2 - d`` with ``d = dl[ip]``), if any. A range a loop variable
+    or a size moves (``0:i``, a chunk ``c:min(c + K, hit)``) is not one."""
     sdfg = state.sdfg
     for begin, end, _ in entry.map.range:
         ends = [{str(s) for s in symbolic.free_symbols_and_functions(bound)} for bound in (begin, end)]
@@ -176,7 +176,7 @@ def data_segment(state: SDFGState, entry: nodes.MapEntry) -> tuple[str, str] | N
             return str(begin), str(end)
         names = set().union(*ends)
         local = assigned_in_enclosing_loop(state, names)
-        if local and local == names and all(data_derived(sdfg, {name}) for name in names):
+        if local and names - local <= small and all(data_derived(sdfg, {name}) for name in local):
             return str(begin), str(end)
     return None
 
@@ -401,9 +401,10 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
                 self.pinned += 1
             return True
         count = node.map.range.num_elements() * pinned_inner_trips(node, children or state.scope_children())
-        if not self.worth_forking(count, SymbolResolver().facts_at(state, node)):
+        facts = SymbolResolver().facts_at(state, node)
+        if not self.worth_forking(count, facts):
             note_sequential(node, BELOW_BREAK_EVEN_REASON.format(count=count))
-        elif in_sequential_loop(state) and (segment := data_segment(state, node)) is not None:
+        elif in_sequential_loop(state) and (segment := data_segment(state, node, facts.small)) is not None:
             note_sequential(node, DATA_SEGMENT_REASON.format(begin=segment[0], end=segment[1]))
         else:
             return True

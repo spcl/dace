@@ -212,6 +212,22 @@ def test_a_row_length_map_in_a_sequential_loop_goes_sequential():
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
 
 
+@pytest.mark.parametrize("order_is_small", [True, False])
+def test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small):
+    """warpx's per-particle stencil: a map over ``0:order + 2 - cnt``, ``cnt`` read from data every particle and
+    ``order`` a SMALL size, forked once per particle over at most a handful (136 s against numba's 1.4 s). A size
+    of the default scale leaves the extent unbounded and the map keeps its region."""
+    sdfg = row_count_sdfg(f"stencil_width_{order_is_small}", "indptr[it + 1] - indptr[it]", assign_in_loop=True)
+    sdfg.add_symbol("order", dace.int64)
+    if order_is_small:
+        sdfg.set_symbol_scale("order", dace.symbolic.Scale.SMALL)
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    entry.map.range = dace.subsets.Range.from_string("0:order + 2 - cnt")
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    expected = dtypes.ScheduleType.Sequential if order_is_small else dtypes.ScheduleType.Default
+    assert schedules(sdfg)["body_map"] == expected
+
+
 def test_an_extent_read_from_data_once_before_the_loop_stays_parallel():
     """The same extent read once, before the loop, is the same size every iteration: the enclosing loop cancels
     out of the fork/join algebra and the map keeps its region."""
@@ -624,6 +640,8 @@ if __name__ == "__main__":
     for in_loop in [True, False]:
         test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop)
     test_a_row_length_map_in_a_sequential_loop_goes_sequential()
+    for order_is_small in [True, False]:
+        test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small)
     test_an_extent_read_from_data_once_before_the_loop_stays_parallel()
     test_an_extent_only_the_loop_variable_moves_stays_parallel()
     test_map_inside_a_conditional_is_decided()
