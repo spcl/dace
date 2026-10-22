@@ -37,7 +37,7 @@ from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
 from dace.sdfg import infer_types, memlet_utils, nodes
 from dace.sdfg.narrowing import as_range
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import helpers as xfh
 from dace.transformation.auto.auto_optimize import (
     apply_cpu_library_parallelism,
@@ -521,7 +521,7 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
 
 
 def enclosing_loops(state: SDFGState) -> list[LoopRegion]:
-    """The ``LoopRegion``\ s of ``state``'s own SDFG enclosing it, innermost first."""
+    """The loops of ``state``'s own SDFG enclosing it, innermost first."""
     loops = []
     region = state.parent_graph
     while region is not None and not isinstance(region, SDFG):
