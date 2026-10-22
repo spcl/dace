@@ -1249,28 +1249,33 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
     # safeguards belong at this one point rather than at each call site, where a new caller silently
     # reintroduces the hang. Only the fork itself has to happen inside the sigmask context.
     kwargs["env"] = build_subprocess_env(kwargs.get("env"))
-    # A POSIX shell reads the command from a script file: ``sh -c`` would take it as one argument, which the kernel
-    # caps at 128 KiB (``Argument list too long``), and a configure line naming hundreds of libraries crosses that
+    # A POSIX shell reads the command from its stdin: ``sh -c`` would take it as one argument, which the kernel caps
+    # at 128 KiB (``Argument list too long``), and a configure line naming hundreds of libraries crosses that
     script, shown = None, command
     if kwargs.get("shell") and isinstance(command, str) and os.name == "posix":
-        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as handle:
-            handle.write(command)
-        kwargs["shell"], script, command = False, handle.name, ["/bin/sh", handle.name]
+        kwargs["shell"], script, command = False, command.encode(), ["/bin/sh"]
+    with build_subprocess_sigmask():
+        process = subprocess.Popen(
+            command,
+            stderr=subprocess.STDOUT,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE if script is not None else None,
+            **kwargs,
+        )
+    if script is not None:
+        process.stdin.write(script)
+        process.stdin.close()
+        # communicate() would flush the closed pipe (ValueError on Python 3.12).
+        process.stdin = None
     output = io.StringIO()
-    try:
-        with build_subprocess_sigmask():
-            process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
-        while True:
-            line = process.stdout.readline().rstrip()
-            if not line:
-                break
-            output.write(line.decode("utf-8") + "\n")
-            if Config.get_bool("debugprint"):
-                print(line.decode("utf-8"), flush=True)
-        stdout, stderr = process.communicate()
-    finally:
-        if script is not None:
-            os.unlink(script)
+    while True:
+        line = process.stdout.readline().rstrip()
+        if not line:
+            break
+        output.write(line.decode("utf-8") + "\n")
+        if Config.get_bool("debugprint"):
+            print(line.decode("utf-8"), flush=True)
+    stdout, stderr = process.communicate()
     if Config.get_bool("debugprint"):
         print(stdout.decode("utf-8"), flush=True)
         if stderr is not None:
