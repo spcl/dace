@@ -374,8 +374,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     # Interstate symbols are still needed to keep read-only / interstate-only
     # candidates in the final intersection below.
     interstate_symbols = set()
+    interstate_assigned = set()
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
+        interstate_assigned |= edge.data.assignments.keys()
     for reg in sdfg.all_control_flow_regions():
         interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
 
@@ -425,11 +427,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     # and mints an undefined free symbol, silently changing the SDFG's signature (and turning a
     # warned uninitialized-transient read into a silent one). Non-transients are exempt: their
     # definition is the caller.
-    interstate_defs: set[str] = set()
-    for edge in sdfg.all_interstate_edges():
-        interstate_defs |= edge.data.assignments.keys()
     for candidate in list(candidates):
-        if sdfg.arrays[candidate].transient and candidate not in candidates_seen and candidate not in interstate_defs:
+        if sdfg.arrays[candidate].transient and candidate not in candidates_seen and candidate not in interstate_assigned:
             candidates.remove(candidate)
 
     return candidates

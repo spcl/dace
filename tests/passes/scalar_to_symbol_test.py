@@ -1160,6 +1160,22 @@ def test_promote_widened_loop_index():
     assert np.allclose(b, expected)
 
 
+def test_do_not_promote_unwritten_transient():
+    """A transient scalar that only an inter-state edge reads has no value to promote."""
+    sdfg = dace.SDFG("unwritten_transient")
+    sdfg.add_scalar("t", dace.int32, transient=True)
+    sdfg.add_array("A", [10], dace.int32)
+    first = sdfg.add_state("first")
+    second = sdfg.add_state_after(first, "second", assignments={"k": "t + 1"})
+    tasklet = second.add_tasklet("set", {}, {"out"}, "out = k")
+    second.add_edge(tasklet, "out", second.add_write("A"), None, dace.Memlet("A[0]"))
+
+    assert "t" not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert "t" in sdfg.arrays
+    assert "t" not in {str(s) for s in sdfg.free_symbols}
+
+
 if __name__ == "__main__":
     test_abs_complex_guard_compiles_and_runs()
     test_complex_scalar_from_array_not_promotable()
@@ -1202,6 +1218,7 @@ if __name__ == "__main__":
     test_do_not_promote_lossy_cast("out = dace.int64(inp + 1) - i", dace.int32)
     test_do_not_promote_lossy_cast("out = dace.int64(i) * dace.int64(inp)", dace.int32)
     test_promote_widened_loop_index()
+    test_do_not_promote_unwritten_transient()
 
 
 def test_scalar_bound_to_a_view_is_not_promoted():
