@@ -1236,3 +1236,31 @@ def test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps():
     sdfg(**got, N=9)
     for name in "abc":
         assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
+
+
+@dace.program
+def column_copy(a: dace.float64[N, N + 2], b: dace.float64[N, N + 2], c: dace.float64[N, N + 2]):
+    for j in dace.map[0 : N + 2]:
+        t = a[:, j] * 2.0
+        u = t + 1.0
+        b[:, j] = t
+        c[:, j] = u
+
+
+def test_a_copy_taking_the_map_dimension_after_another_is_not_fissioned():
+    """Fission widens ``t`` to ``t[j, :]`` but ``b[:, j]`` takes ``j`` second: the lifted copy paired the two
+    dimensions out of order and wrote past ``b`` (CloudSC's ``zsolqa`` overflowed)."""
+    sdfg = column_copy.to_sdfg(simplify=True)
+    reference = copy.deepcopy(sdfg)
+    reference.name = "column_copy_reference"
+
+    assert sdfg.apply_transformations(MapFission) == 0
+
+    rng = np.random.default_rng(0)
+    a = rng.random((3, 5))
+    want = {name: np.zeros((3, 5)) for name in "bc"}
+    got = copy.deepcopy(want)
+    reference(a=a, **want, N=3)
+    sdfg(a=a, **got, N=3)
+    for name in "bc":
+        assert np.array_equal(got[name], want[name]), name

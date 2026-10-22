@@ -974,12 +974,17 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 f"__attribute__((destructor)) static void {name}_release(void) {{\n{release}}}"
             )
         else:
+            # the guard's TYPE has internal linkage too: a named namespace-scope class makes its destructor a weak
+            # symbol, and two units of one library holding a buffer of one name (a GPU kernel's host and device
+            # units) would share it, freeing one unit's pointer twice at unload
             defn = (
                 f"static {ctype} *{name} = nullptr;\n"
                 f"static size_t {name}_count = 0;\n"
-                f"static struct {name}_release_t {{\n"
+                f"namespace {{\n"
+                f"struct {name}_release_t {{\n"
                 f"~{name}_release_t() {{\n{release}}}\n"
-                f"}} {name}_release;"
+                f"}} {name}_release;\n"
+                f"}}"
             )
         self._size_functions[name] = defn
         return name
