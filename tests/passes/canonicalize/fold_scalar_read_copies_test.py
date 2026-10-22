@@ -5,7 +5,9 @@ import numpy as np
 
 import dace
 from dace import data
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 
 N = dace.symbol("N")
@@ -140,6 +142,25 @@ def test_a_scalar_read_again_in_another_state_stays():
     assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
 
 
+def test_a_scalar_a_branch_condition_reads_stays():
+    """cp2k_density_matrix_trs4: ``if s < ...`` read the scalar the fold removed, and C++ saw an undeclared name."""
+    sdfg = copy_beside_a_writer(ordered=True)
+    start = sdfg.start_state
+    branch = ConditionalBlock("branch")
+    sdfg.add_node(branch)
+    sdfg.add_edge(start, branch, dace.InterstateEdge())
+    body = ControlFlowRegion("body", sdfg=sdfg)
+    body.add_state("taken", is_start_block=True)
+    branch.add_branch(CodeBlock("s > 0.5"), body)
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
+
+
+def test_a_scalar_an_interstate_edge_reads_stays():
+    sdfg = copy_beside_a_writer(ordered=True)
+    sdfg.add_state_after(sdfg.start_state, assignments={"k": "s"})
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
+
+
 def result_copy_beside_a_reader(ordered: bool) -> dace.SDFG:
     """``t -> r -> A[0]`` beside ``A[0] -> peek -> B[0]``; with ``ordered`` the reader runs first."""
     sdfg = dace.SDFG("result_copy_beside_a_reader" + ("_ordered" if ordered else ""))
@@ -202,6 +223,8 @@ if __name__ == "__main__":
     test_a_copy_ordering_the_overwrite_through_the_snapshot_stays()
     test_a_copy_whose_writer_follows_the_read_folds()
     test_a_scalar_read_again_in_another_state_stays()
+    test_a_scalar_a_branch_condition_reads_stays()
+    test_a_scalar_an_interstate_edge_reads_stays()
     test_a_result_copy_beside_an_unordered_reader_stays()
     test_a_result_copy_whose_reader_runs_first_folds()
     test_a_copy_out_of_a_view_bound_to_the_scalar_alone_stays()

@@ -138,6 +138,16 @@ def fold_write(state: SDFGState, produce: Any, target: Any) -> None:
     state.remove_node(produce.dst)
 
 
+def control_flow_reads(sdfg: SDFG) -> set[str]:
+    """The names the interstate edges and the control-flow regions' own conditions of ``sdfg`` read."""
+    names: set[str] = set()
+    for edge in sdfg.all_interstate_edges():
+        names |= edge.data.free_symbols
+    for region in sdfg.all_control_flow_regions():
+        names |= region.used_symbols(all_symbols=True, with_contents=False)
+    return names
+
+
 def copy_edges(sdfg: SDFG, state: SDFGState) -> Iterator[Any]:
     """The edges that fill a transient Scalar access node in ``state``."""
     for edge in state.edges():
@@ -165,6 +175,9 @@ class FoldScalarReadCopies(ppl.Pass):
             for state in owner.states():
                 for node in state.data_nodes():
                     counts[node.data] = counts.get(node.data, 0) + 1
+            # A scalar an interstate edge or a branch / loop condition reads has a use no access node shows
+            for name in control_flow_reads(owner) & counts.keys():
+                counts[name] += 1
             for state in owner.states():
                 for copy in list(copy_edges(owner, state)):
                     if copy.dst not in state.nodes():
