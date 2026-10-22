@@ -81,9 +81,12 @@ class SubgraphFission(transformation.SingleStateTransformation):
                 group = [group[0], body.add_state_after(group[0])]
             helpers.nest_sdfg_subgraph(body, gr.SubgraphView(body, group))
         drop_uninitialized_inputs(body)
-        # MapFission moves the two maps inside the nested SDFG; inlining it leaves them in two states
+        # MapFission moves the two maps inside the nested SDFG; inlining it leaves them in two states. Inlining is
+        # cleanup: when the state cannot be split around the nested SDFG (an ordering edge to a later writer of its
+        # input), the two maps stay nested, already correct
         map_fission.MapFission.apply_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=nsdfg)
-        multistate_inline.InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nsdfg)
+        if multistate_inline.InlineMultistateSDFG.can_be_applied_to(sdfg, nested_sdfg=nsdfg):
+            multistate_inline.InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nsdfg)
         root = sdfg.root_sdfg
         sdutil.set_nested_sdfg_parent_references(root)
         root.reset_cfg_list()

@@ -67,3 +67,48 @@ def test_a_cut_naming_no_block_is_refused():
     sdfg = long_body.to_sdfg(simplify=True)
 
     assert sdfg.apply_transformations(SubgraphFission, options={"cut": "no_such_block"}) == 0
+
+
+@dace.program
+def accumulate_then_overwrite_input(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in dace.map[0:N]:
+        t = a[i] * 2.0
+        for k in range(3):
+            t = t + a[i]
+        b[i] = b[i] + t
+    for i in dace.map[0:N]:
+        c[i] = a[i] + 1.0
+    for i in dace.map[0:N]:
+        a[i] = c[i] * 2.0
+
+
+def test_a_split_whose_state_cannot_be_cut_around_it_keeps_both_maps_nested():
+    """A later map overwrites ``a`` the split maps read, so the state cannot be cut around the nested SDFG holding
+    them: the cleanup inline refused after ``can_be_applied`` had already accepted (``ValueError`` from ``apply``)."""
+    sdfg = accumulate_then_overwrite_input.to_sdfg(simplify=True)
+    reference = copy.deepcopy(sdfg)
+    reference.name = "accumulate_then_overwrite_input_reference"
+    (state,) = sdfg.states()
+    (entry,) = [
+        n
+        for n in state.nodes()
+        if isinstance(n, nodes.MapEntry) and isinstance(next(iter(state.out_edges(n))).dst, nodes.NestedSDFG)
+    ]
+    nsdfg = next(iter(state.out_edges(entry))).dst
+    cut = list(sdutil.dfs_topological_sort(nsdfg.sdfg))[0]
+
+    SubgraphFission.apply_to(sdfg, options={"cut": cut.label}, map_entry=entry, nested_sdfg=nsdfg)
+
+    split = [
+        n
+        for n, _ in nsdfg.sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.label == f"{entry.label}_fission"
+    ]
+    assert len(split) == 2, split
+    rng = np.random.default_rng(0)
+    want = {name: rng.random(7) for name in "abc"}
+    got = copy.deepcopy(want)
+    reference(**want, N=7)
+    sdfg(**got, N=7)
+    for name in "abc":
+        assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
