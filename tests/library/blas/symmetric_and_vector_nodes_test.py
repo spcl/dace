@@ -222,6 +222,30 @@ def test_rocblas_call_of_a_row_major_operand(node, inputs, routine, arguments):
     assert call.startswith(f"{routine}(__dace_rocblas_handle, {arguments}"), call[:120]
 
 
+VENDOR_NODES = {
+    "scal": (lambda: Scal("scal"), {"_x": (4,)}, ("_res", (4,))),
+    "ger": (lambda: Ger("ger", m=4, n=3), {"_A": (4, 3), "_x": (4,), "_y": (3,)}, ("_res", (4, 3))),
+    "symv": (lambda: Symv("symv"), {"_A": (4, 4), "_x": (4,), "_yin": (4,)}, ("_yout", (4,))),
+    "symm": (lambda: Symm("symm"), {"_A": (4, 4), "_B": (4, 3), "_Cin": (4, 3)}, ("_Cout", (4, 3))),
+    "syrk": (lambda: Syrk("syrk"), {"_A": (4, 2), "_Cin": (4, 4)}, ("_Cout", (4, 4))),
+}
+VENDOR_ROUTINES = {"OpenBLAS": "cblas_d{}(", "MKL": "cblas_d{}(", "cuBLAS": "cublasD{}(", "rocBLAS": "rocblas_d{}("}
+
+
+@pytest.mark.parametrize("implementation", list(VENDOR_ROUTINES))
+@pytest.mark.parametrize("name", list(VENDOR_NODES))
+def test_vendor_expansion_calls_the_library(implementation, name):
+    """A vendor expansion calls its library rather than falling back to the pure loops. Expanding needs neither the
+    library nor a device."""
+    make, inputs, (output, shape) = VENDOR_NODES[name]
+    values = {c: (c.strip("_").lower(), np.zeros(s)) for c, s in inputs.items()}
+    sdfg = build(f"{name}_vendor", make(), implementation, values, {output: ("out", np.zeros(shape))})
+    sdfg.expand_library_nodes()
+    code = "".join(t.code.as_string for t, _ in sdfg.all_nodes_recursive() if isinstance(t, dace.nodes.Tasklet))
+    assert VENDOR_ROUTINES[implementation].format(name) in code
+    assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+
+
 @pytest.mark.parametrize("implementation", GPU_IMPLEMENTATIONS)
 def test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation):
     """The vendor libraries take row- or column-major matrices only; a matrix strided in both dimensions is an error
@@ -243,5 +267,8 @@ if __name__ == "__main__":
             for flag, upper in ((False, False), (True, True)):
                 test_symm(implementation, order, flag, upper)
                 test_syrk(implementation, order, flag, upper)
+    for implementation in VENDOR_ROUTINES:
+        for name in VENDOR_NODES:
+            test_vendor_expansion_calls_the_library(implementation, name)
     for implementation in GPU_IMPLEMENTATIONS:
         test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation)

@@ -91,7 +91,7 @@ def gpu_call(dialect: GpuBlasDialect, dtype: dtypes.typeclass) -> GpuCall | None
 def scalar_pointers(call: GpuCall, dtype: dtypes.typeclass, **values) -> tuple[str, dict[str, str]]:
     """Declares each of ``values`` as a host scalar of ``dtype``; returns the declarations and, per name, the pointer
     argument passing it to the vendor routine, which takes every scalar by address."""
-    declarations = "".join(f"{dtype.ctype} __{name} = {dtype.ctype}({value});\n" for name, value in values.items())
+    declarations, _ = blas_helpers.scalar_arguments(dtype, **values)
     return declarations, {name: call.pointer(f"&__{name}") for name in values}
 
 
