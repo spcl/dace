@@ -1640,7 +1640,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            if can_sync:
+            # A lowered kernel synchronizes through its own Sync nodes
+            if can_sync and not self._kernel_map.map.gpu_grid_syncs_lowered:
                 callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
 
             # done here, code is generated

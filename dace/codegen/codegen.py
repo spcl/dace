@@ -441,6 +441,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     LowerMemletAccessPolicies().apply_pass(sdfg, {})
 
+    # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
+    from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
     kernels = tile_kernels(sdfg)
     check_tile_toolchain(bool(kernels))
     for tile_kernel, _ in kernels:
