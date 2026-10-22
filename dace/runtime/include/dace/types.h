@@ -36,7 +36,6 @@
     #include <cuda_bf16.h>
     #include <cuda_fp8.h>
     #include <thrust/complex.h>
-    #include "cuda/multidim_gbar.cuh"
 
     // Workaround so that the native low-precision types are scalars (for reductions)
     namespace std {
