@@ -27,9 +27,6 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
-# Frontend imports and helpers
-# Transformations
-
 ############################################################################
 # Tensor core code generator
 
