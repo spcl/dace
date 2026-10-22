@@ -131,7 +131,8 @@ def test_a_persistent_region_thread_id_is_the_int_openmp_returns(language):
 
 
 def test_a_strided_scan_renders_as_parallel_residue_classes_with_no_deduced_type():
-    arr_in = np.array([5.0, 3.0, 4.0, 9.0, 1.0, 7.0, 2.0, 8.0, 6.0, 0.0, 3.0])
+    # Past the small-extent bound: a scan over a few literal elements runs single-core.
+    arr_in = np.random.default_rng(0).random(257)
     sdfg = strided_min_scan(arr_in.size)
     rendering = render(sdfg, language="c++")
     assert DEDUCED.search(rendering.code) is None, rendering.code

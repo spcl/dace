@@ -13,7 +13,7 @@ def mixed(A: dace.float64[8], out: dace.float64[1]):
     s = np.float64(0.0)  # scalar transient
     buf = np.zeros((1,), np.float64)  # length-1-array transient
     for i in dace.map[0:8]:
-        s = s + A[i]
+        s += A[i]  # a reduction: ``s = s + A[i]`` in a map is a race on ``s``
     buf[0] = s * 2.0
     out[0] = buf[0]
 

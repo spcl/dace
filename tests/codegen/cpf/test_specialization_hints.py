@@ -126,13 +126,14 @@ def test_a_scan_states_its_trade_although_the_expansion_consumes_the_node():
     shape -- by the time code is emitted the library node is gone.
     """
     sdfg = dace.SDFG("cpf_hint_scan")
-    sdfg.add_array("arr_in", [16], dace.float64)
-    sdfg.add_array("arr_out", [16], dace.float64)
+    # Past the small-extent bound: a scan over a few literal elements runs single-core.
+    sdfg.add_array("arr_in", [256], dace.float64)
+    sdfg.add_array("arr_out", [256], dace.float64)
     state = sdfg.add_state("scan")
     node = Scan("Scan", op=ScanOp.SUM)
     state.add_node(node)
-    state.add_edge(state.add_read("arr_in"), None, node, "_scan_in", dace.Memlet("arr_in[0:16]"))
-    state.add_edge(node, "_scan_out", state.add_write("arr_out"), None, dace.Memlet("arr_out[0:16]"))
+    state.add_edge(state.add_read("arr_in"), None, node, "_scan_in", dace.Memlet("arr_in[0:256]"))
+    state.add_edge(node, "_scan_out", state.add_write("arr_out"), None, dace.Memlet("arr_out[0:256]"))
     sdfg.validate()
 
     rendered = comment_lines(render(sdfg).code)

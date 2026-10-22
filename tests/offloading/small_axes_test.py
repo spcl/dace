@@ -162,9 +162,14 @@ def test_without_small_symbols_the_kernel_keeps_every_axis():
     assert offload(sdfg) == {("b", "i"): GPU}
 
 
-def test_a_constant_axis_is_not_small():
-    """A literal extent has the default scale: only declared SMALL symbols leave the grid."""
+def test_a_short_constant_axis_leaves_the_grid_like_a_small_symbol():
+    """A literal extent below the small-extent bound is as small as a SMALL symbol for a schedule."""
     sdfg = mapped_copy(blocked_sdfg("constant_axis"), ["4", "nproma"], {"c": "0:4", "i": "0:nproma"}, "c, i")
+    assert offload(sdfg) == {("c",): SEQ, ("i",): GPU}
+
+
+def test_a_long_constant_axis_stays_in_the_grid():
+    sdfg = mapped_copy(blocked_sdfg("long_constant_axis"), ["128", "nproma"], {"c": "0:128", "i": "0:nproma"}, "c, i")
     assert offload(sdfg) == {("c", "i"): GPU}
 
 
@@ -210,6 +215,7 @@ if __name__ == "__main__":
     test_a_block_map_around_a_row_map_launches_over_the_rows()
     test_a_row_map_whose_range_reads_the_block_keeps_the_block_kernel()
     test_without_small_symbols_the_kernel_keeps_every_axis()
-    test_a_constant_axis_is_not_small()
+    test_a_short_constant_axis_leaves_the_grid_like_a_small_symbol()
+    test_a_long_constant_axis_stays_in_the_grid()
     test_a_block_axis_of_a_nested_kernel_leaves_the_grid()
     test_gpu_transform_map_keeps_a_block_axis_off_the_grid()
