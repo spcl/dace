@@ -77,6 +77,7 @@ from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTran
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
+from dace.transformation.passes.canonicalize.nest_to_contraction import NestToContraction
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
@@ -868,6 +869,7 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
         s += [(label, LoopToTranspose())]
     s += [
         (label, LoopToEinsum()),
+        (label, NestToContraction()),
         (label, RevertNonReductionWCR()),
         (label, LoopToReduce()),
         (label, LiftPreprocess()),

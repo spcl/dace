@@ -247,6 +247,41 @@ def _permuted(sdfg: SDFG, state: SDFGState, node: AccessNode, term: str, order: 
     return result
 
 
+def tensordot_axes(einsum_string: str) -> tuple[list[int], list[int], list[int] | None] | None:
+    """``(left_axes, right_axes, permutation)`` of a two-operand contraction without batch indices as a
+    ``TensorDot``, or ``None``."""
+    terms, out = einsum_string.split("->")
+    a, b = terms.split(",")
+    if any(len(set(t)) != len(t) for t in (a, b, out)) or set(out) - set(a + b):
+        return None
+    summed = [c for c in a if c in b]
+    if any(c in out for c in summed) or any(c not in out for c in a + b if c not in summed):
+        return None
+    natural = [c for c in a if c not in summed] + [c for c in b if c not in summed]
+    permutation = [natural.index(c) for c in out]
+    return (
+        [a.index(c) for c in summed],
+        [b.index(c) for c in summed],
+        None if permutation == list(range(len(permutation))) else permutation,
+    )
+
+
+def gpu_tensor_library() -> str | None:
+    """The ``TensorDot`` implementation of the configured GPU backend's tensor library, if installed."""
+    from dace.codegen.common import get_gpu_backend  # Avoid import loop
+    from dace.libraries.linalg.environments import cutensor, hiptensor  # Avoid import loop
+
+    try:
+        backend = get_gpu_backend()
+    except RuntimeError:
+        return None
+    if backend == "hip":
+        return "hipTENSOR" if hiptensor.hipTensor.is_installed() else None
+    if backend == "cuda":
+        return "cuTENSOR" if cutensor.cuTensor.is_installed() else None
+    return None
+
+
 def create_einsum_sdfg(
     sdfg: SDFG,
     state: SDFGState,
@@ -426,6 +461,28 @@ def _create_einsum_internal(
             dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])),
         )
 
+    # A host-issued contraction over GPU-resident tensors goes to the vendor tensor library; plain matrix products
+    # stay on the GEMM path below.
+    elif (
+        len(arrays) == 2
+        and any(len(term) > 2 for term in (*einsum.inputs, einsum.output))
+        and symbolic.equal_valued(1, alpha)
+        and symbolic.equal_valued(0, beta)
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and sdfg.arrays[output].storage == dtypes.StorageType.GPU_Global
+        and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
+        and (axes := tensordot_axes(einsum_string)) is not None
+        and (vendor := gpu_tensor_library()) is not None
+    ):
+        from dace.libraries.linalg.nodes.tensordot import TensorDot  # Avoid import loop
+
+        left_axes, right_axes, permutation = axes
+        tensordot = TensorDot("einsum_tensordot", left_axes, right_axes, permutation)
+        tensordot.implementation = vendor
+        c = state.add_write(output)
+        for node, conn in zip((input_nodes[arrays[0]], input_nodes[arrays[1]]), ("_left_tensor", "_right_tensor")):
+            state.add_edge(node, None, tensordot, conn, Memlet.from_array(node.data, sdfg.arrays[node.data]))
+        state.add_edge(tensordot, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
     # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
     elif (
         len(arrays) == 2
