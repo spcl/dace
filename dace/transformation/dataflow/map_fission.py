@@ -129,25 +129,109 @@ class MapFission(transformation.SingleStateTransformation):
         return tags[: len(params)] == params and all(tag == "" for tag in tags[len(params) :])
 
     @staticmethod
-    def lifted_copies_keep_order(state, edges, top_level, borders, params: list[str], placed=None) -> bool:
-        """Whether every copy between a border transient and another container keeps its dimensions paired once the
-        transient is widened. ``edges`` are the candidate edges, ``top_level`` tells an endpoint outside the inner maps
-        (the map's own entry and exit lead to containers outside it), and ``placed(container, subset)`` gives the
-        subset fission leaves a container with (a nested-SDFG connector takes its outer memlet's dimensions)."""
+    def misordered_copies(
+        state, edges, borders, params: list[str], boundary=(), placed=None
+    ) -> list[gr.MultiConnectorEdge]:
+        """The copies between a border transient and another container that would pair dimensions out of order once
+        the transient is widened. ``edges`` are the candidate edges, ``boundary`` the fissioned map's own entry and
+        exit (which lead to containers outside it), and ``placed(container, subset)`` gives the subset fission leaves a
+        container with (a nested-SDFG connector takes its outer memlet's dimensions)."""
+        found = []
         for e in edges:
-            if e.data.is_empty() or not (top_level(e.src) and top_level(e.dst)):
+            if e.data.is_empty() or not all(isinstance(n, nodes.AccessNode) or n in boundary for n in (e.src, e.dst)):
                 continue
             ends = [(e.src, e.data.get_src_subset), (e.dst, e.data.get_dst_subset)]
             border = [n for n, _ in ends if isinstance(n, nodes.AccessNode) and n.data in borders]
-            if len(border) != 1 or isinstance(e.src, nodes.CodeNode) or isinstance(e.dst, nodes.CodeNode):
+            if len(border) != 1:
                 continue
             ((other, subset_of),) = [(n, get) for n, get in ends if n is not border[0]]
             subset = subset_of(e, state)
             if subset is not None and placed is not None:
                 subset = placed(other.data, subset)
             if subset is None or not MapFission.map_dimensions_lead(subset, params):
-                return False
-        return True
+                found.append(e)
+        return found
+
+    @staticmethod
+    def _copy_indices(state, edge) -> tuple[list, list, list] | None:
+        """The ranges of an elementwise copy map for ``edge`` and the element each side reads or writes, or ``None``
+        if the two subsets do not pair their non-unit dimensions in order."""
+        src, dst = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+        if src is None or dst is None:
+            return None
+        src_sizes = [sz for sz in src.size() if sz != 1]
+        if src_sizes != [sz for sz in dst.size() if sz != 1]:
+            return None
+        params = [f"__fission_copy_{i}" for i in range(len(src_sizes))]
+
+        def element(subset):
+            idx, k = [], 0
+            for (begin, _end, step), size in zip(subset.ranges, subset.size()):
+                if size == 1:
+                    idx.append((begin, begin, 1))
+                else:
+                    i = begin + symbolic.pystr_to_symbolic(params[k]) * step
+                    idx.append((i, i, 1))
+                    k += 1
+            return subsets.Range(idx)
+
+        ranges = [(p, subsets.Range([(0, sz - 1, 1)])) for p, sz in zip(params, src_sizes)]
+        return ranges, element(src), element(dst)
+
+    @staticmethod
+    def copy_as_map(state, edge) -> None:
+        """Replaces the copy ``edge`` by an elementwise copy map, a component fission can replicate per iteration."""
+        ranges, src_element, dst_element = MapFission._copy_indices(state, edge)
+        path = state.memlet_path(edge)
+        src_data, dst_data = path[0].src.data, path[-1].dst.data
+        me, mx = state.add_map("fission_copy", {p: str(r) for p, r in ranges})
+        tasklet = state.add_tasklet("fission_copy", {"__inp"}, {"__out"}, "__out = __inp")
+        state.add_memlet_path(
+            edge.src,
+            me,
+            tasklet,
+            memlet=mm.Memlet(data=src_data, subset=src_element),
+            src_conn=edge.src_conn,
+            dst_conn="__inp",
+        )
+        state.add_memlet_path(
+            tasklet,
+            mx,
+            edge.dst,
+            memlet=mm.Memlet(data=dst_data, subset=dst_element, wcr=edge.data.wcr),
+            src_conn="__out",
+            dst_conn=edge.dst_conn,
+        )
+        state.remove_edge(edge)
+
+    def _misordered_lifted_copies(self, graph, sdfg, nsdfg: sd.SDFG | None, states, border_arrays) -> list:
+        """``(state, edge)`` for each copy fission would lift with its dimensions paired out of order."""
+        map_node = self.map_entry
+        params = list(map_node.map.params)
+        if nsdfg is None:
+            scope, boundary = graph.scope_dict(), (map_node, graph.exit_node(map_node))
+            edges = [e for e in graph.scope_subgraph(map_node).edges() if scope[e.src] is map_node or e.src is map_node]
+            return [(graph, e) for e in self.misordered_copies(graph, edges, border_arrays, params, boundary)]
+
+        outer = {e.dst_conn: e.data for e in graph.in_edges(self.nested_sdfg)}
+        outer |= {e.src_conn: e.data for e in graph.out_edges(self.nested_sdfg)}
+
+        def placed(name: str, subset: subsets.Range) -> subsets.Range:
+            if name not in outer or outer[name].is_empty():
+                return subset
+            inner_desc, outer_desc = nsdfg.arrays[name], sdfg.arrays[outer[name].data]
+            if inner_desc.is_equivalent(outer_desc):
+                return subset
+            inner = mm.Memlet(data=name, subset=dcpy(subset))
+            inner.subset.offset(inner_desc.offset, False)
+            return helpers.unsqueeze_memlet(inner, outer[name]).subset
+
+        found = []
+        for st in states:
+            scope = st.scope_dict()
+            edges = [e for e in st.edges() if scope[e.src] is None]
+            found += [(st, e) for e in self.misordered_copies(st, edges, border_arrays, params, placed=placed)]
+        return found
 
     @staticmethod
     def _outside_map(node, scope_dict, entry_nodes):
@@ -275,34 +359,11 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
 
         # A copy between a border transient and another container leaves the new maps whole; widening the transient
-        # by the map dimensions in front must not pair them with other dimensions of that container
-        params = list(map_node.map.params)
-        if expr_index == 1:
-            outer = {e.dst_conn: e.data for e in graph.in_edges(self.nested_sdfg)}
-            outer |= {e.src_conn: e.data for e in graph.out_edges(self.nested_sdfg)}
-
-            def placed(name: str, subset: subsets.Range) -> subsets.Range:
-                if name not in outer or outer[name].is_empty():
-                    return subset
-                inner_desc, outer_desc = nsdfg_node.sdfg.arrays[name], sdfg.arrays[outer[name].data]
-                if inner_desc.is_equivalent(outer_desc):
-                    return subset
-                inner = mm.Memlet(data=name, subset=dcpy(subset))
-                inner.subset.offset(inner_desc.offset, False)
-                return helpers.unsqueeze_memlet(inner, outer[name]).subset
-
-            for sg in subgraphs:
-                scope = sg.scope_dict()
-                if not self.lifted_copies_keep_order(
-                    sg, sg.edges(), lambda n: scope[n] is None, border_arrays, params, placed
-                ):
-                    return False
-        else:
-            scope, map_exit = graph.scope_dict(), graph.exit_node(map_node)
-            edges = graph.scope_subgraph(map_node).edges()
-            if not self.lifted_copies_keep_order(
-                graph, edges, lambda n: n is map_node or n is map_exit or scope[n] is map_node, border_arrays, params
-            ):
+        # by the map dimensions in front must not pair them with other dimensions of that container. ``apply`` turns
+        # such a copy into an elementwise copy map, which needs the two subsets to pair their dimensions in order
+        nsdfg = nsdfg_node.sdfg if expr_index == 1 else None
+        for state, e in self._misordered_lifted_copies(graph, sdfg, nsdfg, subgraphs, border_arrays):
+            if self._copy_indices(state, e) is None:
                 return False
 
         return True
@@ -322,6 +383,20 @@ class MapFission(transformation.SingleStateTransformation):
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
             parent = nsdfg_node.sdfg
             parent_sdfg = parent.parent_sdfg
+        # Copies fission cannot lift without pairing dimensions out of order are replicated per iteration instead
+        states = [state for state, _ in subgraphs]
+        border_arrays = set()
+        for state, subgraph in subgraphs:
+            border_arrays |= MapFission._border_arrays(
+                parent if self.expr_index == 1 else sdfg, state if self.expr_index == 1 else graph, subgraph
+            )
+        nsdfg = parent if self.expr_index == 1 else None
+        misordered = self._misordered_lifted_copies(graph, sdfg, nsdfg, states, border_arrays)
+        for state, e in misordered:
+            MapFission.copy_as_map(state, e)
+        if misordered and self.expr_index == 0:
+            subgraphs = [(graph, graph.scope_subgraph(map_entry, include_entry=False, include_exit=False))]
+
         modified_arrays = set()
         scalar_like_arrays = set()
 
@@ -368,8 +443,8 @@ class MapFission(transformation.SingleStateTransformation):
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
-            sources = subgraph.source_nodes()
-            sinks = subgraph.sink_nodes()
+            # A border container may also feed a component, so it need not be a source or sink of the subgraph
+            top_access = [n for n in subgraph.scope_children()[None] if isinstance(n, nodes.AccessNode)]
 
             # Collect external edges
             if self.expr_index == 0:
@@ -544,32 +619,27 @@ class MapFission(transformation.SingleStateTransformation):
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
                     state.add_edge(component_out, None, mx, None, mm.Memlet())
-            # Connect other sources/sinks not in components (access nodes)
-            # directly to external nodes
+            # Connect access nodes not in components directly to external nodes
             outside_border_edges = set()
             if self.expr_index == 0:
-                for node in sources:
-                    if isinstance(node, nodes.AccessNode):
-                        for edge in state.in_edges(node):
-                            outer_edge = edge_to_outer.get(edge)
-                            if outer_edge is None:  # No outer feeder: nothing to rewire.
-                                continue
-                            # The added map dimensions are filled in below
-                            new_edge = state.add_edge(
-                                outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data)
-                            )
-                            outside_border_edges.add(new_edge)
-
-                for node in sinks:
-                    if isinstance(node, nodes.AccessNode):
-                        for edge in state.out_edges(node):
-                            outer_edge = edge_to_outer.get(edge)
-                            if outer_edge is None:  # No outer consumer: nothing to rewire.
-                                continue
-                            new_edge = state.add_edge(
-                                edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn, dcpy(outer_edge.data)
-                            )
-                            outside_border_edges.add(new_edge)
+                for node in top_access:
+                    for edge in state.in_edges(node):
+                        outer_edge = edge_to_outer.get(edge)
+                        if outer_edge is None:  # No outer feeder: nothing to rewire.
+                            continue
+                        # The added map dimensions are filled in below
+                        new_edge = state.add_edge(
+                            outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data)
+                        )
+                        outside_border_edges.add(new_edge)
+                    for edge in state.out_edges(node):
+                        outer_edge = edge_to_outer.get(edge)
+                        if outer_edge is None:  # No outer consumer: nothing to rewire.
+                            continue
+                        new_edge = state.add_edge(
+                            edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn, dcpy(outer_edge.data)
+                        )
+                        outside_border_edges.add(new_edge)
 
             # Augment arrays by prepending map dimensions
             for array in arrays:

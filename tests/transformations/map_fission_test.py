@@ -1149,6 +1149,73 @@ def test_fission_keeps_copy_into_a_wider_array_valid():
     assert np.allclose(dqdt, expected)
 
 
+_NC = dace.symbol("NC")
+
+
+@dace.program
+def column_copy(a: dace.float64[_NC, _NC + 2], b: dace.float64[_NC, _NC + 2], c: dace.float64[_NC, _NC + 2]):
+    for j in dace.map[0 : _NC + 2]:
+        t = a[:, j] * 2.0
+        u = t + 1.0
+        b[:, j] = t
+        c[:, j] = u
+
+
+@dace.program
+def row_copy(a: dace.float64[_NC + 2, _NC], b: dace.float64[_NC + 2, _NC], c: dace.float64[_NC + 2, _NC]):
+    for j in dace.map[0 : _NC + 2]:
+        t = a[j, :] * 2.0
+        u = t + 1.0
+        b[j, :] = t
+        c[j, :] = u
+
+
+def _fission_matches_reference(program, shape):
+    """Applies MapFission once and compares ``b`` and ``c`` against the unfissioned SDFG; returns the SDFG."""
+    sdfg = program.to_sdfg(simplify=True)
+    reference = copy.deepcopy(sdfg)
+    reference.name = f"{sdfg.name}_reference"
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    a = rng.random(shape)
+    want = {name: np.zeros(shape) for name in "bc"}
+    got = copy.deepcopy(want)
+    reference(a=a, **want, NC=3)
+    sdfg(a=a, **got, NC=3)
+    for name in "bc":
+        assert np.array_equal(got[name], want[name]), name
+    return sdfg
+
+
+def test_a_copy_taking_the_map_dimension_after_another_becomes_a_copy_map():
+    """Fission widens ``t`` to ``t[j, :]`` but ``b[:, j]`` takes ``j`` second: one lifted copy would pair the two
+    dimensions out of order, so the copy is replicated per iteration as an elementwise map."""
+    sdfg = _fission_matches_reference(column_copy, (3, 5))
+    copies = [
+        e
+        for s in sdfg.states()
+        for e in s.edges()
+        if isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
+    ]
+    assert not copies
+
+
+def test_a_lifted_copy_of_a_transient_with_another_consumer_is_kept():
+    """``t`` also feeds ``u``, so it is no sink of the map body: its copy into ``b`` was dropped, leaving ``b``
+    isolated. The copy pairs dimensions in order and stays one copy outside the maps."""
+    sdfg = _fission_matches_reference(row_copy, (5, 3))
+    copies = [
+        (e.src.data, e.dst.data)
+        for s in sdfg.states()
+        for e in s.edges()
+        if isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
+    ]
+    assert copies == [("t", "b")]
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1179,34 +1246,5 @@ if __name__ == "__main__":
     test_fission_promoted_transient_of_nested_sdfg()
     test_mapfission_keeps_connector_offset()
     test_fission_keeps_copy_into_a_wider_array_valid()
-
-
-_NC = dace.symbol("NC")
-
-
-@dace.program
-def column_copy(a: dace.float64[_NC, _NC + 2], b: dace.float64[_NC, _NC + 2], c: dace.float64[_NC, _NC + 2]):
-    for j in dace.map[0 : _NC + 2]:
-        t = a[:, j] * 2.0
-        u = t + 1.0
-        b[:, j] = t
-        c[:, j] = u
-
-
-def test_a_copy_taking_the_map_dimension_after_another_is_not_fissioned():
-    """Fission widens ``t`` to ``t[j, :]`` but ``b[:, j]`` takes ``j`` second: the lifted copy paired the two
-    dimensions out of order (an invalid SDFG here; an out-of-bounds write when the shapes allow it)."""
-    sdfg = column_copy.to_sdfg(simplify=True)
-    reference = copy.deepcopy(sdfg)
-    reference.name = "column_copy_reference"
-
-    assert sdfg.apply_transformations(MapFission) == 0
-
-    rng = np.random.default_rng(0)
-    a = rng.random((3, 5))
-    want = {name: np.zeros((3, 5)) for name in "bc"}
-    got = copy.deepcopy(want)
-    reference(a=a, **want, NC=3)
-    sdfg(a=a, **got, NC=3)
-    for name in "bc":
-        assert np.array_equal(got[name], want[name]), name
+    test_a_copy_taking_the_map_dimension_after_another_becomes_a_copy_map()
+    test_a_lifted_copy_of_a_transient_with_another_consumer_is_kept()
