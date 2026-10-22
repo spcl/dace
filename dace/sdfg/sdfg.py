@@ -1184,8 +1184,8 @@ class SDFG(ControlFlowRegion):
 
     def facts(self) -> symbolic.Facts:
         """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is a positive
-        multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds for its value on entry only, so
-        nothing is assumed of one an interstate edge assigns."""
+        multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds
+        for its value on entry only, so nothing is assumed of one an interstate edge assigns."""
         own = self._symbol_repo.facts()
         assigned = interstate_bound_names(self)
         if assigned:

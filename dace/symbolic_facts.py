@@ -256,7 +256,10 @@ class cached_proof(Generic[Result]):
         self.cache_clear = cached.cache_clear
 
     def __call__(self, expr: sympy.Expr, facts: Facts) -> Result:
-        result, assumed = self.cached(expr, facts)
+        # Only the relations connected to the symbols of ``expr`` decide it, so facts that differ elsewhere (the
+        # iterators of other loops) share the cached result
+        names = {str(free) for free in sympy.sympify(expr).free_symbols}
+        result, assumed = self.cached(expr, facts.about(names))
         if facts.assumed is not None:
             facts.assumed.update(assumed)
         return result

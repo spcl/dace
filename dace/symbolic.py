@@ -2471,14 +2471,8 @@ def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
 
 
-def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
-    """Simplifies ``expr`` under the facts about its symbols; see ``simplified``."""
-    expr = sympy.sympify(expr)
-    return simplified(expr, facts.about({str(free) for free in expr.free_symbols}))
-
-
 @cached_proof
-def simplified(expr: SymbolicType, facts: Facts) -> SymbolicType:
+def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
     """Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
     (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result
     is written back in the original symbols (``s = N - 5``)."""
@@ -2500,10 +2494,6 @@ def simplified(expr: SymbolicType, facts: Facts) -> SymbolicType:
             if isinstance(s, sympy.Symbol)
         }
     )
-
-
-simplify.cache_clear = simplified.cache_clear
-simplify.cache_info = simplified.cache_info
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
