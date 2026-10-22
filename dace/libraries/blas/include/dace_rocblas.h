@@ -5,7 +5,12 @@
 #include <hip/hip_fp16.h>  // for __float2half
 #include <hip/amd_detail/amd_hip_complex.h> // for hip*Complex
 
+// ROCm 7 removed the top-level rocblas.h that ROCm 6 still ships next to rocblas/rocblas.h
+#if __has_include(<rocblas/rocblas.h>)
+#include <rocblas/rocblas.h>
+#else
 #include <rocblas.h>
+#endif
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
