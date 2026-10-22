@@ -185,6 +185,48 @@ def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
         assert entry.map.schedule == dtypes.ScheduleType.Default
 
 
+def row_count_sdfg(name: str, count: str, assign_in_loop: bool) -> dace.SDFG:
+    """A map over ``0:cnt`` in a ``for it in 0:N`` loop, ``cnt = count`` assigned in the loop body or once before it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("indptr", [N + 1], dace.int64)
+    sdfg.add_array("a", [M], dace.float64)
+    sdfg.add_symbol("cnt", dace.int64)
+    rows = loop(sdfg, "rows", "N")
+    container = rows if assign_in_loop else sdfg
+    read = container.add_state("read_row", is_start_block=True)
+    if assign_in_loop:
+        body = map_state(rows, sdfg, "body", ["0:cnt"])
+        rows.add_edge(read, body, dace.InterstateEdge(assignments={"cnt": count}))
+    else:
+        map_state(rows, sdfg, "body", ["0:cnt"])
+        sdfg.add_edge(read, rows, dace.InterstateEdge(assignments={"cnt": count}))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_row_length_map_in_a_sequential_loop_goes_sequential():
+    """amg_setup's per-row gather: a map over ``0:cnt``, ``cnt`` read from data every row, forks once per row over a
+    few elements (9.5 s against 0.55 s sequential)."""
+    sdfg = row_count_sdfg("row_count", "indptr[it + 1] - indptr[it]", assign_in_loop=True)
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
+
+
+def test_an_extent_read_from_data_once_before_the_loop_stays_parallel():
+    """The same extent read once, before the loop, is the same size every iteration: the enclosing loop cancels
+    out of the fork/join algebra and the map keeps its region."""
+    sdfg = row_count_sdfg("count_before_loop", "indptr[N]", assign_in_loop=False)
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+
+
+def test_an_extent_only_the_loop_variable_moves_stays_parallel():
+    """A triangular ``0:it`` grows with the loop and reads no data: it keeps its region."""
+    sdfg = row_count_sdfg("triangular", "it", assign_in_loop=True)
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+
+
 def test_map_inside_a_conditional_is_decided():
     """A ConditionalBlock is not a ControlFlowRegion, so its branches need their own descent.
 
@@ -581,6 +623,9 @@ if __name__ == "__main__":
     test_map_re_entered_by_symbolic_loop_stays_parallel()
     for in_loop in [True, False]:
         test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop)
+    test_a_row_length_map_in_a_sequential_loop_goes_sequential()
+    test_an_extent_read_from_data_once_before_the_loop_stays_parallel()
+    test_an_extent_only_the_loop_variable_moves_stays_parallel()
     test_map_inside_a_conditional_is_decided()
     test_one_trip_map_releases_the_maps_in_its_body()
     test_released_maps_get_their_own_staged_scalars()

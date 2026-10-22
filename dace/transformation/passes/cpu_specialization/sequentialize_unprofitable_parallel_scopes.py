@@ -23,9 +23,10 @@ Two independent reasons to take the parallelism away, in the order they are chec
    BEFORE schedule inference and gives the maps in its body their own regions, which inference would
    otherwise pin ``Sequential`` under it.
 3. **A data segment under a sequential loop.** A map whose range starts AND ends at values read from
-   data (a CSR row, ``indptr[k]:indptr[k + 1]``) inside a sequential loop runs a handful of
-   iterations per outer one, and nothing bounds that handful at compile time. ilu0's elimination
-   forked once per row over a row of about ten: 1.5 s against numba's sequential 11 ms.
+   data (a CSR row, ``indptr[k]:indptr[k + 1]``), or whose extent each outer iteration reads from data
+   (``0:cnt``), inside a sequential loop runs a handful of iterations per outer one, and nothing bounds
+   that handful at compile time. ilu0's elimination forked once per row over a row of about ten: 1.5 s
+   against numba's sequential 11 ms; amg_setup's per-row gather, 9.5 s against 0.55 s.
 The map's own iteration count, not the work of its whole subtree: a 16-iteration map wrapping a
 1M-element inner map is better served by sequentializing the outer one and letting rule 1 release
 the inner, than by forking 16 ways over 8 threads.
@@ -143,12 +144,39 @@ def in_sequential_loop(state: SDFGState) -> bool:
     return False
 
 
+def assigned_in_enclosing_loop(state: SDFGState, names: set[str]) -> set[str]:
+    """Those of ``names`` an interstate edge inside a ``LoopRegion`` enclosing ``state`` assigns, crossing nested-SDFG
+    boundaries through the symbol mapping: values that change from one outer iteration to the next."""
+    sdfg = state.sdfg
+    assigned = set()
+    region = state.parent_graph
+    while region is not None and region is not sdfg:
+        if isinstance(region, LoopRegion):
+            assigned |= {name for edge in region.all_interstate_edges() for name in edge.data.assignments} & names
+        region = region.parent_graph
+    node = sdfg.parent_nsdfg_node
+    if node is not None:
+        for name in names - assigned:
+            if name in node.symbol_mapping:
+                outer = {str(s) for s in symbolic.pystr_to_symbolic(node.symbol_mapping[name]).free_symbols}
+                if assigned_in_enclosing_loop(sdfg.parent, outer):
+                    assigned.add(name)
+    return assigned
+
+
 def data_segment(state: SDFGState, entry: nodes.MapEntry) -> tuple[str, str] | None:
-    """``(begin, end)`` of the first dimension of ``entry`` whose two ends are both read from data, if any."""
+    """``(begin, end)`` of the first dimension of ``entry`` whose two ends are both read from data, or whose ends
+    name only constants and values an enclosing loop's iteration reads from data (``0:cnt`` with
+    ``cnt = indptr[i + 1] - indptr[i]``), if any. A range a loop variable or a size moves (``0:i``, a chunk
+    ``c:min(c + K, hit)``) is not one."""
     sdfg = state.sdfg
     for begin, end, _ in entry.map.range:
         ends = [{str(s) for s in symbolic.free_symbols_and_functions(bound)} for bound in (begin, end)]
         if all(ends) and all(data_derived(sdfg, names) for names in ends):
+            return str(begin), str(end)
+        names = set().union(*ends)
+        local = assigned_in_enclosing_loop(state, names)
+        if local and local == names and all(data_derived(sdfg, {name}) for name in names):
             return str(begin), str(end)
     return None
 
