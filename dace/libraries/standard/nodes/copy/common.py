@@ -9,6 +9,8 @@ import operator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import sympy
+
 import dace
 from dace import data, dtypes, nodes, subsets, symbolic
 from dace.codegen.common import get_gpu_backend, sym2cpp
@@ -25,6 +27,35 @@ if TYPE_CHECKING:
 
 INPUT_CONNECTOR_NAME = "_cpy_in"
 OUTPUT_CONNECTOR_NAME = "_cpy_out"
+
+# TODO: keep these values up-to-date if support for new memory engines is added
+MEMORY_ENGINE_MAX_RANK = 5
+"""Maximum tensor rank the memory engine supports."""
+MEMORY_ENGINE_MAX_BOX_DIM = 256
+"""Maximum extent of a memory engine box (tile) dimension."""
+MEMORY_ENGINE_STRIDE_ALIGNMENT = 16
+"""Byte alignment of the global strides and of the contiguous box extent."""
+MEMORY_ENGINE_SHARED_ALIGNMENT = 128
+"""Byte alignment of the shared memory side of a copy."""
+
+_TMA_DATA_TYPES = {
+    dtypes.bool_: "CU_TENSOR_MAP_DATA_TYPE_UINT8",
+    dtypes.int8: "CU_TENSOR_MAP_DATA_TYPE_UINT8",
+    dtypes.uint8: "CU_TENSOR_MAP_DATA_TYPE_UINT8",
+    dtypes.int16: "CU_TENSOR_MAP_DATA_TYPE_UINT16",
+    dtypes.uint16: "CU_TENSOR_MAP_DATA_TYPE_UINT16",
+    dtypes.int32: "CU_TENSOR_MAP_DATA_TYPE_INT32",
+    dtypes.uint32: "CU_TENSOR_MAP_DATA_TYPE_UINT32",
+    dtypes.int64: "CU_TENSOR_MAP_DATA_TYPE_INT64",
+    dtypes.uint64: "CU_TENSOR_MAP_DATA_TYPE_UINT64",
+    dtypes.float16: "CU_TENSOR_MAP_DATA_TYPE_FLOAT16",
+    dtypes.bfloat16: "CU_TENSOR_MAP_DATA_TYPE_BFLOAT16",
+    dtypes.float32: "CU_TENSOR_MAP_DATA_TYPE_FLOAT32",
+    dtypes.float64: "CU_TENSOR_MAP_DATA_TYPE_FLOAT64",
+}
+"""``CUtensorMapDataType`` per element type.
+
+The memory engine does not care about signedness, only bits."""
 
 
 @dataclass
@@ -446,3 +477,197 @@ def _build_shmem_collective_copy_code(
         else ""
     )
     return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"
+
+
+@dataclass
+class MemoryEngineGeometry:
+    """Everything a ``MemoryEngineBulk`` copy needs, with all per-dimension lists in TMA order
+    (dimension 0 is the contiguous one, i.e. reversed for C-ordered arrays)."""
+
+    is_load: bool
+    """If true the copy is from global to shared memory. Reversed otherwise."""
+    global_name: str
+    """Name of the array in global memory, which is the source if ``is_load`` is true."""
+    global_desc: data.Array
+    """Array in global memory, which is the source if ``is_load`` is true."""
+    global_subset: subsets.Range
+    """Subset of the array in global memory, which is the source if ``is_load`` is true."""
+    shared_name: str
+    """Name of the array in shared memory, which is the source if ``is_load`` is false."""
+    shared_desc: data.Array
+    """Array in shared memory, which is the source if ``is_load`` is false."""
+    shared_subset: subsets.Range
+    """Subset of the array in shared memory, which is the source if ``is_load`` is false."""
+    dims: List[symbolic.SymExpr]
+    """Dimensions (sizes of the axes) of the global array."""
+    strides: List[symbolic.SymExpr]
+    """Strides of the global array."""
+    box: List[symbolic.SymExpr]
+    """Number of elements per axis that are being copied per load/store."""
+    coords: List[symbolic.SymExpr]
+    """Start of copy given in element-coordinates into the global array."""
+    data_type: str
+    """See ``_TMA_DATA_TYPES``"""
+
+    @property
+    def rank(self) -> int:
+        return len(self.dims)
+
+    @property
+    def bytes(self) -> symbolic.SymExpr:
+        """Bytes one copy moves; a load always moves the full box (out-of-bound elements are zero-filled)."""
+        return functools.reduce(operator.mul, self.box, 1) * self.global_desc.dtype.bytes
+
+
+def _memory_engine_edges(node: nodes.Node, state: dace.SDFGState):
+    """The ``_cpy_in`` and ``_cpy_out`` edges of a ``CopyLibraryNode`` or of its expanded tasklet."""
+    in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
+    out_edges = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        return None, None
+    return in_edges[0], out_edges[0]
+
+
+def _sym_equal(a: symbolic.SymExpr, b: symbolic.SymExpr) -> bool:
+    """True if ``a`` and ``b`` are provably equal."""
+    try:
+        return bool(symbolic.simplify(symbolic.pystr_to_symbolic(a) - symbolic.pystr_to_symbolic(b)) == 0)
+    except TypeError:
+        return False
+
+
+def _tma_order(strides: List[symbolic.SymExpr]) -> Optional[List[int]]:
+    """Dimension order with the contiguous dimension first
+
+    For C-order, the innermost dimension must have stride 1 and the returned order is reversed. For Fortran order
+    the outermost dimension must have stride 1. If the given strides are neither C nor Fortran ordered, ``None``
+    is returned.
+    """
+    if _sym_equal(strides[-1], 1):
+        return list(reversed(range(len(strides))))
+    if _sym_equal(strides[0], 1):
+        return list(range(len(strides)))
+    return None
+
+
+def _unclamp(size: symbolic.SymExpr, extent: symbolic.SymExpr) -> symbolic.SymExpr:
+    """Remove memlet propagation's clamp to the array bound (``Min(extent - 1, ...)``) from ``size``.
+
+    The memory engine zero-fills out-of-bounds elements. This means, we don't need to clamp the sizes manually.
+    This function removes the ``Min(extent - 1, ...)`` clamps.
+    """
+    bound = symbolic.pystr_to_symbolic(extent) - 1
+
+    def drop_bound(*args):
+        # make sure to keep clamps that are not due to array bounds
+        rest = [a for a in args if not _sym_equal(a, bound)]
+        return sympy.Min(*rest) if rest else bound
+
+    size = symbolic.pystr_to_symbolic(size)
+    return symbolic.simplify(size.replace(sympy.Min, drop_bound))
+
+
+def _static_int(value: symbolic.SymExpr) -> Optional[int]:
+    """``value`` as an int if it is a constant, else ``None``."""
+    if symbolic.issymbolic(value):
+        return None
+    return int(value)
+
+
+def memory_engine_geometry(node: nodes.Node,
+                           state: dace.SDFGState) -> Tuple[Optional[MemoryEngineGeometry], Optional[str]]:
+    """Derive the tensor map geometry of a ``MemoryEngineBulk`` copy.
+
+    Works on the ``CopyLibraryNode`` and on its expanded tasklet (both use the ``_cpy_in``/``_cpy_out``
+    connectors), so that this method can be used in the expansion and its postprocessing.
+
+    :param node: the copy node or expanded tasklet.
+    :param state: state containing ``node``.
+    :returns: ``(geometry, None)`` if the memory engine can perform the copy, ``(None, reason)`` otherwise.
+    """
+    sdfg = state.sdfg
+    in_edge, out_edge = _memory_engine_edges(node, state)
+    if in_edge is None or out_edge is None or in_edge.data.is_empty() or out_edge.data.is_empty():
+        return None, "the copy must have exactly one input and one output edge"
+    inp, out = sdfg.arrays[in_edge.data.data], sdfg.arrays[out_edge.data.data]
+
+    if (inp.storage, out.storage) == (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        is_load = True
+        (gname, gdesc, gsubset), (sname, sdesc, ssubset) = ((in_edge.data.data, inp, in_edge.data.subset),
+                                                            (out_edge.data.data, out, out_edge.data.subset))
+    elif (inp.storage, out.storage) == (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global):
+        is_load = False
+        (gname, gdesc, gsubset), (sname, sdesc, ssubset) = ((out_edge.data.data, out, out_edge.data.subset),
+                                                            (in_edge.data.data, inp, in_edge.data.subset))
+    else:
+        return None, (
+            f"MemoryEngineBulk only supports GPU_Global <-> GPU_Shared copies (got {inp.storage} -> {out.storage})")
+
+    if inp.dtype != out.dtype:
+        return None, f"input and output data types must match (got {inp.dtype} vs {out.dtype})"
+    if gdesc.dtype not in _TMA_DATA_TYPES:
+        return None, f"data type {gdesc.dtype} has no memory engine equivalent"
+    for desc in (gdesc, sdesc):
+        if not isinstance(desc, data.Array) or isinstance(desc, data.View):
+            return None, f"both sides must be (non-view) arrays (got {type(desc).__name__})"
+        if not _sym_equal(desc.start_offset, 0):
+            return None, "arrays with a start offset are not supported"
+    if len(gdesc.shape) > MEMORY_ENGINE_MAX_RANK:
+        return None, f"MemoryEngineBulk only supports up to {MEMORY_ENGINE_MAX_RANK} dimensions (got {len(gdesc.shape)})"
+    if any(not _sym_equal(step, 1) for subset in (gsubset, ssubset) for _, _, step in subset.ranges):
+        return None, "strided (step != 1) copies are not supported"
+
+    gorder = _tma_order(gdesc.strides)
+    sorder = _tma_order(sdesc.strides)
+    if gorder is None or sorder is None:
+        return None, "both sides need a contiguous (stride 1) first or last dimension"
+
+    elem_bytes = gdesc.dtype.bytes
+    gsizes = [_unclamp(size, extent) for size, extent in zip(gsubset.size_exact(), gdesc.shape)]
+    box = [gsizes[d] for d in gorder]
+
+    # The memory engine writes/reads the box densely: the shared region must be the box, packed in TMA order
+    ssizes = ssubset.size_exact()
+    sdims = [d for d in sorder if not _sym_equal(ssizes[d], 1)]
+    squeezed_box = [b for b in box if not _sym_equal(b, 1)]
+    if len(sdims) != len(squeezed_box) or any(not _sym_equal(ssizes[d], b) for d, b in zip(sdims, squeezed_box)):
+        return None, (f"the shared region {list(ssizes)} does not match the global box {list(gsizes)} "
+                      "(reshapes and transposes are not supported)")
+    packed = 1
+    for d in sdims:
+        if not _sym_equal(sdesc.strides[d], packed):
+            return None, f"the shared region of {sname} is not packed"
+        packed *= ssizes[d]
+
+    for b in box:
+        b_int = _static_int(b)
+        if b_int is not None and b_int > MEMORY_ENGINE_MAX_BOX_DIM:
+            return None, f"box dimensions must be at most {MEMORY_ENGINE_MAX_BOX_DIM} (got {list(gsizes)})"
+    box0 = _static_int(box[0])
+    if box0 is not None and (box0 * elem_bytes) % MEMORY_ENGINE_STRIDE_ALIGNMENT != 0:
+        return None, (f"the contiguous box extent must be a multiple of {MEMORY_ENGINE_STRIDE_ALIGNMENT} bytes "
+                      f"(got {box0} Elements x {elem_bytes}B/Element)")
+    for d in gorder[1:]:
+        stride = _static_int(gdesc.strides[d])
+        if stride is not None and (stride * elem_bytes) % MEMORY_ENGINE_STRIDE_ALIGNMENT != 0:
+            return None, (f"global strides must be multiples of {MEMORY_ENGINE_STRIDE_ALIGNMENT} bytes "
+                          f"(got {stride} Elements x {elem_bytes}B/Element in {gname})")
+    # When offsetting into a shared memory container, the base address must be aligned. For symbolic offsets, this
+    # can't be checked statically and the hardware faults at runtime.
+    soffset = _static_int(sum(m * s for m, s in zip(ssubset.min_element(), sdesc.strides)))
+    if soffset is not None and (soffset * elem_bytes) % MEMORY_ENGINE_SHARED_ALIGNMENT != 0:
+        return None, f"the shared region must start {MEMORY_ENGINE_SHARED_ALIGNMENT} byte aligned"
+
+    gmin = gsubset.min_element()
+    return MemoryEngineGeometry(is_load=is_load,
+                                global_name=gname,
+                                global_desc=gdesc,
+                                global_subset=gsubset,
+                                shared_name=sname,
+                                shared_desc=sdesc,
+                                shared_subset=ssubset,
+                                dims=[gdesc.shape[d] for d in gorder],
+                                strides=[gdesc.strides[d] for d in gorder],
+                                box=box,
+                                coords=[gmin[d] for d in gorder],
+                                data_type=_TMA_DATA_TYPES[gdesc.dtype]), None
