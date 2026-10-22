@@ -165,6 +165,17 @@ def test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value():
     assert symbolic.ask(le("N + 1", "0"), facts) is symbolic.Truth.UNKNOWN
 
 
+def test_renamed_extent_moves_its_fact():
+    """A dimension's fact is derived from the current descriptors, so a rename leaves nothing of the old name."""
+    sdfg = dace.SDFG("shape_fact_renamed")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_state(is_start_block=True)
+    sdfg.replace_dict({"N": "K"})
+    facts = SymbolResolver().facts_at(sdfg)
+    assert symbolic.ask(le("0", "K"), facts) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("0", "N"), facts) is symbolic.Truth.UNKNOWN
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -181,3 +192,4 @@ if __name__ == "__main__":
     test_loop_body_reassigning_the_iterator_or_a_bound_knows_no_range({"N": "0"})
     test_loop_body_assigning_another_symbol_keeps_the_range()
     test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value()
+    test_renamed_extent_moves_its_fact()
