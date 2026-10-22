@@ -9,8 +9,8 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver
-from dace.symbolic import Truth
 from dace.sdfg.validation import InvalidSDFGEdgeError, validate_state
+from dace.symbolic import Truth
 from dace.transformation import transformation
 from dace.transformation.interstate.state_fusion import StateFusion
 
@@ -325,7 +325,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if e.data.wcr is None or e.data.data not in first_written:
                     continue
                 wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
-                if wsub is not None and all(subsets.intersects(wsub, fs, facts) is Truth.FALSE for fs in first_written[e.data.data]):
+                if wsub is not None and all(
+                    subsets.intersects(wsub, fs, facts) is Truth.FALSE for fs in first_written[e.data.data]
+                ):
                     continue
                 seed = sdfg.arrays[e.data.data]
                 accumulated = second_state.memlet_path(e)[-1].dst
@@ -408,7 +410,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             return False
                     if ordered_by_existing_dataflow(consumers, we):
                         continue
-                    if any(subsets.intersects(wsub, rs, facts) is not Truth.FALSE for rs in first_read_subsets[wnode.data]):
+                    if any(
+                        subsets.intersects(wsub, rs, facts) is not Truth.FALSE for rs in first_read_subsets[wnode.data]
+                    ):
                         if consumers:
                             self._connections_to_make.append(("war", consumers, [wnode]))
                         break
