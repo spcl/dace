@@ -1,190 +1,257 @@
-// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 #ifndef __DACE_DYNMAP_CUH
 #define __DACE_DYNMAP_CUH
 
-#ifdef __CUDACC__
-#include <cooperative_groups.h>
+#if defined(__CUDACC__) || defined(__HIPCC__)
 
-// HIP does not yet support features in cooperative groups used here.
-/*#elif defined(__HIPCC__)
-#include <hip/hip_cooperative_groups.h>
-#endif*/
+#include <cstdint>
+#include <type_traits>
 
 namespace dace {
 
-    namespace cg = cooperative_groups;
+    // Warp primitives over a full warp of WARP_SIZE lanes
+    namespace dynmap_warp {
+#if defined(__HIPCC__)
+        __device__ __forceinline__ unsigned long long ballot(bool predicate) { return __ballot(predicate); }
+        template <typename T> __device__ __forceinline__ T shfl(T value, int lane) { return __shfl(value, lane); }
+        template <typename T> __device__ __forceinline__ T shfl_up(T value, unsigned int delta) {
+            return __shfl_up(value, delta);
+        }
+        __device__ __forceinline__ int first_lane(unsigned long long mask) { return __ffsll(mask) - 1; }
+        // A wavefront runs in lockstep; the fences order its shared memory accesses
+        __device__ __forceinline__ void sync() {
+            __builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront");
+            __builtin_amdgcn_wave_barrier();
+            __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");
+        }
+        // A value the whole wavefront agrees on, in a scalar register: atomics to an address derived from it combine
+        template <typename T> __device__ __forceinline__ T uniform(T value) {
+            if constexpr (sizeof(T) == 8) {
+                const unsigned long long bits = static_cast<unsigned long long>(value);
+                const unsigned int lo = __builtin_amdgcn_readfirstlane(static_cast<unsigned int>(bits));
+                const unsigned int hi = __builtin_amdgcn_readfirstlane(static_cast<unsigned int>(bits >> 32));
+                return static_cast<T>((static_cast<unsigned long long>(hi) << 32) | lo);
+            } else {
+                return static_cast<T>(__builtin_amdgcn_readfirstlane(static_cast<int>(value)));
+            }
+        }
+#else
+        __device__ __forceinline__ unsigned int ballot(bool predicate) { return __ballot_sync(0xffffffffu, predicate); }
+        template <typename T> __device__ __forceinline__ T shfl(T value, int lane) {
+            return __shfl_sync(0xffffffffu, value, lane);
+        }
+        template <typename T> __device__ __forceinline__ T shfl_up(T value, unsigned int delta) {
+            return __shfl_up_sync(0xffffffffu, value, delta);
+        }
+        __device__ __forceinline__ int first_lane(unsigned int mask) { return __ffs(mask) - 1; }
+        template <typename T> __device__ __forceinline__ T uniform(T value) { return value; }
+        __device__ __forceinline__ void sync() { __syncwarp(); }
+#endif
+    }  // namespace dynmap_warp
 
+    /**
+     * Load-balances the iterations of a dynamic thread-block map over a one-dimensional thread block. Every thread
+     * owns a range ``[start, end)`` of iterations of the item ``src``; the block executes the iterations of all ranges
+     * in rounds, in each of which a thread receives a strided batch of the iterations of one item:
+     *
+     *     cursor_type cursor = DynamicMap::begin(state, start, end, src);
+     *     while (DynamicMap::block_round(state, cursor, src, first, count, stride)) { batch(src, first, count, stride); }
+     *     while (DynamicMap::warp_round(state, cursor, src, first, count, stride)) { batch(...); }
+     *     do { more = DynamicMap::thread_round(state, cursor, src, first, count); batch(src, first, count, 1); }
+     *     while (more);
+     *
+     * where ``batch`` runs the body for ``first + k * stride``, ``k < count``. Ranges of at least ``BLOCK_SIZE``
+     * iterations are shared by the whole block, then ranges of at least a warp by their warp; the rest are either
+     * spread over the warp one iteration per thread (``FINE_GRAINED``) or run by their thread. In the block and warp
+     * rounds, the item is the same for the whole warp. The shared state is the range of the current block round and,
+     * fine-grained on CUDA, the list of the items each warp spreads; HIP's 64-wide warps find each item's owner by
+     * shuffles instead, as their lists would not fit in shared memory.
+     * ``begin`` and the block rounds synchronize the block, so every thread of the block calls them, out-of-range
+     * threads with an empty range; the warp and fine-grained rounds synchronize the warp. A body may not synchronize.
+     */
     template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename INDEX_TYPE = int32_t>
     struct DynamicMap {
+        static_assert(BLOCK_SIZE % WARP_SIZE == 0, "The block size of a dynamic map must be a multiple of the warp size");
 
-        // empty field so the compiler doesn't get confused when empty_type is used instead of fg_type
-        struct empty_type {
-            INDEX_TYPE src[1];  // outer map index
-            INDEX_TYPE data[1]; // inner map index
-        };
+#if defined(__HIPCC__)
+        static constexpr bool LISTED = false;
+#else
+        static constexpr bool LISTED = FINE_GRAINED;
+#endif
 
-        struct tb_type {
+        // The range the block shares, and the thread that owns it
+        struct block_range {
             INDEX_TYPE owner;
             INDEX_TYPE src;
             INDEX_TYPE start;
             INDEX_TYPE size;
         };
 
-        // fine grained needs space to accommodate all thread in the warp having the most possible jobs
-        struct fg_type {
-            INDEX_TYPE src[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE];  // outer map index
-            INDEX_TYPE data[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE]; // inner map index
+        // Fine-grained: per warp, the remaining items of its threads (fewer than a warp each)
+        struct item_lists {
+            INDEX_TYPE src[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE];
+            INDEX_TYPE data[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE];
+        };
+        struct no_lists {};
+
+        union shared_type {
+            block_range tb;
+            std::conditional_t<LISTED, item_lists, no_lists> fg;
         };
 
-        // depending on configuration of scheduler generate smaller union to save space
-        template <typename tb_type, typename fg_type>
-        union shared_type_temp {
-            tb_type tb; // for tb-level np
-            fg_type fg; // fine-grained schedule
+        // The scheduling state of one thread
+        struct cursor_type {
+            INDEX_TYPE local_start, local_size, local_src;  // what remains of the thread's own range
+            INDEX_TYPE prefix, size, next;                  // fine-grained: the warp's items up to this thread's,
+                                                            // all of them, and the first of the next round
+            INDEX_TYPE start;                               // fine-grained on CUDA: the warp's part of the lists
         };
 
-        typedef union std::conditional<FINE_GRAINED,
-            shared_type_temp<tb_type, fg_type>,
-            shared_type_temp<tb_type, empty_type>
-        >::type shared_type;
-
-
-        template<typename Functor>
-        __device__ static void schedule(shared_type& s, INDEX_TYPE localStart, INDEX_TYPE localEnd, INDEX_TYPE localSrc, Functor&& work) {
-
-            // defining other local variables
-            INDEX_TYPE localSize = localEnd - localStart;
-
-            cg::thread_block block = cg::this_thread_block();
-            unsigned int threadRank = block.thread_rank();
-            int blockSize = BLOCK_SIZE;
-
+        __device__ static cursor_type begin(shared_type& s, INDEX_TYPE start, INDEX_TYPE end, INDEX_TYPE src) {
             // highest thread id is size - 1 thus no thread has this id
-            if (threadRank == 0) {
-                s.tb.owner = blockSize;
+            if (threadIdx.x == 0) {
+                s.tb.owner = BLOCK_SIZE;
             }
+            __syncthreads();
+            return cursor_type{start, end - start, src, 0, 0, 0, 0};
+        }
 
-            block.sync();
-
-            // Thread block level scheduler
-            while (true) {
-
-                // every thread that has enough workload will compete for the memory, one thread will win the race condition
-                if (localSize >= blockSize) {
-                    s.tb.owner = threadIdx.x;
-                }
-
-                block.sync();
-
-                // if no thread has the enough work, go to next granularity (e.g. warp or next lower group size)
-                if (s.tb.owner == blockSize) {
-                    break;
-                }
-
-                // The winner writes their name into the struct
-                if (s.tb.owner == threadRank) {
-                    s.tb.src = localSrc;
-                    s.tb.start = localStart;
-                    s.tb.size = localSize;
-                    localSize = 0; // mark as processed
-                }
-
-                block.sync();
-
-                // get winning values and reset owner for next round
-                INDEX_TYPE src = s.tb.src;
-                INDEX_TYPE start = s.tb.start;
-                INDEX_TYPE size = s.tb.size;
-
-                if (s.tb.owner == threadRank) {
-                    s.tb.owner = blockSize;
-                }
-
-                block.sync();
-
-                // do work
-                for (unsigned int j = threadRank; j < size; j += blockSize) {
-                    work(src, start + j);
-                }
-
-                block.sync();
-
+        /// The batch of this thread of the next range of at least ``BLOCK_SIZE`` iterations, or false (for the whole
+        /// block) and an empty batch if none is left.
+        __device__ static bool block_round(shared_type& s, cursor_type& c, INDEX_TYPE& src, INDEX_TYPE& first,
+                                           INDEX_TYPE& count, INDEX_TYPE& stride) {
+            const INDEX_TYPE rank = threadIdx.x;
+            // every thread that has enough workload will compete for the memory, one thread will win the race
+            if (c.local_size >= BLOCK_SIZE) {
+                s.tb.owner = rank;
             }
-
-            cg::thread_block_tile<WARP_SIZE> warp = cg::tiled_partition<WARP_SIZE>(block);
-            unsigned int warpId = threadRank / WARP_SIZE;
-            unsigned int warpThreadRank = warp.thread_rank();
-            unsigned int warpSize = warp.size();
-
-            // warp level scheduler, as long as there is any thread with >= warpSize tasks
-            while (warp.any(localSize >= warpSize)) {
-
-                // find a thread that has >= 32 jobs
-                unsigned int mask = warp.ballot(localSize >= warpSize);
-                int owner = __ffs(mask) - 1;
-
-                // share value across warp
-                INDEX_TYPE src = warp.shfl(localSrc, owner);
-                INDEX_TYPE start = warp.shfl(localStart, owner);
-                INDEX_TYPE size = warp.shfl(localSize, owner);
-
-                // mark as processed
-                if (owner == warpThreadRank) {
-                    localSize = 0;
+            __syncthreads();
+            const INDEX_TYPE owner = s.tb.owner;
+            if (owner == BLOCK_SIZE) {
+                if constexpr (LISTED) {
+                    // The lists overlap the owner: every thread reads it before a warp writes them
+                    __syncthreads();
                 }
-
-                // do work
-                for (unsigned int j = warpThreadRank; j < size; j += warpSize) {
-                    work(src, start + j);
-                }
-
+                count = 0;
+                return false;
             }
+            // The winner writes their range into the state and resets the owner for the next round
+            if (owner == rank) {
+                s.tb.src = c.local_src;
+                s.tb.start = c.local_start;
+                s.tb.size = c.local_size;
+                s.tb.owner = BLOCK_SIZE;
+                c.local_size = 0;
+            }
+            __syncthreads();
+            src = dynmap_warp::uniform(s.tb.src);
+            const INDEX_TYPE start = dynmap_warp::uniform(s.tb.start), size = dynmap_warp::uniform(s.tb.size);
+            // Everyone reads the range before the next election may overwrite it
+            __syncthreads();
+            batch(start, size, rank, BLOCK_SIZE, first, count, stride);
+            return true;
+        }
 
-            // fine grained warp level load balancing
-            if (FINE_GRAINED) {
-
-                // prefix sum (after execution the prefix sum will include the value of the current thread)
-                INDEX_TYPE prefix = localSize;
-                for (int delta = 1; delta < warpSize; delta *= 2) {
-                    INDEX_TYPE tmp = warp.shfl_up(prefix, delta);
-                    prefix += (warpThreadRank >= delta) ? tmp : 0;
+        /// The batch of this thread of the next range of its warp of at least a warp of iterations, or false (for the
+        /// whole warp) and an empty batch if none is left.
+        __device__ static bool warp_round(shared_type& s, cursor_type& c, INDEX_TYPE& src, INDEX_TYPE& first,
+                                          INDEX_TYPE& count, INDEX_TYPE& stride) {
+            const INDEX_TYPE lane = threadIdx.x % WARP_SIZE;
+            // find a thread that has at least a warp of jobs
+            const auto mask = dynmap_warp::ballot(c.local_size >= WARP_SIZE);
+            if (mask == 0) {
+                if (FINE_GRAINED) {
+                    fine_grained_ranges(s, c, lane);
                 }
+                count = 0;
+                return false;
+            }
+            const int owner = dynmap_warp::uniform(dynmap_warp::first_lane(mask));
+            src = dynmap_warp::uniform(dynmap_warp::shfl(c.local_src, owner));
+            const INDEX_TYPE start = dynmap_warp::uniform(dynmap_warp::shfl(c.local_start, owner));
+            const INDEX_TYPE size = dynmap_warp::uniform(dynmap_warp::shfl(c.local_size, owner));
+            if (owner == lane) {
+                c.local_size = 0;
+            }
+            batch(start, size, lane, WARP_SIZE, first, count, stride);
+            return true;
+        }
 
-                // total number and local start index (need to subtract localSize, because it is including the
-                // local element)
-                INDEX_TYPE total = warp.shfl(prefix, warpSize - 1);
-                INDEX_TYPE warp_offset = warpId * WARP_SIZE*WARP_SIZE;
-                INDEX_TYPE thread_offset = prefix - localSize;
-                INDEX_TYPE offset = warp_offset + thread_offset;
-
-                // write element range and owner to shared memory
-                for (int i = 0; i < localSize; i++) {
-                    s.fg.src[offset + i] = localSrc;
-                    s.fg.data[offset + i] = localStart + i;
+        /// The remaining iterations: fine-grained, one round of one iteration per thread of the warp, true while
+        /// more follow (for the whole warp); otherwise the thread's own range, at once.
+        __device__ static bool thread_round(shared_type& s, cursor_type& c, INDEX_TYPE& src, INDEX_TYPE& first,
+                                            INDEX_TYPE& count) {
+            if constexpr (LISTED) {
+                // The warp's remaining items, listed in shared memory by ``fine_grained_ranges``
+                const INDEX_TYPE item = c.next + threadIdx.x % WARP_SIZE;
+                count = item < c.size ? 1 : 0;
+                if (count) {
+                    src = s.fg.src[c.start + item];
+                    first = s.fg.data[c.start + item];
                 }
-
-                warp.sync(); // necessary because warps may diverge more since volta
-
-                // do work
-                for (unsigned int j = warp_offset + warpThreadRank; j < warp_offset + total; j += warpSize) {
-                    work(s.fg.src[j], s.fg.data[j]);
-                }
-
-            } else {  // if (FINE_GRAINED)
-
-                // do work
-                if (localSize > 0) {
-                    for (INDEX_TYPE j = localStart; j < localEnd; j++) {
-                        work(localSrc, j);
+                c.next += WARP_SIZE;
+                return c.next < c.size;
+            } else if (FINE_GRAINED) {
+                // The warp's remaining items, in the order of the threads that own them: the owner of the item is the
+                // first thread whose prefix exceeds it
+                const INDEX_TYPE lane = threadIdx.x % WARP_SIZE;
+                const INDEX_TYPE item = c.next + lane;
+                int owner = 0;
+                for (int width = WARP_SIZE / 2; width > 0; width /= 2) {
+                    if (dynmap_warp::shfl(c.prefix, owner + width - 1) <= item) {
+                        owner += width;
                     }
                 }
+                owner = owner < WARP_SIZE ? owner : WARP_SIZE - 1;
+                const INDEX_TYPE owner_start = dynmap_warp::shfl(c.local_start, owner);
+                const INDEX_TYPE owner_src = dynmap_warp::shfl(c.local_src, owner);
+                const INDEX_TYPE owner_first = dynmap_warp::shfl(c.prefix - c.local_size, owner);
+                src = owner_src;
+                first = owner_start + (item - owner_first);
+                count = item < c.size ? 1 : 0;
+                c.next += WARP_SIZE;
+                return c.next < c.size;
+            }
+            src = c.local_src;
+            first = c.local_start;
+            count = c.local_size;
+            return false;
+        }
 
-            }  // if (FINE_GRAINED)
-        }  // __device__ static void schedule()
+    private:
+        // The iterations ``offset, offset + width, ...`` of a range of ``size`` iterations from ``start``
+        __device__ static void batch(INDEX_TYPE start, INDEX_TYPE size, INDEX_TYPE offset, INDEX_TYPE width,
+                                     INDEX_TYPE& first, INDEX_TYPE& count, INDEX_TYPE& stride) {
+            first = start + offset;
+            count = offset < size ? (size - offset + width - 1) / width : 0;
+            stride = width;
+        }
+
+        // The prefix sum of the warp's remaining items, up to and including this thread's, and on CUDA their lists
+        __device__ static void fine_grained_ranges(shared_type& s, cursor_type& c, INDEX_TYPE lane) {
+            INDEX_TYPE prefix = c.local_size;
+            for (int delta = 1; delta < WARP_SIZE; delta *= 2) {
+                const INDEX_TYPE tmp = dynmap_warp::shfl_up(prefix, delta);
+                prefix += (lane >= delta) ? tmp : 0;
+            }
+            c.prefix = prefix;
+            c.size = dynmap_warp::shfl(prefix, WARP_SIZE - 1);
+            c.next = 0;
+            if constexpr (LISTED) {
+                const INDEX_TYPE warp_offset = (threadIdx.x / WARP_SIZE) * WARP_SIZE * WARP_SIZE;
+                const INDEX_TYPE offset = warp_offset + prefix - c.local_size;
+                for (INDEX_TYPE i = 0; i < c.local_size; i++) {
+                    s.fg.src[offset + i] = c.local_src;
+                    s.fg.data[offset + i] = c.local_start + i;
+                }
+                dynmap_warp::sync();
+                c.start = warp_offset;
+            }
+        }
     };  // struct DynamicMap
 }  // namespace dace
 
-#endif // __CUDACC__
+#endif // __CUDACC__ || __HIPCC__
 
 #endif // __DACE_DYNMAP_CUH
