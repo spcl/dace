@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the standard library node expansions."""
 
+import functools
+import operator
 from collections.abc import Callable, Sequence
 
 import dace
@@ -25,6 +27,12 @@ CPU_RESIDENT_STORAGES = frozenset(
         dtypes.StorageType.CPU_ThreadLocal,
     }
 )
+
+
+def exact_element_count(subset: "dace.subsets.Range") -> "dace.symbolic.SymbolicType":
+    """The number of elements ``subset`` names, from its exact bounds: ``num_elements_exact()`` multiplies the
+    over-approximated bounding box, which is too many for a partial tile (``tile_i:Min(N, tile_i + 5)``)."""
+    return functools.reduce(operator.mul, subset.size_exact(), 1)
 
 
 def host_storages(node: nodes.Node, state: "dace.SDFGState") -> frozenset[dtypes.StorageType]:

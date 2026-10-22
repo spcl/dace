@@ -18,6 +18,7 @@ from dace.libraries.standard.helper import (
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
     collapse_to_elements,
+    exact_element_count,
 )
 from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
 
@@ -457,13 +458,13 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
 
     in_conn = INPUT_CONNECTOR_NAME
     out_conn = OUTPUT_CONNECTOR_NAME
-    nbytes = f"{sym2cpp(in_subset.num_elements_exact())} * sizeof({inp.dtype.ctype})"
+    nbytes = f"{sym2cpp(exact_element_count(in_subset))} * sizeof({inp.dtype.ctype})"
     if cuda:
         backend = get_gpu_backend()
         code = f"DACE_GPU_CHECK({backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME}));"
     else:
         code = (
-            f"dace::CopyImpl<{inp.dtype.ctype}, 1>({in_conn}, {out_conn}, {sym2cpp(in_subset.num_elements_exact())});"
+            f"dace::CopyImpl<{inp.dtype.ctype}, 1>({in_conn}, {out_conn}, {sym2cpp(exact_element_count(in_subset))});"
         )
 
     return nodes.Tasklet(

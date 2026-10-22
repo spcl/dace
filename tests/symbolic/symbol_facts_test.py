@@ -247,10 +247,10 @@ def test_facts_about_unrelated_symbols_share_one_simplification():
     first = facts_of(*iterator_range, Relation(RelationKind.LE, ZERO, K))
     second = facts_of(*iterator_range, Relation(RelationKind.LE, ZERO, M))
     assert first.about({"i"}) == second.about({"i"}) == facts_of(*iterator_range).about({"i"})
-    symbolic.simplify.cache_clear()
-    assert symbolic.simplify(sympy.Max(ITERATOR - 1, 0), first) == ITERATOR - 1
-    assert symbolic.simplify(sympy.Max(ITERATOR - 1, 0), second) == ITERATOR - 1
-    assert symbolic.simplify.cache_info().hits == 1
+    symbolic.simplify_under.cache_clear()
+    assert symbolic.simplify_under(sympy.Max(ITERATOR - 1, 0), first) == ITERATOR - 1
+    assert symbolic.simplify_under(sympy.Max(ITERATOR - 1, 0), second) == ITERATOR - 1
+    assert symbolic.simplify_under.cache_info().hits == 1
 
 
 if __name__ == "__main__":

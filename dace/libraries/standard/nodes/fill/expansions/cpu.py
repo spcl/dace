@@ -7,6 +7,7 @@ import dace
 from dace import library, nodes
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard import environments
+from dace.libraries.standard.helper import exact_element_count
 from dace.libraries.standard.nodes.fill.common import (
     OUTPUT_CONNECTOR_NAME,
     VALUE_CONNECTOR_NAME,
@@ -71,7 +72,7 @@ class ExpandCPU(ExpandTransformation):
         value_info = node.value_descriptor(parent_state)
         # Dynamic scalar value supplied through the input connector.
         inputs = {} if value_info is None else {VALUE_CONNECTOR_NAME: value_info[1].dtype}
-        count = sym2cpp(out_subset.num_elements_exact())
+        count = sym2cpp(exact_element_count(out_subset))
 
         if not cpf_lowering.standalone_c():
             # Both gcc and clang turn this into a memset at -O2 and above whenever the value's object

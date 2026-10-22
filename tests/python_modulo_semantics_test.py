@@ -5,6 +5,7 @@ import itertools
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import symbolic

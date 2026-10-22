@@ -3184,10 +3184,14 @@ class SymbolResolver:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
-        # Ranges and declarations consistent on their own; a contradiction between them surfaces in a proof
-        return symbolic.Facts(
-            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed, check=False
-        )
+        try:
+            return symbolic.Facts(
+                tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
+            )
+        except symbolic.InconsistentAssumptionsError:
+            # A range the facts prove empty: its body never runs, so it is sound to know less there
+            kept = tuple(relation for relation in relations if relation not in from_ranges)
+            return symbolic.Facts(kept, frozenset(integers), frozenset(small), frozenset(parameters), own.assumed)
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
         """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its

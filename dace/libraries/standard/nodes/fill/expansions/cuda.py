@@ -7,7 +7,7 @@ import dace
 from dace import library, nodes
 from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard import environments
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, exact_element_count
 from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, byte_pattern
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.transformation.transformation import ExpandTransformation
@@ -42,7 +42,7 @@ class ExpandCUDA(ExpandTransformation):
                 f"FillLibraryNode CUDA expansion requires a byte-splat value; {node.value!r} as "
                 f"{out.dtype} is not one. Use the 'pure' expansion (mapped tasklet)."
             )
-        nbytes = f"{sym2cpp(out_subset.num_elements_exact())} * sizeof({out.dtype.ctype})"
+        nbytes = f"{sym2cpp(exact_element_count(out_subset))} * sizeof({out.dtype.ctype})"
         code = (
             f"DACE_GPU_CHECK({get_gpu_backend()}MemsetAsync({OUTPUT_CONNECTOR_NAME}, {pattern}, {nbytes}, "
             f"{CURRENT_STREAM_NAME}));"
