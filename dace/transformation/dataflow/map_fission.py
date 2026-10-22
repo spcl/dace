@@ -236,7 +236,10 @@ class MapFission(transformation.SingleStateTransformation):
         if nsdfg is None:
             scope, boundary = graph.scope_dict(), (map_node, graph.exit_node(map_node))
             edges = [e for e in graph.scope_subgraph(map_node).edges() if scope[e.src] is map_node or e.src is map_node]
-            return [(graph, e) for e in self.misordered_copies(graph, edges, border_arrays, params, boundary)]
+            # A transient filled the same in every iteration stays unwidened, so no copy into it pairs dimensions
+            body = graph.scope_subgraph(map_node, include_entry=False, include_exit=False)
+            widened = border_arrays - MapFission.iteration_invariant_copies(graph, map_node, body, border_arrays)
+            return [(graph, e) for e in self.misordered_copies(graph, edges, widened, params, boundary)]
 
         outer = {e.dst_conn: e.data for e in graph.in_edges(self.nested_sdfg)}
         outer |= {e.src_conn: e.data for e in graph.out_edges(self.nested_sdfg)}
