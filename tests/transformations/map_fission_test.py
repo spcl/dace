@@ -1193,3 +1193,46 @@ if __name__ == "__main__":
     test_fission_promoted_transient_of_nested_sdfg()
     test_mapfission_keeps_connector_offset()
     test_fission_keeps_copy_into_a_wider_array_valid()
+
+
+N = dace.symbol("N")
+
+
+@dace.program
+def accumulate_then_overwrite_input(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in dace.map[0:N]:
+        t = a[i] * 2.0
+        for k in range(3):
+            t = t + a[i]
+        b[i] = b[i] + t
+    for i in dace.map[0:N]:
+        c[i] = a[i] + 1.0
+    for i in dace.map[0:N]:
+        a[i] = c[i] * 2.0
+
+
+def test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps():
+    """The last map overwrites ``a`` the first reads, ordered by an empty memlet off the first map's exit. MapFission
+    read that memlet's descriptor (``KeyError: None``); the order must survive the split."""
+    sdfg = accumulate_then_overwrite_input.to_sdfg(simplify=True)
+    reference = copy.deepcopy(sdfg)
+    reference.name = "accumulate_then_overwrite_input_reference"
+    (state,) = sdfg.states()
+    (entry,) = [
+        n
+        for n in state.nodes()
+        if isinstance(n, nodes.MapEntry) and isinstance(next(iter(state.out_edges(n))).dst, nodes.NestedSDFG)
+    ]
+    body = next(iter(state.out_edges(entry))).dst
+    assert any(e.data.is_empty() for e in state.out_edges(state.exit_node(entry)))
+
+    MapFission.apply_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=body)
+
+    assert any(e.data.is_empty() for e in state.out_edges(body)), "the write of a must stay after the split maps"
+    rng = np.random.default_rng(0)
+    want = {name: rng.random(9) for name in "abc"}
+    got = copy.deepcopy(want)
+    reference(**want, N=9)
+    sdfg(**got, N=9)
+    for name in "abc":
+        assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
