@@ -481,7 +481,9 @@ class InterstateEdge:
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # As for the SDFG's own keys, an expression replaces uses only and never becomes an assignment target
+                if validate_name(str(new_name)):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
