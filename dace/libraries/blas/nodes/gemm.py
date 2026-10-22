@@ -597,6 +597,89 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandGemmPlanned(ExpandTransformation):
+    """OpenBLAS with a shape plan made at run time, the way a BLAS picks its kernel.
+
+    * A small ``M x N`` result over a long ``K`` splits ``K``: each thread multiplies one slice into a private
+      partial with a single-threaded call, and the partials are summed in slice order (deterministic). OpenBLAS
+      threads over ``M`` and ``N`` only, so a tall-skinny Gramian (``X.T @ W``) otherwise keeps few cores busy.
+    * The same operand on both sides (``X.T @ X``) multiplies each slice with ``syrk``, half the flops, and the
+      sum mirrors the triangle.
+    * Any other shape is one threaded ``gemm``.
+
+    Real types and compile-time coefficients only.
+    """
+
+    environments = [environments.openblas.OpenBLAS]
+
+    #: The shortest ``K`` slice a thread multiplies.
+    MIN_SLICE = 256
+    #: The largest result split: beyond it OpenBLAS's own ``M x N`` threading has the work.
+    MAX_SPLIT_RESULT = 128 * 128
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        dtype = adesc.dtype.base_type
+        if dtype not in (dace.float32, dace.float64) or _coeff_conn_descs(node, state, sdfg):
+            raise ValueError("the planned GEMM supports real types with compile-time coefficients only")
+        prefix = to_blastype(dtype.type).lower()
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, "1", "0", dtype.ctype, prefix + "gemm")
+        ctype = dtype.ctype
+        alpha, beta = f"{ctype}({node.alpha})", f"{ctype}({node.beta})"
+        # Column-major views: the first operand is M x K (K x M when transposed), the second K x N (N x K).
+        x_offset = "__k0" if opt["ta"] == "T" else f"__k0 * __lda"
+        y_offset = f"__k0 * __ldb" if opt["tb"] == "T" else "__k0"
+        ta = "CblasNoTrans" if opt["ta"] == "N" else "CblasTrans"
+        tb = "CblasNoTrans" if opt["tb"] == "N" else "CblasTrans"
+        # ``X X^T`` (``ta`` N, ``tb`` T) is syrk NoTrans; ``X^T X`` (``ta`` T, ``tb`` N) is syrk Trans.
+        gram = opt["ta"] != opt["tb"]
+        syrk_trans = "CblasTrans" if opt["ta"] == "T" else "CblasNoTrans"
+        keep = "" if node.beta == 0 else f" + {beta} * _c[__i + __j * __ldc]"
+        code = f"""
+const int64_t __m = {opt["M"]}, __n = {opt["N"]}, __k = {opt["K"]};
+const int64_t __lda = {opt["lda"]}, __ldb = {opt["ldb"]}, __ldc = {opt["ldc"]};
+const int64_t __slices = std::max<int64_t>(1, std::min<int64_t>(omp_get_max_threads(), __k / {ExpandGemmPlanned.MIN_SLICE}));
+if (__slices < 2 || __m * __n > {ExpandGemmPlanned.MAX_SPLIT_RESULT}) {{
+    cblas_{prefix}gemm(CblasColMajor, {ta}, {tb}, __m, __n, __k, {alpha}, {opt["x"]}, __lda, {opt["y"]}, __ldb, {beta},
+                 _c, __ldc);
+}} else {{
+    const bool __gram = {"true" if gram else "false"} && (const void*){opt["x"]} == (const void*){opt["y"]} && __lda == __ldb && __m == __n;
+    std::vector<{ctype}> __partial(__slices * __m * __n);
+    #pragma omp parallel for schedule(static)
+    for (int64_t __p = 0; __p < __slices; ++__p) {{
+        const int64_t __k0 = __k * __p / __slices, __k1 = __k * (__p + 1) / __slices;
+        {ctype}* __part = __partial.data() + __p * __m * __n;
+        if (__gram) {{
+            cblas_{prefix}syrk(CblasColMajor, CblasUpper, {syrk_trans}, __m, __k1 - __k0, {ctype}(1), {opt["x"]} + {x_offset},
+                        __lda, {ctype}(0), __part, __m);
+        }} else {{
+            cblas_{prefix}gemm(CblasColMajor, {ta}, {tb}, __m, __n, __k1 - __k0, {ctype}(1), {opt["x"]} + {x_offset}, __lda,
+                         {opt["y"]} + {y_offset}, __ldb, {ctype}(0), __part, __m);
+        }}
+    }}
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int64_t __j = 0; __j < __n; ++__j) {{
+        for (int64_t __i = 0; __i < __m; ++__i) {{
+            const int64_t __at = (__gram && __i > __j) ? __j + __i * __m : __i + __j * __m;
+            {ctype} __s = 0;
+            for (int64_t __p = 0; __p < __slices; ++__p) {{
+                __s += __partial[__p * __m * __n + __at];
+            }}
+            _c[__i + __j * __ldc] = {alpha} * __s{keep};
+        }}
+    }}
+}}
+"""
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
+
+
+@dace.library.expansion
 class ExpandGemmLIBXSMM(ExpandTransformation):
     """``libxsmm_?gemm``: a JIT-generated kernel for a small real GEMM, no per-call buffer allocation or threading
     (cp2k_grid_integrate's per-task contractions: OpenBLAS spends 41% in ``blas_memory_alloc``/``free`` there).
@@ -1045,6 +1128,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
         "LIBXSMM": ExpandGemmLIBXSMM,
+        "Planned": ExpandGemmPlanned,
         "cuBLAS": ExpandGemmCuBLAS,
         "CUDA (block strided)": ExpandGemmCUDABlock,
         "rocBLAS": ExpandGemmRocBLAS,

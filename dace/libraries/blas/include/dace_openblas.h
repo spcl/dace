@@ -1,6 +1,11 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
+#include <omp.h>
+
+#include <algorithm>
+#include <vector>
+
 // Weak, so a program linked against a BLAS without these OpenBLAS extensions (netlib through the distro
 // alternatives) still links; their addresses are then null.
 extern "C" {

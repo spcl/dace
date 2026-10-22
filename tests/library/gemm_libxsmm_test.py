@@ -54,7 +54,7 @@ def test_a_gemm_in_a_parallel_map_lowers_to_libxsmm(dtype, trans_a, beta):
 
 
 def test_a_top_level_gemm_keeps_openblas():
-    """A GEMM no parallel region encloses is one large threaded call: OpenBLAS, not LIBXSMM."""
+    """A GEMM no parallel region encloses is a threaded call: OpenBLAS with its shape plan, not LIBXSMM."""
     sdfg = dace.SDFG("libxsmm_top_level")
     sdfg.add_array("A", [64, 64], dace.float64)
     sdfg.add_array("X", [64, 64], dace.float64)
@@ -66,7 +66,7 @@ def test_a_top_level_gemm_keeps_openblas():
     state.add_edge(state.add_read("X"), None, gemm, "_b", dace.Memlet("X[0:64, 0:64]"))
     state.add_edge(gemm, "_c", state.add_write("C"), None, dace.Memlet("C[0:64, 0:64]"))
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
-    assert gemm.implementation == "OpenBLAS"
+    assert gemm.implementation == "Planned"
 
 
 if __name__ == "__main__":

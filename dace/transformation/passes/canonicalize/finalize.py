@@ -295,6 +295,19 @@ def canonicalize_set_fast_implementations(
         ):
             node.implementation = "LIBXSMM"
             continue
+        # A top-level real GEMM takes OpenBLAS with a run-time shape plan: split-K for a small result over a long
+        # reduction axis, syrk for ``X.T @ X`` (``ExpandGemmPlanned``).
+        if (
+            device == dtypes.DeviceType.CPU
+            and not sequential
+            and isinstance(node, Gemm)
+            and "Planned" in impls
+            and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
+            and not ({"_alpha", "_beta"} & set(node.in_connectors))
+            and openblas.OpenBLAS.is_installed()
+        ):
+            node.implementation = "Planned"
+            continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
         # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
         # of it, which is the right order: measured on an RTX 4050 at 8192x8192 float64, cuBLAS

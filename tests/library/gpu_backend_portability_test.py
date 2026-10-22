@@ -231,7 +231,7 @@ def test_a_host_tensor_contraction_reaches_openblas(monkeypatch) -> None:
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
     gemms = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, Gemm)]
     assert node.implementation == "TTGT", node.implementation
-    assert gemms and all(n.implementation == "OpenBLAS" for n in gemms), [n.implementation for n in gemms]
+    assert gemms and all(n.implementation == "Planned" for n in gemms), [n.implementation for n in gemms]
 
 
 @pytest.mark.parametrize("backend, env", [("cuda", cutensor.cuTensor), ("hip", hiptensor.hipTensor)])
