@@ -391,7 +391,7 @@ def test_finalize_never_selects_mkl_prefers_openblas():
     finalize_for_target(sdfg, "cpu", validate=False)
     lib_impls = [n.implementation for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
     assert "MKL" not in lib_impls, f"MKL must never be selected, got {lib_impls}"
-    assert "OpenBLAS" in lib_impls, f"large matmul should lower to OpenBLAS, got {lib_impls}"
+    assert "Planned" in lib_impls, f"large matmul should lower to OpenBLAS (its shape-planned call), got {lib_impls}"
 
 
 def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
