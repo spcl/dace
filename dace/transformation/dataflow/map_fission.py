@@ -8,7 +8,7 @@ from functools import reduce
 from dace import data as dt
 from dace import memlet as mm
 from dace import sdfg as sd
-from dace import subsets
+from dace import subsets, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes
@@ -109,6 +109,45 @@ class MapFission(transformation.SingleStateTransformation):
                         outputs.add(e.dst.data)
 
         return inputs & outputs
+
+    @staticmethod
+    def map_dimensions_lead(subset: subsets.Range, params: list[str]) -> bool:
+        """Whether a copy whose other end is a widened border transient still pairs its dimensions in order.
+
+        Fission prepends the map dimensions to the transient, so the other container's subset must index the map
+        parameters, one per dimension and in map order, before any other dimension longer than one element.
+        """
+        tags: list[str] = []
+        for dim, size in zip(subset.ranges, subset.size()):
+            used = [p for p in params if p in symbolic.symlist(list(dim))]
+            if len(used) > 1:
+                return False
+            if used:
+                tags.append(used[0])
+            elif size != 1:
+                tags.append("")
+        return tags[: len(params)] == params and all(tag == "" for tag in tags[len(params) :])
+
+    @staticmethod
+    def lifted_copies_keep_order(state, edges, top_level, borders, params: list[str], placed=None) -> bool:
+        """Whether every copy between a border transient and another container keeps its dimensions paired once the
+        transient is widened. ``edges`` are the candidate edges, ``top_level`` tells an endpoint outside the inner maps
+        (the map's own entry and exit lead to containers outside it), and ``placed(container, subset)`` gives the
+        subset fission leaves a container with (a nested-SDFG connector takes its outer memlet's dimensions)."""
+        for e in edges:
+            if e.data.is_empty() or not (top_level(e.src) and top_level(e.dst)):
+                continue
+            ends = [(e.src, e.data.get_src_subset), (e.dst, e.data.get_dst_subset)]
+            border = [n for n, _ in ends if isinstance(n, nodes.AccessNode) and n.data in borders]
+            if len(border) != 1 or isinstance(e.src, nodes.CodeNode) or isinstance(e.dst, nodes.CodeNode):
+                continue
+            ((other, subset_of),) = [(n, get) for n, get in ends if n is not border[0]]
+            subset = subset_of(e, state)
+            if subset is not None and placed is not None:
+                subset = placed(other.data, subset)
+            if subset is None or not MapFission.map_dimensions_lead(subset, params):
+                return False
+        return True
 
     @staticmethod
     def _outside_map(node, scope_dict, entry_nodes):
@@ -234,6 +273,37 @@ class MapFission(transformation.SingleStateTransformation):
                         if isinstance(e.dst, nodes.AccessNode):
                             if e.dst.data in not_subgraph:
                                 return False
+
+        # A copy between a border transient and another container leaves the new maps whole; widening the transient
+        # by the map dimensions in front must not pair them with other dimensions of that container
+        params = list(map_node.map.params)
+        if expr_index == 1:
+            outer = {e.dst_conn: e.data for e in graph.in_edges(self.nested_sdfg)}
+            outer |= {e.src_conn: e.data for e in graph.out_edges(self.nested_sdfg)}
+
+            def placed(name: str, subset: subsets.Range) -> subsets.Range:
+                if name not in outer or outer[name].is_empty():
+                    return subset
+                inner_desc, outer_desc = nsdfg_node.sdfg.arrays[name], sdfg.arrays[outer[name].data]
+                if inner_desc.is_equivalent(outer_desc):
+                    return subset
+                inner = mm.Memlet(data=name, subset=dcpy(subset))
+                inner.subset.offset(inner_desc.offset, False)
+                return helpers.unsqueeze_memlet(inner, outer[name]).subset
+
+            for sg in subgraphs:
+                scope = sg.scope_dict()
+                if not self.lifted_copies_keep_order(
+                    sg, sg.edges(), lambda n: scope[n] is None, border_arrays, params, placed
+                ):
+                    return False
+        else:
+            scope, map_exit = graph.scope_dict(), graph.exit_node(map_node)
+            edges = graph.scope_subgraph(map_node).edges()
+            if not self.lifted_copies_keep_order(
+                graph, edges, lambda n: n is map_node or n is map_exit or scope[n] is map_node, border_arrays, params
+            ):
+                return False
 
         return True
 
