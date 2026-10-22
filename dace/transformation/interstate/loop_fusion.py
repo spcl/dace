@@ -120,6 +120,12 @@ class LoopFusion(transformation.MultiStateTransformation):
         # for every other caller.
         if not allow_doall_fuse and (self._is_doall(sdfg, first) or self._is_doall(sdfg, second)):
             return False
+        # A known-parallel loop fuses with another only if that one is parallel too: fusing it with a sequential
+        # loop serializes iterations independent by construction.
+        if first.known_parallel != second.known_parallel:
+            other = second if first.known_parallel else first
+            if not self._is_doall(sdfg, other):
+                return False
         return self._fusion_legal(first, second, acc1, acc2)
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
@@ -128,8 +134,19 @@ class LoopFusion(transformation.MultiStateTransformation):
         # ids -- so reading `self.first` AFTER the merge can resolve the wrong node or raise
         # NodeNotFoundError. `first` survives the merge (only `second` is spliced out), so the reference
         # stays valid.
-        first = self.first
-        self._merge(sdfg, graph, first, self.second)
+        first, second = self.first, self.second
+        # Known-parallel survives only if both loops are parallel and each body's iteration touches only what the
+        # other's same iteration does.
+        keeps_parallel = (
+            (first.known_parallel or second.known_parallel)
+            and (first.known_parallel or self._is_doall(sdfg, first))
+            and (second.known_parallel or self._is_doall(sdfg, second))
+            and self._same_iteration_only(
+                first, second, required(self._body_accesses(first)), required(self._body_accesses(second))
+            )
+        )
+        self._merge(sdfg, graph, first, second)
+        first.known_parallel = keeps_parallel
         self._contract_localized_intermediates(sdfg, first)
 
     # legality kernel (shared source of truth; the FuseLoops pass calls this transformation)
@@ -375,6 +392,27 @@ class LoopFusion(transformation.MultiStateTransformation):
                 for wb in w2.get(arr, []):
                     if not self._same_point(wa, wb):
                         return False
+        return True
+
+    def _same_iteration_only(
+        self,
+        first: LoopRegion,
+        second: LoopRegion,
+        acc1: tuple[dict[str, list], dict[str, list]],
+        acc2: tuple[dict[str, list], dict[str, list]],
+    ) -> bool:
+        """Whether every access one body makes to a container the other writes hits the same point: the fused
+        iterations then stay as independent as the two loops' own were."""
+        r1, w1 = acc1
+        r2, w2 = acc2
+        if second.loop_variable and second.loop_variable != first.loop_variable:
+            r2 = self._rename_ivar(r2, second.loop_variable, first.loop_variable)
+            w2 = self._rename_ivar(w2, second.loop_variable, first.loop_variable)
+        for arr in (set(w1) & (set(r2) | set(w2))) | (set(w2) & set(r1)):
+            pairs = [(a, b) for a in w1.get(arr, []) for b in r2.get(arr, []) + w2.get(arr, [])]
+            pairs += [(a, b) for a in r1.get(arr, []) for b in w2.get(arr, [])]
+            if any(a is None or b is None or not self._same_point(a, b) for a, b in pairs):
+                return False
         return True
 
     @staticmethod

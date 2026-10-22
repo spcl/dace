@@ -34,7 +34,7 @@ from dace.frontend.python.common import (
 from dace.frontend.python.memlet_parser import MemletExpr, ParseMemlet, inner_eval_ast, parse_memlet
 from dace.memlet import Memlet
 from dace.properties import CodeBlock, LambdaProperty
-from dace.sdfg import SDFG, SDFGState, dealias, infer_types, nodes
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
 from dace.sdfg.propagation import (
     align_memlet,
     propagate_memlet,
@@ -478,7 +478,6 @@ def parse_dace_program(
             ProgramVisitor.progress_bar = None
             ProgramVisitor.start_time = 0
 
-    infer_types.sequentialize_carried_maps(sdfg)
     return sdfg
 
 

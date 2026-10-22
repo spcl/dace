@@ -4261,6 +4261,14 @@ class LoopRegion(ControlFlowRegion):
         "``if cond: parallel else: sequential`` specialization) and parallelizing passes "
         "(``LoopToMap`` / ``LoopToReduce``) must leave it as a loop.",
     )
+    known_parallel = Property(
+        dtype=bool,
+        default=False,
+        desc="If True, the iterations are independent by construction (a map lowered to this loop, or a piece of "
+        "one); ``LoopToMap`` lifts it without a dependence test. A pass that restructures the iteration space keeps "
+        "it only where independence provably survives (``LoopFusion``).",
+        serialize_if=lambda loop: loop.known_parallel,
+    )
 
     def __init__(
         self,

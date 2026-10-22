@@ -302,6 +302,8 @@ class FuseConsecutiveLoops(ppl.Pass):
         var = first.loop_variable
         new_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(second))) + 1)
         first.loop_condition = dace.properties.CodeBlock(f"{var} < ({symbolic.symstr(new_end_excl)})")
+        # Independent within each range says nothing across them (``A[i + K] = A[i]`` over ``[0, K)`` and ``[K, 2K)``).
+        first.known_parallel = False
 
         out_edges = list(cfg.out_edges(second))
         cfg.remove_node(second)  # also drops the ``first -> second`` link edge

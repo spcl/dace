@@ -1518,6 +1518,9 @@ class LoopToMap(xf.MultiStateTransformation):
                 if not permissive:
                     return refuse(f"loop body contains a {type(blk).__name__}")
 
+        # A map lowered to this loop: its iterations are independent by construction, so no conflict is tested.
+        permissive = permissive or self.loop.known_parallel
+
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):

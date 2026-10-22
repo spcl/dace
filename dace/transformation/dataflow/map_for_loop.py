@@ -4,7 +4,7 @@
 import copy
 
 import dace
-from dace import properties, symbolic
+from dace import dtypes, properties, symbolic
 from dace.data import Scalar, View
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -272,6 +272,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
             f"{loop_idx} = {replace_param(loop_from)}",
             f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
         )
+        loop_region.known_parallel = map_entry.map.schedule != dtypes.ScheduleType.Sequential
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)
         loop_region.add_node(nstate, is_start_block=True)
