@@ -160,6 +160,9 @@ def fold(sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode, counts: dict[str
     target = found.write.data
     if not same_layout(desc, sdfg.arrays[target]) or target in operand_names(state, node):
         return False
+    # Gemm (``cin``) reads the prior output through a connector; the others, Gemv included (its BLAS call takes
+    # ``_y`` as one in/out pointer), accumulate in place.
+    prior = "_c" if isinstance(node, blas.Gemm) and node.cin else None
 
     edge = view_edge if view_edge is not None else outs[0]
     state.remove_nodes_from(state.scope_subgraph(found.entry, include_entry=True, include_exit=True).nodes())
@@ -173,8 +176,6 @@ def fold(sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode, counts: dict[str
     if found.scale != 1:
         node.alpha = node.alpha * found.scale
     node.beta = 1
-    # Gemm (``cin``) and Gemv read the prior output through a connector; the others accumulate in place.
-    prior = "_c" if isinstance(node, blas.Gemm) and node.cin else "_y" if isinstance(node, blas.Gemv) else None
     if prior is not None:
         node.add_in_connector(prior, force=True)
         state.add_edge(found.read, None, node, prior, Memlet.from_array(target, sdfg.arrays[target]))
