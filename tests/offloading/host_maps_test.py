@@ -10,10 +10,10 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
-from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.sdfg.state import LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.host_maps import (
     find_host_maps,
     maps_pinned_by_host_loops,

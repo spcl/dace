@@ -8,9 +8,10 @@ import numpy as np
 from ordered_set import OrderedSet
 
 from dace import data, properties, symbolic
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 #: Per table: the state that fills it, and the fill tasklets with the index and value each writes.
 Fill = tuple[SDFGState, dict[nodes.Tasklet, tuple[int, object]]]

@@ -7,7 +7,7 @@ from ordered_set import OrderedSet
 
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.utils import get_view_node
 

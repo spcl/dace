@@ -15,8 +15,9 @@ placed on a path that does not need it:
 
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import dtypes
-from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -26,8 +27,6 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
 )
-
-import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading import twins
 from dace.transformation.passes.offloading.locations import Wants
 

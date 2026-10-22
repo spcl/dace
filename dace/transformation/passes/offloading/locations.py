@@ -5,11 +5,10 @@ from typing import NamedTuple
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes
-from dace.sdfg import nodes, SDFG, SDFGState
-from dace.sdfg.graph import MultiConnectorEdge
-
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import data, dtypes
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.graph import MultiConnectorEdge
 
 
 class Wants(NamedTuple):

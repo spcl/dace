@@ -5,14 +5,13 @@ from copy import deepcopy
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, Memlet
-from dace.sdfg import nodes, SDFG, SDFGState
+import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import Memlet, data, dtypes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
-
-import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
 def retype_single_elements(sdfg: SDFG, exceptions: OrderedSet[str]) -> OrderedSet[str]:

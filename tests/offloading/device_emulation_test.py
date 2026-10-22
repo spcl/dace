@@ -12,12 +12,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from shared_graphs import host_write_then_kernel_arm
 
 import dace
-from dace import dtypes, Memlet
+from dace import Memlet, dtypes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from shared_graphs import host_write_then_kernel_arm
 
 N = dace.symbol("N")
 LENGTH = 8

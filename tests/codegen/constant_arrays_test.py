@@ -2,9 +2,8 @@
 import numpy as np
 import pytest
 
-from dace.codegen import codegen
-
 import dace
+from dace.codegen import codegen
 
 
 def test_nsdfg_input():

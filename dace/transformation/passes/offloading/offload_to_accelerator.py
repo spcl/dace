@@ -3,21 +3,21 @@ from typing import Any
 
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import dtypes, properties
-from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, UnstructuredControlFlow
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
 from dace.transformation.passes.fold_constant_tables import FoldConstantTables
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, find_host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.locations import Locations, Wants
 from dace.transformation.passes.offloading.nested_bodies import host_level_nested_sdfgs, prepare_body
 from dace.transformation.passes.offloading.placement import Placement
 from dace.transformation.passes.offloading.single_element import retype_single_elements, single_element_copies_into_map
 from dace.transformation.passes.offloading.size1_wrappers import wrap_host_code
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @properties.make_properties
