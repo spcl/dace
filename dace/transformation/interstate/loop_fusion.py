@@ -49,7 +49,7 @@ from dace.sdfg.state import (
     SDFGState,
     SymbolResolver,
 )
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
@@ -409,28 +409,6 @@ class LoopFusion(transformation.MultiStateTransformation):
                         return False
         return True
 
-    @staticmethod
-    def _swept(sub, ivar: str, lo, hi) -> subsets.Range | None:
-        """The box ``sub`` covers as ``ivar`` runs over ``[lo, hi]``, for bounds affine in ``ivar`` with a constant
-        coefficient; ``None`` otherwise."""
-        if sub is None or lo is None or hi is None:
-            return None
-        itersym = symbolic.symbol(ivar)
-        ranges = []
-        for begin, end, step in sub.ndrange():
-            if step != 1:
-                return None
-            bounds = []
-            for bound, pick_low in ((begin, True), (end, False)):
-                expr = symbolic.pystr_to_symbolic(str(bound))
-                coeff = expr.diff(itersym)
-                if coeff.free_symbols or expr.diff(itersym, 2) != 0:
-                    return None
-                low, high = (lo, hi) if coeff >= 0 else (hi, lo)
-                bounds.append(expr.subs(itersym, low if pick_low else high))
-            ranges.append((bounds[0], bounds[1], 1))
-        return subsets.Range(ranges)
-
     def _same_iteration_only(
         self,
         first: LoopRegion,
@@ -459,7 +437,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         between them in either order. Asked inside the loop, where its range is nonempty."""
         ivar = loop.loop_variable
         lo, hi = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
-        sa, sb = self._swept(a, ivar, lo, hi), self._swept(b, ivar, lo, hi)
+        sa, sb = helpers.swept_range(a, ivar, lo, hi), helpers.swept_range(b, ivar, lo, hi)
         if sa is None or sb is None:
             return False
         return sa.intersects(sb, SymbolResolver().facts_at(loop)) is symbolic.Truth.FALSE

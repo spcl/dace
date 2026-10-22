@@ -3,6 +3,7 @@ import copy
 import itertools
 import warnings
 from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from typing import (
     Any,
 )
@@ -14,6 +15,7 @@ from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ReturnBlock, SymbolResolver
 from dace.sdfg.type_inference import infer_expr_type
+from dace.transformation import helpers
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
 
@@ -469,6 +471,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Two maps can be serially fused if the node decomposition exists and
         #  at least one of the intermediate output sets is not empty. The state
         #  of the pure outputs is irrelevant for serial Map fusion.
+        in_place = self.in_place_intermediates(
+            graph,
+            sdfg,
+            first_map_entry,
+            {e.dst.data for e in graph.out_edges(first_map_exit) if isinstance(e.dst, nodes.AccessNode)},
+            symbols.facts_at(graph, first_map_exit),
+        )
         output_partition = self.partition_first_outputs(
             state=graph,
             sdfg=sdfg,
@@ -476,6 +485,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             second_map_entry=second_map_entry,
             param_repl=param_repl,
             symbols=symbols,
+            in_place=in_place,
         )
         if output_partition is None:
             return False
@@ -492,9 +502,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # validation error. v1 splits only when every inner read AN of the
         # InOut name has ``in_degree == 0`` (the clean one-RMW-tasklet shape)
         # and refuses otherwise.
+        # One fused in place keeps its name, so it needs no split.
         intermediate_names = {
             e.dst.data for e in (exclusive_outputs | shared_outputs) if isinstance(e.dst, nodes.AccessNode)
-        }
+        } - in_place
         if intermediate_names:
             first_scope = graph.scope_subgraph(first_map_entry, include_entry=False, include_exit=False)
             for inner in first_scope.nodes():
@@ -645,12 +656,20 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Now compute the partition. Because we have already renamed the parameters
         #  of the second Map, there is no need to perform any renaming, thus we can
         #  pass an empty `dict`.
+        in_place = self.in_place_intermediates(
+            graph,
+            sdfg,
+            first_map_entry,
+            {e.dst.data for e in graph.out_edges(first_map_exit) if isinstance(e.dst, nodes.AccessNode)},
+            SymbolResolver().facts_at(graph, first_map_exit),
+        )
         output_partition = self.partition_first_outputs(
             state=graph,
             sdfg=sdfg,
             first_map_exit=first_map_exit,
             second_map_entry=second_map_entry,
             param_repl=dict(),
+            in_place=in_place,
         )
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
@@ -664,9 +683,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # If any intermediate's data name is shared with an InOut connector of a
         # NestedSDFG in the producer's body, split the connector so the standard
         # rename machinery below produces a valid InOut-free shape.
+        # One fused in place keeps its name, so it needs no split.
         intermediate_names = {
             e.dst.data for e in (exclusive_outputs | shared_outputs) if isinstance(e.dst, nodes.AccessNode)
-        }
+        } - in_place
         if intermediate_names:
             self._split_inout_for_intermediate(graph, sdfg, first_map_entry, intermediate_names, self.propagated_nsdfgs)
 
@@ -680,6 +700,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 second_map_entry=second_map_entry,
                 second_map_exit=second_map_exit,
                 is_exclusive_set=True,
+                in_place=in_place,
             )
         if len(shared_outputs) != 0:
             self.handle_intermediate_set(
@@ -690,6 +711,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 second_map_entry=second_map_entry,
                 second_map_exit=second_map_exit,
                 is_exclusive_set=False,
+                in_place=in_place,
             )
 
         assert pure_outputs == set(graph.out_edges(first_map_exit))
@@ -760,6 +782,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_entry: nodes.MapEntry,
         param_repl: dict[str, str],
         symbols: SymbolResolver | None = None,
+        in_place: AbstractSet[str] = frozenset(),
     ) -> (
         tuple[
             OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
@@ -907,7 +930,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # If the fused Map would create a new intermediate with symbolic size,
             #  dynamic memory allocation may be required. Prevent this unless the
             #  user explicitly opted in via `allow_intermediates_with_symbolic_size`.
-            if isinstance(intermediate_desc, dace.data.Array) and not self.allow_intermediates_with_symbolic_size:
+            # Fused in place, the intermediate is not reduced: what follows guards the reduced copy only.
+            reduced = intermediate_node.data not in in_place
+            if (
+                reduced
+                and isinstance(intermediate_desc, dace.data.Array)
+                and not self.allow_intermediates_with_symbolic_size
+            ):
                 if not all(str(dim).isdigit() for dim in reduced_inter_shape):
                     return None
 
@@ -948,7 +977,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 # If the fused Map would create a new intermediate with symbolic size,
                 #  dynamic memory allocation may be required. Prevent this unless the
                 #  user explicitly opted in via `allow_intermediates_with_symbolic_size`.
-                if isinstance(intermediate_desc, dace.data.Array) and not self.allow_intermediates_with_symbolic_size:
+                if (
+                    reduced
+                    and isinstance(intermediate_desc, dace.data.Array)
+                    and not self.allow_intermediates_with_symbolic_size
+                ):
                     if not all(str(dim).isdigit() for dim in reduced_inter_shape):
                         return None
 
@@ -964,7 +997,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  guard dead code and let a rank mismatch assert inside `apply()` instead).
                     final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
-                        if not self._check_if_nested_sdfg_can_be_handled(
+                        if reduced and not self._check_if_nested_sdfg_can_be_handled(
                             state=state,
                             sdfg=sdfg,
                             nsdfg=final_producer,
@@ -973,7 +1006,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                             outer_edge=final_producer_edge,
                         ):
                             return None
-                        if self._nsdfg_producer_carries_intermediate(
+                        if reduced and self._nsdfg_producer_carries_intermediate(
                             final_producer, final_producer_edge, intermediate_node, first_map_exit, sdfg
                         ):
                             return None
@@ -1224,6 +1257,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_entry: nodes.MapEntry,
         second_map_exit: nodes.MapExit,
         is_exclusive_set: bool,
+        in_place: AbstractSet[str] = frozenset(),
     ) -> None:
         """This function handles the intermediate sets.
 
@@ -1240,6 +1274,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param second_map_entry: The entry of the second Map.
         :param second_map_exit: The exit of the second Map.
         :param is_exclusive_set: If `True` `intermediate_outputs` is the exclusive set.
+        :param in_place: The intermediates fused in place: the fused body accesses the original container, which
+            survives as in shared mode.
 
         :note: Before the transformation the `state` does not have to be valid and
             after this function has run the state is (most likely) invalid.
@@ -1276,55 +1312,69 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if producer_subset is None:
                 raise NotImplementedError
 
-            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
-                producer_subset=producer_subset,
-                inter_desc=inter_desc,
-            )
-
-            # This is the name of the new "intermediate" node that we will create.
-            #  It will only have the shape `new_inter_shape` which is basically its
-            #  output within one Map iteration.
-            # NOTE: For exclusive intermediate data there is no name collision, but
-            #   for shared intermediate there _might_ be a name collision if the
-            #   intermediate could be used in another MapFusionVertical operation.
-            new_inter_name: str = f"__map_fusion_{inter_name}"
-
-            # Now generate the intermediate data container.
-            if len(new_inter_shape) == 0:
-                assert producer_subset.num_elements() == 1
-                is_scalar = True
-                new_inter_name, new_inter_desc = sdfg.add_scalar(
-                    new_inter_name,
-                    dtype=inter_desc.dtype,
-                    transient=True,
-                    find_new_name=True,
-                )
-
+            is_in_place = inter_name in in_place
+            if is_in_place:
+                new_inter_name, new_inter_desc, is_scalar = inter_name, inter_desc, False
+                new_inter_node = state.add_access(inter_name, copy.copy(inter_node.debuginfo))
             else:
-                is_scalar = False
-                new_inter_name, new_inter_desc = sdfg.add_transient(
-                    new_inter_name,
-                    shape=new_inter_shape,
-                    dtype=inter_desc.dtype,
-                    find_new_name=True,
+                (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
+                    producer_subset=producer_subset,
+                    inter_desc=inter_desc,
                 )
-            # We reuse the old debug information.
-            new_inter_node: nodes.AccessNode = state.add_access(new_inter_name, copy.copy(inter_node.debuginfo))
-            new_inter_desc: data.Data = sdfg.arrays[new_inter_name]
 
-            # Get the subset that defined into which part of the old intermediate
-            #  the old output edge wrote to. We need that to adjust the producer
-            #  Memlets, since they now write into the new (smaller) intermediate.
-            producer_offset = self.compute_offset_subset(
-                original_subset=producer_subset,
-                intermediate_desc=inter_desc,
-                map_params=map_params,
-                producer_offset=None,
-            )
+                # This is the name of the new "intermediate" node that we will create.
+                #  It will only have the shape `new_inter_shape` which is basically its
+                #  output within one Map iteration.
+                # NOTE: For exclusive intermediate data there is no name collision, but
+                #   for shared intermediate there _might_ be a name collision if the
+                #   intermediate could be used in another MapFusionVertical operation.
+                new_inter_name: str = f"__map_fusion_{inter_name}"
+
+                # Now generate the intermediate data container.
+                if len(new_inter_shape) == 0:
+                    assert producer_subset.num_elements() == 1
+                    is_scalar = True
+                    new_inter_name, new_inter_desc = sdfg.add_scalar(
+                        new_inter_name,
+                        dtype=inter_desc.dtype,
+                        transient=True,
+                        find_new_name=True,
+                    )
+
+                else:
+                    is_scalar = False
+                    new_inter_name, new_inter_desc = sdfg.add_transient(
+                        new_inter_name,
+                        shape=new_inter_shape,
+                        dtype=inter_desc.dtype,
+                        find_new_name=True,
+                    )
+                # We reuse the old debug information.
+                new_inter_node: nodes.AccessNode = state.add_access(new_inter_name, copy.copy(inter_node.debuginfo))
+                new_inter_desc: data.Data = sdfg.arrays[new_inter_name]
+
+                # Get the subset that defined into which part of the old intermediate
+                #  the old output edge wrote to. We need that to adjust the producer
+                #  Memlets, since they now write into the new (smaller) intermediate.
+                producer_offset = self.compute_offset_subset(
+                    original_subset=producer_subset,
+                    intermediate_desc=inter_desc,
+                    map_params=map_params,
+                    producer_offset=None,
+                )
 
             # Each producer keeps its own piece of the reduced intermediate; with a single one
             #  that piece is the whole of it.
             for pre_exit_edge in pre_exit_edges:
+                if is_in_place:
+                    state.add_edge(
+                        pre_exit_edge.src,
+                        pre_exit_edge.src_conn,
+                        new_inter_node,
+                        None,
+                        copy.deepcopy(pre_exit_edge.data),
+                    )
+                    continue
                 # Memlets have a lot of additional informations, to ensure that we get
                 #  all of them, we have to do it this way. The main reason for this is
                 #  to handle the case were the "Memlet reverse direction", i.e., `data`
@@ -1405,6 +1455,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 out_conn_name = "OUT_" + in_conn_name[3:]
 
                 for inner_edge in state.out_edges_by_connector(second_map_entry, out_conn_name):
+                    if is_in_place:
+                        state.remove_edge(inner_edge)
+                        state.add_edge(
+                            new_inter_node, None, inner_edge.dst, inner_edge.dst_conn, copy.deepcopy(inner_edge.data)
+                        )
+                        continue
                     # As for the producer side, we now read from a smaller array,
                     #  So we must offset them, we use the original edge for this.
                     assert inner_edge.data.src_subset is not None
@@ -1501,7 +1557,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 second_map_entry.remove_in_connector(in_conn_name)
                 second_map_entry.remove_out_connector(out_conn_name)
 
-            if is_exclusive_set:
+            if is_exclusive_set and not is_in_place:
                 # In exclusive mode the old intermediate node is no longer needed.
                 #  This will also remove `out_edge` from the SDFG.
                 assert state.degree(inter_node) == len(out_edges)
@@ -1533,7 +1589,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  the restored write covers the box they tile, not any single piece of it.
                 final_pre_exit_memlet = copy.deepcopy(pre_exit_edges[0].data)
                 final_pre_exit_memlet.subset = copy.deepcopy(producer_subset)
-                final_pre_exit_memlet.other_subset = subsets.Range.from_array(new_inter_desc)
+                final_pre_exit_memlet.other_subset = (
+                    copy.deepcopy(producer_subset) if is_in_place else subsets.Range.from_array(new_inter_desc)
+                )
 
                 new_pre_exit_conn = second_map_exit.next_connector()
                 state.add_edge(
@@ -1880,7 +1938,19 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 return True
             all_subsets: list[subsets.Subset] = read_subsets + write_subsets
             if not self.test_if_subsets_are_point_wise(all_subsets, facts):
-                return True
+                # A privatized copy would hide the first Map's own writes from its reads; the intermediate is then
+                #  fused in place, which needs no other iteration of the first Map to write what either Map reads.
+                second_reads = self.find_subsets(
+                    node=read_map_2[data_to_inspect],
+                    scope_node=second_map_entry,
+                    state=state,
+                    sdfg=sdfg,
+                    param_repl=param_repl,
+                )
+                if second_reads is None or not self.other_iterations_miss(
+                    first_map_entry.map, write_subsets, read_subsets + second_reads, facts
+                ):
+                    return True
             del all_subsets
 
         # If there is no intersection between the input and output data, then we can
@@ -1920,6 +1990,50 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # No read write dependency was found.
         return False
+
+    @staticmethod
+    def other_iterations_miss(
+        first_map: nodes.Map, writes: list[subsets.Subset], reads: list[subsets.Subset], facts: symbolic.Facts
+    ) -> bool:
+        """Whether ``writes``, swept over every iteration of ``first_map`` other than the current one, intersect none
+        of ``reads`` of the current one. An iteration is another one if some parameter differs: that parameter is swept
+        below and above its current value, the others over their whole range."""
+        if any(not isinstance(subset, subsets.Range) for subset in writes + reads):
+            return False
+        params = [(param, begin, end) for param, (begin, end, step) in zip(first_map.params, first_map.range)]
+        if any(step != 1 for _, _, step in first_map.range):
+            return False
+        for param, begin, end in params:
+            here = symbolic.symbol(param)
+            for lo, hi in ((begin, here - 1), (here + 1, end)):
+                for write in writes:
+                    swept = helpers.swept_range(write, param, lo, hi)
+                    for other, other_begin, other_end in params:
+                        if other != param:
+                            swept = helpers.swept_range(swept, other, other_begin, other_end)
+                    if swept is None:
+                        return False
+                    if any(swept.intersects(read, facts) is not symbolic.Truth.FALSE for read in reads):
+                        return False
+        return True
+
+    def in_place_intermediates(
+        self, state: SDFGState, sdfg: SDFG, first_map_entry: nodes.MapEntry, names: set[str], facts: symbolic.Facts
+    ) -> set[str]:
+        """The intermediates of ``names`` the first Map reads and writes other than point-wise: they are fused in
+        place, see ``has_read_write_dependency()``."""
+        first_map_exit = state.exit_node(first_map_entry)
+        reads = {node.data: node for node in self.get_access_set(first_map_entry, state)}
+        writes = {node.data: node for node in self.get_access_set(first_map_exit, state)}
+        in_place = set()
+        for name in names & reads.keys() & writes.keys():
+            accessed = [
+                self.find_subsets(node=node, scope_node=scope_node, state=state, sdfg=sdfg, param_repl=None)
+                for node, scope_node in ((reads[name], first_map_entry), (writes[name], first_map_exit))
+            ]
+            if None in accessed or not self.test_if_subsets_are_point_wise(accessed[0] + accessed[1], facts):
+                in_place.add(name)
+        return in_place
 
     def test_if_subsets_are_point_wise(self, subsets_to_check: list[subsets.Subset], facts: symbolic.Facts) -> bool:
         """Point wise means that they are all the same.

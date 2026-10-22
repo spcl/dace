@@ -1600,6 +1600,28 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
+def swept_range(sub: subsets.Range | None, ivar: str, lo, hi) -> subsets.Range | None:
+    """The box ``sub`` covers as ``ivar`` runs over ``[lo, hi]``, for bounds affine in ``ivar`` with a constant
+    coefficient; ``None`` otherwise."""
+    if sub is None or lo is None or hi is None:
+        return None
+    itersym = symbolic.symbol(ivar)
+    ranges = []
+    for begin, end, step in sub.ndrange():
+        if step != 1:
+            return None
+        bounds = []
+        for bound, pick_low in ((begin, True), (end, False)):
+            expr = symbolic.pystr_to_symbolic(str(bound))
+            coeff = expr.diff(itersym)
+            if coeff.free_symbols or expr.diff(itersym, 2) != 0:
+                return None
+            low, high = (lo, hi) if coeff >= 0 else (hi, lo)
+            bounds.append(expr.subs(itersym, low if pick_low else high))
+        ranges.append((bounds[0], bounds[1], 1))
+    return subsets.Range(ranges)
+
+
 def offset_map(state: SDFGState, entry: nodes.MapEntry, dim: int, offset: symbolic.SymbolicType, negative: bool = True):
     """
     Offsets a map parameter and its contents by a value.
