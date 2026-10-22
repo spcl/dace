@@ -77,6 +77,7 @@ from dace.transformation.passes.specialize_small_gemms import (
     SpecializeSmallGemms,
     matmul_extents_small,
 )
+from dace.transformation.passes.transient_reuse import TransientReuse
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {"cpu": dtypes.DeviceType.CPU, "gpu": dtypes.DeviceType.GPU}
@@ -924,6 +925,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
         explicit_accumulating_copies(sdfg)
     infer_types.infer_connector_types(sdfg)
     finalize_transient_storage(sdfg, device)
+    # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name.
+    TransientReuse().apply_pass(sdfg, {})
 
     # Open the OpenMP team once per sequential loop rather than once per trip. It runs HERE, at the
     # very end, and not in the ``cpu_specialize`` band, because the step above is what decides which
