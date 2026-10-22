@@ -428,7 +428,11 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     # warned uninitialized-transient read into a silent one). Non-transients are exempt: their
     # definition is the caller.
     for candidate in list(candidates):
-        if sdfg.arrays[candidate].transient and candidate not in candidates_seen and candidate not in interstate_assigned:
+        if (
+            sdfg.arrays[candidate].transient
+            and candidate not in candidates_seen
+            and candidate not in interstate_assigned
+        ):
             candidates.remove(candidate)
 
     return candidates

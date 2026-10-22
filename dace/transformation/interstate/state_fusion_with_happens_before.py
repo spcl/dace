@@ -813,8 +813,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     if _ordered_by_existing_dataflow(consumers, we):
                         continue
                     if any(
-                        subsets.intersects(wsub, rs, facts) is not Truth.FALSE
-                        for rs in first_read_subsets[wnode.data]
+                        subsets.intersects(wsub, rs, facts) is not Truth.FALSE for rs in first_read_subsets[wnode.data]
                     ):
                         # The anti-dependency is on the READ ITSELF, which happens at the
                         # reader's CONSUMER (the tasklet / map that reads through the access
