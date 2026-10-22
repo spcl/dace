@@ -10,6 +10,7 @@ workspace holds it (:func:`dace.codegen.cpf.plan_workspace`).
 """
 
 import re
+import subprocess
 
 import numpy as np
 import pytest
@@ -99,3 +100,22 @@ if __name__ == "__main__":
     test_without_a_workspace_the_buffer_is_one_static_allocation("c")
     test_with_a_workspace_the_buffer_lives_in_it("c++")
     test_with_a_workspace_the_buffer_lives_in_it("c")
+
+
+def test_two_units_of_one_library_each_release_their_own_buffer(tmp_path):
+    """A GPU kernel's host and device units both hold ``__cpf_persistent_buf``. A named guard class gave its
+    destructor external (weak) linkage, so the linker kept ONE for both guards and unloading freed one unit's buffer
+    twice (``free(): double free``). Each unit's guard destructor must stay local to the unit."""
+    units = []
+    for name in ("cpf_persistent_host_unit", "cpf_persistent_device_unit"):
+        unit = tmp_path / f"{name}.cpp"
+        unit.write_text(render(persistent_sdfg(name), language="c++").code)
+        units.append(str(unit))
+    library = tmp_path / "libtwo_units.so"
+    subprocess.run(["g++", "-std=c++20", "-fopenmp", "-fPIC", "-shared", *units, "-o", str(library)], check=True)
+
+    symbols = subprocess.run(["nm", "-C", str(library)], capture_output=True, text=True, check=True).stdout
+
+    destructors = [line for line in symbols.splitlines() if "__cpf_persistent_buf_release_t::~" in line]
+    assert all(line.split()[1] == "t" for line in destructors), destructors
+    assert len({line.split()[0] for line in destructors}) >= 2, "each unit keeps a destructor of its own"
