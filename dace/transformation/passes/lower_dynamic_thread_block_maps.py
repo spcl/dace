@@ -8,6 +8,7 @@ from ordered_set import OrderedSet
 import dace
 from dace import SDFG, config, dtypes, properties, symbolic
 from dace.codegen import common
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
@@ -27,6 +28,8 @@ from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
 #: Prefix of the containers and symbols the lowering adds
 PREFIX = "__dace_dynmap"
+#: The shared state of the queue of a kernel
+QUEUE_STATE = f"{PREFIX}_state"
 
 
 def queue_state_elements(fine_grained: bool, block_size: int) -> int:
@@ -53,6 +56,13 @@ def has_dynamic_map(block: ControlFlowBlock) -> bool:
         or (isinstance(node, nodes.NestedSDFG) and any(has_dynamic_map(b) for b in node.sdfg.nodes()))
         for node in block.nodes()
     )
+
+
+def add_sync(region: ControlFlowRegion, label: str, scope: SyncScope) -> SDFGState:
+    """A state of ``region`` that holds only a barrier of ``scope``."""
+    state = region.add_state(label)
+    state.add_node(Sync(label, scope=scope))
+    return state
 
 
 def guard_block(region: ControlFlowRegion, block: ControlFlowBlock, condition: str) -> ConditionalBlock:
@@ -93,7 +103,10 @@ class LowerDynamicThreadBlockMaps(ppl.Pass):
     iteration. Each dynamic map becomes a nested SDFG in which every thread opens its range of iterations
     (``dace::DynamicMap::begin``, an empty range out of bounds) and then runs the batches the queue hands it in block,
     warp and thread rounds, each through a sequential copy of the map, with the parameter of the thread that owns the
-    batch. The queue's state is a ``GPU_Shared`` array, the per-thread cursor an opaque register.
+    batch. The barriers between the steps of the queue are :class:`~dace.libraries.standard.nodes.sync.Sync` nodes.
+    The queue's state is one ``GPU_Shared`` array per kernel, which its dynamic maps share one after the other, the
+    per-thread cursor an opaque register. In a ``GPU_Persistent`` kernel, the ``GPU_Device`` maps nested in it that
+    contain dynamic maps are lowered as kernels.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -121,8 +134,37 @@ class LowerDynamicThreadBlockMaps(ppl.Pass):
 
     def lower_kernel(self, sdfg: SDFG, state: SDFGState, kernel: nodes.MapEntry) -> int:
         """Gives the kernel a thread-block map and lowers its dynamic maps; returns how many."""
+        if kernel.map.schedule == dtypes.ScheduleType.GPU_Persistent:
+            # Each block runs the nested device maps in a grid-stride loop of its own, which a thread-block map spreads
+            # over its threads like the blocks of a kernel
+            devices = [
+                n
+                for n in state.scope_children()[kernel]
+                if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+            ]
+            lowered = 0
+            for device in devices:
+                lowered += self.lower_device_map(sdfg, state, device)
+            if any(
+                is_dynamic_map(n)
+                or (isinstance(n, nodes.NestedSDFG) and any(has_dynamic_map(b) for b in n.sdfg.nodes()))
+                for n in state.scope_subgraph(kernel).nodes()
+            ):
+                raise NotImplementedError(
+                    f"Dynamic thread-block maps in {kernel.map.label} are not nested in one of its device maps"
+                )
+            return lowered
         if kernel.map.schedule != dtypes.ScheduleType.GPU_Device:
             raise NotImplementedError(f"Dynamic thread-block maps in {kernel.map.schedule} kernels are unsupported")
+        return self.lower_device_map(sdfg, state, kernel)
+
+    def lower_device_map(self, sdfg: SDFG, state: SDFGState, kernel: nodes.MapEntry) -> int:
+        """Gives the device map ``kernel`` a thread-block map and lowers its dynamic maps; returns how many."""
+        if not any(
+            is_dynamic_map(n) or (isinstance(n, nodes.NestedSDFG) and any(has_dynamic_map(b) for b in n.sdfg.nodes()))
+            for n in state.scope_subgraph(kernel).nodes()
+        ):
+            return 0
         block_dims = gpu_helpers.dynamic_map_block_dims()
         if any(dim != 1 for dim in block_dims[1:]):
             raise NotImplementedError("Dynamic thread-block maps only support one-dimensional thread blocks")
@@ -163,7 +205,16 @@ class LowerDynamicThreadBlockMaps(ppl.Pass):
             if name not in threads.sdfg.symbols:
                 threads.sdfg.add_symbol(name, defined[name])
             threads.symbol_mapping.setdefault(name, name)
-        lowering = _KernelLowering(guard, param, queue, queue_state_elements(fine_grained, block_size), index_type)
+        # The queue's state, which the dynamic maps of the kernel share one after the other
+        threads.sdfg.add_array(
+            QUEUE_STATE,
+            [queue_state_elements(fine_grained, block_size)],
+            index_type,
+            storage=dtypes.StorageType.GPU_Shared,
+            transient=True,
+        )
+        listed = fine_grained and common.get_gpu_backend() != "hip"
+        lowering = _KernelLowering(guard, param, queue, listed, index_type)
         lowering.lower_region(threads.sdfg)
         propagation.propagate_memlets_state(sdfg, state)
         return lowering.lowered
@@ -172,7 +223,7 @@ class LowerDynamicThreadBlockMaps(ppl.Pass):
 class _KernelLowering:
     """Lowers the dynamic maps below the thread-block map of one kernel."""
 
-    def __init__(self, guard: str, param: str, queue: str, queue_elements: int, index_type: dtypes.typeclass) -> None:
+    def __init__(self, guard: str, param: str, queue: str, listed: bool, index_type: dtypes.typeclass) -> None:
         #: The condition selecting the threads of in-bounds iterations, over ``param`` and symbols of the kernel
         self.guard = guard
         self.guard_names = {str(s) for s in symbolic.pystr_to_symbolic(guard).free_symbols}
@@ -180,7 +231,8 @@ class _KernelLowering:
         self.param = param
         #: The ``dace::DynamicMap`` instantiation
         self.queue = queue
-        self.queue_elements = queue_elements
+        #: Whether the warps list their remaining items in the shared state (fine-grained on CUDA)
+        self.listed = listed
         self.index_type = index_type
         self.lowered = 0
 
@@ -206,21 +258,29 @@ class _KernelLowering:
     def lower_state(self, state: SDFGState) -> None:
         """Lowers the dynamic maps of ``state``, then splits it so that what the dynamic maps need runs guarded."""
         collective: list[nodes.NestedSDFG] = []
-        for entry in [n for n in state.nodes() if is_dynamic_map(n)]:
-            if state.entry_node(entry) is not None:
-                raise NotImplementedError(f"The dynamic map {entry.map.label} is nested in another scope")
-            collective.append(self.lower_dynamic_map(state, entry))
-        for node in state.nodes():
-            if (
-                isinstance(node, nodes.NestedSDFG)
-                and node not in collective
-                and any(has_dynamic_map(b) for b in node.sdfg.nodes())
-            ):
+        for node in list(sdutil.dfs_topological_sort(state)):
+            if is_dynamic_map(node):
+                if state.entry_node(node) is not None:
+                    raise NotImplementedError(f"The dynamic map {node.map.label} is nested in another scope")
+                collective.append(self.lower_dynamic_map(state, node))
+            elif isinstance(node, nodes.NestedSDFG) and any(has_dynamic_map(b) for b in node.sdfg.nodes()):
                 if state.entry_node(node) is not None:
                     raise NotImplementedError(f"The dynamic maps in {node.label} are nested in another scope")
                 forward_symbols(state, node, self.guard_names)
+                desc = copy.deepcopy(state.sdfg.arrays[QUEUE_STATE])
+                desc.transient = False
+                node.sdfg.add_datadesc(QUEUE_STATE, desc)
                 self.lower_region(node.sdfg)
                 collective.append(node)
+        # The collective nodes take turns on the queue's state
+        previous = None
+        for node in collective:
+            node.add_in_connector(QUEUE_STATE, force=True)
+            node.add_out_connector(QUEUE_STATE, force=True)
+            memlet = Memlet.from_array(QUEUE_STATE, state.sdfg.arrays[QUEUE_STATE])
+            state.add_edge(previous or state.add_access(QUEUE_STATE), None, node, QUEUE_STATE, copy.deepcopy(memlet))
+            previous = state.add_access(QUEUE_STATE)
+            state.add_edge(node, QUEUE_STATE, previous, None, memlet)
         self.split_state(state, collective)
 
     def split_state(self, state: SDFGState, collective: list[nodes.NestedSDFG]) -> None:
@@ -289,7 +349,8 @@ class _KernelLowering:
         for name in moved:
             lowered.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
 
-        names = {key: f"{PREFIX}_{key}" for key in ("lo", "hi", "state", "cursor", "src", "first", "count", "stride")}
+        names = {key: f"{PREFIX}_{key}" for key in ("lo", "hi", "cursor", "src", "first", "count", "stride")}
+        names["state"] = QUEUE_STATE
         symbols = {key: f"{PREFIX}_{key}_sym" for key in ("more", "first", "count", "stride")}
         owner = f"{PREFIX}_owner"
         register = dtypes.StorageType.Register
@@ -300,13 +361,9 @@ class _KernelLowering:
         lowered.add_scalar(
             names["cursor"], dtypes.opaque(f"{self.queue}::cursor_type"), storage=register, transient=True
         )
-        lowered.add_array(
-            names["state"],
-            [self.queue_elements],
-            self.index_type,
-            storage=dtypes.StorageType.GPU_Shared,
-            transient=True,
-        )
+        queue_desc = copy.deepcopy(sdfg.arrays[QUEUE_STATE])
+        queue_desc.transient = False
+        lowered.add_datadesc(QUEUE_STATE, queue_desc)
         queue_state = Memlet.from_array(names["state"], lowered.arrays[names["state"]])
         shared = f"*reinterpret_cast<{self.queue}::shared_type *>(__state)"
 
@@ -336,14 +393,17 @@ class _KernelLowering:
             "begin",
             {"__lo", "__hi", "__state"},
             {"__cursor"},
-            f"__cursor = {self.queue}::begin({shared}, __lo, __hi, {self.param});",
+            f"__cursor = {self.queue}::open(__lo, __hi, {self.param});\n{self.queue}::reset({shared});",
             language=dtypes.Language.CPP,
+            side_effects=True,
         )
         opening.add_edge(opening.add_read(names["lo"]), None, tasklet, "__lo", Memlet(f"{names['lo']}[0]"))
         opening.add_edge(opening.add_read(names["hi"]), None, tasklet, "__hi", Memlet(f"{names['hi']}[0]"))
         opening.add_edge(opening.add_access(names["state"]), None, tasklet, "__state", copy.deepcopy(queue_state))
         opening.add_edge(tasklet, "__cursor", opening.add_write(names["cursor"]), None, Memlet(f"{names['cursor']}[0]"))
         lowered.add_edge(bounds_guard, opening, dace.InterstateEdge())
+        previous = add_sync(lowered, "begin_sync", SyncScope.BLOCK)
+        lowered.add_edge(opening, previous, dace.InterstateEdge())
 
         # The rounds of each phase of the queue: in each, every thread receives a strided batch of the iterations of
         # one owner, which the map runs sequentially, with the parameter and dynamic inputs of that owner. Each phase
@@ -357,9 +417,94 @@ class _KernelLowering:
         batch = dace.SDFGState("batch", sdfg=lowered)
         self.move_scope(state, entry, exit_, batch)
         batch.replace(self.param, owner)
-        previous = opening
+        batch_symbols = {symbols[key]: names[key] for key in ("first", "count", "stride")}
+        batch_symbols[owner] = names["src"]
+
+        def step_state(region: ControlFlowRegion, label: str, code: str, outputs: tuple[str, ...]) -> SDFGState:
+            """A state of ``region`` that runs ``code`` of the queue on the cursor and the shared state."""
+            step_state = region.add_state(label)
+            tasklet = step_state.add_tasklet(
+                label,
+                {"__cursor_in", "__state"},
+                {f"__{key}" for key in outputs},
+                code,
+                language=dtypes.Language.CPP,
+                side_effects=True,
+            )
+            step_state.add_edge(
+                step_state.add_access(names["state"]), None, tasklet, "__state", copy.deepcopy(queue_state)
+            )
+            step_state.add_edge(
+                step_state.add_read(names["cursor"]), None, tasklet, "__cursor_in", Memlet(f"{names['cursor']}[0]")
+            )
+            for key in outputs:
+                step_state.add_edge(
+                    tasklet, f"__{key}", step_state.add_write(names[key]), None, Memlet(f"{names[key]}[0]")
+                )
+            return step_state
+
+        def run_batch(region: ControlFlowRegion, phase: str, copied: bool) -> ConditionalBlock:
+            """A conditional block of ``region`` that runs the batch of the thread, if it has one."""
+            work_region = ControlFlowRegion(f"{phase}_batch_region", sdfg=lowered)
+            work = ConditionalBlock(f"{phase}_batch", sdfg=lowered, parent=region)
+            work.add_branch(CodeBlock(f"{symbols['count']} > 0"), work_region)
+            region.add_node(work)
+            phase_batch = copy.deepcopy(batch) if copied else batch
+            phase_batch.label = f"{phase}_batch"
+            work_region.add_node(phase_batch, is_start_block=True)
+            propagation.propagate_memlets_state(lowered, phase_batch)
+            return work
+
+        def add_loop(label: str) -> LoopRegion:
+            nonlocal previous
+            loop = LoopRegion(f"{entry.map.label}_{label}", condition_expr=symbols["more"], inverted=True, sdfg=lowered)
+            lowered.add_node(loop)
+            lowered.add_edge(previous, loop, dace.InterstateEdge())
+            previous = loop
+            return loop
+
+        def add_lowered_sync(label: str, scope: SyncScope) -> None:
+            nonlocal previous
+            sync = add_sync(lowered, label, scope)
+            lowered.add_edge(previous, sync, dace.InterstateEdge())
+            previous = sync
+
+        # Block rounds: the threads with a range of a block elect one, which publishes it to the block
+        loop = add_loop("block_rounds")
+        elect = step_state(loop, "block_elect", f"{self.queue}::block_elect({shared}, __cursor_in);", ())
+        loop.start_block = loop.node_id(elect)
+        elect_sync = add_sync(loop, "block_elect_sync", SyncScope.BLOCK)
+        loop.add_edge(elect, elect_sync, dace.InterstateEdge())
+        claim = step_state(
+            loop,
+            "block_claim",
+            f"__cursor = __cursor_in;\n__more = {self.queue}::block_claim({shared}, __cursor);",
+            ("cursor", "more"),
+        )
+        loop.add_edge(elect_sync, claim, dace.InterstateEdge())
+        taking = ControlFlowRegion("block_take_region", sdfg=lowered)
+        take_block = ConditionalBlock("block_take", sdfg=lowered, parent=loop)
+        take_block.add_branch(CodeBlock(symbols["more"]), taking)
+        loop.add_node(take_block)
+        loop.add_edge(claim, take_block, dace.InterstateEdge(assignments={symbols["more"]: names["more"]}))
+        claim_sync = add_sync(taking, "block_claim_sync", SyncScope.BLOCK)
+        taking.start_block = taking.node_id(claim_sync)
+        take = step_state(
+            taking,
+            "block_take",
+            f"__cursor = __cursor_in;\n{self.queue}::block_take({shared}, __cursor, __src, __first, __count, __stride);",
+            ("cursor", "src", "first", "count", "stride"),
+        )
+        taking.add_edge(claim_sync, take, dace.InterstateEdge())
+        take_sync = add_sync(taking, "block_take_sync", SyncScope.BLOCK)
+        taking.add_edge(take, take_sync, dace.InterstateEdge(assignments=dict(batch_symbols)))
+        taking.add_edge(take_sync, run_batch(taking, "block", copied=True), dace.InterstateEdge())
+        if self.listed:
+            # The lists of the warps overlap the range of the block rounds
+            add_lowered_sync("block_rounds_sync", SyncScope.BLOCK)
+
+        # Warp rounds, then the remaining iterations, in thread rounds
         rounds = (
-            ("block", f"__more = {self.queue}::block_round({shared}, __cursor, __src, __first, __count, __stride);"),
             ("warp", f"__more = {self.queue}::warp_round({shared}, __cursor, __src, __first, __count, __stride);"),
             (
                 "thread",
@@ -367,49 +512,33 @@ class _KernelLowering:
             ),
         )
         for phase, call in rounds:
-            loop = LoopRegion(
-                f"{entry.map.label}_{phase}_rounds", condition_expr=symbols["more"], inverted=True, sdfg=lowered
-            )
-            lowered.add_node(loop)
-            lowered.add_edge(previous, loop, dace.InterstateEdge())
-            previous = loop
-            round_state = loop.add_state(f"{phase}_round", is_start_block=True)
-            outputs_of_round = ("cursor", "src", "first", "count", "stride", "more")
-            inputs_of_round = {"__cursor_in", "__state"}
-            tasklet = round_state.add_tasklet(
+            loop = add_loop(f"{phase}_rounds")
+            round_state = step_state(
+                loop,
                 f"{phase}_round",
-                inputs_of_round,
-                {f"__{key}" for key in outputs_of_round},
                 f"__cursor = __cursor_in;\n{call}",
-                language=dtypes.Language.CPP,
+                ("cursor", "src", "first", "count", "stride", "more"),
             )
-            round_state.add_edge(
-                round_state.add_access(names["state"]), None, tasklet, "__state", copy.deepcopy(queue_state)
+            loop.start_block = loop.node_id(round_state)
+            assignments = dict(batch_symbols)
+            assignments[symbols["more"]] = names["more"]
+            loop.add_edge(
+                round_state,
+                run_batch(loop, phase, copied=phase != "thread"),
+                dace.InterstateEdge(assignments=assignments),
             )
-            round_state.add_edge(
-                round_state.add_read(names["cursor"]), None, tasklet, "__cursor_in", Memlet(f"{names['cursor']}[0]")
-            )
-            for key in outputs_of_round:
-                round_state.add_edge(
-                    tasklet, f"__{key}", round_state.add_write(names[key]), None, Memlet(f"{names[key]}[0]")
-                )
-            work_region = ControlFlowRegion(f"{phase}_batch_region", sdfg=lowered)
-            work = ConditionalBlock(f"{phase}_batch", sdfg=lowered, parent=loop)
-            work.add_branch(CodeBlock(f"{symbols['count']} > 0"), work_region)
-            loop.add_node(work)
-            assignments = {symbols[key]: names[key] for key in ("more", "first", "count", "stride")}
-            assignments[owner] = names["src"]
-            loop.add_edge(round_state, work, dace.InterstateEdge(assignments=assignments))
-            phase_batch = copy.deepcopy(batch) if phase != "thread" else batch
-            phase_batch.label = f"{phase}_batch"
-            work_region.add_node(phase_batch, is_start_block=True)
-            propagation.propagate_memlets_state(lowered, phase_batch)
+            if self.listed and phase == "warp":
+                # The lists of the warp are written before the thread rounds read them
+                add_lowered_sync("warp_rounds_sync", SyncScope.WARP)
+        if self.listed:
+            # The next dynamic map of the kernel resets the state, which the lists overlap
+            add_lowered_sync("thread_rounds_sync", SyncScope.BLOCK)
         # The copies of the map hold copies of its nested SDFGs
         sdutil.set_nested_sdfg_parent_references(lowered)
 
         # Replace the map scope with the nested SDFG
-        input_names = OrderedSet(e.data.data for e in dynamic_inputs + inputs)
-        output_names = OrderedSet(e.data.data for e in outputs)
+        input_names = OrderedSet(e.data.data for e in dynamic_inputs + inputs) | {QUEUE_STATE}
+        output_names = OrderedSet(e.data.data for e in outputs) | {QUEUE_STATE}
         symbol_mapping = {}
         for name in sorted(lowered.free_symbols | {self.param}):
             if name in defined:

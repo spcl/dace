@@ -233,7 +233,7 @@ def test_dynamic_map(step: int):
     # The queue, its shared state (fine-grained: two lists of 32 * 32 indices per warp) and the batches of the
     # dynamic map all take the 64-bit index type
     assert "__shared__ int64_t __dace_dynmap_state[4096];" in code
-    assert "dace::DynamicMap<true, 64, 32, int64_t>::block_round(" in code
+    assert "dace::DynamicMap<true, 64, 32, int64_t>::block_claim(" in code
     if step == 1:
         assert "for (int64_t j = __dace_dynmap_first_sym;" in code
     else:
@@ -264,7 +264,7 @@ def test_dynamic_map_default_types():
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = _cuda_code(sdfg)
     assert "__shared__ int __dace_dynmap_state[8192];" in code
-    assert "dace::DynamicMap<true, 128, 32, int>::block_round(" in code
+    assert "dace::DynamicMap<true, 128, 32, int>::block_claim(" in code
 
 
 def test_chiplet_distribution():
