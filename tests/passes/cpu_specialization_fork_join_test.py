@@ -533,6 +533,17 @@ def test_a_re_entered_copy_out_of_a_stack_array_is_sequential():
     assert node.schedule == dtypes.ScheduleType.Sequential
 
 
+def test_a_small_copy_out_of_a_host_stack_array_is_one_memcpy():
+    """Copy selection reads a host-level ``Register`` array as host memory too, as the transfer pass does."""
+    from dace.libraries.standard.nodes.copy.select import select_copy_implementation
+
+    sdfg, node = transfer_sdfg("copy_from_stack_top_level", None, "copy", subset="0:8")
+    sdfg.arrays["src"].transient = True
+    sdfg.arrays["src"].storage = dtypes.StorageType.Register
+    state = next(iter(sdfg.states()))
+    assert select_copy_implementation(node, state) == "MemcpyCPU"
+
+
 @pytest.mark.parametrize("kind", ["copy", "memset"])
 def test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it(kind):
     """bicgstab's per-iteration ``N``-element memsets: every entry is the same size, so the entry count cancels

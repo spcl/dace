@@ -4,7 +4,7 @@
 from typing import TYPE_CHECKING
 
 from dace import dtypes, library, nodes, properties
-from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, CURRENT_STREAM_NAME
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, host_storages
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 
 if TYPE_CHECKING:
@@ -125,7 +125,7 @@ class CopyLibraryNode(nodes.LibraryNode):
 
         # Two host storages differ only in the allocator, so a plain memcpy between them is correct;
         # only a CPU/GPU (or other target-specific) pairing genuinely needs a different expansion.
-        host_pair = {inp.storage, out.storage} <= (CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default})
+        host_pair = {inp.storage, out.storage} <= host_storages(self, state)
         if not allow_cross_storage and inp.storage != out.storage and not host_pair:
             raise ValueError(
                 f"Input and output storage types must match for this expansion "

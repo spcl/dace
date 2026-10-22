@@ -9,6 +9,7 @@ from dace import dtypes, symbolic
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.standard.helper import (
     CPU_RESIDENT_STORAGES,
+    host_storages,
     collapse_shape_and_strides,
     is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
@@ -108,12 +109,11 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # is one MemcpyCPU; otherwise falls through to a parallel MappedTasklet. The threshold only
     # applies where the copy runs once: inside a parallel map the mapped form is sequentialized to
     # an element loop, which is strictly worse than the single call at any size.
-    host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = len(inp.shape) == len(out.shape) and not any(
         itertools.starmap(symbolic.inequal_symbols, zip(in_subset.size(), out_subset.size()))
     )
     if (
-        {inp.storage, out.storage} <= host_storages
+        {inp.storage, out.storage} <= host_storages(node, parent_state)
         and same_shape
         and in_subset.is_contiguous_subset(inp)
         and out_subset.is_contiguous_subset(out)

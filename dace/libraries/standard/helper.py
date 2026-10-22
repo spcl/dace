@@ -27,6 +27,17 @@ CPU_RESIDENT_STORAGES = frozenset(
 )
 
 
+def host_storages(node: nodes.Node, state: "dace.SDFGState") -> frozenset[dtypes.StorageType]:
+    """The storages host code at ``node`` reads and writes directly: the CPU-resident ones, ``Default``, and
+    ``Register`` outside device code, where a register array is a stack array (a loop's VLA scratch)."""
+    from dace.sdfg.scope import is_devicelevel_gpu
+
+    host = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        return host
+    return host | {dtypes.StorageType.Register}
+
+
 def single_core_expansion(pure: type) -> type:
     """The single-core lowering of a library node: ``pure``'s expansion with every map it emits ``Sequential``. Selected,
     by name, for a node a parallel region encloses or one with too little work for a region of its own."""
