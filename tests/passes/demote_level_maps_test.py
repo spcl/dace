@@ -130,6 +130,15 @@ def test_a_row_map_over_csr_segments_stays_a_map():
     assert np.allclose(out, expected)
 
 
+def test_an_atom_map_over_small_planes_stays_a_map():
+    """warpx_field_gather's shape: the per-particle taps sweep a SMALL extent, so there is nothing to move outside the
+    level; demoted, the particle map would run on one core."""
+    sdfg = atom_gathers()
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.set_symbol_scale("G", dace.symbolic.Scale.SMALL)
+    assert demote_strided_level_maps(sdfg) == 0
+
+
 def test_an_atom_map_gathering_its_own_row_is_demoted():
     sdfg = atom_gathers()
     assert demote_strided_level_maps(sdfg) == 1
@@ -174,6 +183,7 @@ def test_a_row_map_reducing_into_its_own_element_stays_the_gpu_kernel():
 
 if __name__ == "__main__":
     test_a_row_map_over_csr_segments_stays_a_map()
+    test_an_atom_map_over_small_planes_stays_a_map()
     test_an_atom_map_gathering_its_own_row_is_demoted()
     test_an_atom_map_with_one_per_atom_plane_is_still_demoted()
     test_a_level_map_over_contiguous_planes_is_demoted_for_the_gpu()

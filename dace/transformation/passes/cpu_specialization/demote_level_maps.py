@@ -128,8 +128,16 @@ def level_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
     nblks_v]`` and a gather from ``vn[idx, jk, blk]`` over ``[nproma, nlev, nblks_e]`` share no extent to compare.
     An access by the plane axis alone does not move with the level and stays in cache across it; a gather by the
     level alone walks one row of the gathered array when the level runs inside (newdxx_g's ``eigts1[na, :]`` per
-    atom, under planes over every G-vector).
+    atom, under planes over every G-vector). Planes whose every axis is a small extent never pay.
     """
+    # Planes over SMALL or short literal axes only are per-level work, not planes to interchange outside: the level
+    # map stays the parallel axis (warpx_field_gather's 4x4x4 shape taps under the particle map).
+    if all(
+        symbolic.is_small_extent(symbolic.pystr_to_symbolic(end - begin + 1), owner.facts())
+        for owner, _, entry in planes
+        for begin, end, _ in entry.map.range
+    ):
+        return False
     homed = False
     for owner, state, entry in planes:
         outer = entry.map.params[0]
