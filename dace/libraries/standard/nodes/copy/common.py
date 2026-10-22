@@ -6,6 +6,7 @@ Imported by both the node and its expansions, so it must not import either.
 
 import functools
 import operator
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -20,7 +21,7 @@ from dace.libraries.standard.helper import (
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
 )
-from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
+from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu, is_in_scope
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -671,3 +672,92 @@ def memory_engine_geometry(node: nodes.Node,
                                 box=box,
                                 coords=[gmin[d] for d in gorder],
                                 data_type=_TMA_DATA_TYPES[gdesc.dtype]), None
+
+
+def memory_engine_transient_container(node: nodes.Node, state: dace.SDFGState,
+                                      geometry: MemoryEngineGeometry) -> Tuple[dace.SDFG, str]:
+    """The transient container behind the shared side of a ``MemoryEngineBulk`` copy.
+
+    Inside a NestedSDFG the shared side is an argument; this follows it outward to the transient that the shared
+    memory planner places (see ``gpu_shared_memory.PlanSharedMemory``).
+
+    :param node: the copy node or expanded tasklet.
+    :param state: state containing ``node``.
+    :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :returns: the SDFG holding the container and its name.
+    """
+    sdfg = state.sdfg
+    in_edge, out_edge = _memory_engine_edges(node, state)
+    edge = out_edge if geometry.is_load else in_edge
+    while True:
+        path = state.memlet_path(edge)
+        access_node = path[-1].dst if geometry.is_load else path[0].src
+        nsdfg_node = sdfg.parent_nsdfg_node
+        if sdfg.arrays[access_node.data].transient or nsdfg_node is None:
+            return sdfg, access_node.data
+        parent_state = sdfg.parent
+        if geometry.is_load:
+            edge = next(e for e in parent_state.out_edges(nsdfg_node) if e.src_conn == access_node.data)
+        else:
+            edge = next(e for e in parent_state.in_edges(nsdfg_node) if e.dst_conn == access_node.data)
+        state, sdfg = parent_state, sdfg.parent_sdfg
+
+
+def _cuda_archs_support_memory_engine() -> bool:
+    """False if ``compiler.cuda.cuda_arch`` lists an architecture older than Hopper (empty means native)."""
+    archs = dace.Config.get('compiler', 'cuda', 'cuda_arch').replace(";", ",")
+    archs = archs.split(",")
+    archs = [a.strip() for a in archs]
+    for arch in archs:
+        # check valid architectures ignoring family or arch specific suffix
+        if not all(c.isdigit() for c in arch) and arch[-1] not in ["a", "f"]:
+            warnings.warn(f"compiler.cuda.cuda_arch contains unknown architecture: {arch}")
+
+    numbers = [int("".join(c for c in a if c.isdigit()) or 0) for a in archs]
+    return all(n >= 90 for n in numbers)
+
+
+def _shared_container_reason(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry) -> Optional[str]:
+    """Why the shared side of a ``MemoryEngineBulk`` copy cannot be placed in static shared memory, which is
+    ``MEMORY_ENGINE_SHARED_ALIGNMENT`` aligned (dynamic shared memory is not), or ``None`` if it can."""
+    sdfg, name = memory_engine_transient_container(node, state, geometry)
+    desc = sdfg.arrays[name]
+    if desc.storage != dtypes.StorageType.GPU_Shared:
+        return f"the transient container {name} being {'loaded from' if geometry.is_load else 'stored to'} is not in shared memory"
+    if dtypes.is_dynamic_shared(desc.storage):
+        # TODO: remove this reason once dynamic shared memory is supported
+        return f"the shared container {name} is placed in dynamic shared memory, which is not 128 byte aligned"
+    if symbolic.issymbolic(desc.total_size_in_bytes, sdfg.constants):
+        # TODO: remove this reason once dynamic shared memory is supported
+        return f"the shared container {name} has a symbolic size, so it cannot be placed in static shared memory"
+    return None
+
+
+def memory_engine_bulk_reason(node: nodes.Node, state: dace.SDFGState) -> Optional[str]:
+    """Why ``MemoryEngineBulk`` cannot expand ``node``, or ``None`` if it can.
+
+    :param node: the ``CopyLibraryNode`` that is being expanded.
+    :param state: state containing ``node``.
+    :returns: a human-readable reason, or ``None``.
+    """
+    geometry, reason = memory_engine_geometry(node, state)
+    if reason is not None:
+        return reason
+    reason = _shared_container_reason(node, state, geometry)
+    if reason is not None:
+        return reason
+    sdfg = state.sdfg
+    if not is_in_scope(sdfg, state, node, [dtypes.ScheduleType.GPU_Device]):
+        return "MemoryEngineBulk must be placed inside a GPU_Device map (kernel)"
+    sub_block_schedules = [
+        dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic, dtypes.ScheduleType.GPU_Warp
+    ]
+    if is_in_scope(sdfg, state, node, sub_block_schedules):
+        return ("MemoryEngineBulk IS the thread-block-level operation and must not be nested inside a "
+                "GPU_ThreadBlock or GPU_Warp map")
+    if get_gpu_backend() != 'cuda':
+        # TODO: update once HIP is supported
+        return "MemoryEngineBulk requires the CUDA backend"
+    if not _cuda_archs_support_memory_engine():
+        return "MemoryEngineBulk requires compute capability 9.0 or newer (see compiler.cuda.cuda_arch)"
+    return None
