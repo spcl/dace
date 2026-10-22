@@ -1216,8 +1216,22 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
     # safeguards belong at this one point rather than at each call site, where a new caller silently
     # reintroduces the hang. Only the fork itself has to happen inside the sigmask context.
     kwargs["env"] = build_subprocess_env(kwargs.get("env"))
+    # A POSIX shell reads the command from its stdin: ``sh -c`` would take it as one argument, which the kernel caps
+    # at 128 KiB (``Argument list too long``), and a configure line naming hundreds of libraries crosses that
+    script, shown = None, command
+    if kwargs.get("shell") and isinstance(command, str) and os.name == "posix":
+        kwargs["shell"], script, command = False, command.encode(), ["/bin/sh"]
     with build_subprocess_sigmask():
-        process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+        process = subprocess.Popen(
+            command,
+            stderr=subprocess.STDOUT,
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE if script is not None else None,
+            **kwargs,
+        )
+    if script is not None:
+        process.stdin.write(script)
+        process.stdin.close()
     output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
@@ -1239,7 +1253,7 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
 
     # An error occurred, raise exception
     if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, command, output.getvalue())
+        raise subprocess.CalledProcessError(process.returncode, shown, output.getvalue())
 
 
 # Allow configuring and compiling a prepared build folder from the commandline.
