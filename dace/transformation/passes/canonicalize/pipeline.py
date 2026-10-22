@@ -47,6 +47,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 )
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
+from dace.transformation.passes.canonicalize.carried_accumulation import CarriedAccumulationToWCR
 from dace.transformation.passes.canonicalize.dead_loop_initialization import DeadLoopInitialization
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
@@ -968,6 +969,15 @@ def derive_parallelism(
     ]
     s += _inline_single_state(label)
     s += [(label, StructuralCleanup()), (label, NormalizeWCR())]
+    # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
+    # guarded-scatter versioning below
+    s += [
+        (label, CarriedAccumulationToWCR()),
+        (label, PropagateMemlets()),
+        (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
+        (label, _PrivatizeScalarsStage()),
+        (label, _PrivatizeArraysStage()),
+    ]
     if scatter_to_guarded_maps:
         # An ``arange`` fill is an inlined map by now: its interstate reads become their index, so a scatter keyed
         # through it shows the loop variable as its slot and needs no conflict check.
