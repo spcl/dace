@@ -176,6 +176,7 @@ def test_renamed_extent_moves_its_fact():
     assert symbolic.ask(le("0", "K"), facts) is symbolic.Truth.TRUE
     assert symbolic.ask(le("0", "N"), facts) is symbolic.Truth.UNKNOWN
 
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
