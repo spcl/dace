@@ -26,7 +26,7 @@ class CommF2c(CommNode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_fcomm"}, outputs={"_handle"}, **kwargs)
+        super().__init__(name, *args, inputs=["_fcomm"], outputs=["_handle"], **kwargs)
 
     def validate(self, sdfg, state):
         validate_integer_connector(self, sdfg, state, "_fcomm")

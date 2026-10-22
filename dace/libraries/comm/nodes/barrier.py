@@ -57,4 +57,4 @@ class Barrier(CommNode):
     side_effects = True
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=set(), outputs=set(), **kwargs)
+        super().__init__(name, *args, inputs=[], outputs=[], **kwargs)

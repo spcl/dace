@@ -31,9 +31,8 @@ class ExpandGathervMPI(ExpandTransformation):
         code += int_array("__recv_counts", node.recv_counts)
         code += int_array("__recv_displs", node.displacements())
         code += (
-            f"MPI_Gatherv(_inbuffer, {count}, {utils.MPI_DDT(inbuffer.dtype.base_type)}, "
-            f"_outbuffer, "
-            f"__recv_counts, __recv_displs, {utils.MPI_DDT(outbuffer.dtype.base_type)}, int(_root), "
+            f"MPI_Gatherv(_inbuffer, {count}, {utils.MPI_DDT(inbuffer.dtype.base_type)}, _outbuffer, __recv_counts, "
+            f"__recv_displs, {utils.MPI_DDT(outbuffer.dtype.base_type)}, int(_root), "
             f"{mpi_communicator(node, parent_state)});\n"
         )
         return comm_tasklet(node, parent_state, code)
@@ -62,7 +61,7 @@ class Gatherv(CommNode):
     )
 
     def __init__(self, name, recv_counts=None, recv_displs=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inbuffer", "_root"], outputs=["_outbuffer"], **kwargs)
         self.recv_counts = None if recv_counts is None else [symbolic.pystr_to_symbolic(c) for c in recv_counts]
         self.recv_displs = None if recv_displs is None else [symbolic.pystr_to_symbolic(d) for d in recv_displs]
 

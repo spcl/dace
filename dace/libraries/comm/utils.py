@@ -46,6 +46,11 @@ def is_access_contiguous(memlet, data):
     return memlet.subset.is_contiguous_subset(data)
 
 
+def is_column_major(desc) -> bool:
+    """Whether ``desc`` is a packed column-major (Fortran) array that is not also row-major (a vector is both)."""
+    return isinstance(desc, dace.data.Array) and desc.is_packed_fortran_strides() and not desc.is_packed_c_strides()
+
+
 def create_vector_ddt(memlet, data):
     from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
@@ -54,7 +59,7 @@ def create_vector_ddt(memlet, data):
     if len(data.shape) != 2:
         raise ValueError("Dimensionality of access not supported atm.")
     # Rows run along the dimension of unit stride: the last of a row-major array, the first of a column-major one
-    inner, outer = (0, 1) if data.is_packed_fortran_strides() and not data.is_packed_c_strides() else (1, 0)
+    inner, outer = (0, 1) if is_column_major(data) else (1, 0)
     ddt = dict()
     sizes = memlet.subset.size_exact()
     ddt["blocklen"] = sym2cpp(sizes[inner])

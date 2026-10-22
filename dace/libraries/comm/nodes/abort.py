@@ -24,7 +24,7 @@ class Abort(CommNode):
     side_effects = True
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_errorcode"}, outputs=set(), **kwargs)
+        super().__init__(name, *args, inputs=["_errorcode"], outputs=[], **kwargs)
 
     def validate(self, sdfg, state):
         validate_integer_connector(self, sdfg, state, "_errorcode")

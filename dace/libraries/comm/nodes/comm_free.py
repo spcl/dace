@@ -25,7 +25,7 @@ class CommFree(CommNode):
     side_effects = True
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_comm"}, outputs=set(), **kwargs)
+        super().__init__(name, *args, inputs=["_comm"], outputs=[], **kwargs)
 
     def validate(self, sdfg, state):
         if not external_communicator(self, state):

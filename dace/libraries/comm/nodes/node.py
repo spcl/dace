@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import copy as copy_module
+import copy
 from collections.abc import Sequence
 from typing import Any
 
@@ -181,8 +181,7 @@ def column_major(sdfg: SDFG, state: SDFGState, access: nodes.Node, name: str) ->
         viewed = sdutil.get_last_view_node(state, access)
         if viewed is not None:
             name = viewed.data
-    desc = sdfg.arrays[name]
-    return isinstance(desc, data.Array) and desc.is_packed_fortran_strides() and not desc.is_packed_c_strides()
+    return utils.is_column_major(sdfg.arrays[name])
 
 
 def in_place(sdfg: SDFG, state: SDFGState, edge, node: nodes.Node) -> bool:
@@ -229,7 +228,7 @@ def pack_noncontiguous_buffers(
                 packed_desc.set_strides_from_layout(*range(len(packed_desc.shape)))
         return packed[key]
 
-    def copy(src: nodes.Node, src_conn: str | None, dst: nodes.Node, dst_conn: str | None, src_memlet, dst_memlet):
+    def add_copy(src: nodes.Node, src_conn: str | None, dst: nodes.Node, dst_conn: str | None, src_memlet, dst_memlet):
         # A CopyLibraryNode picks the copy from the storages and strides of both ends, so packing need not handle
         # memory locations or layouts. It connects access nodes only; other ends keep a copy edge.
         if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
@@ -245,21 +244,21 @@ def pack_noncontiguous_buffers(
             continue
         name = transient(edge.data, edge.src)
         access, full = state.add_access(name), Memlet.from_array(name, sdfg.arrays[name])
-        copy(edge.src, edge.src_conn, access, None, Memlet(data=edge.data.data, subset=edge.data.subset), full)
+        add_copy(edge.src, edge.src_conn, access, None, Memlet(data=edge.data.data, subset=edge.data.subset), full)
         state.remove_edge(edge)
-        state.add_edge(access, None, node, edge.dst_conn, copy_module.deepcopy(full))
+        state.add_edge(access, None, node, edge.dst_conn, copy.deepcopy(full))
     for edge in list(state.out_edges(node)):
         if edge.src_conn not in outputs or in_place(sdfg, state, edge, node):
             continue
         name = transient(edge.data, edge.dst)
         access, full = state.add_access(name), Memlet.from_array(name, sdfg.arrays[name])
         state.add_edge(node, edge.src_conn, access, None, full)
-        copy(
+        add_copy(
             access,
             None,
             edge.dst,
             edge.dst_conn,
-            copy_module.deepcopy(full),
+            copy.deepcopy(full),
             Memlet(data=edge.data.data, subset=edge.data.subset),
         )
         state.remove_edge(edge)
