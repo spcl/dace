@@ -446,15 +446,17 @@ def nest_state_subgraph(
         output_names[edge] = new_name
     ###################
 
-    # Add scope symbols to the nested SDFG
+    # Add scope symbols to the nested SDFG with their original data types
     symbols_at_top = state.symbols_defined_at(top_scopenode)
-    defined_vars = {
-        symbolic.pystr_to_symbolic(s) for s in (state.symbols_defined_at(top_scopenode).keys() | sdfg.symbols)
-    }
-    for v in defined_vars:
+    if isinstance(top_scopenode, nodes.EntryNode):
+        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
+    for v in symbols_at_top.keys() | sdfg.symbols.keys():
+        if v in nsdfg.symbols:
+            continue
         if v in sdfg.symbols:
-            sym = sdfg.symbols[v]
-            nsdfg.add_symbol(v, sym.dtype)
+            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
+        elif v in symbols_at_top:
+            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():
@@ -483,6 +485,10 @@ def nest_state_subgraph(
         new_edge.data = name
         edges_to_rename.append(nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge))
     for edge, name in output_names.items():
+        # Written from an access node of the connector itself (a map body's last write feeding the exit): that
+        # node already writes the connector, so a ``name -> name`` copy into a second node would be redundant.
+        if isinstance(edge.src, nodes.AccessNode) and edge.src.data == name:
+            continue
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name

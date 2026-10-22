@@ -99,6 +99,24 @@ def test_multiple_edges():
     _semantic_eq(multiple_edges)
 
 
+K = dace.symbol("K")
+
+
+@dace.program
+def loop_bound_only_in_the_loop(data: dace.float64[I, J]):
+    for i in range(1, K):
+        for j in dace.map[0:J]:
+            data[i, j] = data[i - 1, j]
+
+
+def test_loop_bound_symbols_are_declared_in_the_nested_sdfg():
+    sdfg = loop_bound_only_in_the_loop.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(MoveLoopIntoMap) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.NestedSDFG):
+            assert node.symbol_mapping.keys() <= node.sdfg.symbols.keys()
+
+
 def test_itervar_in_map_range():
     sdfg = should_not_apply_1.to_sdfg(simplify=True)
     count = sdfg.apply_transformations(MoveLoopIntoMap)

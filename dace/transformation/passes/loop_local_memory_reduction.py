@@ -9,6 +9,7 @@ from dace import data as dt
 from dace import properties, symbolic
 from dace import sdfg as sd
 from dace.data import Scalar
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.subsets import Range
 from dace.symbolic import issymbolic, pystr_to_symbolic
@@ -121,7 +122,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def depends_on(self):
         return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
-    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: dict[str, Any]) -> set[str] | None:
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
 
@@ -157,6 +158,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
+        return self.num_applications or None
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[tuple | None]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
@@ -282,6 +284,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     if an.data == array_name
                 )
 
+            # A slot read in the same iteration can still be reused when every read follows every write
+            if cond in (False, sp.false):
+                cond = self._writes_precede_reads(array_name, loop)
+
             # A symbolic condition holds only where the facts prove it
             if issymbolic(cond):
                 relation = symbolic.comparison_relation(cond)
@@ -314,6 +320,38 @@ class LoopLocalMemoryReduction(ppl.Pass):
             else:
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
+
+    def _writes_precede_reads(self, array_name: str, loop: LoopRegion) -> bool:
+        """Whether, within one iteration of ``loop``, every read of ``array_name`` happens after every write."""
+        reads, writes = [], []
+        for state in loop.states():
+            for node in state.data_nodes():
+                if node.data == array_name:
+                    if state.in_degree(node) > 0:
+                        writes.append((state, node))
+                    if state.out_degree(node) > 0:
+                        reads.append((state, node))
+        if not reads or not writes:
+            return False
+
+        def body_block(block):
+            while block.parent_graph is not loop:
+                block = block.parent_graph
+            return block
+
+        for read_state, read in reads:
+            for write_state, write in writes:
+                if write is read:  # an access node orders its writes before its reads
+                    continue
+                if read_state is write_state:
+                    if read not in sdutil.find_downstream_nodes(write, read_state):
+                        return False
+                    continue
+                # The loop body's own edges, without the back edge: reachable within one iteration
+                before, after = body_block(write_state), body_block(read_state)
+                if before is after or after not in loop.bfs_nodes(before):
+                    return False
+        return True
 
     def _write_is_loop_local(
         self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG, loop: LoopRegion

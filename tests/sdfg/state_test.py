@@ -1,4 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
 from copy import deepcopy
 
 import dace
@@ -329,6 +330,24 @@ def test_start_block_reset_when_start_block_removed():
     assert cfg.start_block is other
 
 
+def test_removing_a_path_between_access_nodes_and_a_tasklet_removes_only_the_tasklet_connectors():
+    """An access node has no connectors: removing its edge must not ask it to drop ``None``, which warns."""
+    sdfg = dace.SDFG("remove_memlet_path_connectorless")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("copy", {"a"}, {"b"}, "b = a")
+    read = state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    write = state.add_edge(tasklet, "b", state.add_write("B"), None, dace.Memlet("B[0]"))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        state.remove_memlet_path(read)
+        state.remove_memlet_path(write)
+
+    assert not tasklet.in_connectors and not tasklet.out_connectors
+
+
 if __name__ == "__main__":
     test_read_and_write_set_selection()
     test_read_and_write_set_filter()
@@ -343,3 +362,4 @@ if __name__ == "__main__":
     test_find_downstream_nodes_bloking()
     test_start_block_survives_removal_of_another_block()
     test_start_block_reset_when_start_block_removed()
+    test_removing_a_path_between_access_nodes_and_a_tasklet_removes_only_the_tasklet_connectors()

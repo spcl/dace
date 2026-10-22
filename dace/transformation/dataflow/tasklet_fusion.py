@@ -147,7 +147,7 @@ class TaskletFusion(pm.SingleStateTransformation):
             if in_edge.dst_conn in all_conns:
                 # Check for conflicts with the second tasklet's output connectors
                 if in_edge.dst_conn in t2.out_connectors:
-                    in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
+                    in_edge.dst_conn = dace.utils.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
                     repldict[old_value] = in_edge.dst_conn
                     inputs[in_edge.dst_conn] = t1.in_connectors[old_value]
                     continue
@@ -168,7 +168,7 @@ class TaskletFusion(pm.SingleStateTransformation):
                     or in_edge.data is None
                     or in_edge.data.data is None
                 ):
-                    in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
+                    in_edge.dst_conn = dace.utils.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
                     repldict[old_value] = in_edge.dst_conn
                 else:
                     # If the Memlets are the same, rename the connector on the first Tasklet, such that we only have

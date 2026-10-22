@@ -1051,6 +1051,8 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     # Special case: stream can be represented as a view of an array
     if (len(all_source_paths) > 0 and len(sink_paths) == 1) or (len(all_sink_paths) > 0 and len(source_paths) == 1):
         # TODO: What about a source path?
+        if not sink_paths:
+            return False  # E.g., a stream that is filled from an array and consumed by code in the same state
         arrnode = sink_paths[0]
         # Only works if the stream itself is not an array of streams
         if list(node.desc(sdfg).shape) == [1]:
@@ -2271,7 +2273,7 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                     for e in state.in_edges(node):
                         if not e.dst_conn.startswith("IN_"):
                             if e.dst_conn in dynamic_map_inputs:
-                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                new_name = dace.utils.find_new_name(e.dst_conn, dynamic_map_inputs)
                                 dynamic_map_inputs.add(new_name)
                                 repl_dict[e.dst_conn] = new_name
                                 e._dst_conn = new_name

@@ -17,7 +17,7 @@ import numpy
 import sympy
 
 import dace
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, symbolic, utils
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
@@ -606,7 +606,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
                 # If the callback already exists, and the details differ (e.g., different kwarg names), make new
                 if cbname in self.closure.callbacks and cb_func is not self.closure.callbacks[cbname][1]:
-                    cbname = data.find_new_name(cbname, self.closure.callbacks)
+                    cbname = utils.find_new_name(cbname, self.closure.callbacks)
 
                 self.closure.callbacks[cbname] = (cbqualname, cb_func, False)
                 parent_node.qualname = cbname
@@ -643,7 +643,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         elif keep_object:
             # General object, keep in globals and give a unique name
             objname = self._qualname_to_array_name(qualname, prefix="")
-            objname = data.find_new_name(objname, self._globals.keys())
+            objname = utils.find_new_name(objname, self._globals.keys())
             self._globals[objname] = value
             newnode = ast.Name(id=objname, ctx=ast.Load())
         else:
@@ -987,7 +987,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
                 )
 
             # Create manager as part of closure
-            mgr_name = data.find_new_name(
+            mgr_name = utils.find_new_name(
                 f"__with_{item.context_expr.qualname if hasattr(item.context_expr, 'qualname') else item.context_expr.id}",
                 self.names,
             )
@@ -1628,16 +1628,18 @@ class MPIResolver(ast.NodeTransformer):
 
 
 class ModuloConverter(ast.NodeTransformer):
-    """Converts a % b expressions to (a + b) % b for C/C++ compatibility."""
+    """Rewrites Python's ``a % b`` to ``PyMod(a, b)``, since a bare ``%`` in an SDFG is C's."""
 
-    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        if isinstance(node.op, ast.Mod):
-            left = self.generic_visit(node.left)
-            right = self.generic_visit(node.right)
-            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
-            node.left = newleft
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        node = self.generic_visit(node)
+        if not isinstance(node.op, ast.Mod):
             return node
-        return self.generic_visit(node)
+        if isinstance(node.left, ast.JoinedStr) or (
+            isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)
+        ):
+            return node
+        call = ast.Call(func=ast.Name(id="PyMod", ctx=ast.Load()), args=[node.left, node.right], keywords=[])
+        return ast.copy_location(call, node)
 
 
 def preprocess_dace_program(
@@ -1687,7 +1689,6 @@ def preprocess_dace_program(
     # Guard the availability check only, so a genuine error inside the visitor still surfaces.
     if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
@@ -1750,6 +1751,8 @@ def preprocess_dace_program(
                 print(f"VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:")
                 print(astutils.unparse(src_ast))
             raise
+
+    src_ast = ModuloConverter().visit(src_ast)
 
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)

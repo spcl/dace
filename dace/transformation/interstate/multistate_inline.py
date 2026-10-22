@@ -4,7 +4,7 @@
 import itertools
 from copy import deepcopy as dc
 
-from dace import Memlet, data, symbolic
+from dace import Memlet, data, symbolic, utils
 from dace.properties import make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -138,7 +138,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(blk, ReturnBlock):
                 has_return = True
         if has_return:
-            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
+            # Lowered returns end in `False` edges, which may lead to states that are now unreachable (e.g., the rest
+            # of a loop body). Removing them turns every return into a sink, which is reconnected below.
+            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True, eliminate_dead_states=True)
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -217,7 +219,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
-            newname = data.find_new_name(assign, allnames)
+            newname = utils.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
@@ -270,7 +272,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         node_names = {cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True)}
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
-                node_name = data.find_new_name(node.label, node_names)
+                node_name = utils.find_new_name(node.label, node_names)
                 node.label = node_name
             node_names.add(node.label)
 

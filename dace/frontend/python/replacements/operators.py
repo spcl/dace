@@ -26,6 +26,9 @@ from dace.frontend.python.replacements.utils import (
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
 
+# Modulo functions a program calls like builtins (semantics in ``symbolic.MODULO_FUNCTIONS``)
+MODULO_CALLS = ("PyMod", "FtnMod", "FtnModulo")
+
 
 def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """Implements a general element-wise array unary operator."""
@@ -103,6 +106,8 @@ def _makeunop(op, opcode):
 
 def _is_op_arithmetic(op: str):
     if op in {"Add", "Sub", "Mult", "Div", "FloorDiv", "Pow", "Mod", "FloatPow", "Heaviside", "Arctan2", "Hypot"}:
+        return True
+    if op in MODULO_CALLS:
         return True
     return False
 
@@ -423,7 +428,7 @@ def _array_array_binop(
             f"_{operator}_",
             {"__in1": None, "__in2": None},
             {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
         )
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
@@ -436,7 +441,7 @@ def _array_array_binop(
             f"_{operator}_",
             all_idx_dict,
             {"__in1": Memlet.simple(left_operand, left_idx), "__in2": Memlet.simple(right_operand, right_idx)},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -499,10 +504,7 @@ def _array_const_binop(
             inp_conn = {"__in2"}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            f"_{operator}_",
-            inp_conn,
-            {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
         )
         n3 = state.add_write(out_operand)
         if left_arr:
@@ -519,7 +521,7 @@ def _array_const_binop(
             f"_{operator}_",
             all_idx_dict,
             inp_memlets,
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -582,10 +584,7 @@ def _array_sym_binop(
             inp_conn = {"__in2"}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            f"_{operator}_",
-            inp_conn,
-            {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
         )
         n3 = state.add_write(out_operand)
         if left_arr:
@@ -602,7 +601,7 @@ def _array_sym_binop(
             f"_{operator}_",
             all_idx_dict,
             inp_memlets,
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -650,7 +649,7 @@ def _scalar_scalar_binop(
         f"_{operator}_",
         {"__in1": None, "__in2": None},
         {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
     )
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
@@ -707,10 +706,7 @@ def _scalar_const_binop(
         inp_conn = {"__in2"}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        f"_{operator}_",
-        inp_conn,
-        {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
     )
     n3 = state.add_write(out_operand)
     if left_scal:
@@ -771,10 +767,7 @@ def _scalar_sym_binop(
         inp_conn = {"__in2"}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        f"_{operator}_",
-        inp_conn,
-        {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
     )
     n3 = state.add_write(out_operand)
     if left_scal:
@@ -784,6 +777,15 @@ def _scalar_sym_binop(
     state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_scal))
 
     return out_operand
+
+
+def binop_tasklet_code(left: str, opcode: str, right: str) -> str:
+    """Tasklet code for ``left <opcode> right``; Python's ``%`` becomes ``PyMod``."""
+    if opcode == "%":
+        opcode = "PyMod"
+    if opcode in MODULO_CALLS:
+        return f"__out = {opcode}({left}, {right})"
+    return f"__out = {left} {opcode} {right}"
 
 
 _pyop2symtype = {
@@ -828,6 +830,10 @@ def _const_const_binop(
         right = eval(right_cast)(right_operand)
     else:
         right = right_operand
+
+    if opcode in MODULO_CALLS:
+        value = symbolic.MODULO_FUNCTIONS[opcode](left, right)
+        return int(value) if value.is_Integer else float(value) if value.is_Number else value
 
     # Support for SymPy expressions
     if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
@@ -1044,3 +1050,23 @@ _boolop_to_method = {
 }
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
+
+
+def make_modulo_call(name: str):
+    """Registers ``name(left, right)`` as a call that dispatches to the ``name`` operator, like ``%``."""
+
+    @oprepo.replaces(name)
+    def modulo_call(
+        pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, left: str | Number | sp.Basic, right: str | Number | sp.Basic
+    ):
+        ((left, left_type),) = pv._gettype(left)
+        ((right, right_type),) = pv._gettype(right)
+        func = oprepo.Replacements.getop(left_type, name, otherclass=right_type)
+        if func is None:
+            raise SyntaxError(f"{name} is not defined for types {left_type} and {right_type}")
+        return func(pv, sdfg, state, left, right)
+
+
+for name in MODULO_CALLS:
+    _makebinop(name, name)
+    make_modulo_call(name)

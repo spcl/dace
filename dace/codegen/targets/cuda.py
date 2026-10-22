@@ -304,10 +304,7 @@ class CUDACodeGen(TargetCodeGenerator):
         # Collect all defined symbols and argument lists with one traversal
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if isinstance(node, nodes.MapEntry) and node.map.schedule in (
-                dtypes.ScheduleType.GPU_Device,
-                dtypes.ScheduleType.GPU_Persistent,
-            ):
+            if isinstance(node, nodes.MapEntry) and node.map.schedule in dtypes.GPU_KERNEL_SCHEDULES:
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
@@ -1963,6 +1960,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     ) -> None:
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
+        if scope_entry.map.schedule in dtypes.GPU_SCHEDULES_WITHOUT_CODEGEN:
+            raise NotImplementedError(f"GPU code generation does not implement {scope_entry.map.schedule} maps yet")
 
         state = cfg.state(state_id)
 
@@ -1972,7 +1971,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             return
 
         # If not device-level code, ensure the schedule is correct
-        if scope_entry.map.schedule not in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent):
+        if scope_entry.map.schedule not in dtypes.GPU_KERNEL_SCHEDULES:
             raise TypeError(f"Cannot schedule {str(scope_entry.map.schedule)} directly from non-GPU code")
 
         # Modify thread-blocks if dynamic ranges are detected

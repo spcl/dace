@@ -11,7 +11,7 @@ import numpy as np
 
 import dace
 from dace import data as dt
-from dace import dtypes, nodes, subsets, symbolic
+from dace import dtypes, nodes, subsets, symbolic, utils
 from dace import memlet as mm
 from dace import properties as props
 from dace import sdfg as sd
@@ -288,8 +288,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Filter out non-integral symbols that do not appear in inter-state edges
     interstate_symbols = set()
+    interstate_assigned = set()
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
+        interstate_assigned |= edge.data.assignments.keys()
     for reg in sdfg.all_control_flow_regions():
         interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
     for candidate in candidates - interstate_symbols:
@@ -298,6 +300,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Only keep candidates that were found in SDFG
     candidates &= candidates_seen | interstate_symbols
+    # A transient that nothing writes has no value to promote: promoting it would add an undefined free symbol
+    candidates -= {
+        c for c in candidates if sdfg.arrays[c].transient and c not in candidates_seen and c not in interstate_assigned
+    }
 
     return candidates
 
@@ -425,7 +431,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         node = self.generic_visit(node)
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
-            new_name = dt.find_new_name(node_name, self.connector_names)
+            new_name = utils.find_new_name(node_name, self.connector_names)
             self.connector_names.add(new_name)
 
             subset = self._get_requested_range(node, self.in_edges[node_name].subset)
@@ -436,7 +442,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             else:
                 self.do_not_remove.add(node_name)
         elif node_name in self.out_edges:
-            new_name = dt.find_new_name(node_name, self.connector_names)
+            new_name = utils.find_new_name(node_name, self.connector_names)
             self.connector_names.add(new_name)
 
             subset = self._get_requested_range(node, self.out_edges[node_name].subset)

@@ -276,18 +276,15 @@ def relocate_nodes(
             #  inside the Map scope to define a variable. We handle it directly.
             dmr_symbol = edge_to_move.dst_conn
 
-            # TODO(phimuell): Check if the symbol is really unused in the target scope.
             if dmr_symbol in to_node.in_connectors:
-                raise NotImplementedError(
-                    f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                    f" to '{to_node}', but the symbol is already known there, but the"
-                    " renaming is not implemented."
-                )
-            if not to_node.add_in_connector(dmr_symbol, force=False):
-                raise RuntimeError(  # Might fail because of out connectors.
-                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
-                )
-            helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
+                # Both Maps bind the same value to this dynamic map range (`can_topologically_be_fused()`): drop the duplicate.
+                state.remove_edge(edge_to_move)
+            else:
+                if not to_node.add_in_connector(dmr_symbol, force=False):
+                    raise RuntimeError(  # Might fail because of out connectors.
+                        f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
+                    )
+                helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
         elif edge_to_move.dst_conn not in relocated_connectors:
@@ -454,7 +451,41 @@ def can_topologically_be_fused(
         if scope[first_map_entry] is not None:
             return None
 
+    # A dynamic map range both Maps bind cannot be renamed, so both must bind it to the same value
+    if not dynamic_map_ranges_agree(graph, first_map_entry, second_map_entry):
+        return None
+
     # We will now check if we can rename the Map parameter of the second Map such that they
     #  match the one of the first Map.
     param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
     return param_repl
+
+
+def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, second: nodes.MapEntry) -> bool:
+    """
+    Tests if every dynamic map range both Maps bind reads the same value, and no other one of the second Map collides
+    with an out connector of the first.
+
+    Both bindings must read the same subset of the same data from the same source node. Reading one node is safe for
+    both Maps, also for a View, at the cost of not fusing Maps that read the same value through different nodes.
+
+    :param state: The state containing both Maps.
+    :param first: The Map that receives the dynamic map ranges.
+    :param second: The Map whose dynamic map ranges are moved.
+    """
+    first_ranges = {conn for conn in first.in_connectors if not conn.startswith("IN_")}
+    second_ranges = {conn for conn in second.in_connectors if not conn.startswith("IN_")}
+    if any(dmr in first.out_connectors for dmr in second_ranges - first_ranges):
+        return False
+    for shared_dmr in first_ranges & second_ranges:
+        dmr_edges = [next(iter(state.in_edges_by_connector(node, shared_dmr)), None) for node in (first, second)]
+        if None in dmr_edges:
+            return False
+        dmr_source_first, dmr_source_second = dmr_edges
+        if (
+            dmr_source_first.data.data != dmr_source_second.data.data
+            or dmr_source_first.data.subset != dmr_source_second.data.subset
+            or dmr_source_first.src is not dmr_source_second.src
+        ):
+            return False
+    return True

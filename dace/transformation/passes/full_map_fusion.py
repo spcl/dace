@@ -190,12 +190,14 @@ class FullMapFusion(ppl.Pass):
         object.
 
         :param sdfg: The SDFG to modify.
-        :param pipeline_results: The result of previous pipeline steps. The pass expects
-            at least the result of the `FindSingleUseData`.
+        :param pipeline_results: The result of previous pipeline steps; `FindSingleUseData` runs here if missing.
         :return: The numbers of Maps that were fused or `None` if none were fused.
         """
         if ap.FindSingleUseData.__name__ not in pipeline_results:
-            raise ValueError("Expected to find `FindSingleUseData` in `pipeline_results`.")
+            pipeline_results = {
+                **pipeline_results,
+                ap.FindSingleUseData.__name__: ap.FindSingleUseData().apply_pass(sdfg, {}),
+            }
 
         fusion_transforms = []
         if self.perform_vertical_map_fusion:
