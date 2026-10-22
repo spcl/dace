@@ -1074,6 +1074,8 @@ class SDFG(ControlFlowRegion):
         """
 
         repldict = {k: v for k, v in repldict.items() if k != v}
+        # Renames map parameters and interstate assignments in place
+        self.forget_bound_names()
         if symrepl is None:
             symrepl = {
                 symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
@@ -1146,7 +1148,8 @@ class SDFG(ControlFlowRegion):
         elif name in self.arrays:
             # Data constants are not checked, as they are linked to the data descriptors.
             raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        elif name not in self.symbols and name in self.bound_names()[0]:
+        # Not the cached names: a stale one would refuse a free name
+        elif name not in self.symbols and name in scope_bound_names(self):
             raise NameCollisionError(
                 f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
             )
@@ -2552,7 +2555,7 @@ class SDFG(ControlFlowRegion):
                 return
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
             # assigns, which are not SDFG symbols
-            scoped = sdfg.bound_names()[0] | sdfg.bound_names()[1] | bound_names
+            scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
             # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
             # so a symbol name has one dtype in a process.
             for sym in new:
