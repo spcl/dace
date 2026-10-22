@@ -393,6 +393,18 @@ def test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map():
     assert np.allclose(a, 1.0) and np.allclose(b, 3.0)
 
 
+def test_a_loop_over_small_maps_only_gets_no_team():
+    """A worksharing map over an 8-element literal splits nothing worth a barrier: rayleigh_ritz_rotation's Jacobi
+    sweeps put one ``omp for`` around every scalar statement for such maps."""
+    sdfg = dace.SDFG("small_maps_only")
+    sdfg.add_array("a", [8], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    mapped_state(outer, "par", "a", "1.0", ["0:8"])
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) is None
+    assert teams(sdfg) == 0
+
+
 def test_top_level_nested_sdfg_in_the_loop_is_refused():
     """A nested SDFG beside the maps is a statement nothing can share out. Refuse."""
     sdfg = dace.SDFG("nested_neighbour")
@@ -1303,6 +1315,7 @@ if __name__ == "__main__":
     test_sequential_map_around_a_parallel_map_is_refused()
     test_top_level_fill_in_the_loop_is_expanded_and_shared_out()
     test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map()
+    test_a_loop_over_small_maps_only_gets_no_team()
     test_top_level_nested_sdfg_in_the_loop_is_refused()
     test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team()
     test_loop_local_transient_crossing_two_map_scopes_stays_outside_the_nest()

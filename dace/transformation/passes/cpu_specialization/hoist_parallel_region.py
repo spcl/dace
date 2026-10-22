@@ -120,6 +120,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    SymbolResolver,
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
@@ -348,6 +349,23 @@ def sequential_leaf_map(node: nodes.Node, state: SDFGState) -> bool:
     )
 
 
+def shares_real_work(entry: nodes.MapEntry, state: SDFGState) -> bool:
+    """Whether a worksharing map pays for a team: it, or a map its body runs (nested SDFGs included), has an axis
+    that is not provably ``SMALL``. A one-trip map, or a nest over small static extents only, splits nothing
+    across the threads and costs a barrier."""
+    resolver = SymbolResolver()
+    if not all(xfh.small_map_axes(state, entry, resolver)):
+        return True
+    for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
+        if isinstance(node, nodes.MapEntry) and not all(xfh.small_map_axes(state, node, resolver)):
+            return True
+        if isinstance(node, nodes.NestedSDFG):
+            for inner, inner_state in node.sdfg.all_nodes_recursive():
+                if isinstance(inner, nodes.MapEntry) and not all(xfh.small_map_axes(inner_state, inner, resolver)):
+                    return True
+    return False
+
+
 def replication_free(loop: LoopRegion) -> bool:
     """Condition (H): every statement at the top level of ``loop``'s states is a worksharing map or one
     :func:`share_out_bulk_statements` repairs, and at least one worksharing map is there already.
@@ -367,7 +385,8 @@ def replication_free(loop: LoopRegion) -> bool:
             if isinstance(node, (nodes.AccessNode, nodes.Tasklet)) or elementwise(node):
                 continue
             if isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.schedule == WORKSHARED:
-                worksharing = True
+                entry = block.entry_node(node) if isinstance(node, nodes.MapExit) else node
+                worksharing = worksharing or shares_real_work(entry, block)
                 continue
             entry = block.entry_node(node) if isinstance(node, nodes.MapExit) else node
             if not sequential_leaf_map(entry, block):
@@ -402,7 +421,7 @@ def repairs_amortized(loop: LoopRegion) -> bool:
         if not isinstance(block, SDFGState):
             continue
         top = top_level_nodes(block)
-        if any(isinstance(n, nodes.MapEntry) and n.map.schedule == WORKSHARED for n in top):
+        if any(isinstance(n, nodes.MapEntry) and n.map.schedule == WORKSHARED and shares_real_work(n, block) for n in top):
             region = innermost_loop(block, loop)
             covered.add(id(region))
             while region is not loop:
