@@ -433,7 +433,6 @@ if __name__ == "__main__":
     test_a_sibling_loop_reading_its_own_iterator_is_not_a_read_after()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
-    test_no_postamble_drops_dead_symbol_declaration()
     test_idempotent_skips_already_unique_iterators()
     test_value_preserving_sibling_kbound_loops()
     test_negative_step_loop_value_preserving()

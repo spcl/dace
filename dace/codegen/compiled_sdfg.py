@@ -693,7 +693,7 @@ with open(r"{temp_path}", "wb") as f:
             raise
 
     def _raise_on_broken_assumption(self, initargs: Sequence[Any]) -> None:
-        """Raises if the symbol values break an order a transformation took from the symbol scales."""
+        """Raises if the symbol values break a declared assumption or an order a proof took from the symbol scales."""
         broken = self._check_assumptions(*initargs)
         if broken == 0:
             return
@@ -703,9 +703,11 @@ with open(r"{temp_path}", "wb") as f:
             for name, value in zip(self._initarg_names, initargs)
             if name in symbolic.relation_names(relation)
         )
+        from dace.sdfg.symbol_repo import relation_text
+
         raise ValueError(
-            f'"{self._sdfg.name}" was optimized assuming {relation.lhs} < {relation.rhs} (SMALL symbols are much '
-            f"smaller than the others), which does not hold for {values}"
+            f'"{self._sdfg.name}" was optimized assuming {relation_text(relation)} (declared, or SMALL symbols being '
+            f"much smaller than the others), which does not hold for {values}"
         )
 
     def __del__(self):

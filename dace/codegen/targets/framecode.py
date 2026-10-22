@@ -26,6 +26,7 @@ from dace.sdfg.state import (
 )
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.validation import validate_declared_symbols
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
 from dace.transformation.passes.canonicalize import supply_num_threads
@@ -102,6 +103,7 @@ class DaCeCodeGenerator:
         self._symbol_resolver = SymbolResolver()
         self._struct_types: dict[SDFG, dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
+        validate_declared_symbols(sdfg, fsyms)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         self.resolve_symbols_and_constants(sdfg)
@@ -462,7 +464,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                     sdfg,
                 )
 
-        # The orders proofs took from symbol scales; init refuses symbol values that break one
+        # What the caller declared of the symbols and the orders proofs took from their scales; init refuses symbol
+        # values that break one
         assumptions = program_assumptions(sdfg)
         if assumptions:
             readable = {name for name in self.free_symbols(sdfg) if not name.startswith("__dace")}

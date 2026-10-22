@@ -1749,9 +1749,9 @@ class ProgramVisitor(ExtNodeVisitor):
         loop, start, stop, step = self.ended_loops[name]
         zero = sympy.Integer(0)
         facts = self.facts()
-        if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts) is symbolic.Truth.TRUE:
+        if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts):
             runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts)
-        elif symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts) is symbolic.Truth.TRUE:
+        elif symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts):
             runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts)
         else:
             runs = symbolic.Truth.UNKNOWN
@@ -2421,9 +2421,10 @@ class ProgramVisitor(ExtNodeVisitor):
             if n == name and m == mode:
                 if r == rng:
                     return True
-                elif r.covers(rng, self.facts()):
+                facts = self.facts()
+                if r.covers(rng, facts):
                     print(f"WARNING: New access {name}[{rng}] already covered by {name}[{r}]")
-                elif rng.covers(r, self.facts()):
+                elif rng.covers(r, facts):
                     print(f"WARNING: New access {name}[{rng}] covers previous access {name}[{r}]")
                 return False
 
@@ -2448,6 +2449,8 @@ class ProgramVisitor(ExtNodeVisitor):
         map_inputs: dict[str, Memlet] = None,
         symbols: dict[str, "dace.symbol"] = dict(),
     ):
+        # Adding dataflow leaves the facts unchanged, so one resolver serves every memlet
+        resolver = SymbolResolver()
 
         # Parse map inputs (for memory-based ranges)
         if map_inputs:
@@ -2492,7 +2495,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 for s, r in symbols.items():
                     memlet = propagate_subset(
-                        [memlet], arr, [s], r, self.facts(), use_dst=False, defined_variables=set()
+                        [memlet],
+                        arr,
+                        [s],
+                        r,
+                        resolver.facts_at(self.cfg_target),
+                        use_dst=False,
+                        defined_variables=set(),
                     )
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
@@ -2502,7 +2511,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
                 if memlet.data not in self.sdfg.arrays:
                     if entry_node:
-                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr, symbols=resolver)
                     else:
                         scope_memlet = copy.deepcopy(memlet)
                     irng = memlet.subset
@@ -2580,7 +2589,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 for s, r in symbols.items():
                     memlet = propagate_subset(
-                        [memlet], arr, [s], r, self.facts(), use_dst=True, defined_variables=set()
+                        [memlet], arr, [s], r, resolver.facts_at(self.cfg_target), use_dst=True, defined_variables=set()
                     )
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
@@ -2591,7 +2600,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 inner_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
                     if entry_node:
-                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr, symbols=resolver)
                     else:
                         scope_memlet = copy.deepcopy(memlet)
                     irng = memlet.subset

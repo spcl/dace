@@ -301,6 +301,40 @@ def test_type_inference_takes_the_declared_type_of_a_symbol():
     assert dace.dtypes.result_type_of(dace.symbol("L", dace.int64), dace.int64) == dace.int64
 
 
+def test_swapping_two_names_keeps_both():
+    sdfg = dace.SDFG("registry_swap")
+    sdfg.add_symbol("a", dace.int64, predicates=POSITIVE)
+    sdfg.add_symbol("b", dace.int32)
+    sdfg.add_array("x", [2], dace.float64)
+    sdfg.add_array("y", [3], dace.float32)
+    sdfg.replace_dict({"a": "b", "b": "a", "x": "y", "y": "x"})
+    assert dict(sdfg.symbols) == {"a": dace.int32, "b": dace.int64}
+    assert sdfg.symbol_repo.params.predicates == {"b": POSITIVE}
+    assert (sdfg.arrays["x"].dtype, sdfg.arrays["y"].dtype) == (dace.float32, dace.float64)
+
+
+def test_renaming_into_a_declared_name_keeps_its_declaration():
+    """A name merged into a declared one is that one: its dtype stays, and the merged name's facts are dropped."""
+    sdfg = dace.SDFG("registry_merge")
+    sdfg.add_symbol("a", dace.int64, predicates=POSITIVE)
+    sdfg.add_symbol("b", dace.int32)
+    sdfg.replace_dict({"a": "b"})
+    assert dict(sdfg.symbols) == {"b": dace.int32}
+    assert sdfg.symbol_repo.params.predicates == {}
+
+
+def test_new_names_avoid_names_bound_after_the_last_lookup():
+    """The bound names are cached for naming, and a map added after a lookup is seen by the next one."""
+    sdfg = dace.SDFG("registry_bound_names")
+    sdfg.add_array("A", [4], dace.float64)
+    state = sdfg.add_state()
+    assert sdfg.add_transient("x", [1], dace.float64, find_new_name=True)[0] == "x"
+    assert sdfg.bound_names() is sdfg.bound_names()
+    state.add_mapped_tasklet("m", {"y": "0:4"}, {}, "a = 1.0", {"a": dace.Memlet("A[y]")}, external_edges=True)
+    assert "y" in sdfg.bound_names()[0]
+    assert sdfg.add_transient("y", [1], dace.float64, find_new_name=True)[0] != "y"
+
+
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_scope_takes_over_a_symbol_a_shape_declared()
@@ -330,3 +364,6 @@ if __name__ == "__main__":
     test_shape_declares_a_symbol_with_its_dtype()
     test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names()
     test_type_inference_takes_the_declared_type_of_a_symbol()
+    test_swapping_two_names_keeps_both()
+    test_renaming_into_a_declared_name_keeps_its_declaration()
+    test_new_names_avoid_names_bound_after_the_last_lookup()

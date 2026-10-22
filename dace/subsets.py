@@ -109,7 +109,7 @@ class Subset:
             if divisor == 1 or multiple == 0:
                 return True
             relation = symbolic.Relation(symbolic.RelationKind.DIVIDES, sp.sympify(divisor), sp.sympify(multiple))
-            return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
+            return symbolic.holds(relation, facts)
 
         # Every element of ``other`` lies on this range's lattice: its step divides the distance from its start
         return all(

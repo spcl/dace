@@ -375,9 +375,7 @@ class ModuloSMemlet(SeparableMemletPattern):
         if self.modulo.has(*params) or not self.subexpr.has(*params):
             return False
         # A positive modulo wraps into [0, modulo - 1]
-        if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, sympy.Integer(0), self.modulo), facts) is not (
-            symbolic.Truth.TRUE
-        ):
+        if not symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, sympy.Integer(0), self.modulo), facts):
             return False
 
         for pattern_class in SeparableMemletPattern.extensions():

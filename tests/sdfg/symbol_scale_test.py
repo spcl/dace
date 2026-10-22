@@ -133,6 +133,15 @@ def test_a_cached_proof_records_its_assumption_in_every_sdfg():
     assert symbolic.simplify(sympy.Max(n1, N), unrecorded) == sympy.Max(n1, N)
 
 
+def test_a_scale_disproof_is_not_recorded_by_a_true_only_query():
+    """``provably_le`` acts on TRUE alone, so an order that only disproves its query is not checked at run time."""
+    sdfg = scaled_sdfg("scale_disproof")
+    assert not symbolic.provably_le(N, n1, sdfg.facts())
+    assert list(sdfg.symbol_repo.runtime_assumptions) == []
+    assert symbolic.provably_le(n1, N, sdfg.facts())
+    assert list(sdfg.symbol_repo.runtime_assumptions) == [Relation(RelationKind.LT, n1, N)]
+
+
 if __name__ == "__main__":
     test_small_symbols_are_much_less_than_default_ones()
     test_scales_prove_nothing_without_a_place_to_record()
@@ -143,3 +152,38 @@ if __name__ == "__main__":
     test_call_checks_the_assumed_orders()
     test_init_refuses_values_that_break_an_assumed_order()
     test_a_cached_proof_records_its_assumption_in_every_sdfg()
+    test_a_scale_disproof_is_not_recorded_by_a_true_only_query()
+
+
+def declared_program(name: str) -> dace.SDFG:
+    """Copies ``A[0:M]`` to ``B`` and zeroes the rest of it, the caller having declared ``N`` positive and
+    ``M <= N``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.set_symbol_assumptions("N", frozenset({symbolic.Predicate.POSITIVE}))
+    sdfg.add_symbol_relation(Relation(RelationKind.LE, symbolic.symbol("M"), symbolic.symbol("N")))
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N"], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "copy",
+        {"i": "0:N"},
+        {"a": dace.Memlet("A[i]")},
+        "b = a if i < M else 0.0",
+        {"b": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_call_checks_the_declared_assumptions():
+    """What the caller declared is a precondition the proofs build on, so a call that breaks it is refused."""
+    csdfg = declared_program("declared_checked_call").compile()
+    A, B = np.arange(8, dtype=np.float64), np.zeros(8)
+    csdfg(A=A, B=B, M=5, N=8)
+    assert np.array_equal(B[:5], A[:5])
+    with pytest.raises(ValueError, match=r"M <= N"):
+        csdfg(A=A, B=B, M=9, N=8)
+    with pytest.raises(ValueError, match=r"0 < N"):
+        csdfg(A=np.zeros(0), B=np.zeros(0), M=0, N=0)

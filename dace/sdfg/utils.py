@@ -930,6 +930,8 @@ def consolidate_edges_scope(
         elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
+    if not connectors_to_remove:
+        return 0
     # Per retained (write-side) connector, the exact subset of each write folded into it
     # so far. ``sbs.union`` only computes a bounding box, so checking a new candidate
     # against the already-widened outer subset would false-positive once enough merges

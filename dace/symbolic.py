@@ -56,6 +56,7 @@ from dace.symbolic_facts import (  # noqa: F401
     ask,
     cached_proof,
     comparison_relation,
+    holds,
     is_small,
     is_small_extent,
     predicate_relation,

@@ -1411,9 +1411,9 @@ def step_direction(step: Any, facts: symbolic.Facts) -> int | None:
     """``1`` for a loop whose step is provably ``>= 0``, ``-1`` for one provably ``<= 0``, else None. A zero step
     never terminates (and Python's ``range`` refuses it), so the sign alone orients the loop."""
     zero = sp.Integer(0)
-    if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, zero, sp.sympify(step)), facts) is symbolic.Truth.TRUE:
+    if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LE, zero, sp.sympify(step)), facts):
         return 1
-    if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, sp.sympify(step), zero), facts) is symbolic.Truth.TRUE:
+    if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LE, sp.sympify(step), zero), facts):
         return -1
     return None
 

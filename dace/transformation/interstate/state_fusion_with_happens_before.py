@@ -597,6 +597,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # A read view's binding edge is not a write, so such a View is no output of its state,
             # see ``is_read_view_binding``.
             top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
+            # The states are consecutive, so what holds in the first holds in the second
+            facts = SymbolResolver().facts_at(first_state)
             first_input = in_state_order(
                 first_state, [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)], first_order
             )
@@ -667,7 +669,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     continue
                 wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
                 if wsub is not None and all(
-                    subsets.intersects(wsub, fs, sdfg.facts()) is Truth.FALSE for fs in first_written[e.data.data]
+                    subsets.intersects(wsub, fs, facts) is Truth.FALSE for fs in first_written[e.data.data]
                 ):
                     continue
                 seed = sdfg.arrays[e.data.data]
@@ -811,7 +813,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     if _ordered_by_existing_dataflow(consumers, we):
                         continue
                     if any(
-                        subsets.intersects(wsub, rs, sdfg.facts()) is not Truth.FALSE
+                        subsets.intersects(wsub, rs, facts) is not Truth.FALSE
                         for rs in first_read_subsets[wnode.data]
                     ):
                         # The anti-dependency is on the READ ITSELF, which happens at the

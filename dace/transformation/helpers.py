@@ -742,7 +742,7 @@ def nest_state_subgraph(
     used_symbols = StateSubgraphView(state, subgraph.nodes()).used_symbols(all_symbols=False)
     used_symbols |= {str(s) for desc in nsdfg.arrays.values() for s in desc.free_symbols}
     for v in dict.fromkeys([*symbols_at_top, *sdfg.symbols]):
-        if v in nsdfg.symbols or v not in used_symbols:
+        if v in nsdfg.symbols or v in bound_inside or v not in used_symbols:
             continue
         nsdfg.add_symbol(v, (sdfg.symbols[v] if v in sdfg.symbols else symbols_at_top[v]).dtype)
 

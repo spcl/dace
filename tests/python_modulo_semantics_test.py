@@ -5,7 +5,6 @@ import itertools
 
 import numpy as np
 import pytest
-import sympy
 
 import dace
 from dace import symbolic
@@ -280,7 +279,6 @@ if __name__ == "__main__":
     ):
         test_a_constant_modulo_folds_with_the_rounding_its_spelling_names(text, value)
     test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding()
-    test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod()
     for label, code, types, reference in TASKLET_CASES:
         test_a_tasklet_modulo_computes_what_its_spelling_names(label, code, types, reference)
     for label, assignment, value in (("percent", "(I - 7) % 3", -1), ("pymod", "PyMod(I - 7, 3)", 2)):
