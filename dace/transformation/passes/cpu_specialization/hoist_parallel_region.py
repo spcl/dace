@@ -517,8 +517,9 @@ def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
             entry, _ = memlet_utils.memlet_to_map(edge, block, block.sdfg)
             entry.map.schedule = WORKSHARED
         for node in [n for n in top_level_nodes(block) if elementwise(n)]:
+            # The outermost map of the expansion is shared out; a map nested in it runs on that thread
             for entry in expand_in_place(node, block):
-                entry.map.schedule = WORKSHARED
+                entry.map.schedule = WORKSHARED if block.entry_node(entry) is None else dtypes.ScheduleType.Sequential
         for node in [n for n in top_level_nodes(block) if sequential_leaf_map(n, block)]:
             if fill_as_one_map(node, block) is None:
                 node.map.schedule = WORKSHARED

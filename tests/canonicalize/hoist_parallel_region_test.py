@@ -362,6 +362,37 @@ def test_top_level_fill_in_the_loop_is_expanded_and_shared_out():
     assert np.allclose(a, 1.0) and np.allclose(b, 3.0)
 
 
+def test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map():
+    """fv3_dycore: a fill over ``[N, N, K]`` with ``K`` small expands to an ``(i0, i1)`` map around a ``K`` map. Both
+    became ``omp for``, and GCC refused the work-sharing loop nested in another."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    sdfg = dace.SDFG("nested_fill_neighbour")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.set_symbol_scale("K", dace.symbolic.Scale.SMALL)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N, N, "K"], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    mapped_state(outer, "par", "a", "1.0", ["0:N"])
+    fill_state = outer.add_state("fill")
+    node = FillLibraryNode("fill_b", value=3.0)
+    # As schedule inference leaves a top-level fill: its expansion moves the small axis into an inner map
+    node.schedule = dtypes.ScheduleType.CPU_Multicore
+    fill_state.add_node(node)
+    fill_state.add_edge(
+        node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access("b"), None, dace.Memlet("b[0:N, 0:N, 0:K]")
+    )
+    outer.add_edge(outer.nodes()[0], fill_state, dace.InterstateEdge())
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    for entry, state in sdfg.all_nodes_recursive():
+        if isinstance(entry, nd.MapEntry) and state.entry_node(entry) is not None:
+            assert entry.map.schedule != dtypes.ScheduleType.CPU_Multicore, entry.map.label
+    a, b = np.zeros(5), np.zeros((5, 5, 3))
+    sdfg(a=a, b=b, N=5, K=3)
+    assert np.allclose(a, 1.0) and np.allclose(b, 3.0)
+
+
 def test_top_level_nested_sdfg_in_the_loop_is_refused():
     """A nested SDFG beside the maps is a statement nothing can share out. Refuse."""
     sdfg = dace.SDFG("nested_neighbour")
@@ -1271,6 +1302,7 @@ if __name__ == "__main__":
     test_top_level_sequential_map_in_the_loop_is_shared_out()
     test_sequential_map_around_a_parallel_map_is_refused()
     test_top_level_fill_in_the_loop_is_expanded_and_shared_out()
+    test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map()
     test_top_level_nested_sdfg_in_the_loop_is_refused()
     test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team()
     test_loop_local_transient_crossing_two_map_scopes_stays_outside_the_nest()
