@@ -52,9 +52,7 @@ class Sync(nodes.LibraryNode):
     implementations = {}
     default_implementation = "Auto"
 
-    scope = properties.EnumProperty(
-        dtype=SyncScope, default=SyncScope.BLOCK, desc="Which threads wait for each other."
-    )
+    scope = properties.EnumProperty(dtype=SyncScope, default=SyncScope.BLOCK, desc="Which threads wait for each other.")
     mask = properties.Property(
         dtype=str, allow_none=True, default=None, desc="The lanes of a warp barrier (CUDA), or None for the whole warp."
     )
