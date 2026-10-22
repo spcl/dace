@@ -845,6 +845,8 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
         elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
+    if not connectors_to_remove:
+        return 0
     # The outer side of the scope
     facts = SymbolResolver().facts_at(
         state, scope_node if isinstance(scope_node, nd.EntryNode) else state.entry_node(scope_node)

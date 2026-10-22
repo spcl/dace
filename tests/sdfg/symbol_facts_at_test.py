@@ -177,6 +177,18 @@ def test_renamed_extent_moves_its_fact():
     assert symbolic.ask(le("0", "N"), facts) is symbolic.Truth.UNKNOWN
 
 
+@pytest.mark.parametrize("dimension, nonnegative", [("2 * N", True), ("N + 1", False), ("M * N", False)])
+def test_a_dimension_scaling_one_symbol_makes_it_nonnegative(dimension: str, nonnegative: bool):
+    """``2 * N >= 0`` means ``N >= 0``; ``N + 1`` and ``M * N`` say nothing about ``N`` alone."""
+    sdfg = dace.SDFG(f"scaled_dimension_{nonnegative}_{len(dimension)}")
+    for name in ("M", "N"):
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_array("A", [dimension], dace.float64)
+    sdfg.add_state(is_start_block=True)
+    truth = symbolic.ask(le("0", "N"), SymbolResolver().facts_at(sdfg))
+    assert truth is (symbolic.Truth.TRUE if nonnegative else symbolic.Truth.UNKNOWN)
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -194,3 +206,6 @@ if __name__ == "__main__":
     test_loop_body_assigning_another_symbol_keeps_the_range()
     test_nested_sdfg_symbol_reassigned_inside_is_not_its_mapped_value()
     test_renamed_extent_moves_its_fact()
+    test_a_dimension_scaling_one_symbol_makes_it_nonnegative("2 * N", True)
+    test_a_dimension_scaling_one_symbol_makes_it_nonnegative("N + 1", False)
+    test_a_dimension_scaling_one_symbol_makes_it_nonnegative("M * N", False)

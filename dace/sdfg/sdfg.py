@@ -1183,8 +1183,8 @@ class SDFG(ControlFlowRegion):
         self._symbol_repo.add_relation(relation)
 
     def facts(self) -> symbolic.Facts:
-        """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is equal to is
-        nonnegative, for explicit use in proofs. What is assumed of a symbol holds for its value on entry only, so
+        """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is a positive
+        multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds for its value on entry only, so
         nothing is assumed of one an interstate edge assigns."""
         own = self._symbol_repo.facts()
         assigned = interstate_bound_names(self)
@@ -1198,14 +1198,17 @@ class SDFG(ControlFlowRegion):
             )
         extents = sorted(
             {
-                dim.name
+                base.name
                 for desc in self._arrays.values()
                 for dim in getattr(desc, "shape", ())
+                if symbolic.issymbolic(dim)
+                for coefficient, base in [dim.as_coeff_Mul()]
                 # An undefined symbol is a placeholder with no facts
-                if isinstance(dim, symbolic.symbol)
-                and not isinstance(dim, symbolic.UndefinedSymbol)
-                and dim.name in self.symbols
-                and dim.name not in assigned
+                if coefficient.is_positive
+                and isinstance(base, symbolic.symbol)
+                and not isinstance(base, symbolic.UndefinedSymbol)
+                and base.name in self.symbols
+                and base.name not in assigned
             }
         )
         if not extents:

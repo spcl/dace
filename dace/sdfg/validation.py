@@ -308,13 +308,6 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
             raise InvalidSDFGError(
                 f"Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols", sdfg, None
             )
-        # What the SDFG needs from outside must be declared as its parameters; ``__dace`` names are the code
-        # generator's own (e.g. the element count of a consume chunk). A nested SDFG's mapping of a symbol it does not
-        # use is only warned about (see ``NestedSDFG.validate``), so the used symbols are checked, not the free ones.
-        used = sdfg.used_symbols(all_symbols=False)
-        undeclared = sorted(name for name in used - sdfg.symbols.keys() if not name.startswith("__dace"))
-        if undeclared:
-            raise InvalidSDFGError(f"Free symbols {undeclared} are not declared as SDFG symbols", sdfg, None)
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
@@ -1244,6 +1237,16 @@ def validate_state(
 
 ###########################################
 # Exception classes
+
+
+def validate_declared_symbols(sdfg: "dace.sdfg.SDFG", used: set[str]) -> None:
+    """Raises if a symbol the SDFG uses is not declared as one of its parameters. ``__dace`` names are the code
+    generator's own (e.g. the element count of a consume chunk). Code generation checks this once, with the used
+    symbols it computes anyway, rather than every validation walking the whole SDFG for them.
+    """
+    undeclared = sorted(name for name in used - sdfg.symbols.keys() if not name.startswith("__dace"))
+    if undeclared:
+        raise InvalidSDFGError(f"Free symbols {undeclared} are not declared as SDFG symbols", sdfg, None)
 
 
 class InvalidSDFGError(Exception):

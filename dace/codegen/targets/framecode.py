@@ -20,6 +20,7 @@ from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.validation import validate_declared_symbols
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -53,6 +54,7 @@ class DaCeCodeGenerator:
         self._symbol_resolver = SymbolResolver()
         self._struct_types: dict[SDFG, dict[str, dtypes.struct]] = {}
         fsyms = self.free_symbols(sdfg)
+        validate_declared_symbols(sdfg, fsyms)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         # resolve all symbols and constants

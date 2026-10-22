@@ -2,6 +2,7 @@
 """Contains classes that implement a redundant array removal transformation."""
 
 import copy
+import functools
 import warnings
 from collections.abc import Sequence
 
@@ -281,7 +282,8 @@ class RedundantArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
-        facts = SymbolResolver().facts_at(graph, in_array)
+        # Derived on first use: most candidates are refused before any subset is compared
+        facts = functools.cache(lambda: SymbolResolver().facts_at(graph, in_array))
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -394,7 +396,7 @@ class RedundantArray(pm.SingleStateTransformation):
                             warnings.warn(f"validate_subsets failed: {ex}")
                             return False
                         for oset in true_out_subsets:
-                            if subsets.intersects(oset, subset, facts) is not symbolic.Truth.FALSE:
+                            if subsets.intersects(oset, subset, facts()) is not symbolic.Truth.FALSE:
                                 subsets_intersect = True
                                 break
                         if subsets_intersect:
@@ -489,7 +491,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 warnings.warn(f"validate_subsets failed: {ex}")
                 return False
             # 2-b. Check whether a2_subset covers a1_subset
-            if not a2_subset.covers(a1_subset, facts):
+            if not a2_subset.covers(a1_subset, facts()):
                 return False
             # 2-c. Validate subsets in memlet tree
             # (should not be needed for valid SDGs)
@@ -840,7 +842,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
-        facts = SymbolResolver().facts_at(graph, out_array)
+        # Derived on first use: most candidates are refused before any subset is compared
+        facts = functools.cache(lambda: SymbolResolver().facts_at(graph, out_array))
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -961,7 +964,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                                 warnings.warn(f"validate_subsets failed: {ex}")
                                 return False
                             for iset in true_in_subsets:
-                                if subsets.intersects(iset, subset, facts) is not symbolic.Truth.FALSE:
+                                if subsets.intersects(iset, subset, facts()) is not symbolic.Truth.FALSE:
                                     subsets_intersect = True
                                     break
                             if subsets_intersect:
@@ -1046,7 +1049,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 warnings.warn(f"validate_subsets failed: {ex}")
                 return False
             # 2-b. Check where b1_subset covers b2_subset
-            if not b1_subset.covers(b2_subset, facts):
+            if not b1_subset.covers(b2_subset, facts()):
                 return False
             # 2-c. Validate subsets in memlet tree
             # (should not be needed for valid SDGs)

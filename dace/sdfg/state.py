@@ -2383,6 +2383,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         path = edges if propagate_forward else reversed(edges)
         last_conn = None
+        # Adding the path leaves the facts unchanged, so one resolver propagates through every scope
+        symbols = SymbolResolver()
         # Propagate and add edges
         for i, edge in enumerate(path):
             # Figure out source and destination connectors
@@ -2427,7 +2429,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 snode = edge.dst if propagate_forward else edge.src
                 if not cur_memlet.is_empty():
                     if propagate:
-                        cur_memlet = sdprop.propagate_memlet(self, cur_memlet, snode, True)
+                        cur_memlet = sdprop.propagate_memlet(self, cur_memlet, snode, True, symbols=symbols)
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.sdfg, self, edge)
@@ -2747,6 +2749,9 @@ class SymbolResolver:
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
         self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
+        self._sdfg_facts: dict[
+            SDFG, tuple[symbolic.Facts, tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]]
+        ] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
         state_symbols = self._per_state.get(state)
@@ -2779,11 +2784,13 @@ class SymbolResolver:
         from dace.transformation.passes.analysis import loop_analysis
 
         sdfg = block.sdfg
-        own = sdfg.facts()
-        relations, integers, small, unreadable = self.outer_facts(sdfg)
-        relations.extend(own.relations)
-        integers |= own.integers
-        small |= own.small
+        # What holds in every block of the SDFG is derived once
+        if sdfg not in self._sdfg_facts:
+            self._sdfg_facts[sdfg] = (sdfg.facts(), self.outer_facts(sdfg))
+        own, (outer_relations, outer_integers, outer_small, unreadable) = self._sdfg_facts[sdfg]
+        relations = [*outer_relations, *own.relations]
+        integers = outer_integers | own.integers
+        small = outer_small | own.small
         parameters = own.parameters - unreadable
         scopes: list[tuple[Any, dict[str, dtypes.typeclass], list[tuple[str, Any, Any, Any]]]] = []
         region = block
@@ -2847,8 +2854,9 @@ class SymbolResolver:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
+        # Ranges and declarations consistent on their own; a contradiction between them surfaces in a proof
         return symbolic.Facts(
-            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
+            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed, check=False
         )
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
@@ -2888,6 +2896,7 @@ class SymbolResolver:
         """
         # Nested SDFGs derive their facts from the enclosing ones, so none of them is kept
         self._facts.clear()
+        self._sdfg_facts.clear()
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}

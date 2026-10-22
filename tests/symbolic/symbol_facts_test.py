@@ -223,6 +223,26 @@ def test_inequality_of_identical_expressions_is_false():
     assert ask(Relation(RelationKind.NE, N, N), Facts.none()) is Truth.FALSE
 
 
+def test_a_redundant_fact_keeps_a_proof():
+    """``0 <= N`` follows from ``0 <= i <= N - 1``; stating it too leaves ``2 * N - 2 >= 0`` provable."""
+    query = Relation(RelationKind.LE, ZERO, 2 * N - 2)
+    iterator_range = [Relation(RelationKind.LE, ZERO, ITERATOR), Relation(RelationKind.LE, ITERATOR, N - 1)]
+    assert ask(query, facts_of(*iterator_range)) is Truth.TRUE
+    assert ask(query, facts_of(predicate_relation(Predicate.NONNEGATIVE, N), *iterator_range)) is Truth.TRUE
+
+
+def test_facts_about_unrelated_symbols_share_one_simplification():
+    """Facts differing only in symbols an expression does not reach simplify it through one cached entry."""
+    iterator_range = [Relation(RelationKind.LE, ONE, ITERATOR), Relation(RelationKind.LE, ITERATOR, N - 2)]
+    first = facts_of(*iterator_range, Relation(RelationKind.LE, ZERO, K))
+    second = facts_of(*iterator_range, Relation(RelationKind.LE, ZERO, M))
+    assert first.about({"i"}) == second.about({"i"}) == facts_of(*iterator_range).about({"i"})
+    symbolic.simplify.cache_clear()
+    assert symbolic.simplify(sympy.Max(ITERATOR - 1, 0), first) == ITERATOR - 1
+    assert symbolic.simplify(sympy.Max(ITERATOR - 1, 0), second) == ITERATOR - 1
+    assert symbolic.simplify.cache_info().hits == 1
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -250,3 +270,5 @@ if __name__ == "__main__":
     test_divisibility_keeps_the_order_facts_of_its_multiple()
     test_simplify_writes_a_divisibility_quotient_back()
     test_inequality_of_identical_expressions_is_false()
+    test_a_redundant_fact_keeps_a_proof()
+    test_facts_about_unrelated_symbols_share_one_simplification()

@@ -113,10 +113,7 @@ class Facts:
         "small",
         "parameters",
         "assumed",
-        "substitution",
-        "slacks",
-        "residuals",
-        "nonzero",
+        "solution",
     )
 
     relations: tuple[Relation, ...]
@@ -124,10 +121,6 @@ class Facts:
     small: frozenset[str]
     parameters: frozenset[str]
     assumed: OrderedSet[Relation] | None
-    substitution: dict[sympy.Symbol, sympy.Expr]
-    slacks: dict[sympy.Dummy, sympy.Expr]
-    residuals: tuple[sympy.Expr, ...]
-    nonzero: tuple[sympy.Expr, ...]
 
     def __init__(
         self,
@@ -136,7 +129,10 @@ class Facts:
         small: frozenset[str] = frozenset(),
         parameters: frozenset[str] = frozenset(),
         assumed: OrderedSet[Relation] | None = None,
+        check: bool = True,
     ) -> None:
+        """:param check: Solve the relations now, raising ``InconsistentAssumptionsError`` if they contradict; without,
+        they are solved by the first proof that needs them."""
         # A canonical order, so that what is proven does not depend on the order the facts were given in
         self.relations = tuple(
             sorted(
@@ -148,7 +144,32 @@ class Facts:
         self.small = small
         self.parameters = parameters
         self.assumed = assumed
-        self.substitution, self.slacks, self.residuals, self.nonzero = solve(self.relations, integers)
+        self.solution = solve(self.relations, integers) if check else None
+
+    def solved(
+        self,
+    ) -> tuple[
+        dict[sympy.Symbol, sympy.Expr], dict[sympy.Dummy, sympy.Expr], tuple[sympy.Expr, ...], tuple[sympy.Expr, ...]
+    ]:
+        if self.solution is None:
+            self.solution = solve(self.relations, self.integers)
+        return self.solution
+
+    @property
+    def substitution(self) -> dict[sympy.Symbol, sympy.Expr]:
+        return self.solved()[0]
+
+    @property
+    def slacks(self) -> dict[sympy.Dummy, sympy.Expr]:
+        return self.solved()[1]
+
+    @property
+    def residuals(self) -> tuple[sympy.Expr, ...]:
+        return self.solved()[2]
+
+    @property
+    def nonzero(self) -> tuple[sympy.Expr, ...]:
+        return self.solved()[3]
 
     @classmethod
     def none(cls) -> "Facts":
@@ -157,6 +178,26 @@ class Facts:
     def with_relations(self, relations: Iterable[Relation]) -> "Facts":
         """These facts with more relations, the same scales, recording into the same assumptions."""
         return Facts((*self.relations, *relations), self.integers, self.small, self.parameters, self.assumed)
+
+    def about(self, names: set[str]) -> "Facts":
+        """These facts without the relations sharing no symbol with ``names``, directly or through other relations:
+        what they prove about an expression over ``names`` is the same."""
+        names, kept, rest = set(names), [], list(self.relations)
+        grown = True
+        while grown:
+            grown = False
+            for relation in list(rest):
+                if relation_names(relation) & names:
+                    names |= relation_names(relation)
+                    kept.append(relation)
+                    rest.remove(relation)
+                    grown = True
+        if not rest and names >= self.integers | self.small | self.parameters:
+            return self
+        # A part of facts is as consistent as the whole
+        return Facts(
+            kept, self.integers & names, self.small & names, self.parameters & names, self.assumed, check=False
+        )
 
     def recording(self, assumed: OrderedSet[Relation] | None) -> "Facts":
         """These facts, recording into ``assumed`` instead."""
@@ -221,8 +262,9 @@ class cached_proof(Generic[Result]):
         return result
 
 
-def relation_names(relation: Relation) -> set[str]:
-    return {str(free) for side in (relation.lhs, relation.rhs) for free in sympy.sympify(side).free_symbols}
+@functools.lru_cache(maxsize=4096)
+def relation_names(relation: Relation) -> frozenset[str]:
+    return frozenset(str(free) for side in (relation.lhs, relation.rhs) for free in sympy.sympify(side).free_symbols)
 
 
 def with_integers(expr: sympy.Expr, integers: frozenset[str]) -> sympy.Expr:
@@ -629,6 +671,15 @@ def prove(query: Relation, facts: Facts) -> Truth:
     if query.kind is RelationKind.DIVIDES:
         return divides(query, facts)
     expr = cast(sympy.Expr, sympy.sympify(query.rhs - query.lhs))
+    if expr.is_number and query.kind is not RelationKind.MUCH_LT:
+        answer = {
+            RelationKind.EQ: expr.is_zero,
+            RelationKind.NE: expr.is_nonzero,
+            RelationKind.LT: expr.is_positive,
+            RelationKind.LE: expr.is_nonnegative,
+        }[query.kind]
+        return Truth.UNKNOWN if answer is None else Truth.TRUE if answer else Truth.FALSE
+    facts = facts.about({str(free) for free in expr.free_symbols})
     extrema = sorted(expr.atoms(sympy.Min, sympy.Max), key=str)
     if extrema:
         truth = by_cases(expr, query.kind, extrema[0], facts)
@@ -650,15 +701,28 @@ def prove(query: Relation, facts: Facts) -> Truth:
             answer = True
     else:
         strict = query.kind is RelationKind.LT
-        # A difference that is at least a residual (or nothing) has the residual's sign
-        if any(proves_sign(difference - residual, divisions, strict) for residual in (0, *facts.residuals)):
+        # A difference that is at least a nonnegative multiple of a residual (or nothing) has the residual's sign
+        if any(proves_sign(difference - bound, divisions, strict) for bound in residual_bounds(difference, facts)):
             return Truth.TRUE
-        if any(proves_sign(-difference - residual, divisions, not strict) for residual in (0, *facts.residuals)):
+        if any(
+            proves_sign(-difference - bound, divisions, not strict) for bound in residual_bounds(-difference, facts)
+        ):
             return Truth.FALSE
         return Truth.UNKNOWN
     if answer is None:
         return Truth.UNKNOWN
     return Truth.TRUE if answer else Truth.FALSE
+
+
+def residual_bounds(difference: sympy.Expr, facts: Facts) -> list[sympy.Expr]:
+    """Zero, and each residual (``>= 0``) scaled by 1 and by every positive factor that cancels one of its slacks in
+    ``difference``: the slack ``N - 1 - i`` of ``i <= N - 1`` bounds ``2 * N - 2`` only twice over."""
+    bounds: list[sympy.Expr] = [sympy.Integer(0)]
+    for residual in facts.residuals:
+        slacks = [s for s in residual.free_symbols if isinstance(s, sympy.Dummy)]
+        factors = {difference.coeff(s) / residual.coeff(s) for s in slacks if residual.coeff(s) != 0}
+        bounds += [factor * residual for factor in [sympy.Integer(1), *factors] if factor.is_positive]
+    return list(dict.fromkeys(bounds))
 
 
 def holds(query: Relation, facts: Facts) -> bool:
