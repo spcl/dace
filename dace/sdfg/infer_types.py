@@ -554,6 +554,25 @@ def map_scope_carries_dependency(state: SDFGState, entry: nodes.MapEntry) -> boo
     return False
 
 
+def sequentialize_carried_maps(sdfg: SDFG) -> int:
+    """Pin ``Sequential`` every ``Default``-scheduled map of a freshly parsed program whose scope carries a
+    dependency (:func:`map_scope_carries_dependency`): ``for i in dace.map[0:N]: s = s + A[i]`` is a loop the
+    author spelled as a map. A map is independent by contract; this is the one place a program can break it.
+
+    :returns: the number of maps pinned.
+    """
+    pinned = 0
+    for node, state in sdfg.all_nodes_recursive():
+        if (
+            isinstance(node, nodes.MapEntry)
+            and node.map.schedule == dtypes.ScheduleType.Default
+            and map_scope_carries_dependency(state, node)
+        ):
+            node.map.schedule = dtypes.ScheduleType.Sequential
+            pinned += 1
+    return pinned
+
+
 def _set_default_schedule_in_scope(
     state: SDFGState,
     parent_node: nodes.Node,
@@ -588,16 +607,6 @@ def _set_default_schedule_in_scope(
                     local_child_schedule = _determine_schedule_from_storage(state, node)
                 else:
                     local_child_schedule = child_schedule
-                # An OpenMP team over a loop-carried dependency is a data race, and the wrong answer
-                # it gives is silent. Never CHOOSE that schedule here; an explicit one is the
-                # author's to defend, and so is a proof the memlets cannot show (``proven_independent``).
-                if (
-                    local_child_schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
-                    and isinstance(node, nodes.MapEntry)
-                    and not node.map.proven_independent
-                    and map_scope_carries_dependency(state, node)
-                ):
-                    local_child_schedule = dtypes.ScheduleType.Sequential
                 node.schedule = local_child_schedule
         elif isinstance(node, nodes.LibraryNode):
             if node.schedule == dtypes.ScheduleType.Default:
