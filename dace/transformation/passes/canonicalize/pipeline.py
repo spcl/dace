@@ -48,6 +48,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
+from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
@@ -752,6 +753,8 @@ def statement_round() -> list[ppl.Pass]:
     # Fold symbol copies before the IV matchers: the frontend spells ``k = k + inc`` as ``t = k + inc; k = t``, and
     # induction-variable substitution matches the folded update only (tsvc s318).
     units: list[ppl.Pass] = [promote, PropagateAndPrune()]
+    # A slice update ``A[S] += e`` writes ``A[S]`` in place, a read-modify-write ``AccumulatorCopyChainToWCR`` reduces
+    units += [EliminateCopyBack()]
     units += [HoistInductionVariableUpdates(), InductionVariableSubstitution()]
     units += [PropagateIndexSubsets(), RemoveUnusedSymbols(), PropagateAndPrune()]
     units += [ForwardStoreToLoad(), SplitStatements()]

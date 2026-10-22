@@ -19,12 +19,14 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
+from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
@@ -126,8 +128,10 @@ def test_the_stage_is_wired_in_once_after_maximal_fusion():
     assert labels == ["after_fusion"], labels
 
 
-def test_heat3d_loses_the_copy_out_buffer():
-    """A/B in one test, so it can never go vacuous: without the stage the buffer is there."""
+def test_heat3d_loses_the_copy_out_buffer(monkeypatch):
+    """A/B in one test, so it can never go vacuous: without the stage the buffer is there. ``EliminateCopyBack``
+    removes the same buffer earlier, so it is off in both runs: the stage under test is the only difference."""
+    monkeypatch.setattr(EliminateCopyBack, "apply_pass", lambda self, sdfg, results: None)
     reference = _canonicalize(_heat3d.to_sdfg(simplify=True), with_cleanup=False)
     assert len(_heap_buffers(reference)) == 1, _heap_buffers(reference)
     assert _bulk_copies(reference) == 1
@@ -175,6 +179,7 @@ def test_heat3d_is_bit_exact():
 
 if __name__ == "__main__":
     test_the_stage_is_wired_in_once_after_maximal_fusion()
-    test_heat3d_loses_the_copy_out_buffer()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        test_heat3d_loses_the_copy_out_buffer(monkeypatch)
     test_the_stage_is_idempotent()
     test_heat3d_is_bit_exact()
