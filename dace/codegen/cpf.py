@@ -109,6 +109,7 @@ HOST_SCHEDULES = frozenset(
 #: Keyed by class name. Every library node registered in the process must appear here (the suite
 #: asserts it), so a new node arrives with a description instead of rendering as anonymous loops.
 LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
+    "AINode": "AI-implemented node: the operation its natural-language description states",
     "Abort": "MPI_Abort: terminate the communicator",
     "AllNode": "all: true where every element along the reduced axes is true",
     "Allgather": "MPI_Allgather: gather from every rank to every rank",

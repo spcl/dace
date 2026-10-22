@@ -3201,7 +3201,8 @@ class SymbolResolver:
         renamed expression; and the mapped symbols that are ``SMALL`` there, and those a check at program entry cannot
         read (their values come from more than the outer parameters)."""
         nsdfg = sdfg.parent_nsdfg_node
-        if nsdfg is None:
+        # A detached copy (no state around its node) has no outer facts
+        if nsdfg is None or sdfg.parent is None:
             return [], set(), set(), frozenset()
         outer = self.facts_at(sdfg.parent, nsdfg)
         # A symbol an interstate edge of ``sdfg`` assigns equals its mapped value on entry only

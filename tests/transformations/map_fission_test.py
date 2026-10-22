@@ -1295,19 +1295,19 @@ def test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps():
     assert np.allclose(B, expected) and D[0] == 7.0
 
 
-_NA = dace.symbol("_NA")
+_NA = dace.symbol("NA")
 
 
 @dace.program
 def accumulate_then_overwrite_input(a: dace.float64[_NA], b: dace.float64[_NA], c: dace.float64[_NA]):
-    for i in dace.map[0:N]:
+    for i in dace.map[0:_NA]:
         t = a[i] * 2.0
         for k in range(3):
             t = t + a[i]
         b[i] = b[i] + t
-    for i in dace.map[0:N]:
+    for i in dace.map[0:_NA]:
         c[i] = a[i] + 1.0
-    for i in dace.map[0:N]:
+    for i in dace.map[0:_NA]:
         a[i] = c[i] * 2.0
 
 
@@ -1332,8 +1332,8 @@ def test_an_ordering_edge_out_of_a_nested_sdfg_map_is_kept():
     rng = np.random.default_rng(0)
     want = {name: rng.random(9) for name in "abc"}
     got = copy.deepcopy(want)
-    reference(**want, _NA=9)
-    sdfg(**got, _NA=9)
+    reference(**want, NA=9)
+    sdfg(**got, NA=9)
     for name in "abc":
         assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
 

@@ -264,6 +264,7 @@ class MapFission(transformation.SingleStateTransformation):
         fission widens the containers it reaches but not such a window. Returns whether all of them were folded."""
         from dace.transformation.dataflow.redundant_array import RemoveSliceView  # Avoid import loop
 
+        cfg_list_current = False
         for state in nsdfg.states():
             for node in list(state.data_nodes()):
                 if not isinstance(node.desc(nsdfg), dt.View):
@@ -271,6 +272,10 @@ class MapFission(transformation.SingleStateTransformation):
                 view_edge = sdutil.get_view_edge(state, node)
                 if view_edge is None or not set(params) & set(map(str, view_edge.data.free_symbols)):
                     continue
+                # A copied or re-nested SDFG keeps a stale CFG list, which matching a transformation reads
+                if not cfg_list_current:
+                    nsdfg.reset_cfg_list()
+                    cfg_list_current = True
                 if not RemoveSliceView.can_be_applied_to(nsdfg, view=node):
                     return False
                 RemoveSliceView.apply_to(nsdfg, view=node, verify=False)
@@ -378,20 +383,6 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
-            # A view of a connector container selects its window with the outer map's parameters; the fissioned maps
-            # would leave that view outside them, binding the whole container instead of one iteration's window.
-            for st in nsdfg_node.sdfg.states():
-                for view in st.data_nodes():
-                    if not isinstance(view.desc(nsdfg_node.sdfg), dt.View):
-                        continue
-                    view_edge = sdutil.get_view_edge(st, view)
-                    if (
-                        view_edge is not None
-                        and not view_edge.data.is_empty()
-                        and set(map_node.map.params) & {str(s) for s in view_edge.data.free_symbols}
-                    ):
-                        return False
-
             # Reject if any interstate edge inside the nested SDFG has an
             # assignment that depends on the map iterator, either directly or
             # through a nested-SDFG input connector whose incoming memlet
@@ -606,6 +597,9 @@ class MapFission(transformation.SingleStateTransformation):
 
         # Get map information
         outer_map: nodes.Map = map_entry.map
+        # Typed before the rewiring below, which leaves the scopes unresolvable until it is done
+        ptypes = map_entry.new_symbols(sdfg, graph, graph.symbols_defined_at(map_entry))
+        ptypes = {p: ptypes[p] for p in outer_map.params}
         # Border-transient extent equals the iteration count per dimension.
         # Memlets that index border transients are normalized to
         # `int_floor(p - iMin, step)` so the squeezed array remains in-bounds
@@ -1039,17 +1033,6 @@ class MapFission(transformation.SingleStateTransformation):
                                 else:
                                     e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
-        # A connector sharing the coordinates of a widened container is widened alike; one selecting a window of it
-        # becomes a view of it
-        for state in parent.states():
-            for node in state.nodes():
-                if isinstance(node, nodes.NestedSDFG) and any(
-                    e.data.data in modified_arrays for e in state.all_edges(node)
-                ):
-                    ptypes = {p: state.symbols_defined_at(node)[p] for p in outer_map.params}
-                    MapFission.widen_integrated_connectors(node, state, widened, squeezed_idx, ptypes)
-                    node.integrate_into_parent()
-
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
             for edge in graph.in_edges(map_entry):
@@ -1084,13 +1067,15 @@ class MapFission(transformation.SingleStateTransformation):
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
 
-        # A connector selecting one element of an augmented container becomes a view of it. Integration resolves the
-        # symbols defined at each node, which needs well-formed scopes: the outer map must be gone first
+        # A connector sharing the coordinates of a widened container is widened alike; one selecting a window of it
+        # becomes a view of it. Integration resolves the symbols defined at each node, which needs well-formed scopes:
+        # the outer map must be gone first
         for state in parent.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG) and any(
                     e.data.data in modified_arrays for e in state.all_edges(node)
                 ):
+                    MapFission.widen_integrated_connectors(node, state, widened, squeezed_idx, ptypes)
                     node.integrate_into_parent()
 
         # NOTE: It is better to manually call memlet propagation here to ensure that all subsets are properly updated.
