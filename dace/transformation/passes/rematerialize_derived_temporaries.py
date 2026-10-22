@@ -592,7 +592,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         sink_name, _ = sdfg.add_scalar(
             "remat_" + plan["tnode"].data,
             sdfg.arrays[plan["tnode"].data].dtype,
-            storage=dtypes.StorageType.Register,
+            storage=dtypes.StorageType.Register(force=True),
             transient=True,
             find_new_name=True,
         )
@@ -647,7 +647,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         name, _ = sdfg.add_scalar(
             "remat_" + origin.data,
             sdfg.arrays[origin.data].dtype,
-            storage=dtypes.StorageType.Register,
+            storage=dtypes.StorageType.Register(force=True),
             transient=True,
             find_new_name=True,
         )

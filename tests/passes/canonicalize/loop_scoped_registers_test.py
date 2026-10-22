@@ -96,8 +96,39 @@ def test_a_scratch_an_inner_loop_reads_goes_on_the_stack():
     assert storage == dtypes.StorageType.Register and storage.force
 
 
+def test_a_heap_intermediate_inside_a_map_inside_a_loop_goes_on_the_stack():
+    """warpx_field_gather: a fusion intermediate of one element, inferred ``CPU_Heap``, in a sequential map in the
+    particle loop -- a ``new``/``delete`` per inner iteration unless pinned to the stack."""
+    sdfg = dace.SDFG("heap_intermediate_in_map_in_loop")
+    sdfg.add_array("w", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("weight", [1, 1], dace.float64, storage=dtypes.StorageType.CPU_Heap)
+    loop = LoopRegion("particles", "ip < N", "ip", "ip = 0", "ip = ip + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    entry, exit_ = body.add_map("taps", {"j": "0:3"}, schedule=dtypes.ScheduleType.Sequential)
+    scale = body.add_tasklet("scale", {"wi"}, {"o"}, "o = wi * j")
+    weight = body.add_access("weight")
+    acc = body.add_tasklet("acc", {"t"}, {"o"}, "o = t")
+    body.add_memlet_path(body.add_read("w"), entry, scale, dst_conn="wi", memlet=dace.Memlet("w[ip]"))
+    body.add_edge(scale, "o", weight, None, dace.Memlet("weight[0, 0]"))
+    body.add_edge(weight, None, acc, "t", dace.Memlet("weight[0, 0]"))
+    body.add_memlet_path(
+        acc, exit_, body.add_write("out"), src_conn="o", memlet=dace.Memlet("out[ip]", wcr="lambda a, b: a + b")
+    )
+    sdfg.validate()
+    finalize_transient_storage(sdfg, dtypes.DeviceType.CPU)
+    storage = sdfg.arrays["weight"].storage
+    assert storage == dtypes.StorageType.Register and storage.force
+    n = 20
+    w, out = np.random.default_rng(0).random(n), np.zeros(n)
+    sdfg(w=w, out=out, N=n)
+    assert np.allclose(out, 3 * w)
+
+
 if __name__ == "__main__":
     for small in [True, False]:
         test_a_scratch_sized_by_the_iteration_goes_on_the_stack(small)
     test_a_scratch_the_loop_does_not_resize_is_allocated_once_per_call()
     test_a_scratch_an_inner_loop_reads_goes_on_the_stack()
+    test_a_heap_intermediate_inside_a_map_inside_a_loop_goes_on_the_stack()

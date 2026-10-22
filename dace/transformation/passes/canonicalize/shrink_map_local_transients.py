@@ -224,7 +224,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
                     # Thread-private by construction: every access sits under a kernel and names
                     # one iteration's box. Left in GPU_Global it would be one
                     # buffer shared by every thread.
-                    desc.storage = dtypes.StorageType.Register
+                    desc.storage = dtypes.StorageType.Register(force=True)
                 for _, edge in accesses:
                     edge.data.subset = subsets.Range([(0, dim - 1, 1) for dim in size])
                     edge.data.volume = required(edge.data.subset).num_elements()

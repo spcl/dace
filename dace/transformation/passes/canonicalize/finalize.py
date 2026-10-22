@@ -378,7 +378,8 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
        nested-SDFG boundary excludes any per-thread buffer inside a parallel map body, so it is
        never collapsed to one shared copy; on GPU it also resets non-atomic WCR edges.
     4. **Map-scoped transients -> forced registers on CPU** (:func:`force_map_scoped_registers`): an
-       array allocated per map iteration is pinned to the stack, a symbolically sized one as a VLA.
+       array allocated per map iteration is pinned to the stack, a symbolically sized one as a VLA, whatever
+       storage inference gave it; every other register is forced too (:func:`force_registers`).
     5. **Device transients -> the stream-ordered memory pool on GPU** (:func:`pool_gpu_transients`).
 
     A persistent size-1 WCR accumulator would land as ``__state->x`` -- not a valid OpenMP
@@ -413,7 +414,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 continue
             if desc.total_size == 1:
                 desc.lifetime = dtypes.AllocationLifetime.State
-                desc.storage = dtypes.StorageType.Register
+                desc.storage = dtypes.StorageType.Register(force=True)
                 continue
             # The same holds for an array a map accumulates into: ``__state->histw`` is no ``reduction(+:histw[0:n])``
             # target, so every write falls back to an atomic (azimint_hist: 10^8 contended adds on 1000 bins).
@@ -443,6 +444,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     if device == dtypes.DeviceType.CPU:
         force_map_scoped_registers(sdfg)
         force_loop_scoped_registers(sdfg)
+        force_registers(sdfg)
     else:
         pool_gpu_transients(sdfg)
 
@@ -508,7 +510,7 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
             and desc.transient
             and desc.lifetime == dtypes.AllocationLifetime.Scope
             and (
-                desc.storage == dtypes.StorageType.Default
+                desc.storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
                 or (desc.storage == dtypes.StorageType.Register and not desc.storage.force)
             )
         ):
@@ -517,6 +519,21 @@ def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
         if in_map or (len(scopes) == 1 and next(iter(scopes))[1] is not None):
             desc.storage = dtypes.StorageType.Register(force=True)
             pinned += 1
+    return pinned
+
+
+def force_registers(sdfg: SDFG) -> int:
+    """Pin every remaining ``Register`` container to ``Register(force=True)``: a register array stays on the stack
+    whatever its size, never a heap allocation per scope entry.
+
+    :returns: the number of containers pinned, nested SDFGs included.
+    """
+    pinned = 0
+    for sd in sdfg.all_sdfgs_recursive():
+        for desc in sd.arrays.values():
+            if desc.storage == dtypes.StorageType.Register and not desc.storage.force:
+                desc.storage = dtypes.StorageType.Register(force=True)
+                pinned += 1
     return pinned
 
 
