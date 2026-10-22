@@ -769,11 +769,15 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         # Check that Map memlets depend on itervar in a consistent manner
         # a. A container must either not depend at all on itervar, or depend on it always in the same dimensions.
         # b. Abort when a dimension depends on both the itervar and a Map parameter.
+        # Only a container the body writes can carry a dependence from one loop iteration to the next; a read-only
+        # one may be read at any positions (its propagated subset can be a union such as ``Min(0, i):Max(i, N)``).
         mparams = set(map_entry.map.params)
         data_dependency = dict()
+        written = {n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode) and body.in_degree(n) > 0}
+        written |= {e.data.data for e in body.out_edges(body.exit_node(map_entry)) if e.data.data}
         for e in body.edges():
             if e.src in subgraph.nodes() and e.dst in subgraph.nodes():
-                if itervar in e.data.free_symbols:
+                if itervar in e.data.free_symbols and e.data.data in written:
                     e.data.try_initialize(sdfg, subgraph, e)
                     for i, subset in enumerate((e.data.src_subset, e.data.dst_subset)):
                         if subset:
