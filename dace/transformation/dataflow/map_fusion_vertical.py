@@ -590,7 +590,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  data dependency checks. Thus we have to check them separately here.
                 for final_producer_edge in state.memlet_tree(producer_edge).leaves():
                     assert not final_producer_edge.data.is_empty()
-                    final_producer = final_producer_edge.dst
+                    final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
                             state=state,
@@ -1623,7 +1623,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         If `scope_node` is a `MapEntry` it will operate on the set of incoming edges
         and if it is an `MapExit` on the set of outgoing edges. The function will
         then determine all access nodes that have a connection through these edges
-        to the scope nodes (edges that does not lead to access nodes are ignored).
+        to the scope nodes, edges that does not lead to access nodes or are empty are ignored.
         The function returns a set that contains all access nodes that were found.
         It is important that this set will also contain views.
 
@@ -1636,8 +1636,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         else:
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
+        # An empty Memlet only orders the node against the scope, it accesses nothing
         access_set: set[nodes.AccessNode] = {
-            node for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            other_node(edge)
+            for edge in get_edges(scope_node)
+            if not (edge.data.is_empty() or not isinstance(other_node(edge), nodes.AccessNode))
         }
 
         return access_set
@@ -1666,13 +1669,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
         if isinstance(scope_node, nodes.MapEntry):
-            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
+            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:])
             )
         else:
-            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
+            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:])
@@ -1753,15 +1756,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         is_incomming_edge = outer_edge.dst is nsdfg
         assert (is_incomming_edge) or (outer_edge.src is nsdfg)
 
-        intermediate_data_outside: str = intermediate.data
         inner_sdfg = nsdfg.sdfg
         inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
         assert inner_data in inner_sdfg.arrays
         inner_desc = inner_sdfg.arrays[inner_data]
 
-        # We do not allow that the data is used as input and output.
-        # TODO(phimuell): In this situation it should be enough.
-        if intermediate_data_outside in nsdfg.in_connectors and intermediate_data_outside in nsdfg.out_connectors:
+        # `inner_data` is a connector on the side of `outer_edge`; the same connector on the other side means the
+        #  nested SDFG reads and writes the data in place, which is not handled.
+        if inner_data in (nsdfg.out_connectors if is_incomming_edge else nsdfg.in_connectors):
             return False
 
         # The inner data is an array or a scalar.

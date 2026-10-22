@@ -228,11 +228,23 @@ def repoint_memlet_to_element(edge: "dace.sdfg.graph.MultiConnectorEdge", rename
 
 
 def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
+    """True if ``name`` is read anywhere in ``sdfg``: by an AccessNode with an out-edge, or by control flow (an
+    interstate edge or a loop or branch condition), whose references staging repoints at the scalar too."""
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
                 return True
+    if any(name in edge.data.read_symbols() for edge in sdfg.all_interstate_edges()):
+        return True
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion):
+            codes = (region.init_statement, region.loop_condition, region.update_statement)
+        elif isinstance(region, ConditionalBlock):
+            codes = tuple(condition for condition, _ in region.branches)
+        else:
+            continue
+        if any(code is not None and name in code.get_free_symbols() for code in codes):
+            return True
     return False
 
 

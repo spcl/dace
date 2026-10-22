@@ -450,6 +450,47 @@ def test_other_subset_of_untouched_side_survives(inverse):
     assert a[0] == b[1] and a[1] == b[0]
 
 
+def test_control_flow_only_gate_gets_a_copyin():
+    """A signature length-1 array read ONLY from control flow (an interstate assignment gating the
+    kernel, QE's ``IF (.NOT.okvan) RETURN``). Staging repoints that reference to the scalar, so the
+    scalar needs a copy-in: without one it is declared, read and never written, and an uninitialized
+    stack value decides whether the kernel runs."""
+    sdfg = dace.SDFG("gate_len1")
+    sdfg.add_array("flag", (1,), dace.bool_)
+    sdfg.add_array("y", (4,), dace.float64)
+    sdfg.add_symbol("if_cond", dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    sg = sdfg.add_state("gate")
+    s1 = sdfg.add_state("compute")
+    s2 = sdfg.add_state("end")
+    sdfg.add_edge(s0, sg, dace.InterstateEdge(assignments={"if_cond": "flag[0]"}))
+    sdfg.add_edge(sg, s1, dace.InterstateEdge(condition="if_cond"))
+    sdfg.add_edge(sg, s2, dace.InterstateEdge(condition="not if_cond"))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    tasklet = s1.add_tasklet("set1", {}, {"out": None}, "out = 1.0")
+    s1.add_edge(tasklet, "out", s1.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    # preserve_abi keeps the signature array itself.
+    assert "flag" in sdfg.arrays and not sdfg.arrays["flag"].transient
+    staged = [n for n in sdfg.arrays if n.startswith("scal_flag")]
+    assert len(staged) == 1, f"expected the gate to be staged once, got {staged}"
+    scal = staged[0]
+    assert any(scal in e.data.assignments.get("if_cond", "") for e in sdfg.all_interstate_edges()), (
+        "the gate assignment was not repointed at the staged scalar"
+    )
+    writers = sum(
+        st.in_degree(nd)
+        for st in sdfg.states()
+        for nd in st.nodes()
+        if isinstance(nd, dace.nodes.AccessNode) and nd.data == scal
+    )
+    assert writers > 0, f"{scal} is read from control flow but has no writer: the copy-in was dropped"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
@@ -513,3 +554,4 @@ def test_arrayize_rewrites_conditional_guard_after_branch_removal():
 
     assert isinstance(sdfg.arrays["arr"], dace.data.Array)
     assert "arr[0]" in cond.branches[0][0].as_string, cond.branches[0][0].as_string
+    test_control_flow_only_gate_gets_a_copyin()

@@ -425,15 +425,11 @@ class Memlet:
         Tries to initialize the internal fields of the memlet (e.g., src/dst
         subset) once it is added to an SDFG as an edge.
         """
-        from dace.sdfg.nodes import AccessNode, CodeNode  # Avoid import loops
+        from dace.sdfg.nodes import AccessNode  # Avoid import loops
 
         self._sdfg = sdfg
         self._state = state
         self._edge = edge
-
-        # If memlet is code->code, ensure volume=1
-        if isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode) and self.volume == 0:
-            self.volume = 1
 
         # Find source/destination of memlet
         try:
