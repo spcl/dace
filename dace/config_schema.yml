@@ -444,6 +444,15 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    heap_allocator:
+                        type: str
+                        default: auto
+                        title: CPU heap allocator
+                        description: >
+                            Allocator of CPU heap arrays: ``system`` (aligned ``operator new``),
+                            ``mimalloc`` (``mi_malloc_aligned``, linked from ``MIMALLOC_ROOT`` or the
+                            loader path), or ``auto``, mimalloc when it is installed.
+
                     simd_maps:
                         type: bool
                         default: true

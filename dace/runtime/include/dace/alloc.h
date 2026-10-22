@@ -16,6 +16,11 @@
     #define DACE_ALLOC_ATTR DACE_HFI
 #endif
 
+#if defined(DACE_MIMALLOC)
+extern "C" void *mi_malloc_aligned(std::size_t size, std::size_t alignment);
+extern "C" void mi_free(void *ptr);
+#endif
+
 namespace dace
 {
     // Aligned heap arrays. The aligned ``operator delete[]`` runs no destructors, so only trivially
@@ -27,7 +32,11 @@ namespace dace
 #if defined(__cpp_aligned_new)
         // Compiler supports aligned new (C++17 feature)
         if constexpr (std::is_trivially_destructible<T>::value) {
+    #if defined(DACE_MIMALLOC) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
+            return static_cast<T *>(mi_malloc_aligned(size * sizeof(T), alignment ? alignment : alignof(T)));
+    #else
             return new (std::align_val_t(alignment)) T[size];
+    #endif
         } else {
             return new T[size];
         }
@@ -43,7 +52,11 @@ namespace dace
 #if defined(__cpp_aligned_new)
         // Compiler supports aligned new (C++17 feature)
         if constexpr (std::is_trivially_destructible<T>::value) {
+    #if defined(DACE_MIMALLOC) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
+            mi_free(ptr);
+    #else
             ::operator delete[](ptr, std::align_val_t(alignment));
+    #endif
         } else {
             delete[] ptr;
         }

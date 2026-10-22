@@ -2815,6 +2815,11 @@ class CPUCodeGen(TargetCodeGenerator):
         ``data_name`` are unused here; the readable generator overrides this to route the count
         through an ``<array>_size`` helper."""
         if nodedesc is not None and use_aligned_operator_new(nodedesc):
+            # Avoid import loop
+            from dace.libraries.standard.environments.mimalloc import MiMalloc
+
+            if MiMalloc.enabled():
+                self._dispatcher.used_environments.add(MiMalloc.full_class_path())
             return f"{alloc_name} = dace::aligned_new_array<{ctype}>({arrsize}, {aligned_new_value(nodedesc)});\n"
         return f"{alloc_name} = new {ctype}[{arrsize}];\n"
 
