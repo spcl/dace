@@ -19,10 +19,10 @@ import dataclasses
 
 import sympy
 
-from dace import data, subsets
+from dace import data
 from dace.config import Config
 from dace.libraries.comm.nodes import Irecv, Isend, Wait, Waitall
-from dace.libraries.comm.nodes.node import CommNode, NonblockingCommNode
+from dace.libraries.comm.nodes.node import CommNode, NonblockingCommNode, disjoint
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 #: Unknown memory: a container that may alias any other (e.g., a reference)
@@ -202,7 +202,7 @@ def _wait_for_buffers_in_flight(children: list[tn.ScheduleTreeNode], accesses, r
                 waited = _own_subset(memlet, request)
                 for started, start in in_flight.get(request, []):
                     # A wait completes the starts whose requests lie in its subset of the requests
-                    if waited is None or started is None or subsets.intersects(waited, started) is not False:
+                    if waited is None or started is None or not disjoint(waited, started):
                         access.reads |= start.reads
                         access.writes |= start.writes
 

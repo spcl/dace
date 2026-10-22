@@ -264,6 +264,11 @@ def pack_noncontiguous_buffers(
         state.remove_edge(edge)
 
 
+def disjoint(subset_a: subsets.Subset, subset_b: subsets.Subset) -> bool:
+    """Whether two subsets of one container provably share no element."""
+    return subsets.intersects(subset_a, subset_b) is False
+
+
 def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
     """Whether the input and output of ``node`` are the same memory (``MPI_IN_PLACE``). Disjoint subsets are two
     buffers; possibly overlapping ones are refused, as MPI forbids aliasing."""
@@ -273,7 +278,7 @@ def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
         return False
     if inp.subset == out.subset:
         return True
-    if subsets.intersects(inp.subset, out.subset) is False:
+    if disjoint(inp.subset, out.subset):
         return False
     raise ValueError(
         f'{type(node).__name__} "{node.label}" reads {inp.data}[{inp.subset}] and writes the (possibly) overlapping '
