@@ -140,7 +140,7 @@ _SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(
 # The ``.`` matches attribute access only (not a numeric decimal point): routing a float
 # literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r"\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]"
+    r"\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|%|\.(?![0-9])|[\[]|[\]]"
 )
 
 
@@ -1014,6 +1014,10 @@ _builtin_userfunctions = {
     "OR",
     "pow",
     "round",
+    "int32",
+    "int64",
+    "float32",
+    "float64",
 }
 
 
@@ -1185,6 +1189,23 @@ class __int_floor(int_floor):
     pass
 
 
+class CMod(sympy.Function):
+    """C's truncating modulo, the meaning of ``%`` in an SDFG."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and y != 0:
+            return x - y * sympy.Integer(int(x / y))
+        if x.is_nonnegative and y.is_positive:
+            return sympy.Mod(x, y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
+MODULO_FUNCTIONS = {"CMod": CMod, "FtnMod": CMod, "Mod": sympy.Mod, "PyMod": sympy.Mod, "FtnModulo": sympy.Mod}
+
+
 class int_ceil(sympy.Function):
     @classmethod
     def eval(cls, x, y):
@@ -1308,6 +1329,40 @@ class IfExpr(sympy.Function):
             return True
         if self.args[1].is_integer is False and self.args[2].is_integer is False:
             return False
+
+
+class int32(sympy.Function):
+    """Cast to ``int32`` in a symbolic expression, where ``dace.int32(x)`` does not parse."""
+
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class int64(sympy.Function):
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class float32(sympy.Function):
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+class float64(sympy.Function):
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+#: Cast function -> C++ cast
+TYPECAST_CPP = {"int32": "dace::int32", "int64": "dace::int64", "float32": "dace::float32", "float64": "dace::float64"}
 
 
 class bitwise_and(sympy.Function):
@@ -1712,6 +1767,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.LShift: "__left_shift",
         ast.RShift: "__right_shift",
         ast.FloorDiv: "__int_floor",
+        ast.Mod: "CMod",
     }
 
     def visit_UnaryOp(self, node):
@@ -1848,6 +1904,22 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
             keywords=[],
         )
         return ast.copy_location(new_node, node)
+
+    def visit_Call(self, node):
+        # ``dace.int32(x)`` -> ``int32(x)``; visit_Attribute would make it an uncallable ``Attr(dace, int32)``
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "dace"
+            and func.attr in TYPECAST_CPP
+        ):
+            new_node = ast.Call(
+                func=ast.Name(id=func.attr, ctx=ast.Load), args=[self.visit(a) for a in node.args], keywords=[]
+            )
+            return ast.copy_location(new_node, node)
+        self.generic_visit(node)
+        return node
 
     def visit_Attribute(self, node):
         new_node = ast.Call(
@@ -1997,7 +2069,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(sympy.Mod, a, b, evaluate=False)
+        return _construct_function_uncached(CMod, a, b)
 
     @staticmethod
     def _unary_minus(a):
@@ -2053,7 +2125,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         "int_ceil": int_ceil,
         "ipow": ipow,
         "IfExpr": IfExpr,
-        "Mod": sympy.Mod,
+        **MODULO_FUNCTIONS,
         "Attr": Attr,
         "BitwiseAnd": bitwise_and,
         "BitwiseOr": bitwise_or,
@@ -2452,7 +2524,11 @@ _PYSTR2SYM_locals = {
     "int_ceil": int_ceil,
     "ipow": ipow,
     "IfExpr": IfExpr,
-    "Mod": sympy.Mod,
+    **MODULO_FUNCTIONS,
+    "int32": int32,
+    "int64": int64,
+    "float32": float32,
+    "float64": float64,
     "Attr": Attr,
     "Subscript": Subscript,
     "id": sympy.Symbol("id"),
@@ -2604,6 +2680,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f"{expr.func}[{indices}]"
+        if self.cpp_mode and str(expr.func) in TYPECAST_CPP:
+            return f"{TYPECAST_CPP[str(expr.func)]}({self._print(expr.args[0])})"
         if str(expr.func) == "AND":
             return f"(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))"
         if str(expr.func) == "OR":
@@ -2661,6 +2739,13 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return f"ceil({self._print(expr.args[0])})"
 
     def _print_Mod(self, expr):
+        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor
+        dividend, divisor = expr.args
+        if dividend.is_nonnegative and divisor.is_positive:
+            return f"(({self._print(dividend)}) % ({self._print(divisor)}))"
+        return f"{'py_mod' if self.cpp_mode else 'Mod'}({self._print(dividend)}, {self._print(divisor)})"
+
+    def _print_CMod(self, expr):
         return f"(({self._print(expr.args[0])}) % ({self._print(expr.args[1])}))"
 
     def _print_Equality(self, expr):

@@ -6,8 +6,8 @@ import re
 
 import sympy as sp
 
-from dace import SDFG, SDFGState, dtypes, nodes
-from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, UnstructuredControlFlow
+from dace import SDFG, dtypes, nodes
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ReturnBlock, UnstructuredControlFlow
 from dace.symbolic import pystr_to_symbolic, symbol
 
 UUID_SEPARATOR = "/"
@@ -20,7 +20,7 @@ def ids_to_string(cfg_id, state_id=-1, node_id=-1, edge_id=-1):
 def get_uuid(element, state=None):
     if isinstance(element, SDFG):
         return ids_to_string(element.cfg_id)
-    elif isinstance(element, SDFGState):
+    elif isinstance(element, ControlFlowBlock):
         return ids_to_string(element.parent_graph.cfg_id, element.block_id)
     elif isinstance(element, nodes.Node):
         return ids_to_string(state.parent_graph.cfg_id, state.block_id, state.node_id(element))

@@ -17,7 +17,7 @@ import numpy
 import sympy
 
 import dace
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, utils
 from dace import sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
@@ -651,12 +651,15 @@ def add_indirection_subgraph(
         _, storage = sdfg.add_array(
             tmp_name, rng.bounding_box_size(), array.dtype, storage=dtypes.StorageType.Default, transient=True
         )
-        # Force creation of transients for range indirection
-        if output:
-            if src:
-                start_src = src
-                src = None
-        elif dst:
+
+    # Range indirection, and any value exchanged with a code node, moves through the transient's AccessNode
+    is_range = isinstance(storage, data.Array)
+    if output:
+        if src and (is_range or isinstance(src, nodes.CodeNode)):
+            start_src = src
+            src = None
+    else:
+        if dst and (is_range or isinstance(dst, nodes.CodeNode)):
             end_dst = dst
             dst = None
 
@@ -1274,7 +1277,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return new_nodes
 
         # Map view access nodes to their respective data
-        for state in self.sdfg.all_states():
+        for state in self.sdfg.states():
             # NOTE: We need to support views of views
             nodes = list(state.data_nodes())
             while nodes:
@@ -1580,7 +1583,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 root = name.split(".")[0]
                 return root if root in cached_defined else None
 
-            for s in nested_sdfg.all_states():
+            for s in nested_sdfg.states():
                 for n in s.data_nodes():
                     root = _container_root(n.data)
                     if root is None:
@@ -2175,7 +2178,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if isinstance(memlet_or_node, nodes.Tasklet):
                     tasklet: nodes.Tasklet = memlet_or_node
-                    # Create a code->code node
+                    # Route the tasklet's output to the internal node through a transient scalar
                     new_scalar = tasklet.label
                     if isinstance(internal_node, nodes.NestedSDFG):
                         dtype = internal_node.sdfg.arrays[conn].dtype
@@ -2240,12 +2243,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.inputs[vname] = (state, memlet, [])
                     else:
                         name = memlet.data
-                        vname = "{c}_in_from_{s}{n}".format(
-                            c=conn,
-                            s=self.sdfg.states().index(state),
-                            n=(f"_{state.node_id(entry_node)}" if entry_node else ""),
-                        )
-                        self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
@@ -2261,9 +2258,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
                         if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
+                            vname, _ = self.sdfg.add_stream(f"{conn}_in_from_{name}", dtype, find_new_name=True)
                         else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                            vname, _ = self.sdfg.add_array(
+                                f"{conn}_in_from_{name}", shape, dtype, strides=strides, find_new_name=True
+                            )
+                        self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
                         self.inputs[vname] = (state, scope_memlet, inner_indices)
                         memlet.data = vname
                 else:
@@ -2329,12 +2329,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.outputs[vname] = (state, memlet, [])
                     else:
                         name = memlet.data
-                        vname = "{c}_out_of_{s}{n}".format(
-                            c=conn,
-                            s=self.sdfg.states().index(state),
-                            n=(f"_{state.node_id(exit_node)}" if exit_node else ""),
-                        )
-                        self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
@@ -2351,9 +2345,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
                         if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
+                            vname, _ = self.sdfg.add_stream(f"{conn}_in_from_{name}", dtype, find_new_name=True)
                         else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                            vname, _ = self.sdfg.add_array(
+                                f"{conn}_in_from_{name}", shape, dtype, strides=strides, find_new_name=True
+                            )
+                        self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
                         self.outputs[vname] = (state, scope_memlet, inner_indices)
                         inner_memlet.data = vname
                 else:
@@ -2726,7 +2723,7 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_region.sdfg._labels = {s.label for s in loop_region.sdfg.all_control_flow_blocks()}
             for block in test_region_copy.all_control_flow_blocks():
                 block.sdfg = loop_region.sdfg
-                block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
+                block.label = utils.find_new_name(block.label, loop_region.sdfg._labels)
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
@@ -5172,7 +5169,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.symbols:
             return name
 
-        if name in __builtins__:
+        if name in __builtins__ or name in replacements.operators.MODULO_CALLS:
             return name
 
         if name not in self.scope_vars:
@@ -5523,6 +5520,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
+            # A call returns its single result in a list
+            if isinstance(scalar, list) and len(scalar) == 1:
+                scalar = scalar[0]
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 desc = self.sdfg.arrays[scalar]
                 if isinstance(desc, data.Scalar):
@@ -5532,7 +5532,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         # A name that already means something else here would shadow it
                         symname = f"__sym_{scalar}"
                         if symname in self.sdfg.symbols:
-                            symname = data.find_new_name(
+                            symname = utils.find_new_name(
                                 symname, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys())
                             )
                         sym = dace.symbol(symname, dtype=desc.dtype)

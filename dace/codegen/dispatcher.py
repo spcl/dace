@@ -597,7 +597,7 @@ class TargetDispatcher:
             if e is edge:
                 return None
 
-        if isinstance(src_node, nodes.Tasklet) and not isinstance(dst_node, nodes.Tasklet):
+        if isinstance(src_node, nodes.Tasklet):
             # Special case: Copying from a tasklet to an array, schedule of
             # the copy is in the copying tasklet
             dst_schedule_node = state.entry_node(src_node)
