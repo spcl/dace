@@ -419,32 +419,46 @@ class SymbolRepo:
 
 
 def declared_assumptions(sdfg: "SDFG") -> list[Relation]:
-    """The signs and relations declared of the symbols ``sdfg`` takes: what the caller promised, which the program
-    checks on every call alongside the orders proofs took from the scales."""
-    taken = {name for name in sdfg.used_symbols(all_symbols=False) if not name.startswith("__dace")}
+    """The signs and relations declared of the symbols ``sdfg`` takes, its nested SDFGs' translated through each
+    nesting node's symbol mapping: what the caller promised, which the program checks on every call alongside the
+    orders proofs took from the scales. One naming a symbol bound inside (a loop iterator) has no value at the call."""
+    taken = {str(name) for name in sdfg.free_symbols if not str(name).startswith("__dace")}
     params = sdfg.symbol_repo.params
-    declared = [
+    declared = OrderedSet(
         predicate_relation(predicate, symbolic.symbol(name))
         for name, named in params.predicates.items()
         if name in taken
         for predicate in sorted(named, key=lambda predicate: predicate.name)
-    ]
-    declared += [relation for relation in params.relations if relation_names(relation) <= taken]
-    return declared
+    )
+    declared.update(relation for relation in params.relations if relation_names(relation) <= taken)
+    for node in nested_sdfg_nodes(sdfg):
+        mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in node.symbol_mapping.items()}
+        declared.update(
+            relation
+            for relation in (relation.replaced(mapped) for relation in declared_assumptions(node.sdfg))
+            if relation_names(relation) <= taken
+        )
+    return list(declared)
+
+
+def runtime_assumptions(sdfg: "SDFG") -> list[Relation]:
+    """The runtime assumptions stated of ``sdfg`` and of the SDFGs nested in it, over the symbols of ``sdfg``."""
+    assumptions = OrderedSet(sdfg.symbol_repo.runtime_assumptions)
+    for node in nested_sdfg_nodes(sdfg):
+        mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in node.symbol_mapping.items()}
+        assumptions.update(relation.replaced(mapped) for relation in runtime_assumptions(node.sdfg))
+    return list(assumptions)
+
+
+def nested_sdfg_nodes(sdfg: "SDFG") -> list[nodes.NestedSDFG]:
+    return [node for state in sdfg.states() for node in state.nodes() if isinstance(node, nodes.NestedSDFG)]
 
 
 def program_assumptions(sdfg: "SDFG") -> list[Relation]:
-    """The runtime assumptions of ``sdfg`` and of the SDFGs nested in it, over the symbols of ``sdfg``, in a fixed
-    order: the declared ones (:func:`declared_assumptions`) first, nested ones translated through each nesting node's
-    symbol mapping, and constants substituted."""
+    """The assumptions ``sdfg`` checks on entry, in a fixed order: the declared ones (:func:`declared_assumptions`)
+    first, then the stated runtime ones, constants substituted."""
     assumptions = OrderedSet(declared_assumptions(sdfg))
-    assumptions.update(sdfg.symbol_repo.runtime_assumptions)
-    for state in sdfg.states():
-        for node in state.nodes():
-            if not isinstance(node, nodes.NestedSDFG):
-                continue
-            mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in node.symbol_mapping.items()}
-            assumptions.update([relation.replaced(mapped) for relation in program_assumptions(node.sdfg)])
+    assumptions.update(runtime_assumptions(sdfg))
     constants = {name: value for name, value in sdfg.constants.items() if name not in sdfg.arrays}
     return [relation.replaced(constants) for relation in assumptions]
 
