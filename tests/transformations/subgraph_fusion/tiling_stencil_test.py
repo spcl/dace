@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import contextlib
-
-import dace
-from dace.transformation.subgraph.stencil_tiling import StencilTiling
-from dace.transformation.subgraph import SubgraphFusion
-from dace.sdfg.graph import SubgraphView
+import itertools
 
 import numpy as np
 import pytest
-import itertools
+
+import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
+from dace.transformation.subgraph.stencil_tiling import StencilTiling
 
 N = dace.symbol("N")
 
@@ -25,14 +25,14 @@ def stencil(A: dace.float64[N], B: dace.float64[N]):
         in1 << A[i]
         in2 << A[i - 1]
         out1 >> tmp1[i]
-        out1 = (in1 - in2) / float(2.0)
+        out1 = (in1 - in2) / 2.0
 
     @dace.map
     def m2(i: _[0 : N - 1]):
         in1 << A[i]
         in2 << A[i + 1]
         out1 >> tmp2[i]
-        out1 = (in2 - in1) / float(2.0)
+        out1 = (in2 - in1) / 2.0
 
     @dace.map
     def m3(i: _[1 : N - 1]):
@@ -44,7 +44,7 @@ def stencil(A: dace.float64[N], B: dace.float64[N]):
 
         out1 >> tmp3[i]
 
-        out1 = in1_1 - float(0.2) * in1_2 + in2_1 + float(0.8) * in2_0
+        out1 = in1_1 - 0.2 * in1_2 + in2_1 + 0.8 * in2_0
 
     @dace.map
     def m4(i: _[2 : N - 2]):
@@ -65,14 +65,14 @@ def stencil_offset(A: dace.float64[N], B: dace.float64[N]):
         in1 << A[i + 1]
         in2 << A[i - 1 + 1]
         out1 >> tmp1[i + 1]
-        out1 = (in1 - in2) / float(2.0)
+        out1 = (in1 - in2) / 2.0
 
     @dace.map
     def m2(i: _[1:N]):
         in1 << A[i - 1]
         in2 << A[i + 1 - 1]
         out1 >> tmp2[i - 1]
-        out1 = (in2 - in1) / float(2.0)
+        out1 = (in2 - in1) / 2.0
 
     @dace.map
     def m3(i: _[2:N]):
@@ -84,7 +84,7 @@ def stencil_offset(A: dace.float64[N], B: dace.float64[N]):
 
         out1 >> tmp3[i - 1]
 
-        out1 = in1_1 - float(0.2) * in1_2 + in2_1 + float(0.8) * in2_0
+        out1 = in1_1 - 0.2 * in1_2 + in2_1 + 0.8 * in2_0
 
     @dace.map
     def m4(i: _[0 : N - 4]):
@@ -116,7 +116,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     csdfg(A=A, B=B1, N=100)
     del csdfg
 
-    subgraph = SubgraphView(graph, [n for n in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     st = StencilTiling()
     st.setup_match(subgraph)
     st.tile_size = (tile_size,)
@@ -142,7 +142,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     assert np.allclose(B1, B2)
 
     sdfg.simplify()
-    subgraph = SubgraphView(graph, [n for n in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     sf = SubgraphFusion()
     sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)

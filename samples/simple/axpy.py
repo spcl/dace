@@ -2,8 +2,10 @@
 """Simple program showing the DaCe Python interface via scalar multiplication and vector addition."""
 
 import argparse
-import dace
+
 import numpy as np
+
+import dace
 
 # Define a symbol so that the vectors could have arbitrary sizes and compile the code once
 # (this step is not necessary for arrays with known sizes)

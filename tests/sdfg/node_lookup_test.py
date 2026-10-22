@@ -4,7 +4,8 @@
 import pytest
 
 import dace
-from dace.sdfg import graph as gr, nodes
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 
 
 def _reference_node(graph, id):
@@ -68,7 +69,7 @@ def test_node_ids_are_positions_in_collapsed_graphs():
                 B[i] = A[i] - 1
 
     sdfg = branches_in_loop.to_sdfg(simplify=False)
-    graphs = list(sdfg.all_control_flow_regions(recursive=True)) + list(sdfg.all_states())
+    graphs = list(sdfg.all_control_flow_regions(recursive=True)) + list(sdfg.states())
     assert any(isinstance(g, dace.sdfg.state.ConditionalBlock) for g in graphs)
     for graph in graphs:
         collapsed = collapse_multigraph_to_nx(graph)

@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests dealising of the SDFG produced by the Python frontend."""
 
-import dace
 import numpy as np
+
+import dace
 
 size = 32
 

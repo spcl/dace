@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 
-import dace
 import multiprocessing
-from dace import library, nodes, properties
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from numbers import Number
-from dace.libraries.linalg import environments
 import warnings
+from numbers import Number
+
+import dace
+from dace import library, nodes, properties
+from dace.libraries.blas import blas_helpers
+from dace.libraries.linalg import environments
+from dace.transformation.transformation import ExpandTransformation
 
 
 @library.expansion
@@ -69,10 +70,12 @@ class ExpandHPTT(ExpandTransformation):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = sym2cpp(node.alpha)
         beta = sym2cpp(node.beta)
+        # The complex entry points take whether to conjugate A right after alpha
+        conj_a = "false, " if dchar in ("c", "z") else ""
         code = f"""
             int perm[{len(inp_tensor.shape)}] = {{{axes}}};
             int size[{len(inp_tensor.shape)}] = {{{shape}}};
-            {dchar}TensorTranspose(perm, {len(inp_tensor.shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
+            {dchar}TensorTranspose(perm, {len(inp_tensor.shape)}, {alpha}, {conj_a}_inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
         tasklet = nodes.Tasklet(

@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 
-import pytest
-import dace
 import numpy as np
+import pytest
+
+import dace
 
 
 def test_context_manager_decorator():

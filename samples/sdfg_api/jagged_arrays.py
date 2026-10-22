@@ -1,8 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Sample that shows dynamic ranges in maps by iterating over a jagged array."""
 
-import dace
 import numpy as np
+
+import dace
 
 # Create an empty SDFG
 sdfg = dace.SDFG("jagged")

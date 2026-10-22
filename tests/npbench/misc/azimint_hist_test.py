@@ -1,10 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace
-import pytest
 import argparse
+
+import numpy as np
+import pytest
+
+import dace
+import dace.dtypes
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ("N", "bins", "npt"))

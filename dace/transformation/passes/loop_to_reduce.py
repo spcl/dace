@@ -20,13 +20,14 @@ loop-invariant slice of a multi-element ``Array`` (``C[k]``).
 
 import ast
 import copy as _copy
-from typing import Dict, NamedTuple, Optional
+from typing import NamedTuple, Optional
 
 import sympy
 
-from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, nodes, properties, subsets, symbolic
+from dace import memlet as mm
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.symbolic import AND, OR, bitwise_and, bitwise_or, Subscript
+from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -34,18 +35,18 @@ from dace.transformation.passes.analysis import loop_analysis
 # Ops in these tables are commutative by construction, so we skip calling
 # ``dace.frontend.operations.is_op_commutative`` (which returns ``None`` for
 # ``max`` / ``min`` because Python's builtins choke on symbolic arguments).
-_BINOP_TO_WCR: Dict[type, str] = {
+_BINOP_TO_WCR: dict[type, str] = {
     ast.Add: "lambda a, b: a + b",
     ast.Mult: "lambda a, b: a * b",
     ast.BitAnd: "lambda a, b: a & b",
     ast.BitOr: "lambda a, b: a | b",
     ast.BitXor: "lambda a, b: a ^ b",
 }
-_BOOLOP_TO_WCR: Dict[type, str] = {
+_BOOLOP_TO_WCR: dict[type, str] = {
     ast.Or: "lambda a, b: a | b",
     ast.And: "lambda a, b: a & b",
 }
-_CALL_TO_WCR: Dict[str, str] = {
+_CALL_TO_WCR: dict[str, str] = {
     "max": "lambda a, b: max(a, b)",
     "min": "lambda a, b: min(a, b)",
 }
@@ -87,7 +88,7 @@ class LoopToReduce(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _) -> int | None:
         count = 0
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
@@ -100,7 +101,7 @@ class LoopToReduce(ppl.Pass):
         return count or None
 
 
-def _one_elem(subset) -> Optional[int]:
+def _one_elem(subset) -> int | None:
     """Integer number of elements in ``subset``, or ``None`` if non-constant."""
     if subset is None:
         return None
@@ -131,7 +132,7 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
     return scalar_like(da) and scalar_like(db)
 
 
-def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> Optional[subsets.Range]:
+def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end) -> subsets.Range | None:
     """Widen ``subset`` -- which uses ``loop_var`` linearly -- over the
     iteration range ``[start, end]``."""
     if not isinstance(subset, subsets.Range):
@@ -147,7 +148,7 @@ def _expand_over_loop(subset: subsets.Subset, loop_var: sympy.Symbol, start, end
     return subsets.Range(ranges)
 
 
-def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
+def _cmp_to_wcr(cond, target: str, array: str) -> str | None:
     """Map a ``sym <cmp> arr[...]`` (or reversed) guard to a max/min WCR."""
     try:
         tree = ast.parse(cond.as_string, mode="eval").body
@@ -265,7 +266,7 @@ def _extract_any_pattern(
     )
 
 
-def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional[_Reduction]:
+def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reduction | None:
     if not loop.loop_variable:
         return None
     start = loop_analysis.get_init_assignment(loop)
@@ -485,7 +486,7 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
     out_edges = list(parent.out_edges(loop))
-    extra_assignments: Dict[str, str] = {}
+    extra_assignments: dict[str, str] = {}
 
     if info.accum in root.arrays:
         red_state = parent.add_state(loop.label + "_reduce", is_start_block=was_start)

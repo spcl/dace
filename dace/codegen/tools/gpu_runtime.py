@@ -4,7 +4,6 @@ GPU runtime testing functionality. Used for checking error codes after GPU-capab
 """
 
 import ctypes
-from typing import Optional
 
 
 class GPURuntime:
@@ -28,7 +27,7 @@ class GPURuntime:
     def get_last_error(self) -> int:
         return self._getlasterror()
 
-    def get_last_error_string(self) -> Optional[str]:
+    def get_last_error_string(self) -> str | None:
         res: int = self._getlasterror()
         if res == 0:
             return None

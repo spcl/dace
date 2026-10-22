@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
-from typing import Optional
+
+import dace
 
 N = dace.symbol("N")
 
@@ -23,7 +23,7 @@ def test_keyword_false():
 
 
 @dace.program
-def keyword_none(A: dace.float32[N], B: dace.float32[N], C: Optional[dace.int32[20]]):
+def keyword_none(A: dace.float32[N], B: dace.float32[N], C: dace.int32[20] | None):
     if C is None:
         B[:] = A[:]
 

@@ -1,6 +1,8 @@
-import dace
 import numpy as np
-from dace import nodes as nd, data as dt
+
+import dace
+from dace import data as dt
+from dace import nodes as nd
 from dace.transformation.interstate import InlineSDFG
 
 
@@ -36,9 +38,9 @@ def test_inline_reshape_views_work():
 
     arrays = 0
     views = 0
-    sdfg_used_desc = set(
-        [(n.data, n.desc(sdfg)) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode)]
-    )
+    sdfg_used_desc = {
+        (n.data, n.desc(sdfg)) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode)
+    }
     for _, desc in sdfg_used_desc:
         # View is subclass of Array, so we must do this check first
         if isinstance(desc, dace.data.View):

@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the GPU to-device transformation."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.transformation.dataflow import GPUTransformLocalStorage
 
 
@@ -239,6 +240,16 @@ def test_gpu_local_storage_of_a_nested_sdfg_row():
     sdfg.validate()
 
 
+def test_interstate_condition_reads_a_host_copy_of_a_gpu_map_output():
+    sdfg = dace.SDFG("gpu_output_read_by_a_condition")
+    sdfg.add_array("flag", [4], dace.int32, transient=True)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_mapped_tasklet("set", {"i": "0:4"}, {}, "o = 1", {"o": dace.Memlet("flag[i]")}, external_edges=True)
+    sdfg.add_edge(first, sdfg.add_state("second"), dace.InterstateEdge("flag[0] > 0"))
+    sdfg.apply_gpu_transformations(simplify=False)
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
@@ -251,3 +262,4 @@ if __name__ == "__main__":
         for transient in [False, True]:
             test_free_tasklet(transient, scalar)
     test_gpu_local_storage_of_a_nested_sdfg_row()
+    test_interstate_condition_reads_a_host_copy_of_a_gpu_map_output()

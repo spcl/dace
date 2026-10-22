@@ -1,13 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
-import dace
-from typing import Dict, Optional, Set
-
-from dace import SDFG
-from dace.transformation import pass_pipeline as ppl, transformation
-
 import ast
+import copy
+
+import dace
+from dace import SDFG
 from dace.sdfg.nodes import CodeBlock
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class ASTSplitter:
@@ -107,7 +106,7 @@ class SplitTasklets(ppl.Pass):
 
     tmp_access_identifier = "_split_"
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[str, set[str]] | None:
         split_access_counter = 0
 
         tasklets_to_split = list()  # tasklet, parent_graph, ssa_statements
@@ -143,9 +142,6 @@ class SplitTasklets(ppl.Pass):
         # i2 -> | tasklet | -> tmp1 -> |         |
         #                        i3 -> | tasklet | -> o1
 
-        # For the case a tasklet goes to a taskelt that needs to be split
-        # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
-        # For each tasklet we split we need to track the new input and output maps
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)

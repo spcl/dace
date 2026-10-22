@@ -1,20 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Inline multi-state SDFGs."""
 
-from copy import deepcopy as dc
 import itertools
-from typing import Dict, List
+from copy import deepcopy as dc
 
-from dace import Memlet, symbolic
-from dace.sdfg import dealias, nodes
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg import InterstateEdge, SDFG, SDFGState
-from dace.sdfg import utils as sdutil
-from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
-from dace.transformation import transformation, helpers
+from dace import Memlet, data, symbolic, utils
 from dace.properties import make_properties
-from dace import data
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.sdfg.state import LoopRegion, ReturnBlock
+from dace.transformation import helpers, transformation
 
 
 @make_properties
@@ -38,8 +35,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     @staticmethod
     def _check_strides(
-        inner_strides: List[symbolic.SymbolicType],
-        outer_strides: List[symbolic.SymbolicType],
+        inner_strides: list[symbolic.SymbolicType],
+        outer_strides: list[symbolic.SymbolicType],
         memlet: Memlet,
         nested_sdfg: nodes.NestedSDFG,
     ) -> bool:
@@ -140,7 +137,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(blk, ReturnBlock):
                 has_return = True
         if has_return:
-            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
+            # Lowered returns end in `False` edges, which may lead to states that are now unreachable (e.g., the rest
+            # of a loop body). Removing them turns every return into a sink, which is reconnected below.
+            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True, eliminate_dead_states=True)
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -174,10 +173,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
-        inputs: Dict[str, MultiConnectorEdge] = {}
-        outputs: Dict[str, MultiConnectorEdge] = {}
-        input_set: Dict[str, str] = {}
-        output_set: Dict[str, str] = {}
+        inputs: dict[str, MultiConnectorEdge] = {}
+        outputs: dict[str, MultiConnectorEdge] = {}
+        input_set: dict[str, str] = {}
+        output_set: dict[str, str] = {}
         for e in nsdfg_state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
@@ -216,9 +215,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
-        sym_replacements: Dict[str, str] = {}
+        sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
-            newname = data.find_new_name(assign, allnames)
+            newname = utils.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
@@ -228,7 +227,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Collect and modify access nodes as necessary
 
         # Mapping from nested transient name to top-level name
-        transients: Dict[str, str] = {}
+        transients: dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -243,19 +242,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[node.data] = name
-
-            # All transients of edges between code nodes are also added to parent
-            for edge in nstate.edges():
-                if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
-                    if edge.data.data is not None:
-                        datadesc = nsdfg.arrays[edge.data.data]
-                        if edge.data.data not in transients and datadesc.transient:
-                            new_name = edge.data.data
-                            if new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants:
-                                new_name = f"{nsdfg.label}_{edge.data.data}"
-
-                            name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
-                            transients[edge.data.data] = name
 
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
@@ -280,10 +266,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
         # Make unique names for all control-flow blocks
-        node_names = set(cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True))
+        node_names = {cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True)}
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
-                node_name = data.find_new_name(node.label, node_names)
+                node_name = utils.find_new_name(node.label, node_names)
                 node.label = node_name
             node_names.add(node.label)
 

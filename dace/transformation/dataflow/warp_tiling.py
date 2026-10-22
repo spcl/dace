@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace.sdfg.graph import SubgraphView
-from dace import properties, nodes, dtypes, subsets, symbolic
-from dace import Memlet, SDFG, SDFGState
+
+from dace import SDFG, Memlet, SDFGState, dtypes, nodes, properties, subsets, symbolic
 from dace.frontend.operations import detect_reduction_type
-from dace.transformation import transformation as xf, helpers as xfh
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import SubgraphView
+from dace.transformation import helpers as xfh
+from dace.transformation import transformation as xf
 
 
 @properties.make_properties

@@ -1,12 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """This sample uses basic grid-search based tuning to adapt memory layouts for a simple matrix multiplication."""
 
-import dace
-from dace.codegen.instrumentation.report import InstrumentationReport
 import itertools
 import math
-import numpy as np
 import sys
+
+import numpy as np
+
+import dace
+from dace.codegen.instrumentation.report import InstrumentationReport
 
 # Set data type
 dtype = dace.float64
@@ -130,4 +132,4 @@ if __name__ == "__main__":
     print("Fastest configuration for (%dx%dx%d) is:" % (M, K, N))
     print("  A with storage order %s, padding = %d" % (A_order, A_padding))
     print("  B with storage order %s, padding = %d" % (B_order, B_padding))
-    print("  Runtime: %f ms" % best_runtime)
+    print(f"  Runtime: {best_runtime:f} ms")

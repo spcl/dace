@@ -3,9 +3,11 @@
 sure that it is allocated on the heap instead.
 """
 
-import dace
-import numpy as np
 import warnings
+
+import numpy as np
+
+import dace
 
 N = dace.symbol("N")
 

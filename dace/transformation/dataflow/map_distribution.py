@@ -2,15 +2,17 @@
 """Contains classes that distribute Map computations"""
 
 from copy import deepcopy
+from functools import reduce
 from numbers import Number
-import dace
+
 import sympy
+
+import dace
 from dace import data, subsets, symbolic
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
-from functools import reduce
 
 
 class ElementWiseArrayOperation(pm.SingleStateTransformation):
@@ -64,9 +66,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -125,7 +125,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
         root_tasklet = graph.add_tasklet("_set_root_", {}, {"__out"}, "__out = 0")
         graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
-        from dace.libraries.mpi import Bcast, Scatter, Gather
+        from dace.libraries.mpi import Bcast, Gather, Scatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
@@ -274,9 +274,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -343,7 +341,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
         from dace.libraries.mpi import Bcast
-        from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
+        from dace.libraries.pblas import BlockCyclicGather, BlockCyclicScatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
@@ -385,7 +383,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                     "_set_bsizes_",
                     {},
                     {"__out"},
-                    "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py),
+                    f"__out[0] = {(desc.shape[0]) // Px}; __out[1] = {(desc.shape[1]) // Py}",
                 )
                 graph.add_edge(
                     bsizes_tasklet, "__out", bsizes_access, None, dace.Memlet.from_array(bsizes_name, bsizes_arr)
@@ -460,7 +458,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                     "_set_bsizes_",
                     {},
                     {"__out"},
-                    "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py),
+                    f"__out[0] = {(desc.shape[0]) // Px}; __out[1] = {(desc.shape[1]) // Py}",
                 )
                 graph.add_edge(
                     bsizes_tasklet, "__out", bsizes_access, None, dace.Memlet.from_array(bsizes_name, bsizes_arr)
@@ -614,8 +612,7 @@ class StencilOperation(pm.SingleStateTransformation):
                             bidx = list(idx.free_symbols)[0]
                         else:
                             return False
-                        if bidx in unmatched_indices:
-                            unmatched_indices.remove(bidx)
+                        unmatched_indices.discard(bidx)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -696,8 +693,7 @@ class OuterProductOperation(pm.SingleStateTransformation):
                     for idx in indices:
                         if not isinstance(idx, sympy.Symbol):
                             return False
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                        unmatched_indices.discard(idx)
                     if len(unmatched_indices) == 0:
                         return False
                     outer_product_found = True
@@ -824,9 +820,7 @@ class ReductionNOperation(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) == len(params):
                         return False
             else:

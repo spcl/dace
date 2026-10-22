@@ -56,4 +56,4 @@ __all__ = [
 ]
 
 if TORCH_INTEGRATION_AVAILABLE:
-    __all__.append("make_backward_function")
+    __all__ += ["make_backward_function"]

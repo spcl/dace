@@ -9,8 +9,9 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
-from onnx import helper, numpy_helper, TensorProto
 import torch
+from onnx import TensorProto, helper, numpy_helper
+
 from dace.ml import ONNXModel
 
 

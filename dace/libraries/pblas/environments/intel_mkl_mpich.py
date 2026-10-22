@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import os
-from dace.config import Config
-import dace.library
 import ctypes.util
+import os
 import warnings
+
+import dace.library
+from dace.config import Config
 
 
 @dace.library.environment
@@ -18,7 +19,6 @@ class IntelMKLScaLAPACKMPICH:
     cmake_packages = ["MPI"]
     cmake_variables = {}
     cmake_compile_flags = []
-    cmake_libraries = []
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]

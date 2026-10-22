@@ -11,18 +11,14 @@ This module contains implementations of linear algebra operations including:
 
 import copy
 import itertools
-import typing
 
 import dace
-from dace import SDFG, SDFGState, nodes
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
-
-from dace import config
+from dace import SDFG, SDFGState, config, nodes
+from dace.frontend.common import create_einsum_sdfg
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
-from dace.frontend.common import create_einsum_sdfg
+from dace.sdfg.nodes import Node
 
 # ============================================================================
 # Matrix Multiplication
@@ -41,7 +37,7 @@ class PureMatMul(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
 
         A_desc = in_desc_with_name(node, state, sdfg, "A")
@@ -110,7 +106,7 @@ class PureMatMul(ONNXForward):
                     arg2 = letter + arg2
                     result = letter + result
 
-        einsum_str = "{},{}->{}".format(arg1, arg2, result)
+        einsum_str = f"{arg1},{arg2}->{result}"
 
         # we lower to an ONNXEinsum node instead straight to the dace einsum to
         # make the autodiff simpler
@@ -149,7 +145,7 @@ class PureEinsum(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
@@ -191,7 +187,7 @@ class PureGemm(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
 
         A_desc = in_desc_with_name(node, state, sdfg, "A")
@@ -265,7 +261,7 @@ class PureGemm(ONNXForward):
         if node.transB == 1:
             arg2 = "".join(reversed(arg2))
 
-        einsum_str = "{},{}->{}".format(arg1, arg2, result)
+        einsum_str = f"{arg1},{arg2}->{result}"
 
         # we lower to an ONNXEinsum node instead straight to the dace einsum to
         # make the autodiff simpler
@@ -331,7 +327,7 @@ class PureGemm(ONNXForward):
             )
             beta_scale_code = f"o = s + c * dace.{C_desc.dtype}({node.beta})"
             if node.beta == 1:
-                beta_scale_code = f"o = s + c"
+                beta_scale_code = "o = s + c"
 
             # Support broadcasting in C -> Y
             c_index = result[-len(C_desc.shape) :]

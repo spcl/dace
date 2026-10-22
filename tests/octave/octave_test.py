@@ -1,6 +1,8 @@
-from dace.cli import dacelab
 import os
+
 import pytest
+
+from dace.cli import dacelab
 
 
 @pytest.mark.parametrize("filename", ["add", "cholesky", "forloop", "matrix_scalar_add", "mult", "scalar_add"])

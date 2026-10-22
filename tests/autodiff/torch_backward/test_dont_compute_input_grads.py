@@ -15,7 +15,7 @@ def test_skip_input_grads(use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
 
         def forward(self, x):

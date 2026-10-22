@@ -1,11 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+
 import dace
+import dace.serialize
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-import dace.serialize
 
 
 def test_cond_region_if():
@@ -58,6 +59,34 @@ def test_serialization():
         assert cfg.label == f"cfg_{j}"
 
 
+def test_nested_conditionals_serialize_each_state_once():
+    """A conditional's branches are its nodes: serializing them as nodes too doubled the work per nesting level."""
+    depth = 12
+    sdfg = SDFG("nested_conditionals_serialize_once")
+    sdfg.add_symbol("i", dace.int32)
+    region = sdfg
+    for level in range(depth):
+        cond = ConditionalBlock(f"cond_{level}")
+        region.add_node(cond, is_start_block=True)
+        branch = ControlFlowRegion(f"branch_{level}", sdfg)
+        branch.add_state(f"state_{level}", is_start_block=True)
+        cond.add_branch(CodeBlock(f"i > {level}"), branch)
+        region = branch
+    assert sdfg.is_valid()
+
+    serialized = []
+    state_to_json = dace.SDFGState.to_json
+    dace.SDFGState.to_json = lambda self, parent=None: serialized.append(self) or state_to_json(self, parent)
+    try:
+        new_sdfg = SDFG.from_json(sdfg.to_json())
+    finally:
+        dace.SDFGState.to_json = state_to_json
+
+    assert len(serialized) == depth
+    assert new_sdfg.is_valid()
+    assert sorted(s.label for s in new_sdfg.states()) == sorted(f"state_{level}" for level in range(depth))
+
+
 def test_if_else():
     sdfg = dace.SDFG("regular_if_else")
     sdfg.add_array("A", (1,), dace.float32)
@@ -95,4 +124,5 @@ def test_if_else():
 if __name__ == "__main__":
     test_cond_region_if()
     test_serialization()
+    test_nested_conditionals_serialize_each_state_once()
     test_if_else()

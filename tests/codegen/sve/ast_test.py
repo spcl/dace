@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.codegen.targets.sve.util import NotSupportedError
+import pytest
+
 import dace
 import dace.dtypes
+from dace.codegen.targets.sve.util import NotSupportedError
 from tests.codegen.sve.common import get_code
-import pytest
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -39,6 +40,22 @@ def test_assign_pointer():
     # Assigning a pointer to a vector is bad!
     with pytest.raises(NotSupportedError):
         get_code(program)
+
+
+def test_a_scalar_python_modulo_lowers_to_py_mod():
+
+    @dace.program
+    def program(A: dace.int32[N], B: dace.int32[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a + (M % 4)
+
+    code = get_code(program)
+
+    assert "py_mod(" in code
+    assert "PyMod" not in code
 
 
 def test_compare_scalar_vector():

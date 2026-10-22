@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
 
 from dace.codegen import codegen
+
+import dace
 
 
 def test_nsdfg_input():

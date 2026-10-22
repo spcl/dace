@@ -2,8 +2,8 @@
 import numpy as np
 
 import dace as dp
-from dace.sdfg import SDFG
 from dace.memlet import Memlet
+from dace.sdfg import SDFG
 
 
 # Constructs an SDFG with two consecutive tasklets
@@ -20,6 +20,7 @@ def test_nested_map():
     mysdfg = SDFG("ctasklet_nested_map")
     mysdfg.add_array("A", [N], dp.int32)
     mysdfg.add_array("B", [N], dp.int32)
+    mysdfg.add_scalar("tmp", dp.int32, transient=True)
     state = mysdfg.add_state()
     A_ = state.add_access("A")
     B_ = state.add_access("B")
@@ -29,7 +30,9 @@ def test_nested_map():
     tasklet = state.add_tasklet("mytasklet", {"a"}, {"b"}, "b = 5*a")
     state.add_edge(map_entry, None, tasklet, "a", Memlet.simple(A_, "k*N/2+i"))
     tasklet2 = state.add_tasklet("mytasklet2", {"c"}, {"d"}, "d = 2*c")
-    state.add_edge(tasklet, "b", tasklet2, "c", Memlet())
+    tmp = state.add_access("tmp")
+    state.add_edge(tasklet, "b", tmp, None, Memlet("tmp"))
+    state.add_edge(tmp, None, tasklet2, "c", Memlet("tmp"))
     state.add_edge(tasklet2, "d", map_exit, None, Memlet.simple(B_, "k*N/2+i"))
 
     # Add outer edges
@@ -69,6 +72,7 @@ def test_nested_sdfg():
     nsdfg = dp.SDFG("ctasklet_nested_sdfg_inner")
     nsdfg.add_array("a", [N], dp.int32)
     nsdfg.add_array("b", [N], dp.int32)
+    nsdfg.add_scalar("tmp", dp.int32, transient=True)
     nstate = nsdfg.add_state()
     a = nstate.add_access("a")
     b = nstate.add_access("b")
@@ -76,7 +80,9 @@ def test_nested_sdfg():
     tasklet = nstate.add_tasklet("mytasklet", {"aa"}, {"bb"}, "bb = 5*aa")
     nstate.add_memlet_path(a, map_entry, tasklet, dst_conn="aa", memlet=Memlet("a[k*N/2+i]"))
     tasklet2 = nstate.add_tasklet("mytasklet2", {"cc"}, {"dd"}, "dd = 2*cc")
-    nstate.add_edge(tasklet, "bb", tasklet2, "cc", Memlet())
+    tmp = nstate.add_access("tmp")
+    nstate.add_edge(tasklet, "bb", tmp, None, Memlet("tmp"))
+    nstate.add_edge(tmp, None, tasklet2, "cc", Memlet("tmp"))
     nstate.add_memlet_path(tasklet2, map_exit, b, src_conn="dd", memlet=Memlet("b[k*N/2+i]"))
 
     # Add outer edges

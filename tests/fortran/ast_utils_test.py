@@ -1,7 +1,6 @@
 import pytest
 
 from dace.frontend.fortran.ast_internal_classes import Real_Literal_Node
-
 from dace.frontend.fortran.ast_utils import TaskletWriter
 
 

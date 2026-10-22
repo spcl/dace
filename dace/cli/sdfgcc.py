@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Simple SDFG command-line compiler."""
 
-import dace
-import os
 import argparse
+import os
 import shutil
 
+import dace
 from dace.transformation.optimizer import SDFGOptimizer
 
 

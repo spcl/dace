@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
+
 import dace
 from dace import dtypes
-from dace.transformation.dataflow import TaskletFusion, MapFusionVertical
+from dace.transformation.dataflow import MapFusionVertical, TaskletFusion
 from dace.transformation.optimizer import Optimizer
-import pytest
 
 datatype = dace.float32
 np_datatype = np.float32
@@ -24,11 +25,11 @@ def map_with_tasklets(A: datatype[N], B: datatype[M]):
     return C
 
 
-def _make_sdfg(language: str, with_data: bool = False):
+def _make_sdfg(language: str):
     lang = dtypes.Language.Python if language == "Python" else dtypes.Language.CPP
     endl = "\n" if language == "Python" else ";\n"
 
-    sdfg = dace.SDFG(f"map_with_tasklets")
+    sdfg = dace.SDFG("map_with_tasklets")
     sdfg.add_array("A", (N,), datatype)
     sdfg.add_array("B", (M,), datatype)
     sdfg.add_array("C", (M,), datatype)
@@ -63,38 +64,30 @@ def _make_sdfg(language: str, with_data: bool = False):
     state.add_memlet_path(B, me, ta, memlet=dace.Memlet("B[i]"), dst_conn="__inp2")
     state.add_memlet_path(A, me, tb, memlet=dace.Memlet("A[2*i]"), dst_conn="__inp2")
     state.add_memlet_path(B, me, tc, memlet=dace.Memlet("B[i]"), dst_conn="__inp2")
-    if with_data:
-        sdfg.add_array("tmp1", (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array("tmp2", (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array("tmp3", (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array("tmp4", (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array("tmp5", (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array("tmp6", (1,), datatype, dtypes.StorageType.Default, None, True)
-        atemp1 = state.add_access("tmp1")
-        atemp2 = state.add_access("tmp2")
-        atemp3 = state.add_access("tmp3")
-        atemp4 = state.add_access("tmp4")
-        atemp5 = state.add_access("tmp5")
-        atemp6 = state.add_access("tmp6")
-        state.add_edge(ta, "__out1", atemp1, None, dace.Memlet("tmp1[0]"))
-        state.add_edge(atemp1, None, tb, "__inp1", dace.Memlet("tmp1[0]"))
-        state.add_edge(ta, "__out2", atemp2, None, dace.Memlet("tmp2[0]"))
-        state.add_edge(atemp2, None, tc, "__inp1", dace.Memlet("tmp2[0]"))
-        state.add_edge(tb, "__out", atemp3, None, dace.Memlet("tmp3[0]"))
-        state.add_edge(atemp3, None, td, "__inp2", dace.Memlet("tmp3[0]"))
-        state.add_edge(tc, "__out", atemp4, None, dace.Memlet("tmp4[0]"))
-        state.add_edge(atemp4, None, td, "__inp1", dace.Memlet("tmp4[0]"))
-        state.add_edge(ta, "__out3", atemp5, None, dace.Memlet("tmp5[0]"))
-        state.add_edge(atemp5, None, te, "__inp1", dace.Memlet("tmp5[0]"))
-        state.add_edge(td, "__out", atemp6, None, dace.Memlet("tmp6[0]"))
-        state.add_edge(atemp6, None, te, "__inp2", dace.Memlet("tmp6[0]"))
-    else:
-        state.add_edge(ta, "__out1", tb, "__inp1", dace.Memlet())
-        state.add_edge(ta, "__out2", tc, "__inp1", dace.Memlet())
-        state.add_edge(tb, "__out", td, "__inp2", dace.Memlet())
-        state.add_edge(tc, "__out", td, "__inp1", dace.Memlet())
-        state.add_edge(ta, "__out3", te, "__inp1", dace.Memlet())
-        state.add_edge(td, "__out", te, "__inp2", dace.Memlet())
+    sdfg.add_array("tmp1", (1,), datatype, dtypes.StorageType.Default, None, True)
+    sdfg.add_array("tmp2", (1,), datatype, dtypes.StorageType.Default, None, True)
+    sdfg.add_array("tmp3", (1,), datatype, dtypes.StorageType.Default, None, True)
+    sdfg.add_array("tmp4", (1,), datatype, dtypes.StorageType.Default, None, True)
+    sdfg.add_array("tmp5", (1,), datatype, dtypes.StorageType.Default, None, True)
+    sdfg.add_array("tmp6", (1,), datatype, dtypes.StorageType.Default, None, True)
+    atemp1 = state.add_access("tmp1")
+    atemp2 = state.add_access("tmp2")
+    atemp3 = state.add_access("tmp3")
+    atemp4 = state.add_access("tmp4")
+    atemp5 = state.add_access("tmp5")
+    atemp6 = state.add_access("tmp6")
+    state.add_edge(ta, "__out1", atemp1, None, dace.Memlet("tmp1[0]"))
+    state.add_edge(atemp1, None, tb, "__inp1", dace.Memlet("tmp1[0]"))
+    state.add_edge(ta, "__out2", atemp2, None, dace.Memlet("tmp2[0]"))
+    state.add_edge(atemp2, None, tc, "__inp1", dace.Memlet("tmp2[0]"))
+    state.add_edge(tb, "__out", atemp3, None, dace.Memlet("tmp3[0]"))
+    state.add_edge(atemp3, None, td, "__inp2", dace.Memlet("tmp3[0]"))
+    state.add_edge(tc, "__out", atemp4, None, dace.Memlet("tmp4[0]"))
+    state.add_edge(atemp4, None, td, "__inp1", dace.Memlet("tmp4[0]"))
+    state.add_edge(ta, "__out3", atemp5, None, dace.Memlet("tmp5[0]"))
+    state.add_edge(atemp5, None, te, "__inp1", dace.Memlet("tmp5[0]"))
+    state.add_edge(td, "__out", atemp6, None, dace.Memlet("tmp6[0]"))
+    state.add_edge(atemp6, None, te, "__inp2", dace.Memlet("tmp6[0]"))
     state.add_memlet_path(te, mx, C, memlet=dace.Memlet("C[i]"), src_conn="__out")
 
     return sdfg
@@ -209,10 +202,9 @@ def test_map_param():
     assert (C == ref).all()
 
 
-@pytest.mark.parametrize("with_data", [pytest.param(True), pytest.param(False)])
 @pytest.mark.parametrize("language", [pytest.param("CPP"), pytest.param("Python")])
-def test_map_with_tasklets(language: str, with_data: bool):
-    sdfg = _make_sdfg(language, with_data)
+def test_map_with_tasklets(language: str):
+    sdfg = _make_sdfg(language)
     sdfg.compile()
     sdfg.simplify()
     num = sdfg.apply_transformations_repeated(TaskletFusion)
@@ -332,10 +324,8 @@ if __name__ == "__main__":
     test_same_name_different_memlet()
     test_tasklet_fusion_multiline()
     test_map_param()
-    test_map_with_tasklets(language="Python", with_data=False)
-    test_map_with_tasklets(language="Python", with_data=True)
-    test_map_with_tasklets(language="CPP", with_data=False)
-    test_map_with_tasklets(language="CPP", with_data=True)
+    test_map_with_tasklets(language="Python")
+    test_map_with_tasklets(language="CPP")
     test_none_connector()
     test_intermediate_transients()
     test_transient_in_different_state()

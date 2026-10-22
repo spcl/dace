@@ -1,26 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
 import warnings
+from dataclasses import dataclass
+from typing import Any
 
 from dace import SDFG, config, properties
-from dace.transformation import helpers as xfh, transformation
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
-from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.reference_reduction import ReferenceToView
+from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
-from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
-from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 SIMPLIFY_PASSES = [
@@ -94,16 +95,16 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self,
         validate: bool = False,
         validate_all: bool = False,
-        skip: Optional[Set[str]] = None,
+        skip: set[str] | None = None,
         verbose: bool = False,
         no_inline_function_call_regions: bool = False,
         no_inline_named_regions: bool = False,
-        pass_options: Optional[Dict[str, Any]] = None,
+        pass_options: dict[str, Any] | None = None,
     ):
         if skip:
-            passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
+            passes: list[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
         else:
-            passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES]
+            passes: list[ppl.Pass] = [p() for p in SIMPLIFY_PASSES]
 
         super().__init__(passes=passes)
         self.validate = validate
@@ -126,7 +127,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         for p in passes:
             p.set_opts(pass_opts)
 
-    def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: Dict[str, Any]):
+    def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: dict[str, Any]):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
@@ -148,7 +149,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
                 return None
 
         if type(p) in _recursive_passes:  # If pass needs to run recursively, do so and modify return value
-            ret: Dict[int, Any] = {}
+            ret: dict[int, Any] = {}
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
                 if subret is not None:
@@ -179,7 +180,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
             sdfg.validate()
         return ret
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         result = super().apply_pass(sdfg, pipeline_results)
 
         if result is not None:

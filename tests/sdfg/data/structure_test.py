@@ -1,8 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-
 from scipy import sparse
+
+import dace
 
 
 def test_read_structure():

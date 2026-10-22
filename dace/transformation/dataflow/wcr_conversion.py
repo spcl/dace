@@ -4,13 +4,14 @@
 import ast
 import copy
 import re
-import copy
-from dace import nodes, dtypes, Memlet, data
+from collections.abc import Sequence
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes
 from dace.frontend.python import astutils
-from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
-from dace import Memlet, SDFG, SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import propagate_memlets_state
+from dace.transformation import transformation
 
 
 class AugAssignToWCR(transformation.SingleStateTransformation):
@@ -29,6 +30,53 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     _FUNCTIONS = ["min", "max"]
     _EXPR_MAP = {"-": ("+", "-({expr})"), "/": ("*", "((decltype({expr}))1)/({expr})")}
     _PYOP_MAP = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.Mod: "%", ast.Div: "/"}
+    _PYBOOLOP_MAP = {ast.Or: "or", ast.And: "and"}
+
+    @staticmethod
+    def python_updates(tasklet: nodes.Tasklet, inconns: Sequence[str]) -> list[tuple[str, str, ast.expr]]:
+        """Every ``(op, inconn, other)`` the Python tasklet reads as ``out = inconn <op> other``, with ``op`` a binary
+        or boolean operator, or as ``out = max(inconn, other)`` / ``min``, in either operand order."""
+        if len(tasklet.code.code) != 1 or not isinstance(tasklet.code.code[0], ast.Assign):
+            return []
+        assign: ast.Assign = tasklet.code.code[0]
+        if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+            return []
+        rhs = assign.value
+        if isinstance(rhs, ast.BinOp) and type(rhs.op) in AugAssignToWCR._PYOP_MAP:
+            op, operands = AugAssignToWCR._PYOP_MAP[type(rhs.op)], (rhs.left, rhs.right)
+        elif isinstance(rhs, ast.BoolOp) and type(rhs.op) in AugAssignToWCR._PYBOOLOP_MAP and len(rhs.values) == 2:
+            op, operands = AugAssignToWCR._PYBOOLOP_MAP[type(rhs.op)], tuple(rhs.values)
+        elif (
+            isinstance(rhs, ast.Call)
+            and isinstance(rhs.func, ast.Name)
+            and rhs.func.id in AugAssignToWCR._FUNCTIONS
+            and len(rhs.args) == 2
+            and not rhs.keywords
+        ):
+            op, operands = rhs.func.id, tuple(rhs.args)
+        else:
+            return []
+        return [
+            (op, mine.id, other)
+            for mine, other in (operands, operands[::-1])
+            if isinstance(mine, ast.Name) and mine.id in inconns
+        ]
+
+    @staticmethod
+    def python_update(
+        tasklet: nodes.Tasklet, inedges: Sequence[MultiConnectorEdge], outedge: MultiConnectorEdge
+    ) -> tuple[str, MultiConnectorEdge, ast.expr] | None:
+        """``(op, inedge, other)`` of the update ``out = in <op> other``, where ``in`` reads the element ``out``
+        writes; ``None`` if the Python tasklet is no such update."""
+        target = tasklet.code.code[0].targets[0].id if tasklet.code.code else None
+        if target != outedge.src_conn:
+            return None
+        by_conn = {edge.dst_conn: edge for edge in inedges}
+        for op, inconn, other in AugAssignToWCR.python_updates(tasklet, list(by_conn)):
+            read = by_conn[inconn].data
+            if read.data == outedge.data.data and read.subset == outedge.data.subset:
+                return op, by_conn[inconn], other
+        return None
 
     @classmethod
     def expressions(cls):
@@ -87,42 +135,21 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # Get relevant output connector
         outconn = outedge.src_conn
 
-        ops = "[%s]" % "".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        ops = "[{}]".format("".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS))
         funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         if tasklet.language is dtypes.Language.Python:
-            # Match a single assignment with a binary operation as RHS
-            if len(tasklet.code.code) > 1:
-                return False
-            if not isinstance(tasklet.code.code[0], ast.Assign):
-                return False
-            ast_node: ast.Assign = tasklet.code.code[0]
-            if len(ast_node.targets) > 1:
-                return False
-            if not isinstance(ast_node.targets[0], ast.Name):
-                return False
-            lhs: ast.Name = ast_node.targets[0]
-            if lhs.id != outconn:
-                return False
-            if not isinstance(ast_node.value, ast.BinOp):
-                return False
-            rhs: ast.BinOp = ast_node.value
-            if not isinstance(rhs.op, tuple(AugAssignToWCR._PYOP_MAP.keys())):
-                return False
-            inconns = tuple(edge.dst_conn for edge in inedges)
-            for n in (rhs.left, rhs.right):
-                if isinstance(n, ast.Name) and n.id in inconns:
-                    return True
+            return AugAssignToWCR.python_update(tasklet, inedges, outedge) is not None
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
                 # Try to match a single C assignment that can be converted to WCR
                 inconn = edge.dst_conn
-                lhs = r"^\s*%s\s*=\s*%s\s*%s.*;$" % (re.escape(outconn), re.escape(inconn), ops)
+                lhs = rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(inconn)}\s*{ops}.*;$"
                 # rhs: a = (...) op b
-                rhs = r"^\s*%s\s*=\s*\(.*\)\s*%s\s*%s;$" % (re.escape(outconn), ops, re.escape(inconn))
-                func_lhs = r"^\s*%s\s*=\s*(%s)\(\s*%s\s*,.*\)\s*;$" % (re.escape(outconn), funcs, re.escape(inconn))
-                func_rhs = r"^\s*%s\s*=\s*(%s)\(.*,\s*%s\s*\)\s*;$" % (re.escape(outconn), funcs, re.escape(inconn))
+                rhs = rf"^\s*{re.escape(outconn)}\s*=\s*\(.*\)\s*{ops}\s*{re.escape(inconn)};$"
+                func_lhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(\s*{re.escape(inconn)}\s*,.*\)\s*;$"
+                func_rhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(.*,\s*{re.escape(inconn)}\s*\)\s*;$"
                 if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
                     if re.match(func_lhs, cstr) is None and re.match(func_rhs, cstr) is None:
                         inconns = list(self.tasklet.in_connectors)
@@ -131,11 +158,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                         # Special case: a = <other> op b
                         other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
-                        rhs2 = r"^\s*%s\s*=\s*%s\s*%s\s*%s;$" % (
-                            re.escape(outconn),
-                            re.escape(other_inconn),
-                            ops,
-                            re.escape(inconn),
+                        rhs2 = (
+                            rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(other_inconn)}\s*{ops}\s*{re.escape(inconn)};$"
                         )
                         if re.match(rhs2, cstr) is None:
                             continue
@@ -172,48 +196,31 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # Get relevant output connector
         outconn = outedge.src_conn
 
-        ops = "[%s]" % "".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        ops = "[{}]".format("".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS))
         funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
-            # Match a single assignment with a binary operation as RHS
             ast_node: ast.Assign = tasklet.code.code[0]
-            lhs: ast.Name = ast_node.targets[0]
-            rhs: ast.BinOp = ast_node.value
-            op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-            inconns = list(edge.dst_conn for edge in inedges)
-            if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
-                inedge = inedges[inconns.index(rhs.left.id)]
-                new_rhs = rhs.right
-            else:
-                inedge = inedges[inconns.index(rhs.right.id)]
-                new_rhs = rhs.left
-
-            new_node = ast.copy_location(ast.Assign(targets=[lhs], value=new_rhs), ast_node)
+            op, inedge, new_rhs = AugAssignToWCR.python_update(tasklet, inedges, outedge)
+            new_node = ast.copy_location(ast.Assign(targets=ast_node.targets, value=new_rhs), ast_node)
             tasklet.code.code = [new_node]
 
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
                 inconn = edge.dst_conn
-                match = re.match(r"^\s*%s\s*=\s*%s\s*(%s)(.*);$" % (re.escape(outconn), re.escape(inconn), ops), cstr)
+                match = re.match(rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(inconn)}\s*({ops})(.*);$", cstr)
                 if match is None:
                     match = re.match(
-                        r"^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$" % (re.escape(outconn), ops, re.escape(inconn)), cstr
+                        rf"^\s*{re.escape(outconn)}\s*=\s*\((.*)\)\s*({ops})\s*{re.escape(inconn)};$", cstr
                     )
                     if match is None:
-                        func_rhs = r"^\s*%s\s*=\s*(%s)\((.*),\s*%s\s*\)\s*;$" % (
-                            re.escape(outconn),
-                            funcs,
-                            re.escape(inconn),
-                        )
+                        func_rhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\((.*),\s*{re.escape(inconn)}\s*\)\s*;$"
                         match = re.match(func_rhs, cstr)
                         if match is None:
-                            func_lhs = r"^\s*%s\s*=\s*(%s)\(\s*%s\s*,(.*)\)\s*;$" % (
-                                re.escape(outconn),
-                                funcs,
-                                re.escape(inconn),
+                            func_lhs = (
+                                rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(\s*{re.escape(inconn)}\s*,(.*)\)\s*;$"
                             )
                             match = re.match(func_lhs, cstr)
                             if match is None:
@@ -223,12 +230,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                                 # Special case: a = <other> op b
                                 other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
-                                rhs2 = r"^\s*%s\s*=\s*(%s)\s*(%s)\s*%s;$" % (
-                                    re.escape(outconn),
-                                    re.escape(other_inconn),
-                                    ops,
-                                    re.escape(inconn),
-                                )
+                                rhs2 = rf"^\s*{re.escape(outconn)}\s*=\s*({re.escape(other_inconn)})\s*({ops})\s*{re.escape(inconn)};$"
                                 match = re.match(rhs2, cstr)
                                 if match is None:
                                     continue
@@ -256,7 +258,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     op, newexpr = AugAssignToWCR._EXPR_MAP[op]
                     expr = newexpr.format(expr=expr)
 
-                tasklet.code.code = "%s = %s;" % (outconn, expr)
+                tasklet.code.code = f"{outconn} = {expr};"
                 inedge = edge
                 break
         else:
@@ -296,7 +298,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         newstate = state.parent_graph.add_state_after(state)
 
         # Bookkeeping
-        nodes_to_move = set([tlet])
+        nodes_to_move = {tlet}
         boundary_nodes = set()
         orig_edges = set()
 
@@ -304,7 +306,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
-            if isinstance(e.src, nodes.AccessNode) and isinstance(e.src.desc(sdfg), data.View):
+            if isinstance(e.src, nodes.AccessNode) and isinstance(e.src.desc(state.sdfg), data.View):
                 assert state.in_degree(e.src) > 0
                 view_edges = sdutil.get_all_view_edges(state, e.src)
                 for edge in view_edges:
@@ -424,7 +426,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             scal_name, scal_desc = sdfg.add_scalar(
                 "tmp", sdfg.arrays[self.output.data].dtype, transient=True, find_new_name=True
             )
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
+            scal_access = state.add_access(scal_name)
+            state.add_edge(self.tasklet, edge.src_conn, scal_access, None, Memlet.from_array(scal_name, scal_desc))
+            state.add_edge(scal_access, None, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
             state.add_edge(in_access, None, new_tasklet, "__in2", copy.deepcopy(edge.data))
             state.add_edge(new_tasklet, "__out", self.output, edge.dst_conn, edge.data)
             state.remove_edge(edge)
@@ -445,7 +449,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             scal_name, scal_desc = sdfg.add_scalar(
                 "tmp", sdfg.arrays[self.output.data].dtype, transient=True, find_new_name=True
             )
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
+            scal_access = state.add_access(scal_name)
+            state.add_edge(self.tasklet, edge.src_conn, scal_access, None, Memlet.from_array(scal_name, scal_desc))
+            state.add_edge(scal_access, None, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn="__in2")
             state.add_edge(new_tasklet, "__out", self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)

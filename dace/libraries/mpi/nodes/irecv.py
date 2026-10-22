@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace import dtypes
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import (
     MPINode,
     expanded_input_connectors,
     input_descriptor_name,
     validate_integer_descriptor,
 )
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -44,7 +44,7 @@ class ExpandIrecvMPI(ExpandTransformation):
         buffer_offset = 0  # this is here because the frontend already changes the pointer
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,

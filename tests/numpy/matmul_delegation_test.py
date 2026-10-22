@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 
 N, K, M = 24, 12, 48
@@ -41,7 +42,7 @@ def test_matmul_delegation():
     reference = ((matrix0 @ matrix1) @ vector0) @ vector1
     rel_error = (result - reference) / reference
     if rel_error > 1e-5:
-        raise ValueError("Result mismatch: {} (expected {})".format(result, reference))
+        raise ValueError(f"Result mismatch: {result} (expected {reference})")
     else:
         print("Linear algebra multiplication delegation test verified.")
 
@@ -58,7 +59,7 @@ def test_matmul_delegation2():
     reference = vector1 @ (matrix0 @ matrix1) @ vector0
     rel_error = (result - reference) / reference
     if rel_error > 1e-5:
-        raise ValueError("Result mismatch: {} (expected {})".format(result, reference))
+        raise ValueError(f"Result mismatch: {result} (expected {reference})")
     else:
         print("Linear algebra multiplication delegation test no.2 verified.")
 

@@ -7,7 +7,8 @@ except ImportError:
     tqdm = None
 
 import time
-from typing import Generator, Optional, TypeVar
+from collections.abc import Generator
+from typing import TypeVar
 
 from dace import config
 
@@ -16,9 +17,9 @@ T = TypeVar("T")
 
 def optional_progressbar(
     iter: Generator[T, None, None],
-    title: Optional[str] = None,
-    n: Optional[int] = None,
-    progress: Optional[bool] = None,
+    title: str | None = None,
+    n: int | None = None,
+    progress: bool | None = None,
     time_threshold: float = 5.0,
 ) -> Generator[T, None, None]:
     """
@@ -73,7 +74,7 @@ class OptionalProgressBar:
     """
 
     def __init__(
-        self, n: int, title: Optional[str] = None, progress: Optional[bool] = None, time_threshold: float = 5.0
+        self, n: int, title: str | None = None, progress: bool | None = None, time_threshold: float = 5.0
     ) -> None:
         # Config override
         if tqdm is None or (progress is None and not config.Config.get_bool("progress")):

@@ -3,9 +3,10 @@
 Inference: This module patches certain dispatchers in the `type_inference.py`, to better suit SVE.
 """
 
+import sys
+
 from dace import dtypes
 from dace.sdfg import type_inference
-import sys
 
 
 def infer_expr_type(ast, symbols=None):

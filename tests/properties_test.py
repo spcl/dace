@@ -2,7 +2,9 @@
 """Unit tests for dace.sdfg.properties module."""
 
 import unittest
+
 import sympy as sp
+
 import dace
 
 

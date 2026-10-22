@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 vec3d = dace.struct("vec3d", x=dace.float32, y=dace.float32, z=dace.float32)
 

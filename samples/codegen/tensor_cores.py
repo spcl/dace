@@ -7,28 +7,28 @@ Running the sample requires an NVIDIA GPU with Tensor Cores.
 """
 
 # General DaCe imports
+# Other imports
+import itertools
+
+import numpy as np
+
 import dace
 from dace import data as dt
-from dace.sdfg import nodes
-
-# Code generator imports and helpers
-from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
-# Frontend imports and helpers
-
-# Transformations
+# Code generator imports and helpers
+from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.sdfg import nodes
 
 # Type hints
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.dispatcher import DefinedType
 
-# Other imports
-import itertools
-import numpy as np
+# Frontend imports and helpers
+# Transformations
 
 ############################################################################
 # Tensor core code generator
@@ -141,14 +141,14 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Tasklet -> Array
         if not src_desc:
             local_name = dfg.memlet_path(edge)[0].src_conn
-            callsite_stream.write("auto& %s = %s;" % (local_name, dst_node.data), cfg, state_id, [src_node, dst_node])
+            callsite_stream.write(f"auto& {local_name} = {dst_node.data};", cfg, state_id, [src_node, dst_node])
             return
 
         dst_desc = dst_node.desc(sdfg) if isinstance(dst_node, nodes.AccessNode) else None
         # Array -> Tasklet
         if not dst_desc:
             local_name = dfg.memlet_path(edge)[-1].dst_conn
-            callsite_stream.write("auto& %s = %s;" % (local_name, src_node.data), cfg, state_id, [src_node, dst_node])
+            callsite_stream.write(f"auto& {local_name} = {src_node.data};", cfg, state_id, [src_node, dst_node])
             return
 
         nontc_desc = dst_desc if "TensorCore" in src_desc.storage.name else src_desc
@@ -163,18 +163,16 @@ class TensorCoreCodegen(TargetCodeGenerator):
             other_expr = cpp_array_expr(sdfg, edge.data, framecode=self._frame)
         elif edge.data.other_subset is not None:
             offset_cppstr = cpp_offset_expr(nontc_desc, edge.data.other_subset)
-            other_expr = "%s[%s]" % (nontc_node.data, offset_cppstr)
+            other_expr = f"{nontc_node.data}[{offset_cppstr}]"
         else:
-            other_expr = "%s[0]" % nontc_node.data
+            other_expr = f"{nontc_node.data}[0]"
         #####################################################################
 
         # Emit copy code
         if "TensorCore" in dst_desc.storage.name:
             # GPU memory to Tensor Cores
             callsite_stream.write(
-                "wmma::load_matrix_sync({tc}, &{other}, {stride});".format(
-                    tc=dst_node.data, other=other_expr, stride=src_desc.strides[0 if row_major else 1]
-                ),
+                f"wmma::load_matrix_sync({dst_node.data}, &{other_expr}, {src_desc.strides[0 if row_major else 1]});",
                 cfg,
                 state_id,
                 [src_node, dst_node],
@@ -307,8 +305,11 @@ def hgemm(A: dace.float16[N, N], B: dace.float16[N, N], C: dace.float32[N, N]):
 if __name__ == "__main__":
     extend_dace()
 
-    # Prerequisite for sample: CUDA compute capability >= 70
-    dace.Config.set("compiler", "cuda", "cuda_arch", value="70")
+    # Prerequisite for sample: CUDA compute capability >= 70. A newer configured architecture, or the native
+    # one, stays: CUDA 13 no longer compiles for compute_70.
+    archs = [a for a in dace.Config.get("compiler", "cuda", "cuda_arch").split(",") if a.strip()]
+    if archs and max(int(a) for a in archs) < 70:
+        dace.Config.set("compiler", "cuda", "cuda_arch", value="70")
 
     A = np.random.rand(1024, 1024).astype(np.float16)
     B = np.random.rand(1024, 1024).astype(np.float16)

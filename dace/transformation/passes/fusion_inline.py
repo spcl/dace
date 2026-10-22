@@ -4,11 +4,11 @@ Contains implementations of SDFG inlining and state fusion passes.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion
+from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion, UnstructuredControlFlow
 from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -41,7 +41,7 @@ class FuseStates(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Fuses all possible states of an SDFG (and all sub-SDFGs).
 
@@ -86,7 +86,7 @@ class InlineSDFGs(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
 
@@ -134,6 +134,12 @@ class InlineControlFlowRegions(ppl.Pass):
         category="Applicability",
         desc="Whether to prevent inlining named control flow regions.",
     )
+    no_inline_unstructured = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Whether to prevent inlining regions of unstructured control flow. Since control flow raising lifts "
+        "unstructured control flow into such regions, inlining them prevents simplification from converging.",
+    )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -141,7 +147,7 @@ class InlineControlFlowRegions(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
 
@@ -158,6 +164,8 @@ class InlineControlFlowRegions(ppl.Pass):
             ignore_region_types.append(NamedRegion)
         if self.no_inline_function_call_regions:
             ignore_region_types.append(FunctionCallRegion)
+        if self.no_inline_unstructured:
+            ignore_region_types.append(UnstructuredControlFlow)
         if len(ignore_region_types) < 1:
             ignore_region_types = None
 
@@ -193,7 +201,7 @@ class FixNestedSDFGReferences(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         modified = 0
         for node, state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.NestedSDFG) or node.sdfg is None:

@@ -1,6 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
+import itertools
+
 import numpy as np
+
+import dace
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
 
 
@@ -77,7 +80,7 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     propagate_memlets_sdfg(sdfg)
 
     # Verify all memlet subsets and volumes in the main state of the program, i.e. around the NSDFG.
-    map_state = sdfg.states()[1]
+    map_state = next(itertools.islice(sdfg.states(), 1, None))
     i = dace.symbol("i")
     j = dace.symbol("j")
 

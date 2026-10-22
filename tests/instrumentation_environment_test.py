@@ -9,9 +9,9 @@ import pathlib
 
 import pytest
 
+from dace.codegen.compiler import get_environment_flags
 from dace.codegen.instrumentation.likwid import LIKWID, LIKWIDNvmon, LIKWIDPerfmon
 from dace.codegen.instrumentation.papi import PAPI
-from dace.codegen.compiler import get_environment_flags
 from dace.config import Config, set_temporary
 from dace.library import get_environments_and_dependencies
 

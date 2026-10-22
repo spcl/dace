@@ -12,8 +12,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Optional
 from urllib.parse import urlparse
+
 import dace
 
 
@@ -77,7 +77,7 @@ class TransformationRepoManager:
         """
         self._set_path()  # In a function as we might need to re-read it, if someone changed the config
 
-    def _load_registry(self, filepath: str) -> Dict:
+    def _load_registry(self, filepath: str) -> dict:
         """
         Loads the repository registry from the JSON registry file.
 
@@ -89,13 +89,13 @@ class TransformationRepoManager:
         """
         self._set_path()
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             print(f"Warning: Could not load registry file: {e}")
             return {}
 
-    def _save_registry(self, registry: Dict) -> None:
+    def _save_registry(self, registry: dict) -> None:
         """
         Saves the repository registry to the JSON registry file.
 
@@ -107,7 +107,7 @@ class TransformationRepoManager:
         try:
             with open(reg_file, "w") as f:
                 json.dump(registry, f, indent=2)
-        except IOError as e:
+        except OSError as e:
             print(f"Error: Could not save registry file: {e}")
             sys.exit(1)
 
@@ -128,15 +128,13 @@ class TransformationRepoManager:
         parsed = urlparse(url)
         if parsed.path:
             path = parsed.path.strip("/")
-            if path.endswith(".git"):
-                path = path[:-4]
+            path = path.removesuffix(".git")
             return os.path.basename(path)
 
         # Handle SSH format
         if "@" in url and ":" in url:
             path = url.split(":")[-1]
-            if path.endswith(".git"):
-                path = path[:-4]
+            path = path.removesuffix(".git")
             return os.path.basename(path)
 
         raise ValueError(f"Could not extract repository name from URL: {url}")
@@ -178,7 +176,7 @@ class TransformationRepoManager:
             print(f"Error cloning repository: {e}")
             return False
 
-    def add_repository(self, url: str, name: Optional[str] = None, force=False) -> bool:
+    def add_repository(self, url: str, name: str | None = None, force=False) -> bool:
         """
         Clones a repository and adds it as a new transformation repository.
 

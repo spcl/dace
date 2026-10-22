@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 from dace.transformation.dataflow import MapUnroll
 
 
@@ -18,10 +19,10 @@ def test_map_unroll():
     nsdfg = dace.SDFG("unroll_nested")
     nsdfg_node = outer_state.add_nested_sdfg(nsdfg, {"x"}, {"y"})
     outer_state.add_memlet_path(
-        read, entry_outer, entry_inner, nsdfg_node, dst_conn="x", memlet=dace.Memlet(f"input_array[i, k, j]")
+        read, entry_outer, entry_inner, nsdfg_node, dst_conn="x", memlet=dace.Memlet("input_array[i, k, j]")
     )
     outer_state.add_memlet_path(
-        nsdfg_node, exit_inner, exit_outer, write, src_conn="y", memlet=dace.Memlet(f"output_array[j, k, i]")
+        nsdfg_node, exit_inner, exit_outer, write, src_conn="y", memlet=dace.Memlet("output_array[j, k, i]")
     )
 
     nsdfg.add_array("x", [1], dace.int32)
@@ -30,8 +31,8 @@ def test_map_unroll():
     tasklet = inner_state.add_tasklet("tasklet", {"_x"}, {"_y"}, "_y = _x + 1")
     read = inner_state.add_read("x")
     write = inner_state.add_write("y")
-    inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet(f"x[0]"))
-    inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet(f"y[0]"))
+    inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet("x[0]"))
+    inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet("y[0]"))
 
     nsdfg_node.integrate_into_parent()
 

@@ -1,8 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import dace
+
 import numpy as np
 
+import dace
 from dace.transformation.dataflow import RemoveIntermediateWrite
 
 

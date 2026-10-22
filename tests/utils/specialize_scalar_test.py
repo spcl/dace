@@ -1,9 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import dace.sdfg.utils as sdutil
 from dace.codegen.control_flow import LoopRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
-import dace.sdfg.utils as sdutil
 
 
 def _get_sdfg_for_dynamic_map_input():
@@ -107,7 +107,7 @@ def test_specialize_with_dynamic_input():
     sdfg.validate()
     sdfg.compile()
     map_entries = set()
-    for s in sdfg.all_states():
+    for s in sdfg.states():
         for n in s.nodes():
             if isinstance(n, dace.nodes.MapEntry):
                 map_entries.add(n)

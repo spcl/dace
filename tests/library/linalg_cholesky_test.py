@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+import pytest
+
 import dace
 from dace import Memlet
 from dace.libraries.linalg import Cholesky
-import numpy as np
-import pytest
 
 
 def generate_matrix(size, dtype):
@@ -18,7 +19,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     n = dace.symbol("n", dace.int64)
 
-    sdfg = dace.SDFG("linalg_cholesky_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG(f"linalg_cholesky_{implementation}_{dtype}")
     state = sdfg.add_state("dataflow")
 
     inp = sdfg.add_array("xin", [n, n], dtype)

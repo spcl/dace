@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
-import scipy
 import pytest
+import scipy
 
 import dace
 from dace import nodes

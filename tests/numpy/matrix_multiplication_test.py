@@ -1,7 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-import dace
+
 import numpy as np
+
+import dace
 
 B, M, N, K, L, O = tuple(dace.symbol(k) for k in "BMNKLO")
 

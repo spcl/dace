@@ -69,19 +69,21 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from functools import lru_cache
+import ast
 import inspect
 import sys
-import ast
-import numpy as np
 import warnings
-
-import sympy
-import dace
-from numbers import Number
+from functools import lru_cache
 from io import StringIO
+from numbers import Number
+
+import numpy as np
+import sympy
+
+import dace
 from dace import dtypes
 from dace.sdfg import type_inference
+from dace.symbolic import TYPECAST_CPP
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -108,7 +110,7 @@ def interleave(inter, f, seq, **kwargs):
             f(x, **kwargs)
 
 
-class LocalScheme(object):
+class LocalScheme:
     def is_defined(self, local_name, current_depth):
         raise NotImplementedError("Abstract class")
 
@@ -181,7 +183,7 @@ class CPPUnparser:
         self.language = language
 
         self.dispatch(tree)
-        print("", file=self.f)
+        print(file=self.f)
         self.f.flush()
 
     def fill(self, text=""):
@@ -193,11 +195,10 @@ class CPPUnparser:
             else:
                 self.f.write(text)
             self.firstfill = False
+        elif self.indent_output:
+            self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
         else:
-            if self.indent_output:
-                self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
-            else:
-                self.f.write("\n" + text)
+            self.f.write("\n" + text)
 
     def write(self, text):
         """Append a piece of text to the current line"""
@@ -519,36 +520,34 @@ class CPPUnparser:
         if isinstance(value, (float, complex)):
             # Substitute overflowing decimal literal for AST infinities.
             self.write(result.replace("inf", INFSTR))
+        # Special case for strings of containing byte literals (but are still strings).
+        elif result.find("b'") >= 0:
+            self.write(result)
         else:
-            # Special case for strings of containing byte literals (but are still strings).
-            if result.find("b'") >= 0:
-                self.write(result)
-            else:
-                towrite = result
-                if result.startswith("'"):
-                    towrite = result[1:-1].replace('"', '\\"')
-                    towrite = f'"{towrite}"'
-                self.write(towrite)
+            towrite = result
+            if result.startswith("'"):
+                towrite = result[1:-1].replace('"', '\\"')
+                towrite = f'"{towrite}"'
+            self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
-        else:
-            if isinstance(value, (Number, np.bool_)):
-                self._Num(t)
-            elif isinstance(value, tuple):
-                self.write("(")
-                if len(value) == 1:
-                    self._write_constant(value[0])
-                    self.write(",")
-                else:
-                    interleave(lambda: self.write(", "), self._write_constant, value)
-                self.write(")")
-            elif value is Ellipsis:  # instead of `...` for Py2 compatibility
-                self.write("...")
+        elif isinstance(value, (Number, np.bool_)):
+            self._Num(t)
+        elif isinstance(value, tuple):
+            self.write("(")
+            if len(value) == 1:
+                self._write_constant(value[0])
+                self.write(",")
             else:
-                self._write_constant(t.value)
+                interleave(lambda: self.write(", "), self._write_constant, value)
+            self.write(")")
+        elif value is Ellipsis:  # instead of `...` for Py2 compatibility
+            self.write("...")
+        else:
+            self._write_constant(t.value)
 
     def _ClassDef(self, t):
         raise NotImplementedError("Classes are unsupported")
@@ -953,7 +952,7 @@ class CPPUnparser:
 
     def _BoolOp(self, t):
         self.write("(")
-        s = " %s " % self.boolops[t.op.__class__]
+        s = f" {self.boolops[t.op.__class__]} "
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 
@@ -987,6 +986,15 @@ class CPPUnparser:
         "And": ast.And,
         "Or": ast.Or,
     }
+    modulo_calls = {
+        "CMod": "c_mod",
+        "FtnMod": "ftn_mod",
+        "Mod": "py_mod",
+        "PyMod": "py_mod",
+        "FtnModulo": "ftn_modulo",
+    }
+    # Modulo spellings and the numeric casts of the symbolic engine, by their C++ function
+    renamed_calls = {**modulo_calls, **TYPECAST_CPP}
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
@@ -1006,7 +1014,10 @@ class CPPUnparser:
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
 
-        self.dispatch(t.func)
+        if isinstance(t.func, ast.Name) and t.func.id in self.renamed_calls:
+            self.write(self.renamed_calls[t.func.id])
+        else:
+            self.dispatch(t.func)
         self.write("(")
         comma = False
         for e in t.args:

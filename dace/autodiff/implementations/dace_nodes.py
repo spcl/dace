@@ -8,21 +8,20 @@ import ast
 import collections
 import copy
 import numbers
+from typing import TYPE_CHECKING
+
 import astunparse
 import sympy as sp
-from typing import List, Tuple, TYPE_CHECKING
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
+import dace.autodiff.utils as ad_utils
 from dace import dtypes
-from dace.data import Reference, Structure
-from dace.sdfg import SDFGState
-from dace.data import find_new_name
 
 # Autodiff imports
-from dace.autodiff.base_abc import BackwardResult, AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.autodiff.base_abc import AutoDiffException, BackwardResult
+from dace.data import Reference, Structure
+from dace.sdfg import SDFGState, nodes
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
@@ -38,9 +37,9 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.NestedSDFG,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
         reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
 
         gen = self.bwd_engine.create_child_generator(
@@ -55,7 +54,7 @@ class DaceNodeBackwardImplementations:
         # sdfg fails otherwise
         deferred_edges = []
 
-        inputs = set(backward_result.given_grad_names[name] for name in sorted(given_gradients))
+        inputs = {backward_result.given_grad_names[name] for name in sorted(given_gradients)}
         # loop through the arrays that we need from the forward pass
         for name, desc in sorted(backward_input_arrays.items()):
             # if the name is not already passed to the reverse SDFG node ...
@@ -73,11 +72,9 @@ class DaceNodeBackwardImplementations:
                 #     continue
 
                 # (1)
-                new_name = find_new_name(name + "_forwarded", self.bwd_engine.sdfg.arrays)
+                new_name = dace.utils.find_new_name(name + "_forwarded", self.bwd_engine.sdfg.arrays)
                 if new_name in self.bwd_engine.sdfg.arrays or new_name in self.bwd_engine.backward_input_arrays:
-                    raise AutoDiffException(
-                        "Attempted to create array with name '{}', but it already existed".format(new_name)
-                    )
+                    raise AutoDiffException(f"Attempted to create array with name '{new_name}', but it already existed")
 
                 self.bwd_engine.sdfg.add_datadesc(new_name, copy.deepcopy(desc))
                 self.bwd_engine.backward_input_arrays[new_name] = copy.deepcopy(desc)
@@ -108,7 +105,7 @@ class DaceNodeBackwardImplementations:
             else:
                 inputs.add(name)
 
-        outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
+        outputs = {backward_result.required_grad_names[name] for name in required_gradients}
 
         for inp in inputs:
             if inp in reverse_nsdfg.arrays:
@@ -127,10 +124,10 @@ class DaceNodeBackwardImplementations:
         )
 
         # If any input connectors point to symbols
-        for conn, _ in nsdfg.in_connectors.items():
+        for conn in nsdfg.in_connectors.keys():
             if conn in nsdfg.sdfg.symbols:
                 # We need to add a new symbol and create a mapping
-                new_symbol = find_new_name(conn, nsdfg.sdfg.symbols)
+                new_symbol = dace.utils.find_new_name(conn, nsdfg.sdfg.symbols)
                 nsdfg.sdfg.add_symbol(new_symbol, nsdfg.sdfg.symbols[conn])
                 nsdfg.sdfg.replace(conn, new_symbol)
                 nsdfg.symbol_mapping[new_symbol] = conn
@@ -150,9 +147,9 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.AccessNode,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
 
         desc = self.bwd_engine.sdfg.arrays[node.data]
         if isinstance(desc, Reference):
@@ -180,9 +177,9 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.MapEntry,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
 
         required_grad_names = {n: ad_utils.invert_map_connector(n) for n in required_gradients}
         given_grad_names = {n: ad_utils.invert_map_connector(n) for n in given_gradients}
@@ -205,8 +202,8 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.MapExit,
-        given_gradients: List[str],
-        required_gradients: List[str],
+        given_gradients: list[str],
+        required_gradients: list[str],
     ):
         self.bwd_engine.reverse_map[node.map] = copy.deepcopy(node.map)
 
@@ -239,11 +236,11 @@ class DaceNodeBackwardImplementations:
         state: SDFGState,
         backward_state: SDFGState,
         tasklet: nodes.Tasklet,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
         if tasklet.language is not dtypes.Language.Python:
-            raise AutoDiffException("Expected tasklet with language Python, got language {}".format(tasklet.language))
+            raise AutoDiffException(f"Expected tasklet with language Python, got language {tasklet.language}")
 
         # tasklets should have scalar inputs (can be relaxed)
         for _, _, _, _, memlet in state.in_edges(tasklet):
@@ -333,8 +330,8 @@ class DaceNodeBackwardImplementations:
         code_str: str,
         forward_state: SDFGState,
         tasklet: nodes.Tasklet,
-        given_gradients: List[str],
-        required_gradients: List[str],
+        given_gradients: list[str],
+        required_gradients: list[str],
     ):
         """Performs symbolic differentiation on tasklet code to generate the backward-pass tasklet.
 
@@ -392,11 +389,11 @@ class DaceNodeBackwardImplementations:
             if len(required_gradients) == 0:
                 # for this we need to assing a zero to the gradient output
                 # pick a name for the input gradient
-                rev_input_grad_name = find_new_name(output_conn + "_gradient", rev_inputs)
+                rev_input_grad_name = dace.utils.find_new_name(output_conn + "_gradient", rev_inputs)
                 result.given_grad_names[output_conn] = rev_input_grad_name
 
                 # zero out the gradient
-                code = f"\n__zero_out_conn__ = 0.0"
+                code = "\n__zero_out_conn__ = 0.0"
                 rev_outputs = {}
                 rev_inputs = {rev_input_grad_name}
 
@@ -406,7 +403,7 @@ class DaceNodeBackwardImplementations:
 
                 if inp not in result.required_grad_names:
                     # pick a name for the gradient
-                    rev_output_grad_name = find_new_name(inp + "_gradient", rev_outputs)
+                    rev_output_grad_name = dace.utils.find_new_name(inp + "_gradient", rev_outputs)
                     result.required_grad_names[inp] = rev_output_grad_name
                     rev_outputs.add(rev_output_grad_name)
                 else:
@@ -442,13 +439,11 @@ class DaceNodeBackwardImplementations:
 
                 if diff_expr.atoms(sp.Derivative):
                     # the final result contains a call to sp.Derivative
-                    raise AutoDiffException(
-                        "Unable to symbolically differentiate expression: {}".format(diff_expr.expr)
-                    )
+                    raise AutoDiffException(f"Unable to symbolically differentiate expression: {diff_expr.expr}")
 
                 if output_conn not in result.given_grad_names:
                     # pick a name for the input gradient
-                    rev_input_grad_name = find_new_name(output_conn + "_gradient", rev_inputs)
+                    rev_input_grad_name = dace.utils.find_new_name(output_conn + "_gradient", rev_inputs)
                     result.given_grad_names[output_conn] = rev_input_grad_name
                 else:
                     rev_input_grad_name = result.given_grad_names[output_conn]
@@ -464,7 +459,7 @@ class DaceNodeBackwardImplementations:
                 string_symbols = string_symbols.difference(set(sdfg.symbols.keys()))
                 rev_inputs |= string_symbols | {rev_input_grad_name}
 
-                diff_code_str = "{input} * ({diff_expr})".format(input=rev_input_grad_name, diff_expr=str(diff_expr))
+                diff_code_str = f"{rev_input_grad_name} * ({str(diff_expr)})"
                 # small hack: our heaviside is lowercase
                 diff_code_str = diff_code_str.replace("Heaviside", "heaviside")
 
