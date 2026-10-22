@@ -1,8 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional
-import pytest
-import dace
 import numpy as np
+import pytest
+
+import dace
 
 W = dace.symbol("W")
 H = dace.symbol("H")
@@ -280,7 +280,7 @@ def test_ifchain_manual():
 
 @pytest.mark.skip(
     reason="Switch-case are not allowed in the ConditionalBlock semantics, and are thus not "
-    + "generated with the new ControlFlowRaising pass."
+    "generated with the new ControlFlowRaising pass."
 )
 def test_switchcase():
     sdfg = dace.SDFG("switchcase")
@@ -355,7 +355,7 @@ def test_fsm():
 
 def test_optional_parameters():
 
-    def optional_parameters_func(A: dace.int32[3], B: Optional[dace.int32[3]] = None):
+    def optional_parameters_func(A: dace.int32[3], B: dace.int32[3] | None = None):
         if B is None:
             A[1] = 3
         elif B is not None:

@@ -1,16 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests LoopLocalMemoryReduction transformation."""
 
-import numpy as np
 import copy
+from typing import Any
+
+import numpy as np
+
 import dace
-from dace.sdfg.state import LoopRegion, CodeBlock
+from dace.sdfg.state import CodeBlock, LoopRegion
 from dace.transformation.passes import LoopLocalMemoryReduction
-from typing import Any, Dict
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option
-def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str, Any]):
+def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str, Any]):
     # Apply and validate
     orig_sdfg.validate()
     llmr_sdfg = copy.deepcopy(orig_sdfg)
@@ -43,10 +45,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
             input_data_orig[argName] = argType.dtype.type(32)
             continue
 
-        shape = []
-        for entry in argType.shape:
-            shape.append(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}))
-        shape = tuple(shape)
+        shape = tuple(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}) for entry in argType.shape)
         arr = dace.ndarray(shape=shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
         input_data_orig[argName] = arr
@@ -985,6 +984,49 @@ def test_cloudsc():
     check_transformation(sdfg, 1)
 
 
+def test_cloudsc_flux():
+    """A neighbor read after the current write in the same iteration needs a window of two."""
+    KLEV = 128
+
+    @dace.program
+    def tester(pap: dace.float64[KLEV], zqx: dace.float64[KLEV], zrg_r: dace.float64, pflux: dace.float64[KLEV]):
+        zsedflux = dace.define_local([KLEV], dace.float64)
+        zsedflux[0] = zqx[0] * pap[0] * zrg_r
+        pflux[0] = zsedflux[0]
+        for jk in range(1, KLEV):
+            zsedflux[jk] = zqx[jk] * pap[jk] * zrg_r
+            pflux[jk] = zsedflux[jk] - zsedflux[jk - 1]
+
+    check_transformation(tester.to_sdfg(simplify=True), 1)
+
+
+def test_cloudsc_evap():
+    """Unconditional init, conditional override, then a read: both buffers collapse to scalars."""
+    NPROMA = 128
+
+    @dace.program
+    def tester(
+        za: dace.float64[NPROMA],
+        zliqfrac: dace.float64[NPROMA],
+        zicefrac: dace.float64[NPROMA],
+        zdqs: dace.float64[NPROMA],
+        zlicld: dace.float64[NPROMA],
+        zsolqa: dace.float64[NPROMA],
+    ):
+        zlevapl = dace.define_local([NPROMA], dace.float64)
+        zlevapi = dace.define_local([NPROMA], dace.float64)
+        for jl in range(NPROMA):
+            zlevapl[jl] = 0.0
+            zlevapi[jl] = 0.0
+            if zdqs[jl] > 0.0:
+                zlevap = za[jl] * min(zdqs[jl], zlicld[jl])
+                zlevapl[jl] = zliqfrac[jl] * zlevap
+                zlevapi[jl] = zicefrac[jl] * zlevap
+            zsolqa[jl] = zsolqa[jl] + zlevapl[jl] + zlevapi[jl]
+
+    check_transformation(tester.to_sdfg(simplify=True), 2)
+
+
 if __name__ == "__main__":
     test_simple()
     test_no_offsets()
@@ -1038,3 +1080,5 @@ if __name__ == "__main__":
     test_symbolic_sizes()
     test_symbolic_k()
     test_cloudsc()
+    test_cloudsc_flux()
+    test_cloudsc_evap()

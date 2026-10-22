@@ -6,7 +6,6 @@ registered as SDFG symbols, so that they are part of the SDFG's argument list.
 
 import numpy as np
 import pytest
-from typing import Optional
 
 import dace
 
@@ -113,7 +112,7 @@ def test_none_comparison_in_if_condition():
     """``is None`` comparisons must not register the ``None`` placeholder as a symbol."""
 
     @dace.program
-    def none_comparison_in_if_condition(A: dace.float64[N], B: Optional[dace.float64[N]] = None):
+    def none_comparison_in_if_condition(A: dace.float64[N], B: dace.float64[N] | None = None):
         if B is None:
             A[:] = 1.0
         else:

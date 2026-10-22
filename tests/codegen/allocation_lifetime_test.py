@@ -3,13 +3,14 @@
 
 import re
 
+import numpy as np
 import pytest
 
 import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.sdfg import infer_types
-import numpy as np
+from dace.sdfg.state import LoopRegion
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
@@ -615,6 +616,81 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
+def test_a_view_does_not_reallocate_the_array_it_views():
+    """A view in a later state reads the transient the frame allocated in an earlier state, not a fresh buffer.
+
+    A transient sized by a loop variable is allocated in the state that first uses it. ``defined_vars`` is scoped,
+    so it no longer knows that allocation when a later state views the transient; the frame's declaration does.
+    """
+    N = dace.symbol("N", dtype=dace.int64)
+    i = dace.symbol("i", dtype=dace.int64)
+
+    sdfg = dace.SDFG("view_realloc")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("t", [i + 1], dace.float64)
+    sdfg.add_view("tv", [i + 1], dace.float64)
+
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+
+    fill = loop.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet(
+        "fill",
+        {"j": "0:i + 1"},
+        {"x": dace.Memlet("a[i, j]")},
+        "o = x",
+        {"o": dace.Memlet("t[j]")},
+        external_edges=True,
+    )
+
+    use = loop.add_state_after(fill)
+    tnode, vnode = use.add_access("t"), use.add_access("tv")
+    use.add_edge(tnode, None, vnode, "views", dace.Memlet("t[0:i + 1]"))
+    use.add_edge(vnode, None, use.add_access("out"), None, dace.Memlet("tv[0] -> [i]"))
+
+    code = sdfg.generate_code()[0].clean_code
+    allocations = _count_heap_allocs(code, "double")  # ``t`` is the only heap-allocated array
+    assert allocations == 1, (
+        f"'t' is allocated {allocations} times; the second one is the view's, "
+        "and it throws away what the fill state wrote"
+    )
+
+
+def test_container_read_only_from_tasklet_code():
+    """``t`` is read by the code of a tasklet in a later state, with no access node there."""
+    sdfg = dace.SDFG("container_read_only_from_code")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    write = sdfg.add_state("write", is_start_block=True)
+    tasklet = write.add_tasklet("w", {"a"}, {"o"}, "o = 2 * a")
+    write.add_edge(write.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    write.add_edge(tasklet, "o", write.add_write("t"), None, dace.Memlet("t[0]"))
+    read = sdfg.add_state_after(write, "read")
+    tasklet = read.add_tasklet("r", {}, {"o"}, "o = t + 1")
+    read.add_edge(tasklet, "o", read.add_write("B"), None, dace.Memlet("B[0]"))
+    B = np.zeros(1)
+    sdfg(A=np.ones(1), B=B)
+    assert B[0] == 3
+
+
+def test_view_first_read_by_an_interstate_edge():
+    """A view whose first use is an interstate edge is declared with the data it views."""
+    sdfg = dace.SDFG("view_first_read_by_an_edge")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("buf", [8], dace.float64, transient=True)
+    sdfg.add_view("v", [8], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_nedge(first.add_read("A"), first.add_write("buf"), dace.Memlet("A[0:8]"))
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "v[0]"}))
+    view = second.add_access("v")
+    second.add_edge(second.add_read("buf"), None, view, "views", dace.Memlet("buf[0:8]"))
+    second.add_nedge(view, second.add_write("A"), dace.Memlet("v[0:8]"))
+    sdfg.generate_code()
+
+
 if __name__ == "__main__":
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -639,3 +715,6 @@ if __name__ == "__main__":
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
     test_multisize()
+    test_a_view_does_not_reallocate_the_array_it_views()
+    test_container_read_only_from_tasklet_code()
+    test_view_first_read_by_an_interstate_edge()

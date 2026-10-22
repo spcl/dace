@@ -183,7 +183,7 @@ def test_fortran_frontend_log():
 
     size = 2
     d = np.full([size], 42, order="F", dtype=np.float64)
-    d[0] = 2.71
+    d[0] = 2.71  # noqa: FURB152
     d[1] = 4.5
     res = np.full([2], 42, order="F", dtype=np.float64)
     sdfg(d=d, res=res)
@@ -686,8 +686,8 @@ def test_fortran_frontend_trig():
     size = 3
     d = np.full([size], 42, order="F", dtype=np.float32)
     d[0] = 0
-    d[1] = 3.14 / 2
-    d[2] = 3.14
+    d[1] = 3.14 / 2  # noqa: FURB152
+    d[2] = 3.14  # noqa: FURB152
 
     res = np.full([size * 2], 42, order="F", dtype=np.float32)
     sdfg(d=d, res=res)
@@ -732,7 +732,7 @@ def test_fortran_frontend_hyperbolic():
     d = np.full([size], 42, order="F", dtype=np.float32)
     d[0] = 0
     d[1] = 1
-    d[2] = 3.14
+    d[2] = 3.14  # noqa: FURB152
 
     res = np.full([size * 3], 42, order="F", dtype=np.float32)
     sdfg(d=d, res=res)
@@ -793,7 +793,7 @@ def test_fortran_frontend_trig_inverse():
     atan_args = np.full([size], 42, order="F", dtype=np.float32)
     atan_args[0] = 0.0
     atan_args[1] = 1.0
-    atan_args[2] = 3.14
+    atan_args[2] = 3.14  # noqa: FURB152
 
     atan2_args = np.full([size * 2], 42, order="F", dtype=np.float32)
     atan2_args[0] = 0.0

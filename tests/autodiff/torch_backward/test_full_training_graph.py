@@ -1,17 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
-import pytest
-
 import numpy as np
+import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 
 import dace
-
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close, tensors_close
+from tests.utils import tensors_close, torch_tensors_close
 
 
 @pytest.mark.torch

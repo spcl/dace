@@ -3,21 +3,21 @@
 
 import builtins
 import ctypes
-import json
 import inspect
-import numpy
-import ml_dtypes
+import json
 import re
-from sympy import Float, Integer
 from collections import OrderedDict
 from dataclasses import dataclass
+from enum import Enum, auto
 from functools import wraps
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Union
 
-from dace.config import Config
+import ml_dtypes
+import numpy
+from sympy import Float, Integer
 
-from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
+from dace.config import Config
 from dace.registry import undefined_safe_enum
 from dace.version import __version__
 
@@ -34,7 +34,20 @@ class StorageType(ExtensibleAttributeEnum):
     """Available data storage types in the SDFG."""
 
     Default = auto()  #: Scope-default storage location
-    Register = auto()  #: Local data on registers, stack, or equivalent memory
+
+    @dataclass(frozen=True)
+    class Register:
+        """
+        Local data on registers, stack, or equivalent memory.
+
+        ``StorageType.Register`` is a template that compares equal to every instance, so it can be used as before;
+        instantiate it to force stack allocation, e.g., ``StorageType.Register(force=True)``.
+        """
+
+        #: Whether the array is always on the stack (``True``), a symbolically-sized one as a variable-length array.
+        #: Otherwise (``False``, also for the template) only constant sizes up to the stack size limit are.
+        force: bool = False
+
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
     CPU_ThreadLocal = auto()  #: Thread-local host memory
@@ -51,27 +64,12 @@ class StorageType(ExtensibleAttributeEnum):
 
         #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
         #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
-        dynamic: Optional[bool] = None
+        dynamic: bool | None = None
 
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
-
-
-def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
-    """
-    Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
-
-    :param storage: A ``GPU_Shared`` storage type, either the template or an instance of it.
-    :return: The ``dynamic`` attribute of the storage type, or None if it is left to the code generator (which is also
-             the case for the bare template).
-    """
-    if storage != StorageType.GPU_Shared:
-        raise ValueError(f"Expected a GPU_Shared storage type, got {storage}")
-    if storage._is_template:
-        return None
-    return storage.dynamic
 
 
 class OMPScheduleType(Enum):
@@ -102,14 +100,32 @@ class ScheduleType(ExtensibleAttributeEnum):
     Snitch = auto()
     Snitch_Multicore = auto()
 
+    # No code generation yet
+    GPU_Chiplet = auto()  #: AMD XCD
+    GPU_ThreadBlockCluster = auto()
+    GPU_Warp = auto()
 
-# A subset of GPU schedule types
-GPU_SCHEDULES = [
+
+GPU_KERNEL_SCHEDULES = [
     ScheduleType.GPU_Device,
-    ScheduleType.GPU_ThreadBlock,
-    ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
 ]
+
+# Coarsest first
+GPU_THREAD_SCHEDULES = [
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES_WITHOUT_CODEGEN = [
+    ScheduleType.GPU_Chiplet,
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
 
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
@@ -208,8 +224,11 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
+    ScheduleType.GPU_Chiplet: StorageType.GPU_Global,
+    ScheduleType.GPU_ThreadBlockCluster: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
+    ScheduleType.GPU_Warp: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
 }
@@ -226,6 +245,9 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Chiplet: ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlockCluster: ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
@@ -334,7 +356,7 @@ _DEFAULT_DATA_TYPES = {
 }
 
 
-class typeclass(object):
+class typeclass:
     """An extension of types that enables their use in DaCe.
 
     These types are defined for three reasons:
@@ -352,14 +374,14 @@ class typeclass(object):
                 else:
                     wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
-                raise ValueError("Unknown type: {}".format(wrapped_type))
+                raise ValueError(f"Unknown type: {wrapped_type}")
 
         # Only Python's scalar types consult the configuration; every other type paid the lookup.
         if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
             config_data_types = Config.get("compiler", "default_data_types")
             widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
             if widths is None:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(f"Unknown configuration for default_data_types: {config_data_types}")
             wrapped_type = widths[wrapped_type]
         elif wrapped_type is builtins.bool:
             # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
@@ -420,6 +442,14 @@ class typeclass(object):
     def __ne__(self, other):
         return other is not None and self.ctype != getattr(other, "ctype", False)
 
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64 | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
+
     def __getitem__(self, s):
         """This is syntactic sugar that allows us to define an array type
         with the following syntax: ``dace.uint32[N,M]``
@@ -457,7 +487,7 @@ def max_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).max
 
-    raise TypeError('Unsupported type "%s" for maximum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for maximum')
 
 
 def min_value(dtype: typeclass):
@@ -470,7 +500,7 @@ def min_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).min
 
-    raise TypeError('Unsupported type "%s" for minimum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for minimum')
 
 
 def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
@@ -675,7 +705,7 @@ class vector(typeclass):
 
     @property
     def ctype(self):
-        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+        return f"dace::vec<{self.vtype.ctype}, {self.veclen}>"
 
     @property
     def ctype_unaligned(self):
@@ -728,7 +758,7 @@ class struct(typeclass):
     Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
 
-    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
+    STRUCT_CTYPES: dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
@@ -770,7 +800,7 @@ class struct(typeclass):
 
         ret = struct(json_obj["name"])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj["data"]}
-        ret._length = {k: v for k, v in json_obj["length"]}
+        ret._length = dict(json_obj["length"])
         ret.bytes = json_obj["bytes"]
 
         return ret
@@ -835,7 +865,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ="\n".join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ="\n".join([f"    {t.ctype} {tname};" for tname, t in self._data.items()]),
         )
 
 
@@ -922,7 +952,7 @@ class callback(typeclass):
             elif isinstance(arg, str):
                 arg = json_to_typeclass(arg, {"version": __version__})
             else:
-                raise TypeError("Cannot resolve type from: {}".format(arg))
+                raise TypeError(f"Cannot resolve type from: {arg}")
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
@@ -1008,6 +1038,7 @@ class callback(typeclass):
 
     def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
+
         from dace import data, symbolic
 
         def _string_converter(a: str, *args):
@@ -1069,13 +1100,12 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
                 ret_converters.append(lambda a, *args: a)
+            elif not self.is_scalar_function():
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                ret_converters.append(partial(_pyobject_converter, arg))
             else:
-                if not self.is_scalar_function():
-                    ret_arraypos.append(index + offset)
-                    ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(_pyobject_converter, arg))
-                else:
-                    ret_converters.append(lambda a, *args: a)
+                ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
@@ -1544,7 +1574,7 @@ def json_to_typeclass(obj, context=None):
     elif isinstance(obj, dict) and "type" in obj:
         return get_serializer(obj["type"]).from_json(obj, context)
     else:
-        raise ValueError("Cannot resolve: {}".format(obj))
+        raise ValueError(f"Cannot resolve: {obj}")
 
 
 def paramdec(dec):
@@ -1578,7 +1608,7 @@ def paramdec(dec):
 
 def deduplicate(iterable):
     """Removes duplicates in the passed iterable."""
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 namere = re.compile(r"^[a-zA-Z_][a-zA-Z_0-9]*$")
@@ -1603,12 +1633,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
     if storage == StorageType.Register:
         return True
 
-    if schedule in [
-        ScheduleType.GPU_Device,
-        ScheduleType.GPU_Persistent,
-        ScheduleType.GPU_ThreadBlock,
-        ScheduleType.GPU_ThreadBlock_Dynamic,
-    ]:
+    if schedule in GPU_SCHEDULES:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
@@ -1652,11 +1677,10 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
-        return schedule in [
-            ScheduleType.GPU_Device,
+        return schedule in GPU_KERNEL_SCHEDULES + [
+            ScheduleType.GPU_ThreadBlockCluster,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent,
         ]
 
     # The rest (Registers) can be allocated everywhere

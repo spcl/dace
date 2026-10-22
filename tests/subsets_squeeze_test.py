@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
-from dace.subsets import Range, Indices
+
+from dace.subsets import Range
 
 
 def test_squeeze_unsqueeze_indices():
 
-    a1 = Indices.from_string("i, 0")
+    a1 = Range.from_string("i, 0")
     expected_squeezed = [1]
     a2 = deepcopy(a1)
     not_squeezed = a2.squeeze(ignore_indices=[0])
@@ -15,7 +16,7 @@ def test_squeeze_unsqueeze_indices():
     assert expected_squeezed == squeezed
     assert a1 == a2
 
-    b1 = Indices.from_string("0, i")
+    b1 = Range.from_string("0, i")
     expected_squeezed = [0]
     b2 = deepcopy(b1)
     not_squeezed = b2.squeeze(ignore_indices=[1])
@@ -25,7 +26,7 @@ def test_squeeze_unsqueeze_indices():
     assert expected_squeezed == squeezed
     assert b1 == b2
 
-    c1 = Indices.from_string("i, 0, 0")
+    c1 = Range.from_string("i, 0, 0")
     expected_squeezed = [1, 2]
     c2 = deepcopy(c1)
     not_squeezed = c2.squeeze(ignore_indices=[0])
@@ -35,7 +36,7 @@ def test_squeeze_unsqueeze_indices():
     assert expected_squeezed == squeezed
     assert c1 == c2
 
-    d1 = Indices.from_string("0, i, 0")
+    d1 = Range.from_string("0, i, 0")
     expected_squeezed = [0, 2]
     d2 = deepcopy(d1)
     not_squeezed = d2.squeeze(ignore_indices=[1])
@@ -45,7 +46,7 @@ def test_squeeze_unsqueeze_indices():
     assert expected_squeezed == squeezed
     assert d1 == d2
 
-    e1 = Indices.from_string("0, 0, i")
+    e1 = Range.from_string("0, 0, i")
     expected_squeezed = [0, 1]
     e2 = deepcopy(e1)
     not_squeezed = e2.squeeze(ignore_indices=[2])

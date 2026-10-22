@@ -5,12 +5,11 @@ from typing import NamedTuple
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, Memlet, subsets
-from dace.sdfg import nodes, SDFG, SDFGState
+import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import Memlet, data, dtypes, subsets
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
-
-import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
 def rename_interstate_reads(sdfg: SDFG, edges: list[MultiConnectorEdge]) -> None:

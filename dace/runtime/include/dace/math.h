@@ -56,36 +56,6 @@ DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& 
     return (a > max(ts...)) ? a : max(ts...);
 }
 
-template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
-    return value % modulus;
-}
-
-// Fortran implements MOD for floating-point values as well
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
-    return value - static_cast<int>(value / modulus) * modulus;
-}
-
-// Fortran implementation of MODULO
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
-    // Fortran implementation for integers - find R such that value = Q * modulus + R
-    // However, R must be in [0, modulus)
-    // To achieve that, we need to cast the division to floats.
-    // Example: -17, 3 must produce 1 and not -2.
-    // If we don't use cast, the floor is called on -5, producing wrong value.
-    // Instead, we need to have floor(-5.6... ) to ensure it produces -6.
-    // Similarly, 17, -3 must produce -1 and not 2.
-    // This means that the default solution works if value and modulus have the same sign.
-    return value - floor(static_cast<float>(value) / modulus) * modulus;
-}
-
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus) {
-    return value - floor(value / modulus) * modulus;
-}
-
 // Implement to support a match with Fortran's intrinsic EXPONENT
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
@@ -385,9 +355,11 @@ static_assert(std::is_same_v<std::common_type_t<dace::float16, dace::float16>, d
 // https://stackoverflow.com/a/39304947
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
-    auto divresult = std::div(numerator, denominator);
-    T corr = (divresult.rem != 0 && ((divresult.rem < 0) != (denominator < 0)));
-    return (T)divresult.quot - corr;
+    // Not std::div: it is host-only, and nvcc silently drops it from device code.
+    const T quotient = numerator / denominator;
+    const T remainder = numerator % denominator;
+    const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+    return quotient - corr;
 }
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
@@ -434,14 +406,37 @@ static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominato
     return (T)(numerator - quotient * denominator);
 }
 
-// Computes C/C++ modulus (operator % and fmod)
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_mod<T>((T)numerator, (T)denominator);
+}
+
+// C modulus (CMod): truncating.
 template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
     return numerator % denominator;
 }
-template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
     return (T)std::fmod(numerator, denominator);
+}
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto c_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return c_mod<T>((T)numerator, (T)denominator);
+}
+
+// Fortran MOD (FtnMod).
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& denominator) -> decltype(c_mod(numerator, denominator)) {
+    return c_mod(numerator, denominator);
+}
+
+// Fortran MODULO (FtnModulo): floored.
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
+    return py_mod(numerator, denominator);
 }
 
 // Computes C/C++ divmod (std::div)
@@ -738,7 +733,7 @@ namespace dace
                                                     T>::type;
                 if constexpr (std::is_signed<U>::value)
                 {
-                    if (b < 0) return R(1) / ipow(R(a), 0u - static_cast<unsigned int>(b));
+                    if (b < 0) return R(R(1) / ipow(R(a), 0u - static_cast<unsigned int>(b)));
                 }
                 return ipow(R(a), static_cast<unsigned int>(b));
             }
@@ -747,10 +742,9 @@ namespace dace
                 return std::pow(a, b);
             }
         }
-#ifdef __CUDACC__
         // std::pow has no half overload, so a half argument makes the float/double/long double
         // overloads equally good (ambiguous).
-                template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+        template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
         DACE_HDFI auto pow(const dace::float16& a, const T& b)
         {
             return std::pow(T(a), b);
@@ -764,7 +758,6 @@ namespace dace
         {
             return dace::float16(std::pow(float(a), float(b)));
         }
-#endif
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)

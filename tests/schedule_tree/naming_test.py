@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
+
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 from dace.transformation.passes.constant_propagation import ConstantPropagation
-
-import pytest
 
 
 def _irreducible_loop_to_loop():
@@ -51,9 +51,9 @@ def test_clash_states():
     unique_names = set()
     for node in stree.preorder_traversal():
         if isinstance(node, tn.StateLabel):
-            if node.state.name in unique_names:
+            if node.name in unique_names:
                 raise NameError("Name clash")
-            unique_names.add(node.state.name)
+            unique_names.add(node.name)
 
 
 @pytest.mark.parametrize("constprop", (False, True))

@@ -3,11 +3,12 @@
 Tests how code is generated for free tasklets inside a GPU kernel nested SDFG.
 """
 
+import numpy as np
+import pytest
+
 import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
-import numpy as np
-import pytest
 
 
 def _tester(A: dace.float64[64]):

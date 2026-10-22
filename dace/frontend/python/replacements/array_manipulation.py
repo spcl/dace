@@ -13,9 +13,65 @@ from dace import Memlet, SDFG, SDFGState
 
 import copy
 from numbers import Integral
-from typing import Any, Optional, List, Sequence, Tuple, Union
+from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
+
+
+@oprepo.replaces("dace.roll")
+@oprepo.replaces("numpy.roll")
+def _numpy_roll(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, shift, axis=None) -> str:
+    """Circular shift, lowered onto the ``CShift`` library node.
+
+    ``CShift`` rotates in either direction and the node says which: Fortran ``CSHIFT(x, s)(i)``
+    reads ``x(mod(i + s, n))`` where ``numpy.roll(x, s)[i]`` reads ``x[(i - s) % n]``. Passing
+    :attr:`ShiftDirection.NUMPY` keeps the sign flip inside the expansion instead of open-coding a
+    negation here -- a node rotated the wrong way has the right shape, dtype and even the right
+    multiset of values, so nothing downstream can catch it.
+
+    numpy takes a TUPLE of shifts and axes and applies them in order; each one becomes its own
+    node, and the write node of one is reused as the read node of the next so the chain is ordered
+    by dataflow rather than by two access nodes for the same array sitting unordered in one state.
+    """
+    from dace.libraries.standard.nodes.cshift import CShift, ShiftDirection  # Avoid import loop
+
+    if arr not in sdfg.arrays:
+        raise mem_parser.DaceSyntaxError(pv, None, f"numpy.roll argument {arr} is not SDFG data")
+    desc = sdfg.arrays[arr]
+    if isinstance(desc, data.Scalar):
+        return arr
+    ndim = len(desc.shape)
+    shifts = list(shift) if isinstance(shift, (list, tuple)) else [shift]
+    if axis is None:
+        # numpy FLATTENS an axis-less roll, which is a reshape only when the operand is contiguous.
+        # Rolling the last axis instead would return the right shape holding the wrong numbers.
+        if ndim != 1:
+            raise NotImplementedError(f"numpy.roll without an axis flattens a {ndim}-D operand; pass an axis instead")
+        axes = [0]
+    else:
+        axes = list(axis) if isinstance(axis, (list, tuple)) else [axis]
+    if len(shifts) == 1 and len(axes) > 1:
+        shifts = shifts * len(axes)
+    if len(shifts) != len(axes):
+        raise mem_parser.DaceSyntaxError(
+            pv, None, f"numpy.roll got {len(shifts)} shifts for {len(axes)} axes; they must agree"
+        )
+    axes = [ax if ax >= 0 else ax + ndim for ax in axes]
+    if any(not 0 <= ax < ndim for ax in axes):
+        raise mem_parser.DaceSyntaxError(pv, None, f"numpy.roll axis out of range for a {ndim}-D operand")
+
+    source, node = arr, state.add_read(arr)
+    for amount, ax in zip(shifts, axes):
+        out, out_desc = pv.add_temp_transient(desc.shape, desc.dtype, storage=desc.storage)
+        write = state.add_write(out)
+        cshift = CShift(
+            f"roll_{ax}", dim=ax + 1, shift=symbolic.pystr_to_symbolic(str(amount)), direction=ShiftDirection.NUMPY
+        )
+        state.add_edge(node, None, cshift, "_x", Memlet.from_array(source, sdfg.arrays[source]))
+        state.add_edge(cshift, "_out", write, None, Memlet.from_array(out, out_desc))
+        source, node = out, write
+    return source
 
 
 @oprepo.replaces("numpy.flip")
@@ -25,7 +81,7 @@ def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis
     """
 
     if arr not in sdfg.arrays.keys():
-        raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=arr))
+        raise mem_parser.DaceSyntaxError(pv, None, f"Prototype argument {arr} is not SDFG data!")
     desc = sdfg.arrays[arr]
     if isinstance(desc, data.Stream):
         raise mem_parser.DaceSyntaxError(pv, None, "Streams are not supported!")
@@ -75,7 +131,7 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
     """
 
     if arr not in sdfg.arrays.keys():
-        raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=arr))
+        raise mem_parser.DaceSyntaxError(pv, None, f"Prototype argument {arr} is not SDFG data!")
     desc = sdfg.arrays[arr]
     if not isinstance(desc, (data.Array, data.View)):
         raise mem_parser.DaceSyntaxError(pv, None, "Only Arrays and Views supported!")
@@ -89,7 +145,7 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
         raise ValueError("Axes must be different.")
 
     if axes[0] >= ndim or axes[0] < -ndim or axes[1] >= ndim or axes[1] < -ndim:
-        raise ValueError("Axes={} out of range for array of ndim={}.".format(axes, ndim))
+        raise ValueError(f"Axes={axes} out of range for array of ndim={ndim}.")
 
     k %= 4
 
@@ -144,7 +200,7 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
 @oprepo.replaces("dace.transpose")
 @oprepo.replaces("numpy.transpose")
 def _transpose(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, axes=None, outname: Optional[str] = None
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, axes=None, outname: str | None = None
 ) -> str:
 
     arr1 = sdfg.arrays[inpname]
@@ -214,7 +270,7 @@ def broadcast_to(
     sdfg: SDFG,
     state: SDFGState,
     arr: str,
-    shape: Union[str, symbolic.SymbolicType, Sequence[Union[str, symbolic.SymbolicType]]],
+    shape: str | symbolic.SymbolicType | Sequence[str | symbolic.SymbolicType],
 ) -> str:
     """Replicate ``arr`` across ``shape`` by the NumPy broadcasting rule, into a new transient rather than
     NumPy's zero-stride view, whose writes would all alias."""
@@ -239,9 +295,9 @@ def reshape(
     sdfg: SDFG,
     state: SDFGState,
     arr: str,
-    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    newshape: str | symbolic.SymbolicType | tuple[str | symbolic.SymbolicType],
     order: StringLiteral = StringLiteral("C"),
-    strides: Optional[Any] = None,
+    strides: Any | None = None,
 ) -> str:
     if isinstance(arr, (list, tuple)) and len(arr) == 1:
         arr = arr[0]
@@ -290,7 +346,7 @@ def _ndarray_reshape(
     sdfg: SDFG,
     state: SDFGState,
     arr: str,
-    *newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    *newshape: str | symbolic.SymbolicType | tuple[str | symbolic.SymbolicType],
     order: StringLiteral = StringLiteral("C"),
 ) -> str:
     if len(newshape) == 0:
@@ -477,8 +533,8 @@ def _make_datatype_converter(typeclass: str):
         dtype = dtypes.dtype_to_typeclass(np.dtype(typeclass).type)
 
     @oprepo.replaces(typeclass)
-    @oprepo.replaces("dace.{}".format(typeclass))
-    @oprepo.replaces("numpy.{}".format(typeclass))
+    @oprepo.replaces(f"dace.{typeclass}")
+    @oprepo.replaces(f"numpy.{typeclass}")
     def _converter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arg: UfuncInput):
         return _datatype_converter(sdfg, state, arg, dtype=dtype, name_hint=pv.get_target_name())
 
@@ -510,7 +566,7 @@ def _datatype_converter(
 
     # Set tasklet parameters
     impl = {
-        "name": "_convert_to_{}_".format(dtype.to_string()),
+        "name": f"_convert_to_{dtype.to_string()}_",
         "inputs": ["__inp"],
         "outputs": ["__out"],
         "code": "__out = {}(__inp)".format(
@@ -554,9 +610,9 @@ def _concat(
     visitor: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    arrays: Tuple[Any],
-    axis: Optional[int] = 0,
-    out: Optional[Any] = None,
+    arrays: tuple[Any],
+    axis: int | None = 0,
+    out: Any | None = None,
     *,
     dtype=None,
     casting: str = "same_kind",
@@ -632,7 +688,7 @@ def _stack(
     visitor: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    arrays: Tuple[Any],
+    arrays: tuple[Any],
     axis: int = 0,
     out: Any = None,
     *,
@@ -692,12 +748,12 @@ def _stack(
 @oprepo.replaces("numpy.vstack")
 @oprepo.replaces("numpy.row_stack")
 def _vstack(
-    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, tup: Tuple[Any], *, dtype=None, casting: str = "same_kind"
+    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, tup: tuple[Any], *, dtype=None, casting: str = "same_kind"
 ):
     if not isinstance(tup, (tuple, list)):
         raise ValueError("List of arrays is not iterable, cannot compile stack call")
     if tup[0] not in sdfg.arrays:
-        raise TypeError(f"Index 0 is not an array")
+        raise TypeError("Index 0 is not an array")
 
     # In the 1-D case, stacking is performed along the first axis
     if len(sdfg.arrays[tup[0]].shape) == 1:
@@ -709,12 +765,12 @@ def _vstack(
 @oprepo.replaces("numpy.hstack")
 @oprepo.replaces("numpy.column_stack")
 def _hstack(
-    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, tup: Tuple[Any], *, dtype=None, casting: str = "same_kind"
+    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, tup: tuple[Any], *, dtype=None, casting: str = "same_kind"
 ):
     if not isinstance(tup, (tuple, list)):
         raise ValueError("List of arrays is not iterable, cannot compile stack call")
     if tup[0] not in sdfg.arrays:
-        raise TypeError(f"Index 0 is not an array")
+        raise TypeError("Index 0 is not an array")
 
     # In the 1-D case, concatenation is performed along the first axis
     if len(sdfg.arrays[tup[0]].shape) == 1:
@@ -725,12 +781,12 @@ def _hstack(
 
 @oprepo.replaces("numpy.dstack")
 def _dstack(
-    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, tup: Tuple[Any], *, dtype=None, casting: str = "same_kind"
+    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, tup: tuple[Any], *, dtype=None, casting: str = "same_kind"
 ):
     if not isinstance(tup, (tuple, list)):
         raise ValueError("List of arrays is not iterable, cannot compile a stack call")
     if tup[0] not in sdfg.arrays:
-        raise TypeError(f"Index 0 is not an array")
+        raise TypeError("Index 0 is not an array")
     if len(sdfg.arrays[tup[0]].shape) < 3:
         raise NotImplementedError("dstack is not implemented for arrays that are smaller than 3D")
 
@@ -742,7 +798,7 @@ def _split_core(
     sdfg: SDFG,
     state: SDFGState,
     ary: str,
-    indices_or_sections: Union[int, Sequence[symbolic.SymbolicType], str],
+    indices_or_sections: int | Sequence[symbolic.SymbolicType] | str,
     axis: int,
     allow_uneven: bool,
 ):
@@ -854,7 +910,7 @@ def _split(
     sdfg: SDFG,
     state: SDFGState,
     ary: str,
-    indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+    indices_or_sections: symbolic.SymbolicType | list[symbolic.SymbolicType] | str,
     axis: int = 0,
 ):
     return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis, allow_uneven=False)
@@ -866,7 +922,7 @@ def _array_split(
     sdfg: SDFG,
     state: SDFGState,
     ary: str,
-    indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+    indices_or_sections: symbolic.SymbolicType | list[symbolic.SymbolicType] | str,
     axis: int = 0,
 ):
     return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis, allow_uneven=True)
@@ -878,7 +934,7 @@ def _dsplit(
     sdfg: SDFG,
     state: SDFGState,
     ary: str,
-    indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+    indices_or_sections: symbolic.SymbolicType | list[symbolic.SymbolicType] | str,
 ):
     if isinstance(ary, str) and ary in sdfg.arrays:
         if len(sdfg.arrays[ary].shape) < 3:
@@ -892,7 +948,7 @@ def _hsplit(
     sdfg: SDFG,
     state: SDFGState,
     ary: str,
-    indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+    indices_or_sections: symbolic.SymbolicType | list[symbolic.SymbolicType] | str,
 ):
     if isinstance(ary, str) and ary in sdfg.arrays:
         # In case of a 1D array, split with axis=0
@@ -907,6 +963,6 @@ def _vsplit(
     sdfg: SDFG,
     state: SDFGState,
     ary: str,
-    indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+    indices_or_sections: symbolic.SymbolicType | list[symbolic.SymbolicType] | str,
 ):
     return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=0, allow_uneven=False)

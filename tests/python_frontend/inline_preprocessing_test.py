@@ -3,11 +3,13 @@
 Tests the ``dace.inline`` preprocessor call.
 """
 
-import dace
-from dace.frontend.python.common import DaceSyntaxError
 import math
+
 import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import DaceSyntaxError
 
 
 def _find_in_tasklet(sdfg: dace.SDFG, term: str) -> bool:

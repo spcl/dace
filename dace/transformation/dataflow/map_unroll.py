@@ -1,10 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, symbolic, SDFG, __version__
-from dace.sdfg import nodes, utils as sdutil
-from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
 import copy
 import itertools
+
+from dace import SDFG, __version__, symbolic
+from dace import data as dt
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SDFGState
+from dace.transformation import transformation
 
 
 class MapUnroll(transformation.SingleStateTransformation):

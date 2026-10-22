@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 symsym = dace.symbol("symsym", dace.float64)
 value1 = dace.symbol("value1", dace.float64)

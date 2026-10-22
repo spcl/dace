@@ -13,7 +13,6 @@ from dace import Memlet, SDFG, SDFGState, dtypes
 
 import ast
 import functools
-from typing import Union
 
 
 @oprepo.replaces("slice")
@@ -30,7 +29,7 @@ def _cast_storage(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: st
 
 @oprepo.replaces("dace.elementwise")
 def elementwise(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, func: Union[StringLiteral, str], in_array: str, out_array=None
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, func: StringLiteral | str, in_array: str, out_array=None
 ):
     """
     Apply a lambda function to each element in the input.
@@ -48,14 +47,14 @@ def elementwise(
     try:
         lambda_ast = func_ast.body[0].value
         if len(lambda_ast.args.args) != 1:
-            raise SyntaxError("Expected lambda with one arg, but {} has {}".format(func, len(lambda_ast.args.arrgs)))
+            raise SyntaxError(f"Expected lambda with one arg, but {func} has {len(lambda_ast.args.arrgs)}")
         arg = lambda_ast.args.args[0].arg
         replaced_ast = astutils.ASTFindReplace({arg: "__inp"}).visit(lambda_ast.body)
         body = astutils.unparse(replaced_ast)
     except AttributeError:
-        raise SyntaxError("Could not parse func {}".format(func))
+        raise SyntaxError(f"Could not parse func {func}")
 
-    code = "__out = {}".format(body)
+    code = f"__out = {body}"
 
     num_elements = functools.reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:

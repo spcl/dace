@@ -1,9 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests used-symbols in code generation."""
 
-import dace
 import numpy
 import pytest
+
+import dace
 
 n0i, n0j, n0k = (dace.symbol(s, dtype=dace.int32) for s in ("n0i", "n0j", "n0k"))
 n1i, n1j, n1k = (dace.symbol(s, dtype=dace.int64) for s in ("n1i", "n1j", "n1k"))
@@ -87,7 +88,7 @@ def test_codegen_used_symbols_cpu_2():
 def test_codegen_used_symbols_gpu():
 
     sdfg = rprj3.to_sdfg()
-    for _, desc in sdfg.arrays.items():
+    for desc in sdfg.arrays.values():
         if not desc.transient and isinstance(desc, dace.data.Array):
             desc.storage = dace.StorageType.GPU_Global
     sdfg.apply_gpu_transformations()

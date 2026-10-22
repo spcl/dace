@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the standard library node expansions."""
 
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import dace
 from dace import dtypes
@@ -28,8 +28,8 @@ CPU_RESIDENT_STORAGES = frozenset(
 
 
 def collapse_shape_and_strides(
-    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
-) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
+) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
     """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
     A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
@@ -108,7 +108,7 @@ def auto_dispatch(
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
 
 
-def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = None) -> List[str]:
+def broadcast_indices(shape: Sequence, result: Sequence, axis: int | None = None) -> list[str]:
     """The subscripts, one per axis of an operand of ``shape``, that read it for the result iterators
     ``__i0, __i1, ...`` by the NumPy broadcasting rule: an axis of extent 1 is read at ``0``.
 
@@ -138,8 +138,8 @@ def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = N
 def broadcast_map_expansion(
     label: str,
     parent_sdfg: dace.SDFG,
-    inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
-    output: Tuple[str, dace.Memlet],
+    inputs: dict[str, tuple[dace.Memlet, int | None]],
+    output: tuple[str, dace.Memlet],
     code: str,
 ) -> dace.SDFG:
     """Expand an element-wise library node into one map over its output.
@@ -157,7 +157,7 @@ def broadcast_map_expansion(
     params = [f"__i{d}" for d in range(len(result))]
     sdfg = dace.SDFG(f"{label}_sdfg")
 
-    def operand(conn: str, memlet: dace.Memlet, indices: List[str]) -> dace.Memlet:
+    def operand(conn: str, memlet: dace.Memlet, indices: list[str]) -> dace.Memlet:
         desc = parent_sdfg.arrays[memlet.data]
         strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
         sdfg.add_array(conn, memlet.subset.size(), desc.dtype, desc.storage, strides=strides)
@@ -176,3 +176,38 @@ def broadcast_map_expansion(
         external_edges=True,
     )
     return sdfg
+
+
+def fortran_axis(node: nodes.LibraryNode, dim: int | None, rank: int) -> int | None:
+    """The 0-based axis of Fortran's 1-based ``dim``; ``None`` (or ``-1``) selects the whole array."""
+    if dim is None or dim == -1:
+        return None
+    if not 1 <= dim <= rank:
+        raise ValueError(f"{node.label}: dim={dim} is out of range for a rank-{rank} input")
+    return dim - 1
+
+
+def reduced_coordinates(shape: Sequence, axis: int | None) -> tuple[dict[str, str | dace.subsets.Subset], str]:
+    """Map ranges over the result of reducing ``shape`` along ``axis`` (every axis for ``None``) and the result's
+    subscript, both in the ``__i<d>`` iterators of a map over ``shape``; a whole-array result is one element."""
+    kept = [d for d in range(len(shape)) if axis is not None and d != axis]
+    if not kept:
+        return {"__i": "0:1"}, "0"
+    return map_ranges(shape, kept), ", ".join(f"__i{d}" for d in kept)
+
+
+def map_ranges(shape: Sequence, dims: Sequence[int] | None = None) -> dict[str, str | dace.subsets.Subset]:
+    """``__i<d>`` iterating over each of ``dims`` (every dimension for ``None``) of ``shape``."""
+    return {f"__i{d}": f"0:{shape[d]}" for d in (range(len(shape)) if dims is None else dims)}
+
+
+def connector_array(
+    sdfg: dace.SDFG, name: str, memlet: dace.Memlet, outer: dace.SDFG, *, dtype: dtypes.typeclass | None = None
+) -> list:
+    """Adds to ``sdfg`` the array ``name`` that a nested SDFG reads or writes through ``memlet`` of ``outer``: its shape
+    is the subset's and its strides the container's, scaled by the subset's steps. Returns the shape."""
+    desc = outer.arrays[memlet.data]
+    shape = memlet.subset.size()
+    strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
+    sdfg.add_array(name, shape, dtype or desc.dtype, desc.storage, strides=strides)
+    return shape

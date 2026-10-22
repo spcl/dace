@@ -1,13 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
+import warnings
 from copy import deepcopy as dc
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace.codegen.common import sym2cpp
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
-import warnings
 
 
 def _get_transpose_input(node, state, sdfg):
@@ -32,6 +34,16 @@ def _get_transpose_output(node, state, sdfg):
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError('Transpose output connector "_out" not found.')
+
+
+def _leading_dimensions(node, state, sdfg):
+    """The row strides of the row-major input and output, which BLAS takes as their leading dimensions, or ``None``
+    if a row is not contiguous (a vendor transpose cannot read it; the pure expansion can)."""
+    _, _, _, (in_row, in_col) = _get_transpose_input(node, state, sdfg)
+    _, _, _, (out_row, out_col) = _get_transpose_output(node, state, sdfg)
+    if in_col != 1 or out_col != 1:
+        return None
+    return sym2cpp(in_row), sym2cpp(out_row)
 
 
 @dace.library.expansion
@@ -61,7 +73,7 @@ class ExpandTransposePure(ExpandTransformation):
         else:
             state.add_mapped_tasklet(
                 name="transpose",
-                map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(in_array.shape)},
+                map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(in_array.shape)},
                 inputs={
                     "__inp": dace.memlet.Memlet.simple(
                         "_inp", ",".join(["__i%d" % i for i in range(len(in_array.shape))])
@@ -120,11 +132,12 @@ class ExpandTransposeMKL(ExpandTransformation):
             warnings.warn("Unsupported type for MKL omatcopy extension: " + str(dtype) + ", falling back to pure")
             return ExpandTransposePure.expansion(node, state, sdfg)
 
-        # TODO: Add stride support
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.expansion(node, state, sdfg)
+        lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, {cast}_inp, {n}, {cast}_out, {m});").format(
-            f=func, m=m, n=n, a=alpha, cast=cast
-        )
+        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -166,14 +179,15 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             cast = "(double*)"
         else:
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
-        # TODO: Add stride support
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.expansion(node, state, sdfg)
+        lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = ("cblas_{f}({o}, {t}, {m}, {n}, {cast}{a}, {cast}_inp, {n}, {cast}_out, {m});").format(
-            f=func, o=order, t=trans, m=m, n=n, a=alpha, cast=cast
-        )
+        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -206,14 +220,17 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
 
         alpha = f"__state->cublas_handle.Constants().{factort}Pone()"
         beta = f"__state->cublas_handle.Constants().{factort}Zero()"
-        _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
-        _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.expansion(node, state, sdfg)
+        lda, ldc = leading
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
 
         code = (
             blas_environments.cublas.cuBLAS.handle_setup_code(node)
             + f"""dace::blas::CheckCublasError(cublas{func}(
                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m}));
+                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldc}));
                 """
         )
 

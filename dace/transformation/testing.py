@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from io import StringIO
 import sys
 import traceback
+from io import StringIO
 
 from dace.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion

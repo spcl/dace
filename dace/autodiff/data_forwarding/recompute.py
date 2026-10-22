@@ -1,16 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
-from dace.sdfg import SDFG, SDFGState, state as dstate
-from dace.sdfg.state import LoopRegion
+import dace.autodiff.utils as ad_utils
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
 
 
 def resolve_overwrite_with_recomputation(
@@ -86,7 +85,7 @@ def _connect_recomputation_nsdfg(
 
     # Get the new array shape
     # This will be the shape of the current array
-    shape: List[int] = list(bwd_generator.forward_sdfg.arrays[target_an.data].shape)
+    shape: list[int] = list(bwd_generator.forward_sdfg.arrays[target_an.data].shape)
 
     # Add the array descriptor and AccessNode to the forward state
     original_desc = target_an.desc(forward_state)
@@ -131,16 +130,16 @@ def _prune_descendants_recomputation_nsdfg(
 
     # 1
     # Get the states order for the nested_sdfg
-    states_order: List[SDFGState] = ad_utils.get_state_topological_order(nsdfg.sdfg)
+    states_order: list[SDFGState] = ad_utils.get_state_topological_order(nsdfg.sdfg)
     state_index = states_order.index(forward_state)
-    descendant_states: List[SDFGState] = states_order[state_index:]
+    descendant_states: list[SDFGState] = states_order[state_index:]
     assert descendant_states.pop(0) == forward_state
 
     # Check if the target state is within a loop
     target_within_loop, target_loop = ad_utils.state_within_loop(forward_state)
 
     # We will save the states that are within the same loop because they require special treatement
-    same_loop_states: List[SDFGState] = []
+    same_loop_states: list[SDFGState] = []
     for state in descendant_states:
         # We want to avoid removing the descendant states that are inside the same loop region
         if target_within_loop:

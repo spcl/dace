@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 N = dace.symbol("N")
 
@@ -20,7 +21,7 @@ def test_arraywrite():
     values = np.zeros([100], dtype=np.float64)
     writeresult(output, values)
 
-    reference = np.array([i for i in range(100)]).astype(np.float64)
+    reference = np.array(list(range(100))).astype(np.float64)
     assert np.allclose(np.array(sorted(values)), reference)
 
 

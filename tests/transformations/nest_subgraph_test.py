@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
-from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import LoopRegion, StateSubgraphView
-import numpy as np
+from dace.transformation.helpers import nest_sdfg_control_flow, nest_sdfg_subgraph, nest_state_subgraph
 
 
 @dace.program
@@ -55,6 +56,32 @@ def test_internal_outarray():
     a = np.random.rand(20)
     sdfg(A=a)
     assert a[1] == 0
+
+
+def test_nested_symbol_dtypes():
+    M = dace.symbol("M", dace.int64)
+    sdfg = dace.SDFG("nested_symbol_dtypes")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", [M], dace.float64)
+    sdfg.add_array("B", [M], dace.float64)
+    state = sdfg.add_state()
+
+    me, mx = state.add_map("m", dict(j="0:M"))
+    t = state.add_tasklet("doit", {"a"}, {"b"}, "b = a + j")
+    r = state.add_read("A")
+    w = state.add_write("B")
+    state.add_memlet_path(r, me, t, dst_conn="a", memlet=dace.Memlet("A[j]"))
+    state.add_memlet_path(t, mx, w, src_conn="b", memlet=dace.Memlet("B[j]"))
+
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, [t]))
+    # Scope symbols must keep their parent-defined types (j is an int64 map parameter)
+    assert nsdfg.sdfg.symbols["M"] == dace.int64
+    assert nsdfg.sdfg.symbols["j"] == dace.int64
+
+    a = np.random.rand(10)
+    b = np.zeros(10)
+    sdfg(A=a, B=b, M=10)
+    assert np.allclose(b, a + np.arange(10))
 
 
 def test_symbolic_return():
@@ -222,9 +249,35 @@ def test_nest_two_loops_with_same_variable():
     assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
 
 
+def test_a_container_moved_across_the_boundary_gets_one_connector():
+    """``A`` flows in, through an interior access node of ``A`` (a read-modify-write chain), and out: the
+    nested SDFG binds it through one input and one output connector, not a second ``A_0`` pair whose
+    writeback is unordered with the first."""
+    sdfg = dace.SDFG("rmw_chain")
+    sdfg.add_array("A", [8], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:8"})
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = x + 1")
+    second = state.add_tasklet("second", {"x"}, {"y"}, "y = x * 2")
+    middle = state.add_access("A")
+    state.add_memlet_path(state.add_read("A"), entry, first, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_edge(first, "y", middle, None, dace.Memlet("A[i]"))
+    state.add_edge(middle, None, second, "x", dace.Memlet("A[i]"))
+    state.add_memlet_path(second, exit_, state.add_write("A"), src_conn="y", memlet=dace.Memlet("A[i]"))
+
+    nested = nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
+
+    assert set(nested.in_connectors) == {"A"} and set(nested.out_connectors) == {"A"}
+    sdfg.validate()
+    a = np.arange(8.0)
+    sdfg(A=a)
+    assert np.allclose(a, (np.arange(8.0) + 1) * 2)
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
+    test_nested_symbol_dtypes()
     test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()
@@ -232,3 +285,4 @@ if __name__ == "__main__":
     test_nest_cf_simple_if_elif()
     test_nest_cf_simple_if_chain()
     test_nest_two_loops_with_same_variable()
+    test_a_container_moved_across_the_boundary_gets_one_connector()

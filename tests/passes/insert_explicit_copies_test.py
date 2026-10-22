@@ -6,23 +6,25 @@ import importlib.util
 import os
 import sys
 
-import dace
 import numpy as np
 import pytest
+
+import dace
+import tests.polybench
 from dace import nodes
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-
-import tests.polybench
 
 # The polybench programs import their ``polybench`` harness as a top-level module, which only
 # resolves when run as scripts (own directory on sys.path); importing them as a package needs it too.
 sys.path.append(os.path.dirname(tests.polybench.__file__))
 
-from tests.polybench.correlation import correlation, init_array as _correlation_init_array
-from tests.polybench.covariance import covariance, init_array as _covariance_init_array
+from tests.polybench.correlation import correlation
+from tests.polybench.correlation import init_array as _correlation_init_array
+from tests.polybench.covariance import covariance
+from tests.polybench.covariance import init_array as _covariance_init_array
 
 # fdtd-2d.py's hyphenated filename is not a valid module identifier. Load it from
 # its path under a clean module name so the SDFG name (derived from the module
@@ -37,7 +39,7 @@ _fdtd2d_init_array = _fdtd2d_module.init_array
 
 def _wcr_edges(sdfg):
     """``(state, edge)`` for every edge still carrying a WCR."""
-    return [(st, e) for st in sdfg.all_states() for e in st.edges() if e.data.wcr is not None]
+    return [(st, e) for st in sdfg.states() for e in st.edges() if e.data.wcr is not None]
 
 
 def _count_copy_nodes(sdfg):
@@ -934,7 +936,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     sdfg_ref = program.to_sdfg(simplify=True)
     ref_exe = sdfg_ref.compile()
     ref_arrays = init_fn(**sizes)
-    ref_exe(**{k: v for k, v in ref_arrays.items()}, **sizes)
+    ref_exe(**dict(ref_arrays.items()), **sizes)
     ref_values = {k: ref_arrays[k].copy() for k in check_arrays}
 
     sdfg_pass = _copy.deepcopy(sdfg_ref)
@@ -943,7 +945,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     sdfg_pass.expand_library_nodes()
     pass_exe = sdfg_pass.compile()
     pass_arrays = init_fn(**sizes)
-    pass_exe(**{k: v for k, v in pass_arrays.items()}, **sizes)
+    pass_exe(**dict(pass_arrays.items()), **sizes)
 
     for arr_name in check_arrays:
         np.testing.assert_allclose(
@@ -1185,7 +1187,7 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
     assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
     ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]
@@ -1265,7 +1267,7 @@ def concat_where_sdfg(copies: int) -> dace.SDFG:
 def copy_edges_remaining(sdfg: dace.SDFG) -> list:
     """Edges that still move data as a plain memlet: between two access nodes, or staging through a scope."""
     remaining = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for edge in state.edges():
             if edge.data.is_empty() or edge.data.wcr is not None:
                 continue

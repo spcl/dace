@@ -1,7 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from typing import Dict
 
 import sympy
 
@@ -46,7 +45,7 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
-            ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
+            ind = {str(rb) for rb, _, _ in memlet.subset.ndrange()}
             unique_chars |= ind
             if any(i != "0" and i not in self.map_entry.map.params for i in ind):
                 return False
@@ -105,7 +104,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        import dace.libraries.blas as blas
+        from dace.libraries import blas
 
         map_exit = state.exit_node(self.map_entry)
 
@@ -115,7 +114,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         connector_product = 1  # Needed to compute alpha (input) coefficient
 
         # Map connectors from tasklet to library node
-        connectors: Dict[str, str] = {}
+        connectors: dict[str, str] = {}
         in_edges = []
         out_edge = None
         for e in state.in_edges(self.tasklet):
@@ -136,7 +135,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         einsum.alpha = symexpr / connector_product
 
         # Collect einsum string from sorted memlets
-        param_mapping: Dict[str, str] = {}
+        param_mapping: dict[str, str] = {}
         # letter_to_range: Dict[str, subsets.Range] = {}
         einsum_inputs = []
         einsum_output = ""

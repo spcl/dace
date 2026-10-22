@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains the GPU Transform Map transformation."""
 
-from dace import data, dtypes, sdfg as sd
+from dace import data, dtypes
+from dace import sdfg as sd
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.transformation import transformation, helpers
-from dace.properties import Property, make_properties
+from dace.transformation import helpers, transformation
 
 
 @make_properties

@@ -1,12 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 # NOTE: Fortran2003 needs to be imported before Fortran2008 (circular import otherwise).
+from typing import TYPE_CHECKING, Any, TypeVar, overload
+
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
 from fparser.two import symbol_table
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import Name_Node
-from typing import Any, List, Type, TypeVar, Union, overload, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -22,14 +23,14 @@ T = TypeVar("T")
 
 
 @overload
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: str) -> FASTNode: ...
+def get_child(node: FASTNode | list[FASTNode], child_type: str) -> FASTNode: ...
 
 
 @overload
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Type[T]) -> T: ...
+def get_child(node: FASTNode | list[FASTNode], child_type: type[T]) -> T: ...
 
 
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], List[Type[T]]]):
+def get_child(node: FASTNode | list[FASTNode], child_type: str | type[T] | list[type[T]]):
     if isinstance(node, list):
         children = node
     else:
@@ -41,25 +42,25 @@ def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type
 
     elif isinstance(child_type, list):
         if all(isinstance(i, str) for i in child_type):
-            child_types = [i for i in child_type]
+            child_types = list(child_type)
         else:
             child_types = [i.__name__ for i in child_type]
         children_of_type = list(filter(lambda child: child.__class__.__name__ in child_types, children))
 
     if len(children_of_type) == 1:
         return children_of_type[0]
-    raise ValueError("Expected only one child of type {} but found {}".format(child_type, children_of_type))
+    raise ValueError(f"Expected only one child of type {child_type} but found {children_of_type}")
 
 
 @overload
-def get_children(node: Union[FASTNode, List[FASTNode]], child_type: str) -> List[FASTNode]: ...
+def get_children(node: FASTNode | list[FASTNode], child_type: str) -> list[FASTNode]: ...
 
 
 @overload
-def get_children(node: Union[FASTNode, List[FASTNode]], child_type: Type[T]) -> List[T]: ...
+def get_children(node: FASTNode | list[FASTNode], child_type: type[T]) -> list[T]: ...
 
 
-def get_children(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], List[Type[T]]]):
+def get_children(node: FASTNode | list[FASTNode], child_type: str | type[T] | list[type[T]]):
     if isinstance(node, list):
         children = node
     else:
@@ -187,7 +188,6 @@ class InternalFortranAst:
             "Assignment_Stmt": self.assignment_stmt,
             "Pointer_Assignment_Stmt": self.pointer_assignment_stmt,
             "Where_Stmt": self.where_stmt,
-            "Forall_Stmt": self.forall_stmt,
             "Where_Construct": self.where_construct,
             "Where_Construct_Stmt": self.where_construct_stmt,
             "Masked_Elsewhere_Stmt": self.masked_elsewhere_stmt,
@@ -479,7 +479,7 @@ class InternalFortranAst:
     def assumed_shape_spec_list(self, node: FASTNode):
         return node
 
-    def parse_shape_specification(self, dim: f03.Explicit_Shape_Spec, size: List[FASTNode], offset: List[int]):
+    def parse_shape_specification(self, dim: f03.Explicit_Shape_Spec, size: list[FASTNode], offset: list[int]):
 
         dim_expr = [i for i in dim.children if i is not None]
 
@@ -628,40 +628,39 @@ class InternalFortranAst:
                             line_number=node.item.span,
                         )
                     )
+            elif size is None and attr_size is None:
+                self.symbols[actual_name.name] = init
+                vardecls.append(
+                    ast_internal_classes.Symbol_Decl_Node(
+                        name=actual_name.name, type=testtype, alloc=alloc, init=init, line_number=node.item.span
+                    )
+                )
+            elif attr_size is not None:
+                vardecls.append(
+                    ast_internal_classes.Symbol_Array_Decl_Node(
+                        name=actual_name.name,
+                        type=testtype,
+                        alloc=alloc,
+                        sizes=attr_size,
+                        offsets=attr_offset,
+                        kind=kind,
+                        init=init,
+                        line_number=node.item.span,
+                    )
+                )
             else:
-                if size is None and attr_size is None:
-                    self.symbols[actual_name.name] = init
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Decl_Node(
-                            name=actual_name.name, type=testtype, alloc=alloc, init=init, line_number=node.item.span
-                        )
+                vardecls.append(
+                    ast_internal_classes.Symbol_Array_Decl_Node(
+                        name=actual_name.name,
+                        type=testtype,
+                        alloc=alloc,
+                        sizes=size,
+                        offsets=offset,
+                        kind=kind,
+                        init=init,
+                        line_number=node.item.span,
                     )
-                elif attr_size is not None:
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Array_Decl_Node(
-                            name=actual_name.name,
-                            type=testtype,
-                            alloc=alloc,
-                            sizes=attr_size,
-                            offsets=attr_offset,
-                            kind=kind,
-                            init=init,
-                            line_number=node.item.span,
-                        )
-                    )
-                else:
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Array_Decl_Node(
-                            name=actual_name.name,
-                            type=testtype,
-                            alloc=alloc,
-                            sizes=size,
-                            offsets=offset,
-                            kind=kind,
-                            init=init,
-                            line_number=node.item.span,
-                        )
-                    )
+                )
         return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node: FASTNode):
@@ -807,9 +806,6 @@ class InternalFortranAst:
         return node
 
     def forall_triplet_spec(self, node: FASTNode):
-        return node
-
-    def forall_stmt(self, node: FASTNode):
         return node
 
     def end_forall_stmt(self, node: FASTNode):

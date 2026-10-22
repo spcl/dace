@@ -2,6 +2,7 @@
 """Tests aliasing analysis."""
 
 import pytest
+
 import dace
 
 AliasedArray = dace.data.Array(dace.float64, (20,), may_alias=True)

@@ -9,9 +9,10 @@ https://github.com/vadimkantorov/pydlpack/blob/master/dlpack.py
 
 import ctypes
 
-import dace
 import torch
 import torch.utils.dlpack
+
+import dace
 from dace import data, dtypes
 
 

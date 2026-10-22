@@ -1,19 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import dace
+import re
+
 import numpy as np
 import pytest
-from dace.sdfg import graph, memlet_utils as mu
-import re
-from typing import Tuple, Optional
+
+import dace
+from dace.sdfg import graph
+from dace.sdfg import memlet_utils as mu
 
 
 def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:
     if not isinstance(memlet.subset, dace.subsets.Range):
         return memlet
 
-    for i, (rb, re, rs) in enumerate(memlet.subset.ndrange()):
+    for i, (rb, rend, rs) in enumerate(memlet.subset.ndrange()):
         if rb == 0:
             memlet.subset.ranges[i] = (1, 1, rs)
     return memlet
@@ -69,7 +71,7 @@ def test_replace_memlet(filter_type: str) -> None:
 
 def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge) -> None:
     assert sdfg.number_of_nodes() == 1
-    state: dace.SDFGState = sdfg.states()[0]
+    state: dace.SDFGState = next(iter(sdfg.states()))
     assert state.number_of_nodes() == 2
     assert state.number_of_edges() == 1
     assert all(isinstance(node, dace.nodes.AccessNode) for node in state.nodes())
@@ -109,8 +111,8 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge)
 
 
 def _make_non_lin_delin_sdfg(
-    shape_a: Tuple[int, ...], shape_b: Optional[Tuple[int, ...]] = None
-) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
+    shape_a: tuple[int, ...], shape_b: tuple[int, ...] | None = None
+) -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
 
     if shape_b is None:
         shape_b = shape_a

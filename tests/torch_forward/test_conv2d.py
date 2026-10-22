@@ -2,11 +2,11 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
+
 import dace
 from dace.ml import DaceModule
 
@@ -16,7 +16,7 @@ def test_conv2d(use_cpp_dispatcher: bool):
 
     class Model(nn.Module):
         def __init__(self):
-            super(Model, self).__init__()
+            super().__init__()
             self.conv1 = nn.Conv2d(1, 4, 3)
             self.conv2 = nn.Conv2d(4, 4, 3)
 

@@ -1,16 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A nested SDFG at a host level is a level of its own: its body places its data after the level around it."""
 
-from copy import deepcopy
 from collections.abc import Iterator
+from copy import deepcopy
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, Memlet
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg import nodes, SDFG, SDFGState
-
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import Memlet, data, dtypes
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.sdfg import SDFG, SDFGState, nodes
 
 
 def host_level_nested_sdfgs(

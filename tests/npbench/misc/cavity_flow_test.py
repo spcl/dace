@@ -1,12 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 nx, ny, nit = (dace.symbol(s, dace.int64) for s in ("nx", "ny", "nit"))
 
@@ -193,14 +195,12 @@ def initialize(ny, nx):
 
 def jax_build_up_b(b, rho, dt, u, v, dx, dy):
     b = b.at[1:-1, 1:-1].set(
-        (
-            rho
-            * (
-                1 / dt * ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx) + (v[2:, 1:-1] - v[0:-2, 1:-1]) / (2 * dy))
-                - ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx)) ** 2
-                - 2 * ((u[2:, 1:-1] - u[0:-2, 1:-1]) / (2 * dy) * (v[1:-1, 2:] - v[1:-1, 0:-2]) / (2 * dx))
-                - ((v[2:, 1:-1] - v[0:-2, 1:-1]) / (2 * dy)) ** 2
-            )
+        rho
+        * (
+            1 / dt * ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx) + (v[2:, 1:-1] - v[0:-2, 1:-1]) / (2 * dy))
+            - ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx)) ** 2
+            - 2 * ((u[2:, 1:-1] - u[0:-2, 1:-1]) / (2 * dy) * (v[1:-1, 2:] - v[1:-1, 0:-2]) / (2 * dx))
+            - ((v[2:, 1:-1] - v[0:-2, 1:-1]) / (2 * dy)) ** 2
         )
     )
     return b
@@ -213,11 +213,8 @@ def jax_pressure_poisson(jnp, nit, p, dx, dy, b):
     for q in range(nit):
         pn = p.copy()
         p = p.at[1:-1, 1:-1].set(
-            (
-                ((pn[1:-1, 2:] + pn[1:-1, 0:-2]) * dy**2 + (pn[2:, 1:-1] + pn[0:-2, 1:-1]) * dx**2)
-                / (2 * (dx**2 + dy**2))
-                - dx**2 * dy**2 / (2 * (dx**2 + dy**2)) * b[1:-1, 1:-1]
-            )
+            ((pn[1:-1, 2:] + pn[1:-1, 0:-2]) * dy**2 + (pn[2:, 1:-1] + pn[0:-2, 1:-1]) * dx**2) / (2 * (dx**2 + dy**2))
+            - dx**2 * dy**2 / (2 * (dx**2 + dy**2)) * b[1:-1, 1:-1]
         )
 
         p = p.at[:, -1].set(p[:, -2])  # dp/dx = 0 at x = 2
@@ -240,30 +237,26 @@ def cavity_flow_jax_kernel(jnp, nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
         p = jax_pressure_poisson(jnp, nit, p, dx, dy, b)
 
         u = u.at[1:-1, 1:-1].set(
-            (
-                un[1:-1, 1:-1]
-                - un[1:-1, 1:-1] * dt / dx * (un[1:-1, 1:-1] - un[1:-1, 0:-2])
-                - vn[1:-1, 1:-1] * dt / dy * (un[1:-1, 1:-1] - un[0:-2, 1:-1])
-                - dt / (2 * rho * dx) * (p[1:-1, 2:] - p[1:-1, 0:-2])
-                + nu
-                * (
-                    dt / dx**2 * (un[1:-1, 2:] - 2 * un[1:-1, 1:-1] + un[1:-1, 0:-2])
-                    + dt / dy**2 * (un[2:, 1:-1] - 2 * un[1:-1, 1:-1] + un[0:-2, 1:-1])
-                )
+            un[1:-1, 1:-1]
+            - un[1:-1, 1:-1] * dt / dx * (un[1:-1, 1:-1] - un[1:-1, 0:-2])
+            - vn[1:-1, 1:-1] * dt / dy * (un[1:-1, 1:-1] - un[0:-2, 1:-1])
+            - dt / (2 * rho * dx) * (p[1:-1, 2:] - p[1:-1, 0:-2])
+            + nu
+            * (
+                dt / dx**2 * (un[1:-1, 2:] - 2 * un[1:-1, 1:-1] + un[1:-1, 0:-2])
+                + dt / dy**2 * (un[2:, 1:-1] - 2 * un[1:-1, 1:-1] + un[0:-2, 1:-1])
             )
         )
 
         v = v.at[1:-1, 1:-1].set(
-            (
-                vn[1:-1, 1:-1]
-                - un[1:-1, 1:-1] * dt / dx * (vn[1:-1, 1:-1] - vn[1:-1, 0:-2])
-                - vn[1:-1, 1:-1] * dt / dy * (vn[1:-1, 1:-1] - vn[0:-2, 1:-1])
-                - dt / (2 * rho * dy) * (p[2:, 1:-1] - p[0:-2, 1:-1])
-                + nu
-                * (
-                    dt / dx**2 * (vn[1:-1, 2:] - 2 * vn[1:-1, 1:-1] + vn[1:-1, 0:-2])
-                    + dt / dy**2 * (vn[2:, 1:-1] - 2 * vn[1:-1, 1:-1] + vn[0:-2, 1:-1])
-                )
+            vn[1:-1, 1:-1]
+            - un[1:-1, 1:-1] * dt / dx * (vn[1:-1, 1:-1] - vn[1:-1, 0:-2])
+            - vn[1:-1, 1:-1] * dt / dy * (vn[1:-1, 1:-1] - vn[0:-2, 1:-1])
+            - dt / (2 * rho * dy) * (p[2:, 1:-1] - p[0:-2, 1:-1])
+            + nu
+            * (
+                dt / dx**2 * (vn[1:-1, 2:] - 2 * vn[1:-1, 1:-1] + vn[1:-1, 0:-2])
+                + dt / dy**2 * (vn[2:, 1:-1] - 2 * vn[1:-1, 1:-1] + vn[0:-2, 1:-1])
             )
         )
 

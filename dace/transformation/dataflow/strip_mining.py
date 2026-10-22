@@ -2,41 +2,18 @@
 """This module contains classes and functions that implement the strip-mining
 transformation."""
 
-import dace
 from copy import deepcopy as dcpy
-from dace import dtypes, subsets, symbolic
-from dace.sdfg import SDFG, SDFGState
-from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
-from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
-from dace.symbolic import issymbolic, overapproximate, SymExpr
-from dace.transformation import transformation, helpers as xfh
+
 import sympy
 
-
-def calc_set_image_index(map_idx, map_set, array_idx):
-    image = []
-    for a_idx in array_idx.indices:
-        new_range = [a_idx, a_idx, SymExpr(1, 1)]
-        for m_idx, m_range in zip(map_idx, map_set):
-            symbol = symbolic.pystr_to_symbolic(m_idx)
-            for i in range(2):
-                if isinstance(m_range[i], SymExpr):
-                    exact = m_range[i].expr
-                    approx = m_range[i].approx
-                else:
-                    exact = m_range[i]
-                    approx = overapproximate(m_range[i])
-                if isinstance(new_range[i], SymExpr):
-                    new_range[i] = SymExpr(
-                        new_range[i].expr.subs([(symbol, exact)]), new_range[i].approx.subs([(symbol, approx)])
-                    )
-                elif issymbolic(new_range[i]):
-                    new_range[i] = SymExpr(new_range[i].subs([(symbol, exact)]), new_range[i].subs([(symbol, approx)]))
-                else:
-                    new_range[i] = SymExpr(new_range[i], new_range[i])
-        image.append(new_range)
-    return subsets.Range(image)
+import dace
+from dace import dtypes, subsets, symbolic
+from dace.properties import EnumProperty, Property, SymbolicProperty, make_properties
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.symbolic import SymExpr, issymbolic, overapproximate
+from dace.transformation import helpers as xfh
+from dace.transformation import transformation
 
 
 def calc_set_image_range(map_idx, map_set, array_range):
@@ -83,8 +60,6 @@ def calc_set_image_range(map_idx, map_set, array_range):
 def calc_set_image(map_idx, map_set, array_set):
     if isinstance(array_set, subsets.Range):
         return calc_set_image_range(map_idx, map_set, array_set)
-    if isinstance(array_set, subsets.Indices):
-        return calc_set_image_index(map_idx, map_set, array_set)
 
 
 def calc_set_union(set_a, set_b):
@@ -198,9 +173,9 @@ class StripMining(transformation.SingleStateTransformation):
         stree = state.scope_tree()
         if len(prefix) == 0:
             return target_dim
-        candidate = "%s_%s" % (prefix, target_dim)
+        candidate = f"{prefix}_{target_dim}"
         index = 1
-        defined_vars = set(str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys()))
+        defined_vars = {str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys())}
         while candidate in defined_vars:
             candidate = "%s%d_%s" % (prefix, index, target_dim)
             index += 1
@@ -266,8 +241,7 @@ class StripMining(transformation.SingleStateTransformation):
             nd_to = td_to - td_from
         else:
             nd_to = symbolic.pystr_to_symbolic(
-                "int_ceil(%s + 1 - %s, %s) - 1"
-                % (symbolic.symstr(td_to), symbolic.symstr(td_from), symbolic.symstr(tile_stride))
+                f"int_ceil({symbolic.symstr(td_to)} + 1 - {symbolic.symstr(td_from)}, {symbolic.symstr(tile_stride)}) - 1"
             )
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
@@ -282,71 +256,30 @@ class StripMining(transformation.SingleStateTransformation):
 
         elif offset == 0:
             td_from_new = symbolic.pystr_to_symbolic(
-                "%s + %s * %s" % (symbolic.symstr(td_from), symbolic.symstr(new_dim), symbolic.symstr(tile_stride))
+                f"{symbolic.symstr(td_from)} + {symbolic.symstr(new_dim)} * {symbolic.symstr(tile_stride)}"
             )
             td_to_new_exact = symbolic.pystr_to_symbolic(
-                "min(%s + 1, %s + %s * %s + %s) - 1"
-                % (
-                    symbolic.symstr(td_to),
-                    symbolic.symstr(td_from),
-                    symbolic.symstr(tile_stride),
-                    symbolic.symstr(new_dim),
-                    symbolic.symstr(tile_size),
-                )
+                f"min({symbolic.symstr(td_to)} + 1, {symbolic.symstr(td_from)} + {symbolic.symstr(tile_stride)} * {symbolic.symstr(new_dim)} + {symbolic.symstr(tile_size)}) - 1"
             )
             td_to_new_approx = symbolic.pystr_to_symbolic(
-                "%s + %s * %s + %s - 1"
-                % (
-                    symbolic.symstr(td_from),
-                    symbolic.symstr(tile_stride),
-                    symbolic.symstr(new_dim),
-                    symbolic.symstr(tile_size),
-                )
+                f"{symbolic.symstr(td_from)} + {symbolic.symstr(tile_stride)} * {symbolic.symstr(new_dim)} + {symbolic.symstr(tile_size)} - 1"
             )
 
         else:
             # include offset
             td_from_new_exact = symbolic.pystr_to_symbolic(
-                "max(%s,%s + %s * %s - %s)"
-                % (
-                    symbolic.symstr(td_from),
-                    symbolic.symstr(td_from),
-                    symbolic.symstrtr(tile_stride),
-                    symbolic.symstr(new_dim),
-                    symbolic.symstr(offset),
-                )
+                f"max({symbolic.symstr(td_from)},{symbolic.symstr(td_from)} + {symbolic.symstrtr(tile_stride)} * {symbolic.symstr(new_dim)} - {symbolic.symstr(offset)})"
             )
             td_from_new_approx = symbolic.pystr_to_symbolic(
-                "%s + %s * %s - %s "
-                % (
-                    symbolic.symstr(td_from),
-                    symbolic.symstr(tile_stride),
-                    symbolic.symstr(new_dim),
-                    symbolic.symstr(offset),
-                )
+                f"{symbolic.symstr(td_from)} + {symbolic.symstr(tile_stride)} * {symbolic.symstr(new_dim)} - {symbolic.symstr(offset)} "
             )
             td_from_new = dace.symbolic.SymExpr(td_from_new_exact, td_from_new_approx)
 
             td_to_new_exact = symbolic.pystr_to_symbolic(
-                "min(%s + 1, %s + %s * %s + %s - %s) -1"
-                % (
-                    symbolic.symstr(td_to),
-                    symbolic.symstr(td_from),
-                    symbolic.symstr(tile_stride),
-                    symbolic.symstr(new_dim),
-                    symbolic.symstr(tile_size),
-                    symbolic.symstr(offset),
-                )
+                f"min({symbolic.symstr(td_to)} + 1, {symbolic.symstr(td_from)} + {symbolic.symstr(tile_stride)} * {symbolic.symstr(new_dim)} + {symbolic.symstr(tile_size)} - {symbolic.symstr(offset)}) -1"
             )
             td_to_new_approx = symbolic.pystr_to_symbolic(
-                "%s + %s * %s + %s - %s - 1"
-                % (
-                    symbolic.symstr(td_from),
-                    symbolic.symstr(tile_stride),
-                    symbolic.symstr(new_dim),
-                    symbolic.symstr(tile_size),
-                    symbolic.symstr(offset),
-                )
+                f"{symbolic.symstr(td_from)} + {symbolic.symstr(tile_stride)} * {symbolic.symstr(new_dim)} + {symbolic.symstr(tile_size)} - {symbolic.symstr(offset)} - 1"
             )
 
         if divides_evenly or strided:

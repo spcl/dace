@@ -1,13 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import itertools
+from collections.abc import Generator
 
-from typing import Generator, Tuple, Dict, List
-
+import dace
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
-from dace.transformation import helpers as xfh
 from dace.sdfg.analysis.cutout import SDFGCutout
+from dace.transformation import helpers as xfh
 
 try:
     from tqdm import tqdm
@@ -20,7 +19,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         super().__init__(task="MapPermutation", sdfg=sdfg)
         self.instrument = measurement
 
-    def cutouts(self) -> Generator[Tuple[dace.SDFGState, str], None, None]:
+    def cutouts(self) -> Generator[tuple[dace.SDFGState, str], None, None]:
         for node, state in self._sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.MapEntry):
                 if xfh.get_parent_map(state, node) is not None:
@@ -32,13 +31,13 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 cutout = SDFGCutout.singlestate_cutout(state, *subgraph_nodes, make_copy=False)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
-    def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[Tuple[str], None, None]:
+    def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[tuple[str], None, None]:
         return itertools.permutations(map_entry.map.params)
 
-    def config_from_key(self, key: str, **kwargs) -> List[str]:
+    def config_from_key(self, key: str, **kwargs) -> list[str]:
         return key.split(".")
 
-    def apply(self, config: List[str], label: str, **kwargs) -> None:
+    def apply(self, config: list[str], label: str, **kwargs) -> None:
         state_id, node_id, node_label = label.split(".")
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
 
@@ -50,7 +49,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         ]
         map_entry.map.params = config
 
-    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
         cutout.start_state.instrument = self.instrument
 
         map_entry = None

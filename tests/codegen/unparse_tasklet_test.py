@@ -1,7 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 def test_integer_power():
@@ -108,9 +109,31 @@ b = mylocal
     sdfg.compile()
 
 
+def test_a_method_called_on_an_expression():
+    """``(a * b).real()``, the form the Fortran frontend writes ``REAL(a * b)`` in, names no callable to look up."""
+    sdfg = dace.SDFG("method_on_an_expression")
+    for name, dtype in (("A", dace.complex128), ("B", dace.complex128), ("C", dace.float64)):
+        sdfg.add_array(name, [4], dtype)
+    state = sdfg.add_state(is_start_block=True)
+    state.add_mapped_tasklet(
+        "real_of_product",
+        {"i": "0:4"},
+        {"a": dace.Memlet("A[i]"), "b": dace.Memlet("B[i]")},
+        "c = (a * b).real()",
+        {"c": dace.Memlet("C[i]")},
+        external_edges=True,
+    )
+    a = np.arange(4) + 1j * np.arange(4)
+    b = np.full(4, 2 - 1j)
+    c = np.zeros(4)
+    sdfg(A=a, B=b, C=c)
+    assert np.allclose(c, (a * b).real)
+
+
 if __name__ == "__main__":
     test_integer_power()
     test_integer_power_constant()
     test_equality()
     test_pow_with_implicit_casting()
     test_tasklets_with_same_local_name()
+    test_a_method_called_on_an_expression()

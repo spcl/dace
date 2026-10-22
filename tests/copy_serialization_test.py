@@ -1,8 +1,8 @@
 import dace
-from dace.sdfg import nodes as dace_nodes
-from dace.sdfg import graph as dace_graph
-from dace.symbolic import pystr_to_symbolic as s2s
 from dace.codegen.targets import cpp as dace_cpp
+from dace.sdfg import graph as dace_graph
+from dace.sdfg import nodes as dace_nodes
+from dace.symbolic import pystr_to_symbolic as s2s
 
 
 def _make_sdfg() -> tuple[
@@ -86,7 +86,7 @@ def test_copy_before_and_after_serialization():
     json = sdfg1.to_json()
 
     sdfg2 = dace.SDFG.from_json(json)
-    state2 = sdfg2.states()[0]
+    state2 = next(iter(sdfg2.states()))
     assert sdfg2.number_of_nodes() == 1
     assert state2.number_of_edges() == 1
 
@@ -112,7 +112,7 @@ def test_memlet_copy_shape_roundtrip():
     copy_shape1, *_ = dace_cpp.memlet_copy_to_absolute_strides(None, sdfg1, state1, e1, a1, b1)
 
     sdfg2 = dace.SDFG.from_json(sdfg1.to_json())
-    state2 = sdfg2.states()[0]
+    state2 = next(iter(sdfg2.states()))
     e2 = state2.edges()[0]
 
     copy_shape2, *_ = dace_cpp.memlet_copy_to_absolute_strides(None, sdfg2, state2, e2, e2.src, e2.dst)

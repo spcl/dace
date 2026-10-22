@@ -1,19 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import sys
-from ply import yacc
-from . import lexer
 import copy
+import sys
+
+from ply import yacc
+
 import dace
 
-from .ast_node import AST_Statements
-from .ast_values import AST_Ident, AST_Constant
-from .ast_expression import AST_BinExpression, AST_UnaryExpression
-from .ast_matrix import AST_Matrix_Row, AST_Matrix, AST_Transpose
+from . import lexer
 from .ast_assign import AST_Assign
-from .ast_function import AST_FunCall, AST_Function, AST_EndFunc
-from .ast_range import AST_RangeExpression
+from .ast_expression import AST_BinExpression, AST_UnaryExpression
+from .ast_function import AST_EndFunc, AST_FunCall, AST_Function
 from .ast_loop import AST_ForLoop
-from .ast_nullstmt import AST_NullStmt, AST_Comment, AST_EndStmt
+from .ast_matrix import AST_Matrix, AST_Matrix_Row, AST_Transpose
+from .ast_node import AST_Statements
+from .ast_nullstmt import AST_Comment, AST_EndStmt, AST_NullStmt
+from .ast_range import AST_RangeExpression
+from .ast_values import AST_Constant, AST_Ident
 
 tokens = lexer.tokens
 

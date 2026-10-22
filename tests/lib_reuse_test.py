@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import pathlib
 
-import dace
-from dace.frontend.python.parser import DaceProgram
-from dace.codegen.exceptions import CompilationError
-from dace.codegen.compiler import load_precompiled_sdfg
 import numpy as np
+import pytest
+
+import dace
+from dace.codegen.compiler import load_precompiled_sdfg
+from dace.codegen.exceptions import CompilationError
+from dace.frontend.python.parser import DaceProgram
 
 
 # Dynamically creates DaCe programs with the same name

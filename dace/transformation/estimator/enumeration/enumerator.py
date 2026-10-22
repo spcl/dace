@@ -1,16 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """This file implements the Enuerator class"""
 
-from dace.transformation.subgraph import helpers
-from dace.properties import make_properties, Property
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.graph import SubgraphView
-
-import dace.sdfg.nodes as nodes
-
-from collections import defaultdict
-from typing import Callable
 import itertools
+from collections import defaultdict
+from collections.abc import Callable
+
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import helpers
 
 
 @make_properties
@@ -47,7 +45,7 @@ class Enumerator:
         raise NotImplementedError
 
     def list(self):
-        return list(e for e in self.iterator())
+        return list(self.iterator())
 
     def __iter__(self):
         yield from self.iterator()
@@ -66,8 +64,8 @@ class Enumerator:
         # helper dict needed for a quick build
         exit_nodes = {graph.exit_node(me): me for me in self._map_entries}
         if subgraph:
-            proximity_in = set(ie.src for me in self._map_entries for ie in graph.in_edges(me))
-            proximity_out = set(ie.dst for me in exit_nodes for ie in graph.out_edges(me))
+            proximity_in = {ie.src for me in self._map_entries for ie in graph.in_edges(me)}
+            proximity_out = {ie.dst for me in exit_nodes for ie in graph.out_edges(me)}
             extended_subgraph = SubgraphView(graph, set(itertools.chain(subgraph.nodes(), proximity_in, proximity_out)))
 
         for node in extended_subgraph.nodes() if subgraph else graph.nodes():
@@ -110,7 +108,7 @@ class Enumerator:
         current_id = 0
         while current_id < len(self._map_entries):
             # get current ids whose in_degree is 0
-            candidates = list(me for (me, s) in parent_dict.items() if len(s) == 0 and me not in self._labels)
+            candidates = [me for (me, s) in parent_dict.items() if len(s) == 0 and me not in self._labels]
             candidates.sort(key=lambda me: self._graph.node_id(me))
             for c in candidates:
                 self._labels[c] = current_id

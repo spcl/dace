@@ -13,13 +13,13 @@ The tests that only inspect the generated code run without a GPU; the ones marke
 import json
 import re
 import warnings
-from typing import List, Optional
 
 import numpy as np
 import pytest
 
 import dace
-from dace import data as dt, nodes
+from dace import data as dt
+from dace import nodes
 from dace.codegen import common
 from dace.transformation.passes import gpu_shared_memory
 
@@ -49,18 +49,18 @@ def _cuda_code(sdfg: dace.SDFG, backend: str = "cuda", **config) -> str:
             common.get_gpu_backend.cache_clear()
 
 
-def _placement(sdfg: dace.SDFG, name: str) -> Optional[bool]:
+def _placement(sdfg: dace.SDFG, name: str) -> bool | None:
     """Returns where ``name`` was placed: True for dynamic, False for static shared memory."""
     for nsdfg in sdfg.all_sdfgs_recursive():
         if name in nsdfg.arrays:
             desc = nsdfg.arrays[name]
             if isinstance(desc, dt.View):
                 return True
-            return dace.dtypes.is_dynamic_shared(desc.storage)
+            return desc.storage.dynamic
     raise KeyError(name)
 
 
-def _shared_warnings(record: List[warnings.WarningMessage]) -> List[str]:
+def _shared_warnings(record: list[warnings.WarningMessage]) -> list[str]:
     return [str(w.message) for w in record if "placed in dynamic shared memory" in str(w.message)]
 
 
@@ -218,12 +218,12 @@ def test_storage_type_attribute():
     dynamic = S.GPU_Shared(dynamic=True)
     assert dynamic == S.GPU_Shared and S.GPU_Shared == dynamic and dynamic != S.GPU_Global
     assert {S.GPU_Shared: "found"}[dynamic] == "found"
-    assert dace.dtypes.is_dynamic_shared(S.GPU_Shared) is None
-    assert dace.dtypes.is_dynamic_shared(S.GPU_Shared()) is None
-    assert dace.dtypes.is_dynamic_shared(dynamic) is True
-    assert dace.dtypes.is_dynamic_shared(S.GPU_Shared(dynamic=False)) is False
-    with pytest.raises(ValueError):
-        dace.dtypes.is_dynamic_shared(S.GPU_Global)
+    assert S.GPU_Shared.dynamic is None
+    assert S.GPU_Shared().dynamic is None
+    assert dynamic.dynamic is True
+    assert S.GPU_Shared(dynamic=False).dynamic is False
+    with pytest.raises(AttributeError):
+        S.GPU_Global.dynamic
 
 
 @pytest.mark.parametrize("storage", [S.GPU_Shared, S.GPU_Shared(dynamic=True), S.GPU_Shared(dynamic=False)])

@@ -5,11 +5,12 @@ A conditional without ``else`` has a path that skips the arm, so the arm must re
 needs belong inside it, where only the path that runs the arm pays for them.
 """
 
+from shared_graphs import host_write_then_kernel_arm
+
 import dace
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from shared_graphs import host_write_then_kernel_arm
 
 N = dace.symbol("N")
 

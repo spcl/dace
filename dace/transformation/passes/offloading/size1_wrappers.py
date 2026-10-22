@@ -7,11 +7,10 @@ from copy import deepcopy
 import networkx as nx
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, Memlet
-from dace.sdfg import nodes, SDFG, SDFGState
-from dace.sdfg.graph import MultiConnectorEdge
-
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import Memlet, data, dtypes
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.graph import MultiConnectorEdge
 
 
 def wrap_host_code(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[nodes.MapEntry]) -> None:

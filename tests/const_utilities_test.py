@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 import dace
 import dace.sdfg.utils as sdutils
 from dace.transformation.passes.analysis.scope_data_and_symbol_analysis import ScopeDataAndSymbolAnalysis
 
 
 def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.sdfg.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                 next_map = None
@@ -215,8 +216,8 @@ def _generate_and_transform_sdfg():
     transformed_sdfg.validate()
 
     # Test cases
-    original_state = next(iter(original_sdfg.all_states()))
-    transformed_state = next(iter(transformed_sdfg.all_states()))
+    original_state = next(iter(original_sdfg.states()))
+    transformed_state = next(iter(transformed_sdfg.states()))
     assert original_state is not None
     assert transformed_state is not None
 
@@ -226,10 +227,10 @@ def _generate_and_transform_sdfg():
 def test_const_utilities_case_non_const_input_not_present_in_output():
     _, transformed_sdfg, original_state, transformed_state = _generate_and_transform_sdfg()
 
-    all_data_names = set(node.data for node in original_state.data_nodes())
-    transformed_sdfg_tmp_names = set(
+    all_data_names = {node.data for node in original_state.data_nodes()}
+    transformed_sdfg_tmp_names = {
         node.data for node in transformed_state.data_nodes() if transformed_sdfg.arrays[node.data].transient
-    )
+    }
     # Original state tests
     _check_map_entries(
         original_state, True, False, dace.dtypes.ScheduleType.GPU_Device, all_data_names - {"C"}, {"i", "N"}

@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import pytest
+
+import dace
 
 
 @pytest.mark.gpu

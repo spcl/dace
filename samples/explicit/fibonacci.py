@@ -2,8 +2,10 @@
 """Sample showing the Consume scope by unrolling a Fibonacci sequence recursive computation."""
 
 import argparse
-import dace
+
 import numpy as np
+
+import dace
 
 
 @dace.program
