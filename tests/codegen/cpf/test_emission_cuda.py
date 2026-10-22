@@ -49,6 +49,12 @@ def fused_polynomial(a: dace.float64[N], out: dace.float64[N]):
 
 
 @dace.program
+def total(a: dace.float64[N], out: dace.float64[N]):
+    for i in dace.map[0:N]:
+        out[0] += a[i]
+
+
+@dace.program
 def conditional_stores(cond: dace.float64[N], src: dace.float64[N], a: dace.float64[N], b: dace.float64[N]):
     for i in dace.map[0:N]:
         if cond[i] > 0.0:
@@ -65,11 +71,19 @@ def fused_polynomial_in_numpy(host: HostArrays) -> HostArrays:
     return {"out": (host["a"] ** 2 + 1.0) * (host["a"] ** 2 - 1.0)}
 
 
-PROGRAMS = (("vector_add", vector_add), ("fused_polynomial", fused_polynomial))
+def total_in_numpy(host: HostArrays) -> HostArrays:
+    out = host["out"].copy()
+    out[0] += host["a"].sum()
+    return {"out": out}
+
+
+# ``total`` commits each block's sum through ``cpf_gpu_atomic``, whose two-byte branch nvcc 13 once aborted on
+PROGRAMS = (("vector_add", vector_add), ("fused_polynomial", fused_polynomial), ("total", total))
 PROGRAM_IDS = [label for label, _ in PROGRAMS]
 NUMPY_REFERENCES: dict[str, Callable[[HostArrays], HostArrays]] = {
     "vector_add": vector_add_in_numpy,
     "fused_polynomial": fused_polynomial_in_numpy,
+    "total": total_in_numpy,
 }
 
 
@@ -87,7 +101,8 @@ def nvcc_library(rendering: Rendering, directory: pathlib.Path, name: str) -> pa
     # PTX that the driver cannot JIT, and the kernel launch fails at run time.
     flags = [*CUDA_BUILD_FLAGS, "-arch=native", "-O2", "-Xcompiler=-fPIC"]
     objects = []
-    for suffix, text in ((".cpp", rendering.code), (".cu", rendering.device_code)):
+    # Both units are CUDA: the host unit includes cub for the device-wide scans it launches.
+    for suffix, text in (("_host.cu", rendering.code), ("_device.cu", rendering.device_code)):
         source = directory / f"{name}{suffix}"
         source.write_text(text)
         objects.append(str(source) + ".o")

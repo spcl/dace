@@ -1312,6 +1312,15 @@ namespace gpucub = hipcub;
 //: A two-byte accumulator (bfloat16, half) has no atomic word of its own: the loop swaps the aligned
 //: 32-bit word holding it and leaves the other half as it found it. Its value arrives widened, a
 //: ``long`` or a ``float``, and reaches the 16-bit type through ``float``, the conversion it has.
+//: nvcc 13 aborts constant-evaluating a size-changing ``__builtin_bit_cast`` even in a discarded
+//: ``if constexpr`` branch (the two-byte one, for a double accumulator); a copy is the same cast.
+template <typename To, typename From>
+__device__ inline To cpf_bit_cast(const From &from) {
+    static_assert(sizeof(To) == sizeof(From), "a bit cast keeps the size");
+    To to;
+    memcpy(&to, &from, sizeof(To));
+    return to;
+}
 template <typename T, typename V, typename Op>
 __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
     if constexpr (sizeof(T) == 2) {
@@ -1323,8 +1332,8 @@ __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
         unsigned int assumed;
         do {
             assumed = old;
-            const T updated = op(__builtin_bit_cast(T, static_cast<unsigned short>(assumed >> shift)), operand);
-            const unsigned int bits = static_cast<unsigned int>(__builtin_bit_cast(unsigned short, updated)) << shift;
+            const T updated = op(cpf_bit_cast<T>(static_cast<unsigned short>(assumed >> shift)), operand);
+            const unsigned int bits = static_cast<unsigned int>(cpf_bit_cast<unsigned short>(updated)) << shift;
             old = atomicCAS(word, assumed, (assumed & ~(0xFFFFu << shift)) | bits);
         } while (assumed != old);
     } else {
@@ -1336,8 +1345,8 @@ __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
         cpf_atomic_word assumed;
         do {
             assumed = old;
-            T updated = op(__builtin_bit_cast(T, assumed), static_cast<T>(value));
-            old = atomicCAS(word, assumed, __builtin_bit_cast(cpf_atomic_word, updated));
+            T updated = op(cpf_bit_cast<T>(assumed), static_cast<T>(value));
+            old = atomicCAS(word, assumed, cpf_bit_cast<cpf_atomic_word>(updated));
         } while (assumed != old);
     }
 }
