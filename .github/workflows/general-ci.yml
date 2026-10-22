@@ -73,7 +73,7 @@ jobs:
         # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
         # --ignore=tests/library: the library-node tree (marked and unmarked) runs once in the
         # libnode-loop2x-transformations job instead of once per matrix cell here.
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py --ignore=tests/library -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py --ignore=tests/library -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile and not ai"
         ./codecov
 
     - name: Run sequential tests
@@ -96,7 +96,7 @@ jobs:
         # the general selection above: those suites have their own workflows, with their own
         # configuration. A test carrying both `sequential` and one of them would otherwise run here
         # under general CI's settings rather than under the ones its own workflow sets.
-        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile"
+        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not tile and not ai"
         ./codecov
 
     - name: Run other tests

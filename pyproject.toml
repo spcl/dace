@@ -97,6 +97,9 @@ mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
 # Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
 fastgraph = ["rustworkx"]
+agent-anthropic = ["anthropic>=1.0", "pydantic>=2"]
+agent-openai = ["openai>=1.66", "pydantic>=2"]
+agent = ["anthropic>=1.0", "openai>=1.66", "pydantic>=2"]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"

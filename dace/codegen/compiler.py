@@ -281,6 +281,43 @@ def build_type_flags() -> list:
     return list(table.get(Config.get("compiler", "build_type"), []))
 
 
+def cpuinfo_fields() -> list[str]:
+    """
+    :return: The first ``model name`` and ``flags`` lines of ``/proc/cpuinfo`` (``Features`` is the
+             aarch64 spelling of ``flags``), or an empty list where there is no ``/proc``.
+    """
+    try:
+        with open("/proc/cpuinfo") as fp:
+            return [ln for ln in fp if ln.startswith(("model name", "flags", "Features"))][:2]
+    except OSError:
+        return []
+
+
+@lru_cache(maxsize=1)
+def host_cpu() -> tuple[str | None, list[str]]:
+    """
+    Describes the host CPU, through ``py-cpuinfo`` when it is installed (an optional package that
+    also covers macOS and Windows), and through ``/proc/cpuinfo`` otherwise.
+
+    :return: The model name, if known, and the ISA feature flags.
+    """
+    try:
+        import cpuinfo  # Optional package (py-cpuinfo)
+
+        info = cpuinfo.get_cpu_info()
+        return info.get("brand_raw"), list(info.get("flags", []))
+    except Exception:  # Not installed, or unable to query this CPU
+        pass
+    model, flags = None, []
+    for line in cpuinfo_fields():
+        key, _, value = line.partition(":")
+        if key.strip() == "model name":
+            model = value.strip()
+        else:
+            flags = value.split()
+    return model, flags
+
+
 @lru_cache(maxsize=1, typed=True)
 def host_isa_id() -> str:
     """Identity of the instruction set ``-march=native`` resolves to on this host.
@@ -291,11 +328,7 @@ def host_isa_id() -> str:
     coarser but never wrong in the unsafe direction -- a coarse key over-separates, it cannot merge
     two hosts that differ.
     """
-    try:
-        with open("/proc/cpuinfo") as fp:  # 'Features' is the aarch64 spelling of 'flags'
-            fields = [ln for ln in fp if ln.startswith(("model name", "flags", "Features"))][:2]
-    except OSError:
-        fields = []
+    fields = cpuinfo_fields()
     identity = "".join(fields) if fields else f"{platform.machine()}|{platform.processor()}"
     return hashlib.sha256(identity.encode()).hexdigest()[:12]
 
