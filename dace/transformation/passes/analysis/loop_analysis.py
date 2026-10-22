@@ -32,10 +32,8 @@ if TYPE_CHECKING:
 
 def loop_header_signature(loop: LoopRegion) -> str:
     """The iterator and range of ``loop``, as text."""
-    parts = [loop.loop_variable or ""]
-    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
-        parts.append(code.as_string if code is not None else "")
-    return "|".join(parts)
+    codes = (loop.init_statement, loop.loop_condition, loop.update_statement)
+    return "|".join([loop.loop_variable or "", *(code.as_string if code is not None else "" for code in codes)])
 
 
 def loop_signature(loop: LoopRegion) -> str:
@@ -62,10 +60,14 @@ def loop_signature(loop: LoopRegion) -> str:
                 elif isinstance(node, nodes.NestedSDFG):
                     lines.append(str(sorted(node.symbol_mapping.items())))
                     region(node.sdfg)
-            for edge in block.edges():
-                lines.append(f"{edge.src}:{edge.src_conn}->{edge.dst}:{edge.dst_conn} {edge.data} {edge.data.wcr}")
-        for edge in cfg.all_interstate_edges():
-            lines.append(f"{edge.data.condition.as_string} {sorted(edge.data.assignments.items())}")
+            lines.extend(
+                f"{edge.src}:{edge.src_conn}->{edge.dst}:{edge.dst_conn} {edge.data} {edge.data.wcr}"
+                for edge in block.edges()
+            )
+        lines.extend(
+            f"{edge.data.condition.as_string} {sorted(edge.data.assignments.items())}"
+            for edge in cfg.all_interstate_edges()
+        )
 
     region(loop)
     return hashlib.sha1("\n".join(lines).encode()).hexdigest()

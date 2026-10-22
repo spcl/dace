@@ -9,8 +9,8 @@ from dace import dtypes, symbolic
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.standard.helper import (
     CPU_RESIDENT_STORAGES,
-    host_storages,
     collapse_shape_and_strides,
+    host_storages,
     is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
 )
