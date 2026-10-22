@@ -52,6 +52,7 @@ from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import E
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
+from dace.transformation.passes.canonicalize.forward_iota_reads import ForwardIotaReads
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
@@ -959,6 +960,9 @@ def derive_parallelism(
     s += _inline_single_state(label)
     s += [(label, StructuralCleanup()), (label, NormalizeWCR())]
     if scatter_to_guarded_maps:
+        # An ``arange`` fill is an inlined map by now: its interstate reads become their index, so a scatter keyed
+        # through it shows the loop variable as its slot and needs no conflict check.
+        s += [(label, ForwardIotaReads()), (label, SymbolPropagation())]
         s += [
             (
                 label,
