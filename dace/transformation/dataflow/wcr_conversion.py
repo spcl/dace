@@ -1087,7 +1087,19 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         boundary_nodes = OrderedSet()
         orig_edges = OrderedSet()
 
-        for edge in state.in_edges(tlet):
+        # A tasklet inside a map moves with its outermost scope: the map's other tasklets (a fused delta) stay
+        # inside the entry and exit that move.
+        anchor, last = tlet, tlet
+        scope = state.entry_node(tlet)
+        while scope is not None:
+            anchor, scope = scope, state.entry_node(scope)
+        if anchor is not tlet:
+            last = state.exit_node(anchor)
+            subgraph = state.scope_subgraph(anchor)
+            nodes_to_move = OrderedSet(subgraph.nodes())
+            orig_edges = OrderedSet(subgraph.edges())
+
+        for edge in state.in_edges(anchor):
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
@@ -1099,7 +1111,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     orig_edges.add(edge)
 
         # Find all consumer nodes of `tlet`.
-        for edge in state.edge_bfs(tlet):
+        for edge in state.edge_bfs(last):
             nodes_to_move.add(edge.dst)
             orig_edges.add(edge)
 
