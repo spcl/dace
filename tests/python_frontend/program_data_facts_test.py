@@ -40,7 +40,9 @@ def scatter_rows(
 
 
 @dace.program(facts={"csr": [("A_ptr", "A_idx"), ("B_ptr", "B_idx")]})
-def two_pattern_matrices(A_ptr: dace.int64[M + 1], A_idx: dace.int64[NNZ], B_ptr: dace.int64[N + 1], B_idx: dace.int64[NNZ]):
+def two_pattern_matrices(
+    A_ptr: dace.int64[M + 1], A_idx: dace.int64[NNZ], B_ptr: dace.int64[N + 1], B_idx: dace.int64[NNZ]
+):
     A_ptr[0] = B_ptr[0]
 
 
