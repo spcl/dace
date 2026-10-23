@@ -28,6 +28,18 @@ class FuseStates(ppl.Pass):
     permissive = properties.Property(
         dtype=bool, default=False, category="Applicability", desc="If True, ignores some race condition checks."
     )
+    aggressive_merges = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Passed to StateFusionExtended.aggressive_merges.",
+    )
+    order_array_seeds = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Passed to StateFusionExtended.order_array_seeds.",
+    )
     progress = properties.Property(
         dtype=bool,
         default=None,
@@ -35,6 +47,11 @@ class FuseStates(ppl.Pass):
         category="Diagnostics",
         desc="Whether to print progress, or None for default (print after 5 seconds).",
     )
+
+    def __init__(self, aggressive_merges: bool = False, order_array_seeds: bool = False):
+        super().__init__()
+        self.aggressive_merges = aggressive_merges
+        self.order_array_seeds = order_array_seeds
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
@@ -52,9 +69,10 @@ class FuseStates(ppl.Pass):
         """
         # The probes resolve ``SDFG.facts()`` (a walk of every interstate edge and descriptor) per candidate pair. A
         # fusion leaves them as they are: it touches no symbol or descriptor, and it moves the assignments of the
-        # fused edge onto the edges into the first block (which must exist), so every SDFG assigns the same names.
+        # fused edge onto the edges into the first block (or a new empty predecessor), so every SDFG assigns the same
+        # names.
         with memoize_facts():
-            fused = fuse_states(sdfg, self.permissive, self.progress)
+            fused = fuse_states(sdfg, self.permissive, self.progress, self.aggressive_merges, self.order_array_seeds)
         return fused or None
 
     def report(self, pass_retval: int) -> str:

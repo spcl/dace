@@ -145,7 +145,10 @@ class ParallelizePipeline(ppl.Pass):
         # ``MergeGuards`` folds the guards that keep otherwise fusable bodies apart.
         # A fresh Pipeline per round: FuseMaps declares a FindSingleUseData dependency whose
         # results the Pipeline caches, and the second round runs on a graph the first rewrote.
-        stages.extend(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), MergeGuards()]) for _ in range(FUSE_ROUNDS))
+        stages.extend(
+            Pipeline([FuseStates(aggressive_merges=True), FuseMaps(), FuseLoops(), MergeGuards()])
+            for _ in range(FUSE_ROUNDS)
+        )
         return stages
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:

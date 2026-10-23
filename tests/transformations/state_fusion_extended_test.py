@@ -1546,6 +1546,133 @@ def test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs():
     assert np.array_equal(a, x) and np.array_equal(c, x)
 
 
+def _start_state_with_assignment(name: str, rhs: str):
+    """``s1: A = B + 1``, then ``m = rhs`` on the edge out of the start state, then ``s2: C = A * m``."""
+    sdfg = SDFG(name)
+    for arr in ("A", "B", "C"):
+        sdfg.add_array(arr, [8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    sdfg.add_symbol("m", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge(assignments={"m": rhs}))
+    s1.add_mapped_tasklet(
+        "inc", {"i": "0:8"}, {"b": Memlet("B[i]")}, "a = b + 1", {"a": Memlet("A[i]")}, external_edges=True
+    )
+    s2.add_mapped_tasklet(
+        "scale", {"i": "0:8"}, {"a": Memlet("A[i]")}, "c = a * m", {"c": Memlet("C[i]")}, external_edges=True
+    )
+    return sdfg
+
+
+def test_extended_fusion_moves_a_start_state_edge_assignment_into_a_new_predecessor():
+    """The first state has no predecessor to absorb ``m = k + 1``: an empty one is added to carry it."""
+    sdfg = _start_state_with_assignment("sfx_start_assignment", "k + 1")
+    B = np.arange(8, dtype=np.float64)
+    ref = _run(sdfg, "ref", A=np.zeros(8), B=B, C=np.zeros(8))
+    plain = copy.deepcopy(sdfg)
+    plain.apply_transformations_repeated(StateFusionExtended)
+    assert sum(1 for st in plain.states() if not st.is_empty()) == 2  # main's behaviour: refused
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sum(1 for st in fused.states() if not st.is_empty()) == 1
+    out = _run(fused, "fused", A=np.zeros(8), B=B, C=np.zeros(8))
+    for name in ref:
+        np.testing.assert_array_equal(out[name], ref[name])
+
+
+def test_extended_fusion_keeps_a_start_state_edge_assignment_that_reads_its_writes():
+    """``m = A[0]`` reads what the first state writes: moving it before the state would read stale data."""
+    sdfg = _start_state_with_assignment("sfx_start_assignment_reads", "int(A[0])")
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sum(1 for st in fused.states() if not st.is_empty()) == 2
+
+
+def test_extended_fusion_orders_an_array_accumulation_after_its_seed():
+    """``A[:] = 0`` then ``A[i] (+)= B[i, j]``: with ``order_array_seeds`` the states fuse, the accumulation
+    ordered after the fill; plain fusion keeps them apart."""
+    sdfg = SDFG("sfx_array_seed")
+    sdfg.add_array("A", [8], dtypes.float64)
+    sdfg.add_array("B", [8, 8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    s1.add_mapped_tasklet("zero", {"i": "0:8"}, {}, "a = 0.0", {"a": Memlet("A[i]")}, external_edges=True)
+    s2.add_mapped_tasklet(
+        "acc",
+        {"i": "0:8", "j": "0:8"},
+        {"b": Memlet("B[i, j]")},
+        "a = b",
+        {"a": Memlet("A[i]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+    )
+    B = np.random.default_rng(5).random((8, 8))
+    ref = _run(sdfg, "ref", A=np.ones(8), B=B)
+    plain = copy.deepcopy(sdfg)
+    plain.apply_transformations_repeated(StateFusionExtended)
+    assert plain.number_of_nodes() == 2
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"order_array_seeds": True})
+    assert fused.number_of_nodes() == 1
+    fused.validate()
+    out = _run(fused, "fused", A=np.ones(8), B=B)
+    np.testing.assert_allclose(out["A"], ref["A"])
+    np.testing.assert_allclose(out["A"], B.sum(axis=1))
+
+
+def _sliced_build(name: str, second_reads: bool):
+    """``s1: T[0] = B[0]; T[1] = B[1]`` (two producers of disjoint slices), ``s2: T[2] = B[2]`` and, if
+    ``second_reads``, also ``C[0] = T[0] + T[1]``; ``s3: C[1:4] = T``."""
+    sdfg = SDFG(name)
+    sdfg.add_array("B", [8], dtypes.float64)
+    sdfg.add_array("C", [8], dtypes.float64)
+    sdfg.add_array("T", [3], dtypes.float64, transient=True)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    s3 = sdfg.add_state("s3")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    sdfg.add_edge(s2, s3, InterstateEdge())
+    for st, idx in ((s1, 0), (s1, 1), (s2, 2)):
+        st.add_nedge(st.add_read("B"), st.add_write("T"), Memlet(f"B[{idx}] -> [{idx}]"))
+    if second_reads:
+        t = s2.add_read("T")
+        tasklet = s2.add_tasklet("sum", {"a", "b"}, {"c"}, "c = a + b")
+        s2.add_edge(t, None, tasklet, "a", Memlet("T[0]"))
+        s2.add_edge(t, None, tasklet, "b", Memlet("T[1]"))
+        s2.add_edge(tasklet, "c", s2.add_write("C"), None, Memlet("C[0]"))
+    s3.add_nedge(s3.add_read("T"), s3.add_write("C"), Memlet("T[0:3] -> [1:4]"))
+    return sdfg
+
+
+def test_extended_fusion_fuses_a_transient_built_from_disjoint_slices():
+    sdfg = _sliced_build("sfx_disjoint_slices", second_reads=False)
+    B = np.arange(8, dtype=np.float64) + 1.0
+    ref = _run(sdfg, "ref", B=B, C=np.zeros(8))
+    s1, s2 = (next(st for st in sdfg.states() if st.label == label) for label in ("s1", "s2"))
+    assert not StateFusionExtended.can_be_applied_to(sdfg, first_state=s1, second_state=s2)
+    options = {"aggressive_merges": True}
+    assert StateFusionExtended.can_be_applied_to(sdfg, options=options, first_state=s1, second_state=s2)
+    fused = copy.deepcopy(sdfg)
+    f1, f2 = (next(st for st in fused.states() if st.label == label) for label in ("s1", "s2"))
+    StateFusionExtended.apply_to(fused, options=options, first_state=f1, second_state=f2)
+    assert fused.number_of_nodes() == 2
+    fused.validate()
+    np.testing.assert_array_equal(_run(fused, "fused", B=B, C=np.zeros(8))["C"], ref["C"])
+
+
+def test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads():
+    sdfg = _sliced_build("sfx_disjoint_slices_read", second_reads=True)
+    B = np.arange(8, dtype=np.float64) + 1.0
+    ref = _run(sdfg, "ref", B=B, C=np.zeros(8))
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    fused.validate()
+    np.testing.assert_array_equal(_run(fused, "fused", B=B, C=np.zeros(8))["C"], ref["C"])
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
@@ -1581,3 +1708,8 @@ if __name__ == "__main__":
     test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read()
     test_extended_fusion_orders_a_fanned_out_read_before_an_in_place_write()
     test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs()
+    test_extended_fusion_moves_a_start_state_edge_assignment_into_a_new_predecessor()
+    test_extended_fusion_keeps_a_start_state_edge_assignment_that_reads_its_writes()
+    test_extended_fusion_orders_an_array_accumulation_after_its_seed()
+    test_extended_fusion_fuses_a_transient_built_from_disjoint_slices()
+    test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads()

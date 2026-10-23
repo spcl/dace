@@ -22,6 +22,22 @@ from dace.transformation.interstate.state_fusion import (
 )
 
 
+def producers_disjoint(state: SDFGState, scope: dict, name: str, facts) -> bool:
+    """Whether the top-level producers of ``name`` in ``state`` write pairwise provably disjoint subsets."""
+    written = []
+    for node in state.data_nodes():
+        if node.data != name or scope[node] is not None:
+            continue
+        for edge in state.in_edges(node):
+            if edge.data.is_empty():
+                continue
+            subset = edge.data.get_dst_subset(edge, state)
+            if subset is None:
+                return False
+            written.append(subset)
+    return all(subsets.intersects(a, b, facts) is Truth.FALSE for i, a in enumerate(written) for b in written[i + 1 :])
+
+
 # Helper class for finding connected component correspondences
 class CCDesc:
     def __init__(
@@ -159,6 +175,26 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
+
+    aggressive_merges = properties.Property(
+        dtype=bool,
+        default=False,
+        desc=(
+            "Also fuse where the plain rules refuse but an equivalent merge exists: an edge assignment out of a "
+            "start state moves to a new empty predecessor, and a transient built from disjoint slices is no reuse. "
+            "Off by default (main's behaviour); canonicalization turns it on."
+        ),
+    )
+
+    order_array_seeds = properties.Property(
+        dtype=bool,
+        default=False,
+        desc=(
+            "Fuse a WCR into an array the first state wrote, ordered after that writer. Off by default: early on it "
+            "merges the states a wavefront reconstruction keeps apart (seidel_2d); canonicalization turns it on "
+            "in the late fusion rounds."
+        ),
+    )
 
     strict_validate = properties.Property(
         dtype=bool,
@@ -449,9 +485,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         if not out_edges[0].data.is_unconditional():
             return False
         # The interstate edge may have assignments, as long as there are input
-        # edges to the first state that can absorb them.
+        # edges to the first state that can absorb them, or the first state starts its region and
+        # ``apply`` gives it an empty predecessor that carries them.
         if out_edges[0].data.assignments:
-            if not in_edges:
+            # An empty first state gains nothing: its predecessor would be the same empty state again.
+            if not in_edges and (
+                not self.aggressive_merges or first_state.is_empty() or not is_start_block(graph, first_state)
+            ):
                 return False
             # Reading free symbols parses the assignment RHS and the states' code. An edge (or a
             # state) that does not parse must never be absorbed into a predecessor edge.
@@ -530,7 +570,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # wrong-value binding cannot be repaired by an ordering edge, so
             # refuse. Pinned by nbody: the reused mean transient ``__rdo0``
             # accumulates several component writes across successive fusions and
-            # the KE reduction ends up reading the wrong one.
+            # the KE reduction ends up reading the wrong one. Producers writing provably
+            # disjoint slices build ONE value (lulesh ``b[:, k, c] = ...``): with
+            # ``aggressive_merges`` that is no reuse and fuses.
             first_scope = first_state.scope_dict()
             first_producers: dict[str, int] = {}
             for n in first_state.data_nodes():
@@ -557,7 +599,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 desc = sdfg.arrays.get(dname)
                 if desc is None or not desc.transient or isinstance(desc, dt.View):
                     continue
-                if first_producers.get(dname, 0) >= 2:
+                if first_producers.get(dname, 0) >= 2 and not (
+                    self.aggressive_merges
+                    # A read in the second state would bind to one producer only
+                    and not any(second_state.out_degree(n) > 0 for n in second_state.data_nodes() if n.data == dname)
+                    and producers_disjoint(first_state, first_scope, dname, sdfg.facts())
+                ):
                     return False
 
             # If second state has other input edges, there might be issues
@@ -652,8 +699,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # correlation ``mean[:] = 0.0; mean(+)= data[...]``). A transient scalar seed
             # (``tmp = 0`` before ``tmp(+)= ...``) fuses: every second-state source leading
             # to the accumulated node (for a source AccessNode, its consumers) is ordered
-            # after the seed writer, refused when no source leads there. Any other seeded
-            # container keeps its states apart.
+            # after the seed writer, refused when no source leads there. With ``order_array_seeds`` an
+            # array seed is ordered the same way; any other seeded container keeps its states apart.
             first_written: dict[str, list] = {}
             first_writers: dict[str, list[nodes.AccessNode]] = {}
             for n in first_output:
@@ -674,8 +721,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     continue
                 seed = sdfg.arrays[e.data.data]
                 accumulated = second_state.memlet_path(e)[-1].dst
+                seed_ok = (isinstance(seed, dt.Scalar) and seed.transient) or (
+                    self.order_array_seeds and isinstance(seed, dt.Array) and not isinstance(seed, dt.View)
+                )
                 if (
-                    not (isinstance(seed, dt.Scalar) and seed.transient)
+                    not seed_ok
                     or not isinstance(accumulated, nodes.AccessNode)
                     or accumulated not in top2
                     or not any(
@@ -1065,8 +1115,16 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         edges = graph.edges_between(first_state, second_state)
         for edge in edges:
             if edge.data.assignments:
-                for src, dst, other_data in graph.in_edges(first_state):
-                    other_data.assignments.update(edge.data.assignments)
+                if graph.in_degree(first_state) == 0:
+                    graph.add_state_before(
+                        first_state,
+                        label=f"{first_state.label}_assign",
+                        is_start_block=is_start_block(graph, first_state),
+                        assignments=dict(edge.data.assignments),
+                    )
+                else:
+                    for src, dst, other_data in graph.in_edges(first_state):
+                        other_data.assignments.update(edge.data.assignments)
             graph.remove_edge(edge)
 
         # Special case 1: first state is empty

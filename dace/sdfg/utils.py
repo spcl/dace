@@ -1752,7 +1752,13 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+def fuse_states(
+    sdfg: SDFG,
+    permissive: bool = False,
+    progress: bool = None,
+    aggressive_merges: bool = False,
+    order_array_seeds: bool = False,
+) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusionExtended transformation.
@@ -1805,6 +1811,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                     if isinstance(u, SDFGState) and isinstance(v, SDFGState):
                         candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
                         sf = StateFusionExtended()
+                        sf.aggressive_merges = aggressive_merges
+                        sf.order_array_seeds = order_array_seeds
                         sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
                         if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                             sf.apply(cfg, sd)

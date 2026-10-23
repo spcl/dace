@@ -55,6 +55,7 @@ from dace.transformation.passes.canonicalize.beta_fold import BetaFold
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
+from dace.transformation.passes.canonicalize.split_map_local_transients import SplitMapLocalTransients
 from dace.transformation.passes.canonicalize.transpose_into_blas_flag import transposes_as_blas_flags
 from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_strided_level_maps,
@@ -69,11 +70,13 @@ from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_pa
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
+from dace.transformation.passes.fusion_inline import FuseStates
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
+from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.specialize_small_gemms import (
     SMALL_MATMUL_DIM,
     SpecializeSmallGemms,
@@ -797,7 +800,7 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     # One validation for the whole offload, after the last step, instead of one per step.
     # Its own ``simplify`` would validate: simplified here instead, without validation.
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
-    sdfg.simplify(validate=False)
+    SimplifyPass(pass_options={"FuseStates.aggressive_merges": True}).apply_pass(sdfg, {})
     # Between the offload and the block-size choice, and it has to be exactly here. The offload
     # assigns every nested scope ``Sequential``, so a map tagged ``is_warp_tile`` cannot become a
     # thread block before this point; and ``select_gpu_device_block_size`` skips a kernel that
@@ -1015,6 +1018,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     # host-scheduled graph is rejected here rather than quietly finalized as if it were CPU.
     if device == dtypes.DeviceType.GPU:
         assert_offloaded(sdfg)
+    # The states the last canonicalization stages left adjacent and fusible
+    FuseStates(aggressive_merges=True, order_array_seeds=True).apply_pass(sdfg, {})
 
     # Infer schedules BEFORE selecting library-node implementations so the selection can adhere to
     # each node's schedule: DaCe sets a library node nested in a parallel map (or re-entered per loop
@@ -1060,6 +1065,9 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
         # call covers the device dialects.
         explicit_accumulating_copies(sdfg)
     infer_types.infer_connector_types(sdfg)
+    # Before storage is decided: one map-local name shared across states is otherwise one SDFG-wide buffer
+    # the threads of a parallel map share.
+    SplitMapLocalTransients().apply_pass(sdfg, {})
     finalize_transient_storage(sdfg, device)
     # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name.
     TransientReuse().apply_pass(sdfg, {})

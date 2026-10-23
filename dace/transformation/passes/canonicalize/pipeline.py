@@ -171,6 +171,9 @@ from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
 
+#: Canonicalization's simplify fuses states with StateFusionExtended's extra merges.
+CANON_SIMPLIFY_OPTIONS: dict[str, Any] = {"FuseStates.aggressive_merges": True}
+
 
 def disable_openmp_sections(sdfg: SDFG) -> None:
     """Opt ``sdfg`` and every nested SDFG out of ``#pragma omp parallel sections``.
@@ -291,7 +294,7 @@ class StructuralCleanup(ppl.Pass):
         readers with them, so it decides against the block's own final graph. It pays for itself:
         on CloudSC the terminal band alone collects 3857 dead descriptors in 0.53 s, and every
         stage between two cleanups was walking them."""
-        walk_fuse = FuseStates()
+        walk_fuse = FuseStates(aggressive_merges=True)
         walk_fuse.progress = False
         return [
             EqualizeSymbolDtypes(),
@@ -432,7 +435,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
         promote.transients_only = False
         return (
             promote,
-            SimplifyPass(),
+            SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS),
             HoistInductionVariableUpdates(),
             InductionVariableSubstitution(),
             SplitStatements(),
@@ -824,7 +827,7 @@ def ingest(target: str) -> Stages:
         # np.roll / broadcast_to / np.where as their pure maps from the start, so every normalization below sees a map
         # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
         (CLEANUP, ExpandIndexRemaps()),
-        (CLEANUP, SimplifyPass()),
+        (CLEANUP, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
         # A while loop that counts gets its counter here, so every later pass sees a counted loop.
         (CLEANUP, WhileToFor()),
         # After simplification: the raised guard of a break still reads its condition through a separate
@@ -896,7 +899,7 @@ def normalize_statements(
     if normalize_loop_and_map_origin:
         s += [(label, NormalizeLoopAndMapOrigin())]
     # The special cleanup after normalization.
-    s += [(label, SimplifyPass())]
+    s += [(label, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS))]
     return s
 
 
@@ -1059,6 +1062,9 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
 
     def inner_round() -> list[ppl.Pass]:
         return [
+            # States first: map fusion only sees maps that share a state
+            HoistAssignmentsToLoopBodyHead(),
+            FuseStates(aggressive_merges=True, order_array_seeds=True),
             PatternApplyOnceEverywhere([MapCollapse()]),
             PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]),
             ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True)]),
