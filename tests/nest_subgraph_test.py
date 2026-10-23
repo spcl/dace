@@ -246,3 +246,21 @@ if __name__ == "__main__":
     test_tiled_program()
     test_nest_scalar_with_none_subset_boundary()
     test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy()
+
+
+@dace.program
+def interior_double(A: dace.float64[N], B: dace.float64[N]):
+    for i in dace.map[1 : N - 1]:
+        B[i] = A[i] * 2.0
+
+
+def test_a_nest_of_a_partial_write_claims_it_as_dynamic():
+    """The nest's connector passes all of ``B`` but writes only ``B[1:N-1]``: claimed exact, the offloader skipped
+    the copy-in and returned uninitialized border elements."""
+    sdfg = interior_double.to_sdfg(simplify=True)
+    state = sdfg.start_state
+
+    nested = nest_state_subgraph(sdfg, state, SubgraphView(state, state.nodes()))
+
+    (written,) = [e.data for e in state.out_edges(nested)]
+    assert (written.data, written.dynamic) == ("B", True)

@@ -886,3 +886,28 @@ if __name__ == "__main__":
     test_isolate_stencil_swap_sibling_numerics()
     test_isolate_keeps_an_overwrite_of_the_input_after_the_nested_sdfg()
     test_isolate_refuses_to_leave_a_read_unordered_before_an_overwrite()
+
+
+def test_a_node_an_ordering_edge_puts_before_takes_its_outputs_to_the_pre_state():
+    """``first`` must run before the isolated node (an empty edge orders it before ``D``), so the pre state holds it;
+    its output ``B`` went to the post state without its producer and the split was refused."""
+    sdfg = dace.SDFG("ordered_before_isolated")
+    for name in "ABCD":
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    first = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(state.add_read("A"), None, first, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(first, "B", state.add_write("B"), None, dace.Memlet("B[0:10]"))
+    d = state.add_access("D")
+    state.add_nedge(first, d, dace.Memlet())
+    isolated = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(d, None, isolated, "A", dace.Memlet("D[0:10]"))
+    state.add_edge(isolated, "B", state.add_write("C"), None, dace.Memlet("C[0:10]"))
+    sdfg.validate()
+
+    pre, middle, post = isolate_nested_sdfg(state, isolated)
+
+    assert first in pre.nodes() and isolated in middle.nodes()
+    assert [e.dst.data for e in pre.out_edges(first) if not e.data.is_empty()] == ["B"]
+    assert not count_node(post, dace_nodes.NestedSDFG)
+    sdfg.validate()
