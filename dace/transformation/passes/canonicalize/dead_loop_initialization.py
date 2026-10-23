@@ -172,7 +172,25 @@ class DeadLoopInitialization(ppl.Pass):
         """:returns: how many fills were dropped, or ``None`` if none."""
         dropped = 0
         for owner in sdfg.all_sdfgs_recursive():
+            # Only a filled transient can have a dead fill: the loop analyses run where one exists.
+            filled = {
+                edge.dst.data
+                for state in owner.states()
+                for node in state.nodes()
+                if isinstance(node, FillLibraryNode)
+                for edge in state.out_edges(node)
+                if isinstance(edge.dst, nodes.AccessNode) and owner.arrays[edge.dst.data].transient
+            }
+            if not filled:
+                continue
             for loop in [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion)]:
+                if not any(
+                    node.data in filled
+                    for block in loop.all_control_flow_blocks()
+                    if isinstance(block, SDFGState)
+                    for node in block.data_nodes()
+                ):
+                    continue
                 for state, node, fill in dead_fills(owner, loop):
                     state.remove_node(fill)
                     state.remove_node(node)

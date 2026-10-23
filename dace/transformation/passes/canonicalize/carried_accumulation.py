@@ -29,6 +29,16 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 
 
+def updated_containers(loop: LoopRegion) -> set[str]:
+    """The containers a tasklet in ``loop`` both reads and writes: the candidates for an in-place update."""
+    names: set[str] = set()
+    for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
+        for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
+            reads = {e.data.data for e in state.in_edges(tasklet) if not e.data.is_empty()}
+            names |= reads & {e.data.data for e in state.out_edges(tasklet) if not e.data.is_empty()}
+    return names
+
+
 def refused_container(sdfg: SDFG, loop: LoopRegion) -> str | None:
     """The container whose non-affine write keeps ``loop`` from mapping, or ``None`` if it maps or refuses else."""
     probe = LoopToMap()
@@ -143,14 +153,18 @@ class CarriedAccumulationToWCR(ppl.Pass):
         converted = 0
         for owner in sdfg.all_sdfgs_recursive():
             for loop in [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion)]:
-                # Until the loop maps or nothing is left to rewrite: an applied rewrite renumbers its state.
-                while (name := refused_container(owner, loop)) is not None:
+                # A loop with no in-place update has nothing to rewrite: no LoopToMap probe (cloudsc has hundreds).
+                updated = updated_containers(loop)
+                if not updated:
+                    continue
+                # Until the loop maps or nothing is left to rewrite: one probe per refused container.
+                while (name := refused_container(owner, loop)) is not None and name in updated:
                     if not writes_move_with_the_iteration(loop, name) or not read_only_by_updates(owner, loop, name):
                         break
                     applied = False
                     for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
-                        xform = in_place_update(owner, state, name)
-                        if xform is not None:
+                        # An applied rewrite renumbers the state, so each next update is matched afresh.
+                        while (xform := in_place_update(owner, state, name)) is not None:
                             xform.apply(state, owner)
                             converted += 1
                             applied = True

@@ -502,6 +502,35 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
         return changed
 
 
+class _ThenIfChanged(ppl.Pass):
+    """``first``, then the ``then`` units only when ``first`` rewrote the graph: the lift that follows a rewrite
+    re-probes every loop, which a whole-program kernel pays for nothing when there was nothing to rewrite."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def __init__(self, first: ppl.Pass, then: list[ppl.Pass]) -> None:
+        super().__init__()
+        self.first = first
+        self.then = then
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> Any:
+        result = self.first.apply_pass(sdfg, {})
+        if result is None:
+            return None
+        for unit in self.then:
+            unit.apply_pass(sdfg, {})
+        return result
+
+
 @properties.make_properties
 class _PrivatizeScalarsStage(ppl.Pass):
     """Self-contained adapter for ``PrivatizeScalars`` in the recipe.
@@ -972,11 +1001,18 @@ def derive_parallelism(
     # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
     # guarded-scatter versioning below
     s += [
-        (label, CarriedAccumulationToWCR()),
-        (label, PropagateMemlets()),
-        (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
-        (label, _PrivatizeScalarsStage()),
-        (label, _PrivatizeArraysStage()),
+        (
+            label,
+            _ThenIfChanged(
+                CarriedAccumulationToWCR(),
+                [
+                    PropagateMemlets(),
+                    ParallelizeLoopsHoldingSiblingChains(propagate=False),
+                    _PrivatizeScalarsStage(),
+                    _PrivatizeArraysStage(),
+                ],
+            ),
+        )
     ]
     if scatter_to_guarded_maps:
         # An ``arange`` fill is an inlined map by now: its interstate reads become their index, so a scatter keyed
