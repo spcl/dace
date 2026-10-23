@@ -16,6 +16,9 @@ When both hold the body is rewritten to the plain assignment ``x = y``. That ass
 is then legitimately trivial and may be folded into a direct copy by
 ``TrivialTaskletElimination``. A genuine cast (differing dtypes) fails (b) and is kept,
 so no conversion is ever silently dropped.
+
+The same rewrite applies to a product with the literal one, ``x = 1.0 * y`` / ``x = y * 1``, when ``y`` and ``x``
+share a floating-point dtype, or an integer dtype and the literal is an integer: the product is then exactly ``y``.
 """
 
 import ast
@@ -63,6 +66,36 @@ def noop_cast_candidate(
     return assign.targets[0].id, arg, casts[cast_name]
 
 
+def identity_product_candidate(code: CodeBlock) -> tuple[str, ast.AST, ast.Constant] | None:
+    """``(target_conn, y, literal)`` if ``code`` is a single ``x = 1 * y`` or ``x = y * 1`` with ``y`` a data/symbol
+    reference and the literal numerically one; else ``None``. The dtype checks are applied by the caller."""
+    body = code.code
+    if len(body) != 1 or not isinstance(body[0], ast.Assign):
+        return None
+    assign = body[0]
+    if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+        return None
+    product = assign.value
+    if not isinstance(product, ast.BinOp) or not isinstance(product.op, ast.Mult):
+        return None
+    for literal, arg in ((product.left, product.right), (product.right, product.left)):
+        if (
+            isinstance(literal, ast.Constant)
+            and type(literal.value) in (int, float)
+            and literal.value == 1
+            and isinstance(arg, (ast.Name, ast.Subscript))
+        ):
+            return assign.targets[0].id, arg, literal
+    return None
+
+
+def product_is_exact(literal: ast.Constant, dtype: dtypes.typeclass) -> bool:
+    """Whether multiplying a ``dtype`` value by ``literal`` (one) and storing it as ``dtype`` returns the value."""
+    if dtype in dtypes.FLOAT_TYPES:
+        return True
+    return type(literal.value) is int and dtype in dtypes.INTEGER_TYPES and dtype not in (dtypes.bool, dtypes.bool_)
+
+
 def base_name(arg: ast.AST) -> str:
     """The referenced data/symbol name of a ``Name`` (``y``) or ``Subscript`` (``y[i]``)."""
     return arg.id if isinstance(arg, ast.Name) else astutils.rname(arg.value)
@@ -101,7 +134,8 @@ def source_dtype(
 class CollapseNoOpCast(ppl.Pass):
     """Rewrite a no-op cast tasklet ``x = cast(y)`` into the plain assignment ``x = y`` --
     only when ``y`` is a non-constant data/symbol reference and source, destination and
-    cast-target dtype all coincide (the cast is identity and the store is exact)."""
+    cast-target dtype all coincide (the cast is identity and the store is exact). An exact
+    product with the literal one (module docstring) is rewritten the same way."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -122,6 +156,7 @@ class CollapseNoOpCast(ppl.Pass):
                 for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
                     candidate = noop_cast_candidate(tasklet.code, casts)
                     if candidate is None:
+                        count += self.collapse_identity_product(state, tasklet, nsdfg, resolver)
                         continue
                     target_conn, arg, cast_dtype = candidate
                     dst_dtype = destination_dtype(state, tasklet, target_conn, nsdfg, resolver)
@@ -140,6 +175,23 @@ class CollapseNoOpCast(ppl.Pass):
                     tasklet.code = CodeBlock(f"{target_conn} = {required(astutils.unparse(arg)).strip()}")
                     count += 1
         return count or None
+
+    def collapse_identity_product(
+        self, state: SDFGState, tasklet: nodes.Tasklet, sdfg: SDFG, resolver: scopes.ScopedSymbolResolver
+    ) -> int:
+        """Rewrite an exact ``x = 1 * y`` tasklet to ``x = y``; returns 1 if rewritten, else 0."""
+        candidate = identity_product_candidate(tasklet.code)
+        if candidate is None:
+            return 0
+        target_conn, arg, literal = candidate
+        dst_dtype = destination_dtype(state, tasklet, target_conn, sdfg, resolver)
+        src_dtype = source_dtype(state, tasklet, base_name(arg), sdfg, resolver)
+        if src_dtype is scopes.UNDETERMINED or dst_dtype is scopes.UNDETERMINED:
+            return 0
+        if src_dtype != dst_dtype or not product_is_exact(literal, dst_dtype):
+            return 0
+        tasklet.code = CodeBlock(f"{target_conn} = {required(astutils.unparse(arg)).strip()}")
+        return 1
 
 
 __all__ = ["CollapseNoOpCast"]

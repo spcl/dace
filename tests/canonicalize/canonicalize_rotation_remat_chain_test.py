@@ -56,7 +56,7 @@ def three_stage(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     for i in range(N):
         s = b[i] * c[i]
         u = s + 0.0
-        v = u * 1.0
+        v = u + 0.0
         a[i] = s + t
         t = v
 
@@ -107,12 +107,12 @@ def two_stage_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
 
 
 def three_stage_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
-    """:func:`three_stage`: one more pure stage, so the carry is ``(s + 0.0) * 1.0``."""
+    """:func:`three_stage`: one more pure stage, so the carry is ``s + 0.0 + 0.0``."""
     t = 0.0
     for i in range(a.shape[0]):
         s = b[i] * c[i]
         a[i] = s + t
-        t = (s + 0.0) * 1.0
+        t = s + 0.0 + 0.0
 
 
 def over_the_limit_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
