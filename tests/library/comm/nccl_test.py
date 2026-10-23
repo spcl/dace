@@ -323,14 +323,6 @@ def test_reduction_operator_names():
         comm.reduction_op("MPI_SUMM")
 
 
-def test_deprecated_mpi_library_alias():
-    with pytest.warns(DeprecationWarning):
-        import dace.libraries.mpi  # noqa: F401 (the import is the test; it warns on first import only)
-    from dace.libraries.mpi.nodes.send import Send
-
-    assert Send is comm.Send
-
-
 ###############################################################################
 # Runtime tests
 
@@ -504,7 +496,6 @@ if __name__ == "__main__":
     test_process_grid_communicator_is_created_at_initialization()
     test_fortran_communicator_is_rejected()
     test_reduction_operator_names()
-    test_deprecated_mpi_library_alias()
     test_allreduce(False)
     test_allreduce(True)
     test_bcast_and_reduce()
