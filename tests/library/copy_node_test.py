@@ -4,6 +4,7 @@
 import contextlib
 import math
 from collections.abc import Sequence
+import copy as _copy
 from dataclasses import dataclass
 
 import numpy as np
@@ -2064,8 +2065,12 @@ def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet()
     assert select_copy_implementation(libnode, sdfg.start_state) == "MemcpyCUDA1D"
 
 
-@pytest.mark.parametrize("src_storage", _SINGLE_ELT_STORAGES)
-@pytest.mark.parametrize("dst_storage", _SINGLE_ELT_STORAGES)
+_TMA_STORAGE_PAIRS = [(dace.StorageType.GPU_Global, dace.StorageType.GPU_Shared),
+                      (dace.StorageType.GPU_Shared, dace.StorageType.GPU_Global)]
+
+
+@pytest.mark.parametrize("src_storage,dst_storage", [(s, d) for s in _SINGLE_ELT_STORAGES
+                                                     for d in _SINGLE_ELT_STORAGES if (s, d) not in _TMA_STORAGE_PAIRS])
 def test_memory_engine_copy_rejects_no_shared(src_storage, dst_storage):
     """`MemoryEngineBulk` expansion accepts only cases `GPU_Global`->`GPU_Shared` or `GPU_Shared`->`GPU_Global`."""
     sdfg, _ = _make_copy_sdfg(
@@ -2075,14 +2080,22 @@ def test_memory_engine_copy_rejects_no_shared(src_storage, dst_storage):
         name="tma_bad",
         libnode_name="tma_bad_node",
     )
-    is_correct_memories = (src_storage, dst_storage) in [
-        (dace.StorageType.GPU_Global, dace.StorageType.GPU_Shared),
-        (dace.StorageType.GPU_Shared, dace.StorageType.GPU_Global)]
-    if is_correct_memories:
+    with pytest.raises(ValueError, match="GPU_Global <-> GPU_Shared"):
         sdfg.expand_library_nodes()
-    else:
-        with pytest.raises(Exception, match="GPU_Shared / GPU_Global storages"):
-            sdfg.expand_library_nodes()
+
+
+@pytest.mark.parametrize("src_storage,dst_storage", _TMA_STORAGE_PAIRS, ids=["global_to_shared", "shared_to_global"])
+def test_memory_engine_copy_rejects_outside_kernel(src_storage, dst_storage):
+    """A `MemoryEngineBulk` copy needs an enclosing `GPU_Device` map."""
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[32], storage=src_storage, transient=src_storage == dace.StorageType.GPU_Shared, name="In"),
+        _ArraySpec(shape=[32], storage=dst_storage, transient=dst_storage == dace.StorageType.GPU_Shared, name="Out"),
+        implementation="MemoryEngineBulk",
+        name="tma_no_kernel",
+        libnode_name="tma_no_kernel_node",
+    )
+    with pytest.raises(ValueError, match="GPU_Device"):
+        sdfg.expand_library_nodes()
 
 
 def test_memory_engine_copy_rejects_inside_tblock_map():
@@ -2116,66 +2129,99 @@ def test_memory_engine_copy_rejects_inside_tblock_map():
                           src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
                           memlet=dace.Memlet("shmem[0:32]"))
 
-    with pytest.raises(Exception, match="GPU_ThreadBlock"):
+    with pytest.raises(ValueError, match="GPU_ThreadBlock"):
         sdfg.expand_library_nodes()
 
 
-def _make_memory_engine_copy_transpose_double(dtype):
-    """Creates a `B = 2 * A^T` kernel on GPU using the `MemoryEngineBulk` expansion to copy to shared memory."""
-    sdfg = dace.SDFG("transpose")
+#: Tile edge of the memory engine kernels.
+_TMA_TILE = 32
+#: Global extents: ``M`` leaves a partial tile (out-of-bound box elements), ``N`` keeps every row pitch a
+#: multiple of 16 bytes for all dtypes, as the memory engine requires.
+_TMA_M, _TMA_N = 156, 208
+
+
+def _add_tma_copy(state, src, src_path, dst, dst_path, src_subset, dst_subset):
+    """Wire ``src -> *src_path -> CopyLibraryNode(MemoryEngineBulk) -> *dst_path -> dst``."""
+    libnode = CopyLibraryNode(name="tma_copy")
+    libnode.implementation = "MemoryEngineBulk"
+    state.add_memlet_path(src,
+                          *src_path,
+                          libnode,
+                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet(f"{src.data}[{src_subset}]"))
+    state.add_memlet_path(libnode,
+                          *dst_path,
+                          dst,
+                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet(f"{dst.data}[{dst_subset}]"))
+    return libnode
+
+
+def _add_nested_tma_load(state, sdfg, a, shmem, path):
+    """Wire ``a -> *path -> NestedSDFG{A -> MemoryEngineBulk -> S} -> shmem``, the copy one SDFG level below
+    the kernel map (the tensor map and barrier must be routed through the NestedSDFG)."""
+    inner = dace.SDFG("tma_nested_load")
+    for name, outer_name in (("A", a.data), ("S", shmem.data)):
+        inner.add_datadesc(name, _copy.deepcopy(sdfg.arrays[outer_name]))
+        inner.arrays[name].transient = False
+    inner_state = inner.add_state("copy")
+    _add_tma_copy(inner_state, inner_state.add_access("A"), [], inner_state.add_access("S"), [],
+                  f"block_i:block_i+{_TMA_TILE}, block_j:block_j+{_TMA_TILE}", f"0:{_TMA_TILE}, 0:{_TMA_TILE}")
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"S"}, symbol_mapping={"block_i": "block_i", "block_j": "block_j"})
+    state.add_memlet_path(a, *path, nsdfg, dst_conn="A", memlet=dace.Memlet.from_array(a.data, sdfg.arrays[a.data]))
+    state.add_edge(nsdfg, "S", shmem, None, dace.Memlet.from_array(shmem.data, sdfg.arrays[shmem.data]))
+    return inner
+
+
+def _make_memory_engine_copy_transpose_double(dtype, nested=False):
+    """Creates a `B = 2 * A^T` kernel on GPU using the `MemoryEngineBulk` expansion to copy to shared memory.
+
+    :param nested: put the copy into a NestedSDFG inside the kernel map.
+    """
+    sdfg = dace.SDFG(f"tma_transpose_{dtype.to_string()}{'_nested' if nested else ''}")
     state = sdfg.add_state("main")
 
-    M, N = 156, 206
+    M, N, T = _TMA_M, _TMA_N, _TMA_TILE
+    bi, bj, ti, tj = (dace.symbol(s) for s in ("bi", "bj", "ti", "tj"))
 
     sdfg.add_array("A", [M, N], dtype, dace.StorageType.GPU_Global)
     sdfg.add_array("B", [N, M], dtype, dace.StorageType.GPU_Global)
-    sdfg.add_array("shmem", [32, 32], dtype, dace.StorageType.GPU_Shared, transient=True)
+    sdfg.add_array("shmem", [T, T], dtype, dace.StorageType.GPU_Shared, transient=True)
 
     a = state.add_access("A")
     b = state.add_access("B")
     shmem = state.add_access("shmem")
 
-    global_map_entry, global_map_exit = state.add_map("device",
-                                                      {"block_i": f"0:{M}:32", "block_j": f"0:{N}:32"},
+    global_map_entry, global_map_exit = state.add_map("device", {
+        "block_i": f"0:{M}:{T}",
+        "block_j": f"0:{N}:{T}"
+    },
                                                       schedule=dace.ScheduleType.GPU_Device)
-    block_map_entry, block_map_exit = state.add_map("block",
-                                                    {"thread_i": f"0:32", "thread_j": f"0:32"},
+    block_map_entry, block_map_exit = state.add_map("block", {
+        "thread_i": f"0:{T}",
+        "thread_j": f"0:{T}"
+    },
                                                     schedule=dace.ScheduleType.GPU_ThreadBlock)
 
-    libnode = CopyLibraryNode(name="tma_in")
-    libnode.implementation = "MemoryEngineBulk"
-
-    bi, bj = dace.symbol("bi"), dace.symbol("bj")
-    ti, tj = dace.symbol("ti"), dace.symbol("tj")
-
     @dace.program
-    def inner(A: dtype[32, 32], B: dtype[N, M]):
+    def inner(A: dtype[T, T], B: dtype[N, M]):
         if bj + tj < B.shape[0] and bi + ti < B.shape[1]:
             B[bj + tj, bi + ti] = A[ti, tj] * 2
 
-    nested_sdfg_orig = inner.to_sdfg()
-    nested_sdfg = state.add_nested_sdfg(nested_sdfg_orig,
-                                        {"A"},
-                                        {"B"},
-                                        symbol_mapping={"bi": "block_i",
-                                                        "bj": "block_j",
-                                                        "ti": "thread_i",
-                                                        "tj": "thread_j"})
+    nested_sdfg = state.add_nested_sdfg(inner.to_sdfg(), {"A"}, {"B"},
+                                        symbol_mapping={
+                                            "bi": "block_i",
+                                            "bj": "block_j",
+                                            "ti": "thread_i",
+                                            "tj": "thread_j"
+                                        })
 
-    state.add_memlet_path(a,
-                          global_map_entry,
-                          libnode,
-                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                          memlet=dace.Memlet("A[block_i:block_i+32, block_j:block_j+32]"))
-    state.add_memlet_path(libnode,
-                          shmem,
-                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
-                          memlet=dace.Memlet("shmem"))
-    state.add_memlet_path(shmem,
-                          block_map_entry,
-                          nested_sdfg,
-                          dst_conn="A",
-                          memlet=dace.Memlet("shmem[0:32, 0:32]"))
+    if nested:
+        _add_nested_tma_load(state, sdfg, a, shmem, [global_map_entry])
+    else:
+        _add_tma_copy(state, a, [global_map_entry], shmem, [], f"block_i:block_i+{T}, block_j:block_j+{T}",
+                      f"0:{T}, 0:{T}")
+    state.add_memlet_path(shmem, block_map_entry, nested_sdfg, dst_conn="A", memlet=dace.Memlet(f"shmem[0:{T}, 0:{T}]"))
     state.add_memlet_path(nested_sdfg,
                           block_map_exit,
                           global_map_exit,
@@ -2183,31 +2229,206 @@ def _make_memory_engine_copy_transpose_double(dtype):
                           src_conn="B",
                           memlet=dace.Memlet(f"B[0:{N}, 0:{M}]"))
 
-    return sdfg, libnode, M, N
+    return sdfg
 
 
-_DTYPE_SELECTION = [dace.int8,
-                    dace.int32,
-                    dace.int64,
-                    dace.float16,
-                    dace.float32,
-                    dace.float64]
+def _make_memory_engine_store_double(dtype):
+    """Creates a `B = 2 * A` kernel whose threads fill a shared tile that a `MemoryEngineBulk` copy stores."""
+    sdfg = dace.SDFG(f"tma_store_{dtype.to_string()}")
+    state = sdfg.add_state("main")
+    M, N, T = _TMA_M, _TMA_N, _TMA_TILE
+    bi, bj, ti, tj = (dace.symbol(s) for s in ("bi", "bj", "ti", "tj"))
+
+    sdfg.add_array("A", [M, N], dtype, dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [M, N], dtype, dace.StorageType.GPU_Global)
+    sdfg.add_array("shmem", [T, T], dtype, dace.StorageType.GPU_Shared, transient=True)
+
+    me, mx = state.add_map("device", {
+        "block_i": f"0:{M}:{T}",
+        "block_j": f"0:{N}:{T}"
+    },
+                           schedule=dace.ScheduleType.GPU_Device)
+    te, tx = state.add_map("block", {
+        "thread_i": f"0:{T}",
+        "thread_j": f"0:{T}"
+    },
+                           schedule=dace.ScheduleType.GPU_ThreadBlock)
+
+    @dace.program
+    def inner(A: dtype[M, N], S: dtype[T, T]):
+        if bi + ti < M and bj + tj < N:
+            S[ti, tj] = A[bi + ti, bj + tj] * 2
+
+    nested_sdfg = state.add_nested_sdfg(inner.to_sdfg(), {"A"}, {"S"},
+                                        symbol_mapping={
+                                            "bi": "block_i",
+                                            "bj": "block_j",
+                                            "ti": "thread_i",
+                                            "tj": "thread_j"
+                                        })
+    shmem = state.add_access("shmem")
+    state.add_memlet_path(state.add_access("A"),
+                          me,
+                          te,
+                          nested_sdfg,
+                          dst_conn="A",
+                          memlet=dace.Memlet(f"A[0:{M}, 0:{N}]"))
+    state.add_memlet_path(nested_sdfg, tx, shmem, src_conn="S", memlet=dace.Memlet(f"shmem[0:{T}, 0:{T}]"))
+    # Out-of-bound box elements of the last tile row are dropped by the memory engine
+    _add_tma_copy(state, shmem, [], state.add_access("B"), [mx], f"0:{T}, 0:{T}",
+                  f"block_i:block_i+{T}, block_j:block_j+{T}")
+    return sdfg
 
 
-@pytest.mark.parametrize("dtype", _DTYPE_SELECTION)
-def test_memory_engine_copy_transpose(dtype):
-    """Test the `MemoryEngineBulk` expansion on a modified transpose kernel using multiple datatypes"""
-    sdfg, libnode, M, N = _make_memory_engine_copy_transpose_double(dtype)
+def _make_memory_engine_loop_double(dtype):
+    """Creates a `B = 2 * A` kernel looping over the column tiles of a row block: the `MemoryEngineBulk` load
+    runs once per iteration, reusing one mbarrier across phases."""
+    sdfg = dace.SDFG(f"tma_loop_{dtype.to_string()}")
+    state = sdfg.add_state("main")
+    M, N, T = _TMA_M, _TMA_N, _TMA_TILE
+    bi, bj, ti, tj = (dace.symbol(s) for s in ("bi", "bj", "ti", "tj"))
 
-    assert libnode.implementation == "MemoryEngineBulk"
+    sdfg.add_array("A", [M, N], dtype, dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [M, N], dtype, dace.StorageType.GPU_Global)
+    sdfg.add_array("shmem", [T, T], dtype, dace.StorageType.GPU_Shared, transient=True)
 
+    me, mx = state.add_map("device", {"block_i": f"0:{M}:{T}"}, schedule=dace.ScheduleType.GPU_Device)
+    le, lx = state.add_map("loop", {"block_j": f"0:{N}:{T}"}, schedule=dace.ScheduleType.Sequential)
+    te, tx = state.add_map("block", {
+        "thread_i": f"0:{T}",
+        "thread_j": f"0:{T}"
+    },
+                           schedule=dace.ScheduleType.GPU_ThreadBlock)
+
+    @dace.program
+    def inner(S: dtype[T, T], B: dtype[M, N]):
+        if bi + ti < M and bj + tj < N:
+            B[bi + ti, bj + tj] = S[ti, tj] * 2
+
+    nested_sdfg = state.add_nested_sdfg(inner.to_sdfg(), {"S"}, {"B"},
+                                        symbol_mapping={
+                                            "bi": "block_i",
+                                            "bj": "block_j",
+                                            "ti": "thread_i",
+                                            "tj": "thread_j"
+                                        })
+    shmem = state.add_access("shmem")
+    _add_tma_copy(state, state.add_access("A"), [me, le], shmem, [], f"block_i:block_i+{T}, block_j:block_j+{T}",
+                  f"0:{T}, 0:{T}")
+    state.add_memlet_path(shmem, te, nested_sdfg, dst_conn="S", memlet=dace.Memlet(f"shmem[0:{T}, 0:{T}]"))
+    state.add_memlet_path(nested_sdfg,
+                          tx,
+                          lx,
+                          mx,
+                          state.add_access("B"),
+                          src_conn="B",
+                          memlet=dace.Memlet(f"B[0:{M}, 0:{N}]"))
+    return sdfg
+
+
+#: ``(builder, expected result from A, whether the copy is a load)`` per memory engine kernel.
+_TMA_KERNELS = {
+    "transpose": (_make_memory_engine_copy_transpose_double, lambda A: A.transpose() * 2, True),
+    "nested":
+    (lambda dtype: _make_memory_engine_copy_transpose_double(dtype, nested=True), lambda A: A.transpose() * 2, True),
+    "store": (_make_memory_engine_store_double, lambda A: A * 2, False),
+    "loop": (_make_memory_engine_loop_double, lambda A: A * 2, True),
+}
+
+_DTYPE_SELECTION = [dace.int8, dace.int32, dace.int64, dace.float16, dace.float32, dace.float64]
+
+
+@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
+@pytest.mark.parametrize("kernel", list(_TMA_KERNELS))
+def test_memory_engine_copy_codegen(kernel, implementation):
+    """The expansion routes the tensor map to a ``__grid_constant__`` kernel parameter encoded on the host,
+    and (for loads) initializes an mbarrier once at the top of the kernel, with either CUDA code generator."""
+    builder, _, is_load = _TMA_KERNELS[kernel]
+    sdfg = builder(dace.float64)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+    tasklets = {n.label: (n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)}
+    desc_init, desc_state = tasklets["tma_copy_tma_desc_init"]
+    assert desc_state.sdfg is sdfg and desc_state.scope_dict()[desc_init] is None
+    if is_load:
+        bar_init, bar_state = tasklets["tma_copy_tma_barrier_init"]
+        assert bar_state.sdfg is sdfg
+        assert bar_state.scope_dict()[bar_init].schedule == dace.ScheduleType.GPU_Device
+    else:
+        assert "tma_copy_tma_barrier_init" not in tasklets
+
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value=implementation):
+        code = {obj.title: obj.clean_code for obj in sdfg.generate_code()}
+    kernel_protos = [line for line in code["CUDA"].splitlines() if line.lstrip().startswith("__global__")]
+    assert len(kernel_protos) == 1 and "const __grid_constant__ CUtensorMap tma_desc" in kernel_protos[0]
+    launchers = [line for line in code["CUDA"].splitlines() if "__dace_runkernel_" in line and "(" in line]
+    assert launchers and not any("__grid_constant__" in line for line in launchers)
+    assert "__shared__ __align__(128)" in code["CUDA"]
+    assert ("dace::cuda::tma_load<2>" if is_load else "dace::cuda::tma_store<2>") in code["CUDA"]
+    assert "dace::cuda::make_tiled_tensor_map(__state, CU_TENSOR_MAP_DATA_TYPE_FLOAT64" in code["Frame"]
+    assert '#include "dace/cuda/memoryengine.cuh"' in code["Frame"]
+
+
+@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
+def test_memory_engine_copy_shared_stays_static(implementation):
+    """The shared side of a memory engine copy is pinned to (aligned) static shared memory, even where the shared
+    memory planner would otherwise move it to dynamic shared memory."""
+    sdfg = _make_memory_engine_copy_transpose_double(dace.float64)
+    sdfg.expand_library_nodes()
+    assert dace.dtypes.is_dynamic_shared(sdfg.arrays["shmem"].storage) is False
+    # 8 KiB of shared memory exceed this limit, so an unpinned container would become dynamic
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value=implementation), \
+            dace.config.set_temporary('compiler', 'cuda', 'max_static_shared_memory', value=4096):
+        code = {obj.title: obj.clean_code for obj in sdfg.generate_code()}
+    assert f"__shared__ __align__(128) double shmem[{_TMA_TILE * _TMA_TILE}];" in code["CUDA"]
+
+
+@pytest.mark.parametrize("storage,reason", [
+    (dace.StorageType.GPU_Shared(dynamic=True), "dynamic shared memory"),
+    (dace.StorageType.GPU_Shared, "symbolic size"),
+])
+def test_memory_engine_copy_rejects_non_static_shared(storage, reason):
+    """A shared container that cannot be placed in static shared memory is not aligned for the memory engine."""
+    sdfg = _make_memory_engine_copy_transpose_double(dace.float64)
+    sdfg.arrays["shmem"].storage = storage
+    if reason == "symbolic size":
+        sdfg.arrays["shmem"].set_shape([dace.symbol("T0"), _TMA_TILE])
+    with pytest.raises(ValueError, match=reason):
+        sdfg.expand_library_nodes()
+
+
+def test_memory_engine_copy_rejects_misaligned_pitch():
+    """A global row pitch that is not a multiple of 16 bytes cannot be described by a tensor map."""
+    sdfg = _make_memory_engine_copy_transpose_double(dace.float32)
+    sdfg.arrays["A"].set_shape([_TMA_M, 206])
+    with pytest.raises(ValueError, match="multiples of 16 bytes"):
+        sdfg.expand_library_nodes()
+
+
+def _require_memory_engine():
+    """Return cupy, or skip unless a GPU with a memory engine (compute capability 9.0+) is present."""
     cp = pytest.importorskip("cupy")
-    A = cp.arange(M * N, dtype=dtype.as_numpy_dtype()).reshape((M, N))
-    B = cp.empty((N, M), dtype=dtype.as_numpy_dtype())
+    if int(cp.cuda.Device().compute_capability) < 90:
+        pytest.skip("The memory engine (TMA) requires compute capability 9.0 or newer")
+    return cp
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("kernel", list(_TMA_KERNELS))
+@pytest.mark.parametrize("dtype", _DTYPE_SELECTION)
+def test_memory_engine_copy(kernel, dtype):
+    """Run the `MemoryEngineBulk` kernels on multiple datatypes."""
+    cp = _require_memory_engine()
+    builder, expected, _ = _TMA_KERNELS[kernel]
+    sdfg = builder(dtype)
+    # Values stay small enough to be exact in every dtype after doubling
+    A = (cp.arange(_TMA_M * _TMA_N) % 50).astype(dtype.as_numpy_dtype()).reshape((_TMA_M, _TMA_N))
+    B = cp.zeros_like(expected(A))
 
     sdfg(A=A, B=B)
 
-    cp.testing.assert_array_equal(A.transpose() * 2, B)
+    cp.testing.assert_array_equal(expected(A), B)
 
 
 if __name__ == "__main__":
