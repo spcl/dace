@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Facts about symbols (sign predicates and relations) and the prover that answers questions under them."""
+"""Facts about symbols (sign predicates and relations), facts about the contents of data containers, and the prover
+that answers questions under the symbol facts."""
 
 import copy
 import enum
@@ -54,6 +55,60 @@ class Relation(NamedTuple):
         return Relation(
             self.kind, symbolic.replace_symbols(self.lhs, mapping), symbolic.replace_symbols(self.rhs, mapping)
         )
+
+
+class DataFactKind(enum.Enum):
+    """A property of the contents of a one-dimensional container ``A``."""
+
+    #: The entries other than ``sentinel`` are pairwise distinct and lie in ``[lo, hi]``; ``permutation(0..N-1)`` is
+    #: ``INJECTIVE`` with ``lo = 0``, ``hi = N - 1`` and no sentinel over an array of extent ``N``.
+    INJECTIVE = enum.auto()
+    #: ``A[x] <= A[y]`` for ``lo <= x <= y <= hi`` (CSR row pointers, prefix sums).
+    NONDECREASING = enum.auto()
+    #: Every entry is ``>= 0``.
+    NONNEGATIVE = enum.auto()
+    #: The entries are pairwise distinct within each segment ``[segments[r], segments[r + 1])`` (unique column
+    #: indices in every row of a CSR matrix whose row pointers are ``segments``).
+    SEGMENT_INJECTIVE = enum.auto()
+
+
+class DataFact(NamedTuple):
+    """A fact about the contents of one container; ``lo``, ``hi`` are symbolic, ``segments`` names a container."""
+
+    kind: DataFactKind
+    lo: sympy.Expr | None = None
+    hi: sympy.Expr | None = None
+    sentinel: int | None = None
+    segments: str | None = None
+
+    def replaced(self, mapping, renames: dict[str, str] | None = None) -> "DataFact":
+        """This fact with its bounds' symbols replaced, as ``symbolic.replace_symbols`` does, and ``segments``
+        renamed by ``renames``."""
+        bound = [None if b is None else symbolic.replace_symbols(b, mapping) for b in (self.lo, self.hi)]
+        segments = (
+            self.segments if renames is None or self.segments is None else renames.get(self.segments, self.segments)
+        )
+        return DataFact(self.kind, bound[0], bound[1], self.sentinel, segments)
+
+    def names(self) -> set[str]:
+        """The symbols the bounds name."""
+        return {str(s) for b in (self.lo, self.hi) if b is not None for s in b.free_symbols}
+
+    def text(self, array: str) -> str:
+        if self.kind is DataFactKind.INJECTIVE:
+            values = f" with values in [{self.lo}, {self.hi}]" if self.lo is not None else ""
+            off = f" apart from {self.sentinel}" if self.sentinel is not None else ""
+            return f"{array} injective{off}{values}"
+        if self.kind is DataFactKind.NONDECREASING:
+            return f"{array} nondecreasing on [{self.lo}, {self.hi}]"
+        if self.kind is DataFactKind.SEGMENT_INJECTIVE:
+            return f"{array} injective within each segment of {self.segments}"
+        return f"{array} nonnegative"
+
+
+def permutation(lo: sympy.Expr, hi: sympy.Expr) -> DataFact:
+    """``permutation(lo..hi)``: every value in ``[lo, hi]`` once (over an array of extent ``hi - lo + 1``)."""
+    return DataFact(DataFactKind.INJECTIVE, sympy.sympify(lo), sympy.sympify(hi))
 
 
 class Truth(enum.Enum):

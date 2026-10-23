@@ -3052,6 +3052,7 @@ class SymbolResolver:
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
         self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
+        self._data_facts: dict[tuple[ControlFlowBlock, str], tuple[symbolic.DataFact, ...]] = {}
         #: Per SDFG, the scope resolved last and the symbols every node directly inside it sees.
         self._per_scope: dict[SDFG, tuple[SDFGState, nd.EntryNode, dict[str, dtypes.typeclass]]] = {}
         self._sdfg_facts: dict[
@@ -3227,6 +3228,53 @@ class SymbolResolver:
         ]
         return relations, {f"outer:{name}" for name in outer.integers}, small, unreadable
 
+    def data_facts_at(self, block: "ControlFlowBlock", name: str) -> tuple[symbolic.DataFact, ...]:
+        """The facts assumed of container ``name`` on entry to ``block``: those declared on entry to its SDFG, while
+        no block that runs before ``block`` writes ``name``, and, for a connector a nested SDFG reads whole from a
+        caller's container, that container's facts at the nesting state, in the nested SDFG's names."""
+        key = (block, name)
+        found = self._data_facts.get(key)
+        if found is None:
+            found = self._data_facts[key] = self.derive_data_facts(block, name)
+        return found
+
+    def derive_data_facts(self, block: "ControlFlowBlock", name: str) -> tuple[symbolic.DataFact, ...]:
+        """:meth:`data_facts_at`, uncached."""
+        sdfg = block.sdfg
+        if not reaches_entry_unwritten(block, name):
+            return ()
+        found = list(sdfg.data_assumptions(name))
+        node, state = sdfg.parent_nsdfg_node, sdfg.parent
+        if node is None or not isinstance(state, SDFGState):
+            return tuple(found)
+        outer = whole_binding(state, node, name)
+        if outer is None:
+            return tuple(found)
+        inverse = {}
+        for inner, value in node.symbol_mapping.items():
+            expr = symbolic.pystr_to_symbolic(str(value))
+            if expr.is_Symbol:
+                inverse[str(expr)] = symbolic.symbol(inner)
+        for fact in self.data_facts_at(state, outer):
+            if not fact.names() <= inverse.keys():
+                continue
+            segments = None
+            if fact.segments is not None:
+                segments = next(
+                    (
+                        e.dst_conn
+                        for e in state.in_edges(node)
+                        if e.dst_conn and whole_binding(state, node, e.dst_conn) == fact.segments
+                    ),
+                    None,
+                )
+                if segments is None:
+                    continue
+            translated = fact.replaced(inverse)._replace(segments=segments)
+            if translated not in found:
+                found.append(translated)
+        return tuple(found)
+
     def forget(self, sdfg: "SDFG") -> None:
         """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
 
@@ -3234,6 +3282,7 @@ class SymbolResolver:
         """
         # Nested SDFGs derive their facts from the enclosing ones, so none of them is kept
         self._facts.clear()
+        self._data_facts.clear()
         self._sdfg_facts.clear()
         if self._per_sdfg.pop(sdfg, None) is None:
             return
@@ -3245,6 +3294,7 @@ class SymbolResolver:
         What an enclosing or unrelated SDFG resolved reads neither, and is kept."""
         within = set(sdfg.all_sdfgs_recursive())
         self._facts = {key: facts for key, facts in self._facts.items() if key[0].sdfg not in within}
+        self._data_facts = {key: facts for key, facts in self._data_facts.items() if key[0].sdfg not in within}
         self._region_updates = {
             key: updates for key, updates in self._region_updates.items() if key[0].sdfg not in within
         }
@@ -3252,6 +3302,53 @@ class SymbolResolver:
             self._per_sdfg.pop(nested, None)
             self._per_state.pop(nested, None)
             self._per_scope.pop(nested, None)
+
+
+def block_writes(block: ControlFlowBlock, name: str) -> bool:
+    """Whether a state in ``block`` writes container ``name``."""
+    states = (
+        [block]
+        if isinstance(block, SDFGState)
+        else [b for b in block.all_control_flow_blocks() if isinstance(b, SDFGState)]
+    )
+    return any(dn.data == name and st.in_degree(dn) > 0 for st in states for dn in st.data_nodes())
+
+
+def reaches_entry_unwritten(block: ControlFlowBlock, name: str) -> bool:
+    """Whether every path from the SDFG's entry to ``block`` runs the same blocks, none of which writes ``name``:
+    the walk back from ``block`` reaches the entry through single predecessors, out of branches and plain regions,
+    and never through the body of a loop."""
+    current = block
+    while True:
+        region = current.parent_graph
+        preds = region.predecessors(current)
+        if len(preds) > 1:
+            return False
+        if preds:
+            current = preds[0]
+            if block_writes(current, name):
+                return False
+            continue
+        if region is block.sdfg:
+            return True
+        if isinstance(region, LoopRegion):
+            return False
+        owner = region.parent_graph
+        current = owner if isinstance(owner, ConditionalBlock) else region
+
+
+def whole_binding(state: SDFGState, node: nd.NestedSDFG, conn: str) -> str | None:
+    """The caller's container ``node`` reads whole through ``conn``, when nothing else in ``state`` writes it."""
+    edges = [e for e in state.in_edges(node) if e.dst_conn == conn]
+    if len(edges) != 1 or edges[0].data.data is None:
+        return None
+    outer = edges[0].data.data
+    desc = state.sdfg.arrays.get(outer)
+    if desc is None or edges[0].data.subset != Range.from_array(desc):
+        return None
+    if any(dn.data == outer and any(e.src is not node for e in state.in_edges(dn)) for dn in state.data_nodes()):
+        return None
+    return outer
 
 
 @make_properties

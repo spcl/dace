@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The symbol repository of an SDFG: the dtypes and facts of its parameters and of the names its scopes open."""
+"""The symbol repository of an SDFG: the dtypes and facts of its parameters and of the names its scopes open, and the
+facts assumed of the contents of the containers it takes."""
 
 import enum
 from collections.abc import Collection, Iterable, Iterator, Mapping
@@ -15,6 +16,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.validation import InvalidSDFGError
 from dace.symbolic_facts import (
+    DataFact,
+    DataFactKind,
     Facts,
     InconsistentAssumptionsError,
     Predicate,
@@ -168,6 +171,23 @@ def scope_from_json(obj: dict[str, Any], context: dict[str, Any] | None) -> Scop
     )
 
 
+def data_fact_to_json(fact: DataFact) -> dict[str, Any]:
+    result: dict[str, Any] = {"kind": fact.kind.name}
+    for key, bound in (("lo", fact.lo), ("hi", fact.hi)):
+        if bound is not None:
+            result[key] = symbolic.serialize_symbolic(bound)
+    if fact.sentinel is not None:
+        result["sentinel"] = fact.sentinel
+    if fact.segments is not None:
+        result["segments"] = fact.segments
+    return result
+
+
+def data_fact_from_json(obj: dict[str, Any]) -> DataFact:
+    lo, hi = (as_expr(symbolic.deserialize_symbolic(obj[key])) if key in obj else None for key in ("lo", "hi"))
+    return DataFact(DataFactKind[obj["kind"]], lo, hi, obj.get("sentinel"), obj.get("segments"))
+
+
 def inconsistent(name: str, declared: SymbolInfo, added: SymbolInfo) -> InconsistentAssumptionsError:
     return InconsistentAssumptionsError(
         name,
@@ -187,7 +207,8 @@ class SymbolRepo:
 
     ``small`` names the parameters of ``Scale.SMALL``; ``runtime_assumptions`` are the orders proofs took from the
     scales, which the compiled program checks on every call. ``shape_declared`` names the parameters only a data
-    descriptor's shape declared, which a scope binding the name takes over.
+    descriptor's shape declared, which a scope binding the name takes over. ``data`` holds the facts assumed of the
+    contents of the containers the SDFG takes, on entry.
     """
 
     params: Scope = field(default_factory=Scope)
@@ -195,6 +216,26 @@ class SymbolRepo:
     small: OrderedSet[str] = field(default_factory=lambda: OrderedSet[str]([]))
     runtime_assumptions: OrderedSet[Relation] = field(default_factory=lambda: OrderedSet[Relation]([]))
     shape_declared: OrderedSet[str] = field(default_factory=lambda: OrderedSet[str]([]))
+    data: dict[str, OrderedSet[DataFact]] = field(default_factory=dict)
+
+    def add_data_fact(self, name: str, fact: DataFact) -> None:
+        """Assumes ``fact`` of the contents of container ``name`` on entry; adding a known fact again does nothing."""
+        self.data.setdefault(name, OrderedSet([])).add(fact)
+
+    def set_data_facts(self, name: str, facts: Iterable[DataFact]) -> None:
+        """Replaces the facts assumed of container ``name`` on entry."""
+        self.data[name] = OrderedSet(facts)
+
+    def data_facts(self, name: str) -> tuple[DataFact, ...]:
+        """The facts assumed of container ``name`` on entry."""
+        return tuple(self.data.get(name, ()))
+
+    def remove_data(self, name: str) -> None:
+        """Drops the facts of container ``name`` and those naming it as segments."""
+        self.data.pop(name, None)
+        for facts in self.data.values():
+            for fact in [f for f in facts if f.segments == name]:
+                facts.discard(fact)
 
     def scope(self, at: ScopeOwner | None) -> Scope:
         """The declarations of ``at`` (``None``: the parameters), created empty on first use."""
@@ -324,6 +365,11 @@ class SymbolRepo:
         self.shape_declared = OrderedSet(
             names.get(name, name) for name in self.shape_declared if name not in names or validate_name(names[name])
         )
+        renames = {name: new_name for name, new_name in names.items() if validate_name(new_name)}
+        self.data = {
+            renames.get(name, name): OrderedSet(fact.replaced(replacements, renames) for fact in facts)
+            for name, facts in self.data.items()
+        }
         for owner, scope in [(None, self.params), *self.scopes.items()]:
             scope.relations = OrderedSet(relation.replaced(replacements) for relation in scope.relations)
             # All names leave before any arrives, so that a swap (``a -> b``, ``b -> a``) keeps both declarations
@@ -373,6 +419,23 @@ class SymbolRepo:
             visible = self.params.types.keys() | (bound if owner is not None else set())
             if not named <= visible:
                 raise InvalidSDFGError(f"Symbol facts name undeclared symbols {sorted(named - visible)}", sdfg, None)
+        for name, facts in self.data.items():
+            desc = sdfg.arrays.get(name)
+            if desc is None or desc.transient:
+                raise InvalidSDFGError(f'Data facts name "{name}", which is not a container the SDFG takes', sdfg, None)
+            for fact in facts:
+                if fact.kind is not DataFactKind.NONNEGATIVE and len(desc.shape) != 1:
+                    raise InvalidSDFGError(
+                        f'{fact.kind.name} of "{name}" needs a one-dimensional container', sdfg, None
+                    )
+                if not fact.names() <= self.params.types.keys():
+                    raise InvalidSDFGError(
+                        f'Data facts of "{name}" name undeclared symbols {sorted(fact.names() - self.params.types.keys())}',
+                        sdfg,
+                        None,
+                    )
+                if fact.segments is not None and fact.segments not in sdfg.arrays:
+                    raise InvalidSDFGError(f'Data facts of "{name}" name no container "{fact.segments}"', sdfg, None)
         if not set(self.small) <= self.params.types.keys():
             raise InvalidSDFGError(
                 f"SMALL symbols {sorted(set(self.small) - self.params.types.keys())} are not declared", sdfg, None
@@ -392,6 +455,8 @@ class SymbolRepo:
             result["runtime_assumptions"] = [relation_to_json(relation) for relation in self.runtime_assumptions]
         if self.shape_declared:
             result["shape_declared"] = list(self.shape_declared)
+        if self.data:
+            result["data"] = {name: [data_fact_to_json(f) for f in facts] for name, facts in self.data.items() if facts}
         keys = {owner: key for key, owner in scope_owners(sdfg)} if self.scopes else {}
         live = [(keys[owner], scope) for owner, scope in self.scopes.items() if owner in keys]
         if live:
@@ -415,6 +480,7 @@ class SymbolRepo:
             OrderedSet(obj.get("small", [])),
             OrderedSet(relation_from_json(relation) for relation in obj.get("runtime_assumptions", [])),
             OrderedSet(obj.get("shape_declared", [])),
+            {name: OrderedSet(data_fact_from_json(f) for f in facts) for name, facts in obj.get("data", {}).items()},
         )
 
 

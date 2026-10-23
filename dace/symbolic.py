@@ -46,6 +46,8 @@ NUM_THREADS_SYMBOL = "__dace_num_threads"
 
 # Re-exported so callers reach the facts API as ``symbolic.ask``, ``symbolic.Facts``, ...
 from dace.symbolic_facts import (  # noqa: F401
+    DataFact,
+    DataFactKind,
     Facts,
     InconsistentAssumptionsError,
     Predicate,
@@ -59,6 +61,7 @@ from dace.symbolic_facts import (  # noqa: F401
     holds,
     is_small,
     is_small_extent,
+    permutation,
     predicate_relation,
     provably_integer,
     provably_le,

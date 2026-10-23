@@ -12,6 +12,7 @@ from dace.transformation.passes.analysis import array_facts
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
 M = dace.symbol("M")
+N = dace.symbol("N")
 NNZ = dace.symbol("NNZ")
 BINS = 4
 
@@ -212,6 +213,91 @@ def test_segments_of_a_running_sum_over_caller_widths_stay_sequential():
     """A caller's width can be negative, so the running sum need not be nondecreasing and segments can overlap."""
     sdfg = parallelized(widths_of_unknown_sign)
     assert "r" in loop_variables(sdfg)
+
+
+def test_a_declared_permutation_maps_a_store_through_a_caller_array():
+    """The caller's ``perm`` is declared ``permutation(0..M-1)``: the store ``out[perm[r]]`` needs no producer."""
+    sdfg = caller_supplied_index_array.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "r" not in loop_variables(sdfg)
+    assert any("perm injective with values in [0, M - 1] (declared)" in n for n in fact_notes(sdfg))
+    perm = np.random.default_rng(2).permutation(30).astype(np.int64)
+    out = np.zeros(30)
+    sdfg(perm=perm, out=out, M=30)
+    assert np.array_equal(out, np.ones(30))
+
+
+@dace.program
+def scatter_rows(
+    indptr: dace.int64[M + 1], indices: dace.int64[NNZ], vals: dace.float64[NNZ], dense: dace.float64[M, N]
+):
+    for i in range(M):
+        for k in range(indptr[i], indptr[i + 1]):
+            dense[i, indices[k]] = vals[k]
+
+
+def test_unique_column_indices_per_row_map_the_row_scatter():
+    """Canonical CSR (``indices`` injective within each segment of ``indptr``) makes ``dense[i, indices[k]]`` over
+    one row collision-free, so the loop over the row's entries maps too; the fact reaches the nested SDFG the row
+    loop's lift creates."""
+    sdfg = scatter_rows.to_sdfg(simplify=True)
+    sdfg.add_data_assumption(
+        "indices", dace.symbolic.DataFact(dace.symbolic.DataFactKind.SEGMENT_INJECTIVE, segments="indptr")
+    )
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert not loop_variables(sdfg)
+    assert any("indices injective within each segment of indptr" in n for n in fact_notes(sdfg))
+    indptr = np.array([0, 2, 2, 5], dtype=np.int64)
+    indices = np.array([3, 0, 1, 4, 2], dtype=np.int64)
+    vals = np.arange(5, dtype=np.float64) + 1
+    dense = np.zeros((3, 5))
+    sdfg(indptr=indptr, indices=indices, vals=vals, dense=dense, M=3, N=5, NNZ=5)
+    ref = np.zeros((3, 5))
+    for i in range(3):
+        ref[i, indices[indptr[i] : indptr[i + 1]]] = vals[indptr[i] : indptr[i + 1]]
+    assert np.array_equal(dense, ref)
+
+
+def test_row_scatter_without_the_canonical_csr_fact_stays_sequential():
+    """Without the fact two entries of one row may name the same column: the inner loop stays a loop."""
+    sdfg = scatter_rows.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert "k" in loop_variables(sdfg)
+
+
+def test_data_assumptions_serialize_rename_and_validate():
+    """Data facts survive a JSON round trip, follow a container and a symbol rename, and only name non-transient
+    containers."""
+    sdfg = caller_supplied_index_array.to_sdfg(simplify=True)
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    loaded = dace.SDFG.from_json(sdfg.to_json())
+    assert loaded.data_assumptions("perm") == sdfg.data_assumptions("perm")
+    loaded.replace_dict({"perm": "order", "M": "K"})
+    (fact,) = loaded.data_assumptions("order")
+    assert str(fact.hi) == "K - 1" and not loaded.data_assumptions("perm")
+    loaded.validate()
+    sdfg.add_transient("scratch", [M], dace.int64)
+    sdfg.add_data_assumption("scratch", dace.symbolic.DataFact(dace.symbolic.DataFactKind.NONNEGATIVE))
+    with pytest.raises(dace.sdfg.InvalidSDFGError):
+        sdfg.validate()
+
+
+def test_data_assumptions_follow_the_symbol_registry_api():
+    """Declared at creation (``add_array(..., assumptions=...)``), replaced by ``set_data_assumptions``, re-adding a
+    known fact does nothing, and a permutation with fewer values than entries is refused as inconsistent."""
+    sdfg = dace.SDFG("data_assumptions_api")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("perm", [M], dace.int64, assumptions=[dace.symbolic.permutation(0, M - 1)])
+    sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 1))
+    assert sdfg.data_assumptions("perm") == (dace.symbolic.permutation(0, M - 1),)
+    nonneg = dace.symbolic.DataFact(dace.symbolic.DataFactKind.NONNEGATIVE)
+    sdfg.set_data_assumptions("perm", [nonneg])
+    assert sdfg.data_assumptions("perm") == (nonneg,)
+    with pytest.raises(dace.symbolic.InconsistentAssumptionsError):
+        sdfg.add_data_assumption("perm", dace.symbolic.permutation(0, M - 2))
+    with pytest.raises(KeyError):
+        sdfg.add_data_assumption("missing", nonneg)
 
 
 def test_a_difference_is_not_nonnegative():

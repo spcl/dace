@@ -1379,6 +1379,60 @@ class SDFG(ControlFlowRegion):
         """
         self._symbol_repo.add_relation(relation)
 
+    def add_data_assumption(self, name: str, fact: symbolic.DataFact) -> None:
+        """Assumes ``fact`` of the contents of the non-transient container ``name`` when the program is called (see
+        :class:`~dace.symbolic_facts.DataFactKind`); adding a known fact again does nothing.
+
+        :raise KeyError: If the container does not exist.
+        :raise InconsistentAssumptionsError: If the fact cannot hold for the container (see :meth:`check_data_fact`).
+        """
+        self.check_data_fact(name, fact)
+        self._symbol_repo.add_data_fact(name, fact)
+
+    def set_data_assumptions(self, name: str, facts: Iterable[symbolic.DataFact]) -> None:
+        """Replaces the facts assumed of container ``name`` when the program is called.
+
+        :raise KeyError: If the container does not exist.
+        :raise InconsistentAssumptionsError: If a fact cannot hold for the container.
+        """
+        facts = list(facts)
+        for fact in facts:
+            self.check_data_fact(name, fact)
+        self._symbol_repo.set_data_facts(name, facts)
+
+    def check_data_fact(self, name: str, fact: symbolic.DataFact) -> None:
+        """Raises if ``fact`` cannot hold for container ``name``: a kind other than ``NONNEGATIVE`` on a container
+        that is not one-dimensional, segments naming no container, or a sentinel-free ``INJECTIVE`` whose value range
+        is provably smaller than the container's extent.
+
+        :raise KeyError: If the container does not exist.
+        :raise InconsistentAssumptionsError: If the fact cannot hold.
+        """
+        desc = self._arrays.get(name)
+        if desc is None:
+            raise KeyError(f'Container "{name}" does not exist')
+        problems = []
+        if fact.kind is not symbolic.DataFactKind.NONNEGATIVE and len(desc.shape) != 1:
+            problems.append(f"{fact.kind.name} needs a one-dimensional container, not shape {desc.shape}")
+        if fact.segments is not None and fact.segments not in self._arrays:
+            problems.append(f'segments "{fact.segments}" is not a container')
+        if (
+            fact.kind is symbolic.DataFactKind.INJECTIVE
+            and fact.sentinel is None
+            and fact.lo is not None
+            and len(desc.shape) == 1
+            and symbolic.holds(
+                symbolic.Relation(symbolic.RelationKind.LT, fact.hi - fact.lo + 1, desc.shape[0]), self.facts()
+            )
+        ):
+            problems.append(f"{desc.shape[0]} distinct entries cannot lie in [{fact.lo}, {fact.hi}]")
+        if problems:
+            raise symbolic.InconsistentAssumptionsError(name, [fact.text(name), *problems])
+
+    def data_assumptions(self, name: str) -> tuple[symbolic.DataFact, ...]:
+        """The facts assumed of the contents of container ``name`` when the program is called."""
+        return self._symbol_repo.data_facts(name)
+
     def facts(self) -> symbolic.Facts:
         """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is a positive
         multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds
@@ -1800,6 +1854,7 @@ class SDFG(ControlFlowRegion):
                         )
 
         del self._arrays[name]
+        self._symbol_repo.remove_data(name)
 
     def reset_sdfg_list(self):
         """
@@ -2524,8 +2579,10 @@ class SDFG(ControlFlowRegion):
         find_new_name=False,
         alignment=0,
         may_alias=False,
+        assumptions: Iterable[symbolic.DataFact] = (),
     ) -> tuple[str, dt.Array]:
-        """Adds an array to the SDFG data descriptor store."""
+        """Adds an array to the SDFG data descriptor store; ``assumptions`` are facts assumed of its contents when the
+        program is called (:meth:`add_data_assumption`)."""
 
         shape = [normalize_shape_entry(s) for s in shape]
         strides = strides or None
@@ -2557,7 +2614,10 @@ class SDFG(ControlFlowRegion):
                 may_alias=may_alias,
             )
 
-        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+        name = self.add_datadesc(name, desc, find_new_name=find_new_name)
+        for fact in assumptions:
+            self.add_data_assumption(name, fact)
+        return name, desc
 
     def add_view(
         self,

@@ -14,7 +14,6 @@ consumer's conflict query as axioms instantiated over the array reads the query 
 """
 
 import ast
-import enum
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -27,7 +26,14 @@ from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    SymbolResolver,
+)
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.analysis.smt_dependence import z3
 
@@ -38,10 +44,8 @@ UNGUARDED = symbolic.pystr_to_symbolic("True")
 SUBSTITUTION_DEPTH = 8
 
 
-class FactKind(enum.Enum):
-    INJECTIVE = "injective"
-    NONDECREASING = "nondecreasing"
-    NONNEGATIVE = "nonnegative"
+#: The kinds are the IR's (:class:`~dace.symbolic_facts.DataFactKind`), so declared and derived facts are one thing.
+FactKind = symbolic.DataFactKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,16 +58,10 @@ class ArrayFact:
     hi: Any = None
     sentinel: int | None = None
     origin: str = ""
+    segments: str | None = None
 
     def describe(self) -> str:
-        if self.kind is FactKind.INJECTIVE:
-            values = f" with values in [{self.lo}, {self.hi}]" if self.lo is not None else ""
-            off = f" apart from {self.sentinel}" if self.sentinel is not None else ""
-            text = f"{self.array} injective{off}{values}"
-        elif self.kind is FactKind.NONDECREASING:
-            text = f"{self.array} nondecreasing on [{self.lo}, {self.hi}]"
-        else:
-            text = f"{self.array} nonnegative"
+        text = symbolic.DataFact(self.kind, self.lo, self.hi, self.sentinel, self.segments).text(self.array)
         return f"{text} ({self.origin})" if self.origin else text
 
 
@@ -568,9 +566,12 @@ def nonnegative_containers(
     return known - (set(assumed) - candidates)
 
 
-def facts_at(sdfg: SDFG, loop: LoopRegion, names: Iterable[str], nonneg: set[str] | None = None) -> list[ArrayFact]:
-    """The facts derivable for each of ``names`` on entry to ``loop``."""
-    chain, _ = preceding_chain(loop)
+def facts_at(
+    sdfg: SDFG, block: ControlFlowBlock, names: Iterable[str], nonneg: set[str] | None = None
+) -> list[ArrayFact]:
+    """The facts known of each of ``names`` on entry to ``block``: derived from the nearest writers before it, or,
+    when nothing before it writes the container, the ones assumed on entry to the SDFG (:func:`declared_facts`)."""
+    chain, _ = preceding_chain(block)
     found: list[ArrayFact] = []
     for name in names:
         desc = sdfg.arrays.get(name)
@@ -585,7 +586,16 @@ def facts_at(sdfg: SDFG, loop: LoopRegion, names: Iterable[str], nonneg: set[str
             found.append(fact)
         elif nonneg is not None and name in nonneg:
             found.append(ArrayFact(FactKind.NONNEGATIVE, name, origin="every store is nonnegative"))
+        found.extend(f for f in declared_facts(block, name) if f not in found)
     return found
+
+
+def declared_facts(block: ControlFlowBlock, name: str) -> list[ArrayFact]:
+    """The facts assumed of ``name`` on entry to ``block`` (:meth:`SymbolResolver.data_facts_at`)."""
+    return [
+        ArrayFact(f.kind, name, f.lo, f.hi, f.sentinel, "declared", f.segments)
+        for f in SymbolResolver().data_facts_at(block, name)
+    ]
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -623,23 +633,51 @@ def loop_bindings(loop: LoopRegion) -> tuple[dict[str, Any], Counter]:
 
 def write_bounds(
     loop: LoopRegion, state: SDFGState, edge: Any, bindings: dict[str, Any], assigned: Counter
-) -> tuple[Any, Any, Any] | None:
-    """``(lo, hi, guard)`` of one store, over the iterator and names ``loop`` does not assign, else ``None``."""
-    ranges = list(edge.data.subset.ndrange())
-    if len(ranges) != 1 or edge.data.wcr is not None or enclosing_loops(state, loop):
+) -> tuple[list[tuple[Any, Any]], Any] | None:
+    """``(box, guard)`` of one store, ``box`` its ``(lo, hi)`` per dimension, over the iterator and names ``loop``
+    does not assign, else ``None``."""
+    if edge.data.wcr is not None or enclosing_loops(state, loop):
         return None
-    lo = bound_expression(symbolic.pystr_to_symbolic(str(ranges[0][0])), bindings, assigned)
-    hi = bound_expression(symbolic.pystr_to_symbolic(str(ranges[0][1])), bindings, assigned)
+    box = []
+    for rb, re_, _ in edge.data.subset.ndrange():
+        lo = bound_expression(symbolic.pystr_to_symbolic(str(rb)), bindings, assigned)
+        hi = bound_expression(symbolic.pystr_to_symbolic(str(re_)), bindings, assigned)
+        if lo is None or hi is None:
+            return None
+        box.append((lo, hi))
     guard = collect_enclosing_conditions(state, stop=loop)
     if guard == UNGUARDED:
-        guard = None
-    else:
-        guard = bound_expression(guard, bindings, assigned)
-        if guard is None:
-            return None
-    if lo is None or hi is None:
+        return box, None
+    guard = bound_expression(guard, bindings, assigned)
+    return None if guard is None else (box, guard)
+
+
+def resolved_range(loop: LoopRegion) -> tuple[Any, Any, Any] | None:
+    """``loop``'s range with each name its bounds read replaced by the value the nearest assignment on every path to
+    the loop gives it, while nothing between that assignment and the loop changes what the value reads."""
+    bounds = loop_range(loop)
+    if bounds is None:
         return None
-    return lo, hi, guard
+    chain, _ = preceding_chain(loop)
+    values: dict[str, Any] = {}
+    changed: set[str] = set()
+    for block in [loop, *chain]:
+        for edge in block.parent_graph.in_edges(block):
+            for name, text in edge.data.assignments.items():
+                if name in values or name in changed:
+                    continue
+                value = symbolic.pystr_to_symbolic(text)
+                reads = {str(x) for x in value.free_symbols} | {str(a.args[0]) for a in value.atoms(symbolic.Subscript)}
+                if not reads & changed:
+                    values[name] = value
+            changed |= set(edge.data.assignments)
+        if block is not loop:
+            changed |= {dn.data for st in states_of(block) for dn in st.data_nodes() if st.in_degree(dn) > 0}
+            if not isinstance(block, SDFGState):
+                changed |= set(assigned_in(block))
+    start, end, step = bounds
+    mapping = {symbolic.symbol(n): v for n, v in values.items()}
+    return start.subs(mapping), end.subs(mapping), step
 
 
 def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[ArrayFact] | None:
@@ -647,12 +685,13 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     ``name``, which the loop does not read; ``None`` if there are none.
 
     A store's subset may name symbols the loop binds once per iteration from arrays it does not write
-    (``row = perm[r]``); they are replaced by their values. The branch conditions guarding a store are kept for
-    both iterations, and every array read gets the facts derivable for it on entry to ``loop``.
+    (``row = perm[r]``); they are replaced by their values, as are the names the loop's bounds read
+    (:func:`resolved_range`). The branch conditions guarding a store are kept for both iterations, and every array
+    read gets the facts known of it on entry to ``loop`` (:func:`facts_at`).
     """
     if not smt_dependence.has_z3():
         return None
-    bounds = loop_range(loop)
+    bounds = resolved_range(loop)
     if bounds is None:
         return None
     reads, written = loop.read_and_write_sets()
@@ -665,10 +704,11 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     stores = []
     for state, edge in edges:
         store = write_bounds(loop, state, edge, bindings, assigned)
-        if store is None:
+        if store is None or len(store[0]) != edges[0][1].data.subset.dims():
             return None
         stores.append(store)
-    exprs = [e for store in stores for e in store if e is not None]
+    exprs = [e for box, guard in stores for e in [*(x for lh in box for x in lh), guard] if e is not None]
+    exprs += list(bounds[:2])
     arrays = {str(a.args[0]) for e in exprs for a in e.atoms(symbolic.Subscript)}
     if not arrays or arrays & set(written):
         return None
@@ -700,9 +740,9 @@ def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any]
         selects(term, reads)
     axioms = []
     for fact in facts:
-        if fact.array not in arrays or fact.array not in reads:
+        if fact.array not in reads:
             continue
-        arr = arrays[fact.array]
+        arr = z.Array(fact.array, z.IntSort(), z.IntSort())
         idx = list({x.sexpr(): x for x in reads[fact.array]}.values())
         bound = [
             None if b is None else smt_dependence._sympy_to_z3(symbolic.pystr_to_symbolic(str(b)), sym_cache, arrays)
@@ -711,8 +751,21 @@ def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any]
         if any(b is not None and not z.is_int(b) for b in bound):
             continue
         lo, hi = bound
+        if fact.kind is FactKind.SEGMENT_INJECTIVE:
+            if fact.segments not in reads:
+                continue
+            seg = z.Array(fact.segments, z.IntSort(), z.IntSort())
+            rows = list({r.sexpr(): r for r in reads[fact.segments]}.values())
+            for x in idx:
+                for y in idx:
+                    if x is y:
+                        continue
+                    for r in rows:
+                        inside = z.And(seg[r] <= x, x < seg[r + 1], seg[r] <= y, y < seg[r + 1])
+                        axioms.append(z.Implies(z.And(x != y, inside), arr[x] != arr[y]))
+            continue
         for x in idx:
-            ax = z.Select(arr, x)
+            ax = arr[x]
             if fact.kind is FactKind.NONNEGATIVE:
                 axioms.append(ax >= 0)
             elif fact.kind is FactKind.INJECTIVE and lo is not None:
@@ -721,7 +774,7 @@ def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any]
             for y in idx:
                 if x is y:
                     continue
-                ay = z.Select(arr, y)
+                ay = arr[y]
                 if fact.kind is FactKind.INJECTIVE:
                     premise = x != y if fact.sentinel is None else z.And(x != y, ax != fact.sentinel)
                     axioms.append(z.Implies(premise, ax != ay))
@@ -731,33 +784,37 @@ def fact_axioms(facts: list[ArrayFact], arrays: dict[str, Any], terms: list[Any]
 
 
 def prove_disjoint_under_facts(
-    first: tuple[Any, Any, Any],
-    second: tuple[Any, Any, Any],
+    first: tuple[list[tuple[Any, Any]], Any],
+    second: tuple[list[tuple[Any, Any]], Any],
     itervar: str,
     start: Any,
     end: Any,
     step: Any,
     facts: list[ArrayFact],
 ) -> bool | None:
-    """Whether a store ``first`` of one iteration and a store ``second`` of another, each ``(lo, hi, guard)`` and
-    each passing its guard, write disjoint intervals, given ``facts`` about the arrays they read."""
+    """Whether a store ``first`` of one iteration and a store ``second`` of another, each ``(box, guard)`` and each
+    passing its guard, write disjoint boxes, given ``facts`` about the arrays they and the loop bounds read."""
     z = required(z3)
     sym_cache: dict[str, Any] = {}
     arrays: dict[str, Any] = {}
     sides = []
-    for suffix, (lo_expr, hi_expr, guard) in (("_1", first), ("_2", second)):
+    for suffix, (box, guard) in (("_1", first), ("_2", second)):
         i = z.Int(itervar + suffix)
         sym_cache[itervar] = i
-        lo = smt_dependence._sympy_to_z3(lo_expr, sym_cache, arrays)
-        hi = smt_dependence._sympy_to_z3(hi_expr, sym_cache, arrays)
+        dims = [
+            (smt_dependence._sympy_to_z3(lo, sym_cache, arrays), smt_dependence._sympy_to_z3(hi, sym_cache, arrays))
+            for lo, hi in box
+        ]
         cond = True if guard is None else smt_dependence._bool_to_z3(guard, sym_cache, arrays)
         domain = smt_dependence._iter_bounds(i, start, end, step)
-        if lo is None or hi is None or cond is None or not domain or not (z.is_int(lo) and z.is_int(hi)):
+        if cond is None or not domain or any(x is None or not z.is_int(x) for lh in dims for x in lh):
             return None
-        sides.append((i, lo, hi, cond, domain))
+        sides.append((i, dims, cond, domain))
     del sym_cache[itervar]
-    (i1, lo1, hi1, c1, b1), (i2, lo2, hi2, c2, b2) = sides
+    (i1, d1, c1, b1), (i2, d2, c2, b2) = sides
     conds = [c for c in (c1, c2) if c is not True]
-    axioms = fact_axioms(facts, arrays, [lo1, hi1, lo2, hi2] + conds, sym_cache)
+    terms = [x for lh in d1 + d2 for x in lh] + conds + list(b1) + list(b2)
+    axioms = fact_axioms(facts, arrays, terms, sym_cache)
+    overlap = z.And(*(z.And(lo1 <= hi2, lo2 <= hi1) for (lo1, hi1), (lo2, hi2) in zip(d1, d2)))
     antecedent = z.And(i1 != i2, *b1, *b2, *conds, *axioms)
-    return smt_dependence.prove_unsat(antecedent, z.Not(z.And(lo1 <= hi2, lo2 <= hi1)))
+    return smt_dependence.prove_unsat(antecedent, z.Not(overlap))
