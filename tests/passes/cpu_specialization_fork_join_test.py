@@ -475,15 +475,38 @@ def reduce_in_loop(name, loop_end):
     return sdfg, node
 
 
-def test_library_node_in_long_loop_goes_sequential():
-    """A library node opens its own region per entry, so a long loop around it is a hazard."""
+def test_library_node_in_long_loop_stays_parallel():
+    """A library node is a map over a blackbox: a loop around it multiplies its fork and its work alike
+    (cp2k_trs4's iteration loop over a 1.2M-block batched einsum ran single-core)."""
     sdfg, node = reduce_in_loop("reduce_long_loop", "N")
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert node.schedule == dtypes.ScheduleType.CPU_Multicore
+
+
+def test_library_node_over_a_data_segment_in_a_loop_goes_sequential():
+    """Rule 3 for a blackbox: a reduction over a CSR row, ``row[b:e]`` with both ends read from data each trip."""
+    sdfg = dace.SDFG("reduce_csr_row")
+    sdfg.add_array("indptr", [N + 1], dace.int64)
+    sdfg.add_array("row", [M], dace.float64)
+    sdfg.add_array("acc", [N], dace.float64)
+    for bound in ("b", "e"):
+        sdfg.add_symbol(bound, dace.int64)
+    rows = loop(sdfg, "rows", "N")
+    read = rows.add_state("read_row", is_start_block=True)
+    state = rows.add_state("body")
+    rows.add_edge(read, state, dace.InterstateEdge(assignments={"b": "indptr[it]", "e": "indptr[it + 1]"}))
+    node = Reduce("reduce_sum", wcr="lambda a, b: a + b", axes=None, identity=0.0)
+    node.schedule = dtypes.ScheduleType.CPU_Multicore
+    state.add_node(node)
+    state.add_edge(state.add_access("row"), None, node, "_in", dace.Memlet("row[b:e]"))
+    state.add_edge(node, "_out", state.add_access("acc"), None, dace.Memlet("acc[it]"))
+    sdfg.validate()
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.Sequential
 
 
 def test_library_node_in_short_loop_stays_parallel():
-    """...but a PROVABLY short loop is not re-entry -- the trip-count-aware half of the rule."""
+    """A provably short loop is no re-entry either."""
     sdfg, node = reduce_in_loop("reduce_short_loop", "4")
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.CPU_Multicore
@@ -675,7 +698,8 @@ if __name__ == "__main__":
     test_nested_parallel_map_is_always_sequentialized()
     test_nested_parallel_canonical_form_is_valid()
     test_threshold_zero_disables_the_cost_model()
-    test_library_node_in_long_loop_goes_sequential()
+    test_library_node_in_long_loop_stays_parallel()
+    test_library_node_over_a_data_segment_in_a_loop_goes_sequential()
     test_library_node_in_short_loop_stays_parallel()
     for kind, implementation in [("copy", "MemcpyCPU"), ("memset", "CPU")]:
         test_re_entered_transfer_collapses_to_libc(kind, implementation)

@@ -341,8 +341,6 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         :param entry: the scope's map entry, or ``None`` for the state's top level.
         :param in_parallel: whether a device-parallel map encloses this scope.
         """
-        from dace.libraries.standard.helper import is_reentered_cpu_transfer
-
         for node in children[entry]:
             if isinstance(node, nodes.MapEntry):
                 self.visit_scope(state, children, node, self.decide_map(state, node, in_parallel, children))
@@ -351,12 +349,25 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
                 # the loop half of the re-entry rule; an enclosing parallel map still serializes it.
                 loop_reentry = node.serial_on_loop_reentry
                 if node.schedule in CPU_PARALLEL_SCHEDULES and (
-                    in_parallel or (loop_reentry and is_reentered_cpu_transfer(node, state, loop_cache=self.loop_cache))
+                    in_parallel or (loop_reentry and self.loop_serializes(state, node))
                 ):
                     node.schedule = dtypes.ScheduleType.Sequential
                     self.pinned += 1
             elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
                 self.visit_region(node.sdfg, in_parallel)
+
+    def loop_serializes(self, state: SDFGState, node: nodes.LibraryNode) -> bool:
+        """Whether the sequential loops around ``node`` make its own region unprofitable. A transfer counts a long
+        loop that varies its size (:func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer`); any other
+        node is a map over a blackbox, and a loop alone is no reason (rule 3: a data segment it reads)."""
+        from dace.libraries.standard.helper import is_reentered_cpu_transfer
+        from dace.libraries.standard.nodes.copy import CopyLibraryNode
+        from dace.libraries.standard.nodes.fill import FillLibraryNode
+        from dace.transformation.auto.auto_optimize import libnode_reads_data_segment  # Avoid an import cycle
+
+        if isinstance(node, (CopyLibraryNode, FillLibraryNode)):
+            return is_reentered_cpu_transfer(node, state, loop_cache=self.loop_cache)
+        return libnode_reads_data_segment(node, state)
 
     def fewer_than_threshold(self, count: Any, facts: symbolic.Facts) -> symbolic.Truth:
         """Whether a trip count provably falls short of the break-even work (three-valued).
