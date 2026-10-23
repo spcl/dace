@@ -25,6 +25,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 
 
@@ -70,6 +71,59 @@ def in_place_update(sdfg: SDFG, state: SDFGState, name: str) -> AugAssignToWCR |
     return None
 
 
+def read_only_by_updates(sdfg: SDFG, loop: LoopRegion, name: str) -> bool:
+    """Whether every read of ``name`` in ``loop`` is a tasklet that writes ``name`` back: an update's own read. Any
+    other reader (householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``) sees the accumulated value, which a WCR
+    does not order."""
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        for node in block.data_nodes():
+            if node.data != name:
+                continue
+            for edge in block.out_edges(node):
+                if edge.data.is_empty():
+                    continue
+                reader = block.memlet_path(edge)[-1].dst
+                if not isinstance(reader, nodes.Tasklet):
+                    return False
+                if not any(not e.data.is_empty() and e.data.data == name for e in block.out_edges(reader)):
+                    return False
+    return name not in {
+        read for edge in loop.all_interstate_edges() for read in edge.data.free_symbols
+    } and name not in control_flow_reads_names(loop)
+
+
+def writes_move_with_the_iteration(loop: LoopRegion, name: str) -> bool:
+    """Whether every write of ``name`` in ``loop`` addresses through the loop variable or a symbol the body defines:
+    a scatter whose iterations mostly write apart. A write of the same elements every iteration (``out += w[r] *
+    x``) is a reduction over the loop, which the loop's own parallel axes serve better than atomics across it."""
+    moving = loop_analysis.body_local_symbols(loop) | {loop.loop_variable}
+    found = False
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        for node in block.data_nodes():
+            if node.data != name:
+                continue
+            for edge in block.in_edges(node):
+                if edge.data.is_empty():
+                    continue
+                subset = edge.data.get_dst_subset(edge, block)
+                if subset is None or not {str(sym) for sym in subset.free_symbols} & moving:
+                    return False
+                found = True
+    return found
+
+
+def control_flow_reads_names(loop: LoopRegion) -> set[str]:
+    """The names the loop's own and nested regions' conditions read."""
+    names: set[str] = set()
+    for region in [loop, *loop.all_control_flow_regions()]:
+        names |= region.used_symbols(all_symbols=True, with_contents=False)
+    return names
+
+
 class CarriedAccumulationToWCR(ppl.Pass):
     """WCR for the in-place accumulations that alone keep a loop from mapping (``EliminateCopyBack`` first)."""
 
@@ -89,6 +143,8 @@ class CarriedAccumulationToWCR(ppl.Pass):
             for loop in [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion)]:
                 # Until the loop maps or nothing is left to rewrite: an applied rewrite renumbers its state.
                 while (name := refused_container(owner, loop)) is not None:
+                    if not writes_move_with_the_iteration(loop, name) or not read_only_by_updates(owner, loop, name):
+                        break
                     applied = False
                     for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
                         xform = in_place_update(owner, state, name)
