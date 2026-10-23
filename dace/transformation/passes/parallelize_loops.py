@@ -196,7 +196,9 @@ class ParallelizeLoops(ppl.Pass):
     Refusals are deliberately NOT cached. A lift can make a loop liftable that is nowhere near it,
     so a refusal held across any apply costs parallelism -- measured on a three-nest kernel, caching
     them cost a map the plain matcher finds, because the matcher re-enumerates every candidate after
-    every apply. What is reused is the ANALYSIS, not the verdict.
+    every apply. What is reused is the ANALYSIS, not the verdict -- except between two lifts, when the
+    graph a loop was refused on is still the current one: a sweep goes on past a lift instead of
+    restarting, and its next round re-probes only the loops refused before a later lift.
 
     Soundness rests on one invariant: every ``apply`` is immediately preceded by a full
     ``can_be_applied`` against the CURRENT graph. Nothing is applied on the strength of a verdict
@@ -403,13 +405,21 @@ class ParallelizeLoops(ppl.Pass):
         # whole SDFG, once per lift.
         candidates = candidate_loops(sdfg)
         keys: dict[LoopRegion, Any] = {}
+        # loop -> how many lifts this sweep had made when the loop was last refused. Without a lift since, the graph
+        # is the one it was refused on, and so is the verdict.
+        refused_at: dict[LoopRegion, int] = {}
+        # Rounds over the loops in ``order``: a lift patches the candidates and the round goes on with the loops after
+        # it, and the next round re-probes what a lift since its refusal may have changed.
         while True:
             lifted_one = False
             if order is not None:
                 for loop in candidates:
                     if loop not in keys:
                         keys[loop] = order(loop)
-            for loop in candidates if order is None else sorted(candidates, key=keys.__getitem__):
+            alive = set(candidates)
+            for loop in list(candidates) if order is None else sorted(candidates, key=keys.__getitem__):
+                if loop not in alive or refused_at.get(loop) == applied:
+                    continue
                 sd = loop.sdfg
                 graph = loop.parent_graph
                 inv = invariants.get(sd)
@@ -427,6 +437,7 @@ class ParallelizeLoops(ppl.Pass):
                 if not self.lift(
                     xform, loop, pipeline_results, before_apply=lambda: sites.append(LiftSite.capture(loop))
                 ):
+                    refused_at[loop] = applied
                     continue
                 applied += 1
                 lifted_one = True
@@ -461,6 +472,7 @@ class ParallelizeLoops(ppl.Pass):
                     candidates = candidate_loops(sdfg)
                 else:
                     candidates = patch_candidates(candidates, loop, graph, site, added)
+                alive = set(candidates)
                 for moved in site.inner_loops:
                     keys.pop(moved, None)
                 loop_facts.pop(loop, None)
@@ -482,7 +494,6 @@ class ParallelizeLoops(ppl.Pass):
                         facts.block_order = UNCOMPUTED
                         facts.carried = UNCOMPUTED
                     region = region.parent_graph
-                break  # restart the sweep so the next probe sees a current loop list and context
 
             if not lifted_one:
                 return applied

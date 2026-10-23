@@ -74,6 +74,29 @@ def same_guard_twice(A: dace.float64[N], B: dace.float64[N], flag: dace.int64):
 
 
 @dace.program
+def per_iteration_guard_in_branch(A: dace.float64[N], B: dace.float64[N], M: dace.float64[N], flag: dace.int64):
+    for i in range(N):
+        if flag > 0:
+            c = M[i] > 0.5
+            if c:
+                t = A[i] * 2.0
+            B[i] = A[i]
+            if c:
+                B[i] = t + 1.0
+
+
+@dace.program
+def guard_rewritten_between(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        c = A[i] > 0.5
+        if c:
+            t = A[i] * 2.0
+        c = A[i] < 0.2
+        if c:
+            B[i] = t + 1.0
+
+
+@dace.program
 def varying_guard_twice(A: dace.float64[N], B: dace.float64[N]):
     for i in range(N):
         if i % 2 == 0:
@@ -158,14 +181,41 @@ def test_a_read_under_the_same_invariant_guard_as_its_write_still_maps():
         assert np.allclose(b, a * 2.0 + 1.0 if flag else a)
 
 
-def test_a_read_under_the_same_varying_guard_is_still_refused_as_written():
-    """The guard reads the loop variable: the same text is a different condition per iteration, no carry-over."""
+def test_a_read_under_the_same_varying_guard_still_maps():
+    """The guard reads the loop variable, which keeps its value within an iteration: both branches run in the
+    same iterations, so the scratch is still the iteration's own."""
     sdfg = varying_guard_twice.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    rng = np.random.default_rng(5)
+    a = rng.random(8)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, N=8)
+    assert np.allclose(b, np.where(np.arange(8) % 2 == 0, a * 2.0 + 1.0, a))
+
+
+def test_a_per_iteration_guard_pair_inside_a_branch_still_maps():
+    """velocity_tendencies' ``continue`` guard: inside ``if lextra_diffu:`` a value set at the top of the iteration
+    guards both the write of a scratch and its read; both run in the same iterations."""
+    sdfg = per_iteration_guard_in_branch.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    rng = np.random.default_rng(6)
+    a, m = rng.random(8), rng.random(8)
+    for flag in (0, 1):
+        b = np.zeros(8)
+        sdfg(A=a, B=b, M=m, flag=flag, N=8)
+        assert np.allclose(b, np.where(m > 0.5, a * 2.0 + 1.0, a) if flag else 0.0)
+
+
+def test_a_guard_whose_scalar_is_rewritten_between_the_branches_is_refused():
+    """``c`` changes between the two ``if c:`` blocks: the read may see the ``t`` of an earlier iteration."""
+    sdfg = guard_rewritten_between.to_sdfg(simplify=False)
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, dace.sdfg.state.LoopRegion)]
     from dace.transformation.interstate.loop_to_map import read_before_written
 
     names = {name for name, desc in sdfg.arrays.items() if desc.transient}
-    assert any(read_before_written(loop, names) for loop in loops)
+    assert any("t" in read_before_written(loop, names) for loop in loops)
 
 
 if __name__ == "__main__":
@@ -173,4 +223,6 @@ if __name__ == "__main__":
 
     sys.exit(pytest.main([__file__]))
     test_a_read_under_the_same_invariant_guard_as_its_write_still_maps()
-    test_a_read_under_the_same_varying_guard_is_still_refused_as_written()
+    test_a_read_under_the_same_varying_guard_still_maps()
+    test_a_per_iteration_guard_pair_inside_a_branch_still_maps()
+    test_a_guard_whose_scalar_is_rewritten_between_the_branches_is_refused()

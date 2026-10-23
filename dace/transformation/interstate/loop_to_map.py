@@ -4,7 +4,7 @@
 import copy
 import warnings
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from itertools import islice
 from re import findall
@@ -565,33 +565,70 @@ def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Option
     return carried & observable_locals(loop, candidates, ctx)
 
 
-def read_before_written(loop: LoopRegion, candidates: set[str]) -> set[str]:
+def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterable[SDFGState] | None = None) -> set[str]:
     """Among ``candidates``, the containers an iteration of ``loop`` can read before it writes them (see
     :func:`carried_local_transients`). Each name's verdict depends on its own accesses alone, so asking about one
-    name gives that name's verdict of the whole set."""
+    name gives that name's verdict of the whole set.
+
+    :param holders: states holding every access node of ``candidates`` in ``loop`` (a superset is fine); found by a
+                    scan of the loop when ``None``. Blocks holding none of them are not walked.
+    """
+    if holders is None:
+        holders = [
+            block
+            for block in loop.all_control_flow_blocks()
+            if isinstance(block, SDFGState) and any(dn.data in candidates for dn in block.data_nodes())
+        ]
+    # The blocks on a path from ``loop`` down to an access: everything else neither reads nor writes a candidate.
+    relevant: set[ControlFlowBlock] = set()
+    for state in holders:
+        block = state
+        while block is not loop and block not in relevant and block is not None:
+            relevant.add(block)
+            block = block.parent_graph
+    if not relevant:
+        return set()
+
     carried: set[str] = set()
-    # What a branch on a loop-invariant condition writes, by condition: a later branch on the same condition runs in
-    # exactly the iterations that one did (warpx's two ``if rz_modes:`` blocks, one filling ``a_re``, one reading it).
-    guarded: dict[str, set[str]] = {}
-    varying: set[str] | None = None
+    changes: dict[ControlFlowBlock, set[str]] = {}
 
-    def invariant(condition) -> bool:
-        nonlocal varying
-        if varying is None:
-            # Any written access node counts: a superset of the written data, without memlet analysis.
-            written_data = {
-                dn.data
-                for block in loop.all_control_flow_blocks()
-                if isinstance(block, SDFGState)
-                for dn in block.data_nodes()
-                if block.in_degree(dn) > 0
+    def changed_by(block: ControlFlowBlock) -> set[str]:
+        """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
+        interstate assignments and loop variables inside it."""
+        names = changes.get(block)
+        if names is None:
+            states = [block] if isinstance(block, SDFGState) else block.all_control_flow_blocks()
+            names = {
+                dn.data for st in states if isinstance(st, SDFGState) for dn in st.data_nodes() if st.in_degree(dn) > 0
             }
-            assigned = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
-            varying = written_data | assigned | {loop.loop_variable}
-        return not ({str(name) for name in condition.get_free_symbols()} & varying)
+            if isinstance(block, AbstractControlFlowRegion):
+                names |= {name for edge in block.all_interstate_edges() for name in edge.data.assignments}
+                names |= {
+                    r.loop_variable for r in [block, *block.all_control_flow_regions()] if isinstance(r, LoopRegion)
+                }
+            changes[block] = names
+        return names
 
-    def scan(region: ControlFlowRegion, written: set[str], in_branch: bool, in_loop: bool) -> None:
+    def forget(guarded: dict[str, tuple[set[str], set[str]]], names: set[str]) -> None:
+        for key in [key for key, (reads, _) in guarded.items() if reads & names]:
+            del guarded[key]
+
+    def scan(region: ControlFlowRegion, written: set[str], guarded: dict[str, tuple[set[str], set[str]]]) -> None:
+        """Walk one pass through ``region``. ``guarded`` maps a condition to the names it reads and what a branch on
+        it wrote earlier in this pass, while those names keep their value: a later branch on the same condition runs
+        exactly when that one did (warpx's two ``if rz_modes:`` blocks, one filling ``a_re``, one reading it;
+        velocity_tendencies' ``continue`` guard split into two conditionals). A branch body and a nested loop's body
+        each walk a copy, so what they record stays theirs; a nested loop's copy has first lost what the loop
+        changes, since its later iterations see those changes."""
         for block in cfg_analysis.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=False):
+            if guarded:
+                for edge in region.in_edges(block):
+                    if edge.data.assignments:
+                        forget(guarded, set(edge.data.assignments))
+            if block not in relevant:
+                if guarded:
+                    forget(guarded, changed_by(block))
+                continue
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
                     if (
@@ -604,20 +641,31 @@ def read_before_written(loop: LoopRegion, candidates: set[str]) -> set[str]:
                 written |= {dn.data for dn in block.data_nodes() if dn.data in candidates and block.in_degree(dn) > 0}
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
+                recorded = {}
                 for cond, body in block.branches:
-                    # Looked up under any nest of loops, recorded only where the branch runs once per iteration.
-                    key = cond.as_string if cond is not None and not in_branch and invariant(cond) else None
-                    branch_written = set(written) | guarded.get(key, set())
-                    scan(body, branch_written, True, in_loop)
+                    key = None if cond is None else cond.as_string
+                    branch_written = set(written)
+                    if key in guarded:
+                        branch_written |= guarded[key][1]
+                    scan(body, branch_written, dict(guarded))
                     per_branch.append(branch_written)
-                    if key is not None and not in_loop:
-                        guarded[key] = branch_written
+                    if key is not None:
+                        recorded[key] = ({str(name) for name in cond.get_free_symbols()}, branch_written)
+                guarded.update(recorded)
                 if per_branch and any(cond is None for cond, _ in block.branches):
                     written |= set.intersection(*per_branch)
+            elif isinstance(block, LoopRegion):
+                inner = dict(guarded)
+                forget(inner, changed_by(block))
+                scan(block, written, inner)
             elif isinstance(block, ControlFlowRegion):
-                scan(block, written, in_branch, in_loop or isinstance(block, LoopRegion))
+                # Straight-line: its walk is part of this pass and forgets as it goes.
+                scan(block, written, guarded)
+                continue
+            if guarded:
+                forget(guarded, changed_by(block))
 
-    scan(loop, set(), False, False)
+    scan(loop, set(), {})
     return carried
 
 
@@ -2010,7 +2058,8 @@ class LoopToMap(xf.MultiStateTransformation):
         writing it and the value is observable (:func:`carried_local_transients`), decided for ``name`` alone.
         The loop enclosing many lifts is typically refused on such a carrier (CloudSC's level loop on
         ``zcovptot``), and the full analysis behind it walks the whole body once per lift."""
-        if name not in read_before_written(self.loop, {name}):
+        holders = [st for st in ctx.access_states.get(name, ()) if st in loop_states]
+        if name not in read_before_written(self.loop, {name}, holders):
             return False
         _, local_transients = split_loop_containers(sdfg, loop_states, ctx)
         local_transients -= control_flow_reads_outside(sdfg, self.loop, ctx)
