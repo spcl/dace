@@ -547,6 +547,21 @@ def test_refuse_in_place_compaction_through_a_scalar():
 
 
 @dace.program
+def inplace_via_noop_cast(Z: dace.float64[N], I: dace.int64[N]):
+    c = 0
+    for i in range(N):
+        if I[i] > 0:
+            t = dace.float64(Z[i])
+            Z[c] = t
+            c = c + 1
+
+
+def test_refuse_in_place_compaction_through_an_array_to_array_copy():
+    """The no-op cast leaves ``Z[i] -> Z[c]``, one copy edge whose memlet names only the read side."""
+    assert not lifted(build(inplace_via_noop_cast))
+
+
+@dace.program
 def two_cursors(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
     j = -1
     k = -1

@@ -513,15 +513,23 @@ class LoopToStreamCompaction(ppl.Pass):
             for edge in state.edges():
                 if edge.data.is_empty() or edge.data.data is None:
                     continue
-                name = edge.data.data
-                uses_cursor = cursor in {str(s) for s in required(edge.data.subset).free_symbols}
-                writes = isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
-                target = (
-                    (cursor_written if uses_cursor else plain_written)
-                    if writes
-                    else (cursor_read if uses_cursor else read)
-                )
-                target[name] = target.get(name, 0) + 1
+                # An access-node destination is written at its own side of the memlet, which for a copy between two
+                # access nodes is the other subset (``Z[i] -> Z[c]`` writes ``Z[c]``); its source is read at the other.
+                accesses = []
+                if isinstance(edge.dst, nodes.AccessNode):
+                    accesses.append((edge.dst.data, edge.data.get_dst_subset(edge, state), True))
+                    if isinstance(edge.src, nodes.AccessNode):
+                        accesses.append((edge.src.data, edge.data.get_src_subset(edge, state), False))
+                else:
+                    accesses.append((edge.data.data, edge.data.subset, False))
+                for name, sub, writes in accesses:
+                    uses_cursor = cursor in {str(s) for s in required(sub).free_symbols}
+                    target = (
+                        (cursor_written if uses_cursor else plain_written)
+                        if writes
+                        else (cursor_read if uses_cursor else read)
+                    )
+                    target[name] = target.get(name, 0) + 1
         # Interstate edges and branch conditions read data too; a compaction whose source read is
         # bound to a symbol (``t = Z[i]``) aliases its target exactly as a dataflow read would.
         for memlet in self.meta_reads(loop, sdfg):
