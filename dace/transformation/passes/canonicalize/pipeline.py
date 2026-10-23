@@ -503,12 +503,16 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
 
 
 class _ThenIfChanged(ppl.Pass):
-    """``first``, then the ``then`` units only when ``first`` rewrote the graph: the lift that follows a rewrite
-    re-probes every loop, which a whole-program kernel pays for nothing when there was nothing to rewrite."""
+    """The ``first`` units in order, then the ``then`` units only when a watched one of them rewrote the graph: the
+    lift that follows a rewrite re-probes every loop, which a whole-program kernel pays for nothing when there was
+    nothing to rewrite.
+
+    :param first: ``(unit, watched)`` pairs; only a watched unit's result decides.
+    """
 
     CATEGORY: str = "Canonicalization"
 
-    def __init__(self, first: ppl.Pass, then: list[ppl.Pass]) -> None:
+    def __init__(self, first: list[tuple[ppl.Pass, bool]], then: list[ppl.Pass]) -> None:
         super().__init__()
         self.first = first
         self.then = then
@@ -522,13 +526,16 @@ class _ThenIfChanged(ppl.Pass):
     def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> Any:
-        result = self.first.apply_pass(sdfg, {})
-        if result is None:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
+        changed = False
+        for unit, watched in self.first:
+            result = unit.apply_pass(sdfg, {})
+            changed = changed or (watched and result is not None)
+        if not changed:
             return None
         for unit in self.then:
             unit.apply_pass(sdfg, {})
-        return result
+        return True
 
 
 @properties.make_properties
@@ -853,6 +860,9 @@ def normalize_statements(
     ]
     lower_maps = MapToForLoop()
     lower_maps.keep_reductions_parallel = True
+    # While updates are still maps: once lowered and unrolled, an update's add and its copy-back can land in different
+    # states (gromacs's ``fshift[ish, :] += fi[i, :]``), out of the fold's reach. Again in every statement round.
+    s += [(label, EliminateCopyBack())]
     s += [
         (label, PatternApplyOnceEverywhere([lower_maps], state_local=True)),
         (label, PatternApplyOnceEverywhere([PruneConnectors()])),
@@ -996,15 +1006,18 @@ def derive_parallelism(
         (label, _PrivatizeScalarsStage()),
         (label, _PrivatizeArraysStage()),
     ]
-    s += _inline_single_state(label)
-    s += [(label, StructuralCleanup()), (label, NormalizeWCR())]
     # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
-    # guarded-scatter versioning below
+    # guarded-scatter versioning below. Either rewrite, the inlining or the WCR, can leave a loop that now maps.
     s += [
         (
             label,
             _ThenIfChanged(
-                CarriedAccumulationToWCR(),
+                [
+                    *[(unit, isinstance(unit, PruneAndInlineNestedSDFGs)) for _, unit in _inline_single_state(label)],
+                    (StructuralCleanup(), False),
+                    (NormalizeWCR(), False),
+                    (CarriedAccumulationToWCR(), True),
+                ],
                 [
                     PropagateMemlets(),
                     ParallelizeLoopsHoldingSiblingChains(propagate=False),

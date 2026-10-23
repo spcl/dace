@@ -6,9 +6,8 @@ assignment's copy. Each iteration writes the element it read, so writing ``A`` i
 the copy are gone, and the map is the read-modify-write ``AugAssignToWCR`` turns into a WCR write.
 """
 
+from collections import Counter
 from dataclasses import dataclass
-
-import sympy
 
 from dace import SDFG, SDFGState, data, subsets, symbolic
 from dace.memlet import Memlet
@@ -34,7 +33,7 @@ def same_index(a: subsets.Range, b: subsets.Range) -> bool:
     if a.dims() != b.dims():
         return False
     return all(
-        symbolic.simplify(sympy.sympify(x) - sympy.sympify(y)) == 0
+        symbolic.simplify(symbolic.pystr_to_symbolic(x) - symbolic.pystr_to_symbolic(y)) == 0
         for (ab, ae, _), (bb, be, _) in zip(a.ranges, b.ranges)
         for x, y in ((ab, bb), (ae, be), (ab, ae))
     )
@@ -48,8 +47,8 @@ def placed(write: subsets.Range, subset: subsets.Range, kept: list[int]) -> subs
     return subsets.Range([(begin, begin, 1) for begin in begins])
 
 
-def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode) -> CopyBack | None:
-    """The copy-back ``transient`` closes, or ``None``."""
+def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: Counter[str]) -> CopyBack | None:
+    """The copy-back ``transient`` closes, or ``None``. ``uses``: access nodes per container in ``sdfg``."""
     desc = sdfg.arrays[transient.data]
     if not desc.transient or isinstance(desc, data.View) or state.in_degree(transient) != 1:
         return None
@@ -64,14 +63,14 @@ def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode) -> Copy
         return None
     if target.data == transient.data or isinstance(sdfg.arrays[target.data], data.View) or copy.data.wcr is not None:
         return None
-    if sum(1 for st in sdfg.states() for n in st.data_nodes() if n.data == transient.data) != 1:
+    if uses[transient.data] != 1:
         return None
     whole, subset = copy.data.get_src_subset(copy, state), copy.data.get_dst_subset(copy, state)
     if not isinstance(whole, subsets.Range) or not isinstance(subset, subsets.Range):
         return None
     if whole != subsets.Range.from_array(desc):
         return None
-    kept = [dim for dim, (begin, end, _) in enumerate(subset.ranges) if sympy.sympify(end - begin) != 0]
+    kept = [dim for dim, (begin, end, _) in enumerate(subset.ranges) if symbolic.pystr_to_symbolic(end - begin) != 0]
     if len(kept) != len(desc.shape):
         return None
     return CopyBack(map_exit, transient, copy, kept)
@@ -106,7 +105,7 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
     return not any(isinstance(n, nodes.AccessNode) and n.data == target.data for n in inner.nodes())
 
 
-def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack) -> None:
+def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack, uses: Counter[str]) -> None:
     target, copy = found.copy.dst, found.copy
     subset = copy.data.get_dst_subset(copy, state)
     (outer,) = state.in_edges(found.transient)
@@ -115,7 +114,8 @@ def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack) -> None:
     inner.data = Memlet(data=target.data, subset=placed(write, subset, found.kept))
     state.add_edge(found.map_exit, outer.src_conn, target, copy.dst_conn, Memlet(data=target.data, subset=subset))
     state.remove_node(found.transient)
-    if not any(n.data == found.transient.data for st in sdfg.states() for n in st.data_nodes()):
+    uses[found.transient.data] -= 1
+    if uses[found.transient.data] == 0:
         sdfg.remove_data(found.transient.data, validate=False)
 
 
@@ -136,12 +136,13 @@ class EliminateCopyBack(ppl.Pass):
         """:returns: The number of copy-backs removed, or ``None`` if none was."""
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
+            uses = Counter(node.data for state in sd.states() for node in state.data_nodes())
             for state in sd.states():
                 for transient in list(state.data_nodes()):
                     if transient not in state.nodes():
                         continue
-                    found = copy_back(state, sd, transient)
+                    found = copy_back(state, sd, transient, uses)
                     if found is not None and in_place(state, found):
-                        eliminate(state, sd, found)
+                        eliminate(state, sd, found, uses)
                         count += 1
         return count or None
