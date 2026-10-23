@@ -45,7 +45,7 @@ class InsertMemoryEngineBulkCopies(ppl.Pass):
         """
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
-            for state in nsdfg.all_states():
+            for state in nsdfg.states():
                 for node in state.nodes():
                     if isinstance(node, CopyLibraryNode):
                         count += 1 if self._replace_node(node, state) else 0

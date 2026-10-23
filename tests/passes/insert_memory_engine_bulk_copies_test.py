@@ -44,7 +44,7 @@ def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
     intact (mirrors the pass's own view-edge skip); a copy would change the SDFG's semantics.
     """
     for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.all_states():
+        for state in nsdfg.states():
             for edge in state.edges():
                 memlet = edge.data
                 if memlet.is_empty():
