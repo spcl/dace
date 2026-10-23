@@ -45,6 +45,10 @@ Conservative -- only fires when:
   by the hoisted conditional). A state with more maps is split first, upstream
   map first, until the guarded map has a state of its own.
 
+A map whose body also holds unguarded work unswitches when every guard in it is a single ``if`` branch, all
+conditions are provably equal (:func:`~dace.symbolic.guards_equal`) and map-invariant, and no node of the map writes
+what a condition reads: ``map: { B; NSDFG: if c: A }`` becomes ``if c: { map: { B; A } } else: { map: { B } }``.
+
 Anything else is a no-op.
 """
 
@@ -58,7 +62,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.narrowing import as_map_entry
-from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Tasklet
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
@@ -257,28 +261,94 @@ def _match(
     # ``symbol_mapping`` only, so a body-defined condition symbol would be left
     # behind undefined. Those reach the guard via ``_match_inner`` instead.
     for st, me, ns, cb in _candidates(sdfg, allow_inner_defs=False, require_full_hoist=require_full_hoist):
-        if st.entry_node(me) is not None:
-            continue  # an inner map: handled by _match_inner
-        top = [n for n in st.nodes() if st.entry_node(n) is None]
-        if len([n for n in top if isinstance(n, MapEntry)]) != 1:
-            continue
-        if any(not isinstance(n, (MapEntry, MapExit, AccessNode)) for n in top):
-            continue
-        # Every top-level node must actually be wired through the map. Being an
-        # AccessNode is not enough: a second, map-free component in the same
-        # state (the ``a -> b`` copy StateFusion merges in for ``b[:] = a[:]``)
-        # would be swept into the conditional along with the map, so with a
-        # single-branch guard it would stop running when the guard is false --
-        # silently wrong, since it was unconditional before.
-        mx = st.exit_node(me)
-        for n in top:
-            if n is me or n is mx:
-                continue
-            if not any(e.dst is me for e in st.out_edges(n)) and not any(e.src is mx for e in st.in_edges(n)):
-                break
-        else:
+        if st.entry_node(me) is None and _sole_top_level_map(st, me):
             return st, me, ns, cb
     return None
+
+
+def _sole_top_level_map(st: SDFGState, me: MapEntry) -> bool:
+    """Whether ``me`` is the only top-level map of ``st`` and every other top-level node is an access node wired
+    through it, so the whole state can be replaced by a conditional."""
+    top = [n for n in st.nodes() if st.entry_node(n) is None]
+    if len([n for n in top if isinstance(n, MapEntry)]) != 1:
+        return False
+    if any(not isinstance(n, (MapEntry, MapExit, AccessNode)) for n in top):
+        return False
+    # Every top-level node must actually be wired through the map. Being an
+    # AccessNode is not enough: a second, map-free component in the same
+    # state (the ``a -> b`` copy StateFusion merges in for ``b[:] = a[:]``)
+    # would be swept into the conditional along with the map, so with a
+    # single-branch guard it would stop running when the guard is false --
+    # silently wrong, since it was unconditional before.
+    mx = st.exit_node(me)
+    for n in top:
+        if n is me or n is mx:
+            continue
+        if not any(e.dst is me for e in st.out_edges(n)) and not any(e.src is mx for e in st.in_edges(n)):
+            return False
+    return True
+
+
+def _match_equal_guards(sdfg: SDFG) -> tuple[SDFGState, MapEntry, list[NestedSDFG]] | None:
+    """A single-map state whose map body holds unguarded work next to guard nested SDFGs that unswitch together
+    (module docstring); ``(state, map_entry, guard_nsdfgs)`` or ``None``."""
+    for sd in sdfg.all_sdfgs_recursive():
+        for st in sd.states():
+            for me in [n for n in st.nodes() if isinstance(n, MapEntry) and st.entry_node(n) is None]:
+                guards = _equal_guards_at(st, me)
+                if guards is not None and _sole_top_level_map(st, me):
+                    return st, me, guards
+    return None
+
+
+def _equal_guards_at(st: SDFGState, me: MapEntry) -> list[NestedSDFG] | None:
+    """The guard nested SDFGs of ``me``'s body if they unswitch together with the rest of the body, else ``None``."""
+    body = [n for n in st.nodes() if st.entry_node(n) is me]
+    if any(not isinstance(n, (NestedSDFG, Tasklet, AccessNode, MapExit)) for n in body):
+        return None
+    guards: list[NestedSDFG] = []
+    conditions: list[str] = []
+    for ns in (n for n in body if isinstance(n, NestedSDFG)):
+        cb = _single_meaningful_conditional(ns.sdfg)
+        if cb is None or len(cb.branches) != 1 or cb.branches[0][0] is None or not cb.branches[0][1].nodes():
+            continue
+        guards.append(ns)
+        conditions.append(_outer_condition(st, ns, cb.branches[0][0]))
+    if not guards or not any(isinstance(n, (Tasklet, NestedSDFG)) and n not in guards for n in body):
+        return None
+    if not all(symbolic.guards_equal(conditions[0], c) for c in conditions[1:]):
+        return None
+    map_params = {str(p) for p in me.map.params}
+    mx = st.exit_node(me)
+    written = {e.data.data for e in st.in_edges(mx) if e.data.data is not None}
+    written |= {n.data for n in body if isinstance(n, AccessNode) and st.in_degree(n) > 0}
+    for ns in guards:
+        cond = _single_meaningful_conditional(ns.sdfg).branches[0][0]
+        if not _condition_invariant(cond, ns, st, map_params, allow_inner_defs=False):
+            return None
+        names = {str(x) for x in cond.get_free_symbols()}
+        for e in st.in_edges(ns):
+            if e.dst_conn in names and (e.data.data in written or _source_written(st, e, written)):
+                return None
+    return guards
+
+
+def _source_written(st: SDFGState, edge, written: set[str]) -> bool:
+    """Whether the container at the outer end of ``edge``'s memlet path is written by the map."""
+    source = st.memlet_path(edge)[0].src
+    return isinstance(source, AccessNode) and source.data in written
+
+
+def _outer_condition(st: SDFGState, ns: NestedSDFG, cond: CodeBlock) -> str:
+    """``cond`` in the names of the scope outside the map: symbols through ``symbol_mapping``, connectors as the
+    element the map brings in."""
+    resolved, _syms = _resolve_through_mapping(cond, ns.symbol_mapping)
+    for e in st.in_edges(ns):
+        if e.dst_conn is not None and not e.data.is_empty() and e.dst_conn in _identifiers(resolved):
+            outer = e.data.data
+            element = outer if isinstance(st.sdfg.arrays[outer], Scalar) else f"{outer}[{e.data.subset}]"
+            resolved = _substitute_name(resolved, e.dst_conn, element)
+    return resolved
 
 
 def _branch_holds_a_map(cb: ConditionalBlock) -> bool:
@@ -607,6 +677,11 @@ class MoveMapInvariantIfUp(ppl.Pass):
                 self._move(*m)
                 count += 1
                 continue
+            equal = _match_equal_guards(sdfg)
+            if equal is not None:
+                self._move_equal_guards(*equal)
+                count += 1
+                continue
             if _split_map_producers(sdfg, self.require_full_hoist):
                 continue
             if _split_off_first_map(sdfg, self.require_full_hoist):
@@ -730,18 +805,15 @@ class MoveMapInvariantIfUp(ppl.Pass):
             _replace_conditional_with_branch(new_ns.sdfg, cb.label, branch)
             wrap = ControlFlowRegion(label=f"{st.label}_branch_{len(outer_cb.branches)}")
             wrap.add_node(new_st, is_start_block=True, ensure_unique_name=True)
-            outer_cond = None
-            if cond is not None:
-                resolved, _syms = _resolve_through_mapping(cond, ns.symbol_mapping)
-                # A connector the condition reads becomes the element the map brings in.
-                for e in st.in_edges(ns):
-                    if e.dst_conn is not None and not e.data.is_empty() and e.dst_conn in _identifiers(resolved):
-                        outer = e.data.data
-                        element = outer if isinstance(st.sdfg.arrays[outer], Scalar) else f"{outer}[{e.data.subset}]"
-                        resolved = _substitute_name(resolved, e.dst_conn, element)
-                outer_cond = CodeBlock(resolved)
+            outer_cond = None if cond is None else CodeBlock(_outer_condition(st, ns, cond))
             outer_cb.add_branch(outer_cond, wrap)
 
+        MoveMapInvariantIfUp._replace_state(st, outer_cb, in_edges, out_edges, is_start)
+
+    @staticmethod
+    def _replace_state(st: SDFGState, outer_cb: ConditionalBlock, in_edges: list, out_edges: list, is_start: bool):
+        """Put ``outer_cb`` in place of ``st`` in its parent CFG."""
+        cfg = st.parent_graph
         cfg.add_node(outer_cb, ensure_unique_name=True)
         for e in in_edges:
             cfg.add_edge(e.src, outer_cb, copy.deepcopy(e.data))
@@ -752,6 +824,37 @@ class MoveMapInvariantIfUp(ppl.Pass):
         cfg.remove_node(st)
         if is_start:
             cfg.start_block = cfg.node_id(outer_cb)
+
+    @staticmethod
+    def _move_equal_guards(st: SDFGState, me: MapEntry, guards: list[NestedSDFG]):
+        """Replace ``st`` with ``if c: { map: body, every guard inlined } [else: { map: body without the guards }]``."""
+        cfg = st.parent_graph
+        in_edges = list(cfg.in_edges(st))
+        out_edges = list(cfg.out_edges(st))
+        is_start = cfg.start_block is st
+        conditionals = {st.node_id(ns): _single_meaningful_conditional(ns.sdfg) for ns in guards}
+        cond = CodeBlock(_outer_condition(st, guards[0], conditionals[st.node_id(guards[0])].branches[0][0]))
+
+        outer_cb = ConditionalBlock(label=f"{st.label}_guard")
+        taken = copy.deepcopy(st)
+        for node_id, cb in conditionals.items():
+            _replace_conditional_with_branch(taken.node(node_id).sdfg, cb.label, cb.branches[0][1])
+        wrap = ControlFlowRegion(label=f"{st.label}_branch_0")
+        wrap.add_node(taken, is_start_block=True, ensure_unique_name=True)
+        outer_cb.add_branch(cond, wrap)
+
+        skipped = copy.deepcopy(st)
+        for ns in [skipped.node(node_id) for node_id in conditionals]:
+            for e in list(skipped.in_edges(ns)) + list(skipped.out_edges(ns)):
+                if e in skipped.edges():
+                    skipped.remove_memlet_path(e)
+            if ns in skipped.nodes():
+                skipped.remove_node(ns)
+        if any(isinstance(n, (Tasklet, NestedSDFG)) for n in skipped.nodes()):
+            wrap = ControlFlowRegion(label=f"{st.label}_branch_1")
+            wrap.add_node(skipped, is_start_block=True, ensure_unique_name=True)
+            outer_cb.add_branch(None, wrap)
+        MoveMapInvariantIfUp._replace_state(st, outer_cb, in_edges, out_edges, is_start)
 
 
 def hoist_invariant_guards(sdfg: SDFG, require_full_hoist: bool) -> None:

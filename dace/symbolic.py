@@ -5462,9 +5462,11 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | No
 
 
 def guards_equal(first: str, second: str) -> bool:
-    """Whether two branch guards are provably the same predicate. ``False`` when unknown or unparsable."""
+    """Whether two branch guards are provably the same predicate (``C > 0`` and ``0 < C`` too). ``False`` when
+    unknown or unparsable."""
     try:
-        return bool(pystr_to_symbolic(first) == pystr_to_symbolic(second))
+        a, b = pystr_to_symbolic(first), pystr_to_symbolic(second)
+        return bool(a == b) or simplify(sympy.Equivalent(a, b)) == sympy.true
     except Exception:  # noqa: BLE001 -- an unparsable guard is simply not provably equal
         return False
 

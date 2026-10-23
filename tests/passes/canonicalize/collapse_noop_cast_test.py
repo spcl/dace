@@ -234,6 +234,58 @@ def test_a_cast_of_an_undeclared_name_is_left_alone():
     assert tasklet.code.as_string == "out = int64(ghost)"
 
 
+def test_float_product_with_one_collapsed():
+    sdfg, _, tasklet = build_cast_sdfg(dace.float64, dace.float64, "out = (1.0 * inp)")
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
+    assert tasklet.code.as_string == "out = inp"
+
+
+def test_float32_product_with_integer_one_on_the_right_collapsed():
+    sdfg, _, tasklet = build_cast_sdfg(dace.float32, dace.float32, "out = inp * 1")
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
+    assert tasklet.code.as_string == "out = inp"
+
+
+def test_integer_product_with_float_one_kept():
+    """``1.0 * i`` rounds an int64 through a double: not exact above 2**53."""
+    sdfg, _, tasklet = build_cast_sdfg(dace.int64, dace.int64, "out = 1.0 * inp")
+    before = tasklet.code.as_string
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
+    assert tasklet.code.as_string == before
+
+
+def test_widening_product_with_one_kept():
+    sdfg, _, tasklet = build_cast_sdfg(dace.float32, dace.float64, "out = 1.0 * inp")
+    before = tasklet.code.as_string
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
+    assert tasklet.code.as_string == before
+
+
+def test_product_with_other_constant_kept():
+    sdfg, _, tasklet = build_cast_sdfg(dace.float64, dace.float64, "out = 1.5 * inp")
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
+
+
+@dace.program
+def scale_by_one_prog(a: dace.float64[8], b: dace.float64[8]):
+    b[:] = 1.0 * a
+
+
+def cast_or_product_bodies(sdfg):
+    return [n.code.as_string for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.Tasklet)]
+
+
+def test_program_product_with_one_becomes_an_assignment():
+    """The collapsed product is a plain assignment and computes the same values."""
+    sdfg = scale_by_one_prog.to_sdfg(simplify=False)
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
+    assert not any("*" in body for body in cast_or_product_bodies(sdfg))
+    a = np.random.default_rng(3).random(8)
+    b = np.zeros(8)
+    sdfg(a=a, b=b)
+    assert np.array_equal(b, a)
+
+
 if __name__ == "__main__":
     test_idempotent()
     test_noop_cast_collapsed()
@@ -250,3 +302,9 @@ if __name__ == "__main__":
     test_cast_of_a_32_bit_map_parameter_to_64_bits_is_a_real_widening_and_is_kept()
     test_cast_of_a_32_bit_map_parameter_to_its_own_width_is_collapsed()
     test_a_cast_of_an_undeclared_name_is_left_alone()
+    test_float_product_with_one_collapsed()
+    test_float32_product_with_integer_one_on_the_right_collapsed()
+    test_integer_product_with_float_one_kept()
+    test_widening_product_with_one_kept()
+    test_product_with_other_constant_kept()
+    test_program_product_with_one_becomes_an_assignment()
