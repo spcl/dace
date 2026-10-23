@@ -682,8 +682,8 @@ def memory_engine_geometry(node: nodes.Node,
                                 data_type=_TMA_DATA_TYPES[gdesc.dtype]), None
 
 
-def memory_engine_transient_container(node: nodes.Node, state: dace.SDFGState,
-                                      geometry: MemoryEngineGeometry) -> Tuple[dace.SDFG, str]:
+def _memory_engine_transient_container(node: nodes.Node, state: dace.SDFGState,
+                                       geometry: MemoryEngineGeometry) -> Tuple[dace.SDFG, str]:
     """The transient container behind the shared side of a ``MemoryEngineBulk`` copy.
 
     Inside a NestedSDFG the shared side is an argument; this follows it outward to the transient that the shared
@@ -728,7 +728,7 @@ def _cuda_archs_support_memory_engine() -> bool:
 def _shared_container_reason(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry) -> Optional[str]:
     """Why the shared side of a ``MemoryEngineBulk`` copy cannot be placed in static shared memory, which is
     ``MEMORY_ENGINE_SHARED_ALIGNMENT`` aligned (dynamic shared memory is not), or ``None`` if it can."""
-    sdfg, name = memory_engine_transient_container(node, state, geometry)
+    sdfg, name = _memory_engine_transient_container(node, state, geometry)
     desc = sdfg.arrays[name]
     if desc.storage != dtypes.StorageType.GPU_Shared:
         return f"the transient container {name} being {'loaded from' if geometry.is_load else 'stored to'} is not in shared memory"
@@ -769,6 +769,19 @@ def memory_engine_bulk_reason(node: nodes.Node, state: dace.SDFGState) -> Option
     if not _cuda_archs_support_memory_engine():
         return "MemoryEngineBulk requires compute capability 9.0 or newer (see compiler.cuda.cuda_arch)"
     return None
+
+
+def mark_memory_engine_shared_static(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry):
+    """Pin the shared side of a ``MemoryEngineBulk`` copy to static shared memory, which is aligned for the memory
+    engine. If the static shared memory of the kernel then overflows, the CUDA compiler rejects the kernel instead of
+    the copy faulting at run time. Other containers left to the planner move to dynamic shared memory first.
+
+    TODO: Implement dynamic memory alignment
+    """
+    sdfg, name = _memory_engine_transient_container(node, state, geometry)
+    desc = sdfg.arrays[name]
+    if desc.storage == dtypes.StorageType.GPU_Shared:
+        desc.storage = dtypes.StorageType.GPU_Shared(dynamic=False)
 
 
 def _build_memory_engine_bulk_copy_code(node: "CopyLibraryNode", geometry: MemoryEngineGeometry) -> str:
