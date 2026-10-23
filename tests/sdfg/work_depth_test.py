@@ -9,6 +9,10 @@ from pytest import raises
 import dace
 from dace import symbolic
 from dace.frontend.python.parser import DaceProgram
+from dace.libraries.sort import IntegerSort, ScatterConflictCheck
+from dace.libraries.standard import ArgMax, CountLibraryNode, CShift, FindFirst, Norm2, Scan, ScanOp
+from dace.libraries.standard.nodes.find_first import INDEX_NAME as FIND_FIRST_INDEX
+from dace.libraries.standard.nodes.state_scan import StateScan, StateScanKind
 from dace.sdfg.performance_evaluation.assumptions import assumption_relations
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.work_depth import (
@@ -514,6 +518,125 @@ x += 3
     code14 = "(a+b)*(c+d) + (e+f)*(g+h) + (i+j)*(k+l)"
     assert count_arithmetic_ops_code(code14) == 11, "Work should be 11"
     assert count_depth_code(code14) == 4, "Depth should be 4"
+
+
+def one_node_sdfg(node: dace.nodes.LibraryNode, inputs: dict[str, str], outputs: dict[str, str]) -> dace.SDFG:
+    """An SDFG holding only ``node``, each connector wired to its own array; ``inputs``/``outputs`` map connector
+    to the array's memlet over a ``float64[N]`` (``int32[N]`` for an ``idx``/``keys`` array)."""
+    sdfg = dace.SDFG(f"one_{type(node).__name__}")
+    state = sdfg.add_state()
+    state.add_node(node)
+    for connector, memlet in {**inputs, **outputs}.items():
+        name = memlet.split("[")[0]
+        if name not in sdfg.arrays:
+            dtype = dace.int32 if name in ("idx", "keys", "keys_out", "count", "pos") else dace.float64
+            sdfg.add_array(name, [N], dtype)
+    for connector, memlet in inputs.items():
+        state.add_edge(state.add_read(memlet.split("[")[0]), None, node, connector, dace.Memlet(memlet))
+    for connector, memlet in outputs.items():
+        state.add_edge(node, connector, state.add_write(memlet.split("[")[0]), None, dace.Memlet(memlet))
+    return sdfg
+
+
+def finite_state_scan() -> StateScan:
+    node = StateScan("dfa")
+    node.kind, node.begin, node.end, node.count = StateScanKind.FINITE, 0, N, M
+    return node
+
+
+def segmented_scan() -> Scan:
+    node = Scan("scan")
+    node.segments = 4
+    return node
+
+
+def find_first() -> FindFirst:
+    node = FindFirst("search", predicate=f"_a[{FIND_FIRST_INDEX}] > 0", begin=0, end=N)
+    node.add_in_connector("_a")
+    return node
+
+
+log2N = sp.log(N) / sp.log(2)
+
+# (node factory, inputs, outputs, work, depth): scans and reductions take the work-efficient tree algorithms.
+library_node_cases = {
+    "scan_sum": (lambda: Scan("scan"), {"_scan_in": "x[0:N]"}, {"_scan_out": "y[0:N]"}, 2 * (N - 1), 2 * log2N),
+    "scan_affine": (
+        lambda: Scan("scan", op=ScanOp.AFFINE),
+        {"_scan_in": "x[0:N]", "_scan_coef": "c[0:N]"},
+        {"_scan_out": "y[0:N]"},
+        6 * (N - 1),
+        4 * log2N,
+    ),
+    "scan_segments": (
+        segmented_scan,
+        {"_scan_in": "x[0:N]"},
+        {"_scan_out": "y[0:N]"},
+        2 * (N - 4),
+        sp.Max(0, 2 * log2N - 4),
+    ),
+    "state_scan": (finite_state_scan, {}, {}, 2 * (N - 1) * M, 2 * log2N),
+    "find_first": (find_first, {"_a": "x[0:N]"}, {"_out_idx": "pos[0]"}, N, 1 + log2N),
+    "arg_max": (lambda: ArgMax("argmax"), {"_x": "x[0:N]"}, {"_idx": "pos[0]"}, N - 1, log2N),
+    "count": (lambda: CountLibraryNode("count"), {"_cnt_in": "x[0:N]"}, {"_cnt_out": "y[0]"}, N - 1, log2N),
+    "norm2": (lambda: Norm2("norm2"), {"_x": "x[0:N]"}, {"_out": "y[0]"}, 2 * N, 2 + log2N),
+    "integer_sort": (
+        lambda: IntegerSort("sort"),
+        {"_keys_in": "keys[0:N]"},
+        {"_keys_out": "keys_out[0:N]"},
+        8 * N,
+        8 * log2N,
+    ),
+    "scatter_conflict_check": (
+        lambda: ScatterConflictCheck("check"),
+        {"_idx_in": "idx[0:N]"},
+        {"_count_out": "count[0]"},
+        3 * N - 1,
+        2 + log2N,
+    ),
+    "cshift": (lambda: CShift("cshift", shift=1), {"_x": "x[0:N]"}, {"_out": "y[0:N]"}, 0, 0),
+}
+
+
+@pytest.mark.parametrize("case", list(library_node_cases))
+def test_library_node_is_costed_by_its_parallel_algorithm(case: str):
+    make_node, inputs, outputs, work, depth = library_node_cases[case]
+    sut = one_node_sdfg(make_node(), inputs, outputs)
+    w_d_map: dict[str, sp.Expr] = {}
+
+    analyze_sdfg(sut, w_d_map, get_tasklet_work_depth, ["N>4"])
+
+    result = w_d_map[get_uuid(sut)]
+    assert_symbolically_equal(result[0], sp.sympify(work))
+    assert_symbolically_equal(result[1], sp.sympify(depth))
+
+
+@pytest.mark.parametrize("model,work,depth", [("unit", 2, 2), ("libm", 21, 14)])
+def test_an_exp_costs_its_libm_flops_only_under_the_libm_model(model: str, work: int, depth: int):
+    with dace.config.set_temporary("work_depth", "transcendental_cost", value=model):
+        assert (count_arithmetic_ops_code("y = exp(x) * b"), count_depth_code("y = exp(x) * b")) == (work, depth)
+
+
+def test_a_sine_map_costs_glibcs_reduced_path_per_element():
+    @dace.program
+    def sine(x: dace.float64[N], y: dace.float64[N]):
+        for i in dace.map[0:N]:
+            y[i] = np.sin(x[i])
+
+    sut = sine.to_sdfg()
+    w_d_map: dict[str, sp.Expr] = {}
+    with dace.config.set_temporary("work_depth", "transcendental_cost", value="libm"):
+        analyze_sdfg(sut, w_d_map, get_tasklet_work_depth, [])
+
+    result = w_d_map[get_uuid(sut)]
+    assert_symbolically_equal(result[0], 40 * N)
+    assert_symbolically_equal(result[1], pystr_to_symbolic(22))
+
+
+def test_an_unknown_transcendental_cost_model_is_refused():
+    with dace.config.set_temporary("work_depth", "transcendental_cost", value="taylor"):
+        with raises(ValueError, match="transcendental_cost"):
+            count_arithmetic_ops_code("exp(x)")
 
 
 if __name__ == "__main__":
