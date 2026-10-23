@@ -66,9 +66,7 @@ def batched_gemm(A: dace.float64[NB, M, K], B: dace.float64[NB, K, N], C: dace.f
 
 
 @dace.program
-def gathered_gemm(
-    A: dace.float64[NB, M, K], B: dace.float64[NB, K, N], idx: dace.int64[NB], C: dace.float64[NB, M, N]
-):
+def gathered_gemm(A: dace.float64[NB, M, K], B: dace.float64[NB, K, N], idx: dace.int64[NB], C: dace.float64[NB, M, N]):
     for b in dace.map[0:NB]:
         C[b] = A[idx[b]] @ B[b]
 
