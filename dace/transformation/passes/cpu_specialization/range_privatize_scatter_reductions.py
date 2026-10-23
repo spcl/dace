@@ -163,10 +163,10 @@ def _contiguous_rows(desc: data.Data) -> bool:
         return False
     expected = 1
     for size, stride in reversed(list(zip(desc.shape, desc.strides))):
-        if symbolic.simplify(stride - expected) != 0:
+        if symbolic.equal(stride, expected) is not True:
             return False
         expected = expected * size
-    return symbolic.simplify(desc.total_size - expected) == 0
+    return symbolic.equal(desc.total_size, expected) is True
 
 
 def _same_layout(inner: data.Data, outer: data.Data) -> bool:
@@ -174,7 +174,7 @@ def _same_layout(inner: data.Data, outer: data.Data) -> bool:
     if len(inner.shape) != len(outer.shape) or inner.start_offset != outer.start_offset:
         return False
     pairs = list(zip(inner.shape, outer.shape)) + list(zip(inner.strides, outer.strides))
-    return all(symbolic.simplify(a - b) == 0 for a, b in pairs)
+    return all(symbolic.equal(a, b) is True for a, b in pairs)
 
 
 def _is_scalar(desc: data.Data) -> bool:

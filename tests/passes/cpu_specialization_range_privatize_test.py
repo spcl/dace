@@ -558,6 +558,17 @@ def test_pass_marks_once():
     assert RangePrivatizeScatterReductions().apply_pass(sdfg, {}) is None, "a marked map is not marked again"
 
 
+def test_a_row_stride_spelled_as_a_power_is_contiguous():
+    """cp2k_trs4's ``sink[3 * n + 1, b, b]`` reaches the check with the row stride ``ipow(b, 2)``: the same
+    ``b * b`` as the extents, so the scatter into it is range-privatized, not left to an atomic per element."""
+    from dace.data import Array
+    from dace.symbolic import pystr_to_symbolic
+    from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import _contiguous_rows
+
+    desc = Array(dace.float64, [M, K, K], strides=[pystr_to_symbolic("ipow(K, 2)"), K, 1])
+    assert _contiguous_rows(desc)
+
+
 if __name__ == "__main__":
     for p, m in [("sorted", MV), ("random", MV), ("reversed", MV), ("equal", MV), ("extremes", MV), ("random", 100003)]:
         test_float_sum_matches_add_at(p, m)
@@ -587,3 +598,4 @@ if __name__ == "__main__":
     test_a_map_that_does_not_scatter_is_left_alone(elementwise_add)
     test_a_map_that_does_not_scatter_is_left_alone(gather_sum)
     test_pass_marks_once()
+    test_a_row_stride_spelled_as_a_power_is_contiguous()
