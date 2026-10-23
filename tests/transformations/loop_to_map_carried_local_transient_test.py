@@ -63,6 +63,26 @@ def scratch_row_refilled(A: dace.float64[N, M], B: dace.float64[N, M]):
             B[i, j] = row[j] + 1.0
 
 
+@dace.program
+def same_guard_twice(A: dace.float64[N], B: dace.float64[N], flag: dace.int64):
+    for i in range(N):
+        if flag > 0:
+            t = A[i] * 2.0
+        B[i] = A[i]
+        if flag > 0:
+            B[i] = t + 1.0
+
+
+@dace.program
+def varying_guard_twice(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        if i % 2 == 0:
+            t = A[i] * 2.0
+        B[i] = A[i]
+        if i % 2 == 0:
+            B[i] = t + 1.0
+
+
 def test_guarded_write_carry_is_refused():
     """The guarded write leaves ``t`` carrying the previous iteration, so the loop is not DOALL."""
     sdfg = guarded_carry.to_sdfg(simplify=False)
@@ -124,7 +144,33 @@ def test_scratch_filled_by_inner_loop_still_maps():
     assert np.allclose(b, a * 3.0 + 1.0)
 
 
+def test_a_read_under_the_same_invariant_guard_as_its_write_still_maps():
+    """warpx's two ``if rz_modes:`` blocks: the first fills a scratch the second reads. On a loop-invariant
+    condition both run in the same iterations, so the scratch is the iteration's own."""
+    sdfg = same_guard_twice.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    rng = np.random.default_rng(4)
+    a = rng.random(8)
+    for flag in (0, 1):
+        b = np.zeros(8)
+        sdfg(A=a, B=b, flag=flag, N=8)
+        assert np.allclose(b, a * 2.0 + 1.0 if flag else a)
+
+
+def test_a_read_under_the_same_varying_guard_is_still_refused_as_written():
+    """The guard reads the loop variable: the same text is a different condition per iteration, no carry-over."""
+    sdfg = varying_guard_twice.to_sdfg(simplify=False)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, dace.sdfg.state.LoopRegion)]
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    names = {name for name, desc in sdfg.arrays.items() if desc.transient}
+    assert any(read_before_written(loop, names) for loop in loops)
+
+
 if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__]))
+    test_a_read_under_the_same_invariant_guard_as_its_write_still_maps()
+    test_a_read_under_the_same_varying_guard_is_still_refused_as_written()

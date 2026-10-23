@@ -570,8 +570,20 @@ def read_before_written(loop: LoopRegion, candidates: set[str]) -> set[str]:
     :func:`carried_local_transients`). Each name's verdict depends on its own accesses alone, so asking about one
     name gives that name's verdict of the whole set."""
     carried: set[str] = set()
+    # What a branch on a loop-invariant condition writes, by condition: a later branch on the same condition runs in
+    # exactly the iterations that one did (warpx's two ``if rz_modes:`` blocks, one filling ``a_re``, one reading it).
+    guarded: dict[str, set[str]] = {}
+    varying: set[str] | None = None
 
-    def scan(region: ControlFlowRegion, written: set[str]) -> None:
+    def invariant(condition) -> bool:
+        nonlocal varying
+        if varying is None:
+            _, written_data = loop.read_and_write_sets()
+            assigned = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+            varying = set(written_data) | assigned | {loop.loop_variable}
+        return not ({str(name) for name in condition.get_free_symbols()} & varying)
+
+    def scan(region: ControlFlowRegion, written: set[str], in_branch: bool, in_loop: bool) -> None:
         for block in cfg_analysis.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=False):
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
@@ -585,16 +597,20 @@ def read_before_written(loop: LoopRegion, candidates: set[str]) -> set[str]:
                 written |= {dn.data for dn in block.data_nodes() if dn.data in candidates and block.in_degree(dn) > 0}
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
-                for _cond, body in block.branches:
-                    branch_written = set(written)
-                    scan(body, branch_written)
+                for cond, body in block.branches:
+                    # Looked up under any nest of loops, recorded only where the branch runs once per iteration.
+                    key = cond.as_string if cond is not None and not in_branch and invariant(cond) else None
+                    branch_written = set(written) | guarded.get(key, set())
+                    scan(body, branch_written, True, in_loop)
                     per_branch.append(branch_written)
+                    if key is not None and not in_loop:
+                        guarded[key] = branch_written
                 if per_branch and any(cond is None for cond, _ in block.branches):
                     written |= set.intersection(*per_branch)
             elif isinstance(block, ControlFlowRegion):
-                scan(block, written)
+                scan(block, written, in_branch, in_loop or isinstance(block, LoopRegion))
 
-    scan(loop, set())
+    scan(loop, set(), False, False)
     return carried
 
 
