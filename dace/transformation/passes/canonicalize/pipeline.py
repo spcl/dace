@@ -97,6 +97,7 @@ from dace.transformation.passes.canonicalize.reverse_map_traversal import Revers
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
 from dace.transformation.passes.canonicalize.route_ordering_through_data import RouteOrderingThroughData
 from dace.transformation.passes.canonicalize.segment_confined_loops import SegmentConfinedLoops
+from dace.transformation.passes.canonicalize.sink_last_only_scan_store import SinkLastOnlyScanStore
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
@@ -915,6 +916,7 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
         (label, LoopToEinsum()),
         (label, NestToContraction()),
         (label, RevertNonReductionWCR()),
+        (label, SinkLastOnlyScanStore()),
         (label, LoopToReduce()),
         (label, LiftPreprocess()),
         (label, LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target)),
