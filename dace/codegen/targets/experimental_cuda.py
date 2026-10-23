@@ -19,6 +19,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
 from dace.codegen.targets.cuda import (
     _DYNAMIC_SHARED_MEMORY_SYMBOL,
+    STATIC_SHARED_MEMORY_ALIGNMENT,
     chiplet_count,
     compute_pool_release,
     distribute_over_chiplets,
@@ -27,6 +28,7 @@ from dace.codegen.targets.cuda import (
     gpu_cmake_options,
     gpu_runtime_code,
     gpu_scope_maps_recursive,
+    is_grid_constant,
     location_condition,
     location_index_exprs,
     plan_shared_memory,
@@ -892,8 +894,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         array_ctype = f"{nodedesc.dtype.ctype} *"
 
         declaration_stream.write(
-            f"__shared__ {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n", cfg, state_id, node
-        )
+            "__shared__ __align__({}) {} {}[{}];\n".format(
+                STATIC_SHARED_MEMORY_ALIGNMENT,
+                nodedesc.dtype.ctype,
+                dataname,
+                sym2cpp(arrsize),
+            ), cfg, state_id, node)
 
         self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 

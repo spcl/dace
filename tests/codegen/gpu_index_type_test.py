@@ -232,7 +232,7 @@ def test_persistent_map():
 def test_dynamic_map(step: int):
     code = _cuda_code(_spmv(step), dynamic_map_block_size="64,1,1")
     # The scheduling state (two arrays of 32 * 32 indices per warp) fits in static shared memory
-    assert "__shared__ int64_t __dace_dynmap_state[4096];" in code
+    assert "__shared__ __align__(128) int64_t __dace_dynmap_state[4096];" in code
     assert "int64_t __dace_dynmap_begin = 0, __dace_dynmap_end = 0;" in code
     assert "dace::DynamicMap<true, 64, 32, int64_t>::schedule(" in code
     if step != 1:
@@ -262,7 +262,7 @@ def test_dynamic_map_default_types():
         if isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Sequential:
             node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
     code = _cuda_code(sdfg)
-    assert "__shared__ int __dace_dynmap_state[8192];" in code
+    assert "__shared__ __align__(128) int __dace_dynmap_state[8192];" in code
     assert "unsigned int __dace_dynmap_begin = 0, __dace_dynmap_end = 0;" in code
     assert "dace::DynamicMap<true, 128>::schedule(" in code
 

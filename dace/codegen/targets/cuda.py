@@ -543,7 +543,7 @@ class CUDACodeGen(TargetCodeGenerator):
                 )
             if nodedesc.start_offset != 0:
                 raise NotImplementedError("Start offset unsupported for shared memory")
-            result_decl.write(f"__shared__ {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n")
+            result_decl.write(f"__shared__ __align__({STATIC_SHARED_MEMORY_ALIGNMENT}) {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n")
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
             if node.setzero:
                 self._reset_shared(dataname, nodedesc, cfg, state_id, node, result_alloc)
@@ -3127,6 +3127,9 @@ def _topy(arr):
 
 # The dynamic shared memory of a kernel, which the flat buffers of ``gpu_shared_memory`` refer to
 _DYNAMIC_SHARED_MEMORY_SYMBOL = "__dace_dynsmem_extern"
+
+#: Alignment (bytes) of static shared memory arrays; the memory engine (TMA) needs 128 bytes.
+STATIC_SHARED_MEMORY_ALIGNMENT = 128
 
 
 def _widen_register(register: str, dtype: dtypes.typeclass) -> str:

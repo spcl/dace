@@ -248,7 +248,7 @@ def test_fitting_containers_stay_static():
     code, shared_warnings = _generate(sdfg)
     assert not shared_warnings
     assert _placement(sdfg, "s1") is False and _placement(sdfg, "s2") is False
-    assert "__shared__ double s1[2048];" in code and "__shared__ double s2[2048];" in code
+    assert "__shared__ __align__(128) double s1[2048];" in code and "__shared__ __align__(128) double s2[2048];" in code
     assert "extern __shared__" not in code
     assert "DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY" not in code
 
@@ -259,7 +259,7 @@ def test_overflow_is_placed_dynamically():
     assert len(shared_warnings) == 2 and all("does not fit in the static shared memory" in w for w in shared_warnings)
     assert _placement(sdfg, "s1") is False
     assert _placement(sdfg, "s2") is True and _placement(sdfg, "s3") is True
-    assert "__shared__ double s1[4096];" in code
+    assert "__shared__ __align__(128) double s1[4096];" in code
     assert "extern __shared__ __align__(16) uint8_t __dace_dynsmem_extern[];" in code
     assert re.search(r"s2 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);", code)
     assert re.search(r"s3 = \(double\*\)\(&__dace_dynsmem\w*\[32768\]\);", code)
@@ -276,7 +276,7 @@ def test_explicit_placement():
     code, shared_warnings = _generate(sdfg)
     assert not shared_warnings
     assert _placement(sdfg, "s1") is True and _placement(sdfg, "s2") is False
-    assert "__shared__ double s2[2048];" in code
+    assert "__shared__ __align__(128) double s2[2048];" in code
     assert re.search(r"s1 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);", code)
     # Within the limit, no request is needed
     assert "DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY" not in code
@@ -356,7 +356,7 @@ def test_placement_is_per_kernel():
     code, shared_warnings = _generate(sdfg)
     assert len(shared_warnings) == 1 and '"s_0"' in shared_warnings[0]
     assert _placement(sdfg, "s") is False and _placement(sdfg, "a") is False and _placement(sdfg, "s_0") is True
-    assert "__shared__ double s[4096];" in code and "__shared__ double a[4096];" in code
+    assert "__shared__ __align__(128) double s[4096];" in code and "__shared__ __align__(128) double a[4096];" in code
     assert re.search(r"\bs_0 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);", code)
 
 
