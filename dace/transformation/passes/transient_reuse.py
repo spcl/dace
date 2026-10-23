@@ -171,6 +171,8 @@ class BufferSharing:
     orders: dict[SDFGState, StateOrder] = field(default_factory=dict)
     locals: dict[tuple[SDFGState, str], bool] = field(default_factory=dict)
     hoistable_names: OrderedSet | None = None
+    #: Candidates a nested SDFG's connector is bound to: its descriptor must keep matching the array's.
+    nested: set[str] = field(default_factory=set)
     #: The SDFG's facts, derived once: nothing changes until the renaming at the end.
     facts: symbolic.Facts | None = None
 
@@ -223,6 +225,11 @@ class BufferSharing:
                     other = edge.dst if edge.src is node else edge.src
                     if isinstance(other, nodes.AccessNode) and isinstance(other.desc(sd), (dt.View, dt.Reference)):
                         excluded.add(node.data)
+                    if node.data not in self.nested and any(
+                        isinstance(tree.edge.src, nodes.NestedSDFG) or isinstance(tree.edge.dst, nodes.NestedSDFG)
+                        for tree in state.memlet_tree(edge).traverse_children(include_self=True)
+                    ):
+                        self.nested.add(node.data)
                 self.uses.setdefault(node.data, {}).setdefault(state, []).append(node)
             for edge in state.edges():
                 if edge.data.wcr is not None and edge.data.data is not None:
@@ -332,6 +339,18 @@ class BufferSharing:
         elif self.covers(new, rep):
             chosen = name
         else:
+            return None
+        # A renamed member a nested SDFG is bound to would hand that connector a differently shaped array.
+        shape = arrays[chosen].shape
+        if any(
+            m != chosen
+            and m in self.nested
+            and not (
+                len(arrays[m].shape) == len(shape)
+                and all(symbolic.equal(x, y) is True for x, y in zip(arrays[m].shape, shape))
+            )
+            for m in [*group.members, name]
+        ):
             return None
         if arrays[chosen].lifetime == persistent:
             return chosen

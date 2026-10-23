@@ -180,6 +180,30 @@ def test_transient_read_by_later_nested_sdfg_is_not_shared():
     assert np.allclose(E, 6 * A)
 
 
+def test_transient_bound_to_a_nested_sdfg_keeps_its_shape():
+    """A nested SDFG's connector must match the array it is bound to: ``T`` (``N``) reaches one, so it may share a
+    buffer only of its own shape, never the larger ``Big`` (cp2k_trs4's ``diag_offset`` into a ``9 N`` scratch)."""
+    sdfg = new_sdfg("reuse_nested_shape", ["A", "C", "D"], ["T", "Big"], {"Big": "2 * N", "C": "2 * N"})
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    chain(s0, "A", "2 * x", "T")
+    s1 = sdfg.add_state_after(s0, "s1")
+    call = s1.add_nested_sdfg(nested_increment(), {"inp": None}, {"out": None}, symbol_mapping={"N": "N"})
+    s1.add_edge(s1.add_access("T"), None, call, "inp", Memlet("T[0:N]"))
+    s1.add_edge(call, "out", s1.add_access("D"), None, Memlet("D[0:N]"))
+    s2 = sdfg.add_state_after(s1, "s2")
+    a, big, c = s2.add_access("A"), s2.add_access("Big"), s2.add_access("C")
+    elementwise(s2, a, big, "3 * x", extent="N")
+    elementwise(s2, big, c, "x - 1", extent="N")
+
+    assert reuse(sdfg) is None
+    assert buffers(sdfg) == ["Big", "T"]
+    A = np.random.rand(N_VALUE)
+    C, D = np.zeros(2 * N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, C=C, D=D)
+    assert np.allclose(D, 2 * A + 1)
+    assert np.allclose(C[:N_VALUE], 3 * A - 1)
+
+
 def test_viewed_transient_is_not_shared():
     sdfg = new_sdfg("reuse_viewed", ["A", "B", "C", "D"], ["T1", "T2", "T3"])
     sdfg.add_view("V", ["N"], dace.float64)
