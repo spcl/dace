@@ -28,7 +28,7 @@ import numpy
 import pytest
 
 import dace
-import dace.libraries.mpi as mpi
+import dace.libraries.comm as mpi
 
 # small static toy dims; P must divide NA and NE
 P, NA, NE, M, W = 2, 4, 4, 2, 2

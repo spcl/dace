@@ -180,7 +180,6 @@ class OneRankOfAJob:
         return [value if r == self.rank else None for r in range(self.rank + 1)]
 
 
-
 def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_path):
     """Only rank 0 builds, so the others must look where it built and not where they would have."""
     with (

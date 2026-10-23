@@ -220,7 +220,9 @@ class ControlFlowRaising(ppl.Pass):
                         branch = ControlFlowRegion(branch_name, sdfg)
 
                         if not oe.data.is_unconditional():
-                            if i == len(ordered_oedges) - 1 and _negates(oe.data.condition_sympy(), previous_conditions):
+                            if i == len(ordered_oedges) - 1 and _negates(
+                                oe.data.condition_sympy(), previous_conditions
+                            ):
                                 if uncond_generated:
                                     warnings.warn(
                                         f"Control flow raising: Found multiple unconditional branches in {block.label}"

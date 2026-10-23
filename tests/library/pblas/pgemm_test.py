@@ -7,7 +7,7 @@ import pytest
 import dace
 from dace import Memlet
 from dace.frontend.python.replacements.mpi import _distr_matmult
-from dace.libraries.mpi.nodes.comm_f2c import CommF2c
+from dace.libraries.comm.nodes.comm_f2c import CommF2c
 from dace.libraries.pblas.nodes.gridinit import BlacsGridInit
 from dace.libraries.pblas.nodes.pgemm import Pgemm
 from dace.sdfg import utils

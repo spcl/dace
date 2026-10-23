@@ -422,6 +422,8 @@ def test_a_branch_that_jumps_straight_to_the_merge_keeps_its_assignments(value, 
     y = np.zeros(1)
     sdfg(x=np.array([value]), y=y)
     assert y[0] == expected
+
+
 def _write_state(sdfg: dace.SDFG, label: str, value: int) -> dace.SDFGState:
     state = sdfg.add_state(label)
     tasklet = state.add_tasklet(label, {}, {"o"}, f"o = {value}")

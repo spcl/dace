@@ -23,7 +23,7 @@ import pytest
 
 import dace
 from dace import Memlet
-from dace.libraries.mpi.nodes.comm_f2c import CommF2c
+from dace.libraries.comm.nodes.comm_f2c import CommF2c
 from dace.libraries.pblas.environments import intel_mkl_mpich, intel_mkl_openmpi, ref_mpich, ref_openmpi
 from dace.libraries.pblas.nodes.gridinit import BlacsGridInit
 from dace.libraries.pblas.nodes.pgemm import Pgemm

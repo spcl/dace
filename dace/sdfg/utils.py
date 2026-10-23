@@ -6,7 +6,6 @@ import collections
 import copy
 import re
 import time
-import traceback
 import warnings
 from collections.abc import Callable, Container, Generator, Mapping, Sequence
 from typing import Any, Optional

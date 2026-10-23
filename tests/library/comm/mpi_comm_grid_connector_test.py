@@ -13,9 +13,9 @@ import pytest
 
 import dace
 import dace.frontend.python.replacements.mpi as comm_repl
-import dace.libraries.mpi as mpi
-from dace.libraries.mpi.nodes.comm_f2c import CommF2c
-from dace.libraries.mpi.nodes.redistribute import Redistribute
+import dace.libraries.comm as mpi
+from dace.libraries.comm.nodes.comm_f2c import CommF2c
+from dace.libraries.comm.nodes.redistribute import Redistribute
 from dace.memlet import Memlet
 
 # Routed to the MPI-capable heterogeneous runner (``-m mpi`` under mpirun), like every other
