@@ -8,7 +8,7 @@ import os
 import sys
 import types as pytypes
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ForwardRef, Union, get_args, get_origin
 
 import sympy
@@ -200,6 +200,33 @@ def infer_symbols_from_datadescriptor(
     return {str(k)[8:]: v for k, v in result.items()}
 
 
+#: ``@dace.program(facts=...)``: a container name to the facts assumed of it, or ``"csr"`` to the
+#: ``(row_ptr, col_idx[, values])`` names of one CSR matrix or a list of them.
+FactsSpec = Mapping[str, symbolic.DataFact | Sequence[symbolic.DataFact] | Sequence[str] | Sequence[Sequence[str]]]
+
+
+def register_data_facts(sdfg: SDFG, facts: FactsSpec) -> None:
+    """Assumes ``facts`` of the containers ``sdfg`` takes (:meth:`SDFG.add_data_assumption`). A ``"csr"`` entry that
+    names no container gives each ``(row_ptr, col_idx[, values])`` group ``row_ptr`` nondecreasing over its extent and
+    ``col_idx`` injective within each segment of ``row_ptr`` (a pattern matrix has no ``values``).
+
+    :raise KeyError: If a fact names a container ``sdfg`` does not have.
+    :raise InconsistentAssumptionsError: If a fact cannot hold for its container.
+    """
+    for name, value in facts.items():
+        if name == "csr" and name not in sdfg.arrays:
+            for row_ptr, col_idx, *_ in [value] if isinstance(value[0], str) else value:
+                last = symbolic.pystr_to_symbolic(sdfg.arrays[row_ptr].shape[0] - 1)
+                zero = symbolic.pystr_to_symbolic(0)
+                sdfg.add_data_assumption(row_ptr, symbolic.DataFact(symbolic.DataFactKind.NONDECREASING, zero, last))
+                sdfg.add_data_assumption(
+                    col_idx, symbolic.DataFact(symbolic.DataFactKind.SEGMENT_INJECTIVE, segments=row_ptr)
+                )
+            continue
+        for fact in [value] if isinstance(value, symbolic.DataFact) else value:
+            sdfg.add_data_assumption(name, fact)
+
+
 class DaceProgram(pycommon.SDFGConvertible):
     """A data-centric program object, obtained by decorating a function with
     ``@dace.program``."""
@@ -219,9 +246,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         method: bool = False,
         use_explicit_cf: bool = True,
         ignore_type_hints: bool = False,
+        facts: FactsSpec | None = None,
     ):
 
         self.f = f
+        self.facts: FactsSpec = facts or {}
         self.dec_args = args
         self.dec_kwargs = kwargs
         self.resolve_functions = constant_functions
@@ -1095,6 +1124,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]
+            register_data_facts(sdfg, self.facts)
 
             # TODO: Add to parsed SDFG cache
 
