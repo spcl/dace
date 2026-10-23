@@ -764,6 +764,34 @@ def test_aug_assign_python_after_a_write_fissions_the_state():
     assert A[0] == 3.0
 
 
+def test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update():
+    """warpx's ``Jx[...] += djr * xy`` after map fusion: the accumulator is written by an earlier map of the state and
+    the updating map holds the delta's tasklet next to the update, so the fission moves the whole map."""
+    sdfg = dace.SDFG("aug_assign_multi_tasklet_isolate")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_transient("d", [1], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "init", {"i": "0:8"}, {"b": dace.Memlet("B[i]")}, "o = b", {"o": dace.Memlet("A[i]")}, external_edges=True
+    )
+    acc = next(n for n in state.data_nodes() if n.data == "A")
+    me, mx = state.add_map("update", {"i": "0:8"})
+    delta = state.add_tasklet("delta", {"b"}, {"o"}, "o = 2.0 * b")
+    update = state.add_tasklet("update", {"a", "k"}, {"o"}, "o = a + k")
+    d = state.add_access("d")
+    state.add_memlet_path(state.add_read("B"), me, delta, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_edge(delta, "o", d, None, dace.Memlet("d[0]"))
+    state.add_edge(d, None, update, "k", dace.Memlet("d[0]"))
+    state.add_memlet_path(acc, me, update, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(update, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True) == 1
+    sdfg.validate()
+    A, B = np.zeros(8), np.arange(8, dtype=np.float64)
+    sdfg(A=A, B=B)
+    assert np.allclose(A, 3.0 * B)
+
+
 if __name__ == "__main__":
     test_aug_assign_python_logical_or()
     test_aug_assign_tasklet_lhs()
@@ -793,6 +821,7 @@ if __name__ == "__main__":
     test_aug_assign_fission_keeps_the_binding_of_a_view_left_behind()
     test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_source()
     test_aug_assign_python_after_a_write_fissions_the_state()
+    test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update()
     test_aug_assign_python_min_max("max(a, k)", np.maximum)
     test_aug_assign_python_min_max("min(k, a)", np.minimum)
     test_aug_assign_python_reads_another_element()
