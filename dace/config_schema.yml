@@ -975,6 +975,17 @@ required:
                             setting, so numpy / copy-out SDFGs stay correct.
                         default: true
 
+                    memory_engine_copies:
+                        type: bool
+                        title: Use the memory engine for in-kernel copies
+                        description: >
+                            If enabled, the GPU preprocessing of ExperimentalCUDACodeGen runs
+                            InsertMemoryEngineBulkCopies, which selects the MemoryEngineBulk (TMA)
+                            implementation for every in-kernel GPU_Global <-> GPU_Shared CopyLibraryNode
+                            the memory engine supports. Copies with an explicitly chosen implementation,
+                            and every copy on GPUs older than compute capability 9.0, are left unchanged.
+                        default: false
+
                     gpu_stream_name:
                         type: str
                         title: Name for the GPU stream object
