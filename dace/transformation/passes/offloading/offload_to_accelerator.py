@@ -36,7 +36,7 @@ from dace.sdfg.state import (
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import TrivialMapElimination
-from dace.transformation.helpers import isolate_small_map_axes
+from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_axes
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
@@ -188,6 +188,8 @@ class OffloadToAccelerator(ppl.Pass):
         if self.isolate_small_kernel_axes(sdfg):
             self.cache_scopes(sdfg)
         self.assign_schedules(sdfg)
+        if self.isolate_host_library_nodes(sdfg):
+            self.cache_scopes(sdfg)
 
         # Read before any copy is placed: the staging below renames the accesses this looks at.
         self.no_copy_in_needed = self.overwritten_before_any_read(sdfg)
@@ -1050,6 +1052,34 @@ class OffloadToAccelerator(ppl.Pass):
 
         for state in sdfg.states():
             walk(state, None, host_level)
+
+    def isolate_host_library_nodes(self, sdfg: SDFG) -> bool:
+        """Give each library node kept on the host a state of its own when its state has device work.
+
+        :meth:`assign_schedules` puts every host-level library node on the device, so one it left off was kept on
+        the host by the caller (NestForge's CPU-placed kernels). Beside device work, its state would be hybrid: the
+        resolution moves every array of the state to the device, and the host call reads device memory.
+
+        :returns: whether any state was split.
+        """
+        changed = False
+        pending = list(sdfg.states())
+        while pending:
+            state = pending.pop()
+            scopes = state.scope_dict()
+            top = [node for node in state.nodes() if scopes[node] is None]
+            for node in top:
+                if not isinstance(node, nodes.LibraryNode) or has_GPU_schedule(node):
+                    continue
+                if not any(self.is_device_work(other) for other in top if other is not node):
+                    continue
+                if not isolate_nested_sdfg(state, node, test_if_applicable=True):
+                    continue
+                pre, _, post = isolate_nested_sdfg(state, node)
+                pending += [pre, post]
+                changed = True
+                break
+        return changed
 
     def set_schedule(self, node, schedule: dtypes.ScheduleType) -> None:
         # Sequential specifically: Default can be lowered to CUDA in the wrong places.

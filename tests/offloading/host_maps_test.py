@@ -369,14 +369,17 @@ class HostLibraryNodes(OffloadToAccelerator):
                 node.schedule = dace.ScheduleType.CPU_Multicore
 
 
-def test_a_library_node_kept_on_the_host_beside_a_kernel_is_not_wrapped_into_one():
+def test_a_library_node_kept_on_the_host_beside_a_kernel_runs_in_a_state_of_its_own_on_host_data():
+    """Sharing the kernel's state, the state was hybrid: the library node was wrapped into a size-1 kernel, or, once
+    not, read the device copies of its arrays from the host."""
     sdfg = scaled_total.to_sdfg(simplify=True)
     ppl.Pipeline([HostLibraryNodes()]).apply_pass(sdfg, {})
 
-    placed = [
-        (node, state.entry_node(node))
-        for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.LibraryNode)
+    ((reduce, state),) = [
+        (node, state) for node, state in sdfg.all_nodes_recursive() if isinstance(node, nodes.LibraryNode)
     ]
+    operands = {edge.data.data for edge in state.all_edges(reduce)}
 
-    assert [(node.schedule, entry) for node, entry in placed] == [(dace.ScheduleType.CPU_Multicore, None)]
+    assert (reduce.schedule, state.entry_node(reduce)) == (dace.ScheduleType.CPU_Multicore, None)
+    assert not any(isinstance(node, nodes.MapEntry) for node in state.nodes())
+    assert {sdfg.arrays[name].storage for name in operands} == {dace.StorageType.Default}
