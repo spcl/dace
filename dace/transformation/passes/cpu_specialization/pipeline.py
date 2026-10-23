@@ -26,10 +26,9 @@ Order within the stage, and why:
    a 1-iteration and an ``nchunks``-iteration region, and sequentializing those is exactly the
    verdict the fork/join model exists to give.
 3. :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.RecomputeOversizedIntermediates`
-   -- collapses a producer map into its single consumer and drops the intermediate, but only when
-   that intermediate provably does not fit in the host's last-level cache. The CPU keeps a
-   cache-resident intermediate materialized (reading it back beats recomputing it) and pays ALU only
-   for the ones that would cost a full DRAM round-trip.
+   -- collapses a producer map into its single consumer and drops the intermediate when nothing is
+   recomputed (each element read once), or when the intermediate is not provably below the per-core
+   L2 cache and the producer is pointwise and cheap.
 4. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` -- a
    parallel map never shares out a ``SMALL`` axis (``nblks``): those run in an inner sequential map under the other
    axes, and a map over ``SMALL`` axes only is collapsed with the map over larger ones it holds. Before the reduction

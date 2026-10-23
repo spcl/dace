@@ -1,106 +1,93 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Recompute a producer map inside its consumer when the intermediate outgrows the cache.
+"""Recompute a producer map inside its consumer map (``OTFMapFusion``) when that does not cost the CPU.
 
-:func:`~dace.transformation.passes.canonicalize.finalize.recompute_fuse_for_gpu` collapses
-producer->consumer map chains with ``OTFMapFusion`` and deletes the intermediate, and states why
-the CPU deliberately does not: there the intermediates are cache-resident and shared across the
-consumer maps, so materializing once and reading beats recomputing.
+The CPU counterpart of :func:`~dace.transformation.passes.canonicalize.finalize.recompute_fuse_for_gpu`, with a
+CPU cost model. A chain ``producer map -> transient -> consumer map`` is fused, and the transient deleted, when the
+transient has exactly one reader in its SDFG and either
 
-That argument holds exactly while the intermediate IS cache-resident. A 3-D stencil half-step
-buffer -- heat3d's ``B``, jacobi's, the split-statement temporaries a slice-vectorized stencil
-leaves behind -- is the size of the grid, so materializing it costs a full DRAM write plus a full
-DRAM read that recomputation never pays: ``2 * |T|`` of traffic on a sweep that is bandwidth-bound
-to begin with. The producer's own inputs are read either way, and the consumer streams them
-anyway, so recomputing spends ALU, not bandwidth.
+* every consumer iteration reads one distinct element exactly once, so nothing is recomputed, or
+* the transient is not provably below the per-core L2 cache (a numeric size above it, or a symbolic size that does not
+  name ``SMALL`` symbols only), and the producer is pointwise and cheap: one element per iteration, computed by
+  tasklets and scalar access nodes only.
 
-The CPU rule is therefore the size test the GPU never needs -- fuse when the intermediate provably
-does not fit in the host's last-level cache, keep the materialized form when it does. Both halves
-of the gate stay conservative:
-
-* a symbolic size counts as oversized (house rule: an unknown extent is assumed big), because the
-  materialized form is the one that cannot be recovered once it reaches codegen;
-* only a SINGLE-consumer intermediate is fused. Two consumer maps reading one buffer is precisely
-  the sharing a cache is good at, and fusing into both re-reads the producer's inputs once per
-  consumer -- a traffic question this pass has no model for, so it declines rather than guesses.
-
-A DEVICE SPECIALIZATION, not a canonical form: which side of the recompute/materialize trade wins
-is a property of the host's cache, so this runs in the CPU lowering band and the canonical graph
-keeps its materialized intermediates.
+A device specialization, not a canonical form: the canonical graph keeps its materialized intermediates.
 """
 
 from typing import Any
 
 from dace import SDFG, data, properties, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import forget_facts, memoize_facts
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.passes.cpu_specialization.machine import topology
 
 
-def intermediate_outgrows_cache(sdfg: SDFG, name: str) -> bool:
-    """Whether materializing ``name`` provably costs DRAM traffic on this host.
+def intermediate_outgrows_cache(sdfg: SDFG, name: str, facts: symbolic.Facts) -> bool:
+    """Whether the array ``name`` is not provably below the host's per-core L2 cache.
 
     :param sdfg: The SDFG owning the descriptor.
     :param name: The intermediate transient's name.
-    :returns: True when the array is larger than the host's last level cache, or symbolically sized.
+    :param facts: ``sdfg``'s symbol facts (``SMALL`` symbols).
+    :returns: False for a non-array, a numeric size at most the L2 size, or a size over ``SMALL`` symbols only.
     """
     desc = sdfg.arrays[name]
     if not isinstance(desc, data.Array):
         return False
     size = desc.total_size * desc.dtype.bytes
-    if symbolic.issymbolic(size):
-        return True
-    return int(size) > topology().llc_bytes
+    if not symbolic.issymbolic(size):
+        return int(size) > topology().l2_bytes
+    return not symbolic.is_small(size, facts)
 
 
-@properties.make_properties
-class OversizedIntermediateOTFFusion(OTFMapFusion):
-    """``OTFMapFusion`` restricted to a single-consumer intermediate that outgrows the host's LLC."""
+def consumer_reads(state: SDFGState, name: str, consumer: nodes.MapEntry) -> list:
+    """The memlets inside ``consumer`` that read ``name``."""
+    return [e.data for e in state.out_edges(consumer) if e.data.data == name]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+
+def reads_each_element_once(reads: list, producer: nodes.MapEntry, consumer: nodes.MapEntry) -> bool:
+    """Whether the consumer's iterations read distinct single elements, one access pattern, in the producer's
+    dimensionality: the fused map then computes each element once."""
+    if len(consumer.map.params) != len(producer.map.params):
+        return False
+    patterns = {tuple(memlet.subset.ranges) for memlet in reads}
+    if len(patterns) != 1 or reads[0].subset.num_elements() != 1:
+        return False
+    return set(consumer.map.params) <= reads[0].subset.free_symbols
+
+
+def pointwise_cheap_producer(state: SDFGState, sdfg: SDFG, producer: nodes.MapEntry, exit_node: nodes.MapExit) -> bool:
+    """Whether each producer iteration writes its own single element (no WCR) from tasklets and scalar access nodes
+    only."""
+    params = set(producer.map.params)
+    for edge in state.in_edges(exit_node):
+        subset = edge.data.subset
+        if subset is None or edge.data.wcr is not None or subset.num_elements() != 1:
             return False
-        # Consumers, not edges: a stencil reads one intermediate at several offsets through
-        # several edges into the SAME map entry, and that is still one consumer.
-        if len({e.dst for e in graph.out_edges(self.array)}) != 1:
+        if not params <= subset.free_symbols:
             return False
-        # Counted over the WHOLE SDFG, not this state. ``graph`` is one state, and an intermediate
-        # read from several states -- stencil_3d's ``padded``, read at six offsets per tap inside
-        # the radius loop -- looks single-consumer in every one of them. Fusing then folds the
-        # producer into one reader and leaves the others on a buffer nothing writes: measured on
-        # stencil_3d, the surviving access node came out ``in=0, out=6`` and the kernel returned
-        # uninitialized memory. The SDFG still validates, so nothing downstream catches it.
-        readers = sum(
-            1
-            for state in sdfg.states()
-            for node in state.nodes()
-            if isinstance(node, nodes.AccessNode) and node.data == self.array.data and state.out_degree(node) > 0
-        )
-        if readers != 1:
+    for node in state.scope_subgraph(producer, include_entry=False, include_exit=False).nodes():
+        if isinstance(node, nodes.Tasklet):
+            continue
+        if not isinstance(node, nodes.AccessNode) or sdfg.arrays[node.data].total_size != 1:
             return False
-        return intermediate_outgrows_cache(sdfg, self.array.data)
+    return True
 
-    def apply(self, graph: SDFGState, sdfg: SDFG):
-        """Fuse, then drop the intermediate's descriptor once nothing reads it.
 
-        ``OTFMapFusion`` removes the intermediate's access node but leaves its descriptor in
-        ``sdfg.arrays``, which is the right split for a dataflow transformation and the wrong end
-        state for this one: an array no node touches is still allocated at codegen, so the
-        materialization traffic this pass exists to avoid would be paid in full anyway.
-        """
-        name = self.array.data
-        super().apply(graph, sdfg)
-        if any(
-            node.data == name for state in sdfg.states() for node in state.nodes() if isinstance(node, nodes.AccessNode)
-        ):
-            return
-        sdfg.remove_data(name, validate=False)
+def reader_counts(sdfg: SDFG) -> dict[str, int]:
+    """Number of reading access nodes per data name over every state of ``sdfg``."""
+    counts: dict[str, int] = {}
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if state.out_degree(node) > 0:
+                counts[node.data] = counts.get(node.data, 0) + 1
+    return counts
 
 
 @properties.make_properties
 class RecomputeOversizedIntermediates(ppl.Pass):
-    """Fuse every producer map whose intermediate does not fit in the host's last-level cache."""
+    """Fuse producer->consumer map chains with ``OTFMapFusion`` where the CPU gate (module docstring) admits it."""
 
     CATEGORY: str = "CPU Specialization"
 
@@ -114,9 +101,69 @@ class RecomputeOversizedIntermediates(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Apply to fixpoint; returns how many chains were collapsed, or ``None``."""
-        # ``cpu_specialize`` validates once at its end; a validation per pass would walk the SDFG again.
-        applied = sdfg.apply_transformations_repeated(
-            OversizedIntermediateOTFFusion, validate=False, validate_all=False
-        )
+        """Apply to fixpoint; returns how many chains were collapsed, or ``None``. Does not validate."""
+        xform = OTFMapFusion()
+        oversized: dict[SDFG, dict[str, bool]] = {}
+        applied = 0
+        changed = True
+        with memoize_facts():
+            while changed:
+                changed = False
+                for sd in list(sdfg.all_sdfgs_recursive()):
+                    readers = reader_counts(sd)
+                    for state in sd.states():
+                        while self.fuse_one(xform, sd, state, readers, oversized.setdefault(sd, {})):
+                            applied += 1
+                            changed = True
+                            forget_facts(sd)
+                            readers = reader_counts(sd)
         return applied or None
+
+    def fuse_one(
+        self,
+        xform: OTFMapFusion,
+        sdfg: SDFG,
+        state: SDFGState,
+        readers: dict[str, int],
+        oversized: dict[str, bool],
+    ) -> bool:
+        """Fuse the first admitted chain of ``state``; whether one was fused. ``oversized`` caches
+        :func:`intermediate_outgrows_cache` per name of ``sdfg``."""
+        for node in state.data_nodes():
+            desc = sdfg.arrays[node.data]
+            if not desc.transient or readers.get(node.data, 0) != 1 or state.in_degree(node) != 1:
+                continue
+            exit_node = state.in_edges(node)[0].src
+            consumers = {e.dst for e in state.out_edges(node)}
+            if not isinstance(exit_node, nodes.MapExit) or len(consumers) != 1:
+                continue
+            consumer = next(iter(consumers))
+            if not isinstance(consumer, nodes.MapEntry):
+                continue
+            producer = state.entry_node(exit_node)
+            if not reads_each_element_once(consumer_reads(state, node.data, consumer), producer, consumer):
+                if node.data not in oversized:
+                    oversized[node.data] = intermediate_outgrows_cache(sdfg, node.data, sdfg.facts())
+                if not oversized[node.data] or not pointwise_cheap_producer(state, sdfg, producer, exit_node):
+                    continue
+            xform.setup_match(
+                sdfg,
+                state.parent_graph.cfg_id,
+                state.block_id,
+                {
+                    OTFMapFusion.first_map_exit: exit_node,
+                    OTFMapFusion.array: node,
+                    OTFMapFusion.second_map_entry: consumer,
+                },
+                0,
+                override=True,
+            )
+            if not xform.can_be_applied(state, 0, sdfg):
+                continue
+            name = node.data
+            xform.apply(state, sdfg)
+            # The intermediate's descriptor would otherwise still be allocated at codegen.
+            if not any(n.data == name for st in sdfg.states() for n in st.data_nodes()):
+                sdfg.remove_data(name, validate=False)
+            return True
+        return False

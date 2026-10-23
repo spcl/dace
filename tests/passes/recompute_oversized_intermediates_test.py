@@ -1,11 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the CPU specialization RecomputeOversizedIntermediates (producer -> consumer recompute).
+"""Tests for the CPU specialization RecomputeOversizedIntermediates (gated producer -> consumer recompute).
 
-The trade is cache-resident vs not: an intermediate that fits in the last-level cache is cheaper to
-materialize once and read back, one that does not costs a full DRAM write plus a full DRAM read
-that recomputing never pays. Every "declines" case below asserts that the UNGATED ``OTFMapFusion``
-would have applied, so a shape change that makes the pattern disappear fails the test instead of
-passing it vacuously.
+Every "declines" case asserts that the UNGATED ``OTFMapFusion`` would have applied, so a shape change that makes the
+pattern disappear fails the test instead of passing it vacuously.
 """
 
 import copy
@@ -13,7 +10,7 @@ import copy
 import numpy as np
 
 import dace
-from dace import data
+from dace import data, symbolic
 from dace.sdfg import nodes
 from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.passes.cpu_specialization import RecomputeOversizedIntermediates
@@ -32,6 +29,7 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
 
 
 N = dace.symbol("N")
+M = dace.symbol("M")
 
 #: Small enough to fit any last-level cache this could run on: 16 doubles is 128 bytes.
 SMALL = 16
@@ -53,6 +51,33 @@ def chain_small(a: dace.float64[SMALL], out: dace.float64[SMALL]):
         t[i] = a[i] * 2.0
     for i in dace.map[0:SMALL]:
         out[i] = t[i] + 1.0
+
+
+@dace.program
+def stencil_symbolic(a: dace.float64[N + 2], out: dace.float64[N]):
+    t = dace.define_local([N + 2], dace.float64)
+    for i in dace.map[0 : N + 2]:
+        t[i] = a[i] * 2.0 + 1.0
+    for i in dace.map[0:N]:
+        out[i] = t[i] + t[i + 1] + t[i + 2]
+
+
+@dace.program
+def stencil_small(a: dace.float64[SMALL + 2], out: dace.float64[SMALL]):
+    t = dace.define_local([SMALL + 2], dace.float64)
+    for i in dace.map[0 : SMALL + 2]:
+        t[i] = a[i] * 2.0 + 1.0
+    for i in dace.map[0:SMALL]:
+        out[i] = t[i] + t[i + 1] + t[i + 2]
+
+
+@dace.program
+def stencil_small_symbol(a: dace.float64[M + 2], out: dace.float64[M]):
+    t = dace.define_local([M + 2], dace.float64)
+    for i in dace.map[0 : M + 2]:
+        t[i] = a[i] * 2.0 + 1.0
+    for i in dace.map[0:M]:
+        out[i] = t[i] + t[i + 1] + t[i + 2]
 
 
 @dace.program
@@ -90,6 +115,16 @@ def assert_ungated_fusion_applies(prog):
     assert probe.apply_transformations_repeated(OTFMapFusion, validate_all=False) > 0
 
 
+def assert_matches_unfused(fused: dace.SDFG, unfused: dace.SDFG, n: int, halo: int = 0, **symbols) -> None:
+    """The fused SDFG computes the unfused SDFG's output on random input."""
+    unfused.name = fused.name + "_unfused"
+    a = np.random.default_rng(11).random(n + halo)
+    expected, got = np.zeros(n), np.zeros(n)
+    unfused(a=a.copy(), out=expected, **symbols)
+    fused(a=a.copy(), out=got, **symbols)
+    assert np.allclose(got, expected)
+
+
 def test_oversized_intermediate_is_recomputed():
     """A symbolic extent is assumed big, so the intermediate goes and the two maps become one."""
     sdfg = chain_symbolic.to_sdfg(simplify=True)
@@ -110,14 +145,48 @@ def test_oversized_intermediate_is_recomputed():
     assert np.allclose(out, a * 2.0 + 1.0)
 
 
-def test_cache_resident_intermediate_stays_materialized():
-    """128 bytes fits any LLC, so reading it back beats recomputing and the pass declines."""
-    assert_ungated_fusion_applies(chain_small)
-
+def test_small_read_once_intermediate_is_fused():
+    """Each element read once recomputes nothing, so even a cache-resident intermediate goes."""
     sdfg = chain_small.to_sdfg(simplify=True)
+    unfused = copy.deepcopy(sdfg)
+    intermediate = transients(sdfg)
+    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert intermediate[0] not in sdfg.arrays and len(top_level_maps(sdfg)) == 1
+    assert_matches_unfused(sdfg, unfused, SMALL)
+
+
+def test_large_multiply_read_pointwise_intermediate_is_recomputed():
+    """A symbolic (not SMALL) intermediate read at three offsets is recomputed from its pointwise producer."""
+    sdfg = stencil_symbolic.to_sdfg(simplify=True)
+    unfused = copy.deepcopy(sdfg)
+    intermediate = transients(sdfg)
+    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert_cfg_list_matches_reset(sdfg)
+    assert intermediate[0] not in sdfg.arrays and len(top_level_maps(sdfg)) == 1
+    assert_matches_unfused(sdfg, unfused, 64, halo=2, N=64)
+
+
+def test_small_multiply_read_intermediate_stays_materialized():
+    """A 144-byte intermediate read at three offsets is below L2: reading it back beats recomputing."""
+    assert_ungated_fusion_applies(stencil_small)
+
+    sdfg = stencil_small.to_sdfg(simplify=True)
+    unfused = copy.deepcopy(sdfg)
     assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
-    assert len(transients(sdfg)) == 1
-    assert len(top_level_maps(sdfg)) == 2
+    assert len(transients(sdfg)) == 1 and len(top_level_maps(sdfg)) == 2
+    assert_matches_unfused(sdfg, unfused, SMALL, halo=2)
+
+
+def test_small_symbol_multiply_read_intermediate_stays_materialized():
+    """An intermediate sized by a SMALL symbol only is cache-resident by the size facts."""
+    assert_ungated_fusion_applies(stencil_small_symbol)
+
+    sdfg = stencil_small_symbol.to_sdfg(simplify=True)
+    sdfg.set_symbol_scale("M", symbolic.Scale.SMALL)
+    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
+    assert len(transients(sdfg)) == 1 and len(top_level_maps(sdfg)) == 2
 
 
 def test_two_consumers_stay_materialized():
@@ -163,23 +232,34 @@ def test_consumers_in_separate_states_stay_materialized():
     assert np.allclose(out, 3.0 * (a * 2.0))
 
 
-def test_the_gate_reads_the_host_last_level_cache():
-    """The threshold is the host's own LLC, not a constant measured on the development box."""
-    llc = topology().llc_bytes
+def test_the_gate_reads_the_host_l2_cache_and_size_facts():
+    """The threshold is the host's own per-core L2; a size over SMALL symbols only is below it."""
+    l2 = topology().l2_bytes
     sdfg = dace.SDFG("gate")
-    sdfg.add_array("over", [llc // 8 + 1], dace.float64, transient=True)
-    sdfg.add_array("under", [llc // 8 - 1], dace.float64, transient=True)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.set_symbol_scale("M", symbolic.Scale.SMALL)
+    sdfg.add_array("over", [l2 // 8 + 1], dace.float64, transient=True)
+    sdfg.add_array("under", [l2 // 8 - 1], dace.float64, transient=True)
     sdfg.add_array("symbolic", [N], dace.float64, transient=True)
+    sdfg.add_array("small_symbol", [M, M], dace.float64, transient=True)
+    sdfg.add_array("mixed", [M, N], dace.float64, transient=True)
     sdfg.add_scalar("scalar", dace.float64, transient=True)
+    facts = sdfg.facts()
 
-    assert intermediate_outgrows_cache(sdfg, "over")
-    assert not intermediate_outgrows_cache(sdfg, "under")
-    assert intermediate_outgrows_cache(sdfg, "symbolic")
-    assert not intermediate_outgrows_cache(sdfg, "scalar")
+    assert intermediate_outgrows_cache(sdfg, "over", facts)
+    assert not intermediate_outgrows_cache(sdfg, "under", facts)
+    assert intermediate_outgrows_cache(sdfg, "symbolic", facts)
+    assert not intermediate_outgrows_cache(sdfg, "small_symbol", facts)
+    assert intermediate_outgrows_cache(sdfg, "mixed", facts)
+    assert not intermediate_outgrows_cache(sdfg, "scalar", facts)
 
 
 if __name__ == "__main__":
     test_oversized_intermediate_is_recomputed()
-    test_cache_resident_intermediate_stays_materialized()
+    test_small_read_once_intermediate_is_fused()
+    test_large_multiply_read_pointwise_intermediate_is_recomputed()
+    test_small_multiply_read_intermediate_stays_materialized()
+    test_small_symbol_multiply_read_intermediate_stays_materialized()
     test_two_consumers_stay_materialized()
-    test_the_gate_reads_the_host_last_level_cache()
+    test_consumers_in_separate_states_stay_materialized()
+    test_the_gate_reads_the_host_l2_cache_and_size_facts()

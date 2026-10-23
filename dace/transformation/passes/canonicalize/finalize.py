@@ -725,9 +725,9 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     reads, and recomputes it per consumer iteration; it is numerically faithful to the
     materialized form (verified to machine epsilon on hdiff / jacobi_2d / heat_3d).
 
-    CPU deliberately does NOT run this: there the intermediates are cache-resident and shared
-    across the consumer maps, so materializing once and reading beats recomputing -- the four
-    separate maps are the CPU strategy. Called by :func:`offload_to_gpu` as its first step, so the
+    The CPU runs the same fusion behind a cost gate instead (``cpu_specialize``'s
+    :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.
+    RecomputeOversizedIntermediates`). Called by :func:`offload_to_gpu` as its first step, so the
     fusion sees plain (device-agnostic) maps and the single fused map is what gets offloaded.
 
     :param sdfg: The SDFG to fuse in place.
@@ -757,8 +757,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
        the time the offload starts; inside the function is the only place that can guarantee it.
     1. **Recompute-fuse** (:func:`recompute_fuse_for_gpu`): collapse producer chains into one map
        before the device move, so the single fused map is what lands on the device (register
-       recompute beats the global-memory round-trip of materialized intermediates). CPU keeps the
-       materialized maps, which is why this lives here and not in ``finalize_for_target``.
+       recompute beats the global-memory round-trip of materialized intermediates). The CPU gates
+       the same fusion by its own cost model in ``cpu_specialize``, which is why this lives here.
     2. **Full offload** (unconditional): put non-transient arrays in GPU global storage
        (:func:`apply_gpu_storage`) and run ``apply_gpu_transformations`` (host<->device copies +
        ``GPU_Device`` schedules on every eligible map). Run unconditionally -- a partially-offloaded
