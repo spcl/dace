@@ -911,3 +911,30 @@ def test_a_node_an_ordering_edge_puts_before_takes_its_outputs_to_the_pre_state(
     assert [e.dst.data for e in pre.out_edges(first) if not e.data.is_empty()] == ["B"]
     assert not count_node(post, dace_nodes.NestedSDFG)
     sdfg.validate()
+
+
+def test_an_output_another_writer_also_fills_stays_out_of_the_pre_state():
+    """As above, but ``B`` has a second producer the walk does not pull in. Moving ``B`` to the pre state keeps only
+    the edge from ``first`` and drops ``second``'s write (warpx_boris_push lost every element), so the split is
+    refused instead."""
+    sdfg = dace.SDFG("second_writer_of_pre_output")
+    for name in "ABCDE":
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    b = state.add_write("B")
+    first = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(state.add_read("A"), None, first, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(first, "B", b, None, dace.Memlet("B[0:10]"))
+    second = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(state.add_read("E"), None, second, "A", dace.Memlet("E[0:10]"))
+    state.add_edge(second, "B", b, None, dace.Memlet("B[0:10]"))
+    d = state.add_access("D")
+    state.add_nedge(first, d, dace.Memlet())
+    isolated = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(d, None, isolated, "A", dace.Memlet("D[0:10]"))
+    state.add_edge(isolated, "B", state.add_write("C"), None, dace.Memlet("C[0:10]"))
+    sdfg.validate()
+    writes = count_writes(sdfg)
+
+    assert isolate_nested_sdfg(state, isolated, test_if_applicable=True) is False
+    assert count_writes(sdfg) == writes

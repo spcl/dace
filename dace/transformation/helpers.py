@@ -1267,13 +1267,17 @@ def isolate_nested_sdfg(
             )
 
     # A code node the walk pulled in (through an ordering edge, say) writes its outputs in the pre state too: left to
-    # the post state, an output would lose its producer and the split would be refused.
+    # the post state, an output would lose its producer and the split would be refused. Only an output every producer
+    # of which is in the pre state moves: the pre state keeps just the edges among its own nodes, so another writer's
+    # edge into it would be dropped.
     for node in list(pre_nodes):
         if not isinstance(node, nodes.AccessNode):
             pre_nodes.update(
                 oedge.dst
                 for oedge in state.out_edges(node)
-                if isinstance(oedge.dst, nodes.AccessNode) and oedge.dst not in middle_nodes
+                if isinstance(oedge.dst, nodes.AccessNode)
+                and oedge.dst not in middle_nodes
+                and all(iedge.src in pre_nodes for iedge in state.in_edges(oedge.dst))
             )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
