@@ -27,7 +27,13 @@ from dace.transformation.interstate.loop_to_map import (
     index_block_symbols,
     spans_small_symbols,
 )
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import array_facts, loop_analysis
+
+#: The refusal :meth:`ParallelizeLoops.probe` can lift with array facts.
+NOT_UNIQUE = "is not uniquely indexed by the iteration variable"
+
+#: Added to the hint of a map whose stores were proven disjoint through array facts.
+FACTS_NOTE = "stores proven disjoint by array facts: {facts}"
 
 
 def candidate_loops(sdfg: SDFG) -> list[LoopRegion]:
@@ -316,7 +322,8 @@ class ParallelizeLoops(ppl.Pass):
         # rather than resolving a list the sweep keeps stale until its last lift.
         xform.setup_match(sd, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         xform._pipeline_results = pipeline_results
-        if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+        facts: list[array_facts.ArrayFact] = []
+        if not proven and not self.probe(xform, loop, facts):
             return False
         # A known-parallel loop is mapped as it is: no sibling chain holds it, and its scale is the CPU specialization's
         # to settle.
@@ -330,6 +337,7 @@ class ParallelizeLoops(ppl.Pass):
             before_apply()
         end, last = loop_analysis.get_loop_end(loop), last_iteration(loop)
         itervar = loop.loop_variable
+        existing = {n for st in graph.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)} if facts else set()
         with memoize_facts(active=False):
             xform.apply(graph, sd)
         # The lift edits ``sd``'s descriptors, symbols and interstate edges, and builds a new nested SDFG. The one
@@ -352,12 +360,42 @@ class ParallelizeLoops(ppl.Pass):
                     # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
                     rb, _, rs = node.map.range[0]
                     node.map.range = subsets.Range([(rb, last, rs)])
+            for node in lifted:
+                if facts and node not in existing:
+                    note = FACTS_NOTE.format(facts="; ".join(f.describe() for f in facts))
+                    node.specialization_hint = "\n".join(h for h in (node.specialization_hint, note) if h)
             if lifted:
                 # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
                 # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
                 # cost stays independent of ``propagate``.
                 propagate_memlets_state(sd, state, resolver)
         return True
+
+    def probe(self, xform: LoopToMap, loop: LoopRegion, facts: list[array_facts.ArrayFact]) -> bool:
+        """``LoopToMap``'s probe of the matched ``loop``, retried with each container it refuses on for non-unique
+        stores that the array facts prove conflict-free (:func:`array_facts.conflict_free_under_facts`) vouched
+        for. The facts used are appended to ``facts``."""
+        sd, graph = loop.sdfg, loop.parent_graph
+        if xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+            return True
+        vouched = xform.contract_arrays
+        used: list[array_facts.ArrayFact] = []
+        try:
+            while NOT_UNIQUE in (xform.last_refusal_reason or ""):
+                name = xform.last_refusal_container
+                if name is None or name in xform.contract_arrays:
+                    return False
+                proof = array_facts.conflict_free_under_facts(sd, loop, name)
+                if proof is None:
+                    return False
+                used += [f for f in proof if f not in used]
+                xform.contract_arrays = xform.contract_arrays | {name}
+                if xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+                    facts.extend(used)
+                    return True
+            return False
+        finally:
+            xform.contract_arrays = vouched
 
     def holds_back(self, xform: LoopToMap, loop: LoopRegion) -> bool:
         """Whether to keep ``loop`` a loop although its probe accepted it; asked only after that probe, which refuses
