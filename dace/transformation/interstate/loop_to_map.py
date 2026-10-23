@@ -636,6 +636,9 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
                         and dn.data not in written
                         and block.in_degree(dn) == 0
                         and block.out_degree(dn) > 0
+                        and not any(
+                            dn.data in guarded[key][1] for key in nested_read_guards(block, dn) if key in guarded
+                        )
                     ):
                         carried.add(dn.data)
                 written |= {dn.data for dn in block.data_nodes() if dn.data in candidates and block.in_degree(dn) > 0}
@@ -667,6 +670,58 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
 
     scan(loop, set(), {})
     return carried
+
+
+def nested_read_guards(state: SDFGState, dn: nodes.AccessNode) -> set[str]:
+    """Conditions (as their outer-scope strings) under which every use of ``dn``'s value runs: each read path ends in a
+    NestedSDFG whose every access of the connector sits in a single-condition branch of that condition. A condition
+    counts only when each symbol it reads reaches the NestedSDFG unrenamed and nothing inside it, or a map around it,
+    rebinds that symbol. Empty when some use is unguarded."""
+    common: set[str] | None = None
+    for edge in state.out_edges(dn):
+        if edge.data.is_empty():
+            continue
+        for leaf in state.memlet_tree(edge).leaves():
+            node = leaf.dst
+            if not isinstance(node, nodes.NestedSDFG) or leaf.dst_conn is None:
+                return set()
+            conds = connector_guards(state, node, leaf.dst_conn)
+            common = conds if common is None else common & conds
+            if not common:
+                return set()
+    return common or set()
+
+
+def connector_guards(state: SDFGState, node: nodes.NestedSDFG, conn: str) -> set[str]:
+    """The conditions guarding every access of ``conn`` inside ``node`` that read only identity-mapped symbols no
+    enclosing map and no inner assignment or loop rebinds (see :func:`nested_read_guards`)."""
+    inner = node.sdfg
+    rebound = {name for edge in inner.all_interstate_edges() for name in edge.data.assignments}
+    rebound |= {r.loop_variable for r in inner.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    scope = state.entry_node(node)
+    while scope is not None:
+        rebound |= set(scope.map.params)
+        scope = state.entry_node(scope)
+    common: set[str] | None = None
+    for st in inner.states():
+        for an in st.data_nodes():
+            if an.data != conn:
+                continue
+            conds: set[str] = set()
+            block = st
+            while block is not None and block is not inner:
+                parent = block.parent_graph
+                if isinstance(parent, ConditionalBlock) and len(parent.branches) == 1:
+                    cond, body = parent.branches[0]
+                    if body is block and cond is not None:
+                        free = {str(s) for s in cond.get_free_symbols()}
+                        if not free & rebound and all(str(node.symbol_mapping.get(s)) == s for s in free):
+                            conds.add(cond.as_string)
+                block = parent
+            common = conds if common is None else common & conds
+            if not common:
+                return set()
+    return common or set()
 
 
 def edge_read_symbols(edge: InterstateEdge, ctx: Optional["LiftContext"]) -> set[str]:

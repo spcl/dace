@@ -22,6 +22,7 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 
 N = dace.symbol("N")
 M = dace.symbol("M")
+F = dace.symbol("F")
 
 
 def n_maps(sdfg: dace.SDFG) -> int:
@@ -104,6 +105,16 @@ def varying_guard_twice(A: dace.float64[N], B: dace.float64[N]):
         B[i] = A[i]
         if i % 2 == 0:
             B[i] = t + 1.0
+
+
+@dace.program
+def same_guard_inside_inner_map(A: dace.float64[N], B: dace.float64[N, M], C: dace.float64[M]):
+    for i in range(N):
+        if F > 0:
+            t = A[i] * 2.0
+        for j in range(M):
+            if F > 0:
+                B[i, j] = t + C[j]
 
 
 def test_guarded_write_carry_is_refused():
@@ -216,6 +227,23 @@ def test_a_guard_whose_scalar_is_rewritten_between_the_branches_is_refused():
 
     names = {name for name, desc in sdfg.arrays.items() if desc.transient}
     assert any("t" in read_before_written(loop, names) for loop in loops)
+
+
+def test_a_read_under_the_same_guard_inside_a_map_is_not_carried():
+    """warpx's azimuthal-mode loop after ``MoveIfIntoLoop``: the scratch is written under ``if F > 0:`` and read by
+    an inner map whose body repeats that guard, so the map's outer read runs only when the write did."""
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    sdfg = same_guard_inside_inner_map.to_sdfg(simplify=False)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, dace.sdfg.state.LoopRegion)]
+    inner = next(r for r in loops if r.loop_variable == "j")
+    outer = next(r for r in loops if r.loop_variable == "i")
+    xform = LoopToMap()
+    xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: inner}, 0, override=True)
+    assert xform.can_be_applied(inner.parent_graph, 0, sdfg)
+    xform.apply(inner.parent_graph, sdfg)
+    names = {name for name, desc in sdfg.arrays.items() if desc.transient}
+    assert "t" not in read_before_written(outer, names)
 
 
 if __name__ == "__main__":
