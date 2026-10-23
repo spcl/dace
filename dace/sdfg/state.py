@@ -4495,7 +4495,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 if full_cond_expression is None:
                     full_cond_expression = condition.code[0]
                 else:
-                    full_cond_expression = astutils.and_expr(full_cond_expression, condition.code[0])
+                    full_cond_expression = astutils.or_expr(full_cond_expression, condition.code[0])
                 parent.add_node(region)
                 parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
                 parent.add_edge(region, end_state, InterstateEdge())
