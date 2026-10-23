@@ -1610,6 +1610,20 @@ required:
                     max-flow/min-cut), which always use networkx regardless of this setting;
                     see dace/graphlib for details.
 
+    work_depth:
+        type: dict
+        title: Work-depth analysis
+        description: Settings of the work-depth analysis (dace/sdfg/performance_evaluation/work_depth.py).
+        required:
+            transcendental_cost:
+                type: str
+                default: 'unit'
+                title: Transcendental call cost
+                description: >
+                    Cost of a libm call (exp, log, sin, ...) in tasklet code. "unit" counts each call as
+                    one operation of depth one. "libm" uses the flop count and dependency depth of
+                    glibc's double-precision implementation (table lookup plus a short polynomial).
+
     #############################################
     # DaCe library settings
 

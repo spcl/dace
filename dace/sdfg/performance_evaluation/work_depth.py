@@ -15,9 +15,28 @@ import astunparse
 import sympy as sp
 
 from dace import SDFG, SDFGState, dtypes
+from dace.config import Config
 from dace.libraries.blas import Dot, Gemm, Gemv, MatMul
 from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
-from dace.libraries.standard import Reduce
+from dace.libraries.sort import IntegerSort, ScatterConflictCheck
+from dace.libraries.standard import (
+    ArgReduce,
+    Broadcast,
+    CopyLibraryNode,
+    CShift,
+    FillLibraryNode,
+    FindFirst,
+    MergeLibraryNode,
+    Norm2,
+    Reduce,
+    Scan,
+    ScanOp,
+    StateScan,
+    Symmetrize,
+)
+from dace.libraries.standard.nodes.argminmax import ExtremeIndex
+from dace.libraries.standard.nodes.mask_reduction import MaskReduction
+from dace.libraries.standard.nodes.state_scan import StateScanKind
 from dace.sdfg import InterstateEdge, propagation
 from dace.sdfg import nodes as nd
 from dace.sdfg.performance_evaluation.assumptions import assumption_relations
@@ -350,6 +369,128 @@ def count_depth_gemv(node, symbols, state):
     return sp.Max(1, depth)
 
 
+def tree_depth(n: sp.Expr) -> sp.Expr:
+    """Depth of a balanced binary tree over ``n`` leaves: ``log2(n)``, the lower bound for combining ``n`` values."""
+    return sp.log(sp.Max(1, n), 2)
+
+
+def input_volume(node: nd.LibraryNode, state: SDFGState, symbols: dict[str, str], connector: str) -> sp.Expr:
+    """Number of elements the library node reads through ``connector``."""
+    edge = next(state.in_edges_by_connector(node, connector))
+    return symeval(pystr_to_symbolic(edge.data.volume), symbols)
+
+
+def scan_op_cost(node: Scan) -> tuple[int, int]:
+    """Work and depth of one combine: an affine map composition ``(a2*a1, a2*b1 + b2)`` is 3 flops of depth 2."""
+    return (3, 2) if node.op is ScanOp.AFFINE else (1, 1)
+
+
+def count_work_scan(node: Scan, symbols, state):
+    """Work of a scan: the work-efficient (Blelloch) up-sweep plus down-sweep, ``n - 1`` combines each per segment."""
+    n = input_volume(node, state, symbols, node.INPUT_CONNECTOR_NAME)
+    segments = symeval(pystr_to_symbolic(node.segments), symbols)
+    return 2 * (n - segments) * scan_op_cost(node)[0]
+
+
+def count_depth_scan(node: Scan, symbols, state):
+    """Depth of a scan: two tree traversals over one segment of ``n / segments`` elements."""
+    n = input_volume(node, state, symbols, node.INPUT_CONNECTOR_NAME)
+    segments = symeval(pystr_to_symbolic(node.segments), symbols)
+    return 2 * tree_depth(n / segments) * scan_op_cost(node)[1]
+
+
+def state_scan_compose_cost(node: StateScan) -> tuple[sp.Expr, sp.Expr]:
+    """Work and depth of composing two block summaries: a ``count``-entry table lookup per state, or a GF(2)
+    ``bits x bits`` matrix product (``bits`` row XORs per row, an XOR tree of depth ``log2(bits)``)."""
+    if node.kind is StateScanKind.GF2_AFFINE:
+        return pystr_to_symbolic(node.bits * node.bits), tree_depth(pystr_to_symbolic(node.bits))
+    return pystr_to_symbolic(node.count), pystr_to_symbolic(1)
+
+
+def count_work_state_scan(node: StateScan, symbols, state):
+    """Work of a state scan: a work-efficient scan whose combine is a summary composition."""
+    n = symeval(pystr_to_symbolic(node.end - node.begin), symbols)
+    return 2 * (n - 1) * symeval(state_scan_compose_cost(node)[0], symbols)
+
+
+def count_depth_state_scan(node: StateScan, symbols, state):
+    """Depth of a state scan: two tree traversals of summary compositions."""
+    n = symeval(pystr_to_symbolic(node.end - node.begin), symbols)
+    return 2 * tree_depth(n) * symeval(state_scan_compose_cost(node)[1], symbols)
+
+
+def count_work_find_first(node: FindFirst, symbols, state):
+    """Work of a search: every predicate evaluated (the no-hit worst case), each at least one operation."""
+    n = symeval(pystr_to_symbolic(node.end - node.begin), symbols)
+    return n * max(1, count_arithmetic_ops_code(node.predicate))
+
+
+def count_depth_find_first(node: FindFirst, symbols, state):
+    """Depth of a search: one predicate, then a min-reduction tree over the hit indices."""
+    n = symeval(pystr_to_symbolic(node.end - node.begin), symbols)
+    return max(1, count_depth_code(node.predicate)) + tree_depth(n)
+
+
+def count_work_tree_reduction(connector_of: Callable[[nd.LibraryNode], str]):
+    """Work of a reduction tree over the elements read through ``connector_of(node)``: ``n - 1`` combines."""
+    return lambda node, symbols, state: input_volume(node, state, symbols, connector_of(node)) - 1
+
+
+def count_depth_tree_reduction(connector_of: Callable[[nd.LibraryNode], str]):
+    """Depth of a reduction tree over the elements read through ``connector_of(node)``."""
+    return lambda node, symbols, state: tree_depth(input_volume(node, state, symbols, connector_of(node)))
+
+
+def count_work_norm2(node: Norm2, symbols, state):
+    """Work of a Euclidean norm: ``n`` squares, ``n - 1`` additions and one square root."""
+    n = input_volume(node, state, symbols, "_x")
+    return 2 * n - 1 + call_cost("sqrt", libm_costs_enabled())[0]
+
+
+def count_depth_norm2(node: Norm2, symbols, state):
+    """Depth of a Euclidean norm: one square layer, the addition tree, the square root."""
+    n = input_volume(node, state, symbols, "_x")
+    return 1 + tree_depth(n) + call_cost("sqrt", libm_costs_enabled())[1]
+
+
+RADIX_BITS = 8
+
+
+def radix_passes(node: IntegerSort, state: SDFGState) -> int:
+    """Number of ``RADIX_BITS``-bit digit passes an LSD radix sort makes over the key type."""
+    edge = next(state.in_edges_by_connector(node, node.INPUT_CONNECTOR_NAME))
+    return state.sdfg.arrays[edge.data.data].dtype.bytes * 8 // RADIX_BITS
+
+
+def count_work_integer_sort(node: IntegerSort, symbols, state):
+    """Work of an LSD radix sort: per digit pass, a histogram and a ranked scatter over all ``n`` keys."""
+    n = input_volume(node, state, symbols, node.INPUT_CONNECTOR_NAME)
+    return radix_passes(node, state) * 2 * n
+
+
+def count_depth_integer_sort(node: IntegerSort, symbols, state):
+    """Depth of an LSD radix sort: per digit pass, a histogram reduction tree and a rank scan tree."""
+    n = input_volume(node, state, symbols, node.INPUT_CONNECTOR_NAME)
+    return radix_passes(node, state) * 2 * tree_depth(n)
+
+
+def count_work_scatter_conflict_check(node: ScatterConflictCheck, symbols, state):
+    """Work of a duplicate check: a tagged write and a verify per index, then an OR-reduction of the flags."""
+    n = input_volume(node, state, symbols, node.INPUT_CONNECTOR_NAME)
+    return 3 * n - 1
+
+
+def count_depth_scatter_conflict_check(node: ScatterConflictCheck, symbols, state):
+    """Depth of a duplicate check: the parallel tagged write, the parallel verify, the OR-reduction tree."""
+    n = input_volume(node, state, symbols, node.INPUT_CONNECTOR_NAME)
+    return 2 + tree_depth(n)
+
+
+def no_arithmetic(*args) -> sp.Expr:
+    """Data movement (copies, fills, shifts, selects) performs no arithmetic."""
+    return pystr_to_symbolic(0)
+
+
 LIBNODES_TO_WORK = {
     MatMul: count_work_matmul,
     Gemm: count_work_gemm,
@@ -360,6 +501,21 @@ LIBNODES_TO_WORK = {
     Cholesky: count_work_cholesky,
     Inv: count_work_inv,
     Solve: count_work_solve,
+    Scan: count_work_scan,
+    StateScan: count_work_state_scan,
+    FindFirst: count_work_find_first,
+    ArgReduce: count_work_tree_reduction(lambda node: "_in"),
+    ExtremeIndex: count_work_tree_reduction(lambda node: "_x"),
+    MaskReduction: count_work_tree_reduction(lambda node: node.INPUT_CONNECTOR_NAME),
+    Norm2: count_work_norm2,
+    IntegerSort: count_work_integer_sort,
+    ScatterConflictCheck: count_work_scatter_conflict_check,
+    CShift: no_arithmetic,
+    Broadcast: no_arithmetic,
+    FillLibraryNode: no_arithmetic,
+    CopyLibraryNode: no_arithmetic,
+    Symmetrize: no_arithmetic,
+    MergeLibraryNode: no_arithmetic,
 }
 
 LIBNODES_TO_DEPTH = {
@@ -372,7 +528,32 @@ LIBNODES_TO_DEPTH = {
     Cholesky: count_depth_cholesky,
     Inv: count_depth_inv,
     Solve: count_depth_solve,
+    Scan: count_depth_scan,
+    StateScan: count_depth_state_scan,
+    FindFirst: count_depth_find_first,
+    ArgReduce: count_depth_tree_reduction(lambda node: "_in"),
+    ExtremeIndex: count_depth_tree_reduction(lambda node: "_x"),
+    MaskReduction: count_depth_tree_reduction(lambda node: node.INPUT_CONNECTOR_NAME),
+    Norm2: count_depth_norm2,
+    IntegerSort: count_depth_integer_sort,
+    ScatterConflictCheck: count_depth_scatter_conflict_check,
+    CShift: no_arithmetic,
+    Broadcast: no_arithmetic,
+    FillLibraryNode: no_arithmetic,
+    CopyLibraryNode: no_arithmetic,
+    Symmetrize: no_arithmetic,
+    MergeLibraryNode: no_arithmetic,
 }
+
+
+def libnode_cost_function(table: dict[type, Callable], node: nd.LibraryNode) -> Callable | None:
+    """The cost function of ``node``'s class or of its nearest base class in ``table`` (``ArgMax`` is costed as an
+    ``ExtremeIndex``)."""
+    for cls in type(node).__mro__:
+        if cls in table:
+            return table[cls]
+    return None
+
 
 # Type-cast calls (e.g. ``int``, ``float``, ``dace.float64``, ``dace.uint16``) perform no
 # arithmetic and count as zero work. The names are derived from the available DaCe data types plus
@@ -415,10 +596,56 @@ PYFUNC_TO_ARITHMETICS = {
     "abs": 0,
 }
 
+# (work, depth) of one double-precision libm call on its common path, in flops (an FMA is 2), used when
+# ``work_depth.transcendental_cost`` is ``libm``. Counted from glibc's sysdeps/ieee754/dbl-64 sources (exp, exp2,
+# log and log2 come from Arm optimized-routines): a table lookup plus a short minimax polynomial, not a long Taylor
+# series. sin/cos take the Cody-Waite reduced path (|x| >= 2.4); tan, atan, atan2, asin, acos and cbrt are estimates.
+LIBM_COSTS: dict[str, tuple[int, int]] = {
+    "exp": (20, 13),
+    "exp2": (18, 11),
+    "expm1": (30, 18),
+    "log": (22, 10),
+    "log2": (26, 11),
+    "log10": (26, 12),
+    "sin": (40, 22),
+    "cos": (40, 22),
+    "tan": (45, 24),
+    "sinh": (34, 22),
+    "cosh": (24, 15),
+    "tanh": (34, 22),
+    "atan": (25, 14),
+    "atan2": (30, 16),
+    "asin": (30, 16),
+    "acos": (30, 16),
+    "sqrt": (1, 1),
+    "cbrt": (20, 12),
+}
+
+TRANSCENDENTAL_COST_MODELS = ("unit", "libm")
+
+
+def libm_costs_enabled() -> bool:
+    """Whether ``work_depth.transcendental_cost`` selects the libm cost table."""
+    model = Config.get("work_depth", "transcendental_cost")
+    if model not in TRANSCENDENTAL_COST_MODELS:
+        raise ValueError(f"work_depth.transcendental_cost is {model!r}, expected one of {TRANSCENDENTAL_COST_MODELS}")
+    return model == "libm"
+
+
+def call_cost(fname: str, libm: bool) -> tuple[int, int] | None:
+    """(work, depth) of a call to ``fname``, or None for a function the analysis does not know."""
+    if libm:
+        cost = LIBM_COSTS.get(fname.removeprefix("math."))
+        if cost is not None:
+            return cost
+    unit = PYFUNC_TO_ARITHMETICS.get(fname)
+    return None if unit is None else (unit, unit)
+
 
 class ArithmeticCounter(ast.NodeVisitor):
     def __init__(self):
         self.count = 0
+        self.libm = libm_costs_enabled()
 
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
@@ -432,10 +659,11 @@ class ArithmeticCounter(ast.NodeVisitor):
 
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
-        if fname not in PYFUNC_TO_ARITHMETICS:
+        cost = call_cost(fname, self.libm)
+        if cost is None:
             warnings.warn(f'Unrecognized function "{fname}" in tasklet code; assuming it performs zero work.')
             return self.generic_visit(node)
-        self.count += PYFUNC_TO_ARITHMETICS[fname]
+        self.count += cost[0]
         return self.generic_visit(node)
 
     def visit_AugAssign(self, node):
@@ -478,6 +706,7 @@ class DepthCounter(ast.NodeVisitor):
     def __init__(self):
         # Track the depth at which each variable was last assigned
         self.var_depths: dict[str, int] = {}
+        self.libm = libm_costs_enabled()
 
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
@@ -494,12 +723,13 @@ class DepthCounter(ast.NodeVisitor):
 
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
-        if fname not in PYFUNC_TO_ARITHMETICS:
+        cost = call_cost(fname, self.libm)
+        if cost is None:
             warnings.warn(f'Unrecognized function "{fname}" in tasklet code; assuming it performs zero work.')
             # Still need to visit arguments to get their depth
             arg_depths = [self.visit(arg) for arg in node.args]
             return max(arg_depths) if arg_depths else 0
-        op_cost = PYFUNC_TO_ARITHMETICS[fname]
+        op_cost = cost[1]
         # Get the maximum depth among all arguments
         arg_depths = [self.visit(arg) for arg in node.args]
         max_arg_depth = max(arg_depths) if arg_depths else 0
@@ -1183,9 +1413,10 @@ def scope_work_depth(
             work += nsdfg_work
             w_d_map[get_uuid(node, state)] = (nsdfg_work, nsdfg_depth)
         elif isinstance(node, nd.LibraryNode):
-            try:
-                lib_node_work = LIBNODES_TO_WORK[type(node)](node, symbols, state)
-            except KeyError:
+            work_of = libnode_cost_function(LIBNODES_TO_WORK, node)
+            if work_of is not None:
+                lib_node_work = work_of(node, symbols, state)
+            else:
                 # add a symbol to the top level sdfg, such that the user can define it in the extension
                 top_level_sdfg = state.parent
                 # TODO: This symbol should now appear in the VS code extension in the SDFG analysis tab,
@@ -1196,9 +1427,10 @@ def scope_work_depth(
             lib_node_depth = pystr_to_symbolic(-1)
             if analyze_tasklet != get_tasklet_work:
                 # we are analyzing depth
-                try:
-                    lib_node_depth = LIBNODES_TO_DEPTH[type(node)](node, symbols, state)
-                except KeyError:
+                depth_of = libnode_cost_function(LIBNODES_TO_DEPTH, node)
+                if depth_of is not None:
+                    lib_node_depth = depth_of(node, symbols, state)
+                else:
                     top_level_sdfg = state.parent
                     top_level_sdfg.add_symbol(f"{node.name}_depth", dtypes.int64)
                     lib_node_depth = context.unknown(f"{node.name}_depth", Predicate.POSITIVE)
