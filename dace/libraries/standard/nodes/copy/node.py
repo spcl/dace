@@ -19,7 +19,9 @@ class CopyLibraryNode(nodes.LibraryNode):
     ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
     (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
     ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
-    optional ``__syncthreads()`` barriers controlled by ``sync``).
+    optional ``__syncthreads()`` barriers controlled by ``sync``), ``MemoryEngineBulk``
+    (block-collective TMA copy between ``GPU_Global`` and ``GPU_Shared`` on compute capability
+    9.0+, leading ``__syncthreads()`` controlled by ``sync``).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static
