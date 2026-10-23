@@ -1757,6 +1757,11 @@ def is_gpu_array(obj: Any) -> bool:
     return False
 
 
+def is_dynamic_shared(storage: StorageType) -> bool:
+    """Check if the given storage is dynamic shared memory"""
+    return storage == StorageType.GPU_Shared and storage.dynamic is True
+
+
 def array_interface_ptr(array: Any, storage: StorageType) -> int:
     """
     If the given array implements ``__array_interface__`` (see

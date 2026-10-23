@@ -507,13 +507,13 @@ class MemoryEngineGeometry:
     """Array in shared memory, which is the source if ``is_load`` is false."""
     shared_subset: subsets.Range
     """Subset of the array in shared memory, which is the source if ``is_load`` is false."""
-    dims: List[symbolic.SymExpr]
+    dims: list[symbolic.SymExpr]
     """Dimensions (sizes of the axes) of the global array."""
-    strides: List[symbolic.SymExpr]
+    strides: list[symbolic.SymExpr]
     """Strides of the global array."""
-    box: List[symbolic.SymExpr]
+    box: list[symbolic.SymExpr]
     """Number of elements per axis that are being copied per load/store."""
-    coords: List[symbolic.SymExpr]
+    coords: list[symbolic.SymExpr]
     """Start of copy given in element-coordinates into the global array."""
     data_type: str
     """See ``_TMA_DATA_TYPES``"""
@@ -545,7 +545,7 @@ def _sym_equal(a: symbolic.SymExpr, b: symbolic.SymExpr) -> bool:
         return False
 
 
-def _tma_order(strides: List[symbolic.SymExpr]) -> Optional[List[int]]:
+def _tma_order(strides: list[symbolic.SymExpr]) -> list[int] | None:
     """Dimension order with the contiguous dimension first
 
     For C-order, the innermost dimension must have stride 1 and the returned order is reversed. For Fortran order
@@ -576,7 +576,7 @@ def _unclamp(size: symbolic.SymExpr, extent: symbolic.SymExpr) -> symbolic.SymEx
     return symbolic.simplify(size.replace(sympy.Min, drop_bound))
 
 
-def _static_int(value: symbolic.SymExpr) -> Optional[int]:
+def _static_int(value: symbolic.SymExpr) -> int | None:
     """``value`` as an int if it is a constant, else ``None``."""
     if symbolic.issymbolic(value):
         return None
@@ -584,7 +584,7 @@ def _static_int(value: symbolic.SymExpr) -> Optional[int]:
 
 
 def memory_engine_geometry(node: nodes.Node,
-                           state: dace.SDFGState) -> Tuple[Optional[MemoryEngineGeometry], Optional[str]]:
+                           state: dace.SDFGState) -> tuple[MemoryEngineGeometry | None, str | None]:
     """Derive the tensor map geometry of a ``MemoryEngineBulk`` copy.
 
     Works on the ``CopyLibraryNode`` and on its expanded tasklet (both use the ``_cpy_in``/``_cpy_out``
@@ -683,7 +683,7 @@ def memory_engine_geometry(node: nodes.Node,
 
 
 def _memory_engine_transient_container(node: nodes.Node, state: dace.SDFGState,
-                                       geometry: MemoryEngineGeometry) -> Tuple[dace.SDFG, str]:
+                                       geometry: MemoryEngineGeometry) -> tuple[dace.SDFG, str]:
     """The transient container behind the shared side of a ``MemoryEngineBulk`` copy.
 
     Inside a NestedSDFG the shared side is an argument; this follows it outward to the transient that the shared
@@ -715,7 +715,7 @@ def _cuda_archs_support_memory_engine() -> bool:
     """False if ``compiler.cuda.cuda_arch`` lists an architecture older than Hopper (empty means native)."""
     archs = dace.Config.get('compiler', 'cuda', 'cuda_arch').replace(";", ",")
     archs = archs.split(",")
-    archs = [a.strip() for a in archs]
+    archs = [a.strip() for a in archs if a.strip()]
     for arch in archs:
         # check valid architectures ignoring family or arch specific suffix
         if not all(c.isdigit() for c in arch) and arch[-1] not in ["a", "f"]:
@@ -725,7 +725,7 @@ def _cuda_archs_support_memory_engine() -> bool:
     return all(n >= 90 for n in numbers)
 
 
-def _shared_container_reason(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry) -> Optional[str]:
+def _shared_container_reason(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry) -> str | None:
     """Why the shared side of a ``MemoryEngineBulk`` copy cannot be placed in static shared memory, which is
     ``MEMORY_ENGINE_SHARED_ALIGNMENT`` aligned (dynamic shared memory is not), or ``None`` if it can."""
     sdfg, name = _memory_engine_transient_container(node, state, geometry)
@@ -741,7 +741,7 @@ def _shared_container_reason(node: nodes.Node, state: dace.SDFGState, geometry: 
     return None
 
 
-def memory_engine_bulk_reason(node: nodes.Node, state: dace.SDFGState) -> Optional[str]:
+def memory_engine_bulk_reason(node: nodes.Node, state: dace.SDFGState) -> str | None:
     """Why ``MemoryEngineBulk`` cannot expand ``node``, or ``None`` if it can.
 
     :param node: the ``CopyLibraryNode`` that is being expanded.
@@ -808,8 +808,8 @@ def _build_memory_engine_bulk_copy_code(node: "CopyLibraryNode", geometry: Memor
     return code
 
 
-def _build_memory_engine_desc_code(geometry: MemoryEngineGeometry, dims: List[symbolic.SymExpr],
-                                   strides: List[symbolic.SymExpr], offset: symbolic.SymExpr) -> str:
+def _build_memory_engine_desc_code(geometry: MemoryEngineGeometry, dims: list[symbolic.SymExpr],
+                                   strides: list[symbolic.SymExpr], offset: symbolic.SymExpr) -> str:
     """Build the host code encoding the tensor map of a ``MemoryEngineBulk`` copy.
 
     :param geometry: the copy geometry from :func:`memory_engine_geometry`.
