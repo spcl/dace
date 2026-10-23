@@ -200,7 +200,10 @@ def libxsmm_batched_product(node: BatchedMatMul, state: SDFGState) -> bool:
         shape = edge.data.subset.size()
         if state.sdfg.arrays[edge.data.data].dtype.base_type not in (dtypes.float32, dtypes.float64) or len(shape) < 2:
             return False
-        if any(symbolic.pystr_to_symbolic(extent).is_number and not symbolic.is_small_extent(extent, None) for extent in shape[-2:]):
+        if any(
+            symbolic.pystr_to_symbolic(extent).is_number and not symbolic.is_small_extent(extent, None)
+            for extent in shape[-2:]
+        ):
             return False
     return True
 

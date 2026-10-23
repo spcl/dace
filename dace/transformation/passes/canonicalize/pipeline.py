@@ -41,13 +41,13 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     declare_nonnegative_symbols,
     set_symbol_nonnegative_assumptions,
 )
+from dace.transformation.passes.canonicalize.carried_accumulation import CarriedAccumulationToWCR
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (
     CascadeInterstateEdgeAssignmentsUp,
     HoistAssignmentsToLoopBodyHead,
 )
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
-from dace.transformation.passes.canonicalize.carried_accumulation import CarriedAccumulationToWCR
 from dace.transformation.passes.canonicalize.dead_loop_initialization import DeadLoopInitialization
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack

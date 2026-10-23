@@ -32,7 +32,9 @@ from dace.transformation.passes.canonicalize.eliminate_copy_back import Eliminat
 def refused_container(sdfg: SDFG, loop: LoopRegion) -> str | None:
     """The container whose non-affine write keeps ``loop`` from mapping, or ``None`` if it maps or refuses else."""
     probe = LoopToMap()
-    probe.setup_match(sdfg, loop.parent_graph.cfg_id, -1, {LoopToMap.loop: loop.parent_graph.node_id(loop)}, 0, override=True)
+    probe.setup_match(
+        sdfg, loop.parent_graph.cfg_id, -1, {LoopToMap.loop: loop.parent_graph.node_id(loop)}, 0, override=True
+    )
     if probe.can_be_applied(loop.parent_graph, 0, sdfg):
         return None
     reason = probe.last_refusal_reason or ""

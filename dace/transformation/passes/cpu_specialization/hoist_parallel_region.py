@@ -421,7 +421,9 @@ def repairs_amortized(loop: LoopRegion) -> bool:
         if not isinstance(block, SDFGState):
             continue
         top = top_level_nodes(block)
-        if any(isinstance(n, nodes.MapEntry) and n.map.schedule == WORKSHARED and shares_real_work(n, block) for n in top):
+        if any(
+            isinstance(n, nodes.MapEntry) and n.map.schedule == WORKSHARED and shares_real_work(n, block) for n in top
+        ):
             region = innermost_loop(block, loop)
             covered.add(id(region))
             while region is not loop:

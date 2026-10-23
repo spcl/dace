@@ -631,8 +631,8 @@ class ExpandGemmPlanned(ExpandTransformation):
         ctype = dtype.ctype
         alpha, beta = f"{ctype}({node.alpha})", f"{ctype}({node.beta})"
         # Column-major views: the first operand is M x K (K x M when transposed), the second K x N (N x K).
-        x_offset = "__k0" if opt["ta"] == "T" else f"__k0 * __lda"
-        y_offset = f"__k0 * __ldb" if opt["tb"] == "T" else "__k0"
+        x_offset = "__k0" if opt["ta"] == "T" else "__k0 * __lda"
+        y_offset = "__k0 * __ldb" if opt["tb"] == "T" else "__k0"
         ta = "CblasNoTrans" if opt["ta"] == "N" else "CblasTrans"
         tb = "CblasNoTrans" if opt["tb"] == "N" else "CblasTrans"
         # ``X X^T`` (``ta`` N, ``tb`` T) is syrk NoTrans; ``X^T X`` (``ta`` T, ``tb`` N) is syrk Trans.
