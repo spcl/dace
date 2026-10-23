@@ -240,6 +240,8 @@ def canonicalize_set_fast_implementations(
     """
     set_fast_implementations(sdfg, device, blocklist=["MKL"], find_fast_library_fn=canonicalize_fast_library_priority)
     gpu_priority = canonicalize_fast_library_priority(device) if device == dtypes.DeviceType.GPU else []
+    # Probed once: without LIBXSMM_ROOT, locating LIBXSMM runs a library search per call.
+    has_libxsmm = device == dtypes.DeviceType.CPU and libxsmm.LIBXSMM.is_installed()
     for node, state in sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.LibraryNode):
             continue
@@ -311,7 +313,7 @@ def canonicalize_set_fast_implementations(
             and sequential
             and isinstance(node, Gemm)
             and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
-            and libxsmm.LIBXSMM.is_installed()
+            and has_libxsmm
         ):
             node.implementation = "LIBXSMM"
             continue
@@ -321,7 +323,7 @@ def canonicalize_set_fast_implementations(
             device == dtypes.DeviceType.CPU
             and isinstance(node, BatchedMatMul)
             and libxsmm_batched_product(node, state)
-            and libxsmm.LIBXSMM.is_installed()
+            and has_libxsmm
         ):
             node.implementation = "LIBXSMM"
             continue

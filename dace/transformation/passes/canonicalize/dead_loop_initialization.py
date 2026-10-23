@@ -118,26 +118,32 @@ def tiles_every_iteration(loop: LoopRegion, name: str, desc: data.Data) -> bool:
     return True
 
 
-def dead_fills(sdfg: SDFG, loop: LoopRegion) -> list[tuple[SDFGState, nodes.AccessNode, FillLibraryNode]]:
-    """The fills outside ``loop`` whose values no iteration and nothing after the loop observes."""
+def dead_fills(
+    sdfg: SDFG, loop: LoopRegion, candidates: set[str]
+) -> list[tuple[SDFGState, nodes.AccessNode, FillLibraryNode]]:
+    """The fills outside ``loop`` of the ``candidates`` (filled transients ``loop`` accesses) whose values no
+    iteration and nothing after the loop observes."""
     from dace.transformation.interstate.loop_to_map import (  # Avoid import loop
         carried_local_transients,
         control_flow_reads_outside,
     )
 
-    inside = {id(block) for block in loop.all_control_flow_blocks()}
+    inside = set(loop.all_control_flow_blocks())
     outside: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = {}
     for state in sdfg.states():
-        if id(state) in inside:
+        if state in inside:
             continue
         for node in state.data_nodes():
-            outside.setdefault(node.data, []).append((state, node))
+            if node.data in candidates:
+                outside.setdefault(node.data, []).append((state, node))
+    if not outside:
+        return []
     _, written = loop.read_and_write_sets()
     flow_reads = control_flow_reads_outside(sdfg, loop)
     found = []
     for name in sorted(written & outside.keys()):
         desc = sdfg.arrays[name]
-        if not desc.transient or isinstance(desc, data.View) or name in flow_reads:
+        if isinstance(desc, data.View) or name in flow_reads:
             continue
         fills = []
         for state, node in outside[name]:
@@ -184,14 +190,16 @@ class DeadLoopInitialization(ppl.Pass):
             if not filled:
                 continue
             for loop in [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion)]:
-                if not any(
-                    node.data in filled
+                candidates = {
+                    node.data
                     for block in loop.all_control_flow_blocks()
                     if isinstance(block, SDFGState)
                     for node in block.data_nodes()
-                ):
+                    if node.data in filled
+                }
+                if not candidates:
                     continue
-                for state, node, fill in dead_fills(owner, loop):
+                for state, node, fill in dead_fills(owner, loop, candidates):
                     state.remove_node(fill)
                     state.remove_node(node)
                     dropped += 1

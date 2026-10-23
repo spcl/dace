@@ -349,11 +349,18 @@ def sequential_leaf_map(node: nodes.Node, state: SDFGState) -> bool:
     )
 
 
-def shares_real_work(entry: nodes.MapEntry, state: SDFGState) -> bool:
+def shares_real_work(
+    entry: nodes.MapEntry, state: SDFGState, resolver: SymbolResolver, memo: dict[nodes.MapEntry, bool]
+) -> bool:
     """Whether a worksharing map pays for a team: it, or a map its body runs (nested SDFGs included), has an axis
     that is not provably ``SMALL``. A one-trip map, or a nest over small static extents only, splits nothing
-    across the threads and costs a barrier."""
-    resolver = SymbolResolver()
+    across the threads and costs a barrier. ``memo`` keeps the verdicts while the graph is unchanged."""
+    if entry not in memo:
+        memo[entry] = _shares_real_work(entry, state, resolver)
+    return memo[entry]
+
+
+def _shares_real_work(entry: nodes.MapEntry, state: SDFGState, resolver: SymbolResolver) -> bool:
     if not all(xfh.small_map_axes(state, entry, resolver)):
         return True
     for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
@@ -366,11 +373,13 @@ def shares_real_work(entry: nodes.MapEntry, state: SDFGState) -> bool:
     return False
 
 
-def replication_free(loop: LoopRegion) -> bool:
+def replication_free(loop: LoopRegion, resolver: SymbolResolver, memo: dict[nodes.MapEntry, bool]) -> bool:
     """Condition (H): every statement at the top level of ``loop``'s states is a worksharing map or one
     :func:`share_out_bulk_statements` repairs, and at least one worksharing map is there already.
 
     :param loop: the candidate loop region.
+    :param resolver: shared with :func:`repairs_amortized` for one candidate.
+    :param memo: :func:`shares_real_work` verdicts, shared likewise.
     :returns: ``True`` if, once repaired, a team around ``loop`` replicates no statement.
     """
     worksharing = False
@@ -386,7 +395,7 @@ def replication_free(loop: LoopRegion) -> bool:
                 continue
             if isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.schedule == WORKSHARED:
                 entry = block.entry_node(node) if isinstance(node, nodes.MapExit) else node
-                worksharing = worksharing or shares_real_work(entry, block)
+                worksharing = worksharing or shares_real_work(entry, block, resolver, memo)
                 continue
             entry = block.entry_node(node) if isinstance(node, nodes.MapExit) else node
             if not sequential_leaf_map(entry, block):
@@ -403,7 +412,7 @@ def innermost_loop(block: ControlFlowBlock, loop: LoopRegion) -> LoopRegion:
     return region
 
 
-def repairs_amortized(loop: LoopRegion) -> bool:
+def repairs_amortized(loop: LoopRegion, resolver: SymbolResolver, memo: dict[nodes.MapEntry, bool]) -> bool:
     """Whether every statement :func:`share_out_bulk_statements` repairs in ``loop`` runs in a loop that also
     runs a worksharing map, directly or in a loop nested inside it.
 
@@ -413,6 +422,8 @@ def repairs_amortized(loop: LoopRegion) -> bool:
     element.
 
     :param loop: a loop :func:`replication_free` accepts.
+    :param resolver: the one :func:`replication_free` was given.
+    :param memo: likewise.
     :returns: ``True`` if no repair runs more often than the worksharing it rides on.
     """
     covered: set[int] = set()
@@ -422,7 +433,10 @@ def repairs_amortized(loop: LoopRegion) -> bool:
             continue
         top = top_level_nodes(block)
         if any(
-            isinstance(n, nodes.MapEntry) and n.map.schedule == WORKSHARED and shares_real_work(n, block) for n in top
+            isinstance(n, nodes.MapEntry)
+            and n.map.schedule == WORKSHARED
+            and shares_real_work(n, block, resolver, memo)
+            for n in top
         ):
             region = innermost_loop(block, loop)
             covered.add(id(region))
@@ -744,10 +758,12 @@ class HoistParallelRegion(ppl.Pass):
         :param sdfg: the SDFG owning ``region``.
         """
         for block in list(region.nodes()):
+            # One resolver and verdict memo per candidate: both checks run before anything is rewritten.
+            resolver, memo = SymbolResolver(), {}
             if (
                 isinstance(block, LoopRegion)
-                and replication_free(block)
-                and repairs_amortized(block)
+                and replication_free(block, resolver, memo)
+                and repairs_amortized(block, resolver, memo)
                 and outlinable(sdfg, block)
             ):
                 share_out_bulk_statements(sdfg, block)

@@ -29,13 +29,23 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 
 
-def updated_containers(loop: LoopRegion) -> set[str]:
-    """The containers a tasklet in ``loop`` both reads and writes: the candidates for an in-place update."""
+def updated_in_state(state: SDFGState) -> set[str]:
+    """The containers a tasklet in ``state`` both reads and writes: the candidates for an in-place update."""
+    names: set[str] = set()
+    for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
+        reads = {e.data.data for e in state.in_edges(tasklet) if not e.data.is_empty()}
+        names |= reads & {e.data.data for e in state.out_edges(tasklet) if not e.data.is_empty()}
+    return names
+
+
+def updated_containers(loop: LoopRegion, per_state: dict[SDFGState, set[str]]) -> set[str]:
+    """:func:`updated_in_state` over ``loop``'s states, each computed once into ``per_state`` (nested loops share
+    their states' entries)."""
     names: set[str] = set()
     for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
-        for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
-            reads = {e.data.data for e in state.in_edges(tasklet) if not e.data.is_empty()}
-            names |= reads & {e.data.data for e in state.out_edges(tasklet) if not e.data.is_empty()}
+        if state not in per_state:
+            per_state[state] = updated_in_state(state)
+        names |= per_state[state]
     return names
 
 
@@ -152,9 +162,10 @@ class CarriedAccumulationToWCR(ppl.Pass):
         EliminateCopyBack().apply_pass(sdfg, {})
         converted = 0
         for owner in sdfg.all_sdfgs_recursive():
+            per_state: dict[SDFGState, set[str]] = {}
             for loop in [r for r in owner.all_control_flow_regions() if isinstance(r, LoopRegion)]:
                 # A loop with no in-place update has nothing to rewrite: no LoopToMap probe (cloudsc has hundreds).
-                updated = updated_containers(loop)
+                updated = updated_containers(loop, per_state)
                 if not updated:
                     continue
                 # Until the loop maps or nothing is left to rewrite: one probe per refused container.
@@ -166,6 +177,7 @@ class CarriedAccumulationToWCR(ppl.Pass):
                         # An applied rewrite renumbers the state, so each next update is matched afresh.
                         while (xform := in_place_update(owner, state, name)) is not None:
                             xform.apply(state, owner)
+                            per_state.pop(state, None)
                             converted += 1
                             applied = True
                     if not applied:
