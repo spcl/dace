@@ -75,6 +75,53 @@ def test_inclusive_sum_1d():
     assert np.allclose(out, expected)
 
 
+def exclusive_running_sum_sdfg() -> dace.SDFG:
+    """``for i: b[i] = s; s = s + a[i]`` then ``b[N] = s``, in the single-state body canonicalization produces: the
+    read of ``s`` feeds both the store ``b[i]`` and the update."""
+    sdfg = dace.SDFG("exclusive_running_sum")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N + 1], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    init = sdfg.add_state("init", is_start_block=True)
+    t = init.add_tasklet("seed", {}, {"o"}, "o = 0.25")
+    init.add_edge(t, "o", init.add_write("s"), None, dace.Memlet("s[0]"))
+    loop = LoopRegion("running", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    s_in = body.add_read("s")
+    store = body.add_tasklet("store", {"_in"}, {"_out"}, "_out = _in")
+    body.add_edge(s_in, None, store, "_in", dace.Memlet("s[0]"))
+    body.add_edge(store, "_out", body.add_write("b"), None, dace.Memlet("b[i]"))
+    add = body.add_tasklet("add", {"x", "d"}, {"o"}, "o = (x + d)")
+    body.add_edge(s_in, None, add, "x", dace.Memlet("s[0]"))
+    body.add_edge(body.add_read("a"), None, add, "d", dace.Memlet("a[i]"))
+    body.add_edge(add, "o", body.add_write("s"), None, dace.Memlet("s[0]"))
+    tail = sdfg.add_state("tail")
+    sdfg.add_edge(loop, tail, dace.InterstateEdge())
+    copy_t = tail.add_tasklet("total", {"_in"}, {"_out"}, "_out = _in")
+    tail.add_edge(tail.add_read("s"), None, copy_t, "_in", dace.Memlet("s[0]"))
+    tail.add_edge(copy_t, "_out", tail.add_write("b"), None, dace.Memlet("b[N]"))
+    return sdfg
+
+
+def test_exclusive_running_sum_with_its_total_lifts():
+    """``b[i] = s; s = s + a[i]`` stores the sum BEFORE the update: an exclusive scan seeded with ``s``. The total
+    read after the loop (``b[N] = s``, the CSR row-pointer tail) is the last exclusive value plus the last delta."""
+    sdfg = exclusive_running_sum_sdfg()
+    assert LoopToScan().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+    assert len(scans) == 1 and scans[0].exclusive and scans[0].op is ScanOp.SUM
+    assert _num_loops(sdfg) == 0
+
+    n = 17
+    a = np.random.default_rng(3).uniform(-1.0, 1.0, size=n)
+    b = np.zeros(n + 1)
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(b, 0.25 + np.concatenate([[0.0], np.cumsum(a)]))
+
+
 def test_inclusive_product_1d():
     """Same shape with ``*`` -- the pass picks ``ScanOp.PRODUCT``."""
 

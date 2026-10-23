@@ -280,6 +280,9 @@ class _ScalarCarryScan(NamedTuple):
     acc_read_an: nodes.AccessNode
     acc_write_an: nodes.AccessNode
     acc_used_post_loop: bool
+    #: ``out`` stores the value ``acc`` holds BEFORE the iteration's update (``out[i] = acc; acc = acc OP d[i]``):
+    #: an exclusive scan seeded with ``acc``.
+    exclusive: bool = False
 
 
 @properties.make_properties
@@ -2213,6 +2216,7 @@ def _match_one_scalar_carry(
     # output, so out_degree must be > 0; pure sink ANs are not the target shape).
     read_an: nodes.AccessNode | None = None
     write_an: nodes.AccessNode | None = None
+    sink_an: nodes.AccessNode | None = None
     for n in state.data_nodes():
         if n.data != acc_name:
             continue
@@ -2226,11 +2230,17 @@ def _match_one_scalar_carry(
                 return None
             write_an = n
         elif in_d > 0 and out_d == 0:
-            # Pure sink AN -- the post-RMW value doesn't feed an output, so this
-            # isn't a scalar-carry scan (could be a plain reduction; LoopToReduce's
-            # job). Refuse.
-            return None
+            # Pure sink AN: the post-RMW value feeds no output. A scan only when the PRE-RMW value does (exclusive);
+            # otherwise a plain reduction, LoopToReduce's job.
+            if sink_an is not None:
+                return None
+            sink_an = n
         # in_d == 0 and out_d == 0 -- isolated AN, ignore.
+    exclusive = write_an is None and sink_an is not None
+    if exclusive:
+        write_an = sink_an
+    elif sink_an is not None:
+        return None
     if read_an is None or write_an is None:
         return None
 
@@ -2258,8 +2268,14 @@ def _match_one_scalar_carry(
     if delta_others is None:
         return None
 
-    # The WRITE AN's out-edges feed exactly one per-iter array write.
-    write_out_edges = list(state.out_edges(write_an))
+    # The WRITE AN's out-edges feed exactly one per-iter array write; for an exclusive scan the READ AN's do, besides
+    # the edge into the update.
+    if exclusive:
+        write_out_edges = [
+            e for e in state.out_edges(read_an) if not e.data.is_empty() and not _feeds(state, e.dst, tasklet)
+        ]
+    else:
+        write_out_edges = list(state.out_edges(write_an))
     if len(write_out_edges) != 1:
         return None
     out_info = _resolve_per_iter_write(state, write_out_edges[0], sdfg, loop_var, acc_name)
@@ -2293,6 +2309,7 @@ def _match_one_scalar_carry(
         acc_read_an=read_an,
         acc_write_an=write_an,
         acc_used_post_loop=acc_used_post_loop,
+        exclusive=exclusive,
     )
 
 
@@ -2369,6 +2386,44 @@ def _trace_back_to_rmw_tasklet(state: SDFGState, write_an: nodes.AccessNode, acc
     return tasklet, acc_conn, delta_conn, out_conn, op
 
 
+def _feeds(state: SDFGState, node, target) -> bool:
+    """Whether ``node`` is ``target`` or reaches it along copies (access nodes and copy tasklets)."""
+    seen = set()
+    while node not in seen:
+        seen.add(node)
+        if node is target:
+            return True
+        if not (isinstance(node, nodes.AccessNode) or _identity_input(state, node) is not None):
+            return False
+        outs = [e for e in state.out_edges(node) if not e.data.is_empty()]
+        if len(outs) != 1:
+            return False
+        node = outs[0].dst
+    return False
+
+
+def _identity_input(state: SDFGState, node) -> Any:
+    """The one data edge into ``node`` when it is a copy tasklet (``out = in``), else ``None``."""
+    if not isinstance(node, nodes.Tasklet) or len(node.out_connectors) != 1:
+        return None
+    ins = [e for e in state.in_edges(node) if e.data is not None and not e.data.is_empty()]
+    if len(ins) != 1 or len(node.in_connectors) != 1:
+        return None
+    try:
+        tree = ast.parse((node.code.as_string or "").strip())
+    except SyntaxError:
+        return None
+    body = tree.body
+    if len(body) != 1 or not isinstance(body[0], ast.Assign) or len(body[0].targets) != 1:
+        return None
+    target, value = body[0].targets[0], body[0].value
+    if not (isinstance(target, ast.Name) and target.id in node.out_connectors):
+        return None
+    if not (isinstance(value, ast.Name) and value.id == ins[0].dst_conn):
+        return None
+    return ins[0]
+
+
 def _source_is_acc(state: SDFGState, src, acc_name: str) -> bool:
     """``True`` iff ``src`` is, or traces back through identity transient ANs to,
     an AccessNode of ``acc_name``."""
@@ -2384,7 +2439,10 @@ def _source_is_acc(state: SDFGState, src, acc_name: str) -> bool:
                 return False
             cur = ins[0].src
             continue
-        return False
+        copied = _identity_input(state, cur)
+        if copied is None:
+            return False
+        cur = copied.src
     return False
 
 
@@ -2398,7 +2456,11 @@ def _input_traces_to(state: SDFGState, src, target_an: nodes.AccessNode) -> bool
         if cur is target_an:
             return True
         if not isinstance(cur, nodes.AccessNode):
-            return False
+            copied = _identity_input(state, cur)
+            if copied is None:
+                return False
+            cur = copied.src
+            continue
         ins = list(state.in_edges(cur))
         if len(ins) != 1:
             return False
@@ -2424,11 +2486,20 @@ def _resolve_per_iter_gather(state: SDFGState, edge, sdfg: SDFG, loop_var: str):
     while cur not in seen:
         seen.add(cur)
         if not isinstance(cur, nodes.AccessNode):
-            return None
+            copied = _identity_input(state, cur)
+            if copied is None:
+                return None
+            last_edge = copied
+            cur = copied.src
+            continue
         desc = sdfg.arrays.get(cur.data)
         if desc is None:
             return None
-        if not desc.transient:
+        # A transient the body only reads is as good a source as an argument
+        read_only = state.in_degree(cur) == 0 and not any(
+            dn.data == cur.data and state.in_degree(dn) > 0 for dn in state.data_nodes()
+        )
+        if not desc.transient or (read_only and _classify_subset(last_edge.data.subset, loop_var)[0] is not None):
             # Reached the non-transient source. The array-level gather subset
             # is on ``last_edge`` (the most recent edge we traversed: it goes
             # from this source AN to the first transient intermediate; its
@@ -2445,7 +2516,7 @@ def _resolve_per_iter_gather(state: SDFGState, edge, sdfg: SDFG, loop_var: str):
             if scan_axis is None or coef != 1:
                 return None
             return cur.data, scan_axis, offset, others
-        ins = list(state.in_edges(cur))
+        ins = [e for e in state.in_edges(cur) if not e.data.is_empty()]
         if len(ins) != 1:
             return None
         last_edge = ins[0]
@@ -2491,7 +2562,9 @@ def _resolve_per_iter_write(state: SDFGState, edge, sdfg: SDFG, loop_var: str, a
                 return None
             cur_edge = list(state.out_edges(dst))[0]
             continue
-        return None
+        if _identity_input(state, dst) is None or state.out_degree(dst) != 1:
+            return None
+        cur_edge = list(state.out_edges(dst))[0]
 
 
 def _acc_used_outside_body(sdfg: SDFG, acc_name: str, body_state: SDFGState) -> bool:
@@ -4435,6 +4508,10 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
     out_span = contiguous_scan_span(
         out_desc, info.out_scan_axis, info.out_other_indices, symbolic.simplify(info.iter_start + info.out_offset), trip
     )
+    if info.exclusive:
+        # A single exclusive chain seeds from the op's identity (``Scan``'s contract), so the seed is added on the
+        # way to the output.
+        out_span = None
     if in_span is not None and out_span is not None and info.delta_name == info.out_name:
         # Aliased delta and output keep one buffer: the blocked scan folds and then writes the same
         # block, so reading straight out of the array it is writing is not a shape scan.hpp promises.
@@ -4496,14 +4573,35 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
     if scan_buf is not None:
         _emit_scalar_carry_out_write(s_write, sdfg, info, scan_buf, trip)
     if info.acc_used_post_loop:
-        # The final running value is the LAST element the scan wrote, wherever it landed.
-        last = symbolic.simplify(out_span[0][1])
-        _emit_scalar_carry_acc_post(tail_state, sdfg, info, scan_buf or info.out_name, subsets.Range([(last, last, 1)]))
+        # The final running value is the LAST element the scan wrote, wherever it landed. An exclusive scan's last
+        # output (seed included) precedes the last update, which the writeback applies.
+        if info.exclusive:
+            out_desc = sdfg.arrays[info.out_name]
+            final = symbolic.simplify(info.iter_end + info.out_offset)
+            last_out = _build_subset(out_desc, info.out_scan_axis, final, info.out_other_indices)
+            last_delta = symbolic.simplify(in_span[0][1])
+            _emit_scalar_carry_acc_post(
+                tail_state, sdfg, info, info.out_name, last_out, delta_buf or info.delta_name, last_delta
+            )
+        else:
+            last = symbolic.simplify(out_span[0][1])
+            _emit_scalar_carry_acc_post(
+                tail_state, sdfg, info, scan_buf or info.out_name, subsets.Range([(last, last, 1)])
+            )
 
     # Remove the original loop now that its semantics are captured by the new states.
     parent.remove_node(loop)
     if is_start:
         parent.start_block = parent.node_id(head_state)
+
+
+#: The combine of two values under each scalar op, as tasklet code.
+_SCAN_OP_TO_EXPR = {
+    ScanOp.SUM: "{a} + {b}",
+    ScanOp.PRODUCT: "{a} * {b}",
+    ScanOp.MIN: "min({a}, {b})",
+    ScanOp.MAX: "max({a}, {b})",
+}
 
 
 def _emit_scalar_carry_delta_build(state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan, delta_buf: str):
@@ -4543,20 +4641,26 @@ def _emit_scalar_carry_scan(
 
     The seed is read into a per-instance scalar transient to keep the libnode's
     init-connector edge a clean Scalar memlet (the same pattern
-    :func:`_emit_scan_with_init_direct` uses).
+    :func:`_emit_scan_with_init_direct` uses). An exclusive scan runs unseeded and the
+    out-write adds the seed (:func:`_emit_scalar_carry_out_write`).
     """
+    node = Scan(name=f"{state.label}_op", op=info.op, exclusive=info.exclusive)
+    state.add_node(node)
+    delta_read = state.add_read(in_name)
+    scan_write = state.add_write(out_name)
+    state.add_edge(delta_read, None, node, INPUT_CONNECTOR_NAME, mm.Memlet(data=in_name, subset=copy.deepcopy(in_span)))
+    state.add_edge(
+        node, OUTPUT_CONNECTOR_NAME, scan_write, None, mm.Memlet(data=out_name, subset=copy.deepcopy(out_span))
+    )
+    if info.exclusive:
+        return
+    node.add_in_connector(INIT_CONNECTOR_NAME)
     acc_desc = sdfg.arrays[info.acc_name]
     seed_name, _ = sdfg.add_scalar(
         f"{_SEED_SCALAR_PREFIX}{info.out_name}", acc_desc.dtype, transient=True, find_new_name=True
     )
     acc_read = state.add_read(info.acc_name)
     seed_an = state.add_access(seed_name)
-    delta_read = state.add_read(in_name)
-    scan_write = state.add_write(out_name)
-
-    node = Scan(name=f"{state.label}_op", op=info.op, exclusive=False)
-    node.add_in_connector(INIT_CONNECTOR_NAME)
-    state.add_node(node)
 
     state.add_edge(
         acc_read,
@@ -4568,10 +4672,6 @@ def _emit_scalar_carry_scan(
     state.add_edge(
         seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name, subset=subsets.Range([(0, 0, 1)]))
     )
-    state.add_edge(delta_read, None, node, INPUT_CONNECTOR_NAME, mm.Memlet(data=in_name, subset=copy.deepcopy(in_span)))
-    state.add_edge(
-        node, OUTPUT_CONNECTOR_NAME, scan_write, None, mm.Memlet(data=out_name, subset=copy.deepcopy(out_span))
-    )
 
 
 def _emit_scalar_carry_out_write(state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan, scan_buf: str, trip: Any):
@@ -4581,32 +4681,55 @@ def _emit_scalar_carry_out_write(state: SDFGState, sdfg: SDFG, info: _ScalarCarr
     _i = symbolic.pystr_to_symbolic("_i")
     out_axis_expr = symbolic.simplify(info.iter_start + _i + info.out_offset)
     out_subset = _build_subset(out_desc, info.out_scan_axis, out_axis_expr, info.out_other_indices)
+    inputs = {"__v": mm.Memlet(data=scan_buf, subset=subsets.Range([(_i, _i, 1)]))}
+    code = "__o = __v"
+    if info.exclusive:
+        # The scan ran unseeded; the accumulator's value on entry is its seed
+        inputs["__s"] = mm.Memlet(data=info.acc_name, subset=subsets.Range([(0, 0, 1)]))
+        code = f"__o = {_SCAN_OP_TO_EXPR[info.op].format(a='__s', b='__v')}"
     state.add_mapped_tasklet(
         f"{state.label}_tasklet",
         {"_i": f"0:{trip}"},
-        {"__v": mm.Memlet(data=scan_buf, subset=subsets.Range([(_i, _i, 1)]))},
-        "__o = __v",
+        inputs,
+        code,
         {"__o": mm.Memlet(data=info.out_name, subset=out_subset)},
         external_edges=True,
     )
 
 
 def _emit_scalar_carry_acc_post(
-    state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan, scan_name: str, last: subsets.Range
+    state: SDFGState,
+    sdfg: SDFG,
+    info: _ScalarCarryScan,
+    scan_name: str,
+    last: subsets.Range,
+    delta_name: str | None = None,
+    last_delta: Any = None,
 ):
     """Copy the scan's LAST written element into ``acc[0]`` so downstream readers of
     ``acc`` see the post-loop running value. Single-tasklet state, no Map (it's
     a scalar move). ``scan_name``/``last`` name the staging buffer's final slot, or the output
-    array's, when the buffer was elided."""
+    array's, when the buffer was elided. For an exclusive scan, ``delta_name[last_delta]`` is the
+    last update, combined into the written value."""
     scan_read = state.add_read(scan_name)
     acc_write = state.add_write(info.acc_name)
+    inputs = {"__v"} if last_delta is None else {"__v", "__d"}
+    code = "__o = __v" if last_delta is None else f"__o = {_SCAN_OP_TO_EXPR[info.op].format(a='__v', b='__d')}"
     t = state.add_tasklet(
         name=f"{state.label}_writeback",
-        inputs={"__v"},
+        inputs=inputs,
         outputs={"__o"},
-        code="__o = __v",
+        code=code,
         language=dtypes.Language.Python,
     )
+    if last_delta is not None:
+        state.add_edge(
+            state.add_read(delta_name),
+            None,
+            t,
+            "__d",
+            mm.Memlet(data=delta_name, subset=subsets.Range([(last_delta, last_delta, 1)])),
+        )
     state.add_edge(scan_read, None, t, "__v", mm.Memlet(data=scan_name, subset=copy.deepcopy(last)))
     state.add_edge(t, "__o", acc_write, None, mm.Memlet(data=info.acc_name, subset=subsets.Range([(0, 0, 1)])))
 
