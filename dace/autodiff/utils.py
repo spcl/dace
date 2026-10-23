@@ -98,12 +98,10 @@ def connector_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbol
 
     Always a ``symbolic.symbol``, never a bare ``sympy.Symbol``: the two compare unequal while
     still substituting for one another, which is what makes ``diff()`` return a silent zero.
-    ``integer=None`` where the dtype is unknown, so that ``symbol``'s int32 default does not
-    assert an integer assumption the declaration never made.
     """
     if isinstance(dtype, dtypes.typeclass):
         return symbolic.symbol(name, dtype)
-    return symbolic.symbol(name, integer=None)
+    return symbolic.symbol(name)
 
 
 def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> dict[str, symbolic.symbol]:
@@ -460,9 +458,8 @@ def code_to_exprs(
                 raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
-                idx_sym = connector_symbol(idx, symbols.get(idx) or tasklet.in_connectors.get(idx))
-                # An Idx label must be integral, so a non-integer declaration cannot supply one.
-                symbol_table[idx] = sp.Idx(idx_sym if idx_sym.is_integer else symbolic.symbol(idx))
+                # An index of an SDFG symbol keeps its entry; sympy indexes an IndexedBase by any expression
+                symbol_table.setdefault(idx, connector_symbol(idx))
                 indexed_objects_code += f"    {idx} = {SYMBOL_TABLE_GLOBAL}['{idx}']\n"
 
     code_fn = """

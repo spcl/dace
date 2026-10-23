@@ -602,7 +602,6 @@ def test_thread_local_transient_single_state():
     body = sdfg.add_state("body")
     end = sdfg.add_state("end")
 
-    sdfg.add_symbol("i", dace.int32)
     i = dace.symbol("i", dace.int32)
 
     sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={"i": 0}))
@@ -681,7 +680,6 @@ def test_thread_local_transient_multi_state():
     body1 = sdfg.add_state("body1")
     end = sdfg.add_state("end")
 
-    sdfg.add_symbol("i", dace.int32)
     i = dace.symbol("i", dace.int32)
 
     sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={"i": 0}))
@@ -1268,6 +1266,26 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def test_symbolic_step_of_unknown_sign_stays_a_loop():
+    """A map runs its range upwards, so a loop is mapped only when the facts prove the sign of its step."""
+    N = dace.symbol("N")
+    S = dace.symbol("S")
+    P = dace.symbol("P", positive=True)
+
+    @dace.program
+    def unknown_step(A: dace.float64[N]):
+        for i in range(0, N, S):
+            A[i] = A[i] + 1
+
+    @dace.program
+    def positive_step(A: dace.float64[N]):
+        for i in range(0, N, P):
+            A[i] = A[i] + 1
+
+    assert unknown_step.to_sdfg(simplify=True).apply_transformations(LoopToMap) == 0
+    assert positive_step.to_sdfg(simplify=True).apply_transformations(LoopToMap) == 1
+
+
 def test_a_symbol_assigned_later_stays_out_of_the_mapping():
     """The nested SDFG a lift makes maps only the symbols it reads: a mapping entry is a read, and ``later`` is
     assigned only after the loop, so mapping it would make it a free symbol of the whole SDFG."""
@@ -1406,6 +1424,7 @@ if __name__ == "__main__":
     test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
+    test_symbolic_step_of_unknown_sign_stays_a_loop()
 
 
 def branchy_symbol_loop() -> dace.SDFG:

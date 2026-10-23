@@ -201,7 +201,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         sd.replace(nstate, "__dace_db_param", new_expr)
 
         # Remove symbol once done
-        del nsdfg_node.sdfg.symbols["__dace_db_param"]
+        nsdfg_node.sdfg.symbol_repo.remove("__dace_db_param")
         del nsdfg_node.symbol_mapping["__dace_db_param"]
 
         # A connector selecting one element of the buffered transient becomes a view of it

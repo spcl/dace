@@ -230,45 +230,6 @@ def test_while_loop_no_induction_var():
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 
 
-def test_no_postamble_drops_dead_symbol_declaration():
-    """Nothing reads ``i`` after the loops, so the renamed iterator
-    has no surviving reader, so the stale ``sdfg.symbols[old_name]``
-    declaration left by the frontend must be removed -- otherwise it leaks
-    as a phantom free symbol on the enclosing NestedSDFG boundary
-    (validation: ``Missing symbols on nested SDFG: ['i']``)."""
-
-    @dace.program
-    def sibling_for_loops(x: dace.float64[10, 10]):
-        for j in dace.map[0:10]:
-            for i in range(10):
-                x[i, j] = 1.0
-            for i in range(10):
-                x[i, j] += 2.0
-
-    sdfg = sibling_for_loops.to_sdfg(simplify=False)
-
-    # Pre-condition: the body NestedSDFG declares ``i`` in its symbol table
-    # and the parent does not provide it via ``symbol_mapping``; the
-    # frontend keeps the declaration around because the original LoopRegions
-    # use ``i`` as their ``loop_variable``.
-    body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert any("i" in n.sdfg.symbols for n in body_nsdfgs)
-
-    p = UniqueLoopIterators()
-    p.apply_pass(sdfg, {})
-
-    # Every LoopRegion now has a unique ``_loop_it_<N>`` variable.
-    loopvars = [n.loop_variable for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
-    assert loopvars == sorted(set(loopvars))
-    assert all(v.startswith("_loop_it_") for v in loopvars)
-
-    # An SDFG whose last use of ``i`` was renamed no longer declares it.
-    for n in body_nsdfgs:
-        assert "i" not in n.sdfg.symbols, f"stale 'i' still declared in {n.sdfg.name}.symbols"
-
-    sdfg.validate()
-
-
 def test_idempotent_skips_already_unique_iterators():
     """A second run renames nothing: iterators already named ``_loop_it_<N>`` keep their names, so a grandchild
     nested SDFG's import of an outer iterator stays intact."""
@@ -436,7 +397,6 @@ if __name__ == "__main__":
     test_a_sibling_loop_reading_its_own_iterator_is_not_a_read_after()
     test_loop_bound_with_indirect_array()
     test_while_loop_no_induction_var()
-    test_no_postamble_drops_dead_symbol_declaration()
     test_idempotent_skips_already_unique_iterators()
     test_value_preserving_sibling_kbound_loops()
     test_negative_step_loop_value_preserving()

@@ -546,8 +546,12 @@ def result_type_of(lhs, *rhs):
     # Extract the type if symbolic or data
     from dace.data import Data
 
-    lhs = lhs.dtype if (type(lhs).__name__ == "symbol" or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == "symbol" or isinstance(rhs, Data)) else rhs
+    def type_of(operand: Any) -> Any:
+        if type(operand).__name__ == "symbol":
+            return operand.declaration.dtype  # A user's symbol object: the type it was declared with
+        return operand.dtype if isinstance(operand, Data) else operand
+
+    lhs, rhs = type_of(lhs), type_of(rhs)
 
     if lhs == rhs:
         return lhs  # Types are the same, return either

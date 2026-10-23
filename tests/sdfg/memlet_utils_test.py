@@ -214,11 +214,13 @@ def test_non_lin_delin_8():
 
 
 def test_memlet_set() -> None:
-    empty_set = mu.MemletSet()
+    empty_set = mu.MemletSet(facts=dace.symbolic.Facts.none())
     assert len(empty_set) == 0
 
-    memlet_set = mu.MemletSet([dace.Memlet("A[0:5]")])
-    covered_set = mu.MemletSet([dace.Memlet("A[0:5]")], intersection_is_contained=False)
+    memlet_set = mu.MemletSet([dace.Memlet("A[0:5]")], facts=dace.symbolic.Facts.none())
+    covered_set = mu.MemletSet(
+        [dace.Memlet("A[0:5]")], facts=dace.symbolic.Facts.none(), intersection_is_contained=False
+    )
 
     assert dace.Memlet("A[0:2]") in memlet_set
     assert dace.Memlet("A[0:2]") in covered_set
@@ -247,7 +249,7 @@ def test_memlet_dict() -> None:
     A_01 = dace.Memlet("A[0:1]")
     A_02 = dace.Memlet("A[0:2]")
     A_34 = dace.Memlet("A[3:4]")
-    memlet_dict: mu.Memlet[list[int]] = mu.MemletDict()
+    memlet_dict: mu.Memlet[list[int]] = mu.MemletDict(facts=dace.symbolic.Facts.none())
     assert len(memlet_dict) == 0
     assert A_02 not in memlet_dict
 

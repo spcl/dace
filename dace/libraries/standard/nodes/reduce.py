@@ -18,6 +18,7 @@ from dace.libraries.standard.environments.cuda import CUDA
 from dace.properties import LambdaProperty, ListProperty, Property
 from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, graph, propagation, scope
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SymbolResolver
 from dace.symbolic import issymbolic, symstr
 from dace.transformation import transformation as pm
 
@@ -504,8 +505,9 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             str(s) not in sdfg.free_symbols.union(sdfg.constants.keys()) for s in overapprox_memlet.subset.free_symbols
         ):
             propagation.propagate_states(sdfg)
+            facts = SymbolResolver().facts_at(state, node)
             for p, r in state.ranges.items():
-                overapprox_memlet = propagation.propagate_subset([overapprox_memlet], input_data, [p], r)
+                overapprox_memlet = propagation.propagate_subset([overapprox_memlet], input_data, [p], r, facts)
         overapprox_shape = overapprox_memlet.subset.bounding_box_size()
         overapprox_items = " * ".join(symstr(s) for s in overapprox_shape)
 

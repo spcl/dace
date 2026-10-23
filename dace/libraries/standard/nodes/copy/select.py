@@ -93,7 +93,8 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
         and out_subset.is_contiguous_subset(out)
         and _both_packed_same_layout(inp, out)
         and not (
-            is_parallel_cpu_transfer_size(in_subset.num_elements()) and not is_in_parallel_scope(node, parent_state)
+            is_parallel_cpu_transfer_size(in_subset.num_elements(), parent_state.sdfg.facts())
+            and not is_in_parallel_scope(node, parent_state)
         )
     ):
         return "MemcpyCPU"
