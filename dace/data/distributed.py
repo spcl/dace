@@ -210,7 +210,7 @@ class ProcessGrid(DistributedDescriptor):
         - bool {self.name})_valid
 
         These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
-        more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        more details, check the DaCe MPI library in `dace/libraries/comm`).
 
         """
         if self.is_subgrid:
@@ -389,9 +389,9 @@ class SubArray(DistributedDescriptor):
         - int* {self.name}_displs
 
         These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
-        more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        more details, check the DaCe MPI library in `dace/libraries/comm`).
         """
-        from dace.libraries.mpi import utils
+        from dace.libraries.comm import utils
 
         if self.pgrid:
             return f"""
@@ -538,11 +538,11 @@ class RedistrArray(DistributedDescriptor):
         - int* {self.name}_self_size
 
         These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
-        more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        more details, check the DaCe MPI library in `dace/libraries/comm`).
         """
         array_a = sdfg.subarrays[self.array_a]
         array_b = sdfg.subarrays[self.array_b]
-        from dace.libraries.mpi import utils
+        from dace.libraries.comm import utils
 
         tmp = f"""{{
             __state->{self.name}_sends = 0;

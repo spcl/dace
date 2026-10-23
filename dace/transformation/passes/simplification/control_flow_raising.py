@@ -58,6 +58,14 @@ def remove_unreachable_blocks(sdfg: SDFG) -> int:
     return removed
 
 
+def _negates(condition: sympy.Basic, previous: list[sympy.Basic]) -> bool:
+    """Whether ``condition`` is the negation of the disjunction of the ``previous`` branch conditions (an else
+    branch). Conditions that are not sympy Booleans (e.g., ``AND`` from a Python ``and``) never are."""
+    if not previous or not all(isinstance(c, sympy.logic.boolalg.Boolean) for c in [condition, *previous]):
+        return False
+    return condition == sympy.Not(sympy.Or(*previous))
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ControlFlowRaising(ppl.Pass):
@@ -111,7 +119,7 @@ class ControlFlowRaising(ppl.Pass):
                 elif full_cond_expression is None:
                     full_cond_expression = oe.data.condition.code[0]
                 else:
-                    full_cond_expression = astutils.and_expr(full_cond_expression, oe.data.condition.code[0])
+                    full_cond_expression = astutils.or_expr(full_cond_expression, oe.data.condition.code[0])
             # If there is no unconditional outgoing edge, there may be a catchall that is the negation of all other
             # conditions.
             # NOTE: Checking that for the general case is expensive. For now, we check it for the case of two outgoing
@@ -202,19 +210,17 @@ class ControlFlowRaising(ppl.Pass):
                     # iterate over the out-edges with unconditional edges
                     # sorted to the tail. Stable sort preserves the original
                     # order of the conditional edges, which is what the
-                    # cumulative ``full_cond_expression`` build below relies
+                    # ``previous_conditions`` check below relies
                     # on.
                     ordered_oedges = sorted(oedges, key=lambda e: 1 if e.data.is_unconditional() else 0)
-                    full_cond_expression: sympy.Basic | None = None
+                    previous_conditions: list[sympy.Basic] = []
                     uncond_generated = False
                     for i, oe in enumerate(ordered_oedges):
                         branch_name = "branch_" + str(i) + "_" + block.label
                         branch = ControlFlowRegion(branch_name, sdfg)
 
                         if not oe.data.is_unconditional():
-                            if i == len(ordered_oedges) - 1 and oe.data.condition_sympy() == sympy.Not(
-                                full_cond_expression
-                            ):
+                            if i == len(ordered_oedges) - 1 and _negates(oe.data.condition_sympy(), previous_conditions):
                                 if uncond_generated:
                                     warnings.warn(
                                         f"Control flow raising: Found multiple unconditional branches in {block.label}"
@@ -223,10 +229,7 @@ class ControlFlowRaising(ppl.Pass):
                                 cond = None
                             else:
                                 cond = oe.data.condition
-                                if full_cond_expression is None:
-                                    full_cond_expression = oe.data.condition_sympy()
-                                else:
-                                    full_cond_expression = sympy.And(full_cond_expression, oe.data.condition_sympy())
+                                previous_conditions.append(oe.data.condition_sympy())
                         else:
                             if uncond_generated:
                                 warnings.warn(

@@ -1651,6 +1651,28 @@ required:
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
 
+            comm:
+                type: dict
+                title: Communication
+                description: Built-in communication (MPI/NCCL) DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: MPI
+                        title: Default implementation
+                        description: >
+                            Default implementation for communication library nodes:
+                            MPI, or NCCL (RCCL on the HIP backend) for buffers in GPU
+                            memory. Nodes that only MPI implements keep using it.
+
+                    override:
+                        type: bool
+                        default: false
+                        title: Force configured implementation
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+
             lapack:
                 type: dict
                 title: LAPACK
