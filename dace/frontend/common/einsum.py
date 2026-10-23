@@ -231,6 +231,17 @@ def _bmm_orders(einsum_string: str, sizes: dict[str, int]) -> tuple[int, int, tu
     return best and best[1:]
 
 
+def _batched_dot_index(einsum: "EinsumParser") -> str | None:
+    """The one summed index of a batched dot ``bk,bk->b``: both operands index the batch in the output's order, then
+    the summed index last; ``None`` for any other contraction."""
+    if len(einsum.inputs) != 2 or einsum.inputs[0] != einsum.inputs[1] or not einsum.output:
+        return None
+    term = einsum.inputs[0]
+    if term[:-1] != einsum.output or term[-1] in einsum.output:
+        return None
+    return term[-1]
+
+
 def _permuted(sdfg: SDFG, state: SDFGState, node: AccessNode, term: str, order: str) -> AccessNode:
     """``node``, indexed by ``term``, as a transient indexed by ``order``: a ``TensorTranspose`` unless they agree."""
     if term == order:
@@ -526,6 +537,32 @@ def _create_einsum_internal(
         c = state.add_write(output)
         state.add_edge(product_node, None, transpose, "_inp_tensor", Memlet.from_array(product, sdfg.arrays[product]))
         state.add_edge(transpose, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
+    elif (
+        (summed := _batched_dot_index(einsum))
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and symbolic.equal_valued(1, alpha)
+        and symbolic.equal_valued(0, beta)
+    ):
+        # A batched dot (``ak,ak->a``) is a map over the batch around one ``Dot`` per element: a blackbox axis that
+        # lowers by scope (a block collective in a kernel, the single-core loop under a parallel map), not a scalar
+        # nest whose every term is an atomic add into its row.
+        from dace.libraries.blas.nodes.dot import Dot
+
+        c = state.add_write(output)
+        if is_devicelevel_gpu(sdfg, state, c):
+            schedule = dtypes.ScheduleType.Sequential
+        elif sdfg.arrays[output].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+            schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dtypes.ScheduleType.Default
+        entry, exit_ = state.add_map(
+            "einsum_dot", {param[k]: "0:%s" % chardict[k] for k in einsum.output}, schedule=schedule
+        )
+        dot = Dot("einsum_dot")
+        for term, arr, conn in zip(einsum.inputs, arrays, ("_x", "_y")):
+            index = ",".join(f"0:{chardict[ch]}" if ch == summed else param[ch] for ch in term)
+            state.add_memlet_path(input_nodes[arr], entry, dot, dst_conn=conn, memlet=Memlet(f"{arr}[{index}]"))
+        state.add_memlet_path(dot, exit_, c, src_conn="_result", memlet=Memlet(f"{output}[{output_index}]"))
     elif not einsum.is_bmm() or any(sdfg.arrays[array].dtype != dtype for array in arrays):
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)

@@ -66,6 +66,14 @@ def batched_gemm(A: dace.float64[NB, M, K], B: dace.float64[NB, K, N], C: dace.f
 
 
 @dace.program
+def gathered_gemm(
+    A: dace.float64[NB, M, K], B: dace.float64[NB, K, N], idx: dace.int64[NB], C: dace.float64[NB, M, N]
+):
+    for b in dace.map[0:NB]:
+        C[b] = A[idx[b]] @ B[b]
+
+
+@dace.program
 def subtract_rowsum(A: dace.float64[M, N], b: dace.float64[M]):
     for i in dace.map[0:M]:
         s = 0.0
@@ -189,12 +197,20 @@ def test_a_host_map_that_only_launches_device_work_is_the_kernel():
 
 @pytest.mark.parametrize(
     "program, node, implementation",
-    [(batched_dot, "Dot", "CUDA (block strided)"), (batched_gemm, "Gemm", "CUDA (block strided)")],
+    [(batched_dot, "Dot", "CUDA (block strided)"), (gathered_gemm, "Gemm", "CUDA (block strided)")],
 )
 def test_a_library_node_inside_a_kernel_takes_its_block_collective(program, node, implementation):
     sdfg = canonical_gpu(program)
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)) == 1
     assert library_nodes(sdfg)[node].implementation == implementation
+
+
+def test_a_top_level_batched_gemm_is_one_vendor_batched_call():
+    """``C[b] = A[b] @ B[b]`` over strided batches is a top-level BatchedMatMul: the vendor's strided-batched GEMM,
+    no kernel of per-block products around it."""
+    sdfg = canonical_gpu(batched_gemm)
+    assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
+    assert library_nodes(sdfg)["BatchedMatMul"].implementation in ("cuBLAS", "rocBLAS")
 
 
 def test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction():
@@ -326,7 +342,8 @@ if __name__ == "__main__":
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(gemm_loops)
     test_a_host_map_that_only_launches_device_work_is_the_kernel()
     test_a_library_node_inside_a_kernel_takes_its_block_collective(batched_dot, "Dot", "CUDA (block strided)")
-    test_a_library_node_inside_a_kernel_takes_its_block_collective(batched_gemm, "Gemm", "CUDA (block strided)")
+    test_a_library_node_inside_a_kernel_takes_its_block_collective(gathered_gemm, "Gemm", "CUDA (block strided)")
+    test_a_top_level_batched_gemm_is_one_vendor_batched_call()
     test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction()
     test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers()
     test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration()
