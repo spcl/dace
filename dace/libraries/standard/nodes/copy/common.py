@@ -769,3 +769,27 @@ def memory_engine_bulk_reason(node: nodes.Node, state: dace.SDFGState) -> Option
     if not _cuda_archs_support_memory_engine():
         return "MemoryEngineBulk requires compute capability 9.0 or newer (see compiler.cuda.cuda_arch)"
     return None
+
+
+def _build_memory_engine_bulk_copy_code(node: "CopyLibraryNode", geometry: MemoryEngineGeometry) -> str:
+    """Build the C++ code for ``ExpandMemoryEngineBulk``.
+
+    The tasklet runs on every thread of the block. A load issues ``cp.async.bulk.tensor`` from the leader
+    thread and waits on the mbarrier at ``_tma_bar`` until all bytes have arrived. A store fences the shared
+    memory writes, issues the copy and waits for its completion. ``node.sync`` adds a leading
+    ``__syncthreads()`` so the shared buffer is no longer read (load) or written (store) by other threads.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :returns: the tasklet body.
+    """
+    coords = ', '.join(f"static_cast<int32_t>({sym2cpp(c)})" for c in geometry.coords)
+    code = "__syncthreads();\n" if node.sync else ""
+    code += f"int32_t const _tma_coords[{geometry.rank}] = {{{coords}}};\n"
+    if geometry.is_load:
+        code += (f"dace::cuda::tma_load<{geometry.rank}>({OUTPUT_CONNECTOR_NAME}, &{MEMORY_ENGINE_DESC_INPUT_NAME}, "
+                 f"_tma_coords, {MEMORY_ENGINE_BARRIER_INPUT_NAME}, {sym2cpp(geometry.bytes)});\n")
+    else:
+        code += (f"dace::cuda::tma_store<{geometry.rank}>(&{MEMORY_ENGINE_DESC_INPUT_NAME}, _tma_coords, "
+                 f"{INPUT_CONNECTOR_NAME});\n")
+    return code
