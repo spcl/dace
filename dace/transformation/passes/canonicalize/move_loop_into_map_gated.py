@@ -220,7 +220,6 @@ class MoveLoopIntoMapGated(ppl.Pass):
         :returns: The number of interchanges applied, or ``None`` if none.
         """
         gpu = self.target == "gpu"
-        options = {"cfg_body": gpu}
         applied = 0
         # Re-scan after each apply: MoveLoopIntoMap rewrites the CFG (removes the
         # loop, nests a new one), invalidating the iterator.
@@ -232,9 +231,13 @@ class MoveLoopIntoMapGated(ppl.Pass):
                     continue
                 if gpu and not interchange_pays_on_gpu(loop, loop.sdfg):
                     continue
+                # A short constant loop moves in whole on CPU too: its body's maps of one range (velocity's gather and
+                # accumulation per neighbour) become one map whose unrolled loop keeps the accumulator in a register.
+                short = not gpu and short_constant_trip(loop, loop.sdfg)
+                options = {"cfg_body": gpu or short}
                 if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
                     continue
-                if not gpu and not (short_constant_trip(loop, loop.sdfg) or interchange_lowers_stride(loop, loop.sdfg)):
+                if not gpu and not (short or interchange_lowers_stride(loop, loop.sdfg)):
                     continue
                 MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False)
                 applied += 1

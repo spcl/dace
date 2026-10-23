@@ -204,7 +204,7 @@ def blocked_slice(A: dace.float64[nblks, nproma], B: dace.float64[nblks, nproma]
 
 def test_the_cpu_target_never_shares_out_a_block_axis():
     """Canonicalization keeps the map a slice makes over ``(nblks, nproma)``; the CPU specialization then shares out
-    ``nproma`` and runs ``nblks`` sequentially inside."""
+    ``nblks`` only collapsed with ``nproma``, never alone."""
     for program, shape, reference in (
         (blocked_slice, (NBLKS, NPROMA), lambda A: 2.0 * A + 1.0),
         (blocked_axpy, (NBLKS, NPROMA), lambda A: 2.0 * A + 1.0),
@@ -215,8 +215,8 @@ def test_the_cpu_target_never_shares_out_a_block_axis():
         for entry, state in maps(sdfg):
             if entry.map.schedule == dace.ScheduleType.CPU_Multicore:
                 facts = resolver.facts_at(state, entry)
-                ranges = entry.map.range.ranges
-                assert not any(symbolic.is_small(end - begin, facts) for begin, end, _ in ranges), program.name
+                shared = entry.map.range.ranges[: entry.map.collapse]
+                assert not all(symbolic.is_small(end - begin, facts) for begin, end, _ in shared), program.name
         run_blocked(sdfg, shape, reference)
 
 

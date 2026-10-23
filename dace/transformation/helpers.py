@@ -2035,6 +2035,52 @@ def isolate_small_map_axes(
     return outer
 
 
+def share_out_past_leading_small_axes(
+    state: SDFGState, map_entry: nodes.MapEntry, resolver: SymbolResolver | None = None
+) -> nodes.MapEntry | None:
+    """Share out the ``SMALL`` axes ``map_entry`` has before its first larger one together with that axis (an
+    OpenMP ``collapse``), keeping every axis in its order (the stride order :class:`MinimizeStridePermutation`
+    set) and one parallel region.
+
+    A map over ``SMALL`` axes only whose body is a single map with a larger axis is first collapsed with it; when
+    the inner range reads an outer parameter it becomes ``Sequential`` instead and hands its schedule to the inner
+    map, which is then treated the same way. A map whose first axis is not ``SMALL``, or whose axes are all
+    ``SMALL``, is left as it is.
+
+    :param resolver: shared across calls to reuse the facts it derives.
+    :return: the map entry that shares out a larger axis, or ``None`` if nothing changed.
+    """
+    # Avoid import loop
+    from dace.transformation.dataflow import MapCollapse
+
+    resolver = resolver or SymbolResolver()
+    small = small_map_axes(state, map_entry, resolver)
+    if all(small):
+        children = {edge.dst for edge in state.out_edges(map_entry)}
+        if len(children) != 1:
+            return None
+        inner = next(iter(children))
+        if not isinstance(inner, nodes.MapEntry) or all(small_map_axes(state, inner, resolver)):
+            return None
+        # ``permissive``: a map nested in a scheduled one is already ``Sequential``, and the collapse takes the outer
+        # schedule. It still refuses an inner range that reads an outer parameter.
+        if not MapCollapse.can_be_applied_to(
+            state.sdfg, outer_map_entry=map_entry, inner_map_entry=inner, permissive=True
+        ):
+            inner.map.schedule = map_entry.map.schedule
+            map_entry.map.schedule = dtypes.ScheduleType.Sequential
+            return share_out_past_leading_small_axes(state, inner, resolver) or inner
+        map_entry, _ = MapCollapse.apply_to(
+            state.sdfg, outer_map_entry=map_entry, inner_map_entry=inner, permissive=True, save=False
+        )
+        small = small_map_axes(state, map_entry, resolver)
+    first_large = small.index(False)
+    if first_large == 0 or map_entry.map.collapse > first_large:
+        return None
+    map_entry.map.collapse = first_large + 1
+    return map_entry
+
+
 def scope_tree_recursive(state: SDFGState, entry: nodes.EntryNode | None = None) -> ScopeTree:
     """
     Returns a scope tree that includes scopes from nested SDFGs.

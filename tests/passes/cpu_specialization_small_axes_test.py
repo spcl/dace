@@ -3,8 +3,9 @@
 
 ``nblks`` is declared ``SMALL``: a handful of blocks, much smaller than ``nproma``. The CPU code generator shares
 out the first parameter of a map, so a map over ``(b, i)`` gave each of ``nblks`` threads a whole block and left the
-rest idle. The SMALL axes now run in an inner sequential map under a parallel map over the others; a map over SMALL
-axes only, around a map over large ones, is collapsed with it first, so the large axes are the ones shared out.
+rest idle. The leading SMALL axes are now shared out together with the first large one (``collapse``), every axis in
+its order, so the contiguous axis stays innermost; a map over SMALL axes only, around a map over large ones, is
+collapsed with it, or turns sequential when the inner range reads the block.
 """
 
 import numpy as np
@@ -65,6 +66,12 @@ def nested_maps(name: str, inner_range: str = "0:nproma") -> dace.SDFG:
     return sdfg
 
 
+def collapse_of(sdfg: dace.SDFG) -> int:
+    """The ``collapse`` of the one parallel map in the ``compute`` state."""
+    state = next(s for s in sdfg.states() if s.label == "compute")
+    return next(n.map.collapse for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.schedule == PAR)
+
+
 def map_nest(sdfg: dace.SDFG) -> list[tuple[list[str], dtypes.ScheduleType]]:
     """Every map's parameters and schedule, outermost first."""
     state = next(s for s in sdfg.states() if s.label == "compute")
@@ -87,11 +94,12 @@ def check_values(sdfg: dace.SDFG) -> None:
     np.testing.assert_allclose(B, 2.0 * A + 1.0)
 
 
-def test_a_block_axis_moves_into_an_inner_sequential_map():
+def test_a_leading_block_axis_is_collapsed_with_the_next():
     sdfg = one_map("cpu_block_first")
     assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert map_nest(sdfg) == [(["i"], PAR), (["b"], SEQ)]
+    assert map_nest(sdfg) == [(["b", "i"], PAR)]
+    assert collapse_of(sdfg) == 2
     check_values(sdfg)
 
 
@@ -99,15 +107,17 @@ def test_a_block_map_around_a_row_map_shares_out_the_rows():
     sdfg = nested_maps("cpu_block_around_rows")
     assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert map_nest(sdfg) == [(["i"], PAR), (["b"], SEQ)]
+    assert map_nest(sdfg) == [(["b", "i"], PAR)]
+    assert collapse_of(sdfg) == 2
     check_values(sdfg)
 
 
-def test_a_row_map_whose_range_reads_the_block_is_left_alone():
-    """The rows depend on the block, so the two maps do not collapse and the block map stays the parallel one."""
+def test_a_row_map_whose_range_reads_the_block_shares_out_the_rows():
+    """The rows depend on the block; nothing collapses, the block map turns sequential and the rows are shared out."""
     sdfg = nested_maps("cpu_block_dependent_rows", inner_range="0:nproma - b")
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert map_nest(sdfg) == [(["b"], PAR), (["i"], SEQ)]
+    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert map_nest(sdfg) == [(["b"], SEQ), (["i"], PAR)]
 
 
 def test_a_block_map_without_a_large_axis_is_left_alone():
@@ -126,13 +136,30 @@ def test_a_block_map_without_a_large_axis_is_left_alone():
     assert map_nest(sdfg) == [(["b"], PAR)]
 
 
+def test_a_block_axis_after_a_large_one_keeps_its_place():
+    """Only a leading SMALL axis moves: a map over ``(i, b)`` already shares out ``i``."""
+    sdfg = blocked_sdfg("cpu_block_second")
+    state = sdfg.add_state("compute")
+    state.add_mapped_tasklet(
+        "scale",
+        {"i": "0:nproma", "b": "0:nblks"},
+        {"x": dace.Memlet("A[b, i]")},
+        "y = 2.0 * x + 1.0",
+        {"y": dace.Memlet("B[b, i]")},
+        schedule=PAR,
+        external_edges=True,
+    )
+    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
+    assert map_nest(sdfg) == [(["i", "b"], PAR)]
+
+
 def test_without_small_symbols_nothing_changes():
     sdfg = one_map("cpu_no_small", small=False)
     assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
     assert map_nest(sdfg) == [(["b", "i"], PAR)]
 
 
-def test_a_literal_small_axis_moves_into_an_inner_sequential_map():
+def test_a_leading_literal_small_axis_is_collapsed_with_the_next():
     """A literal extent below ``SMALL_CONSTANT_EXTENT`` is as small as a ``SMALL`` symbol: no symbol is declared."""
     sdfg = dace.SDFG("cpu_literal_block_first")
     sdfg.add_symbol("nproma", dace.int64)
@@ -150,7 +177,8 @@ def test_a_literal_small_axis_moves_into_an_inner_sequential_map():
     )
     assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert map_nest(sdfg) == [(["i"], PAR), (["b"], SEQ)]
+    assert map_nest(sdfg) == [(["b", "i"], PAR)]
+    assert collapse_of(sdfg) == 2
     A = np.random.default_rng(11).random((NBLKS, NPROMA))
     B = np.zeros_like(A)
     sdfg(A=A, B=B, nproma=NPROMA)
@@ -162,12 +190,14 @@ def test_cpu_specialize_never_shares_out_a_block_axis():
         for entry in (e for e, _ in sdfg.all_nodes_recursive() if isinstance(e, nodes.MapEntry)):
             entry.map.schedule = dtypes.ScheduleType.Default
         cpu_specialize(sdfg)
-        for params, schedule in map_nest(sdfg):
-            assert schedule != PAR or "b" not in params, map_nest(sdfg)
+        # ``b`` is shared out only collapsed with ``i``
+        state = next(s for s in sdfg.states() if s.label == "compute")
+        for entry in (n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.schedule == PAR):
+            assert entry.map.params[0] != "b" or entry.map.collapse >= 2, map_nest(sdfg)
         check_values(sdfg)
 
 
-def expanded_fill_maps(small: bool) -> list[tuple[list[str], dtypes.ScheduleType]]:
+def expanded_fill_maps(small: bool) -> list[tuple[list[str], dtypes.ScheduleType, int]]:
     """Expand a whole-array fill of ``B`` into its element map and return that map nest, outermost first."""
     sdfg = blocked_sdfg("cpu_expanded_fill_small" if small else "cpu_expanded_fill", small)
     state = sdfg.add_state("compute")
@@ -189,25 +219,24 @@ def expanded_fill_maps(small: bool) -> list[tuple[list[str], dtypes.ScheduleType
     B = np.ones((NBLKS, NPROMA))
     sdfg(A=np.zeros((NBLKS, NPROMA)), B=B, nblks=NBLKS, nproma=NPROMA)
     np.testing.assert_allclose(B, 0.0)
-    return [(e.map.params, e.map.schedule) for e in entries]
+    return [(e.map.params, e.map.schedule, e.map.collapse) for e in entries]
 
 
 def test_a_library_expansion_never_shares_out_a_block_axis():
     """A library node expands at code generation, after ``SequentializeSmallAxes``: a whole-array fill of a
     ``(nblks, nproma)`` temporary was one map shared out over ``nblks`` -- velocity_tendencies at one block
     filled five ``(nblks, nlev, nproma)`` temporaries per call on one thread each."""
-    nest = expanded_fill_maps(small=True)
-    assert nest[0][1] == PAR and nest[0][0] == ["__i1"], nest
-    assert nest[1] == (["__i0"], SEQ), nest
-    assert expanded_fill_maps(small=False) == [(["__i0", "__i1"], PAR)]
+    assert expanded_fill_maps(small=True) == [(["__i0", "__i1"], PAR, 2)]
+    assert expanded_fill_maps(small=False) == [(["__i0", "__i1"], PAR, 1)]
 
 
 if __name__ == "__main__":
-    test_a_block_axis_moves_into_an_inner_sequential_map()
+    test_a_leading_block_axis_is_collapsed_with_the_next()
     test_a_block_map_around_a_row_map_shares_out_the_rows()
-    test_a_row_map_whose_range_reads_the_block_is_left_alone()
+    test_a_row_map_whose_range_reads_the_block_shares_out_the_rows()
     test_a_block_map_without_a_large_axis_is_left_alone()
+    test_a_block_axis_after_a_large_one_keeps_its_place()
     test_without_small_symbols_nothing_changes()
-    test_a_literal_small_axis_moves_into_an_inner_sequential_map()
+    test_a_leading_literal_small_axis_is_collapsed_with_the_next()
     test_cpu_specialize_never_shares_out_a_block_axis()
     test_a_library_expansion_never_shares_out_a_block_axis()

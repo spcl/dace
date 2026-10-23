@@ -311,12 +311,14 @@ def cube_sweep(out: dace.float64[N, N, N, B], inp: dace.float64[N, N, N, B], w: 
         out += w[r] * inp
 
 
-def test_a_cube_is_tiled_along_its_outer_axis_not_its_short_innermost_one():
-    """Three axes of extent ``N`` named no single axis, so only the short ``B`` was cut: one or two tiles of 16, the
-    whole ``N^3`` volume on one or two threads."""
+def test_a_short_constant_loop_over_a_cube_moves_into_the_map():
+    """The four trips of ``r`` move into the cube map whole (``MoveLoopIntoMapGated``'s short constant trip): one
+    parallel sweep over the ``N^3 * B`` volume that accumulates in a register, instead of four strip-mined sweeps."""
     sdfg = finalized(cube_sweep, "smi_cube_sweep")
     code = emitted(sdfg)
-    assert re.search(r"for \(\w+ \w+ = __dace_tile; \w+ < \(__dace_tile \+ 1\)", code), code
+    body = code[code.index("_internal(") :]
+    assert "__dace_tile" not in body, code
+    assert re.search(r"#pragma omp parallel for\s*\n\s*for \(int __i0", body), code
     n, b = 7, 3
     rng = np.random.default_rng(0)
     out, inp, w = rng.random((n, n, n, b)), rng.random((n, n, n, b)), rng.random(4)
@@ -337,4 +339,4 @@ if __name__ == "__main__":
     test_the_cloudsc_vertical_carry_is_tiled_and_matches_numpy()
     test_a_gather_on_the_carried_array_is_refused()
     test_a_gather_on_a_read_only_operand_still_tiles()
-    test_a_cube_is_tiled_along_its_outer_axis_not_its_short_innermost_one()
+    test_a_short_constant_loop_over_a_cube_moves_into_the_map()

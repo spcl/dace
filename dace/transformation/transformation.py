@@ -766,8 +766,8 @@ def adopt_top_level_schedule(expansion: SDFG, schedule: ScheduleType) -> None:
 
 
 def share_out_no_small_axis(expansion: SDFG) -> None:
-    """Move the ``SMALL`` axes of the ``CPU_Multicore`` maps a library expansion just made into an inner
-    sequential map, as
+    """Share out the leading ``SMALL`` axes of the ``CPU_Multicore`` maps a library expansion just made together with
+    the first larger one, as
     :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` does
     for the maps that exist before code generation. A library node expands at code generation, after that
     pass: velocity_tendencies at one block filled each ``(nblks, nlev, nproma)`` temporary in a map shared out
@@ -776,7 +776,7 @@ def share_out_no_small_axis(expansion: SDFG) -> None:
     :param expansion: the nested SDFG of an expansion, already in its parent and with its schedules inferred.
     """
     # Avoid import loop
-    from dace.transformation.helpers import isolate_small_map_axes
+    from dace.transformation.helpers import share_out_past_leading_small_axes
 
     resolver = st.SymbolResolver()
     candidates = [
@@ -786,7 +786,7 @@ def share_out_no_small_axis(expansion: SDFG) -> None:
         if isinstance(node, nd.MapEntry) and node.map.schedule == ScheduleType.CPU_Multicore
     ]
     for entry, state in candidates:
-        isolate_small_map_axes(state, entry, resolver)
+        share_out_past_leading_small_axes(state, entry, resolver)
 
 
 @make_properties

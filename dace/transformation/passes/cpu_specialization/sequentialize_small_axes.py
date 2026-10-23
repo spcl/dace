@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""CPU specialization of a parallel map over a ``SMALL`` axis: the ``SMALL`` axes become an inner sequential map.
+"""CPU specialization of a parallel map whose first axis is ``SMALL``: the leading ``SMALL`` axes are shared out
+together with the first larger one.
 
 A symbol declared ``SMALL`` (``nblks``) or a literal extent below ``SMALL_CONSTANT_EXTENT`` is a handful, much
-smaller than every other size. The CPU code generator
-shares out the first parameter of a map, so a parallel map over ``(b, i)`` with ``b`` in ``range(nblks)`` gives
-``nblks`` threads a block each and leaves the others idle. This pass keeps the axes that are not ``SMALL``, in their
-order, in the parallel map and runs the ``SMALL`` ones in an inner ``Sequential`` map: the same iteration space, with
-a large axis shared out. A parallel map over ``SMALL`` axes only that holds nothing but a map over larger ones is
-collapsed with it first; any other one has no other axis to share out and is left alone.
+smaller than every other size. The CPU code generator shares out the first parameter of a map, so a parallel map over
+``(b, k, i)`` with ``b`` in ``range(nblks)`` gives ``nblks`` threads a block each and leaves the others idle. This
+pass collapses the leading ``SMALL`` axes with the first larger one (``collapse(2)`` over ``b, k``), keeping the order
+of every axis: the stride order, contiguous axis innermost, survives, in one parallel region
+(:func:`~dace.transformation.helpers.share_out_past_leading_small_axes`).
 """
 
 from typing import Any
@@ -16,12 +16,12 @@ from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.helpers import isolate_small_map_axes
+from dace.transformation.helpers import share_out_past_leading_small_axes
 
 
 @properties.make_properties
 class SequentializeSmallAxes(ppl.Pass):
-    """Move the ``SMALL`` axes of every parallel CPU map into an inner sequential map."""
+    """Share out the leading ``SMALL`` axes of every parallel CPU map together with the first larger one."""
 
     CATEGORY: str = "Device Specialization"
 
@@ -35,7 +35,7 @@ class SequentializeSmallAxes(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Split every ``CPU_Multicore`` map in ``sdfg`` with a ``SMALL`` axis and a larger one.
+        """Split every ``CPU_Multicore`` map in ``sdfg`` whose first axis is ``SMALL`` and that has a larger one.
 
         :param sdfg: the SDFG to specialize, in place.
         :param _pipeline_results: unused.
@@ -47,5 +47,7 @@ class SequentializeSmallAxes(ppl.Pass):
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.CPU_Multicore
         ]
         resolver = SymbolResolver()
-        split = sum(isolate_small_map_axes(state, entry, resolver) is not None for entry, state in candidates)
+        split = sum(
+            share_out_past_leading_small_axes(state, entry, resolver) is not None for entry, state in candidates
+        )
         return split or None
