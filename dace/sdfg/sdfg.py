@@ -3,6 +3,7 @@ import ast
 import collections
 import copy
 import ctypes
+import functools
 import gzip
 import json
 import os
@@ -296,6 +297,12 @@ class LogicalGroup:
         return ret
 
 
+@functools.lru_cache(maxsize=16384, typed=True)
+def assignment_rhs_symbol_names(rhs: str) -> frozenset[str]:
+    """The names an interstate-edge assignment reads: a function of its text alone, which every symbol walk asks for."""
+    return frozenset(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
+
+
 @make_properties
 class InterstateEdge:
     """An SDFG state machine edge. These edges can contain a condition
@@ -417,7 +424,7 @@ class InterstateEdge:
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
+            rhs_symbols |= assignment_rhs_symbol_names(rhs)
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
@@ -474,7 +481,9 @@ class InterstateEdge:
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # As for the SDFG's own keys, an expression replaces uses only and never becomes an assignment target
+                if validate_name(str(new_name)):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():

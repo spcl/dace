@@ -1,0 +1,300 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Python frontend replacement of ``dace.ai``, which adds an :class:`~dace.libraries.ai.nodes.ai_node.AINode`.
+The connectors, which the description refers to, are named after the call:
+
+* a keyword input ``a=A`` becomes ``_a``,
+* positional inputs become ``_in0``, ``_in1``, ...,
+* the output is ``_out``, or ``_out0``, ``_out1``, ... for several containers in ``out=``.
+"""
+
+from collections.abc import Sequence
+from numbers import Number
+from typing import Any
+
+# Imported for its side effect on the annotations below: ``ProgramVisitor`` is a string at run time, and
+# resolving it -- as the documentation build does -- needs ``dace`` in this module's namespace
+import dace  # noqa
+from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
+from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import DaceSyntaxError, StringLiteral
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape
+from dace.sdfg import nodes
+
+
+def _description_of(pv: ProgramVisitor, sdfg: SDFG, description: Any) -> str:
+    """
+    Returns the description given in the call. The frontend passes a string literal as a
+    :class:`~dace.frontend.python.common.StringLiteral` and a data container as its name.
+
+    :param pv: The program visitor, for error reporting.
+    :param sdfg: The SDFG being built, to tell a description from a container name.
+    :param description: The first argument of the call, as parsed by the frontend.
+    :return: The description as a string.
+    :raises DaceSyntaxError: If the description is not a string literal, or is empty.
+    """
+    # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
+    if type(description) is str and description in sdfg.arrays:
+        given = f'the data container "{description}"'
+    elif isinstance(description, (StringLiteral, str)):
+        given = None
+    else:
+        given = f'a value of type "{type(description).__name__}"'
+
+    if given is not None:
+        raise DaceSyntaxError(
+            pv,
+            None,
+            "The first argument of dace.ai must be a string literal or a compile-time constant string "
+            f"describing what the node computes, but {given} was given.",
+        )
+    text = str(description).strip()
+    if not text:
+        raise DaceSyntaxError(pv, None, "The description given to dace.ai is empty.")
+    return text
+
+
+def _container_of(pv: ProgramVisitor, sdfg: SDFG, argument: Any, described: str) -> str:
+    """
+    Resolves one argument of the call to the data container it refers to.
+
+    :param pv: The program visitor, for error reporting.
+    :param sdfg: The SDFG being built.
+    :param argument: The argument, as parsed by the frontend.
+    :param described: How to refer to the argument in an error message.
+    :return: The name of the data container.
+    :raises DaceSyntaxError: If the argument is not a data container.
+    """
+    # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
+    if type(argument) is str and argument in sdfg.arrays:
+        return argument
+
+    if isinstance(argument, (Number, StringLiteral)) or symbolic.issymbolic(argument):
+        raise DaceSyntaxError(
+            pv,
+            None,
+            f"{described} of dace.ai is a constant or a symbol, but only data containers can be connected. "
+            "Symbols are visible to the generated code by name, and constants can be stated in the description.",
+        )
+    raise DaceSyntaxError(pv, None, f"{described} of dace.ai is not a data container of this program.")
+
+
+def _input_connectors(
+    pv: ProgramVisitor, sdfg: SDFG, inputs: Sequence[Any], named_inputs: dict[str, Any]
+) -> dict[str, str]:
+    """
+    Maps every input of the call to the connector it is read into.
+
+    :param pv: The program visitor, for error reporting.
+    :param sdfg: The SDFG being built.
+    :param inputs: Positional inputs, which become ``_in0``, ``_in1``, ...
+    :param named_inputs: Keyword inputs, where ``a=A`` becomes ``_a``.
+    :return: A mapping from connector name to data container name, in call order.
+    :raises DaceSyntaxError: If an input is not a data container, or two inputs claim one connector.
+    """
+    connectors: dict[str, str] = {}
+    for i, argument in enumerate(inputs):
+        connectors[f"_in{i}"] = _container_of(pv, sdfg, argument, f"Positional input {i}")
+
+    for keyword, argument in named_inputs.items():
+        connector = f"_{keyword}"
+        if connector in connectors:
+            raise DaceSyntaxError(
+                pv,
+                None,
+                f'Two inputs of dace.ai map to the connector "{connector}": the keyword argument '
+                f'"{keyword}" collides with a positional input. Pass it by keyword under a different name.',
+            )
+        connectors[connector] = _container_of(pv, sdfg, argument, f'Input "{keyword}"')
+
+    return connectors
+
+
+def _output_connectors(pv: ProgramVisitor, sdfg: SDFG, out: Any) -> dict[str, str]:
+    """
+    Maps the containers the node writes to the connectors they are written from.
+
+    :param pv: The program visitor, for error reporting.
+    :param sdfg: The SDFG being built.
+    :param out: One container name, or a sequence of them.
+    :return: A mapping from connector name to data container name, in the given order.
+    :raises DaceSyntaxError: If an output is not a data container, or the same one is written twice.
+    """
+    names = list(out) if isinstance(out, (list, tuple)) else [out]
+    if not names:
+        raise DaceSyntaxError(
+            pv,
+            None,
+            'The "out" argument of dace.ai is empty. Leave it out to have the '
+            "output allocated, or name the containers to write to.",
+        )
+
+    containers = [_container_of(pv, sdfg, name, f"Output {i}") for i, name in enumerate(names)]
+    if len(set(containers)) != len(containers):
+        raise DaceSyntaxError(
+            pv,
+            None,
+            'The same container is given twice in the "out" argument of dace.ai. '
+            "A node cannot write to one container through two connectors.",
+        )
+
+    if len(containers) == 1:
+        return {"_out": containers[0]}
+    return {f"_out{i}": name for i, name in enumerate(containers)}
+
+
+def _allocate_output(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    inputs: dict[str, str],
+    shape: Shape | None,
+    dtype: dtypes.typeclass | None,
+    storage: dtypes.StorageType | None,
+) -> str:
+    """
+    Adds the transient the node writes to when the call does not name one, taking what is not
+    given from the first input.
+
+    :param pv: The program visitor, used to name the transient after the assignment target.
+    :param sdfg: The SDFG being built.
+    :param inputs: The input connectors, used to infer whatever was not given.
+    :param shape: Shape of the output, or ``None`` to take the shape of the first input.
+    :param dtype: Data type of the output, or ``None`` to take the type of the first input.
+    :param storage: Storage of the output, or ``None`` to take the storage of the first input.
+    :return: The name of the new transient.
+    :raises DaceSyntaxError: If there is no input to infer the missing parts from.
+    """
+    prototype: data.Data | None = None
+    if inputs:
+        prototype = sdfg.arrays[next(iter(inputs.values()))]
+
+    if prototype is None and (shape is None or dtype is None):
+        raise DaceSyntaxError(
+            pv,
+            None,
+            "dace.ai cannot tell what to allocate for the output of a node that has no inputs to "
+            'take it from. Give "shape" and "dtype", or write into an existing container with "out".',
+        )
+
+    if dtype is None:
+        dtype = prototype.dtype
+    if storage is None:
+        storage = prototype.storage if prototype is not None else dtypes.StorageType.Default
+    if shape is None:
+        shape = () if isinstance(prototype, data.Scalar) else prototype.shape
+
+    if not shape:
+        name, _ = sdfg.add_scalar(pv.get_target_name(), dtype, storage=storage, transient=True, find_new_name=True)
+        return name
+    name, _ = pv.add_temp_transient(shape, dtype, storage=storage)
+    return name
+
+
+def _node_name(sdfg: SDFG, base: str = "ai") -> str:
+    """
+    Returns a name no other library node of this SDFG has. The name identifies the node's session.
+
+    :param sdfg: The SDFG being built.
+    :param base: The name to use if it is free.
+    :return: The unused name closest to ``base``.
+    """
+    taken = {n.name for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)}
+    if base not in taken:
+        return base
+    index = 1
+    while f"{base}_{index}" in taken:
+        index += 1
+    return f"{base}_{index}"
+
+
+@oprepo.replaces("dace.ai")
+@oprepo.replaces("dace.frontend.python.interface.ai")
+def ai_node(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    description: StringLiteral | str,
+    *inputs: str,
+    out: str | Sequence[str] | None = None,
+    shape: Shape | None = None,
+    dtype: dtypes.typeclass | None = None,
+    storage: dtypes.StorageType | None = None,
+    name: StringLiteral | str | None = None,
+    schedule: dtypes.ScheduleType | None = None,
+    **named_inputs: str,
+) -> str | tuple[str, ...]:
+    """
+    Adds a node whose implementation is described in natural language (see
+    :func:`dace.frontend.python.interface.ai`).
+
+    :param pv: The program visitor parsing the program.
+    :param sdfg: The SDFG being built.
+    :param state: The state to add the node to.
+    :param description: What the node must compute.
+    :param inputs: Containers read through the connectors ``_in0``, ``_in1``, ...
+    :param out: Container(s) to write to. If not given, a transient is allocated.
+    :param shape: Shape of the allocated output.
+    :param dtype: Data type of the allocated output.
+    :param storage: Storage type of the allocated output.
+    :param name: Name of the node, which the model sees along with the description. Defaults to an
+                 unused name of the form ``ai``, ``ai_1``, ...
+    :param schedule: Schedule of the node, which determines its default device mapping.
+    :param named_inputs: Containers read through the connectors named after their keywords.
+    :return: The name of the container written, or a tuple of them if several were given in ``out``.
+    :raises DaceSyntaxError: If the description or the operands cannot be used to build the node.
+    """
+    from dace.libraries.ai.nodes import AINode  # Avoid depending on the AI library unless it is used
+
+    text = _description_of(pv, sdfg, description)
+
+    # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
+    if name is not None and ((type(name) is str and name in sdfg.arrays) or not isinstance(name, (StringLiteral, str))):
+        raise DaceSyntaxError(
+            pv,
+            None,
+            'The "name" argument of dace.ai is the label of the node and must be a string. It is '
+            'one of the keyword arguments that configure the node ("out", "shape", "dtype", "storage", '
+            '"name", "schedule"), so it cannot be used to name an input connector.',
+        )
+
+    # The name identifies the node's generation session, so it must be unique
+    if name is not None and any(
+        isinstance(n, nodes.LibraryNode) and n.name == str(name) for n, _ in sdfg.all_nodes_recursive()
+    ):
+        raise DaceSyntaxError(pv, None, f'Another node of this program is already named "{name}".')
+
+    in_connectors = _input_connectors(pv, sdfg, inputs, named_inputs)
+
+    if out is None:
+        out_connectors = {"_out": _allocate_output(pv, sdfg, in_connectors, shape, dtype, storage)}
+    else:
+        if shape is not None or dtype is not None or storage is not None:
+            raise DaceSyntaxError(
+                pv,
+                None,
+                'The "shape", "dtype" and "storage" arguments of dace.ai describe the output it '
+                'allocates, so they cannot be combined with "out", which writes to a container that '
+                "already exists.",
+            )
+        out_connectors = _output_connectors(pv, sdfg, out)
+
+    node = AINode(
+        str(name) if name is not None else _node_name(sdfg),
+        text,
+        inputs=dict.fromkeys(in_connectors),
+        outputs=dict.fromkeys(out_connectors),
+        schedule=schedule,
+    )
+    state.add_node(node)
+
+    for connector, container in in_connectors.items():
+        state.add_edge(
+            state.add_read(container), None, node, connector, Memlet.from_array(container, sdfg.arrays[container])
+        )
+    for connector, container in out_connectors.items():
+        state.add_edge(
+            node, connector, state.add_write(container), None, Memlet.from_array(container, sdfg.arrays[container])
+        )
+
+    written = tuple(out_connectors.values())
+    return written[0] if len(written) == 1 else written

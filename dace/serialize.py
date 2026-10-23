@@ -2,6 +2,7 @@
 import copy
 import enum
 import json
+import pydoc
 import warnings
 from dataclasses import is_dataclass
 
@@ -147,6 +148,30 @@ def to_json(obj):
         return str(obj)
 
 
+def _resolve_serializer(typename, obj):
+    """
+    Finds the class that can deserialize ``obj``. A type that is not registered yet, because its
+    module was not imported, is imported from the ``classpath`` field of ``obj`` if there is one
+    (as for library nodes).
+
+    :param typename: The value of the object's ``type`` field.
+    :param obj: The serialized object, consulted for a ``classpath`` fallback.
+    :return: The registered serializer.
+    :raises KeyError: If the type is unknown and no importable ``classpath`` names it.
+    """
+    try:
+        return get_serializer(typename)
+    except KeyError:
+        classpath = obj.get("classpath") if isinstance(obj, dict) else None
+        if not classpath:
+            raise
+        located = pydoc.locate(classpath)
+        if located is None:
+            raise
+        # Importing the module registered the type
+        return get_serializer(typename)
+
+
 def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
         if known_type is not None:
@@ -187,7 +212,7 @@ def from_json(obj, context=None, known_type=None):
 
     if t:
         try:
-            serializer = get_serializer(t)
+            serializer = _resolve_serializer(t, obj)
             if is_dataclass(serializer):
                 # Special case for dataclasses
                 field_values = {}

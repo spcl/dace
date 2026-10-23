@@ -96,11 +96,11 @@ class RemoveUnusedSymbols(ppl.Pass):
             result |= set(map(str, desc.free_symbols))
 
         for block in sdfg.all_control_flow_blocks():
-            result |= block.free_symbols
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
             if isinstance(block, SDFGState):
+                result |= block.free_symbols
                 for node in block.nodes():
                     if isinstance(node, nodes.Tasklet):
                         if node.code.language != dtypes.Language.Python:
@@ -120,6 +120,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                                 node.code_exit.as_string, sdfg.symbols.keys(), node.ignored_symbols
                             )
             else:
+                # The blocks inside a region are visited themselves: walking them again for every enclosing region
+                # repeats the whole nest once per nesting level
                 result |= block.used_symbols(all_symbols=True, with_contents=False)
 
         for e in sdfg.all_interstate_edges():

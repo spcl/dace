@@ -7,7 +7,9 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.validation import InvalidSDFGNodeError
+from dace.transformation.helpers import nest_state_subgraph
 
 
 def _nested_write(
@@ -183,6 +185,23 @@ def test_is_equivalent_symbol_mapping_structure():
     assert not inner.is_equivalent(outer, symbol_mapping={"N": "M"})
 
 
+def test_a_specialized_extent_stays_mapped_into_a_nested_sdfg():
+    """``specialize`` pins ``N`` as a constant, so ``N`` is no longer free, yet the nested container is still
+    ``a[N]`` and the parent's ``N`` must reach it through the mapping."""
+    extent = dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG("specialized_nest")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [extent], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet("write", {"i": "0:N"}, {}, "o = 1", {"o": dace.Memlet("A[i]")}, external_edges=True)
+    sdfg.specialize({"N": 8})
+
+    nested = nest_state_subgraph(sdfg, state, SubgraphView(state, state.nodes()))
+
+    assert {name: str(value) for name, value in nested.symbol_mapping.items()} == {"N": "N"}
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_mapped_expression()
     test_mapped_expression_in_inner_shape()
@@ -200,3 +219,4 @@ if __name__ == "__main__":
     test_is_equivalent_symbol_mapping_strides()
     test_is_equivalent_symbol_mapping_stream()
     test_is_equivalent_symbol_mapping_structure()
+    test_a_specialized_extent_stays_mapped_into_a_nested_sdfg()
