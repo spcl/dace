@@ -24,10 +24,10 @@ import copy
 import re
 from typing import Any
 
-from dace import SDFG, SDFGState, dtypes, properties, symbolic
+from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
 from dace.optionals import required
 from dace.sdfg import InterstateEdge, nodes
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
@@ -135,7 +135,54 @@ def _hoist_loop_region(loop: LoopRegion) -> int:
                 break
             count += 1
 
+    # (4) Speculative hoist out of the body's other states, conditional branches included: only a tasklet computing
+    # a transient scalar nothing outside the loop touches, so running it once whether or not its branch is taken
+    # is unobservable (warpx's ``xmin * dinvx`` under ``if rz_modes`` kept the particle loop from mapping).
+    for state in _speculation_states(loop):
+        while True:
+            tasklet = _find_one_invariant_tasklet(state, variant_syms, variant_data, region_writers)
+            if tasklet is None or not _scalar_private_to_loop(loop, state, tasklet):
+                break
+            preheader = _get_or_create_preheader(loop)
+            if not _hoist_tasklet_to_preheader(state, tasklet, preheader):
+                break
+            count += 1
+
     return count
+
+
+def _speculation_states(loop: LoopRegion) -> list[SDFGState]:
+    """The states of ``loop``'s body other than its start, through conditional branches but not nested loops."""
+    found: list[SDFGState] = []
+
+    def walk(region: ControlFlowRegion) -> None:
+        for block in region.nodes():
+            if isinstance(block, SDFGState):
+                found.append(block)
+            elif isinstance(block, ConditionalBlock):
+                for _condition, branch in block.branches:
+                    walk(branch)
+            elif isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+                walk(block)
+
+    walk(loop)
+    return [state for state in found if state is not loop.start_block]
+
+
+def _scalar_private_to_loop(loop: LoopRegion, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+    """Whether ``tasklet`` writes a transient scalar that no state outside ``loop`` accesses."""
+    (edge,) = state.out_edges(tasklet)
+    name = edge.dst.data
+    desc = state.sdfg.arrays[name]
+    if not desc.transient or not isinstance(desc, data.Scalar):
+        return False
+    inside = {id(block) for block in loop.all_control_flow_blocks()}
+    return not any(
+        node.data == name
+        for other in state.sdfg.states()
+        if id(other) not in inside
+        for node in other.data_nodes()
+    )
 
 
 def _hoist_invariant_child_regions(loop: LoopRegion) -> int:

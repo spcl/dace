@@ -712,6 +712,65 @@ def test_a_guard_reading_a_body_scalar_only_in_its_condition_is_not_hoisted():
     _run_and_check(sdfg, py_ref, A=np.array([0.0, 0.0, 1.0, 0.0]), B=np.zeros(4), N=4)
 
 
+def guarded_invariant_product(name: str, read_after: bool) -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: if c[i] > 0: t = a * b; out[i] = t``, with ``t`` a transient scalar (read after the loop too, or not)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_array("last", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    head = loop.add_state("head", is_start_block=True)
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(head, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("guard_body")
+    guard.add_branch(CodeBlock("c[i] > 0"), branch)
+    body = branch.add_state("product", is_start_block=True)
+    mul = body.add_tasklet("mul", {"x", "y"}, {"z"}, "z = x * y")
+    body.add_edge(body.add_read("a"), None, mul, "x", mm.Memlet("a[0]"))
+    body.add_edge(body.add_read("b"), None, mul, "y", mm.Memlet("b[0]"))
+    t = body.add_access("t")
+    body.add_edge(mul, "z", t, None, mm.Memlet("t"))
+    put = body.add_tasklet("put", {"v"}, {"o"}, "o = v")
+    body.add_edge(t, None, put, "v", mm.Memlet("t"))
+    body.add_edge(put, "o", body.add_write("out"), None, mm.Memlet("out[i]"))
+    if read_after:
+        after = sdfg.add_state_after(loop, "after")
+        keep = after.add_tasklet("keep", {"v"}, {"o"}, "o = v")
+        after.add_edge(after.add_read("t"), None, keep, "v", mm.Memlet("t"))
+        after.add_edge(keep, "o", after.add_write("last"), None, mm.Memlet("last[0]"))
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_an_invariant_scalar_under_a_guard_is_hoisted():
+    """warpx's ``xmin * dinvx`` under ``if rz_modes``: a pure product into a scalar only the loop touches runs once
+    before the loop, so the particle loop holds no carried scalar."""
+    sdfg, loop = guarded_invariant_product("licm_guarded_scalar", read_after=False)
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert "mul" not in {n.label for n, _ in loop.all_nodes_recursive() if isinstance(n, nodes.Tasklet)}
+
+    def py_ref(a, b, c, out, last, N):
+        for i in range(N):
+            if c[i] > 0:
+                out[i] = a[0] * b[0]
+
+    c = np.array([1.0, -1.0, 2.0, -3.0, 4.0])
+    _run_and_check(sdfg, py_ref, a=np.array([1.5]), b=np.array([2.0]), c=c, out=np.zeros(5), last=np.zeros(1), N=5)
+
+
+def test_a_guarded_scalar_read_after_the_loop_stays():
+    """Read after the loop, the scalar keeps its value from before the loop when no branch is taken: not hoisted."""
+    sdfg, loop = guarded_invariant_product("licm_guarded_scalar_read_after", read_after=True)
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    assert "mul" in {n.label for n, _ in loop.all_nodes_recursive() if isinstance(n, nodes.Tasklet)}
+
+
 def test_a_state_reading_what_a_sibling_guard_writes_is_not_hoisted():
     """A conditional's writes conflict with a sibling's reads. Counting the guard's states only for a
     ``ControlFlowRegion`` (``ConditionalBlock`` is not one) left its write set empty, so the state reading ``t``
@@ -1339,3 +1398,5 @@ if __name__ == "__main__":
     test_llvm_hoist_invariant_load_multi_consumer()
     test_llvm_gep_reassociate_map_scope_invariant_load()
     test_map_invariant_scalar_read_hoist_uses_inner_memlet()
+    test_an_invariant_scalar_under_a_guard_is_hoisted()
+    test_a_guarded_scalar_read_after_the_loop_stays()
