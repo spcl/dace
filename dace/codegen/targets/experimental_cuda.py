@@ -1054,13 +1054,19 @@ class KernelSpec:
         ]
 
         args_typed = []
+        kernel_args_typed = []
         for name, data in self.arglist.items():
             if data.lifetime == dtypes.AllocationLifetime.Persistent:
                 arg_name = ptr(name, data, sdfg, cudaCodeGen._frame)
             else:
                 arg_name = name
-            args_typed.append(("const " if name in self.kernel_constants else "") + data.as_arg(name=arg_name))
+            const = "const " if name in self.kernel_constants else ""
+            args_typed.append(const + data.as_arg(name=arg_name))
+            # Only the ``__global__`` prototype may carry ``__grid_constant__``, not the host launcher
+            grid_constant = "const __grid_constant__ " if is_grid_constant(data) else const
+            kernel_args_typed.append(grid_constant + data.as_arg(name=arg_name))
         self.args_typed: list[str] = args_typed
+        self.kernel_args_typed: list[str] = kernel_args_typed
 
         cudaCodeGen._in_device_code = False
 
