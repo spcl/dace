@@ -712,10 +712,13 @@ def test_a_guard_reading_a_body_scalar_only_in_its_condition_is_not_hoisted():
     _run_and_check(sdfg, py_ref, A=np.array([0.0, 0.0, 1.0, 0.0]), B=np.zeros(4), N=4)
 
 
-def guarded_invariant_product(name: str, read_after: bool) -> tuple[dace.SDFG, LoopRegion]:
-    """``for i: if c[i] > 0: t = a * b; out[i] = t``, with ``t`` a transient scalar (read after the loop too, or not)."""
+def guarded_invariant_product(
+    name: str, read_after: bool, a_shape: tuple = (1,), a_index: str = "0"
+) -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: if c[i] > 0: t = a[a_index] * b; out[i] = t``, with ``t`` a transient scalar (read after the loop
+    too, or not)."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("a", list(a_shape), dace.float64)
     sdfg.add_array("b", [1], dace.float64)
     sdfg.add_array("c", [N], dace.float64)
     sdfg.add_array("out", [N], dace.float64)
@@ -731,7 +734,7 @@ def guarded_invariant_product(name: str, read_after: bool) -> tuple[dace.SDFG, L
     guard.add_branch(CodeBlock("c[i] > 0"), branch)
     body = branch.add_state("product", is_start_block=True)
     mul = body.add_tasklet("mul", {"x", "y"}, {"z"}, "z = x * y")
-    body.add_edge(body.add_read("a"), None, mul, "x", mm.Memlet("a[0]"))
+    body.add_edge(body.add_read("a"), None, mul, "x", mm.Memlet(f"a[{a_index}]"))
     body.add_edge(body.add_read("b"), None, mul, "y", mm.Memlet("b[0]"))
     t = body.add_access("t")
     body.add_edge(mul, "z", t, None, mm.Memlet("t"))
@@ -767,6 +770,14 @@ def test_an_invariant_scalar_under_a_guard_is_hoisted():
 def test_a_guarded_scalar_read_after_the_loop_stays():
     """Read after the loop, the scalar keeps its value from before the loop when no branch is taken: not hoisted."""
     sdfg, loop = guarded_invariant_product("licm_guarded_scalar_read_after", read_after=True)
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    assert "mul" in {n.label for n, _ in loop.all_nodes_recursive() if isinstance(n, nodes.Tasklet)}
+
+
+def test_a_guarded_read_not_provably_in_bounds_stays():
+    """``if c[i] > 0: t = a[K - 1] * b``: with ``K == 0`` the branch may be what keeps the read inside ``a``, so the
+    product is not run speculatively before the loop."""
+    sdfg, loop = guarded_invariant_product("licm_guarded_oob", read_after=False, a_shape=(K,), a_index="K - 1")
     LoopInvariantCodeMotion().apply_pass(sdfg, {})
     assert "mul" in {n.label for n, _ in loop.all_nodes_recursive() if isinstance(n, nodes.Tasklet)}
 
@@ -1400,3 +1411,4 @@ if __name__ == "__main__":
     test_map_invariant_scalar_read_hoist_uses_inner_memlet()
     test_an_invariant_scalar_under_a_guard_is_hoisted()
     test_a_guarded_scalar_read_after_the_loop_stays()
+    test_a_guarded_read_not_provably_in_bounds_stays()

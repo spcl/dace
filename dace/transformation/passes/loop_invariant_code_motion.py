@@ -138,10 +138,15 @@ def _hoist_loop_region(loop: LoopRegion) -> int:
     # (4) Speculative hoist out of the body's other states, conditional branches included: only a tasklet computing
     # a transient scalar nothing outside the loop touches, so running it once whether or not its branch is taken
     # is unobservable (warpx's ``xmin * dinvx`` under ``if rz_modes`` kept the particle loop from mapping).
+    outside: set[str] | None = None
     for state in _speculation_states(loop):
         while True:
             tasklet = _find_one_invariant_tasklet(state, variant_syms, variant_data, region_writers)
-            if tasklet is None or not _scalar_private_to_loop(loop, state, tasklet):
+            if tasklet is None:
+                break
+            if outside is None:
+                outside = _accessed_outside(loop)
+            if not _scalar_private_to_loop(state, tasklet, outside) or not _reads_in_bounds(state, tasklet):
                 break
             preheader = _get_or_create_preheader(loop)
             if not _hoist_tasklet_to_preheader(state, tasklet, preheader):
@@ -169,20 +174,38 @@ def _speculation_states(loop: LoopRegion) -> list[SDFGState]:
     return [state for state in found if state is not loop.start_block]
 
 
-def _scalar_private_to_loop(loop: LoopRegion, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
-    """Whether ``tasklet`` writes a transient scalar that no state outside ``loop`` accesses."""
+def _accessed_outside(loop: LoopRegion) -> set[str]:
+    """The containers an access node in a state of ``loop``'s SDFG outside ``loop`` names."""
+    inside = set(loop.all_control_flow_blocks())
+    return {node.data for other in loop.sdfg.states() if other not in inside for node in other.data_nodes()}
+
+
+def _scalar_private_to_loop(state: SDFGState, tasklet: nodes.Tasklet, outside: set[str]) -> bool:
+    """Whether ``tasklet`` writes a transient scalar not in ``outside`` (:func:`_accessed_outside`)."""
     (edge,) = state.out_edges(tasklet)
-    name = edge.dst.data
-    desc = state.sdfg.arrays[name]
-    if not desc.transient or not isinstance(desc, data.Scalar):
-        return False
-    inside = {id(block) for block in loop.all_control_flow_blocks()}
-    return not any(
-        node.data == name
-        for other in state.sdfg.states()
-        if id(other) not in inside
-        for node in other.data_nodes()
-    )
+    desc = state.sdfg.arrays[edge.dst.data]
+    return desc.transient and isinstance(desc, data.Scalar) and edge.dst.data not in outside
+
+
+def _reads_in_bounds(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+    """Whether every array ``tasklet`` reads is read inside its extents under the SDFG's facts alone: hoisted out of
+    its branch, the read also runs where the branch's condition (``if n > 0: s = a[n - 1]``) would have kept it out."""
+    facts = state.sdfg.facts()
+    for edge in state.in_edges(tasklet):
+        if edge.data.is_empty():
+            continue
+        desc = state.sdfg.arrays[edge.data.data]
+        if isinstance(desc, data.Scalar):
+            continue
+        if edge.data.dynamic or edge.data.subset is None:
+            return False
+        for (begin, end, _), extent in zip(edge.data.subset.ndrange(), desc.shape):
+            begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
+            if not symbolic.provably_nonnegative(begin, facts):
+                return False
+            if not symbolic.provably_le(end, symbolic.pystr_to_symbolic(extent) - 1, facts):
+                return False
+    return True
 
 
 def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
