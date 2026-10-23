@@ -641,6 +641,36 @@ def test_a_contraction_whose_output_interleaves_the_operands_transposes_the_prod
     assert np.allclose(sdfg(A=A, B=B), np.einsum("aik,kj->aji", A, B))
 
 
+def test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose():
+    """cp2k_trs4's ``ijk,ilkm->iljm`` accumulating into its buffer (``beta = 1``): a batched GEMM whose product the
+    transpose folds in, not a scalar nest of atomic adds."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG("accumulating_interleaved_einsum")
+    sdfg.add_array("A", (6, 5, 4), dace.float64)
+    sdfg.add_array("B", (6, 3, 4, 5), dace.float64)
+    sdfg.add_array("C", (6, 3, 5, 5), dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ijk,ilkm->iljm"
+    enode.beta = 1.0
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", state.add_write("C"), None, dace.Memlet("C"))
+    enode.expand(sdfg, state)
+
+    assert "TensorTranspose" in contraction_nodes(sdfg)
+    assert not any(e.data.wcr for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet))
+    rng = np.random.default_rng(11)
+    A, B, C = rng.random((6, 5, 4)), rng.random((6, 3, 4, 5)), rng.random((6, 3, 5, 5))
+    expected = C + np.einsum("ijk,ilkm->iljm", A, B)
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, expected)
+
+
 if __name__ == "__main__":
     test_general_einsum()
     test_matmul()
@@ -666,3 +696,4 @@ if __name__ == "__main__":
     test_contraction_with_summed_indices_in_different_orders_matches_numpy()
     test_a_contraction_in_no_gemm_order_transposes_the_small_operand()
     test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
+    test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose()
