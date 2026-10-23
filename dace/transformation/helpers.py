@@ -382,7 +382,11 @@ def nest_sdfg_subgraph(
             new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
         for name in write_set:
             w = new_state.add_write(name)
-            new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
+            # The nested blocks may write any part of the container, not each element: an exact whole-array write
+            # lets the offloader skip the copy-in, and the elements they leave come back as uninitialized memory.
+            written = Memlet.from_array(name, sdfg.arrays[name])
+            written.dynamic = True
+            new_state.add_edge(cnode, name, w, None, written)
 
         # Part (2)
         if out_state is not None:
@@ -858,6 +862,9 @@ def nest_state_subgraph(
             continue
         data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         data.wcr = edge.data.wcr
+        # The connector passes the whole container, but the nest writes only what the boundary edge wrote: a
+        # partial write claimed in full lets the offloader skip the copy-in and return uninitialized elements.
+        data.dynamic = edge.data.dynamic or edge.data.subset != data.subset
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out[name] = edge
 
@@ -873,7 +880,7 @@ def nest_state_subgraph(
         node = state.add_write(name)
         if exit is not None:
             state.add_nedge(node, exit, Memlet())
-        state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr))
+        state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr, dynamic=True))
 
     # Restore the ordering edges. This used to fire only when the nested SDFG ended up
     # with degree 0 -- treating an empty memlet as a mere connectivity fallback. It is a
@@ -1116,10 +1123,10 @@ def state_fission(
 
 def isolate_nested_sdfg(
     state: SDFGState,
-    nsdfg_node: nodes.NestedSDFG,
+    nsdfg_node: nodes.NestedSDFG | nodes.LibraryNode,
     test_if_applicable: bool = False,
 ) -> tuple[SDFGState, SDFGState, SDFGState] | bool:
-    """Isolate the nested SDFG.
+    """Isolate the nested SDFG (or a library node, whose inputs and outputs are access nodes alike).
 
     The function will split ``state`` into three states:
 
@@ -1257,6 +1264,16 @@ def isolate_nested_sdfg(
                 and other_writer not in visited
                 and other_writer not in forward_from_nsdfg
                 and not overwrites_after(node_to_process, other_writer)
+            )
+
+    # A code node the walk pulled in (through an ordering edge, say) writes its outputs in the pre state too: left to
+    # the post state, an output would lose its producer and the split would be refused.
+    for node in list(pre_nodes):
+        if not isinstance(node, nodes.AccessNode):
+            pre_nodes.update(
+                oedge.dst
+                for oedge in state.out_edges(node)
+                if isinstance(oedge.dst, nodes.AccessNode) and oedge.dst not in middle_nodes
             )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
