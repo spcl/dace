@@ -1157,7 +1157,7 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts
         subset_b.max_element_approx(),
     ):
         result.append(
-            (symbolic.fold_extrema(sp.Min(arb, brb), facts), symbolic.fold_extrema(sp.Max(are, bre), facts), 1)
+            (symbolic.extremum_union(sp.Min, arb, brb, facts), symbolic.extremum_union(sp.Max, are, bre, facts), 1)
         )
 
     return Range(result)

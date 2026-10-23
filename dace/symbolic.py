@@ -3976,6 +3976,34 @@ def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
 
 
+def extremum_union(func: type[sympy.Min] | type[sympy.Max], a: sympy.Expr, b: sympy.Expr, facts: Facts) -> sympy.Expr:
+    """``func(a, b)`` without the arguments the facts prove are not the extremum. ``a``'s own arguments are taken as
+    already folded (a bound this built), so only ``b``'s are proved against the kept ones: a union over many
+    accesses stays linear in them, where an evaluated ``func`` and :func:`fold_extrema` compare every pair."""
+
+    def dominated(arg: sympy.Expr, by: sympy.Expr) -> bool:
+        return provably_le(arg, by, facts) if func is sympy.Max else provably_le(by, arg, facts)
+
+    def operands(expr: sympy.Expr) -> list[sympy.Expr]:
+        """The arguments of ``expr`` as one ``func``, a shifted one distributed: ``Min(a, b) + e`` is
+        ``Min(a + e, b + e)``, whose ``x + 1`` a kept ``x`` dominates (``Min(2047, x, Min(2047, x) + 1)``)."""
+        if isinstance(expr, func):
+            return [op for arg in expr.args for op in operands(arg)]
+        if isinstance(expr, sympy.Add):
+            nested = [term for term in expr.args if isinstance(term, func)]
+            if len(nested) == 1:
+                rest = expr - nested[0]
+                return [op + rest for op in operands(nested[0])]
+        return [expr]
+
+    kept = list(dict.fromkeys(operands(sympy.sympify(a))))
+    for arg in operands(sympy.sympify(b)):
+        if arg in kept or any(dominated(arg, other) for other in kept):
+            continue
+        kept = [other for other in kept if not dominated(other, arg)] + [arg]
+    return kept[0] if len(kept) == 1 else func(*kept, evaluate=False)
+
+
 @cached_proof
 def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
     """Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
