@@ -171,8 +171,11 @@ class BufferSharing:
     orders: dict[SDFGState, StateOrder] = field(default_factory=dict)
     locals: dict[tuple[SDFGState, str], bool] = field(default_factory=dict)
     hoistable_names: OrderedSet | None = None
+    #: The SDFG's facts, derived once: nothing changes until the renaming at the end.
+    facts: symbolic.Facts | None = None
 
     def run(self) -> dict[str, str]:
+        self.facts = self.sdfg.facts()
         self.collect()
         if len(self.uses) < 2:
             return {}
@@ -306,7 +309,7 @@ class BufferSharing:
         ):
             return False
         written = edge.data.get_dst_subset(edge, state)
-        return written is not None and written.covers_precise(full, self.sdfg.facts())
+        return written is not None and written.covers_precise(full, self.facts)
 
     def joined_rep(self, group: Group, name: str) -> str | None:
         """The buffer ``group`` shares once ``name`` joins it, or None if ``name`` cannot join."""
@@ -337,7 +340,7 @@ class BufferSharing:
         return chosen
 
     def covers(self, big: dt.Array, small: dt.Array) -> bool:
-        facts = self.sdfg.facts()
+        facts = self.facts
         return all(
             symbolic.provably_nonnegative(symbolic.simplify(x - y), facts)
             for x, y in zip((*big.shape, big.total_size), (*small.shape, small.total_size))
@@ -355,7 +358,7 @@ class BufferSharing:
                 if isinstance(region, LoopRegion) and region.loop_variable:
                     names.discard(region.loop_variable)
             self.hoistable_names = names
-        facts = self.sdfg.facts()
+        facts = self.facts
         return all(
             str(s) in self.hoistable_names
             for extent in (*desc.shape, desc.total_size)
