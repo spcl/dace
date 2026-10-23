@@ -806,3 +806,36 @@ def _build_memory_engine_bulk_copy_code(node: "CopyLibraryNode", geometry: Memor
         code += (f"dace::cuda::tma_store<{geometry.rank}>(&{MEMORY_ENGINE_DESC_INPUT_NAME}, _tma_coords, "
                  f"{INPUT_CONNECTOR_NAME});\n")
     return code
+
+
+def _build_memory_engine_desc_code(geometry: MemoryEngineGeometry, dims: List[symbolic.SymExpr],
+                                   strides: List[symbolic.SymExpr], offset: symbolic.SymExpr) -> str:
+    """Build the host code encoding the tensor map of a ``MemoryEngineBulk`` copy.
+
+    :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :param dims: global extents in TMA order, in host symbols.
+    :param strides: global element strides in TMA order, in host symbols.
+    :param offset: element offset of the kernel-visible global array from ``_tma_global``, in host symbols.
+    :returns: the host tasklet body.
+    """
+    elem_bytes = geometry.global_desc.dtype.bytes
+    dims_str = ', '.join(f"(cuuint64_t)({sym2cpp(d)})" for d in dims)
+    strides_str = ', '.join(f"(cuuint64_t)({sym2cpp(s)}) * {elem_bytes}" for s in strides[1:]) or "0"
+    box_str = ', '.join(f"(cuuint32_t)({sym2cpp(b)})" for b in geometry.box)
+    return (
+        f"const cuuint64_t _tma_dims[{geometry.rank}] = {{{dims_str}}};\n"
+        f"const cuuint64_t _tma_strides[{max(geometry.rank - 1, 1)}] = {{{strides_str}}};\n"
+        f"const cuuint32_t _tma_box[{geometry.rank}] = {{{box_str}}};\n" +
+        "{} = dace::cuda::make_tiled_tensor_map(__state, {}, (void *)({} + {}), {}, _tma_dims, _tma_strides, _tma_box);\n"
+        .format(
+            MEMORY_ENGINE_DESC_OUTPUT_NAME,
+            geometry.data_type,
+            MEMORY_ENGINE_GLOBAL_INPUT_NAME,
+            sym2cpp(offset),
+            geometry.rank,
+        ))
+
+
+def _build_memory_engine_barrier_init_code() -> str:
+    """Build the device code initializing the mbarrier of a ``MemoryEngineBulk`` load (once per kernel)."""
+    return f"dace::cuda::tma_barrier_init({MEMORY_ENGINE_BARRIER_OUTPUT_NAME});\n"
