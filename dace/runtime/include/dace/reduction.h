@@ -143,6 +143,15 @@ struct wcr_custom<float> {
       old = atomicCAS(iptr, assumed, __float_as_int(wcr(__int_as_float(assumed), value)));
     } while (assumed != old);
     return __int_as_float(old);
+#elif defined(__GNUC__) || defined(__clang__)
+    // A compare-and-swap loop on the element itself: one global critical section serializes every thread's
+    // updates, also to distinct elements (cp2k_trs4's diagonal ``x[d, c, c] -= v``: 0.5 s per 2.4M updates).
+    float old, desired;
+    __atomic_load(ptr, &old, __ATOMIC_RELAXED);
+    do {
+      desired = wcr(old, value);
+    } while (!__atomic_compare_exchange(ptr, &old, &desired, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    return old;
 #else
     float old;
 #pragma omp critical
@@ -178,6 +187,15 @@ struct wcr_custom<double> {
       old = atomicCAS(iptr, assumed, __double_as_longlong(wcr(__longlong_as_double(assumed), value)));
     } while (assumed != old);
     return __longlong_as_double(old);
+#elif defined(__GNUC__) || defined(__clang__)
+    // A compare-and-swap loop on the element itself: one global critical section serializes every thread's
+    // updates, also to distinct elements (cp2k_trs4's diagonal ``x[d, c, c] -= v``: 0.5 s per 2.4M updates).
+    double old, desired;
+    __atomic_load(ptr, &old, __ATOMIC_RELAXED);
+    do {
+      desired = wcr(old, value);
+    } while (!__atomic_compare_exchange(ptr, &old, &desired, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    return old;
 #else
     double old;
 #pragma omp critical
