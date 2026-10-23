@@ -55,6 +55,8 @@ UNTILED_KERNELS = frozenset(
         "s13110_d_single",
         "s141_d_single",
         "s161_d_single",
+        # Canonical as one (j, i) map whose a[i] reduces over j as a WCR, which the tile region refuses.
+        "s176_d_single",
         "s2111_d_single",
         "s232_d_single",
         "s257_d_single",
