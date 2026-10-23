@@ -47,6 +47,8 @@ Order within the stage, and why:
    indices gives each thread a private copy of only the rows its chunk writes, not of the whole array.
 9. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
    loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
+10. :class:`~dace.transformation.passes.cpu_specialization.choose_omp_schedule.ChooseOmpSchedule` -- once the parallel
+    maps are final: one whose iterations do data-dependent work (a loop over a CSR row) is scheduled ``guided``.
 
 The two terminal hygiene passes run again at the end because this stage builds states and indices
 of its own: ``ChunkAntiDependence`` emits prologue and seam blocks, which orphan the entry guard
@@ -60,6 +62,7 @@ from dace.sdfg import infer_types
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
+from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions import (
@@ -110,6 +113,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
+    ChooseOmpSchedule().apply_pass(sdfg, {})
 
     AssumeSymbolConstraints().apply_pass(sdfg, {})
     NormalizeFloorDivision().apply_pass(sdfg, {})
