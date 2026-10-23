@@ -6877,6 +6877,11 @@ class ProgramVisitor(ExtNodeVisitor):
         output_shape = output_shape[:dim_position] + list(advidx_shape) + output_shape[dim_position + 1 :]
         output_ndrange = output_ndrange[:dim_position] + advidx_index + output_ndrange[dim_position + 1 :]
 
+        # Map parameters in output order: ``x[idx]`` of ``x[nnz, b, b]`` writes ``[idx..., b, b]`` contiguously along
+        # its last parameter, and the outermost one is the one a parallel schedule shares out.
+        order = [str(begin) for begin, _, _ in output_ndrange if str(begin) in index_mapping]
+        index_mapping = {p: index_mapping[p] for p in order + [p for p in index_mapping if p not in order]}
+
         return (
             index_mapping,
             Memlet(data=aname, subset=input_subset, volume=1),

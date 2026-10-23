@@ -959,6 +959,37 @@ def test_gather_evaluated_before_its_destination_is_cleared():
     assert np.allclose(out, expected)
 
 
+def gather_params(program) -> list[list[str]]:
+    sdfg = program.to_sdfg(simplify=False)
+    return [n.map.params for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+
+
+def test_gather_map_parameters_follow_the_output_order():
+    """``x[idx]`` of blocks ``x[N, B, B]`` writes ``[N, 3, B, B]``: its map runs the index axes outermost, which a
+    parallel schedule shares out (cp2k_trs4 forked over the 5-wide block axis around a 1.2M-row gather)."""
+
+    @dace.program
+    def gather_blocks(x: dace.float64[N, M, M], idx: dace.int64[N, 3], out: dace.float64[N, 3, M, M]):
+        out[:] = x[idx]
+
+    @dace.program
+    def gather_middle(x: dace.float64[M, N, 4], idx: dace.int64[7], out: dace.float64[M, 7, 4]):
+        out[:] = x[:, idx, :]
+
+    assert ["__ind0", "__ind1", "__i1", "__i2"] in gather_params(gather_blocks)
+    assert ["__i0", "__ind0", "__i2"] in gather_params(gather_middle)
+    x = np.random.rand(10, 5, 5)
+    idx = np.random.randint(0, 10, (10, 3))
+    out = np.zeros((10, 3, 5, 5))
+    gather_blocks(x, idx, out)
+    assert np.allclose(out, x[idx])
+    x = np.random.rand(5, 10, 4)
+    idx = np.random.randint(0, 10, 7)
+    out = np.zeros((5, 7, 4))
+    gather_middle(x, idx, out)
+    assert np.allclose(out, x[:, idx, :])
+
+
 if __name__ == "__main__":
     test_flat()
     test_flat_noncontiguous()
@@ -1013,3 +1044,4 @@ if __name__ == "__main__":
     test_index_array_with_integer_index_write_is_refused()
     test_index_array_followed_by_integer_index_write_is_allowed()
     test_gather_evaluated_before_its_destination_is_cleared()
+    test_gather_map_parameters_follow_the_output_order()
