@@ -578,9 +578,16 @@ def read_before_written(loop: LoopRegion, candidates: set[str]) -> set[str]:
     def invariant(condition) -> bool:
         nonlocal varying
         if varying is None:
-            _, written_data = loop.read_and_write_sets()
+            # Any written access node counts: a superset of the written data, without memlet analysis.
+            written_data = {
+                dn.data
+                for block in loop.all_control_flow_blocks()
+                if isinstance(block, SDFGState)
+                for dn in block.data_nodes()
+                if block.in_degree(dn) > 0
+            }
             assigned = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
-            varying = set(written_data) | assigned | {loop.loop_variable}
+            varying = written_data | assigned | {loop.loop_variable}
         return not ({str(name) for name in condition.get_free_symbols()} & varying)
 
     def scan(region: ControlFlowRegion, written: set[str], in_branch: bool, in_loop: bool) -> None:
