@@ -664,6 +664,7 @@ def test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds
 
     assert "TensorTranspose" in contraction_nodes(sdfg)
     assert not any(e.data.wcr for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet))
+    sdfg = dace.SDFG.from_json(sdfg.to_json())  # the folded beta survives serialization
     rng = np.random.default_rng(11)
     A, B, C = rng.random((6, 5, 4)), rng.random((6, 3, 4, 5)), rng.random((6, 3, 5, 5))
     expected = C + np.einsum("ijk,ilkm->iljm", A, B)

@@ -490,6 +490,7 @@ def _create_einsum_internal(
         and all(sdfg.arrays[array].dtype == dtype for array in arrays)
         and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
         and (orders := _bmm_orders(einsum_string, {c: _path_extent(s, sdfg.facts()) for c, s in chardict.items()}))
+        and (orders[2][2] == einsum.output or sympy.sympify(beta).is_number)
     ):
         # Transpose-transpose-GEMM: permute the operands into a batched GEMM's index order, never a scalar nest
         # over every index (seissol's ``qpkl,blq->bkp``).
@@ -518,7 +519,10 @@ def _create_einsum_internal(
         )
         # ``C = perm(A B) + beta C``: the transpose folds the output's own term (cp2k_trs4's ``ijk,ilkm->iljm``
         # accumulating into its product buffer ran as an atomic scalar nest).
-        transpose = TensorTranspose("einsum_transpose", [c_order.index(c) for c in einsum.output], beta=beta)
+        # The node's beta is a plain number: a sympy value does not serialize into its numeric property.
+        folded = sympy.sympify(beta)
+        folded = float(folded) if folded.is_real else complex(folded)
+        transpose = TensorTranspose("einsum_transpose", [c_order.index(c) for c in einsum.output], beta=folded)
         c = state.add_write(output)
         state.add_edge(product_node, None, transpose, "_inp_tensor", Memlet.from_array(product, sdfg.arrays[product]))
         state.add_edge(transpose, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
