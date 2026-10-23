@@ -26,6 +26,7 @@ from dace import SDFG, Memlet, dtypes, subsets, symbolic
 from dace import data as dt
 from dace.config import Config
 from dace.libraries.blas.environments import libxsmm, openblas
+from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
@@ -188,6 +189,22 @@ def gemm_dtype(node: Gemm, state: SDFGState) -> dtypes.typeclass:
     return state.sdfg.arrays[edge.data.data].dtype.base_type
 
 
+def libxsmm_batched_product(node: BatchedMatMul, state: SDFGState) -> bool:
+    """Whether ``node`` multiplies real matrices no extent of which is a constant past
+    :data:`~dace.symbolic_facts.SMALL_CONSTANT_EXTENT`: LIBXSMM generates a kernel for a small shape at run time and
+    hands any other to BLAS, so only a product known to be large goes to OpenBLAS directly."""
+    edges = [e for e in state.in_edges(node) if e.dst_conn in ("_a", "_b")]
+    if len(edges) != 2:
+        return False
+    for edge in edges:
+        shape = edge.data.subset.size()
+        if state.sdfg.arrays[edge.data.data].dtype.base_type not in (dtypes.float32, dtypes.float64) or len(shape) < 2:
+            return False
+        if any(symbolic.pystr_to_symbolic(extent).is_number and not symbolic.is_small_extent(extent, None) for extent in shape[-2:]):
+            return False
+    return True
+
+
 def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """``node`` sits inside a GPU kernel, so whatever it lowers to has to be device code.
 
@@ -291,6 +308,16 @@ def canonicalize_set_fast_implementations(
             and sequential
             and isinstance(node, Gemm)
             and gemm_dtype(node, state) in (dtypes.float32, dtypes.float64)
+            and libxsmm.LIBXSMM.is_installed()
+        ):
+            node.implementation = "LIBXSMM"
+            continue
+        # A batch of real products not known to be large is a LIBXSMM kernel per product, not an OpenBLAS call each
+        # (cp2k_trs4's 5x5 blocks: 11.9 s against 7.3 s).
+        if (
+            device == dtypes.DeviceType.CPU
+            and isinstance(node, BatchedMatMul)
+            and libxsmm_batched_product(node, state)
             and libxsmm.LIBXSMM.is_installed()
         ):
             node.implementation = "LIBXSMM"

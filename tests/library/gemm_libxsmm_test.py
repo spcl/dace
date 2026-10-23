@@ -6,7 +6,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.blas import Gemm
+from dace.libraries.blas import BatchedMatMul, Gemm
 from dace.libraries.blas.environments.libxsmm import LIBXSMM
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
 
@@ -69,9 +69,49 @@ def test_a_top_level_gemm_keeps_openblas():
     assert gemm.implementation == "Planned"
 
 
+def batched_product(name: str, rows: int, beta: float) -> tuple[dace.SDFG, BatchedMatMul]:
+    """``C = A @ X + beta * C`` over a symbolic batch of ``rows x 4 @ 4 x 6`` products."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [B, rows, 4], dace.float64)
+    sdfg.add_array("X", [B, 4, 6], dace.float64)
+    sdfg.add_array("C", [B, rows, 6], dace.float64)
+    state = sdfg.add_state()
+    bmm = BatchedMatMul("bmm")
+    bmm.beta = beta
+    state.add_node(bmm)
+    state.add_edge(state.add_read("A"), None, bmm, "_a", dace.Memlet(f"A[0:B, 0:{rows}, 0:4]"))
+    state.add_edge(state.add_read("X"), None, bmm, "_b", dace.Memlet("X[0:B, 0:4, 0:6]"))
+    state.add_edge(bmm, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:B, 0:{rows}, 0:6]"))
+    sdfg.validate()
+    return sdfg, bmm
+
+
+@pytest.mark.parametrize("beta", [0.0, 1.0])
+def test_a_batch_of_small_products_lowers_to_libxsmm(beta):
+    """cp2k_trs4's block products: one LIBXSMM kernel per batch element, not an OpenBLAS call each."""
+    sdfg, bmm = batched_product(f"libxsmm_bmm_{int(beta)}", 5, beta)
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
+    assert bmm.implementation == "LIBXSMM"
+    rng = np.random.default_rng(1)
+    b = 41
+    a, x, c = rng.random((b, 5, 4)), rng.random((b, 4, 6)), rng.random((b, 5, 6))
+    expected = a @ x + beta * c
+    sdfg(A=a, X=x, C=c, B=b)
+    assert np.allclose(c, expected)
+
+
+def test_a_batch_of_large_products_keeps_openblas():
+    sdfg, bmm = batched_product("libxsmm_bmm_large", 512, 0.0)
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
+    assert bmm.implementation == "OpenBLAS"
+
+
 if __name__ == "__main__":
     for dtype in [dace.float32, dace.float64]:
         for trans_a in [False, True]:
             for beta in [0.0, 1.0]:
                 test_a_gemm_in_a_parallel_map_lowers_to_libxsmm(dtype, trans_a, beta)
     test_a_top_level_gemm_keeps_openblas()
+    test_a_batch_of_small_products_lowers_to_libxsmm(0.0)
+    test_a_batch_of_small_products_lowers_to_libxsmm(1.0)
+    test_a_batch_of_large_products_keeps_openblas()

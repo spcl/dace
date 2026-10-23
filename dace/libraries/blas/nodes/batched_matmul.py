@@ -386,6 +386,40 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandBatchedMatMulLIBXSMM(ExpandTransformation):
+    """The OpenBLAS batch loop over ``libxsmm_?gemm``: a JIT kernel per small product, no per-call buffer allocation
+    (cp2k_trs4's 1.2M 5x5 block products). A complex batch takes the OpenBLAS calls."""
+
+    environments = [environments.libxsmm.LIBXSMM, environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+        dtype = cdesc.dtype.base_type
+        if dtype not in (dace.float32, dace.float64):
+            return ExpandBatchedMatMulOpenBLAS.expansion(node, state, sdfg)
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+        func = to_blastype(dtype.type).lower() + "gemm"
+        alpha, beta = f"{dtype.ctype}({node.alpha})", f"{dtype.ctype}({node.beta})"
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+        opt["pragma"] = "#pragma omp parallel for\n        " if shares_out_batch(node, state, sdfg) else ""
+        code = """
+        const char __ta = '{ta}', __tb = '{tb}';
+        const libxsmm_blasint __m = {M}, __n = {N}, __k = {K}, __lda = {lda}, __ldb = {ldb}, __ldc = {ldc};
+        const {dtype} __alpha = {alpha}, __beta = {beta};
+        {pragma}for (int64_t __ib = 0; __ib < {BATCH}; ++__ib) {{
+            libxsmm_{func}(&__ta, &__tb, &__m, &__n, &__k, &__alpha, (({dtype}*){x}) + __ib*{stride_a}, &__lda,
+                           (({dtype}*){y}) + __ib*{stride_b}, &__ldb, &__beta, (({dtype}*)_c) + __ib*{stride_c}, &__ldc);
+        }}""".format_map(opt)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
+
+
+@dace.library.expansion
 class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
     environments = []
 
@@ -614,6 +648,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandBatchedMatMulPure,
         "MKL": ExpandBatchedMatMulMKL,
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
+        "LIBXSMM": ExpandBatchedMatMulLIBXSMM,
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
         "rocBLAS": ExpandBatchedMatMulRocBLAS,
     }
