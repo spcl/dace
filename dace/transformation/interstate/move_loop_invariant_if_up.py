@@ -28,11 +28,17 @@ Conservative -- only fires when:
 * there are no other (non-invariant) interstate-edge assignments in the
   chain.
 
+Equal guards around unguarded work unswitch together: ``for k: { if c: A; B; if c: C }`` becomes
+``if c: { for k: { A; B; C } } else: { for k: { B } }`` when every guard is a single ``if`` branch, the conditions
+are provably equal (:func:`~dace.symbolic.guards_equal`) and each is invariant by the rules above; an ``else`` loop
+left without work is dropped.
+
 Anything else is a no-op. Linear-CFG assumption: the loop body is a plain
 linear chain; blocks may have parents (the pass recurses into all regions).
 """
 
 import copy
+import re
 from typing import Any
 
 from dace import SDFG, properties, symbolic
@@ -40,7 +46,7 @@ from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, rehome_claimed_block
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -201,7 +207,7 @@ def strippable_prep(loop: LoopRegion, hoisted: list[tuple[str, str]]) -> dict[st
 
 
 def _hoistable(
-    sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock, require_full_hoist: bool
+    sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock, require_full_hoist: bool, loop_w: set[str] | None = None
 ) -> tuple[CodeBlock, list[tuple[str, str]]] | None:
     """Whether the guard ``cb`` is loop-invariant enough to leave ``loop``.
 
@@ -229,7 +235,8 @@ def _hoistable(
         return None
 
     lvar = str(loop.loop_variable)
-    loop_w = _written(loop)
+    if loop_w is None:
+        loop_w = _written(loop)
     outside_reads = _reads_outside(loop, cb)
     # Interstate-edge assignments on the loop's own chain. Split into:
     #   - invariant: hoist with the guard;
@@ -309,6 +316,40 @@ def match_loop(
     return None if h is None else (loop, cbs[0], h[0], h[1])
 
 
+def match_equal_guards(
+    sdfg: SDFG, loop: LoopRegion, require_full_hoist: bool = False
+) -> tuple[LoopRegion, list[ConditionalBlock], list[tuple[str, str]]] | None:
+    """``(loop, guards, hoist_assignments)`` when the body chain of ``loop`` holds two or more single-branch guards
+    with provably equal conditions, each invariant by :func:`_hoistable`; else ``None``."""
+    order = _linear_order(loop)
+    if order is None:
+        return None
+    guards = [b for b in order if isinstance(b, ConditionalBlock)]
+    if len(guards) < 2 or any(len(g.branches) != 1 or g.branches[0][0] is None for g in guards):
+        return None
+    if len({g.label for g in guards}) != len(guards):
+        return None
+    written = _written(loop)
+    hoisted: list[tuple[str, str]] = []
+    for guard in guards:
+        verdict = _hoistable(sdfg, loop, guard, require_full_hoist, written)
+        if verdict is None:
+            return None
+        hoisted = verdict[1]
+    # Compared with the hoisted prep substituted: ``g_index > 0`` and ``g_index_0 > 0`` both read ``g[0]``.
+    conditions = [expand_prep(g.branches[0][0].as_string, hoisted) for g in guards]
+    if not all(symbolic.guards_equal(conditions[0], c) for c in conditions[1:]):
+        return None
+    return loop, guards, hoisted
+
+
+def expand_prep(condition: str, hoisted: list[tuple[str, str]]) -> str:
+    """``condition`` with every hoisted prep symbol replaced by its defining expression (one level)."""
+    for lhs, rhs in hoisted:
+        condition = re.sub(rf"\b{re.escape(lhs)}\b", f"({rhs})", condition)
+    return condition
+
+
 def find_match(
     sdfg: SDFG, require_full_hoist: bool = False
 ) -> tuple[LoopRegion, ConditionalBlock, CodeBlock, list[tuple[str, str]]] | None:
@@ -364,6 +405,66 @@ def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
     return False
 
 
+def splice_guard(region: ControlFlowRegion, guard: ConditionalBlock, take: bool) -> None:
+    """Replace the single-branch ``guard`` in ``region`` by its branch body (``take``) or by an empty state."""
+    in_edges = list(region.in_edges(guard))
+    out_edges = list(region.out_edges(guard))
+    was_start = region.start_block is guard
+    for e in in_edges + out_edges:
+        region.remove_edge(e)
+    region.remove_node(guard)
+    if take:
+        body = guard.branches[0][1]
+        blocks, edges, start = list(body.nodes()), list(body.edges()), body.start_block
+        sinks = [b for b in blocks if body.out_degree(b) == 0]
+        for b in blocks:
+            region.add_node(b, ensure_unique_name=True)
+        for e in edges:
+            region.add_edge(e.src, e.dst, e.data)
+    else:
+        start = region.add_state(f"{guard.label}_skip")
+        sinks = [start]
+    for e in in_edges:
+        region.add_edge(e.src, start, e.data)
+    for sink in sinks:
+        for e in out_edges:
+            region.add_edge(sink, e.dst, copy.deepcopy(e.data))
+    if was_start:
+        region.start_block = region.node_id(start)
+
+
+def drop_empty_states(region: ControlFlowRegion) -> None:
+    """Splice out empty states on plain (unconditional, assignment-free) edges of ``region``."""
+    changed = True
+    while changed:
+        changed = False
+        for st in list(region.nodes()):
+            if not isinstance(st, SDFGState) or st.number_of_nodes() != 0:
+                continue
+            in_e = list(region.in_edges(st))
+            out_e = list(region.out_edges(st))
+            if any(not (e.data.is_unconditional() and not e.data.assignments) for e in in_e + out_e):
+                continue
+            if len(out_e) == 1 and (in_e or region.start_block is st):
+                succ = out_e[0].dst
+                for e in in_e:
+                    region.add_edge(e.src, succ, e.data)
+                for e in in_e + out_e:
+                    region.remove_edge(e)
+                was_start = region.start_block is st
+                region.remove_node(st)
+                if was_start:
+                    region.start_block = region.node_id(succ)
+                changed = True
+                break
+            if not out_e and in_e and region.start_block is not st:
+                for e in in_e:
+                    region.remove_edge(e)
+                region.remove_node(st)
+                changed = True
+                break
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopInvariantIfUp(ppl.Pass):
@@ -411,6 +512,19 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         while True:
             m = find_match(sdfg, self.require_full_hoist)
             if m is None:
+                equal = next(
+                    (
+                        e
+                        for loop in sdfg.all_control_flow_regions(recursive=True)
+                        if isinstance(loop, LoopRegion)
+                        and (e := match_equal_guards(sdfg, loop, self.require_full_hoist)) is not None
+                    ),
+                    None,
+                )
+                if equal is not None:
+                    self._move_equal_guards(*equal)
+                    count += 1
+                    continue
                 # The guard may be sharing its body with independent siblings: split
                 # them apart and re-match. Terminates -- a split leaves the guard alone
                 # in its own single-block clone, which is no longer splittable.
@@ -463,6 +577,25 @@ class MoveLoopInvariantIfUp(ppl.Pass):
                 inner.add_node(unswitched, is_start_block=True, ensure_unique_name=True)
             outer_cb.add_branch(None if branch_cond is None else CodeBlock(branch_cond.as_string), inner)
 
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(loop)
+        MoveLoopInvariantIfUp._install_guard(
+            parent, loop.label, outer_cb, hoist_assignments, in_edges, out_edges, is_start
+        )
+
+    @staticmethod
+    def _install_guard(
+        parent: ControlFlowRegion,
+        label: str,
+        outer_cb: ConditionalBlock,
+        hoist_assignments: list[tuple[str, str]],
+        in_edges: list,
+        out_edges: list,
+        is_start: bool,
+    ) -> None:
+        """Wire ``outer_cb`` into ``parent`` along the removed loop's ``in_edges`` / ``out_edges``, the hoisted
+        assignments on its entry edge."""
         parent.add_node(outer_cb, ensure_unique_name=True)
         # Hoisted invariant assignments go on the edge entering the guard.
         hoisted = dict(hoist_assignments)
@@ -471,18 +604,56 @@ class MoveLoopInvariantIfUp(ppl.Pass):
             data.assignments.update(hoisted)
             parent.add_edge(e.src, outer_cb, data)
         if not in_edges and hoisted:
-            pre = parent.add_state(f"{loop.label}_hoist")
+            pre = parent.add_state(f"{label}_hoist")
             parent.add_edge(pre, outer_cb, InterstateEdge(assignments=hoisted))
             if is_start:
                 parent.start_block = parent.node_id(pre)
                 is_start = False
         for e in out_edges:
             parent.add_edge(outer_cb, e.dst, copy.deepcopy(e.data))
+        if is_start:
+            parent.start_block = parent.node_id(outer_cb)
+
+    @staticmethod
+    def _move_equal_guards(loop: LoopRegion, guards: list[ConditionalBlock], hoist_assignments: list[tuple[str, str]]):
+        """Replace ``loop`` with ``if c: { loop, every guard inlined } [else: { loop, every guard removed }]``."""
+        parent = loop.parent_graph
+        in_edges = list(parent.in_edges(loop))
+        out_edges = list(parent.out_edges(loop))
+        is_start = parent.start_block is loop
+        strip = strippable_prep(loop, hoist_assignments)
+        labels = [g.label for g in guards]
+        cond = guards[0].branches[0][0]
+        skipped = copy.deepcopy(loop)
+        for guard in guards:
+            splice_guard(loop, guard, take=True)
+        for label in labels:
+            splice_guard(
+                skipped,
+                next(b for b in skipped.nodes() if isinstance(b, ConditionalBlock) and b.label == label),
+                take=False,
+            )
+
+        outer_cb = ConditionalBlock(label=f"{loop.label}_guard")
         for e in in_edges + out_edges:
             parent.remove_edge(e)
         parent.remove_node(loop)
-        if is_start:
-            parent.start_block = parent.node_id(outer_cb)
+        arms = [(CodeBlock(cond.as_string), loop)]
+        if any(not _is_empty_state(b) for b in skipped.all_control_flow_blocks()):
+            arms.append((None, skipped))
+        for index, (arm_cond, arm) in enumerate(arms):
+            for e in arm.edges():
+                for lhs, rhs in strip.items():
+                    if e.data.assignments.get(lhs) == rhs:
+                        del e.data.assignments[lhs]
+            drop_empty_states(arm)
+            inner = ControlFlowRegion(label=f"{loop.label}_body_{index}" if index else f"{loop.label}_body")
+            inner.add_node(arm, is_start_block=True, ensure_unique_name=True)
+            outer_cb.add_branch(arm_cond, inner)
+        MoveLoopInvariantIfUp._install_guard(
+            parent, loop.label, outer_cb, hoist_assignments, in_edges, out_edges, is_start
+        )
+        rehome_claimed_block(outer_cb, parent.sdfg)
 
     @staticmethod
     def _loop_with_branch(
@@ -528,32 +699,5 @@ class MoveLoopInvariantIfUp(ppl.Pass):
                     del e.data.assignments[lhs]
 
         # Splice out empty boundary states the removed conditional leaves (EmptyStateElimination's local splice).
-        changed = True
-        while changed:
-            changed = False
-            for st in list(new_loop.nodes()):
-                if not isinstance(st, SDFGState) or st.number_of_nodes() != 0:
-                    continue
-                in_e = list(new_loop.in_edges(st))
-                out_e = list(new_loop.out_edges(st))
-                if any(not (e.data.is_unconditional() and not e.data.assignments) for e in in_e + out_e):
-                    continue
-                if len(out_e) == 1 and (in_e or new_loop.start_block is st):
-                    succ = out_e[0].dst
-                    for e in in_e:
-                        new_loop.add_edge(e.src, succ, e.data)
-                    for e in in_e + out_e:
-                        new_loop.remove_edge(e)
-                    was_start = new_loop.start_block is st
-                    new_loop.remove_node(st)
-                    if was_start:
-                        new_loop.start_block = new_loop.node_id(succ)
-                    changed = True
-                    break
-                if not out_e and in_e and new_loop.start_block is not st:
-                    for e in in_e:
-                        new_loop.remove_edge(e)
-                    new_loop.remove_node(st)
-                    changed = True
-                    break
+        drop_empty_states(new_loop)
         return new_loop
