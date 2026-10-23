@@ -53,14 +53,14 @@ def _expanded_code(node, state, sdfg, implementation):
 
 def _wire_comm(sdfg, state, node):
     """A ``_comm`` connector fed by a ``CommF2c``: a Fortran integer handle turned
-    into an ``opaque(MPI_Comm)``, exactly as the MPI nodes take one."""
+    into an integer ``MPI_Comm`` handle, exactly as the comm nodes take one."""
     sdfg.add_scalar("fcomm", dace.int32)
-    sdfg.add_scalar("usercomm", dace.dtypes.opaque("MPI_Comm"), transient=True)
+    sdfg.add_scalar("usercomm", dace.int64, transient=True)
     f2c = CommF2c("_commf2c_")
     state.add_edge(state.add_read("fcomm"), None, f2c, "_fcomm", Memlet(data="fcomm", subset="0"))
     comm_node = state.add_access("usercomm")
-    state.add_edge(f2c, "_comm", comm_node, None, Memlet(data="usercomm", subset="0"))
-    node.add_in_connector("_comm", dace.dtypes.opaque("MPI_Comm"))
+    state.add_edge(f2c, "_handle", comm_node, None, Memlet(data="usercomm", subset="0"))
+    node.add_in_connector("_comm", dace.int64)
     state.add_edge(comm_node, None, node, "_comm", Memlet(data="usercomm", subset="0"))
 
 
@@ -71,7 +71,7 @@ def _wire_context(sdfg, state, node):
     sdfg.add_scalar("pcols", dace.int32)
     sdfg.add_scalar("context", dace.int32, transient=True)
     gridinit = BlacsGridInit("_blacs_gridinit_")
-    gridinit.add_in_connector("_comm", dace.dtypes.opaque("MPI_Comm"))
+    gridinit.add_in_connector("_comm", dace.int64)
     state.add_edge(state.add_read("usercomm"), None, gridinit, "_comm", Memlet(data="usercomm", subset="0"))
     state.add_edge(state.add_read("prows"), None, gridinit, "_prows", Memlet(data="prows", subset="0"))
     state.add_edge(state.add_read("pcols"), None, gridinit, "_pcols", Memlet(data="pcols", subset="0"))
@@ -148,7 +148,7 @@ def test_comm_connector_carries_the_grid(name, implementation):
     _wire_comm(sdfg, state, node)
     code = _expanded_code(node, state, sdfg, implementation)
 
-    assert "Csys2blacs_handle(_comm)" in code
+    assert "Csys2blacs_handle(((MPI_Comm)(_comm)))" in code
     assert "Csys2blacs_handle(MPI_COMM_WORLD)" not in code
 
 
@@ -190,7 +190,7 @@ def test_gridinit_node_builds_the_grid_on_its_communicator(implementation):
     gridinit = _wire_context(sdfg, state, node)
     code = _expanded_code(gridinit, state, sdfg, implementation)
 
-    assert "Csys2blacs_handle(_comm)" in code
+    assert "Csys2blacs_handle(((MPI_Comm)(_comm)))" in code
     assert "__prows = _prows, __pcols = _pcols" in code
     assert "gridinit" in code
     assert "_context = __ctxt;" in code

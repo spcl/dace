@@ -202,7 +202,7 @@ def _wait_for_buffers_in_flight(children: list[tn.ScheduleTreeNode], accesses, r
                 waited = _own_subset(memlet, request)
                 for started, start in in_flight.get(request, []):
                     # A wait completes the starts whose requests lie in its subset of the requests
-                    if waited is None or started is None or not disjoint(waited, started):
+                    if waited is None or started is None or not disjoint(waited, started, root.facts):
                         access.reads |= start.reads
                         access.writes |= start.writes
 

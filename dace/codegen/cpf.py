@@ -140,6 +140,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "CommF2c": "MPI_Comm_f2c: convert a Fortran communicator handle",
     "CommFree": "MPI_Comm_free: release the communicator",
     "CommNode": "communication operation (MPI or NCCL)",
+    "NonblockingCommNode": "communication operation (MPI or NCCL) that can start and complete separately",
     "CommRank": "MPI_Comm_rank: this rank in the communicator",
     "CommSize": "MPI_Comm_size: number of ranks in the communicator",
     "CommSplit": "MPI_Comm_split: split the communicator",
@@ -233,7 +234,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
 #: before :data:`LIBRARY_NODE_DESCRIPTIONS` -- which deliberately has NO ``Reduce`` entry, so
 #: neither meaning can be served to the other by a bare-name lookup.
 QUALIFIED_DESCRIPTIONS: dict[str, str] = {
-    "dace.libraries.mpi.nodes.reduce.Reduce": "MPI_Reduce: reduce across ranks onto the root",
+    "dace.libraries.comm.nodes.reduce.Reduce": "MPI_Reduce: reduce across ranks onto the root",
     "dace.libraries.standard.nodes.reduce.Reduce": "reduction over the given axes with the given operator",
 }
 

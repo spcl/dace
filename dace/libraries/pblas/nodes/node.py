@@ -1,15 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Communicator and BLACS-context resolution shared by the PBLAS library nodes.
 
-Follows :mod:`dace.libraries.mpi.nodes.node`: the connector NAME is the semantic
+Follows :mod:`dace.libraries.comm.nodes.node`: the connector NAME is the semantic
 discriminator, the connector is wired dynamically instead of being declared in
 the node's fixed inputs, and a node with nothing wired falls back to the process
 default. PBLAS reads two of them:
 
   * ``_context`` -- an integer BLACS context, as produced by
     :class:`~dace.libraries.pblas.nodes.gridinit.BlacsGridInit`. Used directly.
-  * ``_comm`` -- a raw ``opaque(MPI_Comm)``, the same value ``CommF2c`` produces
-    and :func:`dace.libraries.mpi.nodes.node.resolve_comm` hands the MPI nodes.
+  * ``_comm`` -- an integer holding an ``MPI_Comm``, as ``CommF2c`` produces and the
+    comm nodes take (:func:`dace.libraries.comm.nodes.node.mpi_communicator`).
     The ``Py`` x ``Px`` grid is built on it. Falls back to ``MPI_COMM_WORLD``,
     which is what the environment's ``__dace_init_`` used to build it on.
 
@@ -20,7 +20,7 @@ so a program whose grid came from there could only ever have one grid.
 
 from typing import Any
 
-from dace.libraries.mpi.nodes.node import input_descriptor_name
+from dace.libraries.comm.nodes.node import input_descriptor_name
 
 #: (integer type, state-field prefix) of each environment family.
 MKL_SPELLING = ("MKL_INT", "__mkl_scalapack")
@@ -30,7 +30,7 @@ REF_SPELLING = ("int", "__scalapack")
 def resolve_comm(node: Any, state: Any) -> str:
     """The communicator a PBLAS node builds its BLACS grid on."""
     if input_descriptor_name(node, state, "_comm"):
-        return "_comm"
+        return "((MPI_Comm)(_comm))"
     return "MPI_COMM_WORLD"
 
 

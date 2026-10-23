@@ -414,7 +414,7 @@ def _make_comm_grid_sdfg():
     sdfg.add_scalar("fcomm", dace.int32)
     sdfg.add_scalar("prows", dace.int32)
     sdfg.add_scalar("pcols", dace.int32)
-    sdfg.add_scalar("usercomm", dace.dtypes.opaque("MPI_Comm"), transient=True)
+    sdfg.add_scalar("usercomm", dace.int64, transient=True)
     sdfg.add_scalar("context", dace.int32, transient=True)
     # The global sizes only ever appear inside the Pgemm node's symbolic m/n/k properties, never in
     # a memlet or an array shape, so they need registering by hand to reach the program signature.
@@ -424,10 +424,10 @@ def _make_comm_grid_sdfg():
     f2c = CommF2c("_commf2c_")
     state.add_edge(state.add_read("fcomm"), None, f2c, "_fcomm", Memlet(data="fcomm", subset="0"))
     comm_node = state.add_access("usercomm")
-    state.add_edge(f2c, "_comm", comm_node, None, Memlet(data="usercomm", subset="0"))
+    state.add_edge(f2c, "_handle", comm_node, None, Memlet(data="usercomm", subset="0"))
 
     gridinit = BlacsGridInit("_blacs_gridinit_")
-    gridinit.add_in_connector("_comm", dace.dtypes.opaque("MPI_Comm"))
+    gridinit.add_in_connector("_comm", dace.int64)
     state.add_edge(comm_node, None, gridinit, "_comm", Memlet(data="usercomm", subset="0"))
     state.add_edge(state.add_read("prows"), None, gridinit, "_prows", Memlet(data="prows", subset="0"))
     state.add_edge(state.add_read("pcols"), None, gridinit, "_pcols", Memlet(data="pcols", subset="0"))
@@ -460,7 +460,7 @@ def test_pgemm_comm_grid_wiring():
 
     comm_edge = next(e for e in state.in_edges(gridinit) if e.dst_conn == "_comm")
     assert comm_edge.data.data == "usercomm"
-    assert next(e for e in state.out_edges(f2c) if e.src_conn == "_comm").data.data == "usercomm"
+    assert next(e for e in state.out_edges(f2c) if e.src_conn == "_handle").data.data == "usercomm"
 
     # Nothing about the grid is a symbol, so nothing about it can reach __dace_init_.
     assert not ({"Px", "Py"} & {str(s) for s in sdfg.free_symbols})

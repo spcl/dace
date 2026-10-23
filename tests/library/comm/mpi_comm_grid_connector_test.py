@@ -61,15 +61,15 @@ def _expanded_code(node, state, sdfg):
 
 def _wire_comm(sdfg, state, node):
     """Wire a ``_comm`` connector fed by a ``CommF2c`` (mirrors the dace-fortran
-    ``_wire_user_comm`` path): a Fortran integer handle -> ``opaque(MPI_Comm)``."""
+    ``_wire_user_comm`` path): a Fortran integer handle -> an integer ``MPI_Comm`` handle."""
     sdfg.add_scalar("_fh", dace.int32, transient=False)
-    sdfg.add_scalar("_usercomm", dace.dtypes.opaque("MPI_Comm"), transient=True)
+    sdfg.add_scalar("_usercomm", dace.int64, transient=True)
     f2c = CommF2c("_commf2c_")
     state.add_node(f2c)
     state.add_edge(state.add_read("_fh"), None, f2c, "_fcomm", Memlet(data="_fh", subset="0"))
     cw = state.add_access("_usercomm")
-    state.add_edge(f2c, "_comm", cw, None, Memlet(data="_usercomm", subset="0"))
-    node.add_in_connector("_comm", dace.dtypes.opaque("MPI_Comm"))
+    state.add_edge(f2c, "_handle", cw, None, Memlet(data="_usercomm", subset="0"))
+    node.add_in_connector("_comm", dace.int64)
     state.add_edge(cw, None, node, "_comm", Memlet(data="_usercomm", subset="0"))
 
 

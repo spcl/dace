@@ -2,8 +2,8 @@
 """Build a BLACS process grid inside an SDFG from an MPI communicator, as an
 explicit dataflow node.
 
-The ScaLAPACK analogue of :class:`~dace.libraries.mpi.nodes.comm_f2c.CommF2c`:
-the communicator arrives on ``_comm`` (``opaque(MPI_Comm)``, produced by
+The ScaLAPACK analogue of :class:`~dace.libraries.comm.nodes.comm_f2c.CommF2c`:
+the communicator arrives on ``_comm`` (an integer ``MPI_Comm`` handle, produced by
 ``CommF2c`` or ``CommSplit``), the grid shape arrives on the ``_prows`` /
 ``_pcols`` integer scalars, and the BLACS context leaves on ``_context`` as an
 ordinary integer value that flows into the ``_context`` input of ``Pgemm`` /
@@ -19,7 +19,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import expanded_input_connectors, validate_integer_descriptor
+from dace.libraries.comm.nodes.node import expanded_input_connectors, validate_integer_descriptor
 from dace.libraries.pblas import environments
 from dace.libraries.pblas.nodes.node import blacs_grid_code, resolve_comm
 from dace.ordered import OrderedSet
