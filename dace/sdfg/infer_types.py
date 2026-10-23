@@ -54,6 +54,47 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     return ctype
 
 
+def infer_in_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.Node, cname: str) -> dtypes.typeclass:
+    """
+    Infers a single input connector type of a node from the edge connected to it.
+
+    :param sdfg: The SDFG to infer in.
+    :param state: The state in which the node resides.
+    :param node: The node to infer.
+    :param cname: The input connector name.
+    :return: The connector type.
+    :raises TypeError: If the edge comes from a code node whose output type is not known.
+    """
+    e = next(state.in_edges_by_connector(node, cname))
+    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
+    if e.data.data is not None:
+        allocated_as_scalar = sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global
+    else:
+        allocated_as_scalar = True
+
+    # If nested SDFG, try to use internal array type
+    if isinstance(node, nodes.NestedSDFG):
+        # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
+        # to use the `allocated_as_scalar` check here.
+        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
+        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
+        dtype = node.sdfg.arrays[cname].dtype
+        return dtype if scalar or struct else dtypes.pointer(dtype)
+    if e.data.data is not None:  # Obtain type from memlet
+        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        if isinstance(node, nodes.LibraryNode):
+            scalar &= allocated_as_scalar
+        dtype = sdfg.arrays[e.data.data].dtype
+        return dtype if scalar else dtypes.pointer(dtype)
+
+    # Code->Code
+    src_edge = state.memlet_path(e)[0]
+    sconn = src_edge.src.out_connectors[src_edge.src_conn]
+    if sconn.type is None:
+        raise TypeError(f'Ambiguous or uninferable type in connector "{sconn}" of node "{src_edge.src}"')
+    return sconn
+
+
 def infer_connector_types(sdfg: SDFG):
     """
     Infers connector types throughout an SDFG and its nested SDFGs in-place.
@@ -70,35 +111,7 @@ def infer_connector_types(sdfg: SDFG):
                     continue
 
                 if node.in_connectors[cname].type is None:
-                    scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
-                    if e.data.data is not None:
-                        allocated_as_scalar = sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global
-                    else:
-                        allocated_as_scalar = True
-
-                    # If nested SDFG, try to use internal array type
-                    if isinstance(node, nodes.NestedSDFG):
-                        # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
-                        # to use the `allocated_as_scalar` check here.
-                        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
-                        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
-                        dtype = node.sdfg.arrays[cname].dtype
-                        ctype = dtype if scalar or struct else dtypes.pointer(dtype)
-                    elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
-                        if isinstance(node, nodes.LibraryNode):
-                            scalar &= allocated_as_scalar
-                        dtype = sdfg.arrays[e.data.data].dtype
-                        ctype = dtype if scalar else dtypes.pointer(dtype)
-                    else:  # Code->Code
-                        src_edge = state.memlet_path(e)[0]
-                        sconn = src_edge.src.out_connectors[src_edge.src_conn]
-                        if sconn.type is None:
-                            raise TypeError(
-                                f'Ambiguous or uninferable type in connector "{sconn}" of node "{src_edge.src}"'
-                            )
-                        ctype = sconn
-                    node.in_connectors[cname] = ctype
+                    node.in_connectors[cname] = infer_in_connector_type(sdfg, state, node, cname)
 
             # Try to infer outputs from output edges
             for e in state.out_edges(node):
@@ -211,7 +224,7 @@ def set_default_schedule_and_storage_types(
         for aname, desc in scope.arrays.items():
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and scope.parent_sdfg is not None:
-                desc.storage = _get_storage_from_parent(aname, scope)
+                desc.storage = get_storage_from_parent(aname, scope)
             elif (desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default:
                 # Indeterminate storage type, set to register
                 desc.storage = dtypes.StorageType.Register
@@ -419,7 +432,7 @@ def _set_default_storage_in_scope(
         desc = node.desc(sdfg)
         # If not transient in a nested SDFG, take storage from parent, regardless of current type
         if not desc.transient and sdfg.parent is not None:
-            desc.storage = _get_storage_from_parent(node.data, sdfg)
+            desc.storage = get_storage_from_parent(node.data, sdfg)
         elif desc.storage == dtypes.StorageType.Default:
             if isinstance(desc, data.View):
                 view_nodes.append(node)
@@ -442,12 +455,12 @@ def _set_default_storage_in_scope(
             desc = sdfg.arrays[edge.data.data]
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and sdfg.parent is not None:
-                desc.storage = _get_storage_from_parent(edge.data.data, sdfg)
+                desc.storage = get_storage_from_parent(edge.data.data, sdfg)
             elif desc.storage == dtypes.StorageType.Default:
                 desc.storage = child_storage
 
 
-def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
+def get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
     """
     Retrieves the storage type of an array from its parent SDFG.
 
