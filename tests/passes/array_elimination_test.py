@@ -230,6 +230,8 @@ def test_redundant_copy_folds_when_its_readers_precede_the_source_write():
     ref_a, ref_b = (a + 1.0) * 2.0, a + 1.0
 
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
+    assert "a_snap" in sdfg.arrays, "only canonicalization's array elimination folds a copy of a WAR carrier"
+    Pipeline([ArrayElimination(fold_ordered_copies=True)]).apply_pass(sdfg, {})
 
     assert "a_snap" not in sdfg.arrays
     b_out = np.zeros(10)

@@ -263,5 +263,29 @@ def test_a_row_target_under_a_parallel_map_is_hoisted():
     assert np.allclose(out, x.sum(axis=1))
 
 
+def test_nested_sequential_maps_accumulate_into_one_register():
+    """``out[0] += x[i, j]`` over a sequential map in a sequential map: one register, held by the outer map; a second
+    one in the inner map would be stored over by the outer's untouched copy (np.tensordot's pure expansion)."""
+    sdfg = dace.SDFG("seq_wcr_nested")
+    sdfg.add_array("x", [M, N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    oe, ox = state.add_map("outer", {"i": "0:M"}, schedule=dtypes.ScheduleType.Sequential)
+    ie, ix = state.add_map("inner", {"j": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("acc", {"a"}, {"b"}, "b = a")
+    state.add_memlet_path(state.add_read("x"), oe, ie, t, dst_conn="a", memlet=dace.Memlet("x[i, j]"))
+    state.add_memlet_path(
+        t, ix, ox, state.add_write("out"), src_conn="b", memlet=dace.Memlet("out[0]", wcr="lambda a, b: a + b")
+    )
+
+    code = generated_cpu_code(sdfg)
+    assert len(set(re.findall(r"__acc_\d+_\d+_out", code))) == 1, code
+
+    x = np.random.default_rng(3).random((5, 7))
+    out = np.zeros(1)
+    sdfg(x=x, out=out, M=5, N=7)
+    assert np.allclose(out[0], x.sum())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

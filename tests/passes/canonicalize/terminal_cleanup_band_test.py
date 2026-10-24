@@ -158,14 +158,21 @@ def _canonicalize(
     canon_pipeline.disable_openmp_sections(sdfg)
     reclaim_slots = _reclaim_slots()
     cleanup_slots = _cleanup_slots()
-    for index, (label, unit) in enumerate(canon_pipeline.build_stages()):
-        if not with_reclaim and index in reclaim_slots:
-            continue
-        if not with_cleanup and index in cleanup_slots:
-            continue
-        if not with_optional and isinstance(unit, OptionalArrayInference):
-            continue
-        unit.apply_pass(sdfg, {})
+    units = canon_pipeline.StructuralCleanup.units
+    if not with_reclaim:
+        # The structural cleanup reclaims too: its array elimination goes with the reclaiming stages
+        canon_pipeline.StructuralCleanup.units = lambda self: [u for u in units(self) if not _is_reclaim_stage(u)]
+    try:
+        for index, (label, unit) in enumerate(canon_pipeline.build_stages()):
+            if not with_reclaim and index in reclaim_slots:
+                continue
+            if not with_cleanup and index in cleanup_slots:
+                continue
+            if not with_optional and isinstance(unit, OptionalArrayInference):
+                continue
+            unit.apply_pass(sdfg, {})
+    finally:
+        canon_pipeline.StructuralCleanup.units = units
     canon_pipeline.disable_openmp_sections(sdfg)
     sdfg.validate()
     return sdfg

@@ -43,6 +43,23 @@ def expected(a, b, m):
     return bl * br if m == 5 else 3.0 * np.abs(bl) - br
 
 
+@dace.program
+def lone_branches(a: dace.float64[N], out: dace.float64[N]):
+    if M == 5:
+        for i in dace.map[0:N]:
+            out[i] = a[i] + 1.0
+    else:
+        for i in dace.map[0:N]:
+            out[i] = a[i] - 1.0
+
+
+def test_branch_maps_without_a_fusion_partner_stay_apart():
+    """Merged, each element would compute both arms with nothing to fuse with: the branch stays."""
+    sdfg = lone_branches.to_sdfg(simplify=True)
+    assert SelectBranchMaps().apply_pass(sdfg, {}) is None
+    assert any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+
+
 def test_the_two_branch_maps_become_one_selecting_map():
     sdfg = limiter.to_sdfg(simplify=True)
     assert any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
@@ -84,6 +101,7 @@ def test_a_condition_on_a_scalar_is_handed_to_the_select():
 
 
 if __name__ == "__main__":
+    test_branch_maps_without_a_fusion_partner_stay_apart()
     test_the_two_branch_maps_become_one_selecting_map()
     test_canonicalization_fuses_the_select_with_its_producers()
     test_a_condition_on_a_scalar_is_handed_to_the_select()

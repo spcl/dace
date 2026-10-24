@@ -51,13 +51,13 @@ def nmaps(sdfg: dace.SDFG) -> int:
 
 
 def fusion_index() -> int:
-    """Position of the recipe's maximal-fusion fixpoint."""
+    """Position of the recipe's first maximal-fusion fixpoint (recompose's; a second one follows the last lifts)."""
     at = [
         i
         for i, (label, unit) in enumerate(build_stages(target="cpu"))
         if isinstance(unit, PhaseFixpoint) and unit.name == "maximal_fusion"
     ]
-    assert len(at) == 1, at
+    assert at, "the recipe has no maximal-fusion fixpoint"
     return at[0]
 
 

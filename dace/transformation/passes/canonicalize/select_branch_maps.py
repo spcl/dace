@@ -17,7 +17,9 @@ Contract, per ``ConditionalBlock`` with an ``if`` and an ``else`` branch:
   whose body is tasklets and one-element access nodes only (no WCR), with every output written by a tasklet;
 * the two maps have equal ranges (up to parameter names) and write the same arrays at the same subsets;
 * the condition reads symbols, none a map parameter, and one-element containers neither branch writes;
-* both bodies together have at most ``MAX_TASKLETS`` tasklets: each element computes both.
+* both bodies together have at most ``MAX_TASKLETS`` tasklets: each element computes both;
+* a map over the same range elsewhere in the block's region produces one of the branch inputs or reads one of its
+  outputs, so the merged map has a fusion partner.
 """
 
 import copy
@@ -67,6 +69,22 @@ def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | 
     ):
         return None
     return state, entry
+
+
+def fusion_partner(block: ConditionalBlock, rng, reads: set[str], writes: set[str]) -> bool:
+    """Whether a state of ``block``'s region holds a top-level map over ``rng`` (up to parameter names) that writes
+    one of ``reads`` or reads one of ``writes``: computing both branches pays only when the merged map fuses."""
+    for st in block.parent_graph.nodes():
+        if not isinstance(st, SDFGState):
+            continue
+        for n in st.nodes():
+            if not isinstance(n, nodes.MapEntry) or st.entry_node(n) is not None or n.map.range != rng:
+                continue
+            ins = {e.data.data for e in st.in_edges(n)}
+            outs = {e.data.data for e in st.out_edges(st.exit_node(n))}
+            if ins & writes or outs & reads:
+                return True
+    return False
 
 
 @properties.make_properties
@@ -137,6 +155,9 @@ class SelectBranchMaps(ppl.Pass):
         if outs_t is None or outs_f is None or set(outs_t) != set(outs_f):
             return 0
         if any(outs_t[k][1] != outs_f[k][1] for k in outs_t):
+            return 0
+        reads = {e.data.data for st, en in ((state, entry), (other, entry_f)) for e in st.in_edges(en) if e.data.data}
+        if not fusion_partner(block, entry.map.range, reads, set(outs_t)):
             return 0
 
         # The else body, copied into the if map with its parameters renamed and its scalars given fresh names

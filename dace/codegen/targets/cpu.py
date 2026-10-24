@@ -3678,6 +3678,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # Into an access node, or into the exit of an enclosing map (a row reduction under a parallel map)
             if len(out_edges) != 1 or not isinstance(out_edges[0].dst, (nodes.AccessNode, nodes.MapExit)):
                 continue
+            # Under a sequential map the enclosing map holds the register: two would store over each other
+            if isinstance(out_edges[0].dst, nodes.MapExit) and out_edges[0].dst.map.schedule in (
+                dtypes.ScheduleType.Sequential,
+                dtypes.ScheduleType.Default,
+            ):
+                continue
             desc = sdfg.arrays.get(iedge.data.data)
             if desc is None or iedge.data.data in read_names:
                 continue

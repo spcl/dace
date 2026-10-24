@@ -25,6 +25,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.redundant_array import RedundantArray
+from dace.transformation.passes import array_elimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -130,8 +131,14 @@ def test_the_stage_is_wired_in_once_after_maximal_fusion():
 
 def test_heat3d_loses_the_copy_out_buffer(monkeypatch):
     """A/B in one test, so it can never go vacuous: without the stage the buffer is there. ``EliminateCopyBack``
-    removes the same buffer earlier, so it is off in both runs: the stage under test is the only difference."""
+    and array elimination's fold of a copy read before its source's write remove the same buffer earlier, so both are
+    off in both runs: the stage under test is the only difference."""
     monkeypatch.setattr(EliminateCopyBack, "apply_pass", lambda self, sdfg, results: None)
+    monkeypatch.setattr(
+        array_elimination.ArrayElimination,
+        "folding_races",
+        lambda self, state, source, copy, first: array_elimination._is_war_carrier(state, source),
+    )
     reference = _canonicalize(_heat3d.to_sdfg(simplify=True), with_cleanup=False)
     assert len(_heap_buffers(reference)) == 1, _heap_buffers(reference)
     assert _bulk_copies(reference) == 1

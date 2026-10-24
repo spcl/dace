@@ -313,7 +313,7 @@ class StructuralCleanup(ppl.Pass):
             DeadStateElimination(),
             RedundantOrderingEdgeElimination(),
             # After the state fusion above, so a copy and its readers share a state: redundant copies fold away
-            ppl.Pipeline([ArrayElimination()]),
+            ppl.Pipeline([ArrayElimination(fold_ordered_copies=True)]),
             # A shifted copy array elimination keeps (read in several states) is read at the shifted source index
             ForwardOffsetCopies(),
             PruneUnreferencedTransients(),
@@ -773,7 +773,7 @@ def privatization_units() -> list[ppl.Pass]:
 
 def dead_dataflow_units() -> list[ppl.Pass]:
     return [
-        ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]),
+        ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]),
         DeadCarriedStoreElimination(),
     ]
 
@@ -790,8 +790,6 @@ def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
         SetSymbolNonnegativeAssumptions(),
         parallelize(propagate=False),
         PatternApplyOnceEverywhere([PruneConnectors()]),
-        # What the lifts leave (empty states, dead copies, unused symbols) goes before the next phase reads the graph
-        StructuralCleanup(),
     ]
 
 
@@ -1143,7 +1141,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
     s += [(label, NormalizeWCRSource()), (label, RelaxIntegerPowers())]
-    s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]))]
+    s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
     s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
     s += [
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
@@ -1176,7 +1174,7 @@ def finish() -> Stages:
         # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),
-        (FINISH, ppl.Pipeline([ArrayElimination()])),
+        (FINISH, ppl.Pipeline([ArrayElimination(fold_ordered_copies=True)])),
     ]
     return s
 

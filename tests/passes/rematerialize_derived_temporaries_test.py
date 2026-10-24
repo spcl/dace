@@ -74,7 +74,8 @@ def arrays(sdfg: dace.SDFG):
 
 def stranded_by_fusion(sdfg: dace.SDFG):
     """The temporaries fusion forced across a map boundary: every array except ``A_slice``, the copy-out buffer of
-    the frontend's slice assignment, which is no derived temporary and which array elimination keeps.
+    the frontend's slice assignment, which is no derived temporary (array elimination folds it when its readers
+    precede the write back).
 
     How many of them fusion leaves depends on the order its matches are applied in, which follows the networkx
     version's VF2 candidate order, so the tests count against this set and not against a literal.
@@ -392,7 +393,7 @@ def test_heat3d_after_loop_to_map_and_fusion_drops_transients():
     # Guard against a vacuous test: fusion must actually have stranded the three temporaries.
     assert len(stranded) == 3, stranded
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == len(stranded)
-    assert arrays(sdfg) == {"A_slice"}
+    assert arrays(sdfg) <= {"A_slice"}, "a stranded temporary survived"
     sdfg.validate()
 
 

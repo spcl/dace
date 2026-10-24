@@ -99,10 +99,13 @@ def _copy_fold_races(state: SDFGState, source: str, copy: nodes.AccessNode, firs
 
     ``first`` (``copy`` is removed, its writers write ``source``): every old-value reader of ``source``
     must precede ``copy``'s writers. Otherwise (``copy`` is removed, its readers read ``source``):
-    every reader of ``copy`` must precede every write of ``source``.
+    every reader of ``copy`` must precede every write of ``source``. A one-element copy always races: it is the
+    delay line (``t = s; s = f(...)``) that keeps a carried scalar out of the enclosing loop.
     """
     if not _is_war_carrier(state, source):
         return False
+    if state.sdfg.arrays[copy.data].total_size == 1:
+        return True
     anodes = [n for n in state.data_nodes() if n.data == source]
     if first:
         readers = [e.dst for n in anodes if state.in_degree(n) == 0 for e in state.out_edges(n)]
@@ -149,6 +152,23 @@ class ArrayElimination(ppl.Pass):
     """
 
     CATEGORY: str = "Simplification"
+
+    fold_ordered_copies = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Also fold a copy of a WAR carrier whose reads are ordered before the carrier's write (canonicalization)",
+    )
+
+    def __init__(self, fold_ordered_copies: bool = False):
+        super().__init__()
+        self.fold_ordered_copies = fold_ordered_copies
+
+    def folding_races(self, state: SDFGState, source: str, copy: nodes.AccessNode, first: bool) -> bool:
+        """Whether folding ``copy`` onto ``source`` could reorder a read past a write; without
+        ``fold_ordered_copies`` any WAR carrier counts."""
+        if self.fold_ordered_copies:
+            return _copy_fold_races(state, source, copy, first)
+        return _is_war_carrier(state, source)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -467,7 +487,7 @@ class ArrayElimination(ppl.Pass):
                     if state.out_degree(anode) == 1:
                         succ = state.successors(anode)[0]
                         if isinstance(succ, nodes.AccessNode):
-                            if _copy_fold_races(state, succ.data, anode, first=True):
+                            if self.folding_races(state, succ.data, anode, first=True):
                                 continue  # folding anode onto a WAR carrier would reorder a read past a write
                             for xform in xforms_first:
                                 # Quick path to setup match
@@ -489,7 +509,7 @@ class ArrayElimination(ppl.Pass):
                     if state.in_degree(anode) == 1:
                         pred = state.predecessors(anode)[0]
                         if isinstance(pred, nodes.AccessNode):
-                            if _copy_fold_races(state, pred.data, anode, first=False):
+                            if self.folding_races(state, pred.data, anode, first=False):
                                 continue  # folding anode onto a WAR carrier would reorder a read past a write
                             for xform in xforms_second:
                                 # Quick path to setup match

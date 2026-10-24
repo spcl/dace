@@ -313,7 +313,7 @@ def fill_value(block: ControlFlowBlock, name: str, desc: dt.Data) -> int | None:
     edges = write_edges(block, name)
     if len(edges) == 1 and isinstance(edges[0][1].src, FillLibraryNode):
         node, edge = edges[0][1].src, edges[0][1]
-        if "_fill_val" in node.in_connectors or not covers_whole(edge.data.subset, desc):
+        if FillLibraryNode.VALUE_CONNECTOR_NAME in node.in_connectors or not covers_whole(edge.data.subset, desc):
             return None
         return integer_constant(repr(node.value))
     store = iteration_store(block, name)
@@ -537,7 +537,11 @@ def nonnegative_containers(
             return node.data in known
         if isinstance(node, FillLibraryNode):
             constant = integer_constant(repr(node.value))
-            return "_fill_val" not in node.in_connectors and constant is not None and constant >= 0
+            return (
+                FillLibraryNode.VALUE_CONNECTOR_NAME not in node.in_connectors
+                and constant is not None
+                and constant >= 0
+            )
         if isinstance(node, nodes.NestedSDFG):
             inputs = {e.dst_conn for e in state.in_edges(node) if e.dst_conn and e.data.data in known}
             inputs |= {k for k, v in node.symbol_mapping.items() if parses_nonnegative(str(v), known)}
