@@ -392,7 +392,24 @@ class NormalizeWCRSource(ppl.Pass):
         bound = [oe for oe in parent_state.out_edges(parent) if oe.src_conn == name]
         if not bound:
             return False
-        return all((cdesc := parent_sdfg.arrays.get(oe.data.data)) is not None and cdesc.transient for oe in bound)
+        # A call inside a map runs once per iteration: an accumulation there folds into one shared caller array
+        if parent_state.entry_node(parent) is not None and any(
+            e.data.wcr is not None for oe in bound for e in parent_state.memlet_tree(oe)
+        ):
+            return False
+        for oe in bound:
+            cdesc = parent_sdfg.arrays.get(oe.data.data)
+            if cdesc is None or not cdesc.transient:
+                return False
+            # The caller array is fresh only if this call is its one writer: anything else gave it a value
+            sink = parent_state.memlet_path(oe)[-1].dst
+            if any(
+                n.data == oe.data.data and n is not sink and st.in_degree(n) > 0
+                for st in parent_sdfg.states()
+                for n in st.data_nodes()
+            ):
+                return False
+        return True
 
     def _seedable_accumulator(self, sd: SDFG, name: str, plain_written: set[str]) -> bool:
         """True if ``name`` is a fresh WCR accumulator safe to identity-seed: fresh storage

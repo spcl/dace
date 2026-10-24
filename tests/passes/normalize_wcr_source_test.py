@@ -460,6 +460,64 @@ def test_seed_spares_nested_out_only_aliasing_live_array():
     assert np.allclose(A, 10.0 + val), f"A must be accumulated in place (10 + val), not overwritten; got {A}"
 
 
+def test_seed_spares_a_scatter_called_once_per_map_iteration():
+    """cp2k's ``np.add.at`` after LoopToMap: a parallel map calls a body that accumulates a row through a data index
+    into a transient the caller filled first. The row map writes each slot once per call, but each call is one
+    iteration of the shared accumulation; seeding it per call zeroed every earlier contribution and the fill."""
+    n, k, m = 6, 4, 3
+    sdfg = dace.SDFG("scatter_per_iteration")
+    sdfg.add_array("idx", [n], dace.int64)
+    sdfg.add_array("b", [n, m], dace.float64)
+    sdfg.add_array("init", [k, m], dace.float64)
+    sdfg.add_array("out", [k, m], dace.float64)
+    sdfg.add_transient("acc", [k, m], dace.float64)
+    body = dace.SDFG("scatter_per_iteration_body")
+    body.add_symbol("i", dace.int64)
+    body.add_symbol("t", dace.int64)
+    body.add_array("bidx", [n], dace.int64)
+    body.add_array("bb", [n, m], dace.float64)
+    body.add_array("bacc", [k, m], dace.float64)
+    first = body.add_state("first", is_start_block=True)
+    bst = body.add_state("add")
+    body.add_edge(first, bst, dace.InterstateEdge(assignments={"t": "bidx[i]"}))
+    bst.add_mapped_tasklet(
+        "row",
+        {"j": f"0:{m}"},
+        {"__v": dace.Memlet("bb[i, j]")},
+        "__o = __v",
+        {"__o": dace.Memlet(data="bacc", subset="t, j", wcr="lambda x, y: x + y")},
+        external_edges=True,
+    )
+    st = sdfg.add_state("s")
+    st.add_nedge(st.add_read("init"), st.add_access("acc"), dace.Memlet(f"init[0:{k}, 0:{m}]"))
+    st2 = sdfg.add_state_after(st, "scatter")
+    me, mx = st2.add_map("m", {"i": f"0:{n}"})
+    nsdfg = st2.add_nested_sdfg(body, {"bidx", "bb"}, {"bacc"}, symbol_mapping={"i": "i"})
+    st2.add_memlet_path(st2.add_read("idx"), me, nsdfg, dst_conn="bidx", memlet=dace.Memlet(f"idx[0:{n}]"))
+    st2.add_memlet_path(st2.add_read("b"), me, nsdfg, dst_conn="bb", memlet=dace.Memlet(f"b[0:{n}, 0:{m}]"))
+    st2.add_memlet_path(
+        nsdfg,
+        mx,
+        st2.add_access("acc"),
+        src_conn="bacc",
+        memlet=dace.Memlet(data="acc", subset=f"0:{k}, 0:{m}", wcr="lambda x, y: x + y"),
+    )
+    st3 = sdfg.add_state_after(st2, "out")
+    st3.add_nedge(st3.add_read("acc"), st3.add_write("out"), dace.Memlet(f"acc[0:{k}, 0:{m}]"))
+    sdfg.validate()
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    assert not _seed_states(sdfg), "a per-iteration call into a filled accumulator must not be seeded"
+
+    rng = np.random.default_rng(0)
+    idx, b, init = rng.integers(0, k, n), rng.random((n, m)), rng.random((k, m))
+    out = np.zeros((k, m))
+    sdfg(idx=idx, b=b, init=init, out=out)
+    expected = init.copy()
+    np.add.at(expected, idx, b)
+    assert np.allclose(out, expected)
+
+
 def test_seed_spares_source_oriented_plain_init():
     """A plain initializer written SOURCE-oriented -- a ``read(bias) -> write(acc)`` copy whose
     memlet data is ``bias`` -- still initializes ``acc``. The pass must detect it (keying the
