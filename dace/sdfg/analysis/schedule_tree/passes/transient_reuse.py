@@ -82,7 +82,7 @@ def _covered_under(read: Tuple[Optional[_Box], frozenset],
 
 
 @dataclass
-class _Use:
+class Use:
     node: tn.ScheduleTreeNode
     memlets: dict
     connector: str
@@ -149,7 +149,7 @@ class Liveness:
             path.append(path[-1].parent)
         return path[::-1]
 
-    def _box(self, use: _Use, context: tn.ScheduleTreeNode) -> Optional[_Box]:
+    def _box(self, use: Use, context: tn.ScheduleTreeNode) -> Optional[_Box]:
         """The region of an access, over the iterations of the loops between it and ``context``."""
         ranges: Dict[str, Tuple[int, int]] = {}
         for scope in self._path(use.node, context)[:-1]:
@@ -194,7 +194,7 @@ class Liveness:
             self._written[id(context)] = names_in_subtrees([context], names_written) - bound_names(context)
         return self._written[id(context)]
 
-    def _guards(self, use: _Use, context: tn.ScheduleTreeNode) -> Optional[frozenset]:
+    def _guards(self, use: Use, context: tn.ScheduleTreeNode) -> Optional[frozenset]:
         """The conditions under which an access runs in an iteration of ``context`` (empty if it always runs), or
         ``None`` if that cannot be described by conditions that are the same throughout the iteration (conditions on
         variables of inner loops or on names assigned in the iteration, loops that may not run, other scopes)."""
@@ -221,15 +221,15 @@ class Liveness:
                 guards.add((condition.as_string, isinstance(scope, tn.IfScope)))  # (condition, whether it holds)
         return frozenset(guards)
 
-    def _read(self, use: _Use, context: tn.ScheduleTreeNode) -> Tuple[Optional[_Box], frozenset]:
+    def _read(self, use: Use, context: tn.ScheduleTreeNode) -> Tuple[Optional[_Box], frozenset]:
         guards = self._guards(use, context)
         return self._box(use, context), frozenset() if guards is None else guards
 
-    def segments(self, uses: List[_Use]) -> Tuple[List[Tuple[int, int]], bool]:
+    def segments(self, uses: List[Use]) -> Tuple[List[Tuple[int, int]], bool]:
         """Live segments of a container, and whether it is read before being written (live on entry)."""
         return self._analyze(self.root, uses)
 
-    def exposed_in(self, scope: tn.ScheduleTreeScope, uses: List[_Use]) -> bool:
+    def exposed_in(self, scope: tn.ScheduleTreeScope, uses: List[Use]) -> bool:
         """
         Whether one execution of a scope's children (e.g., one iteration of a loop) may read a container before
         writing it there.
@@ -240,9 +240,9 @@ class Liveness:
         """
         return self._analyze(scope, uses)[1]
 
-    def _analyze(self, context: tn.ScheduleTreeNode, uses: List[_Use]) -> Tuple[List[Tuple[int, int]], bool]:
+    def _analyze(self, context: tn.ScheduleTreeNode, uses: List[Use]) -> Tuple[List[Tuple[int, int]], bool]:
         # Group the uses by the child of the context containing them, in program order
-        groups: Dict[int, Tuple[tn.ScheduleTreeNode, List[_Use]]] = {}
+        groups: Dict[int, Tuple[tn.ScheduleTreeNode, List[Use]]] = {}
         for use in uses:
             child = self._path(use.node, context)[0]
             groups.setdefault(id(child), (child, []))[1].append(use)
@@ -323,10 +323,10 @@ def _fits(desc: data.Array, slot: data.Array) -> bool:
     return True
 
 
-def usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Use]], Set[str]]:
+def usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[Use]], Set[str]]:
     """The memlet uses of every container, and the containers accessed in ways other than through the memlets of
     statements (e.g., by name in conditions, as copy targets or through views)."""
-    uses: Dict[str, List[_Use]] = {}
+    uses: Dict[str, List[Use]] = {}
     opaque: Set[str] = set()
     names = set(root.containers.keys())
     for node in root.preorder_traversal():
@@ -335,7 +335,7 @@ def usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Use]], S
             memlets = getattr(node, attr, None)
             if isinstance(memlets, dict):
                 for connector, memlet in memlets.items():
-                    uses.setdefault(memlet.data, []).append(_Use(node, memlets, connector, write))
+                    uses.setdefault(memlet.data, []).append(Use(node, memlets, connector, write))
                     covered.add(memlet.data)
                     if memlet.wcr is not None or memlet.other_subset is not None:
                         opaque.add(memlet.data)

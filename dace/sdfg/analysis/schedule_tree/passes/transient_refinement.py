@@ -13,7 +13,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (iteration_spaces, memlets_of, names_read, names_written,
                                                             repository_of)
-from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, usable_accesses
+from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, Use, usable_accesses
 
 
 def _sequential_loops(node: tn.ScheduleTreeNode) -> List[tn.ScheduleTreeScope]:
@@ -86,8 +86,10 @@ def _rewrite_condition(code: CodeBlock, accesses: List[ast.Subscript], name: str
             if scalar:
                 return ast.copy_location(ast.Name(id=name, ctx=ast.Load()), node)
             indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
-            indices = [ast.copy_location(ast.Constant(value=0), index) if d in contracted else index
-                       for d, index in enumerate(indices)]
+            indices = [
+                ast.copy_location(ast.Constant(value=0), index) if d in contracted else index
+                for d, index in enumerate(indices)
+            ]
             if isinstance(node.slice, ast.Tuple):
                 node.slice.elts = indices
             else:
@@ -141,7 +143,7 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
 
     # Every memlet of each container, and containers accessed in ways not analyzed here
     accesses: Dict[str, List[Tuple[tn.ScheduleTreeNode, dict | None, str | None, ast.Subscript | None]]] = {}
-    condition_accesses: Dict[str, List[Tuple[CodeBlock, ast.Subscript]]] = {}
+    condition_accesses: Dict[str, List[Tuple[tn.ScheduleTreeNode, ast.Subscript]]] = {}
     opaque: Set[str] = set()
     for node in root.preorder_traversal():
         covered = set()
@@ -162,11 +164,16 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
             opaque |= unsupported
             for name, access in found:
                 accesses.setdefault(name, []).append((node, None, None, access))
-                condition_accesses.setdefault(name, []).append((condition, access))
+                condition_accesses.setdefault(name, []).append((node, access))
                 covered.add(name)
         opaque |= (names_read(node) | names_written(node)) & containers.keys() - covered
 
     live_uses, _ = usable_accesses(root)
+    for name, scope_accesses in condition_accesses.items():  # Conditions are read before their scope runs
+        for node, access in scope_accesses:
+            indices = access.slice.elts if isinstance(access.slice, ast.Tuple) else [access.slice]
+            memlets = {'__condition': Memlet(f'{name}[{", ".join(ast.unparse(i) for i in indices)}]')}
+            live_uses.setdefault(name, []).append(Use(node, memlets, '__condition', False))
     liveness = Liveness(root, trust_reads=False)
 
     removed = 0
@@ -225,8 +232,8 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
                 old = memlets[connector]
                 memlets[connector] = Memlet(data=name, subset=subsets.Range([(0, 0, 1)]), dynamic=old.dynamic)
             grouped = {}
-            for code, access in condition_accesses.get(name, []):
-                grouped.setdefault(id(code), (code, []))[1].append(access)
+            for node, access in condition_accesses.get(name, []):
+                grouped.setdefault(id(node), (node.condition, []))[1].append(access)
             for code, code_accesses in grouped.values():
                 _rewrite_condition(code, code_accesses, name, contracted, scalar=True)
             continue
@@ -242,8 +249,8 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
                                         subset=subsets.Range([(x, x, 1) for x in indices]),
                                         dynamic=old.dynamic)
         grouped = {}
-        for code, access in condition_accesses.get(name, []):
-            grouped.setdefault(id(code), (code, []))[1].append(access)
+        for node, access in condition_accesses.get(name, []):
+            grouped.setdefault(id(node), (node.condition, []))[1].append(access)
         for code, code_accesses in grouped.values():
             _rewrite_condition(code, code_accesses, name, contracted, scalar=False)
     return removed
