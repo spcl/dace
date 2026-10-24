@@ -24,7 +24,7 @@ import copy
 import re
 from typing import Any
 
-from dace import SDFG, data, dtypes, properties, symbolic
+from dace import SDFG, dtypes, properties, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -62,7 +62,9 @@ def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | 
         return None
     if any(e.data.wcr is not None for e in scope.edges()):
         return None
-    if any(not isinstance(e.src, nodes.Tasklet) for e in state.in_edges(state.exit_node(entry)) if not e.data.is_empty()):
+    if any(
+        not isinstance(e.src, nodes.Tasklet) for e in state.in_edges(state.exit_node(entry)) if not e.data.is_empty()
+    ):
         return None
     return state, entry
 
@@ -194,7 +196,10 @@ class SelectBranchMaps(ppl.Pass):
             picks = []
             for tag, src, conn in (("t", edge_t.src, edge_t.src_conn), ("f", mapping[edge_f.src], edge_f.src_conn)):
                 scalar, _ = sdfg.add_scalar(
-                    f"__select_{name}_{tag}", dtype, transient=True, storage=dtypes.StorageType.Register,
+                    f"__select_{name}_{tag}",
+                    dtype,
+                    transient=True,
+                    storage=dtypes.StorageType.Register,
                     find_new_name=True,
                 )
                 node = state.add_access(scalar)
