@@ -1423,6 +1423,28 @@ def test_a_data_indexed_row_accumulation_canonicalizes_to_a_wcr_map():
     assert np.allclose(a, expected)
 
 
+def test_an_assignment_the_loop_condition_reads_stays_in_the_loop():
+    """``done = 0; while done == 0: A[0] += 1; done = 1``: ``done = 1`` reads nothing the loop changes, but the
+    condition reads ``done``; moved before the loop, the body would never run (cp2k's convergence loop)."""
+    sdfg = dace.SDFG("licm_condition_flag")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_symbol("done", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("converge", condition_expr="done == 0")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"done": "0"}))
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("inc", {"a"}, {"b"}, "b = a + 1.0")
+    body.add_edge(body.add_read("A"), None, t, "a", mm.Memlet("A[0]"))
+    body.add_edge(t, "b", body.add_write("A"), None, mm.Memlet("A[0]"))
+    loop.add_edge(body, loop.add_state("tail"), dace.InterstateEdge(assignments={"done": "1"}))
+    sdfg.add_edge(loop, sdfg.add_state("after"), dace.InterstateEdge())
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    a = np.zeros(1)
+    sdfg(A=a)
+    assert a[0] == 1.0
+
+
 if __name__ == "__main__":
     test_pure_tasklet_hoisted_from_loop_region()
     test_invariant_load_without_inloop_writer_is_hoisted()
@@ -1457,4 +1479,5 @@ if __name__ == "__main__":
     test_a_guarded_scalar_read_after_the_loop_stays()
     test_a_guarded_read_not_provably_in_bounds_stays()
     test_an_invariant_interstate_assignment_moves_out_of_the_inner_loop()
+    test_an_assignment_the_loop_condition_reads_stays_in_the_loop()
     test_a_data_indexed_row_accumulation_canonicalizes_to_a_wcr_map()

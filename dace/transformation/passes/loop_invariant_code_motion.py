@@ -162,19 +162,20 @@ def _hoist_loop_region(loop: LoopRegion) -> int:
 
 def _hoist_invariant_assignments(loop: LoopRegion, variant_syms: set[str], variant_data: set[str]) -> int:
     """Move each assignment ``s = expr`` on an unconditional edge out of ``loop``'s start state to the edge into
-    ``loop`` when ``expr`` reads no variant symbol or written container, ``s`` is assigned nowhere else in ``loop``,
-    the start state does not read ``s``, and nothing outside ``loop`` reads ``s``."""
+    ``loop`` when ``expr`` reads no variant symbol or written container, ``s`` is assigned nowhere else in the SDFG,
+    neither the start state nor ``loop``'s own condition, init or update reads ``s``, and nothing outside ``loop``
+    reads ``s``."""
     start = loop.start_block
     out = loop.out_edges(start) if isinstance(start, SDFGState) else []
     if len(out) != 1 or not out[0].data.is_unconditional() or not out[0].data.assignments:
         return 0
     edge = out[0]
     assigned: dict[str, int] = {}
-    for e in loop.all_interstate_edges():
+    for e in loop.sdfg.all_interstate_edges():
         for name in e.data.assignments:
             assigned[name] = assigned.get(name, 0) + 1
     inside = set(loop.all_control_flow_blocks())
-    used_outside: set[str] = set()
+    used_outside: set[str] = set(loop.used_symbols(all_symbols=True, with_contents=False))
     for e in loop.sdfg.all_interstate_edges():
         if e.src not in inside or e.dst not in inside:
             used_outside |= e.data.free_symbols
