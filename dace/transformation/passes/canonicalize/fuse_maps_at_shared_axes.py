@@ -89,18 +89,19 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
-                tried: set[tuple[nodes.Map, nodes.Map]] = set()
+                # Keyed by transient and consumer: a merge-back rebuilds the producer's map, never these two
+                tried: set[tuple[nodes.AccessNode, nodes.MapEntry]] = set()
                 progress = True
                 while progress:
                     progress = False
                     for producer, node, consumer, axes in candidates(state):
-                        if (producer.map, consumer.map) in tried:
+                        if (node, consumer) in tried:
                             continue
                         restored = self.try_fuse(sd, state, producer, node, consumer, axes, fusion, pipeline_results)
                         if restored is None:
                             fused += 1
                         else:
-                            tried.add((restored.map, consumer.map))
+                            tried.add((node, consumer))
                         # Either way the producer's entry was rebuilt: the remaining candidates name the old one
                         progress = True
                         break
