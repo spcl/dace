@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
-    from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.dtypes import DataInstrumentationType, InstrumentationType
     from dace.sdfg import SDFG
@@ -278,7 +278,7 @@ def instrument_data(
         # Restore data into compiled SDFG
         class DataRestoreHook:
             @contextmanager
-            def __call__(self, csdfg: "CompiledSDFG", args: tuple[Any, ...]):
+            def __call__(self, csdfg: "CompiledSDFGProtocol", args: tuple[Any, ...]):
                 # Restore data from requested data report
                 set_report = csdfg.get_exported_function("__dace_set_instrumented_data_report")
                 if set_report is None:
@@ -296,7 +296,17 @@ def instrument_data(
                     if verbose:
                         print("Loading instrumented data report from", folder)
 
-                set_report(csdfg._libhandle, ctypes.c_char_p(os.path.abspath(folder).encode("utf-8")))
+                from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
+
+                # The state pointer is interface-specific. ctypes initializes BEFORE invoking the
+                # call hooks, so its handle is ready; the nanobind interface initializes inside
+                # the compiled call, so the hook initializes eagerly (idempotent - its `args` is
+                # a 1-tuple holding the processed keyword arguments) and uses the returned state.
+                if isinstance(csdfg, CtypesCompiledSDFG):
+                    state = csdfg._libhandle
+                else:
+                    state = csdfg.initialize(**args[0]) if args else csdfg.initialize()
+                set_report(state, ctypes.c_char_p(os.path.abspath(folder).encode("utf-8")))
                 yield
 
         with on_compiled_sdfg_call(context_manager=DataRestoreHook()):
