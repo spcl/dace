@@ -71,6 +71,7 @@ import math
 from typing import Any
 
 from dace import SDFG, properties, symbolic
+from dace.sdfg import propagation
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -173,6 +174,17 @@ def interchange_pays_on_gpu(loop: LoopRegion, sdfg: SDFG) -> bool:
     return not costs[0] < costs[1]
 
 
+def enclosing_loops(block) -> set[LoopRegion]:
+    """The loops around ``block``, through nested SDFGs."""
+    found: set[LoopRegion] = set()
+    graph = block.parent_graph
+    while graph is not None:
+        if isinstance(graph, LoopRegion):
+            found.add(graph)
+        graph = graph.parent if isinstance(graph, SDFG) else graph.parent_graph
+    return found
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopIntoMapGated(ppl.Pass):
@@ -213,6 +225,23 @@ class MoveLoopIntoMapGated(ppl.Pass):
     def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
+    def try_interchange(self, loop: LoopRegion, gpu: bool) -> bool:
+        """Interchange ``loop`` with its map when the policy approves; whether it did."""
+        if self.single_iteration_only and not single_iteration_lanes(loop):
+            return False
+        if gpu and not interchange_pays_on_gpu(loop, loop.sdfg):
+            return False
+        # A short constant loop moves in whole on CPU too: its body's maps of one range (velocity's gather and
+        # accumulation per neighbour) become one map whose unrolled loop keeps the accumulator in a register.
+        short = not gpu and short_constant_trip(loop, loop.sdfg)
+        options = {"cfg_body": gpu or short}
+        if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
+            return False
+        if not gpu and not (short or interchange_lowers_stride(loop, loop.sdfg)):
+            return False
+        MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False, annotate=False)
+        return True
+
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Interchange every approved loop<->map pair in ``sdfg``.
 
@@ -223,31 +252,30 @@ class MoveLoopIntoMapGated(ppl.Pass):
         applied = 0
 
         # Sweep until a sweep applies nothing: an apply removes its loop and nests a new one, which the next sweep
-        # sees; a loop an apply moved or removed since the sweep began is skipped.
+        # sees. A refused loop is probed again only once an apply changed its body (it encloses the applied loop),
+        # and not before the next sweep: memlets are propagated once per sweep, not per apply, and only the loops
+        # around an apply see its stale ones.
         def live_loops() -> list[LoopRegion]:
             return [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
 
+        refused: set[LoopRegion] = set()
         changed = True
         while changed:
             changed = False
+            stale: set[LoopRegion] = set()
             live: set[LoopRegion] | None = None
             for loop in live_loops():
-                if live is not None and loop not in live:
+                if loop in refused or loop in stale or (live is not None and loop not in live):
                     continue
-                if self.single_iteration_only and not single_iteration_lanes(loop):
+                around = enclosing_loops(loop)
+                if not self.try_interchange(loop, gpu):
+                    refused.add(loop)
                     continue
-                if gpu and not interchange_pays_on_gpu(loop, loop.sdfg):
-                    continue
-                # A short constant loop moves in whole on CPU too: its body's maps of one range (velocity's gather and
-                # accumulation per neighbour) become one map whose unrolled loop keeps the accumulator in a register.
-                short = not gpu and short_constant_trip(loop, loop.sdfg)
-                options = {"cfg_body": gpu or short}
-                if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
-                    continue
-                if not gpu and not (short or interchange_lowers_stride(loop, loop.sdfg)):
-                    continue
-                MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False)
                 applied += 1
                 changed = True
+                refused -= around
+                stale |= around
                 live = set(live_loops())
+            if changed:
+                propagation.propagate_memlets_sdfg(sdfg)
         return applied or None
