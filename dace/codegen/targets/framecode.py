@@ -16,6 +16,7 @@ import dace
 from dace import config, data, dtypes, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
+from dace.codegen import cppunparse
 from dace.codegen import dispatcher as disp
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import strip_codegen_comments
@@ -51,10 +52,12 @@ def _reaches_state_struct(sdfg: SDFG, states: list[SDFGState]) -> bool:
     return utils.calls_opaque_code(sdfg, states)
 
 
-def _assigned_literal(edge) -> bool | int | float | None:
+def _assigned_literal(edge) -> str | None:
     """
-    The constant that the edge writes if it comes from a tasklet without inputs whose code assigns a numeric or
-    boolean literal (possibly cast, e.g., ``float(2.0)``, or negated) to the edge's connector; None otherwise.
+    The constant that the edge writes, as C++ code, if it comes from a tasklet without inputs whose code assigns a
+    numeric or boolean literal (possibly cast, e.g., ``float(2.0)``, or negated) to the edge's connector; None
+    otherwise. A cast stays part of the constant, since it may change the value (``int(2.7)``, or ``float(0.1)``,
+    which is single precision in C++).
     """
     tasklet = edge.src
     if (
@@ -89,9 +92,9 @@ def _assigned_literal(edge) -> bool | int | float | None:
         value = value.operand
     if not isinstance(value, ast.Constant) or not isinstance(value.value, (bool, int, float)):
         return None
-    if negate:
-        return None if isinstance(value.value, bool) else -value.value
-    return value.value
+    if negate and isinstance(value.value, bool):
+        return None
+    return cppunparse.pyexpr2cpp(ast.unparse(stmt.value))
 
 
 def _region_function_key(code: str, name: str) -> str:
@@ -883,7 +886,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         cached = self._literal_cache.get(sdfg)
         if cached is not None:
             return cached
-        values: dict[str, Any] = {}
+        values: dict[str, str] = {}
         excluded: set[str] = set()
         for state in sdfg.states():
             for node in state.data_nodes():
@@ -903,10 +906,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     value = _assigned_literal(edge)
                     if value is None or values.setdefault(node.data, value) != value:
                         excluded.add(node.data)
-        literals = {}
-        for name, value in values.items():
-            if name not in excluded:
-                literals[name] = ("true" if value else "false") if isinstance(value, bool) else repr(value)
+        literals = {name: value for name, value in values.items() if name not in excluded}
         self._literal_cache[sdfg] = literals
         return literals
 

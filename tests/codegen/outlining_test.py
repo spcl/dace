@@ -483,7 +483,7 @@ def test_region_literal_scalars_folded():
     sdfg = _literal_scalar_sdfg("fnregion_literals", "a * 3", True)
     frame, unit = _linkable_sources(sdfg)
     params = _signature(unit, "scale_fn")
-    assert not re.search(r"\bc\b", params) and re.search(r"const double c = -2\.0;", unit)
+    assert not re.search(r"\bc\b", params) and re.search(r"const double c = dace::float64\(-2\.0\);", unit)
     assert re.search(r"\bd\b", params)
     A = np.random.rand(10)
     ref = A * -2.0 + A[0] * 3
@@ -566,6 +566,30 @@ def test_region_no_restrict_with_outside_view():
     assert np.array_equal(out, [3.0, 7.0])
 
 
+@pytest.mark.parametrize("code", ["o = dace.float32(0.1)", "o = int(2.7)"])
+def test_region_literal_scalar_keeps_cast(code: str):
+    """A folded literal keeps its cast, which changes the value assigned to a double scalar."""
+    sdfg = dace.SDFG("fnregion_literal_cast_" + ("float" if "float" in code else "int"))
+    sdfg.add_array("OUT", [1], dace.float64)
+    sdfg.add_scalar("x", dace.float64, transient=True)
+    assign = sdfg.add_state("assign", is_start_block=True)
+    tasklet = assign.add_tasklet("literal", {}, {"o"}, code)
+    assign.add_edge(tasklet, "o", assign.add_write("x"), None, dace.Memlet("x[0]"))
+    use = sdfg.add_state_after(assign, "use")
+    tasklet = use.add_tasklet("use", {"a"}, {"o"}, "o = a")
+    use.add_edge(use.add_read("x"), None, tasklet, "a", dace.Memlet("x[0]"))
+    use.add_edge(tasklet, "o", use.add_write("OUT"), None, dace.Memlet("OUT[0]"))
+    xfh.wrap_in_function_region([use], "body", dtypes.FunctionPlacement.SeparateUnit)
+    sdfg.validate()
+
+    frame, unit = _linkable_sources(sdfg)
+    assert re.search(r"const double x = \S+\(", unit)  # Folded, with the cast
+    out = np.zeros(1)
+    sdfg(OUT=out)
+    expected = float(np.float32(0.1)) if "float32" in code else 2.0
+    assert out[0] == expected
+
+
 def test_region_serialization():
     sdfg = _three_loop_regions("fnregion_serialization", dtypes.FunctionPlacement.SeparateUnit, "unit0")
     loaded = dace.SDFG.from_json(sdfg.to_json())
@@ -607,4 +631,6 @@ if __name__ == "__main__":
     test_region_literal_scalar_not_folded_with_call()
     test_region_in_loop_keeps_carried_scalar()
     test_region_no_restrict_with_outside_view()
+    test_region_literal_scalar_keeps_cast("o = dace.float32(0.1)")
+    test_region_literal_scalar_keeps_cast("o = int(2.7)")
     test_region_serialization()
