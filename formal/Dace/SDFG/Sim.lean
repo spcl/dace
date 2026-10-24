@@ -1403,14 +1403,16 @@ omit hu in
 theorem privateTransients_ren (s : State) (entry : NodeId) :
     (ctx.ren π).privateTransients s entry = (ctx.privateTransients s entry).map π := by
   unfold Ctx.privateTransients
-  simp only [Ctx.ren_g, List.map_filterMap]
-  congr 1
-  funext x
-  obtain ⟨t, d⟩ := x
-  simp only
-  split
-  · split <;> simp_all [Ctx.ren]
-  · rfl
+  rw [show (ctx.ren π).containerNames = ctx.containerNames from rfl, List.map_filterMap]
+  refine List.filterMap_congr fun t _ => ?_
+  rw [show (ctx.ren π).desc? t = ctx.desc? t from rfl, show (ctx.ren π).g = ctx.g from rfl]
+  cases ctx.desc? t with
+  | none => rfl
+  | some d =>
+    simp only
+    split
+    · split <;> simp_all [Ctx.ren]
+    · rfl
 
 omit hu in
 theorem iterStart_sim {pre₂ pre₁ : St} (h : St.Sim π pre₂ pre₁) (priv : List Name) :

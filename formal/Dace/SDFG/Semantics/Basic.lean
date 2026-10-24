@@ -709,31 +709,41 @@ def SDFG.countMentions (g : SDFG) (t : Name) : Nat := Region.countMentions t g.t
 
 namespace Ctx
 
+/-- The distinct container names of the current SDFG. -/
+def containerNames (ctx : Ctx) : List Name := (ctx.g.arrays.map Prod.fst).eraseDups
+
 /-- Transient containers of the current SDFG with `Scope` lifetime all of
 whose mentions (over the whole SDFG, `Region.countMentions`) are nodes
 inside the scope of `entry` in state `s`; they are allocated per
 iteration/task, so their effects are private to it (`Decisions.md#D39`).
 Any other lifetime (`State`, `SDFG`, `Global`, `Persistent`, `External`)
 allocates the container once outside the scope, shared by all iterations.
-Returned with the memory-name prefix. -/
+A transient the scope does not mention is not private (its privacy is
+unobservable).  Returned as memory names. -/
 def privateTransients (ctx : Ctx) (s : State) (entry : NodeId) : List Name :=
   let inside := s.scopeNodes entry
-  ctx.g.arrays.filterMap fun (t, d) =>
-    if d.transient && d.lifetime = .scope then
-      let here := (s.nodes.filter fun n => n.mentions t && inside.contains n.id).length
-      if here = ctx.g.countMentions t then some (ctx.cname t) else none
-    else none
+  ctx.containerNames.filterMap fun t =>
+    match ctx.desc? t with
+    | some d =>
+      if d.transient && d.lifetime = .scope then
+        let here := (s.nodes.filter fun n => n.mentions t && inside.contains n.id).length
+        if 0 < here && here = ctx.g.countMentions t then some (ctx.cname t) else none
+      else none
+    | none => none
 
 /-- Transients allocated per execution of state `s` (`Decisions.md#D68`):
 `Scope` or `State` lifetime, mentioned in `s`, and not shared: every mention
 of it in the SDFG (`SDFG.countMentions`, control-flow expressions included)
 is a node of `s`.  Container names (not memory names). -/
 def stateTransients (ctx : Ctx) (s : State) : List Name :=
-  ctx.g.arrays.filterMap fun (t, d) =>
-    if d.transient && (d.lifetime == .scope || d.lifetime == .state) then
-      let here := (s.nodes.filter (·.mentions t)).length
-      if 0 < here && here = ctx.g.countMentions t then some t else none
-    else none
+  ctx.containerNames.filterMap fun t =>
+    match ctx.desc? t with
+    | some d =>
+      if d.transient && (d.lifetime == .scope || d.lifetime == .state) then
+        let here := (s.nodes.filter (·.mentions t)).length
+        if 0 < here && here = ctx.g.countMentions t then some t else none
+      else none
+    | none => none
 
 end Ctx
 

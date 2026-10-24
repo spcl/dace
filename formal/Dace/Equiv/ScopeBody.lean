@@ -1381,14 +1381,24 @@ theorem sameOutside?_spec {g : SDFG} {s' s : State} {M : NodeId} (h : sameOutsid
     simp only [Bool.and_eq_true, beq_iff_eq] at this
     exact this.1
   · unfold Ctx.stateTransients
-    refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
-    simp only
-    split
-    · rename_i hd
-      have hc := sameTransientMentions?_count hm hmem hd
-      simp only [Block.countMentions] at hc
-      rw [hc]
-    · rfl
+    refine List.filterMap_congr fun t _ => ?_
+    cases hdt : ({ I, g } : Ctx).desc? t with
+    | none => rfl
+    | some d =>
+      simp only
+      split
+      · rename_i hd
+        have hmem : (t, d) ∈ g.arrays := by
+          simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hdt
+          obtain ⟨⟨t', d'⟩, hf, rfl⟩ := hdt
+          have := List.find?_some hf
+          simp only [decide_eq_true_eq] at this
+          subst this
+          exact List.mem_of_find?_eq_some hf
+        have hc := sameTransientMentions?_count hm hmem hd
+        simp only [Block.countMentions] at hc
+        rw [hc]
+      · rfl
   · have := hscopes n hn
     rw [hk] at this
     simp only [Bool.and_eq_true, beq_iff_eq, Bool.or_eq_true, hnM, false_or, List.all_eq_true,

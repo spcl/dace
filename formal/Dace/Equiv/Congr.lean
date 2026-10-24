@@ -1288,28 +1288,49 @@ two blocks mention every `Scope`-lifetime transient equally often. -/
 theorem Ctx.agree_setBlockAt {I : Interp} {cn sc : Name → Name} {g : SDFG} {p : List PathStep} {i : BlockId}
     {b' b : Block} (hat : g.top.blockAt? p i = some b) (hm : sameTransientMentions? g b' b = true) :
     Ctx.Agree { I, g := g.setBlockAt p i b', cname := cn, scope := sc } { I, g, cname := cn, scope := sc } := by
+  have hmem : ∀ {t : Name} {d : DataDesc}, ({ I, g, cname := cn, scope := sc } : Ctx).desc? t = some d →
+      (t, d) ∈ g.arrays := by
+    intro t d h
+    simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at h
+    obtain ⟨⟨t', d'⟩, hf, rfl⟩ := h
+    have := List.find?_some hf
+    simp only [decide_eq_true_eq] at this
+    subst this
+    exact List.mem_of_find?_eq_some hf
   refine ⟨rfl, fun s entry => ?_, fun s => ?_⟩
   · unfold Ctx.privateTransients
-    refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
+    refine List.filterMap_congr fun t _ => ?_
     simp only
-    split
-    · rename_i hsc
-      have hd : (d.transient && (d.lifetime == .scope || d.lifetime == .state)) = true := by
-        simp only [Bool.and_eq_true, decide_eq_true_eq] at hsc
-        simp [hsc.1, hsc.2]
-      have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
-        Region.countMentions_setBlockAt t (sameTransientMentions?_count hm hmem hd) p g.top hat
-      rw [hc]
-    · rfl
+    rw [show ({ I, g := g.setBlockAt p i b', cname := cn, scope := sc } : Ctx).desc? t =
+      ({ I, g, cname := cn, scope := sc } : Ctx).desc? t from rfl]
+    cases hdt : ({ I, g, cname := cn, scope := sc } : Ctx).desc? t with
+    | none => rfl
+    | some d =>
+      simp only
+      split
+      · rename_i hsc
+        have hd : (d.transient && (d.lifetime == .scope || d.lifetime == .state)) = true := by
+          simp only [Bool.and_eq_true, decide_eq_true_eq] at hsc
+          simp [hsc.1, hsc.2]
+        have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
+          Region.countMentions_setBlockAt t (sameTransientMentions?_count hm (hmem hdt) hd) p g.top hat
+        rw [hc]
+      · rfl
   · unfold Ctx.stateTransients
-    refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
+    refine List.filterMap_congr fun t _ => ?_
     simp only
-    split
-    · rename_i hd
-      have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
-        Region.countMentions_setBlockAt t (sameTransientMentions?_count hm hmem hd) p g.top hat
-      rw [hc]
-    · rfl
+    rw [show ({ I, g := g.setBlockAt p i b', cname := cn, scope := sc } : Ctx).desc? t =
+      ({ I, g, cname := cn, scope := sc } : Ctx).desc? t from rfl]
+    cases hdt : ({ I, g, cname := cn, scope := sc } : Ctx).desc? t with
+    | none => rfl
+    | some d =>
+      simp only
+      split
+      · rename_i hd
+        have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
+          Region.countMentions_setBlockAt t (sameTransientMentions?_count hm (hmem hdt) hd) p g.top hat
+        rw [hc]
+      · rfl
 
 /-! ## Congruence for SDFGs -/
 
