@@ -3,7 +3,7 @@
 
 import ast
 
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, symbolic, utils
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -151,7 +151,7 @@ def skip_redundant_resets(stree: tn.ScheduleTreeScope) -> int:
             for w in others
         ):
             continue
-        flag = data.find_new_name("__dirty", containers)
+        flag = utils.find_new_name("__dirty", containers)
         containers[flag] = data.Scalar(dtypes.bool_, transient=True)
         # Set at the beginning of the program
         children = list(root.children)

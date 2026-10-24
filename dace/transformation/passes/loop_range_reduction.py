@@ -707,7 +707,9 @@ def _map_body(state: SDFGState, entry: nd.MapEntry) -> nd.NestedSDFG | None:
 
 def _map_translation(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG) -> dict[str, str]:
     """How names inside the nested SDFG of a map body read from the outside: inner symbols through the symbol
-    mapping, and input scalars that are fed one element of a compile-time constant array through that element.
+    mapping, and inputs that are fed from a compile-time constant array. An input array is that array (the inner
+    descriptor of a connector is equivalent to the outer one), indexed the same way; an input scalar of a legacy
+    nested SDFG reads the one element its memlet selects.
     The replacement expressions are strings, the currency of ``ASTFindReplace`` (see ``LoopUnroll``)."""
     inner = nsdfg.sdfg
     constants = state.sdfg.constants
@@ -723,13 +725,16 @@ def _map_translation(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG)
             or memlet.data is None
             or not isinstance(constants.get(memlet.data, None), np.ndarray)
             or memlet.subset is None
-            or memlet.subset.num_elements() != 1
         ):
             continue
-        if not isinstance(inner.arrays.get(name, None), dt.Scalar):
-            continue
-        indices = ", ".join(symbolic.symstr(index) for index in memlet.subset.min_element())
-        translation[name] = f"{memlet.data}[{indices}]"
+        inner_desc = inner.arrays.get(name, None)
+        if isinstance(inner_desc, dt.Scalar):
+            if memlet.subset.num_elements() != 1:
+                continue
+            indices = ", ".join(symbolic.symstr(index) for index in memlet.subset.min_element())
+            translation[name] = f"{memlet.data}[{indices}]"
+        elif isinstance(inner_desc, dt.Array) and not isinstance(inner_desc, dt.View):
+            translation[name] = memlet.data
     # Constants are shared with the parent SDFG; names that are not shadowed inside read the same from outside.
     for name in constants:
         if name not in translation and name not in inner.arrays and name not in inner.symbols:
@@ -789,7 +794,7 @@ def _reparent(block, sdfg: SDFG) -> None:
     else:
         for inner in itertools.chain([block], block.all_control_flow_blocks()):
             inner.sdfg = sdfg
-        states = list(block.all_states())
+        states = list(block.states())
     for state in states:
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:

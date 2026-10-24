@@ -5,7 +5,7 @@ statements are all guarded when no guard holds."""
 import ast
 import copy
 
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, symbolic, utils
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -209,7 +209,7 @@ def coarsen_guards(
         )
         tested = [loop for loop in nest if loop.loop.loop_variable in needed]
         if rows:
-            flag = data.find_new_name("__any_row", containers)
+            flag = utils.find_new_name("__any_row", containers)
             containers[flag] = data.Scalar(dtypes.bool_, transient=True)
             parent = nest[-2]
             test = _existence_test(flag, [innermost], guards, "any_row")
@@ -219,7 +219,7 @@ def coarsen_guards(
         # A test over every loop of the nest would read as much as the row tests, without their contiguous accesses
         # (compilers unroll the short innermost loop and vectorize across rows), so it is left to them
         if "nest" in levels and not (rows and len(tested) == len(nest)):
-            flag = data.find_new_name("__any", containers)
+            flag = utils.find_new_name("__any", containers)
             containers[flag] = data.Scalar(dtypes.bool_, transient=True)
             test = _existence_test(flag, tested, guards, "any")
             result = test + [tn.IfScope(condition=CodeBlock(flag), children=[nest[0]])]

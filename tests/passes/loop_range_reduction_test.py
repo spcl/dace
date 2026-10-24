@@ -725,8 +725,9 @@ def test_map_runtime_data_residual():
     (entry,) = _maps(sdfg)
     assert str(entry.map.range) == "2:N"
     (guard,) = _conditionals(sdfg)
-    assert "A" not in guard.branches[0][0].as_string  # The residual stays in the nested SDFG's own names
-    assert "4.5" in guard.branches[0][0].as_string
+    residual = guard.branches[0][0].as_string
+    assert guard.sdfg is not sdfg  # The residual stays in the nested SDFG
+    assert ">= 2" not in residual and "4.5" in residual
     a = np.arange(20, dtype=np.float64)
     b = np.zeros(20)
     sdfg(A=a, B=b, N=20)
@@ -812,23 +813,24 @@ def test_map_inside_loop_and_loop_inside_map():
 
 
 def _guarded_map_body(sdfg: dace.SDFG) -> dace.SDFG:
-    """Nested SDFG ``flag = (c_in > 0); if flag: u_out = t_in + 1`` -- the shape the frontend emits for a guarded map
-    body, with the guard read through an input scalar."""
+    """Nested SDFG ``flag = (c_in[i] > 0); if flag: u_out[i] = t_in[i] + 1`` -- the shape the frontend emits for a
+    guarded map body, with the guard read through an input array (the inner arrays are the outer ones)."""
     inner = dace.SDFG("body")
-    inner.add_scalar("t_in", dace.float64)
-    inner.add_scalar("c_in", dace.int32)
-    inner.add_scalar("u_out", dace.float64)
+    inner.add_array("t_in", [8], dace.float64)
+    inner.add_array("c_in", [8], dace.int32)
+    inner.add_array("u_out", [8], dace.float64)
+    inner.add_symbol("i", dace.int64)
     inner.add_symbol("flag", dace.int32)
     pre = inner.add_state("pre", is_start_block=True)
     guard = ConditionalBlock("guard", sdfg=inner, parent=inner)
     inner.add_node(guard)
-    inner.add_edge(pre, guard, dace.InterstateEdge(assignments={"flag": "(c_in > 0)"}))
+    inner.add_edge(pre, guard, dace.InterstateEdge(assignments={"flag": "(c_in[i] > 0)"}))
     branch = ControlFlowRegion("branch", sdfg=inner, parent=guard)
     guard.add_branch(CodeBlock("flag"), branch)
     state = branch.add_state("compute", is_start_block=True)
     tasklet = state.add_tasklet("t", {"t"}, {"u"}, "u = t + 1")
-    state.add_edge(state.add_read("t_in"), None, tasklet, "t", dace.Memlet("t_in[0]"))
-    state.add_edge(tasklet, "u", state.add_write("u_out"), None, dace.Memlet("u_out[0]"))
+    state.add_edge(state.add_read("t_in"), None, tasklet, "t", dace.Memlet("t_in[i]"))
+    state.add_edge(tasklet, "u", state.add_write("u_out"), None, dace.Memlet("u_out[i]"))
     return inner
 
 
@@ -857,9 +859,7 @@ def test_map_split_inside_fused_dataflow():
         output_nodes={"T": t_node},
     )
     entry, exit_node = state.add_map("guarded", {"i": "0:8"})
-    nsdfg = state.add_nested_sdfg(
-        _guarded_map_body(sdfg), {"t_in": dace.float64, "c_in": dace.int32}, {"u_out": dace.float64}, {"i": "i"}
-    )
+    nsdfg = state.add_nested_sdfg(_guarded_map_body(sdfg), {"t_in", "c_in"}, {"u_out"}, {"i": "i"})
     state.add_memlet_path(t_node, entry, nsdfg, dst_conn="t_in", memlet=dace.Memlet("T[i]"))
     state.add_memlet_path(c_node, entry, nsdfg, dst_conn="c_in", memlet=dace.Memlet("cstarr[i]"))
     state.add_memlet_path(nsdfg, exit_node, u_node, src_conn="u_out", memlet=dace.Memlet("U[i]"))

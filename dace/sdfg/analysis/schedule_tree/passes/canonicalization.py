@@ -4,7 +4,7 @@ read, and reading containers before conditions."""
 
 import ast
 
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, symbolic, utils
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -443,7 +443,7 @@ def hoist_condition_reads(stree: tn.ScheduleTreeScope) -> int:
                     connectors.setdefault(element, f"__in{len(connectors)}")
                 names = {id(node): connectors[element] for _, element, node, _ in accesses}
                 expression = ast.unparse(ReplaceAccesses(names).visit(condition))  # The condition is replaced below
-                name = data.find_new_name("__condition", containers)
+                name = utils.find_new_name("__condition", containers)
                 containers[name] = data.Scalar(dtypes.bool_, transient=True)
                 tasklet = nodes.Tasklet(
                     "condition", dict.fromkeys(connectors.values()), {"__out": None}, f"__out = {expression}"
