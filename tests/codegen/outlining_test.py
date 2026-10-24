@@ -10,7 +10,8 @@ import pytest
 import dace
 from dace import dtypes
 from dace.codegen.exceptions import CodegenError
-from dace.sdfg.state import CodeGeneratorFunctionRegion, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import CodeGeneratorFunctionRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import helpers as xfh
 
 N = dace.symbol("N")
@@ -497,6 +498,74 @@ def test_region_literal_scalar_not_folded_with_call():
     assert re.search(r"\bd\b", _signature(unit, "scale_fn"))
 
 
+def test_region_in_loop_keeps_carried_scalar():
+    """A scalar that carries a value to the next iteration of a loop stays outside a region in the loop body, even
+    if the region holds all of its accesses: a local of the function would lose the value between calls."""
+    sdfg = dace.SDFG("fnregion_carried_scalar")
+    sdfg.add_array("IN", [8], dace.float64)
+    sdfg.add_array("OUT", [8], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = ConditionalBlock("first")
+    loop.add_node(first, is_start_block=True)
+    branch = ControlFlowRegion("first_body", sdfg=sdfg)
+    first.add_branch(CodeBlock("i == 0"), branch)
+    init = branch.add_state("init", is_start_block=True)
+    tasklet = init.add_tasklet("zero", {}, {"o"}, "o = 0.0")
+    init.add_edge(tasklet, "o", init.add_write("s"), None, dace.Memlet("s[0]"))
+    use = loop.add_state("use")  # OUT[i] = the input of the previous iteration
+    tasklet = use.add_tasklet("use", {"a"}, {"o"}, "o = a")
+    use.add_edge(use.add_read("s"), None, tasklet, "a", dace.Memlet("s[0]"))
+    use.add_edge(tasklet, "o", use.add_write("OUT"), None, dace.Memlet("OUT[i]"))
+    loop.add_edge(first, use, dace.InterstateEdge())
+    carry = loop.add_state("carry")
+    tasklet = carry.add_tasklet("carry", {"a"}, {"o"}, "o = a")
+    carry.add_edge(carry.add_read("IN"), None, tasklet, "a", dace.Memlet("IN[i]"))
+    carry.add_edge(tasklet, "o", carry.add_write("s"), None, dace.Memlet("s[0]"))
+    loop.add_edge(use, carry, dace.InterstateEdge())
+    xfh.wrap_in_function_region([first, use, carry], "body", inlining=dtypes.FunctionInlining.NoInline)
+    sdfg.validate()
+
+    inputs = np.arange(1, 9, dtype=np.float64)
+    out = np.full(8, -1.0)
+    sdfg(IN=inputs.copy(), OUT=out)
+    assert np.array_equal(out, np.concatenate([[0.0], inputs[:-1]]))
+
+
+def test_region_no_restrict_with_outside_view():
+    """A view declared outside a region may point into another argument, so no argument is ``__restrict__``: the
+    region writes through the view and reads the viewed array."""
+    sdfg = dace.SDFG("fnregion_outside_view")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("OUT", [2], dace.float64)
+    sdfg.add_view("V", [4], dace.float64)
+    before = sdfg.add_state("before", is_start_block=True)
+    view = before.add_access("V")
+    before.add_edge(before.add_read("A"), None, view, "views", dace.Memlet("A[2:6]"))
+    tasklet = before.add_tasklet("read_view", {"x"}, {"o"}, "o = x")
+    before.add_edge(view, None, tasklet, "x", dace.Memlet("V[1]"))
+    before.add_edge(tasklet, "o", before.add_write("OUT"), None, dace.Memlet("OUT[0]"))
+    write = sdfg.add_state_after(before, "write")
+    view = write.add_access("V")
+    tasklet = write.add_tasklet("write_view", {}, {"o"}, "o = 7.0")
+    write.add_edge(tasklet, "o", view, None, dace.Memlet("V[0]"))
+    write.add_edge(view, "views", write.add_write("A"), None, dace.Memlet("A[2:6]"))
+    read = sdfg.add_state_after(write, "read")
+    tasklet = read.add_tasklet("read_array", {"x"}, {"o"}, "o = x")
+    read.add_edge(read.add_read("A"), None, tasklet, "x", dace.Memlet("A[2]"))
+    read.add_edge(tasklet, "o", read.add_write("OUT"), None, dace.Memlet("OUT[1]"))
+    xfh.wrap_in_function_region([write, read], "body", inlining=dtypes.FunctionInlining.NoInline)
+    sdfg.validate()
+
+    (frame,) = _linkable_sources(sdfg)
+    assert "__restrict__" not in _signature(frame, "body")
+    A = np.arange(8, dtype=np.float64)
+    out = np.zeros(2)
+    sdfg(A=A, OUT=out)
+    assert np.array_equal(out, [3.0, 7.0])
+
+
 def test_region_serialization():
     sdfg = _three_loop_regions("fnregion_serialization", dtypes.FunctionPlacement.SeparateUnit, "unit0")
     loaded = dace.SDFG.from_json(sdfg.to_json())
@@ -536,4 +605,6 @@ if __name__ == "__main__":
     test_region_equal_functions_shared()
     test_region_literal_scalars_folded()
     test_region_literal_scalar_not_folded_with_call()
+    test_region_in_loop_keeps_carried_scalar()
+    test_region_no_restrict_with_outside_view()
     test_region_serialization()

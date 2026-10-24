@@ -9,6 +9,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+import networkx as nx
 import numpy as np
 
 import dace
@@ -115,6 +116,21 @@ def _inside_loop_of(block: ControlFlowBlock, region: ControlFlowRegion) -> bool:
     while graph is not region:
         if isinstance(graph, LoopRegion):
             return True
+        graph = graph.parent_graph
+    return False
+
+
+def _may_run_again(block: ControlFlowBlock) -> bool:
+    """
+    Whether a block may run several times in one execution of its SDFG, i.e., whether a loop or a cycle of control
+    flow encloses it. Values it leaves in its data may then be read by its next run.
+    """
+    graph = block.parent_graph
+    while graph is not None:
+        if isinstance(graph, LoopRegion) or not nx.is_directed_acyclic_graph(graph.nx):
+            return True
+        if isinstance(graph, SDFG):
+            return False
         graph = graph.parent_graph
     return False
 
@@ -983,6 +999,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         state_local = self._state_local_scalars(sdfg)
         literals = self._literal_scalars(sdfg)
+        # A view or reference declared outside the region points into other data, which may be another argument:
+        # then no argument may be treated as unaliased
+        outside_views = any(
+            isinstance(sdfg.arrays[name], (data.View, data.Reference)) for name in accessed - declared_inside
+        )
         # Persistent data is passed as arguments (which compilers can treat as unaliased, unlike state struct members)
         # unless code in the region may reach it through the state struct by other means
         pass_persistent = region.persistent_arguments and not _reaches_state_struct(sdfg, inner_states)
@@ -1018,6 +1039,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if defined_type == disp.DefinedType.Pointer and name not in allocated_inside:
                 restrict = (
                     region.restrict_arguments
+                    and not outside_views
                     and ctype.rstrip().endswith("*")
                     and not desc.may_alias
                     and not isinstance(desc, (data.View, data.Reference))
@@ -1547,6 +1569,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     and key not in inside
                     and key is not region
                 ):
+                    continue
+                # A local of the function is undefined on every call: a value that the previous run of the region
+                # left (e.g., in the previous iteration of a loop around it) must stay outside, unless no value
+                # crosses a state boundary
+                if _may_run_again(region) and name not in self._state_local_scalars(sdfg):
                     continue
 
                 for scope, entry in entries[name]:
