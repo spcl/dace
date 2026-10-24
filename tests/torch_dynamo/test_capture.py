@@ -5,6 +5,7 @@ import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
@@ -115,6 +116,26 @@ def test_capture_compile_and_bind():
         x = torch.randn(4, 4)
         (out,) = run(x, 1)
         torch.testing.assert_close(out, model(x, 1))
+
+
+TABLE = np.arange(12.0, dtype=np.float32).reshape(3, 4)
+
+
+def _function_with_numpy_global(x):
+    return x * 2 + torch.as_tensor(TABLE)[1]
+
+
+@pytest.mark.torch
+def test_capture_numpy_global_source():
+    """A module-level numpy array is traced as a tensor (``___from_numpy``) and bound as one at run time."""
+    program = capture(_function_with_numpy_global, torch.randn(5, 4), dynamic_shapes={"x": {0: "n"}})
+    assert any(kind == "global" and name == "TABLE" for kind, name, _ in _sources(program))
+    run = program.compile("capture_numpy_global")
+    with torch.no_grad():
+        for n in (5, 3):
+            x = torch.randn(n, 4)
+            (out,) = run(x)
+            torch.testing.assert_close(out, _function_with_numpy_global(x))
 
 
 if __name__ == "__main__":

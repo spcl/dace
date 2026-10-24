@@ -14,6 +14,7 @@ import warnings
 from collections.abc import Sequence
 from typing import Any
 
+import numpy
 import sympy
 import torch
 from torch._dynamo import source as dsource
@@ -77,6 +78,9 @@ class SourceRef:
             value = arguments[self.root]
         for accessor in self.raw_path if self.raw_path is not None else self.path:
             value = value[accessor] if isinstance(value, (dict, list, tuple)) else getattr(value, accessor)
+        if isinstance(value, numpy.ndarray):
+            # Dynamo traces numpy arrays (e.g., module-level constant tables) as tensors (``___from_numpy(...)``)
+            value = torch.from_numpy(value)
         if self.kind == "size":
             return value.size(self.dim)
         if self.kind == "stride":
