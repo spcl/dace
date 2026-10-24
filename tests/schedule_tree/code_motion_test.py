@@ -634,7 +634,7 @@ def test_hoistable_whole_child():
     stree = _hoisting_tree()
     loop = stree.children[0]
     copy_nest = _loop("k", 0, 8, [_tasklet("o = a", {"a": "y[k]"}, {"o": "d[k]"})])
-    loop.children = [copy_nest] + [c for c in loop.children]
+    loop.children = [copy_nest, *loop.children]
     loop.children[1].children = loop.children[1].children[:1]
     for child in loop.children:
         child.parent = loop

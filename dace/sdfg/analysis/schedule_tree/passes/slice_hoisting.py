@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import sympy
 
-from dace import data, dtypes
+from dace import data, dtypes, utils
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -48,7 +48,7 @@ from dace.sdfg.analysis.schedule_tree.passes.tasklet_splitting import (
 from dace.sdfg.state import LoopRegion
 
 # Nodes that create aliases or jump: loop bodies that contain them are not analyzed
-_UNSUPPORTED = (tn.ViewNode, tn.NViewEnd, tn.RefSetNode, tn.GotoNode, tn.StateLabel, tn.BreakNode, tn.ContinueNode)
+_UNSUPPORTED = (tn.ViewNode, tn.RefSetNode, tn.GotoNode, tn.StateLabel, tn.BreakNode, tn.ContinueNode)
 
 # Scopes the slice may run in (copied with their headers)
 _COPYABLE = (tn.ForScope, tn.WhileScope, tn.IfScope, tn.ElifScope, tn.ElseScope)
@@ -448,8 +448,10 @@ def _copy_slice(
             ):
                 members.append(children[position + len(members)])
             needed = [k for k, member in enumerate(members) if id(member) in cut.scopes]
-            for member in members[: max(needed) + 1] if needed else []:
-                result.append(_copy_scope(member, _copy_slice(member.children, body, cut, stored, renamed), renamed))
+            result.extend(
+                _copy_scope(member, _copy_slice(member.children, body, cut, stored, renamed), renamed)
+                for member in (members[: max(needed) + 1] if needed else [])
+            )
             position += len(members)
             continue
         position += 1
@@ -576,12 +578,12 @@ def _hoist_slice(loop: tn.ForScope, trips: int, reaching: ReachingAnalysis, repo
         desc = copy.deepcopy(containers[name])
         desc.transient = True
         desc.lifetime = dtypes.AllocationLifetime.Scope
-        renamed[name] = data.find_new_name(f"{name}_slice", containers)
+        renamed[name] = utils.find_new_name(f"{name}_slice", containers)
         containers[renamed[name]] = desc
     for entry in stored:
         entry.memlets = {}
         for value in entry.values:
-            name = data.find_new_name(f"{entry.node.node.label}_{value}", containers)
+            name = utils.find_new_name(f"{entry.node.node.label}_{value}", containers)
             containers[name] = data.Array(entry.types[value], [n for _, n, _ in entry.space[value]], transient=True)
             entry.memlets[value] = Memlet(f"{name}[{', '.join(i for _, _, i in entry.space[value])}]")
 

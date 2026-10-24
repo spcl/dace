@@ -15,7 +15,6 @@ concrete, never just toward their readers (which would lengthen the live ranges 
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Union
 
 import sympy
 
@@ -63,10 +62,10 @@ from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, Us
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Nodes that create aliases or jump to arbitrary places: subtrees that contain them are not reordered
-_OPAQUE_NODES = (tn.ViewNode, tn.NViewEnd, tn.RefSetNode, tn.GotoNode, tn.StateLabel)
+_OPAQUE_NODES = (tn.ViewNode, tn.RefSetNode, tn.GotoNode, tn.StateLabel)
 
 #: A subtree, or statements of one loop body (in body order) that move together
-Statements = Union[tn.ScheduleTreeNode, Sequence[tn.ScheduleTreeNode]]
+Statements = tn.ScheduleTreeNode | Sequence[tn.ScheduleTreeNode]
 
 
 def _statements(unit: Statements) -> tuple[tn.ScheduleTreeNode, ...]:
