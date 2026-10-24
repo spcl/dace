@@ -78,7 +78,7 @@ def make_compound_extents_sdfg():
     shape = [dace.symbol("p"), dace.symbolic.pystr_to_symbolic("(m + 1) // 2 + 3")]
     for name in ("inbuf", "outbuf"):
         sdfg.add_array(name, shape, dace.float64)
-    node = mpi.nodes.alltoall.Alltoall("alltoall")
+    node = comm.nodes.alltoall.Alltoall("alltoall")
     whole = {name: Memlet.from_array(name, sdfg.arrays[name]) for name in ("inbuf", "outbuf")}
     state.add_memlet_path(state.add_access("inbuf"), node, dst_conn="_inbuffer", memlet=whole["inbuf"])
     state.add_memlet_path(node, state.add_access("outbuf"), src_conn="_outbuffer", memlet=whole["outbuf"])
