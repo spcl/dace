@@ -61,7 +61,7 @@ structure SibCtx where
 
 /-- Execution context of a schedule tree. -/
 structure TCtx where
-  /-- The SDFG context over the tree's descriptor repository (`pfx = ""`). -/
+  /-- The SDFG context over the tree's descriptor repository (top-level memory names). -/
   ctx : Ctx
   tree : STree
   /-- The stream consumed by the innermost enclosing consume scope: reads
@@ -70,7 +70,7 @@ structure TCtx where
 
 namespace TCtx
 
-def ofTree (I : Interp) (t : STree) : TCtx := { ctx := { I, g := t.toSDFG, pfx := "" }, tree := t }
+def ofTree (I : Interp) (t : STree) : TCtx := { ctx := { I, g := t.toSDFG }, tree := t }
 
 /-- Enter the body of a consume scope popping from `d`. -/
 def consuming (tc : TCtx) (d : Name) : TCtx := { tc with consumed := some d }

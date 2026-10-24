@@ -593,14 +593,13 @@ theorem consumeFinish_shift (pre : St) (l : Loc) (logs : List Log) (rest pushed 
   simp only [St.shift_mem]
   split <;> simp [Res.map, St.shift, Log.seq_assoc]
 
-theorem bindConnectors_shift (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (st : St) :
-    bindConnectors ctx ctx' ρ' s n (st.shift L) =
-      (bindConnectors ctx ctx' ρ' s n st).map (Prod.map (St.shift L) id) := by
-  unfold bindConnectors
-  refine List.foldlM_res_comm (Prod.map (St.shift L) id) _ (fun ⟨st, aliased⟩ c => ?_) _ (st, [])
+theorem bindCodeInputs_shift (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (st : St) :
+    bindCodeInputs ctx' ρ' s n (st.shift L) =
+      (bindCodeInputs ctx' ρ' s n st).map (Prod.map (St.shift L) id) := by
+  unfold bindCodeInputs
+  refine List.foldlM_res_comm (Prod.map (St.shift L) id) _ (fun ⟨st, codes⟩ c => ?_) _ (st, [])
   simp only [Prod.map_apply, id_eq, St.shift_mem, St.shift_val?]
   split
-  · rfl
   · split
     · exact Res.bind_shift' _ fun l => rfl
     · rfl
@@ -614,10 +613,13 @@ theorem nestedSetup_shift (s : State) (n : DNode) (inner : SDFG) (mapping : List
     nestedSetup ctx ρ s n inner mapping (st.shift L) =
       (nestedSetup ctx ρ s n inner mapping st).map (shiftNested L) := by
   unfold nestedSetup
+  refine Res.bind_shift' _ fun conns => ?_
   simp only [St.shift_mem]
   refine Res.bind_shift' _ fun ρ' => ?_
-  rw [bindConnectors_shift]
-  exact Res.bind_shift _ fun ⟨st', aliased⟩ => rfl
+  have : ({ st.shift L with mem := (ctx.enter inner n.id conns).allocate inner.callTransients st.mem } : St) =
+      St.shift L { st with mem := (ctx.enter inner n.id conns).allocate inner.callTransients st.mem } := rfl
+  rw [this, bindCodeInputs_shift]
+  exact Res.bind_shift _ fun ⟨st', codes⟩ => rfl
 
 theorem nestedFinish_shift (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (aliased : List Name) (pre : St)
     (m₂ : Mem) (g₂ : Log) :

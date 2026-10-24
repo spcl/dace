@@ -8,8 +8,8 @@ import Dace.SDFG.WF
 Shared infrastructure of the operational semantics (`Dace.SDFG.Semantics`):
 
 * outcomes (`ErrReason`, `Res`) and control signals (`Ctl`);
-* the execution context `Ctx` (interpretation, current SDFG, container-name
-  prefix of the current nested invocation);
+* the execution context `Ctx` (interpretation, current SDFG, memory names of
+  the containers of the current invocation);
 * element locations (`Ctx.loc`), expression evaluation that may read data
   (`Ctx.eval`), subset enumeration (`Ctx.pointsOf`);
 * the sequential execution state `St` (local memory view, access log, scalar
@@ -212,19 +212,25 @@ def SDFG.withConstants (g : SDFG) (ρ : Valuation) : Valuation :=
 structure Ctx where
   I : Interp
   g : SDFG
-  /-- Container-name prefix of the current nested invocation (`""` at top level). -/
-  pfx : String := ""
+  /-- Memory name of each container name of the current SDFG (the identity
+  at top level, `Ctx.enter`). -/
+  cname : Name → Name := id
+  /-- Memory name of a name private to the current invocation: the inner
+  containers of a nested SDFG live under `scope (inner.name#node/ ++ n)`
+  (the identity at top level). -/
+  scope : Name → Name := id
 
 namespace Ctx
 
-/-- Memory name of a container of the current SDFG. -/
-def cname (ctx : Ctx) (n : Name) : Name := ctx.pfx ++ n
-
 def desc? (ctx : Ctx) (n : Name) : Option DataDesc := ctx.g.array? n
 
-/-- Context of a nested SDFG invoked by node `node`. -/
-def enter (ctx : Ctx) (inner : SDFG) (node : NodeId) : Ctx :=
-  { ctx with g := inner, pfx := ctx.pfx ++ inner.name ++ "#" ++ toString node ++ "/" }
+/-- Context of a nested SDFG invoked by node `node` (`Decisions.md#D34`):
+a connector bound in `conns` names the memory of the outer container on its
+edge, every other inner container lives under the call prefix
+`inner.name#node/`. -/
+def enter (ctx : Ctx) (inner : SDFG) (node : NodeId) (conns : List (Name × Name)) : Ctx :=
+  let sc := fun n => ctx.scope (inner.name ++ "#" ++ toString node ++ "/" ++ n)
+  { ctx with g := inner, cname := fun n => (conns.lookup n).getD (sc n), scope := sc }
 
 def isView (ctx : Ctx) (n : Name) : Bool := (ctx.desc? n).any (·.isView)
 def isReference (ctx : Ctx) (n : Name) : Bool := (ctx.desc? n).any (·.isReference)
@@ -607,7 +613,7 @@ def DataDesc.definedAtStart (d : DataDesc) : Bool := !d.transient || d.lifetime 
 mutual
 
 /-- Memory names of the `External` transients of an SDFG invoked under the
-memory-name prefix `pfx` and of the SDFGs nested in it (`Ctx.enter`). -/
+memory-name prefix `pfx` (`Ctx.scope` at top level) and of the SDFGs nested in it (`Ctx.enter`). -/
 def SDFG.externalNames (pfx : String) : SDFG → List Name
   | ⟨_, arrays, _, _, _, top, _⟩ =>
     (arrays.filter fun (_, d) => d.transient && d.lifetime == .external).map (pfx ++ ·.1) ++

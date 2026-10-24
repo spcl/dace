@@ -971,7 +971,7 @@ end Matched
 /-! ## Programs -/
 
 /-- The contexts in which an SDFG and a schedule tree run. -/
-def sctx (I : Interp) (g : SDFG) : Ctx := { I, g, pfx := "" }
+def sctx (I : Interp) (g : SDFG) : Ctx := { I, g }
 
 /-- The tree's root list corresponds to the SDFG's top region. -/
 structure ProgCorr (I : Interp) (g : SDFG) (t : STree) : Prop where
@@ -988,7 +988,7 @@ theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) 
     (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r := by
   obtain ⟨res, hx, rfl⟩ := ht
   have he : (TCtx.ofTree I t).ctx.erase = (sctx I g).erase :=
-    Ctx.erase_eq_of rfl rfl (by simp [TCtx.ofTree, STree.toSDFG, sctx, hc.arrays])
+    Ctx.erase_eq_of rfl rfl rfl (by simp [TCtx.ofTree, STree.toSDFG, sctx, hc.arrays])
   have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := g.startMem m₀ } := by
     simp [rootStart, hc.consts, hc.start, SDFG.startMem]
   rw [hstart] at hx

@@ -14,7 +14,7 @@ block whose runs it matches yields a refinement of the whole SDFG.
 The execution relations depend on the context `ctx` only through
 
 * `ctx.erase`: the interpretation `ctx.I`, the container-name prefix
-  `ctx.pfx` and the descriptor repository `ctx.g.arrays` (every leaf function
+  memory names `ctx.cname`, `ctx.scope` and the descriptor repository `ctx.g.arrays` (every leaf function
   of `Dace.SDFG.Semantics.Leaf` sees nothing else: `f ctx = f ctx.erase`
   holds by `rfl`, `Ctx.Agree.execSimple` etc.), and
 * `Ctx.privateTransients`, which counts the mentions of each transient over
@@ -23,7 +23,7 @@ The execution relations depend on the context `ctx` only through
 Constants, symbols, facts, the SDFG name and the control-flow hierarchy
 `ctx.g.top` are not read by any relation (constants enter through the
 `SDFG` argument of `SDFGExec`; nested invocations build their own context
-from `ctx.I` and `ctx.pfx` alone, `Ctx.enter`).  `Ctx.Agree ctx' ctx` states
+from `ctx.I` and `ctx.scope` alone, `Ctx.enter`).  `Ctx.Agree ctx' ctx` states
 the two conditions; under it every relation holds in `ctx'` iff it holds in
 `ctx` (`NodeExec.congr`, …, `SDFGExec.congr`, `BlockExec.congr_iff`).
 
@@ -97,11 +97,11 @@ namespace Ctx
 /-- The part of a context the leaf functions read: interpretation, prefix and
 descriptor repository. -/
 def erase (ctx : Ctx) : Ctx :=
-  { I := ctx.I, g := { name := "", arrays := ctx.g.arrays, top := {} }, pfx := ctx.pfx }
+  { I := ctx.I, g := { name := "", arrays := ctx.g.arrays, top := {} }, cname := ctx.cname, scope := ctx.scope }
 
-theorem erase_eq_of {ctx' ctx : Ctx} (hI : ctx'.I = ctx.I) (hp : ctx'.pfx = ctx.pfx)
+theorem erase_eq_of {ctx' ctx : Ctx} (hI : ctx'.I = ctx.I) (hc : ctx'.cname = ctx.cname) (hs : ctx'.scope = ctx.scope)
     (ha : ctx'.g.arrays = ctx.g.arrays) : ctx'.erase = ctx.erase := by
-  simp only [erase, hI, hp, ha]
+  simp only [erase, hI, hc, hs, ha]
 
 /-- Two contexts in which the execution relations coincide (`ctx_congr`):
 same interpretation, prefix and descriptors, and the same private transients
@@ -1274,9 +1274,9 @@ theorem sameTransientMentions?_symm {g g' : SDFG} {b' b : Block} (ha : g'.arrays
 /-- **The contexts of an SDFG and of the SDFG with a block replaced agree**
 (same descriptors, and same private transients for every scope) when the
 two blocks mention every `Scope`-lifetime transient equally often. -/
-theorem Ctx.agree_setBlockAt {I : Interp} {pfx : String} {g : SDFG} {p : List PathStep} {i : BlockId}
+theorem Ctx.agree_setBlockAt {I : Interp} {cn sc : Name → Name} {g : SDFG} {p : List PathStep} {i : BlockId}
     {b' b : Block} (hat : g.top.blockAt? p i = some b) (hm : sameTransientMentions? g b' b = true) :
-    Ctx.Agree { I, g := g.setBlockAt p i b', pfx } { I, g, pfx } := by
+    Ctx.Agree { I, g := g.setBlockAt p i b', cname := cn, scope := sc } { I, g, cname := cn, scope := sc } := by
   refine ⟨rfl, fun s entry => ?_⟩
   unfold Ctx.privateTransients
   refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
@@ -1288,24 +1288,23 @@ theorem Ctx.agree_setBlockAt {I : Interp} {pfx : String} {g : SDFG} {p : List Pa
     have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
       Region.countMentions_setBlockAt t h p g.top hat
     rw [hc]
-    rfl
   · rfl
 
 /-! ## Congruence for SDFGs -/
 
 theorem SDFG.Exec.intro {I : Interp} {g : SDFG} {ρ₀ : Valuation} {m₀ : Mem} {res : Res (Valuation × Mem × Log)}
-    (h : SDFGExec { I, g, pfx := "" } ρ₀ (g.startMem m₀) g res) : SDFG.Exec I g ρ₀ m₀ (res.map fun x => x.2.1) :=
+    (h : SDFGExec { I, g } ρ₀ (g.startMem m₀) g res) : SDFG.Exec I g ρ₀ m₀ (res.map fun x => x.2.1) :=
   ⟨res, h, rfl⟩
 
 /-- Every run of the SDFG with the block replaced is matched (`MatchedE`) (with
 equal final memories) by a run of the original SDFG. -/
 theorem Congr.exec_matchedE {g : SDFG} {p : List PathStep} {i : BlockId} {b' b : Block}
     (hat : g.top.blockAt? p i = some b) (hm : sameTransientMentions? g b' b = true) {I : Interp}
-    (hs : BlockMatchedE { I, g, pfx := "" } b' b) {ρ₀ : Valuation} {m₀ : Mem} {r : Res Mem}
+    (hs : BlockMatchedE { I, g } b' b) {ρ₀ : Valuation} {m₀ : Mem} {r : Res Mem}
     (hr : SDFG.Exec I (g.setBlockAt p i b') ρ₀ m₀ r) : MatchedE Eq (SDFG.Exec I g ρ₀ m₀) r := by
   obtain ⟨res, hres, rfl⟩ := hr
   rw [SDFG.startMem_setBlockAt hat (sameTransientMentions?_externals hm)] at hres
-  have hres := SDFGExec.congr (Ctx.agree_setBlockAt (I := I) (pfx := "") hat hm) hres
+  have hres := SDFGExec.congr (Ctx.agree_setBlockAt (I := I) (cn := id) (sc := id) hat hm) hres
   have hreg := Congr.region_setBlockAt hs p g.top hat
   cases hres with
   | err h =>
@@ -1332,8 +1331,8 @@ theorem Congr.exec_matchedE {g : SDFG} {p : List PathStep} {i : BlockId} {b' b :
 * `g` is `Supported` (necessary: `Refines g g` alone needs it). -/
 theorem Congr.block {g : SDFG} {p : List PathStep} {i : BlockId} {b' b : Block}
     (hat : g.top.blockAt? p i = some b) (hm : sameTransientMentions? g b' b = true)
-    (hs : ∀ I : Interp, I.Lawful → ∀ cst r', BlockExec { I, g, pfx := "" } cst b' r' →
-      MatchedE CtlRel (BlockExec { I, g, pfx := "" } cst b) r')
+    (hs : ∀ I : Interp, I.Lawful → ∀ cst r', BlockExec { I, g } cst b' r' →
+      MatchedE CtlRel (BlockExec { I, g } cst b) r')
     (hsup : Supported g.prog) : Refines (g.setBlockAt p i b').prog g.prog :=
   Refines.of_matchedE hsup fun I _ _ hp _ hr =>
     (Congr.exec_matchedE hat hm (BlockMatchedE.of_same (hs I hp.1)) hr).mono
@@ -1343,10 +1342,10 @@ theorem Congr.block {g : SDFG} {p : List PathStep} {i : BlockId} {b' b : Block}
 give equivalent SDFGs (the new SDFG is then supported as well). -/
 theorem Congr.blockEquiv {g : SDFG} {p : List PathStep} {i : BlockId} {b' b : Block}
     (hat : g.top.blockAt? p i = some b) (hm : sameTransientMentions? g b' b = true)
-    (hs : ∀ I : Interp, I.Lawful → ∀ cst r', BlockExec { I, g, pfx := "" } cst b' r' →
-      MatchedE CtlRel (BlockExec { I, g, pfx := "" } cst b) r')
-    (hs' : ∀ I : Interp, I.Lawful → ∀ cst r, BlockExec { I, g, pfx := "" } cst b r →
-      MatchedE CtlRel (BlockExec { I, g, pfx := "" } cst b') r)
+    (hs : ∀ I : Interp, I.Lawful → ∀ cst r', BlockExec { I, g } cst b' r' →
+      MatchedE CtlRel (BlockExec { I, g } cst b) r')
+    (hs' : ∀ I : Interp, I.Lawful → ∀ cst r, BlockExec { I, g } cst b r →
+      MatchedE CtlRel (BlockExec { I, g } cst b') r)
     (hsup : Supported g.prog) : Equiv (g.setBlockAt p i b').prog g.prog := by
   have hat' : (g.setBlockAt p i b').top.blockAt? p i = some b' := Region.blockAt?_setBlockAt p g.top hat
   have hm' := sameTransientMentions?_symm (g' := g.setBlockAt p i b') rfl hm
@@ -1359,8 +1358,8 @@ theorem Congr.blockEquiv {g : SDFG} {p : List PathStep} {i : BlockId} {b' b : Bl
   have bwd : ∀ I ρ₀ m₀, (g.setBlockAt p i b').prog.Pre I ρ₀ m₀ → ∀ r,
       g.prog.exec I ρ₀ m₀ r → MatchedE Eq ((g.setBlockAt p i b').prog.exec I ρ₀ m₀) r := by
     intro I ρ₀ m₀ hp r hr
-    have hA := Ctx.agree_setBlockAt (I := I) (pfx := "") hat hm
-    have hsI : BlockMatchedE { I, g := g.setBlockAt p i b', pfx := "" } b b' :=
+    have hA := Ctx.agree_setBlockAt (I := I) (cn := id) (sc := id) hat hm
+    have hsI : BlockMatchedE { I, g := g.setBlockAt p i b' } b b' :=
       BlockMatchedE.of_same fun cst r hr =>
         (hs' I hp.1 cst r (BlockExec.congr hA hr)).mono (fun _ _ h => h) (fun _ h => BlockExec.congr hA.symm h)
     have hr' : SDFG.Exec I ((g.setBlockAt p i b').setBlockAt p i b) ρ₀ m₀ r := by rw [hg]; exact hr

@@ -414,7 +414,7 @@ end
 /-- Program-level semantics: `g` run by interpretation `I` from the symbol
 valuation `ρ₀` and memory `m₀` may produce outcome `r`. -/
 def SDFG.Exec (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (r : Res Mem) : Prop :=
-  ∃ res, SDFGExec { I, g, pfx := "" } ρ₀ (g.startMem m₀) g res ∧ r = res.map (fun x => x.2.1)
+  ∃ res, SDFGExec { I, g } ρ₀ (g.startMem m₀) g res ∧ r = res.map (fun x => x.2.1)
 
 /-! ## Sanity lemmas -/
 

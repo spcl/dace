@@ -317,7 +317,7 @@ end
 the symbol valuation `ρ₀` and memory `m₀` with the given fuel.  `none` =
 fuel exhausted (or no outcome exists). -/
 def SDFG.run (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (fuel : Nat) : Option (Res Mem) :=
-  (execSDFG fuel { I, g, pfx := "" } ρ₀ (g.startMem m₀) g).map fun res => res.map fun x => x.2.1
+  (execSDFG fuel { I, g } ρ₀ (g.startMem m₀) g).map fun res => res.map fun x => x.2.1
 
 /-! ## Sanity lemmas -/
 

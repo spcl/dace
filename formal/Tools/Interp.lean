@@ -296,7 +296,7 @@ def runProgram (ctx : Ctx) (inputsPath : String) (opts : Options)
 def runSDFG (sdfgPath inputsPath : String) (opts : Options) : IO UInt32 := do
   match ← SDFG.Json.readSDFG sdfgPath with
   | .error e => errorExit s!"cannot import SDFG: {e}"
-  | .ok g => runProgram { I := Interp.executable, g, pfx := "" } inputsPath opts (SDFG.run Interp.executable g)
+  | .ok g => runProgram { I := Interp.executable, g } inputsPath opts (SDFG.run Interp.executable g)
 
 /-- The schedule tree runs in the context of its own descriptor repository
 (`TCtx.ofTree`), exactly as `STree.Exec` does. -/

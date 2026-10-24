@@ -170,6 +170,11 @@ def alloc (m : Mem) (name : Name) : Mem :=
   { m with cells := fun l => if l.name = name then .undef else m.cells l,
            queues := fun l => if l.name = name then [] else m.queues l }
 
+/-- Allocate a container that is not a stream: its cells become
+uninitialized; queues and alias bindings are unchanged. -/
+def allocCells (m : Mem) (name : Name) : Mem :=
+  { m with cells := fun l => if l.name = name then .undef else m.cells l }
+
 /-- Allocate several containers. -/
 def allocAll (m : Mem) (names : List Name) : Mem := names.foldl alloc m
 

@@ -647,52 +647,68 @@ def nestedValuation (ctx : Ctx) (ρ : Valuation) (m : Mem) (mapping : List (Sym 
 /-- Connector names of a nested SDFG node (in-out connectors once). -/
 def nestedConns (n : DNode) : List Conn := ((n.inConns ++ n.outConns).map Prod.fst).eraseDups
 
-/-- Bind the connectors of a nested SDFG node (`Decisions.md#D15`, `#D34`):
-containers (the consume chunk included) are aliased with offset `0`, scalar
-code values are copied into the inner scalar.  Returns the aliased inner
-names. -/
-def bindConnectors (ctx ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (st : St) : Res (St × List Name) :=
-  (nestedConns n).foldlM (fun (st, aliased) c =>
-    let ep : Endpoint :=
-      match s.inEdgeOn n c with
-      | some e => s.srcEndpoint e
-      | none =>
-        match s.outEdgesOn n c with
-        | e :: _ => s.dstEndpoint e
-        | [] => .invalid
-    match ep with
-    | .data base _ =>
-      let inner := ctx'.cname c
-      pure ({ st with mem := st.mem.setAlias inner { base := ctx.cname base } }, inner :: aliased)
+/-- The outer end of the edge on connector `c` of a nested SDFG node. -/
+def nestedEndpoint (s : State) (n : DNode) (c : Conn) : Endpoint :=
+  match s.inEdgeOn n c with
+  | some e => s.srcEndpoint e
+  | none =>
+    match s.outEdgesOn n c with
+    | e :: _ => s.dstEndpoint e
+    | [] => .invalid
+
+/-- The connector bindings of a nested SDFG node (`Decisions.md#D15`,
+`#D34`): a connector on a data edge names the memory of the outer container
+(offset `0`).  Connectors on code edges are not bound. -/
+def nestedBindings (ctx : Ctx) (s : State) (n : DNode) : Res (List (Name × Name)) :=
+  (nestedConns n).foldlM (fun acc c =>
+    match nestedEndpoint s n c with
+    | .data base _ => pure (acc ++ [(c, ctx.cname base)])
+    | .code _ => pure acc
+    | .invalid => .err (.malformed s!"nested SDFG connector '{c}' without a valid edge")) []
+
+/-- Copy the scalar values on code→nested edges into the inner scalars.
+Returns the memory names of the connectors on code edges. -/
+def bindCodeInputs (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (st : St) : Res (St × List Name) :=
+  (nestedConns n).foldlM (fun (st, codes) c =>
+    match nestedEndpoint s n c with
     | .code key =>
       match st.val? key with
       | some v => do
         let l ← ctx'.loc ρ' st.mem c []
-        pure ({ st with mem := st.mem.write l v }, aliased)
-      | none => pure (st, aliased)
-    | .invalid => .err (.malformed s!"nested SDFG connector '{c}' without a valid edge")) (st, [])
+        pure ({ st with mem := st.mem.write l v }, codes ++ [ctx'.cname c])
+      | none => pure (st, codes ++ [ctx'.cname c])
+    | _ => pure (st, codes)) (st, [])
 
-/-- Set-up of a nested invocation: inner context, valuation, connectors. -/
+/-- The transients of an SDFG allocated per call (`Decisions.md#D68`): all
+but `Persistent`, `Global` and `External` ones. -/
+def SDFG.callTransients (g : SDFG) : List Name :=
+  (g.arrays.filter fun (_, d) =>
+    d.transient && !(d.lifetime == .persistent || d.lifetime == .global || d.lifetime == .external)).map Prod.fst
+
+/-- Allocate containers of the current SDFG (`Decisions.md#D68`): streams
+get an empty queue, other containers uninitialized cells. -/
+def Ctx.allocate (ctx : Ctx) (ts : List Name) (m : Mem) : Mem :=
+  ts.foldl (fun m t => if ctx.isStream t then m.alloc (ctx.cname t) else m.allocCells (ctx.cname t)) m
+
+/-- Set-up of a nested invocation: connector bindings, inner context,
+valuation, the per-call transients allocated, scalar code inputs copied.
+Returns the memory names whose log entries stay inside the call: the
+connectors on code edges and the per-call transients. -/
 def nestedSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (inner : SDFG) (mapping : List (Sym × Expr))
     (st : St) : Res (Ctx × Valuation × St × List Name) := do
-  let ctx' := ctx.enter inner n.id
+  let conns ← nestedBindings ctx s n
+  let ctx' := ctx.enter inner n.id conns
   let ρ' ← nestedValuation ctx ρ st.mem mapping
-  let (st, aliased) ← bindConnectors ctx ctx' ρ' s n st
-  pure (ctx', ρ', st, aliased)
+  let st := { st with mem := ctx'.allocate inner.callTransients st.mem }
+  let (st, codes) ← bindCodeInputs ctx' ρ' s n st
+  pure (ctx', ρ', st, codes ++ inner.callTransients.map ctx'.cname)
 
-/-- Names whose log entries stay inside a nested invocation: its connectors
-and its transients (prefixed). -/
-def nestedDropped (ctx' : Ctx) (n : DNode) : List Name :=
-  (nestedConns n).map ctx'.cname ++
-    ctx'.g.arrays.filterMap fun (a, d) => if d.transient then some (ctx'.cname a) else none
-
-/-- Tear-down of a nested invocation: clear the connector aliases, keep the
-memory, contribute the inner log without private names, and pass scalar
-outputs on to code consumers. -/
-def nestedFinish (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (aliased : List Name) (pre : St)
+/-- Tear-down of a nested invocation: keep the memory, contribute the inner
+log without the names private to the call (`dropped`, from `nestedSetup`),
+and pass scalar outputs on to code consumers. -/
+def nestedFinish (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (dropped : List Name) (pre : St)
     (m₂ : Mem) (g₂ : Log) : Res St :=
-  let st : St := { mem := aliased.foldl Mem.clearAlias m₂,
-                   log := pre.log.seq (g₂.dropNames (nestedDropped ctx' n)), vals := pre.vals }
+  let st : St := { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals }
   (s.outEdges n.id).foldlM (fun st e =>
     match e.data, e.srcConn with
     | .memlet _, some c =>

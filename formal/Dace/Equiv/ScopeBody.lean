@@ -239,12 +239,8 @@ theorem NodeLocal.mapSetup (mp : MapNode) (st : St) :
   unfold Dace.mapSetup
   rw [h.bindDynamicInputs]
 
-theorem NodeLocal.bindConnectors (ctx₂ : Ctx) (ρ' : Valuation) (st : St) :
-    Dace.bindConnectors ctx ctx₂ ρ' s' n st = Dace.bindConnectors ctx ctx₂ ρ' s n st := by
-  unfold Dace.bindConnectors
-  refine List.foldlM_congr_mem (fun c _ x => ?_) _
-  rcases x with ⟨st, al⟩
-  dsimp only
+theorem NodeLocal.nestedEndpoint (c : Conn) : Dace.nestedEndpoint s' n c = Dace.nestedEndpoint s n c := by
+  unfold Dace.nestedEndpoint
   rw [h.inEdgeOn, h.outEdgesOn]
   cases hi : s.inEdgeOn n c with
   | some e => simp only [(h.edgeIn e (State.mem_inEdgeOn hi)).src]
@@ -256,8 +252,8 @@ theorem NodeLocal.bindConnectors (ctx₂ : Ctx) (ρ' : Valuation) (st : St) :
 
 theorem NodeLocal.nestedSetup (inner : SDFG) (mapping : List (Sym × Expr)) (st : St) :
     Dace.nestedSetup ctx ρ s' n inner mapping st = Dace.nestedSetup ctx ρ s n inner mapping st := by
-  unfold Dace.nestedSetup
-  simp only [h.bindConnectors]
+  unfold Dace.nestedSetup Dace.nestedBindings Dace.bindCodeInputs
+  simp only [h.nestedEndpoint]
 
 theorem NodeLocal.nestedFinish (ctx₂ : Ctx) (ρ' : Valuation) (aliased : List Name) (pre : St) (m₂ : Mem)
     (g₂ : Log) :
@@ -1196,7 +1192,7 @@ end Matched
 /-- The context in which the check evaluates the context-dependent queries
 (descriptor kinds, private transients): they read only the SDFG and the
 prefix, not the interpretation. -/
-def checkCtx (g : SDFG) : Ctx := { I := Interp.uninterpreted, g, pfx := "" }
+def checkCtx (g : SDFG) : Ctx := { I := Interp.uninterpreted, g }
 
 /-- What the leaf functions read about an edge (`EdgeSame`). -/
 def edgeFp (ctx : Ctx) (s : State) (e : DEdge) :
@@ -1298,7 +1294,7 @@ def sameOutside? (g : SDFG) (s' s : State) (M : NodeId) : Bool :=
 theorem sameOutside?_spec {g : SDFG} {s' s : State} {M : NodeId} (h : sameOutside? g s' s M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M)) (I : Interp) :
-    OuterFacts { I, g, pfx := "" } s' s M := by
+    OuterFacts { I, g } s' s M := by
   unfold sameOutside? at h
   simp only [Bool.and_eq_true] at h
   obtain ⟨⟨⟨hb, ho⟩, hs⟩, -⟩ := h
@@ -1398,9 +1394,9 @@ theorem sameOutside?_mentions {g : SDFG} {s' s : State} {M : NodeId} (h : sameOu
 theorem scopeBody_blockMatchedE {g : SDFG} {s' s : State} {M : NodeId} (hchk : sameOutside? g s' s M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M)) {I : Interp} (hI : I.Lawful)
-    (hbody : BodyMatchedE { I, g, pfx := "" } s' s M) :
-    ∀ cst r', BlockExec { I, g, pfx := "" } cst (.state s') r' →
-      MatchedE CtlRel (BlockExec { I, g, pfx := "" } cst (.state s)) r' := by
+    (hbody : BodyMatchedE { I, g } s' s M) :
+    ∀ cst r', BlockExec { I, g } cst (.state s') r' →
+      MatchedE CtlRel (BlockExec { I, g } cst (.state s)) r' := by
   intro cst r' h
   cases h with
   | state h =>
@@ -1426,7 +1422,7 @@ theorem Congr.scopeBody {g : SDFG} {p : List PathStep} {i : BlockId} {s s' : Sta
     (hat : g.top.blockAt? p i = some (.state s)) (hchk : sameOutside? g s' s M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M))
-    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } s' s M)
+    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g } s' s M)
     (hsup : Supported g.prog) : Refines (g.setBlockAt p i (.state s')).prog g.prog :=
   Congr.block hat (sameOutside?_mentions hchk)
     (fun I hI => scopeBody_blockMatchedE hchk hN hE hI (hbody I hI)) hsup
@@ -1438,8 +1434,8 @@ theorem Congr.scopeBodyEquiv {g : SDFG} {p : List PathStep} {i : BlockId} {s s' 
     (hchk' : sameOutside? g s s' M = true)
     (hN : s'.outerNodes (s'.scopeNodes M) = s.outerNodes (s.scopeNodes M))
     (hE : s'.outerEdges (s'.scopeNodes M) = s.outerEdges (s.scopeNodes M))
-    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } s' s M)
-    (hbody' : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } s s' M)
+    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g } s' s M)
+    (hbody' : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g } s s' M)
     (hsup : Supported g.prog) : Equiv (g.setBlockAt p i (.state s')).prog g.prog :=
   Congr.blockEquiv hat (sameOutside?_mentions hchk)
     (fun I hI => scopeBody_blockMatchedE hchk hN hE hI (hbody I hI))
@@ -1480,7 +1476,7 @@ hypotheses of `Congr.scopeBody` become the check `bodyFits?`. -/
 theorem Congr.mapBody {g : SDFG} {p : List PathStep} {i : BlockId} {s : State} {M : NodeId} {bn : List DNode}
     {be : List DEdge} (hat : g.top.blockAt? p i = some (.state s)) (hfit : s.bodyFits? M bn be = true)
     (hchk : sameOutside? g (s.withBody M bn be) s M = true)
-    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g, pfx := "" } (s.withBody M bn be) s M)
+    (hbody : ∀ I : Interp, I.Lawful → BodyMatchedE { I, g } (s.withBody M bn be) s M)
     (hsup : Supported g.prog) : Refines (g.setBlockAt p i (.state (s.withBody M bn be))).prog g.prog :=
   Congr.scopeBody hat hchk (State.withBody_outer hfit).1 (State.withBody_outer hfit).2 hbody hsup
 

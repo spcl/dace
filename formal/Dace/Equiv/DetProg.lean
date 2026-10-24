@@ -494,11 +494,11 @@ end Control
 fragment with convex map scopes.  It does not depend on the interpretation
 (`SDFG.Exec.det`). -/
 def SDFG.det? (g : SDFG) : Bool :=
-  Region.statesOk (stateDet? { I := Interp.uninterpreted, g, pfx := "" }) g.top
+  Region.statesOk (stateDet? { I := Interp.uninterpreted, g }) g.top
 
 theorem stateDet?_sound {I : Interp} {g : SDFG} {s : State}
-    (h : stateDet? { I := Interp.uninterpreted, g, pfx := "" } s = true) :
-    SeqPure { I, g, pfx := "" } s ∧ ScopesOk s := by
+    (h : stateDet? { I := Interp.uninterpreted, g } s = true) :
+    SeqPure { I, g } s ∧ ScopesOk s := by
   simp only [stateDet?, Bool.and_eq_true] at h
   have hs := seqPure?_sound h.1
   exact ⟨⟨⟨hs.plain, hs.shapes, hs.memlets, hs.kinds, hs.ranges, hs.reduces, hs.codeOut⟩, hs.noPriv⟩, scopesOk?_sound h.2⟩
@@ -516,7 +516,7 @@ theorem SDFG.Exec.det {I : Interp} {g : SDFG} {ρ₀ : Valuation} {m₀ : Mem} {
     obtain ⟨ρ', m', l⟩ := y
     simp only [Res.map_ok, Res.ok_inj] at hmx
     subst hmx
-    obtain ⟨_, rfl, -⟩ := SDFGExec.det (ctx := { I, g, pfx := "" }) hl (fun _ h => stateDet?_sound h) hok hy hx
+    obtain ⟨_, rfl, -⟩ := SDFGExec.det (ctx := { I, g }) hl (fun _ h => stateDet?_sound h) hok hy hx
     rfl
 
 /-- A program passing `SDFG.det?` with a normal outcome has no erroneous

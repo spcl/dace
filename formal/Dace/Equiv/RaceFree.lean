@@ -130,16 +130,16 @@ theorem Access.hit_eq {ρ : Valuation} {a : Access} {l : Loc} (hna : NoAlias m�
 or different containers. -/
 def accSep (a b : Access) : Bool := a.kind.compat b.kind || a.data != b.data
 
-theorem accSep_sound {ρa ρb : Valuation} {a b : Access} (hna : NoAlias m₀) (h : accSep a b = true) :
-    Access.Sep ctx m₀ ρa ρb a b := by
+theorem accSep_sound {ρa ρb : Valuation} {a b : Access} (hinj : Function.Injective ctx.cname) (hna : NoAlias m₀)
+    (h : accSep a b = true) : Access.Sep ctx m₀ ρa ρb a b := by
   simp only [accSep, Bool.or_eq_true, bne_iff_ne, ne_eq] at h
   rcases h with h | h
   · exact Or.inl h
   · refine Or.inr fun l ha hb => h ?_
     obtain ⟨o, rfl⟩ := Access.hit_eq hna ha
     obtain ⟨o', ho⟩ := Access.hit_eq hna hb
-    simp only [Loc.elem, Loc.mk.injEq, Ctx.cname] at ho
-    exact (String.append_right_inj _).1 ho.1
+    simp only [Loc.elem, Loc.mk.injEq] at ho
+    exact hinj ho.1
 
 theorem bindIdx_cons (ρ : Valuation) (p : Sym) (ps : List Sym) (v : Int) (vs : Idx) :
     ρ.bindIdx (p :: ps) (v :: vs) = fun y => if p = y then some (.int v) else ρ.bindIdx ps vs y := by
@@ -212,13 +212,13 @@ def iterSep (ctx : Ctx) (orc : Query → Bool) (C : Constraints) (params : List 
     | none => true)
 
 theorem iterSep_sound {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid) {C : Constraints} {params : List Sym} {rng : Range} {ρ : Valuation} {pts : List Idx}
-    {i j : Idx} {a b : Access} (hna : NoAlias m₀) (hC : C.satisfies ctx.I.expr ρ)
+    {i j : Idx} {a b : Access} (hinj : Function.Injective ctx.cname) (hna : NoAlias m₀) (hC : C.satisfies ctx.I.expr ρ)
     (hrng : rng.points ctx.I.expr ρ = some pts) (hi : i ∈ pts) (hj : j ∈ pts) (hne : i ≠ j)
     (hnd : params.Nodup) (hlen : params.length = rng.dims.length) (h : iterSep ctx orc C params rng a b = true) :
     Access.Sep ctx m₀ (ρ.bindIdx params i) (ρ.bindIdx params j) a b := by
   unfold iterSep at h
   rcases Bool.or_eq_true_iff.1 h with h | h
-  · exact accSep_sound hna h
+  · exact accSep_sound hinj hna h
   · simp only [Bool.and_eq_true, List.isEmpty_iff, beq_iff_eq] at h
     obtain ⟨⟨⟨⟨⟨hba, hbb⟩, hab⟩, hpa⟩, hpb⟩, hd⟩ := h
     refine Or.inr fun l hla hlb => ?_
@@ -519,7 +519,8 @@ theorem stateFinish_clean {ctx : Ctx} {cst : CSt} {logs : List Log} (h : Log.pai
 
 /-- Iteration logs within separated footprints are pairwise free. -/
 theorem iterLogs_free {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid) {ctx : Ctx} {m₀ : Mem} {C : Constraints} {params : List Sym} {rng : Range} {ρ : Valuation}
-    {pts : List Idx} {logs : List Log} {B : List Access} (hna : NoAlias m₀) (hC : C.satisfies ctx.I.expr ρ)
+    {pts : List Idx} {logs : List Log} {B : List Access} (hinj : Function.Injective ctx.cname) (hna : NoAlias m₀)
+    (hC : C.satisfies ctx.I.expr ρ)
     (hrng : rng.points ctx.I.expr ρ = some pts) (hnd : params.Nodup) (hlen : params.length = rng.dims.length)
     (hsep : ∀ a ∈ B, ∀ b ∈ B, iterSep ctx orc C params rng a b = true)
     (hw : List.Forall₂ (fun g i => g.Within (LocPred.ofAccesses ctx m₀ (ρ.bindIdx params i) B)) logs pts) :
@@ -527,7 +528,7 @@ theorem iterLogs_free {orc : Query → Bool} (horc : ∀ q, orc q = true → q.V
   rw [Log.pairwiseFree_iff_pairwise_free]
   refine ListLemmas.pairwise_of_forall₂ (R := fun i j : Idx => i ∈ pts ∧ j ∈ pts ∧ i ≠ j)
     (fun g i h j ⟨hi, hg⟩ ⟨hj, hh⟩ ⟨_, _, hne⟩ =>
-      free_of_sep hg hh fun a ha b hb => iterSep_sound horc hna hC hrng hi hj hne hnd hlen (hsep a ha b hb))
+      free_of_sep hg hh fun a ha b hb => iterSep_sound horc hinj hna hC hrng hi hj hne hnd hlen (hsep a ha b hb))
     (forall₂_mem_right hw) ?_
   exact ((Range.points_nodup hrng).imp_of_mem fun hi hj hne => ⟨hi, hj, hne⟩)
 
@@ -538,7 +539,8 @@ section Dataflow
 variable {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid)
 include horc
 
-variable {ctx : Ctx} {s : State} {F : Nat}
+variable {ctx : Ctx} {s : State} {F : Nat} (hinj : Function.Injective ctx.cname)
+include hinj
 
 /-- The happens-before check of a sequential execution passes. -/
 theorem hbFree_of_ok {ρ : Valuation} {all direct order : List NodeId} {st st₁ st₂ : St}
@@ -572,7 +574,7 @@ theorem hbFree_of_ok {ρ : Valuation} {all direct order : List NodeId} {st st₁
   · obtain ⟨nx, Ax, hnx, hAx, hwx⟩ := htr x hx
     obtain ⟨ny, Ay, hny, hAy, hwy⟩ := htr y hy
     simp only [nodesSep, hnx, hny, hAx, hAy, List.all_eq_true] at h
-    have hf := free_of_sep hwx hwy fun a ha b hb => accSep_sound hna (h a ha b hb)
+    have hf := free_of_sep hwx hwy fun a ha b hb => accSep_sound hinj hna (h a ha b hb)
     simp [State.hbConflict, (Log.conflicts_eq_false_iff _ _).2 hf]
 
 mutual
@@ -607,7 +609,7 @@ theorem NodeExec.clean {ρ : Valuation} {n : DNode} {st : St} {r : Res St} {G : 
     · rename_i B hB'
       simp only [List.all_eq_true] at hB
       simp only [Ctx.rangePoints, Ctx.range_points_pure ctx _ _ hrp, Res.ofOption_eq_ok] at hpts
-      exact scopeFinish_clean (iterLogs_free horc hna hC hpts hnd hlen hB
+      exact scopeFinish_clean (iterLogs_free horc hinj hna hC hpts hnd hlen hB
         (IterExec.fp_pairs (scopeFp_incl hB') rfl hna hi rfl))
     · cases hB
   | .consumeSetupErr hk _, _, _, hfp, _ => by rw [nodeFp_consumeEntry hk] at hfp; cases hfp
@@ -655,7 +657,7 @@ theorem OrderedExec.clean {ρ : Valuation} {all direct : List NodeId} {st : St} 
       (fun id hid => hmaps id (by simpa using (List.mem_filter.1 hid).2)))
   | .hbRace ho hp hs hf, _, hna, hok => by
     obtain ⟨⟨A, hfp⟩, hhb, -⟩ := bodyOk_spec hok
-    rw [hbFree_of_ok horc hna ho hp hs hfp hhb] at hf
+    rw [hbFree_of_ok horc hinj hna ho hp hs hfp hhb] at hf
     cases hf
   | .run _ _ _ _, _, _, _ => Res.Clean.ok _
 
@@ -683,7 +685,8 @@ section StateLevel
 variable {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid)
 include horc
 
-variable {ctx : Ctx}
+variable {ctx : Ctx} (hinj : Function.Injective ctx.cname)
+include hinj
 
 theorem CompsExec.clean {ρ : Valuation} {s : State} {m : Mem} {F G : Nat} {C : Constraints} :
     ∀ {comps : List (List NodeId)} {r : Res (List Log)}, CompsExec ctx ρ s m comps r →
@@ -693,7 +696,7 @@ theorem CompsExec.clean {ρ : Valuation} {s : State} {m : Mem} {F G : Nat} {C : 
   | _, _, .headErr hc, hC, hna, hok => by
     have h := hok _ (List.mem_cons_self ..)
     obtain ⟨G', rfl⟩ := bodyOk_succ h
-    exact Res.Clean.err_of rfl (OrderedExec.clean horc hc hC hna h)
+    exact Res.Clean.err_of rfl (OrderedExec.clean horc hinj hc hC hna h)
   | _, _, .tailErr _ hr, hC, hna, hok =>
     CompsExec.clean hr hC hna fun comp hc => hok comp (List.mem_cons_of_mem _ hc)
   | _, _, .cons _ _, _, _, _ => Res.Clean.ok _
@@ -709,7 +712,7 @@ no alias. -/
 theorem CompsExec.logs_free {ρ : Valuation} {s : State} {m : Mem} {C : Constraints} {logs : List Log}
     (h : CompsExec ctx ρ s m s.components (.ok logs)) (hok : stateOk ctx orc C s = true) (hna : NoAlias m) :
     Log.pairwiseFree logs = true ∧ ∀ g ∈ logs, g.aliasSets = [] := by
-  obtain ⟨hbody, hsep⟩ := stateOk_spec horc hok
+  obtain ⟨hbody, hsep⟩ := stateOk_spec horc hinj hok
   have hw := CompsExec.fp_logs (F := s.nodes.length + 1) h rfl
   have hw' := forall₂_mem_right hw.flip
   have hsome : ∀ comp ∈ s.components, ∃ A, scopeFp ctx s (s.nodes.length + 1) (s.topLevelOf comp) = some A :=
@@ -721,7 +724,7 @@ theorem CompsExec.logs_free {ρ : Valuation} {s : State} {m : Mem} {C : Constrai
     obtain ⟨A, hA⟩ := hsome c₁ hc₁
     obtain ⟨B, hB⟩ := hsome c₂ hc₂
     simp only [compsSep, hA, hB, List.all_eq_true] at hcs
-    exact free_of_sep (hg A hA) (hg' B hB) fun a ha b hb => accSep_sound hna (hcs a ha b hb)
+    exact free_of_sep (hg A hA) (hg' B hB) fun a ha b hb => accSep_sound hinj hna (hcs a ha b hb)
   · obtain ⟨comp, hc, hgc⟩ := ListLemmas.mem_of_forall₂ hw.flip hg
     obtain ⟨A, hA⟩ := hsome comp hc
     exact (hgc A hA).aliasSets
@@ -734,9 +737,9 @@ theorem StateExec.good {cst : CSt} {s : State} {r : Res (Ctl × CSt)} {C : Const
     r.Clean ∧ ∀ ctl cst', r = .ok (ctl, cst') → cst'.ρ = cst.ρ ∧ NoAlias cst'.mem := by
   cases h with
   | compsErr hc =>
-    refine ⟨Res.Clean.err_of rfl (CompsExec.clean horc hc hC hna (stateOk_spec horc hok).1), fun _ _ h => by cases h⟩
+    refine ⟨Res.Clean.err_of rfl (CompsExec.clean horc hinj hc hC hna (stateOk_spec horc hinj hok).1), fun _ _ h => by cases h⟩
   | @run _ _ _ logs hc =>
-    obtain ⟨hfree, hal⟩ := CompsExec.logs_free horc hc hok hna
+    obtain ⟨hfree, hal⟩ := CompsExec.logs_free horc hinj hc hok hna
     refine ⟨stateFinish_clean hfree, fun ctl cst' hr => ?_⟩
     unfold stateFinish at hr
     split at hr
@@ -947,18 +950,19 @@ section ControlFlow
 variable {orc : Query → Bool} (horc : ∀ q, orc q = true → q.Valid)
 include horc
 
-variable {ctx : Ctx} {C : Constraints}
+variable {ctx : Ctx} {C : Constraints} (hinj : Function.Injective ctx.cname)
+include hinj
 
 theorem StateExec.cgood {cst : CSt} {s : State} {r : Res (Ctl × CSt)} (h : StateExec ctx cst s r)
     (hok : stateOk ctx orc C s = true) (hi : CInv ctx.I.expr C cst) : CGood ctx.I.expr C r := by
-  obtain ⟨hc, hinv⟩ := StateExec.good horc h hok hi.1 hi.2
+  obtain ⟨hc, hinv⟩ := StateExec.good horc hinj h hok hi.1 hi.2
   exact ⟨hc, fun ctl cst' hr => let ⟨hρ, hna⟩ := hinv ctl cst' hr; ⟨hρ ▸ hi.1, hna⟩⟩
 
 mutual
 
 theorem BlockExec.cgood {cst : CSt} {b : Block} {r : Res (Ctl × CSt)} :
     BlockExec ctx cst b r → Block.raceOk (stateOk ctx orc C) C b = true → CInv ctx.I.expr C cst → CGood ctx.I.expr C r
-  | .state h, hok, hi => StateExec.cgood horc h hok hi
+  | .state h, hok, hi => StateExec.cgood horc hinj h hok hi
   | .region h, hok, hi => RegionExec.cgood h hok hi
   | .loop h, hok, hi => LoopExec.cgood h hok hi
   | .cond h, hok, hi => CondExec.cgood h hok hi
@@ -1123,7 +1127,7 @@ theorem raceFreeWith_sound {orc : Query → Bool} (horc : ∀ q, orc q = true �
     exact h
   cases hres with
   | err hrg =>
-    have hc := (RegionExec.cgood horc hrg hok ⟨raceFacts_initial hf, hna⟩).1
+    have hc := (RegionExec.cgood horc (fun _ _ h => h) hrg hok ⟨raceFacts_initial hf, hna⟩).1
     simp only [Res.map_err, Res.err.injEq] at hr
     exact hc w (by rw [hr])
   | escape _ _ => simp at hr
