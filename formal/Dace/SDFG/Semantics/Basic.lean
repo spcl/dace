@@ -533,7 +533,7 @@ def pathEndsAtAccess (s : State) (e : DEdge) : Bool := s.isAccessNode (s.pathEnd
 def memletData? (e : DEdge) : Option Name := e.data.memlet?.map (·.data)
 
 /-- The one-in/one-out tail of `get_view_edge` (`dace/sdfg/utils.py:1181-1226`). -/
-private def viewEdgeOneOne (s : State) (v : DNode) (i : DEdge) (o? : Option DEdge) : Option (DEdge × Bool) :=
+def viewEdgeOneOne (s : State) (v : DNode) (i : DEdge) (o? : Option DEdge) : Option (DEdge × Bool) :=
   let srcIsData := s.pathStartsAtAccess i
   let dstIsData := o?.any (s.pathEndsAtAccess ·)
   if srcIsData && !dstIsData then some (i, true)

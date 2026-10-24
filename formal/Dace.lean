@@ -46,6 +46,7 @@ import Dace.SDFG.Footprinted
 import Dace.SDFG.Frame
 import Dace.Equiv.Order
 import Dace.SDFG.Clean
+import Dace.SDFG.Names
 import Dace.SDFG.Sim
 import Dace.Equiv.RaceFree
 import Dace.Equiv.ScopeBody

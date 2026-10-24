@@ -261,3 +261,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.NodeExec.sim
 #print axioms Dace.SDFGExec.sim
 #print axioms Dace.merge_sim
+#print axioms Dace.StateExec.sim
+#print axioms Dace.privateTransients_mem
+#print axioms Dace.enter_sim
+#print axioms Dace.Region.Names.ofAll
