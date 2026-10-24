@@ -232,6 +232,11 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
+    # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
+    from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 

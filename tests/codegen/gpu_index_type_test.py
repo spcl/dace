@@ -185,9 +185,10 @@ def test_nested_device_map():
         tasklet, inner_exit, outer_exit, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i, j]")
     )
 
+    # The inner map becomes a dimension of the kernel, as wide as it
     code = _cuda_code(sdfg)
-    assert _declaration(code, "i") == "int64_t i = (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x);"
-    assert _declaration(code, "j") == "int64_t j = static_cast<int64_t>(blockIdx.y);"
+    assert _declaration(code, "b_i") == "int64_t b_i = static_cast<int64_t>(blockIdx.y);"
+    assert _declaration(code, "b_j") == "int64_t b_j = (32 * static_cast<int64_t>(blockIdx.x));"
 
 
 def test_nested_sdfg_receives_wide_index():
@@ -208,9 +209,10 @@ def test_nested_sdfg_receives_wide_index():
 
 def test_persistent_map():
     code = _cuda_code(_persistent(persistent_offset_indices.to_sdfg(simplify=False)))
+    # A grid-stride loop over the threads of the grid, from the 64-bit offset
     header = _declaration(code, "i")
-    assert header == "for (int64_t i = (O + (static_cast<int64_t>(blockIdx.x) * 32 + threadIdx.x));", header
-    assert "i += static_cast<int64_t>(gridDim.x) * 32" in code
+    assert header == "for (int64_t i = ((O + (__dace_blk * __dace_nthr)) + __dace_tid);", header
+    assert "i += (__dace_nblk * __dace_nthr)" in code
 
 
 @pytest.mark.parametrize("step", [1, 2])
