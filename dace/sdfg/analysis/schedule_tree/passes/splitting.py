@@ -1,19 +1,32 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Index-set splitting of loops and maps by the conditions in their bodies, and merging contiguous loops back."""
+
 import ast
 import copy
-from typing import Dict, List, Optional
 
 from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    AccessIndex,
+    ancestors,
+    bound_names,
+    clone_body,
+    condition_of,
+    iteration_spaces,
+    make_scope,
+    memlets_of,
+    names_in_subtrees,
+    names_written,
+    ordered_intervals,
+    prune_empty,
+    range_analysis,
+    repository_of,
+    trip_count,
+)
+from dace.sdfg.analysis.schedule_tree.passes.folding import RangeFacts, facts_at, fold_scope
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, ancestors, bound_names, clone_body,
-                                                            condition_of, iteration_spaces, make_scope, memlets_of,
-                                                            names_in_subtrees, names_written, ordered_intervals,
-                                                            prune_empty, range_analysis, repository_of, trip_count)
-from dace.sdfg.analysis.schedule_tree.passes.folding import (RangeFacts, facts_at, fold_scope)
 
 
 def _breaks_out_of(scope: tn.ScheduleTreeScope) -> bool:
@@ -33,14 +46,17 @@ def _has_direct_callback(scope: tn.ScheduleTreeScope) -> bool:
         if not isinstance(child, tn.TaskletNode) or child.node.code.language != dtypes.Language.Python:
             continue
         if any(
-                isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-                and isinstance(symbols.get(call.func.id), dtypes.callback) for stmt in child.node.code.code
-                for call in ast.walk(stmt)):
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and isinstance(symbols.get(call.func.id), dtypes.callback)
+            for stmt in child.node.code.code
+            for call in ast.walk(stmt)
+        ):
             return True
     return False
 
 
-def _guard_atoms_on(scope: tn.ScheduleTreeScope, var: str) -> List[ast.expr]:
+def _guard_atoms_on(scope: tn.ScheduleTreeScope, var: str) -> list[ast.expr]:
     """The distinct atoms that mention ``var`` in the conditions within ``scope`` (outside nested scopes that bind
     ``var`` anew)."""
     lrr = range_analysis()
@@ -56,14 +72,14 @@ def _guard_atoms_on(scope: tn.ScheduleTreeScope, var: str) -> List[ast.expr]:
             if key not in seen and var in symbolic.symbols_in_ast(atom):
                 seen.add(key)
                 atoms.append(atom)
-        for child in getattr(node, 'children', ()):
+        for child in getattr(node, "children", ()):
             walk(child)
 
     walk(scope)
     return atoms
 
 
-def _index_set_cells(space, atoms: List[ast.expr], max_ranges: int, max_enumeration: int) -> Optional[list]:
+def _index_set_cells(space, atoms: list[ast.expr], max_ranges: int, max_enumeration: int) -> list | None:
     """The iteration range of ``space`` partitioned into intervals, in iteration order, on each of which every
     analyzable atom of ``atoms`` is decided; adjacent intervals with the same outcomes are merged. ``None`` if the
     partition exceeds ``max_ranges`` intervals or its intervals cannot be ordered."""
@@ -79,10 +95,19 @@ def _index_set_cells(space, atoms: List[ast.expr], max_ranges: int, max_enumerat
         for before, after in zip(edges, edges[1:]):
             if (before is not None and before.hi is None) or (after is not None and after.lo is None):
                 continue
-            parts.append((lrr.Interval(None if before is None else before.hi + 1,
-                                       None if after is None else after.lo - 1), False))
-        cells = [(iv, outcomes + (holds, )) for cell, outcomes in cells for part, holds in parts
-                 for iv in [lrr.intersect(cell, part)] if not lrr.provably_empty(iv)]
+            parts.append(
+                (
+                    lrr.Interval(None if before is None else before.hi + 1, None if after is None else after.lo - 1),
+                    False,
+                )
+            )
+        cells = [
+            (iv, outcomes + (holds,))
+            for cell, outcomes in cells
+            for part, holds in parts
+            for iv in [lrr.intersect(cell, part)]
+            if not lrr.provably_empty(iv)
+        ]
         if len(cells) > 4 * max_ranges:
             return None
     order = ordered_intervals([iv for iv, _ in cells])
@@ -99,11 +124,13 @@ def _index_set_cells(space, atoms: List[ast.expr], max_ranges: int, max_enumerat
     return merged if space.ascending else merged[::-1]
 
 
-def split_iteration_spaces(stree: tn.ScheduleTreeScope,
-                           max_ranges: int = 32,
-                           max_enumeration: int = 1 << 20,
-                           min_trip_count: int = 1,
-                           exclude_callback_loops: bool = True) -> int:
+def split_iteration_spaces(
+    stree: tn.ScheduleTreeScope,
+    max_ranges: int = 32,
+    max_enumeration: int = 1 << 20,
+    min_trip_count: int = 1,
+    exclude_callback_loops: bool = True,
+) -> int:
     """
     Split loops and maps at the points where the conditions in their bodies change outcome (index-set splitting),
     and fold those conditions in each part.
@@ -138,7 +165,7 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
     index = AccessIndex(stree.get_root())
     splits = 0
 
-    split_on: Dict[int, tuple] = {}  # Variables each part was already split along (a part is never split again
+    split_on: dict[int, tuple] = {}  # Variables each part was already split along (a part is never split again
 
     # along the same variable, even if folding could not prove some outcome of its cell)
 
@@ -151,7 +178,7 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
                     return True
         return False
 
-    def split(scope: tn.ScheduleTreeScope, facts: RangeFacts) -> Optional[List[tn.ScheduleTreeNode]]:
+    def split(scope: tn.ScheduleTreeScope, facts: RangeFacts) -> list[tn.ScheduleTreeNode] | None:
         """The parts that replace ``scope`` (a loop or map within the facts ``facts``), or ``None`` to keep it."""
         if exclude_callback_loops and _has_direct_callback(scope):
             return None
@@ -183,7 +210,7 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
             return parts
         return None
 
-    def process(node: tn.ScheduleTreeNode, facts: RangeFacts, previous, cold: bool) -> List[tn.ScheduleTreeNode]:
+    def process(node: tn.ScheduleTreeNode, facts: RangeFacts, previous, cold: bool) -> list[tn.ScheduleTreeNode]:
         """``node`` (inside a scope with the facts ``facts``) with its loops and maps split, as a list of nodes.
         Nothing is split in ``cold`` code (within a thin loop)."""
         nonlocal splits
@@ -211,29 +238,40 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
     return splits
 
 
-def _memlet_key(memlet: Memlet, renames: Dict[str, str]) -> tuple:
-    return (renames.get(memlet.data,
-                        memlet.data), str(memlet.subset), str(memlet.other_subset), str(memlet.wcr), memlet.dynamic)
+def _memlet_key(memlet: Memlet, renames: dict[str, str]) -> tuple:
+    return (
+        renames.get(memlet.data, memlet.data),
+        str(memlet.subset),
+        str(memlet.other_subset),
+        str(memlet.wcr),
+        memlet.dynamic,
+    )
 
 
-def _code_key(code: CodeBlock, renames: Dict[str, str]) -> str:
+def _code_key(code: CodeBlock, renames: dict[str, str]) -> str:
     if not renames or code.language != dtypes.Language.Python:
         return code.as_string
     from dace.frontend.python import astutils  # Avoid import loops
-    return '\n'.join(
-        ast.unparse(astutils.ASTFindReplace(dict(renames)).visit(astutils.copy_tree(stmt))) for stmt in code.code)
+
+    return "\n".join(
+        ast.unparse(astutils.ASTFindReplace(dict(renames)).visit(astutils.copy_tree(stmt))) for stmt in code.code
+    )
 
 
-def _equivalent(x: tn.ScheduleTreeNode, y: tn.ScheduleTreeNode, renames: Dict[str, str]) -> bool:
+def _equivalent(x: tn.ScheduleTreeNode, y: tn.ScheduleTreeNode, renames: dict[str, str]) -> bool:
     """Whether ``y`` does exactly what ``x`` does, reading the names of ``y`` through ``renames``. Node kinds whose
     equivalence is not checked here compare unequal."""
     if type(x) is not type(y):
         return False
     if isinstance(x, tn.TaskletNode):
-        if (x.node.language != y.node.language or x.node.code.as_string != y.node.code.as_string
-                or getattr(x.node, 'side_effects', False) or getattr(y.node, 'side_effects', False)):
+        if (
+            x.node.language != y.node.language
+            or x.node.code.as_string != y.node.code.as_string
+            or getattr(x.node, "side_effects", False)
+            or getattr(y.node, "side_effects", False)
+        ):
             return False
-        for attr in ('in_memlets', 'out_memlets'):
+        for attr in ("in_memlets", "out_memlets"):
             mx, my = getattr(x, attr), getattr(y, attr)
             if not isinstance(mx, dict) or not isinstance(my, dict) or mx.keys() != my.keys():
                 return False
@@ -249,9 +287,10 @@ def _equivalent(x: tn.ScheduleTreeNode, y: tn.ScheduleTreeNode, renames: Dict[st
         if x.condition.as_string != _code_key(y.condition, renames):
             return False
     elif isinstance(x, tn.ForScope):
-        if (x.loop.loop_variable != y.loop.loop_variable or any(
-                getattr(x.loop, a).as_string != getattr(y.loop, a).as_string
-                for a in ('init_statement', 'loop_condition', 'update_statement'))):
+        if x.loop.loop_variable != y.loop.loop_variable or any(
+            getattr(x.loop, a).as_string != getattr(y.loop, a).as_string
+            for a in ("init_statement", "loop_condition", "update_statement")
+        ):
             return False
     elif isinstance(x, tn.MapScope):
         mx, my = x.node.map, y.node.map
@@ -261,11 +300,12 @@ def _equivalent(x: tn.ScheduleTreeNode, y: tn.ScheduleTreeNode, renames: Dict[st
         return False
     if isinstance(x, tn.ScheduleTreeScope):
         return len(x.children) == len(y.children) and all(
-            _equivalent(a, b, renames) for a, b in zip(x.children, y.children))
+            _equivalent(a, b, renames) for a, b in zip(x.children, y.children)
+        )
     return True
 
 
-def _local_renames(a: tn.MapScope, b: tn.MapScope, index: AccessIndex) -> Optional[Dict[str, str]]:
+def _local_renames(a: tn.MapScope, b: tn.MapScope, index: AccessIndex) -> dict[str, str] | None:
     """The renaming of ``b``'s map-local transients to ``a``'s under which the bodies may be equivalent (as
     :func:`clone_body` privatizes them in copies of a map), or ``None`` if the names do not correspond."""
     containers = a.get_root().containers
@@ -273,9 +313,8 @@ def _local_renames(a: tn.MapScope, b: tn.MapScope, index: AccessIndex) -> Option
     def names(scope):
         result = []
         for node in scope.preorder_traversal():
-            for memlet in (memlets_of(node, 'in_memlets') + memlets_of(node, 'out_memlets') +
-                           memlets_of(node, 'memlet')):
-                result.append(memlet.data)
+            memlets = memlets_of(node, "in_memlets") + memlets_of(node, "out_memlets") + memlets_of(node, "memlet")
+            result.extend(memlet.data for memlet in memlets)
             if isinstance(node, tn.CopyNode):
                 result.append(node.target)
         return result
@@ -283,7 +322,7 @@ def _local_renames(a: tn.MapScope, b: tn.MapScope, index: AccessIndex) -> Option
     xs, ys = names(a), names(b)
     if len(xs) != len(ys):
         return None
-    renames: Dict[str, str] = {}
+    renames: dict[str, str] = {}
     for x, y in zip(xs, ys):
         if x == y and y not in renames:
             continue
@@ -291,43 +330,57 @@ def _local_renames(a: tn.MapScope, b: tn.MapScope, index: AccessIndex) -> Option
             return None
     for y, x in renames.items():
         if x in renames or not all(
-                getattr(containers.get(n, None), 'transient', False) and not index.used_outside(s, n)
-                for n, s in ((x, a), (y, b))):
+            getattr(containers.get(n, None), "transient", False) and not index.used_outside(s, n)
+            for n, s in ((x, a), (y, b))
+        ):
             return None
     return renames if len(set(renames.values())) == len(renames) else None
 
 
 def _nonnegative_length(space) -> bool:
     lrr = range_analysis()
-    return (lrr.provably_ge(space.end +
-                            1, space.start) if space.ascending else lrr.provably_ge(space.start + 1, space.end))
+    return (
+        lrr.provably_ge(space.end + 1, space.start) if space.ascending else lrr.provably_ge(space.start + 1, space.end)
+    )
 
 
-def _concatenate(a: tn.ScheduleTreeNode, b: tn.ScheduleTreeNode, repository,
-                 index: AccessIndex) -> Optional[tn.ScheduleTreeScope]:
+def _concatenate(
+    a: tn.ScheduleTreeNode, b: tn.ScheduleTreeNode, repository, index: AccessIndex
+) -> tn.ScheduleTreeScope | None:
     """``a`` and ``b`` as one loop or map, if ``b`` continues the iteration range of ``a`` with the same body."""
     lrr = range_analysis()
     if isinstance(a, tn.ForScope) and isinstance(b, tn.ForScope):
-        (_, var, sa), = iteration_spaces(a, repository) or [(None, None, None)]
-        (_, _, sb), = iteration_spaces(b, repository) or [(None, None, None)]
-        if (sa is None or sb is None or b.loop.loop_variable != var or abs(sa.stride) != 1 or sa.stride != sb.stride
-                or sa.op is not sb.op):
+        ((_, var, sa),) = iteration_spaces(a, repository) or [(None, None, None)]
+        ((_, _, sb),) = iteration_spaces(b, repository) or [(None, None, None)]
+        if (
+            sa is None
+            or sb is None
+            or b.loop.loop_variable != var
+            or abs(sa.stride) != 1
+            or sa.stride != sb.stride
+            or sa.op is not sb.op
+        ):
             return None
         if lrr._num(sb.start - (sa.end + sa.stride)) != 0 or not (_nonnegative_length(sa) and _nonnegative_length(sb)):
             return None
         # The merged loop evaluates the bound of ``b`` while the body of ``a`` runs
-        bound = {str(s) for s in sb.end.free_symbols} if hasattr(sb.end, 'free_symbols') else set()
-        if bound & names_in_subtrees(a.children, names_written) or not all(
-                _equivalent(x, y, {}) for x, y in zip(a.children, b.children)) or len(a.children) != len(b.children):
+        bound = {str(s) for s in sb.end.free_symbols} if hasattr(sb.end, "free_symbols") else set()
+        if (
+            bound & names_in_subtrees(a.children, names_written)
+            or not all(_equivalent(x, y, {}) for x, y in zip(a.children, b.children))
+            or len(a.children) != len(b.children)
+        ):
             return None
         old = a.loop
-        header = LoopRegion(old.label,
-                            condition_expr=copy.deepcopy(b.loop.loop_condition),
-                            loop_var=var,
-                            initialize_expr=copy.deepcopy(old.init_statement),
-                            update_expr=copy.deepcopy(old.update_statement),
-                            unroll=old.unroll,
-                            unroll_factor=old.unroll_factor)
+        header = LoopRegion(
+            old.label,
+            condition_expr=copy.deepcopy(b.loop.loop_condition),
+            loop_var=var,
+            initialize_expr=copy.deepcopy(old.init_statement),
+            update_expr=copy.deepcopy(old.update_statement),
+            unroll=old.unroll,
+            unroll_factor=old.unroll_factor,
+        )
         return tn.ForScope(loop=header, children=a.children)
     if isinstance(a, tn.MapScope) and isinstance(b, tn.MapScope):
         ma, mb = a.node.map, b.node.map
@@ -342,13 +395,17 @@ def _concatenate(a: tn.ScheduleTreeNode, b: tn.ScheduleTreeNode, repository,
             return None
         if not (lrr.provably_ge(ea + 1, ba) and lrr.provably_ge(eb + 1, bb)):
             return None
-        renames = {} if all(_equivalent(x, y, {})
-                            for x, y in zip(a.children, b.children)) else _local_renames(a, b, index)
-        if renames is None or len(a.children) != len(
-                b.children) or not all(_equivalent(x, y, renames) for x, y in zip(a.children, b.children)):
+        renames = (
+            {} if all(_equivalent(x, y, {}) for x, y in zip(a.children, b.children)) else _local_renames(a, b, index)
+        )
+        if (
+            renames is None
+            or len(a.children) != len(b.children)
+            or not all(_equivalent(x, y, renames) for x, y in zip(a.children, b.children))
+        ):
             return None
         entry = copy.deepcopy(a.node)
-        ranges = [r + (t, ) for r, t in zip(ma.range.ranges, ma.range.tile_sizes)]
+        ranges = [r + (t,) for r, t in zip(ma.range.ranges, ma.range.tile_sizes)]
         ranges[dim] = (ba, eb, 1, ranges[dim][3])
         entry.map.range = subsets.Range(ranges)
         return tn.MapScope(node=entry, children=a.children, state=a.state)

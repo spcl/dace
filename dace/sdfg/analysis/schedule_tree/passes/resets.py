@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Skipping resets of containers that nothing wrote since they were last reset."""
+
 import ast
-from typing import Dict, List, Optional, Set
 
 from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
@@ -12,11 +12,15 @@ from dace.sdfg.analysis.schedule_tree.passes.common import ancestors, names_writ
 
 # Storage and lifetimes of containers allocated at most once per call, so that their values stay between resets
 _ONCE_STORAGE = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned)
-_ONCE_LIFETIMES = (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.Global,
-                   dtypes.AllocationLifetime.SDFG, dtypes.AllocationLifetime.External)
+_ONCE_LIFETIMES = (
+    dtypes.AllocationLifetime.Persistent,
+    dtypes.AllocationLifetime.Global,
+    dtypes.AllocationLifetime.SDFG,
+    dtypes.AllocationLifetime.External,
+)
 
 
-def _perfect_nest(loop: tn.ForScope) -> List[tn.ForScope]:
+def _perfect_nest(loop: tn.ForScope) -> list[tn.ForScope]:
     chain = [loop]
     while len(chain[-1].children) == 1 and type(chain[-1].children[0]) is tn.ForScope:
         chain.append(chain[-1].children[0])
@@ -29,18 +33,18 @@ def _constant_header(loop: tn.ForScope) -> bool:
     return bool(variable) and all(code.get_free_symbols() <= {variable} for code in loop.loop.get_meta_codeblocks())
 
 
-def _constant_store(node: tn.ScheduleTreeNode, variables: Set[str]) -> bool:
+def _constant_store(node: tn.ScheduleTreeNode, variables: set[str]) -> bool:
     """Whether a statement stores constants into single elements indexed only by ``variables``."""
     if not isinstance(node, tn.TaskletNode) or node.in_memlets:
         return False
     tasklet = node.node
-    if tasklet.language != dtypes.Language.Python or getattr(tasklet, 'side_effects', False) or tasklet.free_symbols:
+    if tasklet.language != dtypes.Language.Python or getattr(tasklet, "side_effects", False) or tasklet.free_symbols:
         return False
     for statement in tasklet.code.code:
         for n in ast.walk(statement):
-            if isinstance(n, ast.Call) and not (isinstance(n.func, ast.Name) and n.func.id in ('float', 'int', 'bool')):
+            if isinstance(n, ast.Call) and not (isinstance(n.func, ast.Name) and n.func.id in ("float", "int", "bool")):
                 return False
-            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in ('float', 'int', 'bool'):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in ("float", "int", "bool"):
                 return False  # Reads something other than literals
     for memlet in node.out_memlets.values():
         if memlet.wcr is not None or not set(map(str, memlet.free_symbols)) <= variables:
@@ -50,10 +54,10 @@ def _constant_store(node: tn.ScheduleTreeNode, variables: Set[str]) -> bool:
     return True
 
 
-def _writers(root: tn.ScheduleTreeRoot) -> Dict[str, Optional[List[tn.TaskletNode]]]:
+def _writers(root: tn.ScheduleTreeRoot) -> dict[str, list[tn.TaskletNode] | None]:
     """The tasklets that write each container, or ``None`` for containers that other nodes write or alias."""
     containers = root.containers
-    writers: Dict[str, Optional[List[tn.TaskletNode]]] = {}
+    writers: dict[str, list[tn.TaskletNode] | None] = {}
     for node in root.preorder_traversal():
         if isinstance(node, (tn.ViewNode, tn.RefSetNode)):
             for name in (node.source, node.target) if isinstance(node, tn.ViewNode) else names_written(node):
@@ -71,9 +75,11 @@ def _writers(root: tn.ScheduleTreeRoot) -> Dict[str, Optional[List[tn.TaskletNod
 
 
 def _flag_tasklet(flag: str, value: bool) -> tn.TaskletNode:
-    return tn.TaskletNode(node=nodes.Tasklet('dirty' if value else 'clean', {}, {'__out'}, f'__out = {value}'),
-                          in_memlets={},
-                          out_memlets={'__out': Memlet(f'{flag}[0]')})
+    return tn.TaskletNode(
+        node=nodes.Tasklet("dirty" if value else "clean", {}, {"__out"}, f"__out = {value}"),
+        in_memlets={},
+        out_memlets={"__out": Memlet(f"{flag}[0]")},
+    )
 
 
 def skip_redundant_resets(stree: tn.ScheduleTreeScope) -> int:
@@ -103,7 +109,8 @@ def skip_redundant_resets(stree: tn.ScheduleTreeScope) -> int:
     skipped = 0
     # The outermost loops of perfect nests
     candidates = [
-        n for n in stree.preorder_traversal()
+        n
+        for n in stree.preorder_traversal()
         if type(n) is tn.ForScope and not (type(n.parent) is tn.ForScope and len(n.parent.children) == 1)
     ]
     for loop in candidates:
@@ -119,12 +126,16 @@ def skip_redundant_resets(stree: tn.ScheduleTreeScope) -> int:
         if not body or not all(_constant_store(n, variables) for n in body):
             continue
         reset_containers = {m.data for n in body for m in n.out_memlets.values()}
-        if not all(containers[c].transient and type(containers[c]) is data.Array
-                   and containers[c].storage in _ONCE_STORAGE and containers[c].lifetime in _ONCE_LIFETIMES
-                   for c in reset_containers):
+        if not all(
+            containers[c].transient
+            and type(containers[c]) is data.Array
+            and containers[c].storage in _ONCE_STORAGE
+            and containers[c].lifetime in _ONCE_LIFETIMES
+            for c in reset_containers
+        ):
             continue
         writers = _writers(root)
-        others: List[tn.TaskletNode] = []
+        others: list[tn.TaskletNode] = []
         ok = True
         own = {id(n) for n in body}
         for name in reset_containers:
@@ -134,10 +145,13 @@ def skip_redundant_resets(stree: tn.ScheduleTreeScope) -> int:
             others += [w for w in writers[name] if id(w) not in own]
         if not ok or not others:
             continue
-        if any(not any(type(a) is tn.IfScope
-                       for a in ancestors(w)) or any(isinstance(a, tn.MapScope) for a in ancestors(w)) for w in others):
+        if any(
+            not any(type(a) is tn.IfScope for a in ancestors(w))
+            or any(isinstance(a, tn.MapScope) for a in ancestors(w))
+            for w in others
+        ):
             continue
-        flag = data.find_new_name('__dirty', containers)
+        flag = data.find_new_name("__dirty", containers)
         containers[flag] = data.Scalar(dtypes.bool_, transient=True)
         # Set at the beginning of the program
         children = list(root.children)

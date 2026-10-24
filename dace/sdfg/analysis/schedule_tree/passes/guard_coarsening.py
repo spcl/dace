@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Guards that rarely hold: moving statements under the guards of their only readers, and skipping loop nests whose
 statements are all guarded when no guard holds."""
+
 import ast
 import copy
-from typing import Dict, List, Optional, Set, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
@@ -11,11 +11,26 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, ReplaceAccesses, ancestors, bound_names,
-                                                            clone_subtree, make_scope, range_analysis,
-                                                            condition_element_accesses, condition_of, in_bounds,
-                                                            is_pure, iteration_spaces, loop_ranges, names_in_subtrees,
-                                                            names_read, names_written, repository_of, trip_count)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    AccessIndex,
+    ReplaceAccesses,
+    ancestors,
+    bound_names,
+    clone_subtree,
+    condition_element_accesses,
+    condition_of,
+    in_bounds,
+    is_pure,
+    iteration_spaces,
+    loop_ranges,
+    make_scope,
+    names_in_subtrees,
+    names_read,
+    names_written,
+    range_analysis,
+    repository_of,
+    trip_count,
+)
 from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, Use
 from dace.sdfg.state import LoopRegion
 
@@ -24,7 +39,7 @@ from dace.sdfg.state import LoopRegion
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _perfect_nest(loop: tn.ForScope) -> List[tn.ForScope]:
+def _perfect_nest(loop: tn.ForScope) -> list[tn.ForScope]:
     """The loops of a perfect nest starting at ``loop``, outermost first."""
     chain = [loop]
     while len(chain[-1].children) == 1 and type(chain[-1].children[0]) is tn.ForScope:
@@ -32,12 +47,13 @@ def _perfect_nest(loop: tn.ForScope) -> List[tn.ForScope]:
     return chain
 
 
-def _symbols(expression: ast.expr) -> Set[str]:
+def _symbols(expression: ast.expr) -> set[str]:
     return set(symbolic.symbols_in_ast(expression))
 
 
-def _testable_guards(body: List[tn.ScheduleTreeNode], containers: Dict[str, data.Data], repository,
-                     local: Set[str]) -> Optional[List[Tuple[ast.expr, list]]]:
+def _testable_guards(
+    body: list[tn.ScheduleTreeNode], containers: dict[str, data.Data], repository, local: set[str]
+) -> list[tuple[ast.expr, list]] | None:
     """Conditions implied by those of a loop body that consists only of ``if`` scopes (without ``elif``/``else``),
     with their container accesses (see ``condition_element_accesses``), if they can be evaluated in a separate test:
     pure, and every access a condition may skip either read anyway or within the shape of its container. Conjuncts
@@ -67,49 +83,57 @@ def _testable_guards(body: List[tn.ScheduleTreeNode], containers: Dict[str, data
     return guards
 
 
-def _loop_copy(loop: tn.ForScope, suffix: str, body: List[tn.ScheduleTreeNode]) -> tn.ForScope:
+def _loop_copy(loop: tn.ForScope, suffix: str, body: list[tn.ScheduleTreeNode]) -> tn.ForScope:
     """A loop with the header of ``loop`` and the given body."""
     old = loop.loop
-    header = LoopRegion(f'{old.label}_{suffix}',
-                        condition_expr=copy.deepcopy(old.loop_condition),
-                        loop_var=old.loop_variable,
-                        initialize_expr=copy.deepcopy(old.init_statement),
-                        update_expr=copy.deepcopy(old.update_statement))
+    header = LoopRegion(
+        f"{old.label}_{suffix}",
+        condition_expr=copy.deepcopy(old.loop_condition),
+        loop_var=old.loop_variable,
+        initialize_expr=copy.deepcopy(old.init_statement),
+        update_expr=copy.deepcopy(old.update_statement),
+    )
     return tn.ForScope(loop=header, children=body)
 
 
-def _existence_test(flag: str, loops: List[tn.ForScope], guards: List[Tuple[ast.expr, list]],
-                    suffix: str) -> List[tn.ScheduleTreeNode]:
+def _existence_test(
+    flag: str, loops: list[tn.ForScope], guards: list[tuple[ast.expr, list]], suffix: str
+) -> list[tn.ScheduleTreeNode]:
     """``flag = False`` followed by loops (copies of ``loops``) that set ``flag`` if any guard holds."""
-    connectors: Dict[str, str] = {}  # By element read
+    connectors: dict[str, str] = {}  # By element read
     for _, accesses in guards:
         for _, element, _, _ in accesses:
-            connectors.setdefault(element, f'__in{len(connectors)}')
+            connectors.setdefault(element, f"__in{len(connectors)}")
     terms = []
     for condition, accesses in guards:
         # The accesses are replaced in a copy (the condition belongs to the scope), found by position in the walk
         copied = astutils.copy_tree(condition)
         copies = {id(original): new for original, new in zip(ast.walk(condition), ast.walk(copied))}
         names = {id(copies[id(node)]): connectors[element] for _, element, node, _ in accesses}
-        terms.append(f'bool({ast.unparse(ReplaceAccesses(names).visit(copied))})')
-    init = tn.TaskletNode(node=nodes.Tasklet('any_init', {}, {'__out'}, '__out = False'),
-                          in_memlets={},
-                          out_memlets={'__out': Memlet(f'{flag}[0]')})
+        terms.append(f"bool({ast.unparse(ReplaceAccesses(names).visit(copied))})")
+    init = tn.TaskletNode(
+        node=nodes.Tasklet("any_init", {}, {"__out"}, "__out = False"),
+        in_memlets={},
+        out_memlets={"__out": Memlet(f"{flag}[0]")},
+    )
     in_memlets = {connector: Memlet(element) for element, connector in connectors.items()}
-    in_memlets['__previous'] = Memlet(f'{flag}[0]')
-    test: tn.ScheduleTreeNode = tn.TaskletNode(node=nodes.Tasklet('any_guard', set(in_memlets), {'__out'},
-                                                                  f'__out = __previous | {" | ".join(terms)}'),
-                                               in_memlets=in_memlets,
-                                               out_memlets={'__out': Memlet(f'{flag}[0]')})
+    in_memlets["__previous"] = Memlet(f"{flag}[0]")
+    test: tn.ScheduleTreeNode = tn.TaskletNode(
+        node=nodes.Tasklet("any_guard", set(in_memlets), {"__out"}, f"__out = __previous | {' | '.join(terms)}"),
+        in_memlets=in_memlets,
+        out_memlets={"__out": Memlet(f"{flag}[0]")},
+    )
     for loop in reversed(loops):
         test = _loop_copy(loop, suffix, [test])
     return [init, test]
 
 
-def coarsen_guards(stree: tn.ScheduleTreeScope,
-                   levels: Tuple[str, ...] = ('nest', 'row'),
-                   min_iterations: int = 32,
-                   min_row_trip_count: int = 8) -> int:
+def coarsen_guards(
+    stree: tn.ScheduleTreeScope,
+    levels: tuple[str, ...] = ("nest", "row"),
+    min_iterations: int = 32,
+    min_row_trip_count: int = 8,
+) -> int:
     """
     Skip the iterations of loop nests whose statements are all guarded when no guard holds: a perfect nest of ``for``
     loops whose innermost body consists only of ``if`` scopes runs only if a test finds a guard that holds.
@@ -145,13 +169,13 @@ def coarsen_guards(stree: tn.ScheduleTreeScope,
     index = AccessIndex(root)
     coarsened = 0
 
-    def trips(loop: tn.ForScope) -> Optional[int]:
+    def trips(loop: tn.ForScope) -> int | None:
         spaces = iteration_spaces(loop, repository)
         if len(spaces) != 1 or spaces[0][2] is None:
             return None
         return trip_count(spaces[0][2])
 
-    def coarsen(nest: List[tn.ForScope]) -> Optional[List[tn.ScheduleTreeNode]]:
+    def coarsen(nest: list[tn.ForScope]) -> list[tn.ScheduleTreeNode] | None:
         nonlocal coarsened
         if any(not loop.loop.loop_variable or index.used_outside(loop, loop.loop.loop_variable) for loop in nest):
             return None
@@ -169,32 +193,35 @@ def coarsen_guards(stree: tn.ScheduleTreeScope,
         needed = {v for v in variables if v in guard_symbols}
         while True:
             more = {
-                v
-                for loop in nest if loop.loop.loop_variable in needed for v in variables if v in _header_symbols(loop)
+                v for loop in nest if loop.loop.loop_variable in needed for v in variables if v in _header_symbols(loop)
             } - needed
             if not more:
                 break
             needed |= more
-        result: List[tn.ScheduleTreeNode] = [nest[0]]
+        result: list[tn.ScheduleTreeNode] = [nest[0]]
         innermost = nest[-1]
         count = counts[-1]
-        rows = ('row' in levels and len(nest) > 1 and innermost.loop.loop_variable in guard_symbols
-                and (count is None or count >= min_row_trip_count))
+        rows = (
+            "row" in levels
+            and len(nest) > 1
+            and innermost.loop.loop_variable in guard_symbols
+            and (count is None or count >= min_row_trip_count)
+        )
         tested = [loop for loop in nest if loop.loop.loop_variable in needed]
         if rows:
-            flag = data.find_new_name('__any_row', containers)
+            flag = data.find_new_name("__any_row", containers)
             containers[flag] = data.Scalar(dtypes.bool_, transient=True)
             parent = nest[-2]
-            test = _existence_test(flag, [innermost], guards, 'any_row')
+            test = _existence_test(flag, [innermost], guards, "any_row")
             parent.children = []
             parent.add_children(test + [tn.IfScope(condition=CodeBlock(flag), children=[innermost])])
             index.add(parent)
         # A test over every loop of the nest would read as much as the row tests, without their contiguous accesses
         # (compilers unroll the short innermost loop and vectorize across rows), so it is left to them
-        if 'nest' in levels and not (rows and len(tested) == len(nest)):
-            flag = data.find_new_name('__any', containers)
+        if "nest" in levels and not (rows and len(tested) == len(nest)):
+            flag = data.find_new_name("__any", containers)
             containers[flag] = data.Scalar(dtypes.bool_, transient=True)
-            test = _existence_test(flag, tested, guards, 'any')
+            test = _existence_test(flag, tested, guards, "any")
             result = test + [tn.IfScope(condition=CodeBlock(flag), children=[nest[0]])]
         elif not rows:
             return None
@@ -221,14 +248,14 @@ def coarsen_guards(stree: tn.ScheduleTreeScope,
     return coarsened
 
 
-def _product(values: List[int]) -> int:
+def _product(values: list[int]) -> int:
     result = 1
     for value in values:
         result *= value
     return result
 
 
-def _header_symbols(loop: tn.ForScope) -> Set[str]:
+def _header_symbols(loop: tn.ForScope) -> set[str]:
     return {s for code in loop.loop.get_meta_codeblocks() for s in code.get_free_symbols()} - {loop.loop.loop_variable}
 
 
@@ -237,17 +264,17 @@ def _header_symbols(loop: tn.ForScope) -> Set[str]:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _conjuncts(condition: ast.expr) -> List[ast.expr]:
+def _conjuncts(condition: ast.expr) -> list[ast.expr]:
     if isinstance(condition, ast.BoolOp) and isinstance(condition.op, ast.And):
         return list(condition.values)
     return [condition]
 
 
-def _normalized(indices: List[str]) -> Tuple[str, ...]:
+def _normalized(indices: list[str]) -> tuple[str, ...]:
     return tuple(str(symbolic.pystr_to_symbolic(i)) for i in indices)
 
 
-def _memlet_element(memlet: Memlet) -> Optional[Tuple[str, ...]]:
+def _memlet_element(memlet: Memlet) -> tuple[str, ...] | None:
     """The indices of the single element a memlet accesses, or ``None`` if it accesses more."""
     indices = []
     for start, end, _ in memlet.subset.ndrange():
@@ -261,24 +288,23 @@ class _Read:
     """A read of a container: by the memlets of a tasklet, or in the condition of an ``if`` scope (then with the
     conjuncts of the condition before the first one that reads it)."""
 
-    def __init__(self,
-                 node: tn.ScheduleTreeNode,
-                 elements: List[Optional[Tuple[str, ...]]],
-                 preceding: Optional[List[ast.expr]] = None):
+    def __init__(
+        self, node: tn.ScheduleTreeNode, elements: list[tuple[str, ...] | None], preceding: list[ast.expr] | None = None
+    ):
         self.node = node
         self.elements = elements
         self.preceding = preceding or []
 
 
-def _reads(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Read]], Set[str]]:
+def _reads(root: tn.ScheduleTreeRoot) -> tuple[dict[str, list[_Read]], set[str]]:
     """The reads of every container by tasklets and ``if`` conditions, and the containers read in other ways (which
     are left alone)."""
     containers = root.containers
-    reads: Dict[str, List[_Read]] = {}
-    other: Set[str] = set()
+    reads: dict[str, list[_Read]] = {}
+    other: set[str] = set()
     for node in root.preorder_traversal():
         if isinstance(node, tn.TaskletNode):
-            by_name: Dict[str, list] = {}
+            by_name: dict[str, list] = {}
             for memlet in node.in_memlets.values():
                 by_name.setdefault(memlet.data, []).append(_memlet_element(memlet))
             for name, elements in by_name.items():
@@ -291,14 +317,14 @@ def _reads(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Read]], Set[str]]
             other |= names_read(node) & containers.keys()
             continue
         conjuncts = _conjuncts(condition)
-        found: Dict[str, Tuple[list, int]] = {}
+        found: dict[str, tuple[list, int]] = {}
         for name, _, access, _ in accesses:
             position = next(k for k, c in enumerate(conjuncts) if any(n is access for n in ast.walk(c)))
             if isinstance(access, ast.Subscript):
                 indices = access.slice.elts if isinstance(access.slice, ast.Tuple) else [access.slice]
                 element = _normalized([ast.unparse(i) for i in indices])
             else:  # A single-element container by name
-                element = ('0', )
+                element = ("0",)
             elements, first = found.get(name, ([], position))
             found[name] = (elements + [element], min(first, position))
         for name, (elements, position) in found.items():
@@ -306,7 +332,7 @@ def _reads(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Read]], Set[str]]
     return reads, other
 
 
-def _path_to(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> List[tn.ScheduleTreeNode]:
+def _path_to(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> list[tn.ScheduleTreeNode]:
     """``node`` and its ancestors below ``scope``, innermost first."""
     path = []
     while node is not scope:
@@ -327,11 +353,11 @@ def _inside(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> bool:
     return False
 
 
-def _bound_between(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> Set[str]:
+def _bound_between(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> set[str]:
     return set().union(*(bound_names(n) for n in _path_to(node, scope)))
 
 
-def _guard_candidates(read: _Read, scope: tn.ScheduleTreeScope) -> List[ast.expr]:
+def _guard_candidates(read: _Read, scope: tn.ScheduleTreeScope) -> list[ast.expr]:
     """The conditions that hold whenever ``read`` happens, from the ``if`` scopes between it and ``scope``."""
     candidates = list(read.preceding)
     for node in _path_to(read.node, scope)[1:]:
@@ -347,16 +373,16 @@ def _guarded_anywhere(read: _Read) -> bool:
     return bool(read.preceding) or any(type(n) is tn.IfScope for n in ancestors(read.node))
 
 
-def _some_read_guarded(statement: tn.ScheduleTreeNode, reads: List[_Read]) -> bool:
+def _some_read_guarded(statement: tn.ScheduleTreeNode, reads: list[_Read]) -> bool:
     """Whether a container that ``statement`` writes is never read by others, or some read is under a guard."""
     others = [r for r in reads if r.node is not statement]
     return not others or any(_guarded_anywhere(r) for r in others)
 
 
-def _memlet_uses(root: tn.ScheduleTreeRoot) -> Dict[str, List[Use]]:
-    uses: Dict[str, List[Use]] = {}
+def _memlet_uses(root: tn.ScheduleTreeRoot) -> dict[str, list[Use]]:
+    uses: dict[str, list[Use]] = {}
     for node in root.preorder_traversal():
-        for attr, write in (('in_memlets', False), ('out_memlets', True)):
+        for attr, write in (("in_memlets", False), ("out_memlets", True)):
             memlets = getattr(node, attr, None)
             if isinstance(memlets, dict):
                 for connector, memlet in memlets.items():
@@ -364,9 +390,14 @@ def _memlet_uses(root: tn.ScheduleTreeRoot) -> Dict[str, List[Use]]:
     return uses
 
 
-def _value_reads(statement: tn.TaskletNode, name: str, reads: List[_Read], liveness: Liveness,
-                 memlet_uses: Dict[str, List[Use]],
-                 cache: Dict[str, tuple]) -> Tuple[List[_Read], Optional[tn.ScheduleTreeScope]]:
+def _value_reads(
+    statement: tn.TaskletNode,
+    name: str,
+    reads: list[_Read],
+    liveness: Liveness,
+    memlet_uses: dict[str, list[Use]],
+    cache: dict[str, tuple],
+) -> tuple[list[_Read], tn.ScheduleTreeScope | None]:
     """The reads that may see a value ``statement`` writes to ``name`` (those in its live segment), and the lowest
     scope above the statement that contains every access in the segment and, if the statement reads ``name`` too (as
     an accumulation does), in which ``name`` is written before it is read: no value flows into one execution of the
@@ -375,8 +406,8 @@ def _value_reads(statement: tn.TaskletNode, name: str, reads: List[_Read], liven
     for read in reads:
         if not isinstance(read.node, tn.TaskletNode):  # Reads in conditions
             for element in read.elements:
-                memlet = Memlet(f'{name}[{", ".join(element)}]')
-                uses.append(Use(read.node, {'__cond': memlet}, '__cond', False))
+                memlet = Memlet(f"{name}[{', '.join(element)}]")
+                uses.append(Use(read.node, {"__cond": memlet}, "__cond", False))
     if name not in cache:  # The same for every statement writing ``name`` (until the tree changes)
         cache[name] = liveness.segments(uses)[0]
     segments = cache[name]
@@ -400,11 +431,12 @@ def _value_reads(statement: tn.TaskletNode, name: str, reads: List[_Read], liven
     return found, None
 
 
-def _map_to_element(condition: ast.expr, bound: Set[str], elements: List[Optional[Tuple[str, ...]]],
-                    written: Tuple[str, ...]) -> Optional[ast.expr]:
+def _map_to_element(
+    condition: ast.expr, bound: set[str], elements: list[tuple[str, ...] | None], written: tuple[str, ...]
+) -> ast.expr | None:
     """``condition`` with the loop variables in ``bound`` replaced by the indices the statement writes at the
     positions where they index every element read, or ``None`` if a variable does not."""
-    replacements: Dict[str, str] = {}
+    replacements: dict[str, str] = {}
     for variable in sorted(_symbols(condition) & bound):
         positions = None
         for element in elements:
@@ -414,16 +446,16 @@ def _map_to_element(condition: ast.expr, bound: Set[str], elements: List[Optiona
             positions = here if positions is None else positions & here
         if not positions:
             return None
-        replacements[variable] = f'({written[min(positions)]})'
+        replacements[variable] = f"({written[min(positions)]})"
     mapped = astutils.copy_tree(condition)
     if replacements:
         mapped = astutils.ASTFindReplace(replacements).visit(mapped)
     return mapped
 
 
-def _assigned_in(nodes_: List[tn.ScheduleTreeNode]) -> Set[str]:
+def _assigned_in(nodes_: list[tn.ScheduleTreeNode]) -> set[str]:
     """Containers and symbols assigned in subtrees, other than loop and map variables."""
-    assigned: Set[str] = set()
+    assigned: set[str] = set()
     for root in nodes_:
         for node in root.preorder_traversal():
             if not isinstance(node, (tn.LoopScope, tn.MapScope)):
@@ -431,8 +463,9 @@ def _assigned_in(nodes_: List[tn.ScheduleTreeNode]) -> Set[str]:
     return assigned
 
 
-def _unchanged_between(condition: ast.expr, statement: tn.ScheduleTreeNode, read: tn.ScheduleTreeNode,
-                       scope: tn.ScheduleTreeScope) -> bool:
+def _unchanged_between(
+    condition: ast.expr, statement: tn.ScheduleTreeNode, read: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope
+) -> bool:
     """Whether nothing in ``scope``, from the child that contains ``statement`` to the one that contains ``read``,
     assigns the containers or symbols ``condition`` reads."""
     children = scope.children
@@ -440,26 +473,40 @@ def _unchanged_between(condition: ast.expr, statement: tn.ScheduleTreeNode, read
     last = next(k for k, c in enumerate(children) if c is _child_containing(scope, read))
     if last < first:
         return False
-    return not (_assigned_in(children[first:last + 1]) & _symbols(condition))
+    return not (_assigned_in(children[first : last + 1]) & _symbols(condition))
 
 
-def _sinking_guard(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: Set[str],
-                   containers: Dict[str, data.Data], liveness: Liveness, memlet_uses: Dict[str, List[Use]],
-                   cache: Dict[str, tuple]) -> Optional[ast.expr]:
+def _sinking_guard(
+    statement: tn.TaskletNode,
+    reads: dict[str, list[_Read]],
+    other: set[str],
+    containers: dict[str, data.Data],
+    liveness: Liveness,
+    memlet_uses: dict[str, list[Use]],
+    cache: dict[str, tuple],
+) -> ast.expr | None:
     """The guard under which ``statement`` can run (see :func:`sink_into_guards`), or ``None``."""
     tasklet = statement.node
-    if tasklet.language != dtypes.Language.Python or getattr(tasklet, 'side_effects', False):
+    if tasklet.language != dtypes.Language.Python or getattr(tasklet, "side_effects", False):
         return None
     if any(
-            isinstance(n, ast.Call) and not isinstance(n.func, (ast.Name, ast.Attribute))
-            for n in ast.walk(ast.Module(body=list(tasklet.code.code), type_ignores=[]))):
+        isinstance(n, ast.Call) and not isinstance(n.func, (ast.Name, ast.Attribute))
+        for n in ast.walk(ast.Module(body=list(tasklet.code.code), type_ignores=[]))
+    ):
         return None
-    outputs: Dict[str, Tuple[str, ...]] = {}
+    outputs: dict[str, tuple[str, ...]] = {}
     for memlet in statement.out_memlets.values():
         element = _memlet_element(memlet)
         desc = containers.get(memlet.data)
-        if (element is None or desc is None or not desc.transient or isinstance(desc, data.View) or memlet.data in other
-                or memlet.wcr is not None or outputs.get(memlet.data, element) != element):
+        if (
+            element is None
+            or desc is None
+            or not desc.transient
+            or isinstance(desc, data.View)
+            or memlet.data in other
+            or memlet.wcr is not None
+            or outputs.get(memlet.data, element) != element
+        ):
             return None
         outputs[memlet.data] = element
     if any(m.data in outputs and _memlet_element(m) != outputs[m.data] for m in statement.in_memlets.values()):
@@ -467,8 +514,8 @@ def _sinking_guard(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], oth
     # Quick filter before the liveness analysis: some read of every output that is read must be under a guard at all
     if not all(_some_read_guarded(statement, reads.get(name, [])) for name in outputs):
         return None
-    uses: Dict[str, List[_Read]] = {}
-    scopes: Dict[str, tn.ScheduleTreeScope] = {}
+    uses: dict[str, list[_Read]] = {}
+    scopes: dict[str, tn.ScheduleTreeScope] = {}
     for name in outputs:
         uses[name], scope = _value_reads(statement, name, reads.get(name, []), liveness, memlet_uses, cache)
         if scope is None:
@@ -480,19 +527,21 @@ def _sinking_guard(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], oth
     # Guards that already hold where the statement runs
     present = {
         ast.dump(c)
-        for n in ancestors(statement) if type(n) is tn.IfScope for c in _conjuncts(condition_of(n))
+        for n in ancestors(statement)
+        if type(n) is tn.IfScope
+        for c in _conjuncts(condition_of(n))
         if condition_of(n) is not None
     }
-    choice: Optional[Tuple[str, ast.expr]] = None
+    choice: tuple[str, ast.expr] | None = None
     for name, written in outputs.items():
         if not uses[name]:
             continue  # Never read: whether it runs does not matter
         scope = scopes[name]
         statement_bound = _bound_between(statement, scope)
-        options: Optional[Dict[str, ast.expr]] = None
+        options: dict[str, ast.expr] | None = None
         for read in uses[name]:
             bound = _bound_between(read.node, scope)
-            found: Dict[str, ast.expr] = {}
+            found: dict[str, ast.expr] = {}
             for condition in _guard_candidates(read, scope):
                 if (_symbols(condition) - bound) & statement_bound:
                     continue  # Would read a variable of a loop around the statement under the same name
@@ -543,7 +592,7 @@ def sink_into_guards(stree: tn.ScheduleTreeScope) -> int:
         reads, other = _reads(root)
         liveness = Liveness(root, trust_reads=False)
         memlet_uses = _memlet_uses(root)
-        cache: Dict[str, tuple] = {}
+        cache: dict[str, tuple] = {}
         for node in stree.preorder_traversal():
             if not isinstance(node, tn.TaskletNode):
                 continue
@@ -552,8 +601,9 @@ def sink_into_guards(stree: tn.ScheduleTreeScope) -> int:
                 continue
             parent = node.parent
             position = next(k for k, c in enumerate(parent.children) if c is node)
-            wrapper = tn.IfScope(condition=CodeBlock([ast.fix_missing_locations(ast.Expr(value=guard))]),
-                                 children=[node])
+            wrapper = tn.IfScope(
+                condition=CodeBlock([ast.fix_missing_locations(ast.Expr(value=guard))]), children=[node]
+            )
             children = list(parent.children)
             children[position] = wrapper
             parent.children = []
@@ -569,7 +619,7 @@ def sink_into_guards(stree: tn.ScheduleTreeScope) -> int:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _nest_around(statement: tn.ScheduleTreeNode) -> Optional[List[tn.ForScope]]:
+def _nest_around(statement: tn.ScheduleTreeNode) -> list[tn.ForScope] | None:
     """The loops of the perfect nest whose innermost body contains ``statement``, outermost first."""
     loops = []
     scope = statement.parent
@@ -581,18 +631,19 @@ def _nest_around(statement: tn.ScheduleTreeNode) -> Optional[List[tn.ForScope]]:
     return loops[::-1] or None
 
 
-def _injective(element: Tuple[str, ...], variables: List[str]) -> bool:
+def _injective(element: tuple[str, ...], variables: list[str]) -> bool:
     """Whether every variable is the index of some dimension, up to a constant (so iterations access distinct
     elements)."""
     for variable in variables:
         if not any(
-                symbolic.simplify(symbolic.pystr_to_symbolic(index) - symbolic.pystr_to_symbolic(variable)).is_number
-                for index in element):
+            symbolic.simplify(symbolic.pystr_to_symbolic(index) - symbolic.pystr_to_symbolic(variable)).is_number
+            for index in element
+        ):
             return False
     return True
 
 
-def _outer_offset(element: Tuple[str, ...], variable: str) -> Optional[Tuple[int, int]]:
+def _outer_offset(element: tuple[str, ...], variable: str) -> tuple[int, int] | None:
     """``(dimension, c)`` of the first dimension indexed by ``variable + c``, or ``None``."""
     for dim, index in enumerate(element):
         difference = symbolic.simplify(symbolic.pystr_to_symbolic(index) - symbolic.pystr_to_symbolic(variable))
@@ -630,7 +681,7 @@ def move_statements_to_readers(stree: tn.ScheduleTreeScope) -> int:
         reads, other = _reads(root)
         liveness = Liveness(root, trust_reads=False)
         memlet_uses = _memlet_uses(root)
-        cache: Dict[str, tuple] = {}
+        cache: dict[str, tuple] = {}
         for node in stree.preorder_traversal():
             if isinstance(node, tn.TaskletNode):
                 plan = _move_plan(node, reads, other, containers, liveness, memlet_uses, repository, cache)
@@ -642,14 +693,21 @@ def move_statements_to_readers(stree: tn.ScheduleTreeScope) -> int:
             return moved
 
 
-def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: Set[str],
-               containers: Dict[str, data.Data], liveness: Liveness, memlet_uses: Dict[str, List[Use]], repository,
-               cache: Dict[str, tuple]) -> Optional[tuple]:
+def _move_plan(
+    statement: tn.TaskletNode,
+    reads: dict[str, list[_Read]],
+    other: set[str],
+    containers: dict[str, data.Data],
+    liveness: Liveness,
+    memlet_uses: dict[str, list[Use]],
+    repository,
+    cache: dict[str, tuple],
+) -> tuple | None:
     """``(nest, target, space, stay)`` to move ``statement`` out of ``nest`` to before the sibling ``target``, keeping
     the iterations of the outermost loop (iteration space ``space``) in the interval ``stay`` in place (or ``None``),
     or ``None`` if it cannot or need not be moved."""
     tasklet = statement.node
-    if tasklet.language != dtypes.Language.Python or getattr(tasklet, 'side_effects', False):
+    if tasklet.language != dtypes.Language.Python or getattr(tasklet, "side_effects", False):
         return None
     nest = _nest_around(statement)
     if nest is None or any(not loop.loop.loop_variable for loop in nest):
@@ -658,15 +716,21 @@ def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: 
     if scope is None:
         return None
     variables = [loop.loop.loop_variable for loop in nest]
-    outputs: Dict[str, Tuple[str, ...]] = {}
+    outputs: dict[str, tuple[str, ...]] = {}
     for memlet in statement.out_memlets.values():
         element = _memlet_element(memlet)
         desc = containers.get(memlet.data)
-        if (element is None or desc is None or not desc.transient or memlet.data in other or memlet.wcr is not None
-                or outputs.get(memlet.data, element) != element):
+        if (
+            element is None
+            or desc is None
+            or not desc.transient
+            or memlet.data in other
+            or memlet.wcr is not None
+            or outputs.get(memlet.data, element) != element
+        ):
             return None
         outputs[memlet.data] = element
-    inputs: Dict[str, Tuple[str, ...]] = {}
+    inputs: dict[str, tuple[str, ...]] = {}
     for memlet in statement.in_memlets.values():
         element = _memlet_element(memlet)
         if element is None or memlet.data in outputs or inputs.get(memlet.data, element) != element:
@@ -705,7 +769,7 @@ def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: 
     # The split: the rest of the body does not use the outputs and writes the inputs only where the statement reads
     body = nest[-1].children
     index = next(k for k, c in enumerate(body) if c is statement)
-    rest = body[:index] + body[index + 1:]
+    rest = body[:index] + body[index + 1 :]
     if (names_in_subtrees(rest, names_read) | names_in_subtrees(rest, names_written)) & outputs.keys():
         return None
     for k, child in enumerate(body):
@@ -718,8 +782,9 @@ def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: 
             if k > index or not isinstance(node, tn.TaskletNode):
                 return None
             for memlet in node.out_memlets.values():
-                if memlet.data in inputs and (_memlet_element(memlet) != inputs[memlet.data]
-                                              or not _injective(inputs[memlet.data], variables)):
+                if memlet.data in inputs and (
+                    _memlet_element(memlet) != inputs[memlet.data] or not _injective(inputs[memlet.data], variables)
+                ):
                     return None
 
     # The move: conflicts with the nests in between, as intervals of the outermost loop
@@ -728,7 +793,7 @@ def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: 
         return None
     space = spaces[0][2]
     first, last = (int(space.start), int(space.end)) if space.ascending else (int(space.end), int(space.start))
-    conflicts: List[Tuple[int, int]] = []
+    conflicts: list[tuple[int, int]] = []
     accesses = [(Use(statement, statement.in_memlets, c, False), m) for c, m in statement.in_memlets.items()]
     accesses += [(Use(statement, statement.out_memlets, c, True), m) for c, m in statement.out_memlets.items()]
     free = set(map(str, tasklet.free_symbols)) | {
@@ -736,7 +801,7 @@ def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: 
         for m in list(statement.in_memlets.values()) + list(statement.out_memlets.values())
         for sym in m.free_symbols
     }
-    for between in siblings[position + 1:target_position]:
+    for between in siblings[position + 1 : target_position]:
         if _assigned_in([between]) & (free - set(variables)):
             return None  # Changes a symbol the statement reads
         through_memlets = {
@@ -779,14 +844,15 @@ def _move_plan(statement: tn.TaskletNode, reads: Dict[str, List[_Read]], other: 
     return nest, target, space, stay
 
 
-def _apply_move(statement: tn.TaskletNode, nest: List[tn.ForScope], target: tn.ScheduleTreeNode, space, stay,
-                lrr) -> None:
+def _apply_move(
+    statement: tn.TaskletNode, nest: list[tn.ForScope], target: tn.ScheduleTreeNode, space, stay, lrr
+) -> None:
     scope = nest[0].parent
     innermost = nest[-1]
     innermost.children = [c for c in innermost.children if c is not statement]
 
     def copy_nest(interval, k: int) -> tn.ForScope:
-        body: List[tn.ScheduleTreeNode] = [clone_subtree(statement)]
+        body: list[tn.ScheduleTreeNode] = [clone_subtree(statement)]
         for loop in reversed(nest[1:]):
             body = [make_scope(loop, None, None, None, body, k)]
         return make_scope(nest[0], None, space, interval, body, k)

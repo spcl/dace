@@ -1,17 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Moving conditions that do not change within a loop out of it (loop unswitching)."""
+
 import ast
-from typing import List, Optional
 
 from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, bound_names, clone_body, condition_of, is_pure,
-                                                            iteration_spaces, make_scope, names_in_subtrees,
-                                                            names_written, range_analysis, repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    AccessIndex,
+    bound_names,
+    clone_body,
+    condition_of,
+    is_pure,
+    iteration_spaces,
+    make_scope,
+    names_in_subtrees,
+    names_written,
+    range_analysis,
+    repository_of,
+)
 
 
-def _chain_at(children: List[tn.ScheduleTreeNode], start: int) -> int:
+def _chain_at(children: list[tn.ScheduleTreeNode], start: int) -> int:
     """The end (exclusive) of the if/elif/else chain starting at ``children[start]``."""
     end = start + 1
     while end < len(children) and isinstance(children[end], (tn.ElifScope, tn.ElseScope)):
@@ -28,18 +38,20 @@ def _runs_at_least_once(scope: tn.ScheduleTreeScope, repository) -> bool:
         return False
     return all(
         lrr.provably_ge(space.end, space.start) if space.ascending else lrr.provably_ge(space.start, space.end)
-        for _, _, space in spaces)
+        for _, _, space in spaces
+    )
 
 
-def _chain(conditions: List[Optional[CodeBlock]], bodies: List[list]) -> List[tn.ScheduleTreeNode]:
+def _chain(conditions: list[CodeBlock | None], bodies: list[list]) -> list[tn.ScheduleTreeNode]:
     """An if/elif/else chain from its conditions (``None`` for ``else``) and bodies, without empty trailing branches;
     ``if c: <nothing> else: B`` becomes ``if not c: B``."""
     from dace.frontend.python import astutils  # Avoid import loops
+
     while bodies and not bodies[-1] and len(bodies) > 1:
         conditions, bodies = conditions[:-1], bodies[:-1]
     if len(bodies) == 2 and not bodies[0] and conditions[1] is None:
         condition = conditions[0].code[0]
-        negated = astutils.negate_expr(astutils.copy_tree(getattr(condition, 'value', condition))).value
+        negated = astutils.negate_expr(astutils.copy_tree(getattr(condition, "value", condition))).value
         conditions, bodies = [CodeBlock([ast.fix_missing_locations(ast.Expr(value=negated))])], [bodies[1]]
     if len(bodies) == 1 and not bodies[0]:
         return []
@@ -93,7 +105,7 @@ def unswitch_invariant_guards(stree: tn.ScheduleTreeScope, max_copies: int = 8) 
             reads_data |= bool(names & root.containers.keys())
         return not reads_data or _runs_at_least_once(loop, repository)
 
-    def process(loop: tn.ScheduleTreeScope, budget: int) -> List[tn.ScheduleTreeNode]:
+    def process(loop: tn.ScheduleTreeScope, budget: int) -> list[tn.ScheduleTreeNode]:
         """``loop`` with the invariant chains of its body moved out, as the nodes that replace it."""
         nonlocal unswitched
         children = loop.children

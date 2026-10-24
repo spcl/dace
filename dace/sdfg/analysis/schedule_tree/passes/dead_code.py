@@ -1,12 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Removing code without effect: unused labels, empty scopes and dead stores."""
+
 import ast
-from typing import List, Set, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (condition_of, is_pure, memlets_of, names_read,
-                                                            names_written)
+from dace.sdfg.analysis.schedule_tree.passes.common import condition_of, is_pure, memlets_of, names_read, names_written
 
 
 def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
@@ -17,17 +16,15 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
     """
 
     class FindGotos(tn.ScheduleNodeVisitor):
-
         def __init__(self):
-            self.gotos: Set[str] = set()
+            self.gotos: set[str] = set()
 
         def visit_GotoNode(self, node: tn.GotoNode):
             if node.target is not None:
                 self.gotos.add(node.target)
 
     class RemoveLabels(tn.ScheduleNodeTransformer):
-
-        def __init__(self, labels_to_keep: Set[str]) -> None:
+        def __init__(self, labels_to_keep: set[str]) -> None:
             self.labels_to_keep = labels_to_keep
             self.labels_seen = set()
 
@@ -53,7 +50,6 @@ def remove_empty_scopes(stree: tn.ScheduleTreeScope):
     """
 
     class RemoveEmptyScopes(tn.ScheduleNodeTransformer):
-
         def visit_scope(self, node: tn.ScheduleTreeScope):
             if len(node.children) == 0:
                 return None
@@ -83,35 +79,35 @@ def remove_dead_stores(stree: tn.ScheduleTreeScope) -> int:
     in_descriptors = set().union(*(map(str, desc.free_symbols) for desc in containers.values()))
     tracked |= {name for name in root.symbols if name not in containers and name not in in_descriptors}
     everything = frozenset(tracked)
-    dead: List[tn.ScheduleTreeNode] = []
+    dead: list[tn.ScheduleTreeNode] = []
 
-    def statement_sets(node: tn.ScheduleTreeNode) -> Tuple[Set[str], Set[str]]:
+    def statement_sets(node: tn.ScheduleTreeNode) -> tuple[set[str], set[str]]:
         """Names a statement reads, and names it certainly overwrites (not through dynamic or accumulating writes)."""
         reads, writes = names_read(node) & tracked, names_written(node) & tracked
-        for memlet in memlets_of(node, 'out_memlets'):
+        for memlet in memlets_of(node, "out_memlets"):
             if memlet.dynamic or memlet.wcr is not None:
                 writes.discard(memlet.data)
                 if memlet.wcr is not None and memlet.data in tracked:
                     reads.add(memlet.data)
         return reads, writes
 
-    def removable(node: tn.ScheduleTreeNode, live: Set[str]) -> bool:
+    def removable(node: tn.ScheduleTreeNode, live: set[str]) -> bool:
         if not isinstance(node, (tn.TaskletNode, tn.CopyNode, tn.AssignNode)):
             return False
         written = names_written(node)
         if not written or not written <= tracked or written & live:
             return False
         if isinstance(node, tn.TaskletNode):
-            if node.node.language != dtypes.Language.Python or getattr(node.node, 'side_effects', False):
+            if node.node.language != dtypes.Language.Python or getattr(node.node, "side_effects", False):
                 return False
-            if any(m.dynamic or m.wcr is not None for m in memlets_of(node, 'out_memlets')):
+            if any(m.dynamic or m.wcr is not None for m in memlets_of(node, "out_memlets")):
                 return False
             return is_pure(ast.Module(body=list(node.node.code.code), type_ignores=[]))
         if isinstance(node, tn.AssignNode):
-            return is_pure(getattr(node.value.code[0], 'value', node.value.code[0]))
+            return is_pure(getattr(node.value.code[0], "value", node.value.code[0]))
         return True
 
-    def body(children: List[tn.ScheduleTreeNode], live: Set[str], record: bool) -> Set[str]:
+    def body(children: list[tn.ScheduleTreeNode], live: set[str], record: bool) -> set[str]:
         """Live names before ``children`` given those live after them; records dead statements if ``record``."""
         live = set(live)
         k = len(children) - 1
@@ -122,7 +118,7 @@ def remove_dead_stores(stree: tn.ScheduleTreeScope) -> int:
                 start = k
                 while start > 0 and isinstance(children[start], (tn.ElifScope, tn.ElseScope)):
                     start -= 1
-                chain = children[start:k + 1]
+                chain = children[start : k + 1]
                 before = set()
                 for branch in chain:
                     before |= body(branch.children, live, record)
@@ -138,7 +134,8 @@ def remove_dead_stores(stree: tn.ScheduleTreeScope) -> int:
                 before = body(node.children, live, record) | live
                 condition = condition_of(node)
                 live = before | (
-                    (set(symbolic.symbols_in_ast(condition)) & tracked) if condition is not None else set(everything))
+                    (set(symbolic.symbols_in_ast(condition)) & tracked) if condition is not None else set(everything)
+                )
             elif isinstance(node, (tn.ForScope, tn.MapScope)):
                 header = names_read(node) & tracked
                 carried = set(live)

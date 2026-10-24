@@ -2,20 +2,21 @@
 """Loop range reduction: the sequence of passes that shrinks loops by their conditions."""
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.canonicalization import (forward_substitute_conditions,
-                                                                      pair_complementary_guards,
-                                                                      remove_dead_assignments)
-from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, prune_empty)
-from dace.sdfg.analysis.schedule_tree.passes.dead_code import (remove_dead_stores)
-from dace.sdfg.analysis.schedule_tree.passes.folding import (fold_guards)
-from dace.sdfg.analysis.schedule_tree.passes.splitting import (merge_contiguous_loops, split_iteration_spaces)
-from dace.sdfg.analysis.schedule_tree.passes.unswitching import (unswitch_invariant_guards)
+from dace.sdfg.analysis.schedule_tree.passes.canonicalization import (
+    forward_substitute_conditions,
+    pair_complementary_guards,
+    remove_dead_assignments,
+)
+from dace.sdfg.analysis.schedule_tree.passes.common import AccessIndex, prune_empty
+from dace.sdfg.analysis.schedule_tree.passes.dead_code import remove_dead_stores
+from dace.sdfg.analysis.schedule_tree.passes.folding import fold_guards
+from dace.sdfg.analysis.schedule_tree.passes.splitting import merge_contiguous_loops, split_iteration_spaces
+from dace.sdfg.analysis.schedule_tree.passes.unswitching import unswitch_invariant_guards
 
 
-def reduce_loop_ranges(stree: tn.ScheduleTreeScope,
-                       max_ranges: int = 32,
-                       max_enumeration: int = 1 << 20,
-                       min_trip_count: int = 1) -> int:
+def reduce_loop_ranges(
+    stree: tn.ScheduleTreeScope, max_ranges: int = 32, max_enumeration: int = 1 << 20, min_trip_count: int = 1
+) -> int:
     """
     Split and shrink loops and maps according to the conditions in their bodies, and move conditions that do not
     change within a loop out of it.

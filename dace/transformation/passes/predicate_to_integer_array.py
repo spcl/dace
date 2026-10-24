@@ -10,17 +10,18 @@ float``). Storing the mask as a 32-bit integer removes the mismatch. On the pyFV
 The array keeps holding only ``0`` and ``1``: every value written to it is converted with ``bool(...)`` first, and
 C++ treats an integer ``0``/``1`` exactly like the ``bool`` it came from in every expression that reads it.
 """
+
 import ast
-from typing import Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, data, dtypes, properties
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
-def _output_assignments(tasklet: nodes.Tasklet, connector: str) -> Optional[List[ast.Assign]]:
+def _output_assignments(tasklet: nodes.Tasklet, connector: str) -> list[ast.Assign] | None:
     """The statements of a Python tasklet that assign ``connector``, if every one of them is a plain
     ``connector = <expression>``; ``None`` otherwise (other languages, augmented or tuple assignments)."""
     if tasklet.language != dtypes.Language.Python:
@@ -41,11 +42,11 @@ def _output_assignments(tasklet: nodes.Tasklet, connector: str) -> Optional[List
     return assignments
 
 
-def _names(node: ast.AST) -> Set[str]:
+def _names(node: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
-def _predicate_flow(tasklet: nodes.Tasklet, connector: str) -> Tuple[bool, Set[str]]:
+def _predicate_flow(tasklet: nodes.Tasklet, connector: str) -> tuple[bool, set[str]]:
     """How a Python tasklet uses input ``connector`` as a truth value: whether it chooses between alternatives with it
     (in the test of a conditional expression or ``if``), and which names it passes it on to by boolean operations
     (``t = m and a > 0``; among them, output connectors). Other languages use nothing."""
@@ -57,13 +58,19 @@ def _predicate_flow(tasklet: nodes.Tasklet, connector: str) -> Tuple[bool, Set[s
     while changed:
         changed = False
         for node in ast.walk(module):
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                    and isinstance(node.value, (ast.Name, ast.BoolOp, ast.UnaryOp, ast.Compare))
-                    and _names(node.value) & derived and node.targets[0].id not in derived):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, (ast.Name, ast.BoolOp, ast.UnaryOp, ast.Compare))
+                and _names(node.value) & derived
+                and node.targets[0].id not in derived
+            ):
                 derived.add(node.targets[0].id)
                 changed = True
     tested = any(
-        isinstance(node, (ast.IfExp, ast.If, ast.While)) and _names(node.test) & derived for node in ast.walk(module))
+        isinstance(node, (ast.IfExp, ast.If, ast.While)) and _names(node.test) & derived for node in ast.walk(module)
+    )
     return tested, derived
 
 
@@ -83,12 +90,12 @@ def _in_loop(region: ControlFlowRegion) -> bool:
     return False
 
 
-def _predicate_containers(sdfg: SDFG) -> Set[str]:
+def _predicate_containers(sdfg: SDFG) -> set[str]:
     """Containers used as predicates inside loops: read in branch, loop and interstate-edge conditions that run in a
     loop, or read by a tasklet in a loop (or map) that tests them, or combined by boolean operations -- in a tasklet
     or an interstate-edge assignment in a loop -- into another predicate (e.g. ``flag = above[i - 1] or above[i]``
     feeding ``if flag``)."""
-    names: Set[str] = set()
+    names: set[str] = set()
     for block in sdfg.all_control_flow_blocks():
         if isinstance(block, ConditionalBlock) and _in_loop(block):
             for condition, _ in block.branches:
@@ -103,7 +110,7 @@ def _predicate_containers(sdfg: SDFG) -> Set[str]:
                     names |= set(map(str, edge.data.condition.get_free_symbols()))
 
     # Through tasklets: (read container, written container) pairs where the value flows by boolean operations
-    flows: Set[Tuple[str, str]] = set()
+    flows: set[tuple[str, str]] = set()
     for state in sdfg.states():
         for tasklet in state.nodes():
             if not isinstance(tasklet, nodes.Tasklet) or not (state.entry_node(tasklet) is not None or _in_loop(state)):
@@ -122,13 +129,14 @@ def _predicate_containers(sdfg: SDFG) -> Set[str]:
         if not _in_loop(region):
             continue
         for edge in region.edges():
-            for target, value in (edge.data.assignments.items() if edge.data is not None else ()):
+            for target, value in edge.data.assignments.items() if edge.data is not None else ():
                 try:
-                    expr = ast.parse(str(value), mode='eval').body
+                    expr = ast.parse(str(value), mode="eval").body
                 except SyntaxError:
                     continue
-                if (isinstance(expr, (ast.Name, ast.Subscript, ast.BoolOp, ast.Compare))
-                        or (isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not))):
+                if isinstance(expr, (ast.Name, ast.Subscript, ast.BoolOp, ast.Compare)) or (
+                    isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not)
+                ):
                     flows |= {(name, target) for name in _names(expr)}
     changed = True
     while changed:
@@ -165,15 +173,17 @@ class PredicateToIntegerArray(ppl.Pass):
     SDFG's own descriptor would have to change with them); run after inlining.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     # The integer width should match the floating-point values the predicate selects between, so that masks and
     # values fill vectors with the same number of lanes: int32 for float (measured: gcc 3.3-3.8x on pyFV3 D_SW);
     # for double, int64 is the matching width (4 lanes on AVX2), which has not been measured yet. A future version may
     # derive the width from the predicate's uses instead.
-    dtype = properties.TypeClassProperty(default=dtypes.int32,
-                                         desc='Integer type to store predicate arrays as (match the width of the '
-                                         'floating-point values they select, e.g. int64 for double)')
+    dtype = properties.TypeClassProperty(
+        default=dtypes.int32,
+        desc="Integer type to store predicate arrays as (match the width of the "
+        "floating-point values they select, e.g. int64 for double)",
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Tasklets
@@ -181,25 +191,25 @@ class PredicateToIntegerArray(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, _: dict) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, _: dict) -> dict[str, set[str]] | None:
         """
         :return: The retyped arrays, by SDFG label, or ``None`` if nothing was retyped.
         """
-        result: Dict[str, Set[str]] = {}
+        result: dict[str, set[str]] = {}
         for nested in sdfg.all_sdfgs_recursive():
             retyped = self._retype(nested)
             if retyped:
                 result[nested.label] = retyped
         return result or None
 
-    def _retype(self, sdfg: SDFG) -> Set[str]:
+    def _retype(self, sdfg: SDFG) -> set[str]:
         candidates = {
             name
             for name, desc in sdfg.arrays.items()
             if desc.transient and desc.dtype == dtypes.bool_ and type(desc) is data.Array
         }
         # Per array: (tasklet, connector, is output) of every access
-        accesses: Dict[str, List[Tuple[nodes.Tasklet, str, bool]]] = {name: [] for name in candidates}
+        accesses: dict[str, list[tuple[nodes.Tasklet, str, bool]]] = {name: [] for name in candidates}
         for state in sdfg.states():
             for node in state.data_nodes():
                 if node.data not in candidates:
@@ -211,9 +221,13 @@ class PredicateToIntegerArray(ppl.Pass):
                     output = path[0].src is not node
                     end = path[0] if output else path[-1]
                     owner, connector = (end.src, end.src_conn) if output else (end.dst, end.dst_conn)
-                    if (not isinstance(owner, nodes.Tasklet) or connector is None
-                            or any(e.data.wcr is not None or e.data.data != node.data for e in path)
-                            or end.data.other_subset is not None or end.data.subset.num_elements() != 1):
+                    if (
+                        not isinstance(owner, nodes.Tasklet)
+                        or connector is None
+                        or any(e.data.wcr is not None or e.data.data != node.data for e in path)
+                        or end.data.other_subset is not None
+                        or end.data.subset.num_elements() != 1
+                    ):
                         candidates.discard(node.data)
                         break
                     ctype = (owner.out_connectors if output else owner.in_connectors).get(connector, None)
@@ -233,10 +247,13 @@ class PredicateToIntegerArray(ppl.Pass):
                     continue
                 for assignment in _output_assignments(tasklet, connector):
                     value = assignment.value
-                    if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-                            and value.func.id == 'bool'):
+                    if not (
+                        isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "bool"
+                    ):
                         assignment.value = ast.copy_location(
-                            ast.Call(func=ast.Name(id='bool', ctx=ast.Load()), args=[value], keywords=[]), value)
-                tasklet.code = CodeBlock([ast.fix_missing_locations(s) for s in tasklet.code.code],
-                                         tasklet.code.language)
+                            ast.Call(func=ast.Name(id="bool", ctx=ast.Load()), args=[value], keywords=[]), value
+                        )
+                tasklet.code = CodeBlock(
+                    [ast.fix_missing_locations(s) for s in tasklet.code.code], tasklet.code.language
+                )
         return candidates

@@ -4,6 +4,7 @@ Passes for schedule trees.
 
 Each module holds one family of passes; all passes are importable from this package.
 """
+
 from dace.sdfg.analysis.schedule_tree.passes.folding import fold_guards
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import forward_substitute_conditions
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import hoist_condition_reads

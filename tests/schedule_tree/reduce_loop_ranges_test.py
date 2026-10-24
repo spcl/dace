@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the schedule-tree loop range reduction pass."""
+
 import numpy as np
 import pytest
 
@@ -7,8 +8,8 @@ import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import reduce_loop_ranges
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 CSTARR = np.array([0, 0, 0, 1, 1, 0, 0, 2], dtype=np.int32)
 
 
@@ -30,7 +31,7 @@ def _nodes(stree: tn.ScheduleTreeRoot, kind: type) -> list:
 
 def _for_headers(stree: tn.ScheduleTreeRoot) -> list:
     return [
-        f.loop.init_statement.as_string + ' ; ' + f.loop.loop_condition.as_string for f in _nodes(stree, tn.ForScope)
+        f.loop.init_statement.as_string + " ; " + f.loop.loop_condition.as_string for f in _nodes(stree, tn.ForScope)
     ]
 
 
@@ -40,11 +41,11 @@ def _map_ranges(stree: tn.ScheduleTreeRoot) -> list:
 
 def _run(stree: tn.ScheduleTreeRoot, **kwargs):
     # Simplification of the converted SDFG follows the configuration, as in ``roundtrip_test``.
-    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
+    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool("optimizer", "automatic_simplification"))
     sdfg(**kwargs)
 
 
-@pytest.mark.parametrize('use_map', [False, True])
+@pytest.mark.parametrize("use_map", [False, True])
 def test_stree_symbolic_guard(use_map):
 
     @dace.program
@@ -60,23 +61,23 @@ def test_stree_symbolic_guard(use_map):
                 B[i] = A[i] * 2.0
 
     sdfg = (mapped if use_map else loop).to_sdfg()
-    if 'M' not in sdfg.symbols:
-        sdfg.add_symbol('M', dace.int64)
+    if "M" not in sdfg.symbols:
+        sdfg.add_symbol("M", dace.int64)
     stree = _tree(sdfg)
     assert _reduce(stree) == 1
     assert not _nodes(stree, tn.IfScope)
     if use_map:
-        (rng, ) = _map_ranges(stree)
-        assert rng.startswith('1:') and 'Min' in rng
+        (rng,) = _map_ranges(stree)
+        assert rng.startswith("1:") and "Min" in rng
     else:
-        (header, ) = _for_headers(stree)
-        assert header.startswith('i = 1 ;') and 'Min' in header
+        (header,) = _for_headers(stree)
+        assert header.startswith("i = 1 ;") and "Min" in header
     for n, m in ((16, 9), (16, 40), (16, 1)):
         a = np.random.rand(n)
         b = np.zeros(n)
         _run(stree, A=a, B=b, N=n, M=m)
         expected = np.zeros(n)
-        expected[1:min(n, m)] = a[1:min(n, m)] * 2.0
+        expected[1 : min(n, m)] = a[1 : min(n, m)] * 2.0
         assert np.allclose(b, expected)
 
 
@@ -90,10 +91,10 @@ def test_stree_constant_array_loop_split():
                 B[i] = A[i] + 1.0
 
     sdfg = prog.to_sdfg()
-    sdfg.add_constant('cstarr', CSTARR)
+    sdfg.add_constant("cstarr", CSTARR)
     stree = _tree(sdfg)
     assert _reduce(stree) == 1
-    assert _for_headers(stree) == ['i = 3 ; (i < 5)', 'i = 7 ; (i < 8)']
+    assert _for_headers(stree) == ["i = 3 ; (i < 5)", "i = 7 ; (i < 8)"]
     assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.AssignNode)
     a = np.arange(8, dtype=np.float64)
     b = np.zeros(8)
@@ -110,27 +111,29 @@ def test_stree_constant_array_map_split_hand_built():
     from dace.properties import CodeBlock
     from dace.sdfg import InterstateEdge, nodes
 
-    tasklet = nodes.Tasklet('t', {'a'}, {'b'}, 'b = a + 1')
-    body = tn.TaskletNode(node=tasklet, in_memlets={'a': dace.Memlet('A[i]')}, out_memlets={'b': dace.Memlet('B[i]')})
-    assign = tn.AssignNode(name='flag',
-                           value=CodeBlock('(cstarr[i] > 0)'),
-                           edge=InterstateEdge(assignments={'flag': '(cstarr[i] > 0)'}))
-    guard = tn.IfScope(condition=CodeBlock('flag'), children=[body])
-    entry = nodes.MapEntry(nodes.Map('m', ['i'], subsets.Range.from_string('0:8')))
+    tasklet = nodes.Tasklet("t", {"a"}, {"b"}, "b = a + 1")
+    body = tn.TaskletNode(node=tasklet, in_memlets={"a": dace.Memlet("A[i]")}, out_memlets={"b": dace.Memlet("B[i]")})
+    assign = tn.AssignNode(
+        name="flag", value=CodeBlock("(cstarr[i] > 0)"), edge=InterstateEdge(assignments={"flag": "(cstarr[i] > 0)"})
+    )
+    guard = tn.IfScope(condition=CodeBlock("flag"), children=[body])
+    entry = nodes.MapEntry(nodes.Map("m", ["i"], subsets.Range.from_string("0:8")))
     scope = tn.MapScope(node=entry, children=[assign, guard])
-    stree = tn.ScheduleTreeRoot(name='split',
-                                containers={
-                                    'A': data.Array(dace.float64, [8]),
-                                    'B': data.Array(dace.float64, [8]),
-                                    'cstarr': data.Array(dace.int32, [8]),
-                                },
-                                symbols={'flag': dace.int32},
-                                constants={'cstarr': (data.Array(dace.int32, [8]), CSTARR)},
-                                arg_names=['A', 'B', 'cstarr'],
-                                children=[scope])
+    stree = tn.ScheduleTreeRoot(
+        name="split",
+        containers={
+            "A": data.Array(dace.float64, [8]),
+            "B": data.Array(dace.float64, [8]),
+            "cstarr": data.Array(dace.int32, [8]),
+        },
+        symbols={"flag": dace.int32},
+        constants={"cstarr": (data.Array(dace.int32, [8]), CSTARR)},
+        arg_names=["A", "B", "cstarr"],
+        children=[scope],
+    )
     tn.validate_children_and_parents_align(stree, root=True)
     assert _reduce(stree) == 1
-    assert _map_ranges(stree) == ['3:5', '7']
+    assert _map_ranges(stree) == ["3:5", "7"]
     assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.AssignNode)
     maps = _nodes(stree, tn.MapScope)
     assert maps[0].node is not maps[1].node and maps[0].children[0].node is not maps[1].children[0].node
@@ -153,10 +156,10 @@ def test_stree_frontend_map_constant_array_split():
                 B[i] = A[i] + 1.0
 
     sdfg = prog.to_sdfg()
-    sdfg.add_constant('cstarr', CSTARR)
+    sdfg.add_constant("cstarr", CSTARR)
     stree = _tree(sdfg)
     assert _reduce(stree) == 1
-    assert _map_ranges(stree) == ['3:5', '7']
+    assert _map_ranges(stree) == ["3:5", "7"]
     assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.AssignNode)
     a = np.arange(8, dtype=np.float64)
     b = np.zeros(8)
@@ -176,10 +179,10 @@ def test_stree_residual_and_prologue_kept_when_read():
 
     stree = _tree(prog.to_sdfg())
     assert _reduce(stree) == 1
-    (header, ) = _for_headers(stree)
-    assert header.startswith('i = 2 ;')
-    (guard, ) = _nodes(stree, tn.IfScope)
-    assert '4.5' in guard.condition.as_string and 'i >= 2' not in guard.condition.as_string
+    (header,) = _for_headers(stree)
+    assert header.startswith("i = 2 ;")
+    (guard,) = _nodes(stree, tn.IfScope)
+    assert "4.5" in guard.condition.as_string and "i >= 2" not in guard.condition.as_string
     a = np.arange(20, dtype=np.float64)
     b = np.zeros(20)
     _run(stree, A=a, B=b, N=20)
@@ -197,13 +200,13 @@ def test_stree_two_dimensional_map_both_params():
                 B[i, j] = A[i, j] + 1.0
 
     sdfg = prog.to_sdfg()
-    if 'M' not in sdfg.symbols:
-        sdfg.add_symbol('M', dace.int64)
+    if "M" not in sdfg.symbols:
+        sdfg.add_symbol("M", dace.int64)
     stree = _tree(sdfg)
     assert _reduce(stree) == 2
     assert not _nodes(stree, tn.IfScope)
-    (m, ) = _nodes(stree, tn.MapScope)
-    assert str(m.node.map.range.ranges[0][0]) == '2' and 'Min' in str(m.node.map.range.ranges[1][1])
+    (m,) = _nodes(stree, tn.MapScope)
+    assert str(m.node.map.range.ranges[0][0]) == "2" and "Min" in str(m.node.map.range.ranges[1][1])
     n, mm = 6, 4
     a = np.random.rand(n, n)
     b = np.zeros((n, n))
@@ -224,8 +227,8 @@ def test_stree_nested_loop_in_map():
                         B[i, j] = A[i, j] + 1.0
 
     sdfg = prog.to_sdfg()
-    if 'M' not in sdfg.symbols:
-        sdfg.add_symbol('M', dace.int64)
+    if "M" not in sdfg.symbols:
+        sdfg.add_symbol("M", dace.int64)
     stree = _tree(sdfg)
     assert _reduce(stree) == 2
     assert not _nodes(stree, tn.IfScope)
@@ -347,41 +350,45 @@ def test_stree_stencil_mask_hoisted_and_k_split():
     splits into the runs where the mask holds (running ``A`` with ``i``/``j`` reduced to ``2:28``) and where it does
     not (running ``B``), and no conditional remains."""
     sdfg = _stencil_program().to_sdfg()
-    sdfg.add_constant('mode', MODE)
+    sdfg.add_constant("mode", MODE)
     stree = _tree(sdfg)
     assert _reduce(stree) > 0
     assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.ElseScope)
-    k_loops = [f for f in _nodes(stree, tn.ForScope) if f.loop.loop_variable == 'k']
+    k_loops = [f for f in _nodes(stree, tn.ForScope) if f.loop.loop_variable == "k"]
     # mode == 0 on k in {0, 1}, {3}, {5}; mode != 0 on {2}, {4}: five k loops in iteration order.
-    assert [f.loop.init_statement.as_string for f in k_loops] == ['k = 0', 'k = 2', 'k = 3', 'k = 4', 'k = 5']
+    assert [f.loop.init_statement.as_string for f in k_loops] == ["k = 0", "k = 2", "k = 3", "k = 4", "k = 5"]
     inner = {
         f.loop.loop_variable: f.loop.init_statement.as_string
-        for f in k_loops[0].preorder_traversal() if isinstance(f, tn.ForScope)
+        for f in k_loops[0].preorder_traversal()
+        if isinstance(f, tn.ForScope)
     }
-    assert inner['i'] == 'i = 2' and inner['j'] == 'j = 2'
+    assert inner["i"] == "i = 2" and inner["j"] == "j = 2"
     inner = {
         f.loop.loop_variable: f.loop.init_statement.as_string
-        for f in k_loops[1].preorder_traversal() if isinstance(f, tn.ForScope)
+        for f in k_loops[1].preorder_traversal()
+        if isinstance(f, tn.ForScope)
     }
-    assert inner['i'] == 'i = 0' and inner['j'] == 'j = 0'
+    assert inner["i"] == "i = 0" and inner["j"] == "j = 0"
     _check_stencil(stree)
 
 
 def test_stree_stencil_sibling_negated_guards():
     """The same stencil with the else branch written as a sibling ``if not mask`` (as some frontends emit)."""
     sdfg = _stencil_program().to_sdfg()
-    sdfg.add_constant('mode', MODE)
+    sdfg.add_constant("mode", MODE)
     stree = _tree(sdfg)
     from dace.frontend.python import astutils
+
     for else_scope in _nodes(stree, tn.ElseScope):
         guard = else_scope.parent.children[else_scope.parent.children.index(else_scope) - 1]
         assert isinstance(guard, tn.IfScope)
-        negated = tn.IfScope(condition=tn.CodeBlock([astutils.negate_expr(guard.condition.code[0])]),
-                             children=else_scope.children)
+        negated = tn.IfScope(
+            condition=tn.CodeBlock([astutils.negate_expr(guard.condition.code[0])]), children=else_scope.children
+        )
         else_scope.parent.children[else_scope.parent.children.index(else_scope)] = negated
         negated.parent = else_scope.parent
     tn.validate_children_and_parents_align(stree, root=True)
-    assert 'if (not' in stree.as_string()
+    assert "if (not" in stree.as_string()
     assert _reduce(stree) > 0
     assert not _nodes(stree, tn.IfScope)
     _check_stencil(stree)
@@ -394,13 +401,14 @@ def test_stree_hoist_only_runtime_mask_stays():
     stree = _tree(sdfg)
     assert _reduce(stree) > 0
     guards = _nodes(stree, tn.IfScope)
-    assert len(guards) == 1 and 'mode' in guards[0].condition.as_string
-    assert isinstance(guards[0].parent, tn.ForScope) and guards[0].parent.loop.loop_variable == 'k'
+    assert len(guards) == 1 and "mode" in guards[0].condition.as_string
+    assert isinstance(guards[0].parent, tn.ForScope) and guards[0].parent.loop.loop_variable == "k"
     inner = {
         f.loop.loop_variable: f.loop.init_statement.as_string
-        for f in guards[0].preorder_traversal() if isinstance(f, tn.ForScope)
+        for f in guards[0].preorder_traversal()
+        if isinstance(f, tn.ForScope)
     }
-    assert inner == {'i': 'i = 2', 'j': 'j = 2'}
+    assert inner == {"i": "i = 2", "j": "j = 2"}
     _check_stencil(stree)
 
 
@@ -416,11 +424,11 @@ def test_stree_guard_after_plain_statements_splits_loop():
                 C[k] = B[k] + 1.0
 
     sdfg = prog.to_sdfg()
-    sdfg.add_constant('cstarr', CSTARR)
+    sdfg.add_constant("cstarr", CSTARR)
     stree = _tree(sdfg)
     assert _reduce(stree) == 1
     assert not _nodes(stree, tn.IfScope)
-    assert _for_headers(stree) == ['k = 0 ; (k < 3)', 'k = 3 ; (k < 5)', 'k = 5 ; (k < 7)', 'k = 7 ; (k < 8)']
+    assert _for_headers(stree) == ["k = 0 ; (k < 3)", "k = 3 ; (k < 5)", "k = 5 ; (k < 7)", "k = 7 ; (k < 8)"]
     a = np.arange(8, dtype=np.float64)
     b = np.zeros(8)
     c = np.zeros(8)
@@ -445,11 +453,11 @@ def test_stree_two_guards_in_one_body():
                 C[k] = A[k] + 1.0
 
     sdfg = prog.to_sdfg()
-    sdfg.add_constant('cstarr', CSTARR)
+    sdfg.add_constant("cstarr", CSTARR)
     stree = _tree(sdfg)
     assert _reduce(stree) == 1
     assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.ElseScope)
-    assert _for_headers(stree) == ['k = 0 ; (k < 3)', 'k = 3 ; (k < 5)', 'k = 5 ; (k < 7)', 'k = 7 ; (k < 8)']
+    assert _for_headers(stree) == ["k = 0 ; (k < 3)", "k = 3 ; (k < 5)", "k = 5 ; (k < 7)", "k = 7 ; (k < 8)"]
     a = np.arange(8, dtype=np.float64)
     b = np.zeros(8)
     c = np.zeros(8)
@@ -473,8 +481,8 @@ def test_stree_invariant_guard_after_statement_unswitched_in_order():
                 C[i] = B[i] + 1.0
 
     sdfg = prog.to_sdfg()
-    if 'M' not in sdfg.symbols:
-        sdfg.add_symbol('M', dace.int64)
+    if "M" not in sdfg.symbols:
+        sdfg.add_symbol("M", dace.int64)
     stree = _tree(sdfg)
     assert _reduce(stree) == 1
     guard = next(n for n in stree.children if isinstance(n, tn.IfScope))
@@ -495,31 +503,32 @@ def test_stree_sibling_guards_not_paired_when_first_branch_changes_condition():
     from dace.sdfg import nodes
 
     def tasklet(code: str, inputs: dict, output: str) -> tn.TaskletNode:
-        node = nodes.Tasklet('t', set(inputs), {'out'}, f'out = {code}')
-        return tn.TaskletNode(node=node,
-                              in_memlets={
-                                  c: dace.Memlet(m)
-                                  for c, m in inputs.items()
-                              },
-                              out_memlets={'out': dace.Memlet(output)})
+        node = nodes.Tasklet("t", set(inputs), {"out"}, f"out = {code}")
+        return tn.TaskletNode(
+            node=node,
+            in_memlets={c: dace.Memlet(m) for c, m in inputs.items()},
+            out_memlets={"out": dace.Memlet(output)},
+        )
 
-    first = tn.IfScope(condition=CodeBlock('(i >= 4) and (flag[0] > 0)'),
-                       children=[tasklet('-1.0', {}, 'flag[0]'),
-                                 tasklet('1.0', {}, 'B[i]')])
-    second = tn.IfScope(condition=CodeBlock('not ((i >= 4) and (flag[0] > 0))'),
-                        children=[tasklet('b + a', {
-                            'a': 'A[i]',
-                            'b': 'B[i]'
-                        }, 'B[i]')])
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
-    stree = tn.ScheduleTreeRoot(name='sibling_guards',
-                                containers={
-                                    'A': data.Array(dace.float64, [8]),
-                                    'B': data.Array(dace.float64, [8]),
-                                    'flag': data.Array(dace.float64, [1]),
-                                },
-                                arg_names=['A', 'B', 'flag'],
-                                children=[tn.ForScope(loop=loop, children=[first, second])])
+    first = tn.IfScope(
+        condition=CodeBlock("(i >= 4) and (flag[0] > 0)"),
+        children=[tasklet("-1.0", {}, "flag[0]"), tasklet("1.0", {}, "B[i]")],
+    )
+    second = tn.IfScope(
+        condition=CodeBlock("not ((i >= 4) and (flag[0] > 0))"),
+        children=[tasklet("b + a", {"a": "A[i]", "b": "B[i]"}, "B[i]")],
+    )
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1")
+    stree = tn.ScheduleTreeRoot(
+        name="sibling_guards",
+        containers={
+            "A": data.Array(dace.float64, [8]),
+            "B": data.Array(dace.float64, [8]),
+            "flag": data.Array(dace.float64, [1]),
+        },
+        arg_names=["A", "B", "flag"],
+        children=[tn.ForScope(loop=loop, children=[first, second])],
+    )
     tn.validate_children_and_parents_align(stree, root=True)
     _reduce(stree)
     a = np.arange(8, dtype=np.float64)
@@ -530,6 +539,7 @@ def test_stree_sibling_guards_not_paired_when_first_branch_changes_condition():
     assert np.allclose(b, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    sys.exit(pytest.main([__file__, '-x', '-q']))
+
+    sys.exit(pytest.main([__file__, "-x", "-q"]))

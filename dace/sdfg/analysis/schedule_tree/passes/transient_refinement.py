@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shrinking transients to the part of them that one loop iteration uses (e.g., fields to planes, planes to
 scalars)."""
+
 import ast
 import copy
-from typing import Dict, List, Set, Tuple, cast
+from typing import cast
 
 import sympy
 
@@ -11,12 +12,17 @@ from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (iteration_spaces, memlets_of, names_read, names_written,
-                                                            repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    iteration_spaces,
+    memlets_of,
+    names_read,
+    names_written,
+    repository_of,
+)
 from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, Use, usable_accesses
 
 
-def _sequential_loops(node: tn.ScheduleTreeNode) -> List[tn.ScheduleTreeScope]:
+def _sequential_loops(node: tn.ScheduleTreeNode) -> list[tn.ScheduleTreeScope]:
     """The loops enclosing ``node`` whose iterations run one after the other, innermost first."""
     result, parent = [], node.parent
     while parent is not None:
@@ -30,9 +36,10 @@ def _sequential_loops(node: tn.ScheduleTreeNode) -> List[tn.ScheduleTreeScope]:
 
 def _packed_strides(shape: list, strides: list) -> list:
     """Contiguous strides for ``shape`` that keep the order of the dimensions in memory given by ``strides``."""
-    order = sorted(range(len(shape)),
-                   key=lambda d: (symbolic.overapproximate(strides[d])
-                                  if symbolic.issymbolic(strides[d]) else strides[d], d))
+    order = sorted(
+        range(len(shape)),
+        key=lambda d: (symbolic.overapproximate(strides[d]) if symbolic.issymbolic(strides[d]) else strides[d], d),
+    )
     result, stride = [0] * len(shape), 1
     for d in order:
         result[d] = stride
@@ -40,13 +47,13 @@ def _packed_strides(shape: list, strides: list) -> list:
     return result
 
 
-def _condition_accesses(code: CodeBlock, containers: dict) -> Tuple[List[Tuple[str, ast.Subscript]], Set[str]]:
+def _condition_accesses(code: CodeBlock, containers: dict) -> tuple[list[tuple[str, ast.Subscript]], set[str]]:
     """Find direct, scalar subscripts of containers in condition code; report unsupported uses as opaque."""
     if code.language != dtypes.Language.Python:
         return [], set()
     if not isinstance(code.code, list):
         return [], set(containers)
-    body = cast(List[ast.stmt], code.code)
+    body = cast(list[ast.stmt], code.code)
     module = ast.Module(body=body, type_ignores=[])
 
     parents = {}
@@ -55,8 +62,9 @@ def _condition_accesses(code: CodeBlock, containers: dict) -> Tuple[List[Tuple[s
             parents[child] = parent
 
     accesses, opaque = [], set()
-    for name_node in (n for n in ast.walk(module)
-                      if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in containers):
+    for name_node in (
+        n for n in ast.walk(module) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in containers
+    ):
         parent = parents.get(name_node)
         if not isinstance(parent, ast.Subscript) or parent.value is not name_node:
             opaque.add(name_node.id)
@@ -66,20 +74,19 @@ def _condition_accesses(code: CodeBlock, containers: dict) -> Tuple[List[Tuple[s
             opaque.add(name_node.id)
             continue
         indices = parent.slice.elts if isinstance(parent.slice, ast.Tuple) else [parent.slice]
-        if (len(indices) != len(containers[name_node.id].shape) or any(isinstance(i, ast.Slice) for i in indices)):
+        if len(indices) != len(containers[name_node.id].shape) or any(isinstance(i, ast.Slice) for i in indices):
             opaque.add(name_node.id)
             continue
         accesses.append((name_node.id, parent))
     return accesses, opaque
 
 
-def _rewrite_condition(code: CodeBlock, accesses: List[ast.Subscript], name: str, contracted: Set[int], scalar: bool):
+def _rewrite_condition(code: CodeBlock, accesses: list[ast.Subscript], name: str, contracted: set[int], scalar: bool):
     if not isinstance(code.code, list):
         return
     replacements = {id(access) for access in accesses}
 
     class Rewriter(ast.NodeTransformer):
-
         def visit_Subscript(self, node):
             if id(node) not in replacements:
                 return self.generic_visit(node)
@@ -96,15 +103,15 @@ def _rewrite_condition(code: CodeBlock, accesses: List[ast.Subscript], name: str
                 node.slice = indices[0]
             return self.generic_visit(node)
 
-    tree = ast.Module(body=cast(List[ast.stmt], code.code), type_ignores=[])
+    tree = ast.Module(body=cast(list[ast.stmt], code.code), type_ignores=[])
     tree = Rewriter().visit(tree)
     ast.fix_missing_locations(tree)
     code.code = tree.body
 
 
-def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
-                                 trust_reads: bool = False,
-                                 refine_in_conditions: bool = True) -> int:
+def refine_loop_local_transients(
+    stree: tn.ScheduleTreeScope, trust_reads: bool = False, refine_in_conditions: bool = True
+) -> int:
     """
     Shrink each transient array to the part that one iteration of a loop uses, when no value it holds is used by
     another iteration: a dimension that every access indexes with exactly the variable ``v`` of an enclosing
@@ -142,12 +149,12 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
     viewed |= {n.target for n in root.preorder_traversal() if isinstance(n, tn.ViewNode)}
 
     # Every memlet of each container, and containers accessed in ways not analyzed here
-    accesses: Dict[str, List[Tuple[tn.ScheduleTreeNode, dict | None, str | None, ast.Subscript | None]]] = {}
-    condition_accesses: Dict[str, List[Tuple[tn.ScheduleTreeNode, ast.Subscript]]] = {}
-    opaque: Set[str] = set()
+    accesses: dict[str, list[tuple[tn.ScheduleTreeNode, dict | None, str | None, ast.Subscript | None]]] = {}
+    condition_accesses: dict[str, list[tuple[tn.ScheduleTreeNode, ast.Subscript]]] = {}
+    opaque: set[str] = set()
     for node in root.preorder_traversal():
         covered = set()
-        for attr in ('in_memlets', 'out_memlets'):
+        for attr in ("in_memlets", "out_memlets"):
             memlets = getattr(node, attr, None)
             if isinstance(memlets, dict):
                 for connector, memlet in memlets.items():
@@ -157,8 +164,8 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
                         opaque.add(memlet.data)
             elif memlets is not None:
                 opaque |= {m.data for m in memlets_of(node, attr)}
-        opaque |= {m.data for m in memlets_of(node, 'memlet')}
-        condition = getattr(node, 'condition', None)
+        opaque |= {m.data for m in memlets_of(node, "memlet")}
+        condition = getattr(node, "condition", None)
         if refine_in_conditions and isinstance(condition, CodeBlock):
             found, unsupported = _condition_accesses(condition, containers)
             opaque |= unsupported
@@ -172,25 +179,33 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
     for name, scope_accesses in condition_accesses.items():  # Conditions are read before their scope runs
         for node, access in scope_accesses:
             indices = access.slice.elts if isinstance(access.slice, ast.Tuple) else [access.slice]
-            memlets = {'__condition': Memlet(f'{name}[{", ".join(ast.unparse(i) for i in indices)}]')}
-            live_uses.setdefault(name, []).append(Use(node, memlets, '__condition', False))
+            memlets = {"__condition": Memlet(f"{name}[{', '.join(ast.unparse(i) for i in indices)}]")}
+            live_uses.setdefault(name, []).append(Use(node, memlets, "__condition", False))
     liveness = Liveness(root, trust_reads=False)
 
     removed = 0
     for name, uses in accesses.items():
         desc = containers.get(name)
-        if (desc is None or not desc.transient or not isinstance(desc, data.Array) or isinstance(desc, data.View)
-                or name in viewed or name in opaque or getattr(desc, 'may_alias', False)):
+        if (
+            desc is None
+            or not desc.transient
+            or not isinstance(desc, data.Array)
+            or isinstance(desc, data.View)
+            or name in viewed
+            or name in opaque
+            or getattr(desc, "may_alias", False)
+        ):
             continue
-        if any(memlets is not None and memlets[connector].subset.num_elements() != 1
-               for _, memlets, connector, _ in uses):
+        if any(
+            memlets is not None and memlets[connector].subset.num_elements() != 1 for _, memlets, connector, _ in uses
+        ):
             continue
         # Loops enclosing every access
         loops = None
         for node, _, _, _ in uses:
             enclosing = _sequential_loops(node)
             loops = enclosing if loops is None else [l for l in loops if any(l is e for e in enclosing)]
-        contracted: Set[int] = set()
+        contracted: set[int] = set()
         for loop in loops or []:
             spaces = iteration_spaces(loop, repository)
             for dim_index, var, space in spaces:
@@ -245,9 +260,9 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
                 continue
             old = memlets[connector]
             indices = [0 if d in contracted else x for d, x in enumerate(old.subset.min_element())]
-            memlets[connector] = Memlet(data=name,
-                                        subset=subsets.Range([(x, x, 1) for x in indices]),
-                                        dynamic=old.dynamic)
+            memlets[connector] = Memlet(
+                data=name, subset=subsets.Range([(x, x, 1) for x in indices]), dynamic=old.dynamic
+            )
         grouped = {}
         for node, access in condition_accesses.get(name, []):
             grouped.setdefault(id(node), (node.condition, []))[1].append(access)

@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for sinking statements into guards and coarsening guards in schedule trees."""
+
 import copy
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 import numpy as np
 
@@ -12,7 +13,7 @@ from dace.sdfg.analysis.schedule_tree.passes import coarsen_guards, move_stateme
 from dace.sdfg.state import LoopRegion
 
 
-def _root(name: str, arrays: Dict[str, tuple], transients: Dict[str, tuple] = None) -> tn.ScheduleTreeRoot:
+def _root(name: str, arrays: dict[str, tuple], transients: dict[str, tuple] = None) -> tn.ScheduleTreeRoot:
     """An empty tree with the given arrays (name -> (shape, dtype)) and transients (scalars if the shape is empty)."""
     sdfg = dace.SDFG(name)
     for array, (shape, dtype) in arrays.items():
@@ -29,22 +30,18 @@ def _root(name: str, arrays: Dict[str, tuple], transients: Dict[str, tuple] = No
 
 
 def _loop(var: str, start: int, end: int, body: list) -> tn.ForScope:
-    loop = LoopRegion(f'loop_{var}', f'{var} < {end}', var, f'{var} = {start}', f'{var} = {var} + 1')
+    loop = LoopRegion(f"loop_{var}", f"{var} < {end}", var, f"{var} = {start}", f"{var} = {var} + 1")
     return tn.ForScope(loop=loop, children=body)
 
 
-def _tasklet(code: str, inputs: Dict[str, str], outputs: Dict[str, str]) -> tn.TaskletNode:
+def _tasklet(code: str, inputs: dict[str, str], outputs: dict[str, str]) -> tn.TaskletNode:
     """A tasklet with connectors -> memlet strings."""
-    tasklet = dace.nodes.Tasklet('compute', set(inputs), set(outputs), code)
-    return tn.TaskletNode(node=tasklet,
-                          in_memlets={
-                              c: dace.Memlet(m)
-                              for c, m in inputs.items()
-                          },
-                          out_memlets={
-                              c: dace.Memlet(m)
-                              for c, m in outputs.items()
-                          })
+    tasklet = dace.nodes.Tasklet("compute", set(inputs), set(outputs), code)
+    return tn.TaskletNode(
+        node=tasklet,
+        in_memlets={c: dace.Memlet(m) for c, m in inputs.items()},
+        out_memlets={c: dace.Memlet(m) for c, m in outputs.items()},
+    )
 
 
 def _if(condition: str, body: list) -> tn.IfScope:
@@ -63,15 +60,18 @@ def _nodes(stree: tn.ScheduleTreeRoot, kind: type) -> list:
     return [n for n in stree.preorder_traversal() if type(n) is kind]
 
 
-def _run(stree: tn.ScheduleTreeRoot, arguments: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+def _run(stree: tn.ScheduleTreeRoot, arguments: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     arguments = {k: v.copy() for k, v in arguments.items()}
-    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
+    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool("optimizer", "automatic_simplification"))
     sdfg(**arguments)
     return arguments
 
 
-def _same_results(build: Callable[[], tn.ScheduleTreeRoot], transform: Callable[[tn.ScheduleTreeRoot], None],
-                  inputs: List[Dict[str, np.ndarray]]) -> tn.ScheduleTreeRoot:
+def _same_results(
+    build: Callable[[], tn.ScheduleTreeRoot],
+    transform: Callable[[tn.ScheduleTreeRoot], None],
+    inputs: list[dict[str, np.ndarray]],
+) -> tn.ScheduleTreeRoot:
     """Transforms a tree and checks that it computes what the original does for each set of inputs."""
     transformed = build()
     transform(transformed)
@@ -92,44 +92,45 @@ def _same_results(build: Callable[[], tn.ScheduleTreeRoot], transform: Callable[
 def _borrowing_tree() -> tn.ScheduleTreeRoot:
     """``for k: for i: if L[k-1, i] != 0: A[k, i] -= L[k-1, i]; if A[k, i] < 0: L[k, i] = A[k, i]; A[k, i] = 0``, the
     shape of the interior sweep that fixes negative values."""
-    stree = _root('coarsen_borrowing', {'A': ([8, 16], dace.float64), 'L': ([8, 16], dace.float64)})
-    carry = _if('L[k - 1, i] != 0', [_tasklet('b = a - l', {'a': 'A[k, i]', 'l': 'L[k - 1, i]'}, {'b': 'A[k, i]'})])
-    fix = _if('A[k, i] < 0', [_tasklet('l = a; b = 0', {'a': 'A[k, i]'}, {'l': 'L[k, i]', 'b': 'A[k, i]'})])
-    stree.add_child(_loop('k', 1, 8, [_loop('i', 0, 16, [carry, fix])]))
+    stree = _root("coarsen_borrowing", {"A": ([8, 16], dace.float64), "L": ([8, 16], dace.float64)})
+    carry = _if("L[k - 1, i] != 0", [_tasklet("b = a - l", {"a": "A[k, i]", "l": "L[k - 1, i]"}, {"b": "A[k, i]"})])
+    fix = _if("A[k, i] < 0", [_tasklet("l = a; b = 0", {"a": "A[k, i]"}, {"l": "L[k, i]", "b": "A[k, i]"})])
+    stree.add_child(_loop("k", 1, 8, [_loop("i", 0, 16, [carry, fix])]))
     return stree
 
 
-def _inputs_with_negatives() -> List[Dict[str, np.ndarray]]:
+def _inputs_with_negatives() -> list[dict[str, np.ndarray]]:
     rng = np.random.default_rng(0)
     positive = rng.random((8, 16))
     some_negative = positive.copy()
     some_negative[3, 5] = -0.5
     some_negative[6, 0] = -0.25
-    return [{'A': positive, 'L': np.zeros((8, 16))}, {'A': some_negative, 'L': np.zeros((8, 16))}]
+    return [{"A": positive, "L": np.zeros((8, 16))}, {"A": some_negative, "L": np.zeros((8, 16))}]
 
 
 def test_coarsen_nest_and_rows():
     stree = _same_results(_borrowing_tree, lambda t: coarsen_guards(t) == 1 or None, _inputs_with_negatives())
     # The tests read the guards' elements through memlets, not by name in their code
     for test in _nodes(stree, tn.TaskletNode):
-        if test.node.label == 'any_guard':
-            assert 'A[' not in test.node.code.as_string and 'L[' not in test.node.code.as_string
-            assert {m.data for m in test.in_memlets.values()} >= {'A', 'L'}
+        if test.node.label == "any_guard":
+            assert "A[" not in test.node.code.as_string and "L[" not in test.node.code.as_string
+            assert {m.data for m in test.in_memlets.values()} >= {"A", "L"}
     # The guards read both loop variables: only row tests, inside the k loop over i
     conditions = [n.condition.as_string for n in _nodes(stree, tn.IfScope)]
-    assert any(c.startswith('__any_row') for c in conditions)
-    assert not any(c.startswith('__any') and not c.startswith('__any_row') for c in conditions)
-    assert len(stree.children) == 1 and stree.children[0].loop.loop_variable == 'k'
+    assert any(c.startswith("__any_row") for c in conditions)
+    assert not any(c.startswith("__any") and not c.startswith("__any_row") for c in conditions)
+    assert len(stree.children) == 1 and stree.children[0].loop.loop_variable == "k"
     # Without row tests, one test over both loops before the nest
-    stree = _same_results(_borrowing_tree, lambda t: coarsen_guards(t, levels=('nest', )) == 1 or None,
-                          _inputs_with_negatives())
-    assert type(stree.children[-1]) is tn.IfScope and stree.children[-2].loop.loop_variable == 'k'
+    stree = _same_results(
+        _borrowing_tree, lambda t: coarsen_guards(t, levels=("nest",)) == 1 or None, _inputs_with_negatives()
+    )
+    assert type(stree.children[-1]) is tn.IfScope and stree.children[-2].loop.loop_variable == "k"
 
 
 def test_coarsen_counts():
     stree = _borrowing_tree()
     assert coarsen_guards(stree) == 1
-    assert coarsen_guards(_borrowing_tree(), levels=('nest', )) == 1
+    assert coarsen_guards(_borrowing_tree(), levels=("nest",)) == 1
     assert coarsen_guards(_borrowing_tree(), min_iterations=1000) == 0
 
 
@@ -137,45 +138,43 @@ def test_coarsen_test_only_over_guard_variables():
     """A guard on ``Z[j]`` in ``for k: for j:`` is tested once per ``j``, before the ``k`` loop."""
 
     def build():
-        stree = _root('coarsen_invariant', {'A': ([8, 16], dace.float64), 'Z': ([16], dace.int32)})
-        body = _if('Z[j] > 0', [_tasklet('b = a * 2', {'a': 'A[k, j]'}, {'b': 'A[k, j]'})])
-        stree.add_child(_loop('k', 0, 8, [_loop('j', 0, 16, [body])]))
+        stree = _root("coarsen_invariant", {"A": ([8, 16], dace.float64), "Z": ([16], dace.int32)})
+        body = _if("Z[j] > 0", [_tasklet("b = a * 2", {"a": "A[k, j]"}, {"b": "A[k, j]"})])
+        stree.add_child(_loop("k", 0, 8, [_loop("j", 0, 16, [body])]))
         return stree
 
     rng = np.random.default_rng(1)
     zeros, some = np.zeros(16, dtype=np.int32), np.zeros(16, dtype=np.int32)
     some[4] = 1
-    stree = _same_results(build, lambda t: coarsen_guards(t, levels=('nest', )), [{
-        'A': rng.random((8, 16)),
-        'Z': zeros
-    }, {
-        'A': rng.random((8, 16)),
-        'Z': some
-    }])
+    stree = _same_results(
+        build,
+        lambda t: coarsen_guards(t, levels=("nest",)),
+        [{"A": rng.random((8, 16)), "Z": zeros}, {"A": rng.random((8, 16)), "Z": some}],
+    )
     test_loop = stree.children[1]
-    assert type(test_loop) is tn.ForScope and test_loop.loop.loop_variable == 'j'
+    assert type(test_loop) is tn.ForScope and test_loop.loop.loop_variable == "j"
     assert type(test_loop.children[0]) is tn.TaskletNode
 
 
 def test_coarsen_requires_all_statements_guarded():
     stree = _borrowing_tree()
     inner = stree.children[0].children[0]
-    inner.add_child(_tasklet('b = a', {'a': 'A[k, i]'}, {'b': 'L[k, i]'}))
+    inner.add_child(_tasklet("b = a", {"a": "A[k, i]"}, {"b": "L[k, i]"}))
     assert coarsen_guards(stree) == 0
 
 
 def test_coarsen_skippable_access_must_be_in_bounds():
     """The test reads every access of a guard, also those ``and`` skips: ``A[i + 1]`` must exist for all ``i``."""
     for size, expected in ((16, 0), (17, 1)):
-        stree = _root(f'coarsen_bounds_{size}', {'A': ([size], dace.float64), 'B': ([16], dace.float64)})
-        body = _if('A[i] < 0 and A[i + 1] > 0', [_tasklet('b = 1', {}, {'b': 'B[i]'})])
-        stree.add_child(_loop('k', 0, 4, [_loop('i', 0, 16, [body])]))
+        stree = _root(f"coarsen_bounds_{size}", {"A": ([size], dace.float64), "B": ([16], dace.float64)})
+        body = _if("A[i] < 0 and A[i + 1] > 0", [_tasklet("b = 1", {}, {"b": "B[i]"})])
+        stree.add_child(_loop("k", 0, 4, [_loop("i", 0, 16, [body])]))
         assert coarsen_guards(stree) == expected
 
 
 def test_coarsen_not_if_loop_variable_used_after():
     stree = _borrowing_tree()
-    stree.add_child(_tasklet('b = k', {}, {'b': 'A[0, 0]'}))
+    stree.add_child(_tasklet("b = k", {}, {"b": "A[0, 0]"}))
     assert coarsen_guards(stree) == 0
 
 
@@ -184,30 +183,31 @@ def test_coarsen_not_if_loop_variable_used_after():
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _column_arrays() -> Dict[str, tuple]:
-    return {'dm': ([8, 4, 4], dace.float64), 'q': ([8, 4, 4], dace.float64), 'zfix': ([4, 4], dace.int32)}
+def _column_arrays() -> dict[str, tuple]:
+    return {"dm": ([8, 4, 4], dace.float64), "q": ([8, 4, 4], dace.float64), "zfix": ([4, 4], dace.int32)}
 
 
-def _column_inputs() -> List[Dict[str, np.ndarray]]:
+def _column_inputs() -> list[dict[str, np.ndarray]]:
     rng = np.random.default_rng(2)
     none, some = np.zeros((4, 4), dtype=np.int32), np.zeros((4, 4), dtype=np.int32)
     some[1, 2] = 1
     some[3, 0] = 2
-    return [{'dm': rng.random((8, 4, 4)), 'q': rng.random((8, 4, 4)), 'zfix': z} for z in (none, some)]
+    return [{"dm": rng.random((8, 4, 4)), "q": rng.random((8, 4, 4)), "zfix": z} for z in (none, some)]
 
 
 def _reset() -> tn.ForScope:
-    return _loop('j', 0, 4, [_loop('i', 0, 4, [_tasklet('s = 0', {}, {'s': 'sum0[i, j]'})])])
+    return _loop("j", 0, 4, [_loop("i", 0, 4, [_tasklet("s = 0", {}, {"s": "sum0[i, j]"})])])
 
 
 def _fused_tree() -> tn.ScheduleTreeRoot:
     """A column sum and a correction that uses it in one loop nest, under a per-column guard."""
-    stree = _root('sink_fused', _column_arrays(), {'sum0': ([4, 4], dace.float64), 'fac': ([], dace.float64)})
-    accumulate = _tasklet('t = s + d', {'s': 'sum0[i, j]', 'd': 'dm[k, i, j]'}, {'t': 'sum0[i, j]'})
-    factor = _tasklet('f = s * 2', {'s': 'sum0[i, j]'}, {'f': 'fac[0]'})
-    correct = _if('zfix[i, j] > 0 and fac > 1', [_tasklet('o = f', {'f': 'fac[0]'}, {'o': 'q[k, i, j]'})])
+    stree = _root("sink_fused", _column_arrays(), {"sum0": ([4, 4], dace.float64), "fac": ([], dace.float64)})
+    accumulate = _tasklet("t = s + d", {"s": "sum0[i, j]", "d": "dm[k, i, j]"}, {"t": "sum0[i, j]"})
+    factor = _tasklet("f = s * 2", {"s": "sum0[i, j]"}, {"f": "fac[0]"})
+    correct = _if("zfix[i, j] > 0 and fac > 1", [_tasklet("o = f", {"f": "fac[0]"}, {"o": "q[k, i, j]"})])
     stree.add_children(
-        [_reset(), _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [accumulate, factor, correct])])])])
+        [_reset(), _loop("k", 0, 8, [_loop("j", 0, 4, [_loop("i", 0, 4, [accumulate, factor, correct])])])]
+    )
     return stree
 
 
@@ -216,7 +216,7 @@ def test_sink_fused_sum_and_correction():
     def transform(stree):
         # The correction factor, the sum and the reset of the sum (all of its reads are under the guard)
         assert sink_into_guards(stree) == 3
-        assert coarsen_guards(stree, levels=('nest', )) == 1  # The reset nest is too small to be worth a test
+        assert coarsen_guards(stree, levels=("nest",)) == 1  # The reset nest is too small to be worth a test
 
     stree = _same_results(_fused_tree, transform, _column_inputs())
     body = stree.children[-1].children[0]  # The fused nest under its test
@@ -226,18 +226,20 @@ def test_sink_fused_sum_and_correction():
 
 def _split_tree(between: list = None, after: list = None) -> tn.ScheduleTreeRoot:
     """The column sum and the correction in separate nests, the second with other loop variable names."""
-    stree = _root('sink_split', {**_column_arrays(), 'out': ([1], dace.float64)}, {'sum0': ([4, 4], dace.float64)})
-    accumulate = _tasklet('t = s + d', {'s': 'sum0[i, j]', 'd': 'dm[k, i, j]'}, {'t': 'sum0[i, j]'})
-    correct = _if('zfix[a, b] > 0',
-                  [_tasklet('o = s * x', {
-                      's': 'sum0[a, b]',
-                      'x': 'q[c, a, b]'
-                  }, {'o': 'q[c, a, b]'})])
-    stree.add_children([
-        _reset(),
-        _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [accumulate])])]), *(between or []),
-        _loop('c', 0, 8, [_loop('b', 0, 4, [_loop('a', 0, 4, [correct])])]), *(after or [])
-    ])
+    stree = _root("sink_split", {**_column_arrays(), "out": ([1], dace.float64)}, {"sum0": ([4, 4], dace.float64)})
+    accumulate = _tasklet("t = s + d", {"s": "sum0[i, j]", "d": "dm[k, i, j]"}, {"t": "sum0[i, j]"})
+    correct = _if(
+        "zfix[a, b] > 0", [_tasklet("o = s * x", {"s": "sum0[a, b]", "x": "q[c, a, b]"}, {"o": "q[c, a, b]"})]
+    )
+    stree.add_children(
+        [
+            _reset(),
+            _loop("k", 0, 8, [_loop("j", 0, 4, [_loop("i", 0, 4, [accumulate])])]),
+            *(between or []),
+            _loop("c", 0, 8, [_loop("b", 0, 4, [_loop("a", 0, 4, [correct])])]),
+            *(after or []),
+        ]
+    )
     return stree
 
 
@@ -246,54 +248,61 @@ def test_sink_across_nests_maps_guard_to_element():
     def transform(stree):
         assert sink_into_guards(stree) == 2  # The sum and its reset
         sunk = [
-            g for g in _nodes(stree, tn.IfScope) if any(m.data == 'sum0' for m in g.children[0].out_memlets.values())
+            g for g in _nodes(stree, tn.IfScope) if any(m.data == "sum0" for m in g.children[0].out_memlets.values())
         ]
         assert len(sunk) == 2
         for guard in sunk:
-            assert guard.condition.as_string.translate(str.maketrans('', '', ' ()')) == 'zfix[i,j]>0'
-        assert coarsen_guards(stree, levels=('nest', )) == 2  # Not the small reset nest
+            assert guard.condition.as_string.translate(str.maketrans("", "", " ()")) == "zfix[i,j]>0"
+        assert coarsen_guards(stree, levels=("nest",)) == 2  # Not the small reset nest
 
-    _same_results(lambda: _split_tree(), transform, [{**i, 'out': np.zeros(1)} for i in _column_inputs()])
+    _same_results(lambda: _split_tree(), transform, [{**i, "out": np.zeros(1)} for i in _column_inputs()])
 
 
 def test_sink_not_if_guard_input_written_in_between():
-    bump = _loop('j', 0, 4, [_loop('i', 0, 4, [_tasklet('o = z + 1', {'z': 'zfix[i, j]'}, {'o': 'zfix[i, j]'})])])
+    bump = _loop("j", 0, 4, [_loop("i", 0, 4, [_tasklet("o = z + 1", {"z": "zfix[i, j]"}, {"o": "zfix[i, j]"})])])
     assert sink_into_guards(_split_tree(between=[bump])) == 0
 
 
 def test_sink_not_if_read_unguarded():
-    read = _tasklet('o = s', {'s': 'sum0[0, 0]'}, {'o': 'out[0]'})
+    read = _tasklet("o = s", {"s": "sum0[0, 0]"}, {"o": "out[0]"})
     assert sink_into_guards(_split_tree(after=[read])) == 0
 
 
 def test_sink_not_if_guard_changes_while_value_accumulates():
     """The sum is reset once and accumulated in every iteration of ``t``, while the guard changes with ``t``."""
-    stree = _root('sink_accumulate', _column_arrays(), {'sum0': ([4, 4], dace.float64)})
-    accumulate = _tasklet('t = s + d', {'s': 'sum0[i, j]', 'd': 'dm[k, i, j]'}, {'t': 'sum0[i, j]'})
-    bump = _loop('j', 0, 4, [_loop('i', 0, 4, [_tasklet('o = z + 1', {'z': 'zfix[i, j]'}, {'o': 'zfix[i, j]'})])])
-    correct = _if('zfix[i, j] > 3', [_tasklet('o = s', {'s': 'sum0[i, j]'}, {'o': 'q[k, i, j]'})])
-    stree.add_children([
-        _reset(),
-        _loop('t', 0, 3, [
-            bump,
-            _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [accumulate])])]),
-            _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [correct])])]),
-        ])
-    ])
+    stree = _root("sink_accumulate", _column_arrays(), {"sum0": ([4, 4], dace.float64)})
+    accumulate = _tasklet("t = s + d", {"s": "sum0[i, j]", "d": "dm[k, i, j]"}, {"t": "sum0[i, j]"})
+    bump = _loop("j", 0, 4, [_loop("i", 0, 4, [_tasklet("o = z + 1", {"z": "zfix[i, j]"}, {"o": "zfix[i, j]"})])])
+    correct = _if("zfix[i, j] > 3", [_tasklet("o = s", {"s": "sum0[i, j]"}, {"o": "q[k, i, j]"})])
+    stree.add_children(
+        [
+            _reset(),
+            _loop(
+                "t",
+                0,
+                3,
+                [
+                    bump,
+                    _loop("k", 0, 8, [_loop("j", 0, 4, [_loop("i", 0, 4, [accumulate])])]),
+                    _loop("k", 0, 8, [_loop("j", 0, 4, [_loop("i", 0, 4, [correct])])]),
+                ],
+            ),
+        ]
+    )
     assert sink_into_guards(stree) == 0
 
 
 def test_sink_shared_container_reused_elsewhere():
     """The sum's container is later overwritten and read without a guard: those reads see other values."""
-    overwrite = _loop('j', 0, 4, [_loop('i', 0, 4, [_tasklet('s = d', {'d': 'dm[0, i, j]'}, {'s': 'sum0[i, j]'})])])
-    read = _tasklet('o = s', {'s': 'sum0[0, 0]'}, {'o': 'out[0]'})
+    overwrite = _loop("j", 0, 4, [_loop("i", 0, 4, [_tasklet("s = d", {"d": "dm[0, i, j]"}, {"s": "sum0[i, j]"})])])
+    read = _tasklet("o = s", {"s": "sum0[0, 0]"}, {"o": "out[0]"})
 
     def transform(stree):
         assert sink_into_guards(stree) == 2  # The sum and its reset (the overwrite is read without a guard)
 
-    _same_results(lambda: _split_tree(after=[overwrite, read]), transform, [{
-        **i, 'out': np.zeros(1)
-    } for i in _column_inputs()])
+    _same_results(
+        lambda: _split_tree(after=[overwrite, read]), transform, [{**i, "out": np.zeros(1)} for i in _column_inputs()]
+    )
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -305,32 +314,35 @@ def _moving_tree(blocker_writes: str = None) -> tn.ScheduleTreeRoot:
     """``for k, j, i: if U[k + 1, i, j] != 0: q -= U; dm = q * dp`` (fixes, then a value only the correction uses), then
     a nest that counts columns to correct in ``Z`` (and optionally writes ``q``), then the correction under ``Z > 0``."""
     stree = _root(
-        'move_to_readers', {
-            'q': ([8, 4, 4], dace.float64),
-            'dp': ([8, 4, 4], dace.float64),
-            'U': ([9, 4, 4], dace.float64),
-            'Z': ([4, 4], dace.int32),
-            'out': ([8, 4, 4], dace.float64)
-        }, {'dm': ([8, 4, 4], dace.float64)})
-    fix = _if('U[k + 1, i, j] != 0',
-              [_tasklet('o = x - u', {
-                  'x': 'q[k, i, j]',
-                  'u': 'U[k + 1, i, j]'
-              }, {'o': 'q[k, i, j]'})])
-    value = _tasklet('m = x * d', {'x': 'q[k, i, j]', 'd': 'dp[k, i, j]'}, {'m': 'dm[k, i, j]'})
-    count = [_if('q[7, i, j] < 0', [_tasklet('o = z + 1', {'z': 'Z[i, j]'}, {'o': 'Z[i, j]'})])]
+        "move_to_readers",
+        {
+            "q": ([8, 4, 4], dace.float64),
+            "dp": ([8, 4, 4], dace.float64),
+            "U": ([9, 4, 4], dace.float64),
+            "Z": ([4, 4], dace.int32),
+            "out": ([8, 4, 4], dace.float64),
+        },
+        {"dm": ([8, 4, 4], dace.float64)},
+    )
+    fix = _if(
+        "U[k + 1, i, j] != 0", [_tasklet("o = x - u", {"x": "q[k, i, j]", "u": "U[k + 1, i, j]"}, {"o": "q[k, i, j]"})]
+    )
+    value = _tasklet("m = x * d", {"x": "q[k, i, j]", "d": "dp[k, i, j]"}, {"m": "dm[k, i, j]"})
+    count = [_if("q[7, i, j] < 0", [_tasklet("o = z + 1", {"z": "Z[i, j]"}, {"o": "Z[i, j]"})])]
     if blocker_writes:
-        count.append(_tasklet('o = x * 2', {'x': f'q[{blocker_writes}, i, j]'}, {'o': f'q[{blocker_writes}, i, j]'}))
-    correct = _if('Z[i, j] > 0', [_tasklet('o = m', {'m': 'dm[k, i, j]'}, {'o': 'out[k, i, j]'})])
-    stree.add_children([
-        _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [fix, value])])]),
-        _loop('j', 0, 4, [_loop('i', 0, 4, count)]),
-        _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [correct])])]),
-    ])
+        count.append(_tasklet("o = x * 2", {"x": f"q[{blocker_writes}, i, j]"}, {"o": f"q[{blocker_writes}, i, j]"}))
+    correct = _if("Z[i, j] > 0", [_tasklet("o = m", {"m": "dm[k, i, j]"}, {"o": "out[k, i, j]"})])
+    stree.add_children(
+        [
+            _loop("k", 0, 8, [_loop("j", 0, 4, [_loop("i", 0, 4, [fix, value])])]),
+            _loop("j", 0, 4, [_loop("i", 0, 4, count)]),
+            _loop("k", 0, 8, [_loop("j", 0, 4, [_loop("i", 0, 4, [correct])])]),
+        ]
+    )
     return stree
 
 
-def _moving_inputs() -> List[Dict[str, np.ndarray]]:
+def _moving_inputs() -> list[dict[str, np.ndarray]]:
     rng = np.random.default_rng(4)
     result = []
     for negative in (False, True):
@@ -339,13 +351,15 @@ def _moving_inputs() -> List[Dict[str, np.ndarray]]:
             q[7, 1, 2] = -1.0
         u = np.zeros((9, 4, 4))
         u[3, 0, 1] = 0.5
-        result.append({
-            'q': q,
-            'dp': rng.random((8, 4, 4)),
-            'U': u,
-            'Z': np.zeros((4, 4), dtype=np.int32),
-            'out': np.zeros((8, 4, 4))
-        })
+        result.append(
+            {
+                "q": q,
+                "dp": rng.random((8, 4, 4)),
+                "U": u,
+                "Z": np.zeros((4, 4), dtype=np.int32),
+                "out": np.zeros((8, 4, 4)),
+            }
+        )
     return result
 
 
@@ -355,19 +369,21 @@ def test_move_past_guard_assignment_then_sink():
         assert move_statements_to_readers(stree) == 1
         assert sink_into_guards(stree) == 1
         # The fixes (now alone in their nest), the moved value and the correction
-        assert coarsen_guards(stree, levels=('nest', )) == 3
+        assert coarsen_guards(stree, levels=("nest",)) == 3
 
     stree = _same_results(_moving_tree, transform, _moving_inputs())
     # The value is computed after the counting nest (which writes Z), under the guard
     order = [c for c in stree.children if type(c) in (tn.ForScope, tn.IfScope)]
-    writes = lambda node, name: any(m.data == name for n in node.preorder_traversal() if type(n) is tn.TaskletNode
-                                    for m in n.out_memlets.values())
-    counting = next(k for k, c in enumerate(order) if writes(c, 'Z'))
-    value = next(k for k, c in enumerate(order) if writes(c, 'dm'))
+    writes = lambda node, name: any(
+        m.data == name for n in node.preorder_traversal() if type(n) is tn.TaskletNode for m in n.out_memlets.values()
+    )
+    counting = next(k for k, c in enumerate(order) if writes(c, "Z"))
+    value = next(k for k, c in enumerate(order) if writes(c, "dm"))
     assert counting < value
-    guarded = [n for n in stree.preorder_traversal() if type(n) is tn.TaskletNode and writes(n, 'dm')]
+    guarded = [n for n in stree.preorder_traversal() if type(n) is tn.TaskletNode and writes(n, "dm")]
     assert all(
-        any(type(a) is tn.IfScope and a.condition.as_string.startswith('(Z') for a in _ancestors(n)) for n in guarded)
+        any(type(a) is tn.IfScope and a.condition.as_string.startswith("(Z") for a in _ancestors(n)) for n in guarded
+    )
 
 
 def test_move_keeps_conflicting_iterations():
@@ -376,17 +392,17 @@ def test_move_keeps_conflicting_iterations():
     def transform(stree):
         assert move_statements_to_readers(stree) == 1
         headers = [c.loop.loop_condition.as_string for c in stree.children if type(c) is tn.ForScope]
-        assert any('7' in h for h in headers[1:])
+        assert any("7" in h for h in headers[1:])
 
-    _same_results(lambda: _moving_tree(blocker_writes='7'), transform, _moving_inputs())
+    _same_results(lambda: _moving_tree(blocker_writes="7"), transform, _moving_inputs())
 
 
 def test_move_not_past_writes_of_every_iteration():
-    stree = _moving_tree(blocker_writes='0:8')
+    stree = _moving_tree(blocker_writes="0:8")
     assert move_statements_to_readers(stree) == 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_coarsen_nest_and_rows()
     test_coarsen_counts()
     test_coarsen_test_only_over_guard_variables()

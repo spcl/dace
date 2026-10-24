@@ -886,23 +886,30 @@ def test_cfg_list_complete() -> None:
     with its position as its ID."""
 
     def assign(value: int) -> tn.TaskletNode:
-        return tn.TaskletNode(nodes.Tasklet(f'assign_{value}', {}, {'out'}, f'out = {value}'), {},
-                              {'out': dace.Memlet('A[i]')})
+        return tn.TaskletNode(
+            nodes.Tasklet(f"assign_{value}", {}, {"out"}, f"out = {value}"), {}, {"out": dace.Memlet("A[i]")}
+        )
 
-    loop = LoopRegion(label='outer',
-                      loop_var='i',
-                      initialize_expr=CodeBlock('i = 0'),
-                      condition_expr=CodeBlock('i < 3'),
-                      update_expr=CodeBlock('i = i + 1'))
-    stree = tn.ScheduleTreeRoot(name='tester',
-                                containers={'A': data.Array(dace.float64, [20])},
-                                children=[
-                                    tn.ForScope(loop=loop,
-                                                children=[
-                                                    tn.IfScope(condition=CodeBlock('i > 0'), children=[assign(1)]),
-                                                    tn.ElseScope(children=[assign(2)]),
-                                                ])
-                                ])
+    loop = LoopRegion(
+        label="outer",
+        loop_var="i",
+        initialize_expr=CodeBlock("i = 0"),
+        condition_expr=CodeBlock("i < 3"),
+        update_expr=CodeBlock("i = i + 1"),
+    )
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={"A": data.Array(dace.float64, [20])},
+        children=[
+            tn.ForScope(
+                loop=loop,
+                children=[
+                    tn.IfScope(condition=CodeBlock("i > 0"), children=[assign(1)]),
+                    tn.ElseScope(children=[assign(2)]),
+                ],
+            )
+        ],
+    )
     sdfg = stree.as_sdfg(validate=True, simplify=False)
 
     regions = list(sdfg.all_control_flow_regions(recursive=True))

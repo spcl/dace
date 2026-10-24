@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the schedule-tree map-to-loop conversion pass."""
+
 import numpy as np
 import pytest
 
@@ -7,9 +8,9 @@ import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import convert_map_to_loop
 
-H = dace.symbol('H')
-W = dace.symbol('W')
-nnz = dace.symbol('nnz')
+H = dace.symbol("H")
+W = dace.symbol("W")
+nnz = dace.symbol("nnz")
 
 
 def _convert(stree: tn.ScheduleTreeRoot) -> int:
@@ -23,12 +24,14 @@ def _nodes(stree: tn.ScheduleTreeRoot, kind: type) -> list:
 
 
 def _headers(stree: tn.ScheduleTreeRoot) -> list:
-    return [(f.loop.init_statement.as_string, f.loop.loop_condition.as_string, f.loop.update_statement.as_string)
-            for f in _nodes(stree, tn.ForScope)]
+    return [
+        (f.loop.init_statement.as_string, f.loop.loop_condition.as_string, f.loop.update_statement.as_string)
+        for f in _nodes(stree, tn.ForScope)
+    ]
 
 
 def _run(stree: tn.ScheduleTreeRoot, **kwargs):
-    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
+    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool("optimizer", "automatic_simplification"))
     return sdfg(**kwargs)
 
 
@@ -42,7 +45,7 @@ def test_one_dimensional_map():
     stree = scale.to_sdfg().as_schedule_tree()
     assert _convert(stree) == 1
     assert not _nodes(stree, tn.MapScope)
-    assert _headers(stree) == [('i = 0', '(i < 20)', 'i = (i + 1)')]
+    assert _headers(stree) == [("i = 0", "(i < 20)", "i = (i + 1)")]
 
     a = np.random.rand(20)
     b = np.zeros(20)
@@ -63,7 +66,7 @@ def test_multidimensional_map():
     # One loop per dimension, nested in map parameter order
     outer, inner = _nodes(stree, tn.ForScope)
     assert inner.parent is outer
-    assert _headers(stree) == [('i = 0', '(i < 10)', 'i = (i + 1)'), ('j = 1', '(j < 20)', 'j = (j + 2)')]
+    assert _headers(stree) == [("i = 0", "(i < 10)", "i = (i + 1)"), ("j = 1", "(j < 20)", "j = (j + 2)")]
 
     a = np.zeros((10, 20))
     _run(stree, A=a)
@@ -83,10 +86,10 @@ def test_negative_step_raises():
                 A[i, j] = 1.0
 
     stree = outer_and_inner.to_sdfg().as_schedule_tree()
-    inner, = [m for m in _nodes(stree, tn.MapScope) if m.node.map.params == ['j']]
+    (inner,) = [m for m in _nodes(stree, tn.MapScope) if m.node.map.params == ["j"]]
     inner.node.map.range = dace.subsets.Range([(9, 0, -1)])
 
-    with pytest.raises(ValueError, match='negative step'):
+    with pytest.raises(ValueError, match="negative step"):
         convert_map_to_loop(stree)
 
 
@@ -111,10 +114,11 @@ def test_nested_maps_and_write_conflict_resolution():
 
 
 @dace.program
-def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W],
-         b: dace.float32[H]):
+def spmv(
+    A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W], b: dace.float32[H]
+):
     for i in dace.map[0:H]:
-        for j in dace.map[A_row[i]:A_row[i + 1]]:
+        for j in dace.map[A_row[i] : A_row[i + 1]]:
             b[i] += A_val[j] * x[A_col[j]]
 
 
@@ -139,37 +143,37 @@ def test_dynamic_map_range():
     # The dynamic inputs are read once, right before the loop they bound
     outer, inner = _nodes(stree, tn.ForScope)
     start, end, loop = outer.children[:3]
-    assert isinstance(start, tn.AssignNode) and start.value.as_string == 'A_row[i]'
-    assert isinstance(end, tn.AssignNode) and end.value.as_string == 'A_row[(i + 1)]'
+    assert isinstance(start, tn.AssignNode) and start.value.as_string == "A_row[i]"
+    assert isinstance(end, tn.AssignNode) and end.value.as_string == "A_row[(i + 1)]"
     assert loop is inner
-    assert inner.loop.init_statement.as_string == f'j = {start.name}'
-    assert inner.loop.loop_condition.as_string == f'(j < {end.name})'
+    assert inner.loop.init_statement.as_string == f"j = {start.name}"
+    assert inner.loop.loop_condition.as_string == f"(j < {end.name})"
     assert stree.symbols[start.name] == dace.uint32
     assert stree.symbols[end.name] == dace.uint32
 
     dense, args = _spmv_inputs()
     b = np.zeros(8, dtype=np.float32)
     _run(stree, b=b, **args)
-    assert np.allclose(b, dense @ args['x'], rtol=1e-5)
+    assert np.allclose(b, dense @ args["x"], rtol=1e-5)
 
 
 def test_dynamic_map_range_from_scalar():
-    sdfg = dace.SDFG('dynamic_scalar_range')
-    sdfg.add_scalar('size', dace.int32)
-    sdfg.add_array('A', [10], dace.float64)
+    sdfg = dace.SDFG("dynamic_scalar_range")
+    sdfg.add_scalar("size", dace.int32)
+    sdfg.add_array("A", [10], dace.float64)
     state = sdfg.add_state()
-    map_entry, map_exit = state.add_map('fill', {'i': '0:ub'})
-    map_entry.add_in_connector('ub')
-    state.add_edge(state.add_read('size'), None, map_entry, 'ub', dace.Memlet('size', dynamic=True))
-    tasklet = state.add_tasklet('one', {}, {'o'}, 'o = 1')
+    map_entry, map_exit = state.add_map("fill", {"i": "0:ub"})
+    map_entry.add_in_connector("ub")
+    state.add_edge(state.add_read("size"), None, map_entry, "ub", dace.Memlet("size", dynamic=True))
+    tasklet = state.add_tasklet("one", {}, {"o"}, "o = 1")
     state.add_nedge(map_entry, tasklet, dace.Memlet())
-    state.add_memlet_path(tasklet, map_exit, state.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, map_exit, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
 
     stree = sdfg.as_schedule_tree()
     assert _convert(stree) == 1
     assign, loop = stree.children
-    assert isinstance(assign, tn.AssignNode) and assign.name == 'ub'
-    assert assign.value.as_string == 'size'  # Scalars are read without an index
+    assert isinstance(assign, tn.AssignNode) and assign.name == "ub"
+    assert assign.value.as_string == "size"  # Scalars are read without an index
     assert isinstance(loop, tn.ForScope)
 
     a = np.zeros(10)
@@ -184,11 +188,11 @@ def test_dynamic_input_name_clash_keeps_map():
 
     # The outer map is converted, the one with dynamic inputs is kept together with its inputs
     assert _convert(stree) == 1
-    outer, = _nodes(stree, tn.ForScope)
+    (outer,) = _nodes(stree, tn.ForScope)
     assert [type(c) for c in outer.children] == [tn.DynScopeCopyNode, tn.DynScopeCopyNode, tn.MapScope]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_one_dimensional_map()
     test_multidimensional_map()
     test_negative_step_raises()

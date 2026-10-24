@@ -1,24 +1,31 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reusing the memory of transients whose live ranges do not overlap, and moving small transients to the stack."""
+
 import copy
 import itertools
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 
 import sympy
 
 from dace import data, dtypes, utils
 from dace.config import Config
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (bound_names, iteration_spaces, memlets_of,
-                                                            names_in_subtrees, names_read, names_written, repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    bound_names,
+    iteration_spaces,
+    memlets_of,
+    names_in_subtrees,
+    names_read,
+    names_written,
+    repository_of,
+)
 
 # A region: per dimension, (first, last) as integers, or as equal symbolic expressions for dimensions indexed by
 # variables of loops outside the context (the same in every access of one iteration)
-_Box = List[Tuple[object, object]]
+_Box = list[tuple[object, object]]
 
 
-def _integer(value) -> Optional[int]:
+def _integer(value) -> int | None:
     value = sympy.sympify(value)
     return int(value) if value.is_Integer else None
 
@@ -31,14 +38,14 @@ def _subtract(box: list, other: list) -> list:
     result, rest = [], list(box)
     for dim, ((a, b), (c, d)) in enumerate(zip(box, other)):
         if a < c:
-            result.append(rest[:dim] + [(a, c - 1)] + rest[dim + 1:])
+            result.append(rest[:dim] + [(a, c - 1)] + rest[dim + 1 :])
         if d < b:
-            result.append(rest[:dim] + [(d + 1, b)] + rest[dim + 1:])
+            result.append(rest[:dim] + [(d + 1, b)] + rest[dim + 1 :])
         rest[dim] = (max(a, c), min(b, d))
     return result
 
 
-def _covered(read: Optional[_Box], writes: List[_Box]) -> bool:
+def _covered(read: _Box | None, writes: list[_Box]) -> bool:
     """Whether the union of ``writes`` contains ``read``."""
     if read is None:
         return False
@@ -49,9 +56,10 @@ def _covered(read: Optional[_Box], writes: List[_Box]) -> bool:
         if write is None or len(write) != len(read):
             continue
         if any(
-                sympy.expand(sympy.sympify(write[d][0]) -
-                             read[d][0]) != 0 or sympy.expand(sympy.sympify(write[d][1]) - read[d][1]) != 0
-                for d in symbolic_dims):
+            sympy.expand(sympy.sympify(write[d][0]) - read[d][0]) != 0
+            or sympy.expand(sympy.sympify(write[d][1]) - read[d][1]) != 0
+            for d in symbolic_dims
+        ):
             continue
         bounds = [(_integer(write[d][0]), _integer(write[d][1])) for d in integer_dims]
         if any(lo is None or hi is None for lo, hi in bounds):
@@ -62,9 +70,9 @@ def _covered(read: Optional[_Box], writes: List[_Box]) -> bool:
     return not remaining
 
 
-def _covered_under(read: Tuple[Optional[_Box], frozenset],
-                   writes: List[Tuple[Optional[_Box], frozenset]],
-                   max_conditions: int = 6) -> bool:
+def _covered_under(
+    read: tuple[_Box | None, frozenset], writes: list[tuple[_Box | None, frozenset]], max_conditions: int = 6
+) -> bool:
     """Whether a read is covered by the writes that run whenever it does. Guards are sets of ``(condition, value)``;
     the read's guards hold, and every combination of the other conditions of the writes is considered (e.g., writes
     in both branches of an ``if``/``else`` together cover a read outside it)."""
@@ -94,11 +102,12 @@ class Use:
 class _Event:
     """What a child of a context does with a container: its reads that need values from before it (as regions of the
     context), the regions it certainly writes, and its extent in program order."""
+
     start: int
     end: int
-    reads: List[Tuple[Optional[_Box], frozenset]] = field(default_factory=list)  # (region, guards)
-    writes: List[Tuple[Optional[_Box], frozenset]] = field(default_factory=list)
-    inner: Optional[List[Tuple[int, int]]] = None  # Live segments within one iteration, if the child is a loop whose
+    reads: list[tuple[_Box | None, frozenset]] = field(default_factory=list)  # (region, guards)
+    writes: list[tuple[_Box | None, frozenset]] = field(default_factory=list)
+    inner: list[tuple[int, int]] | None = None  # Live segments within one iteration, if the child is a loop whose
     # iterations do not pass values of the container to each other
     writes_at_all: bool = False  # Whether the child may write the container (also conditionally)
 
@@ -111,14 +120,14 @@ class Liveness:
         self.root = root
         self.trust_reads = trust_reads
         self.repository = repository_of(root)
-        self.position: Dict[int, int] = {}
-        self.last: Dict[int, int] = {}
+        self.position: dict[int, int] = {}
+        self.last: dict[int, int] = {}
         self._number(root, 0)
-        self._spaces: Dict[int, Optional[List[Tuple[str, int, int]]]] = {}
-        self._boxes: Dict[tuple, Optional[_Box]] = {}
-        self._written: Dict[int, Set[str]] = {}
+        self._spaces: dict[int, list[tuple[str, int, int]] | None] = {}
+        self._boxes: dict[tuple, _Box | None] = {}
+        self._written: dict[int, set[str]] = {}
 
-    def _ranges(self, scope: tn.ScheduleTreeScope) -> Optional[List[Tuple[str, int, int]]]:
+    def _ranges(self, scope: tn.ScheduleTreeScope) -> list[tuple[str, int, int]] | None:
         """``(variable, first, last)`` of each variable a loop or map binds (in iteration order), or ``None`` if some
         bound is not a constant (computed once per scope)."""
         key = id(scope)
@@ -138,21 +147,21 @@ class Liveness:
     def _number(self, node: tn.ScheduleTreeNode, pos: int) -> int:
         self.position[id(node)] = pos
         end = pos
-        for child in getattr(node, 'children', ()):
+        for child in getattr(node, "children", ()):
             end = self._number(child, end + 1)
         self.last[id(node)] = end
         return end
 
-    def _path(self, node: tn.ScheduleTreeNode, context: tn.ScheduleTreeNode) -> List[tn.ScheduleTreeNode]:
+    def _path(self, node: tn.ScheduleTreeNode, context: tn.ScheduleTreeNode) -> list[tn.ScheduleTreeNode]:
         """The ancestors of ``node`` below ``context``, outermost first (``node`` included)."""
         path = [node]
         while path[-1].parent is not context:
             path.append(path[-1].parent)
         return path[::-1]
 
-    def _box(self, use: Use, context: tn.ScheduleTreeNode) -> Optional[_Box]:
+    def _box(self, use: Use, context: tn.ScheduleTreeNode) -> _Box | None:
         """The region of an access, over the iterations of the loops between it and ``context``."""
-        ranges: Dict[str, Tuple[int, int]] = {}
+        ranges: dict[str, tuple[int, int]] = {}
         for scope in self._path(use.node, context)[:-1]:
             if isinstance(scope, (tn.ForScope, tn.MapScope)):
                 spaces = self._ranges(scope)
@@ -167,7 +176,7 @@ class Liveness:
         return self._boxes[key]
 
     @staticmethod
-    def _region(subset, ranges: Dict[str, Tuple[int, int]]) -> Optional[_Box]:
+    def _region(subset, ranges: dict[str, tuple[int, int]]) -> _Box | None:
         box = []
         for start, end, _ in subset.ndrange():
             bounds = []
@@ -189,13 +198,13 @@ class Liveness:
             box.append(tuple(bounds))
         return box
 
-    def _written_in(self, context: tn.ScheduleTreeNode) -> Set[str]:
+    def _written_in(self, context: tn.ScheduleTreeNode) -> set[str]:
         """Names assigned within one iteration of ``context`` (its own iteration variables excluded)."""
         if id(context) not in self._written:
             self._written[id(context)] = names_in_subtrees([context], names_written) - bound_names(context)
         return self._written[id(context)]
 
-    def _guards(self, use: Use, context: tn.ScheduleTreeNode) -> Optional[frozenset]:
+    def _guards(self, use: Use, context: tn.ScheduleTreeNode) -> frozenset | None:
         """The conditions under which an access runs in an iteration of ``context`` (empty if it always runs), or
         ``None`` if that cannot be described by conditions that are the same throughout the iteration (conditions on
         variables of inner loops or on names assigned in the iteration, loops that may not run, other scopes)."""
@@ -222,15 +231,15 @@ class Liveness:
                 guards.add((condition.as_string, isinstance(scope, tn.IfScope)))  # (condition, whether it holds)
         return frozenset(guards)
 
-    def _read(self, use: Use, context: tn.ScheduleTreeNode) -> Tuple[Optional[_Box], frozenset]:
+    def _read(self, use: Use, context: tn.ScheduleTreeNode) -> tuple[_Box | None, frozenset]:
         guards = self._guards(use, context)
         return self._box(use, context), frozenset() if guards is None else guards
 
-    def segments(self, uses: List[Use]) -> Tuple[List[Tuple[int, int]], bool]:
+    def segments(self, uses: list[Use]) -> tuple[list[tuple[int, int]], bool]:
         """Live segments of a container, and whether it is read before being written (live on entry)."""
         return self._analyze(self.root, uses)
 
-    def exposed_in(self, scope: tn.ScheduleTreeScope, uses: List[Use]) -> bool:
+    def exposed_in(self, scope: tn.ScheduleTreeScope, uses: list[Use]) -> bool:
         """
         Whether one execution of a scope's children (e.g., one iteration of a loop) may read a container before
         writing it there.
@@ -241,9 +250,9 @@ class Liveness:
         """
         return self._analyze(scope, uses)[1]
 
-    def _analyze(self, context: tn.ScheduleTreeNode, uses: List[Use]) -> Tuple[List[Tuple[int, int]], bool]:
+    def _analyze(self, context: tn.ScheduleTreeNode, uses: list[Use]) -> tuple[list[tuple[int, int]], bool]:
         # Group the uses by the child of the context containing them, in program order
-        groups: Dict[int, Tuple[tn.ScheduleTreeNode, List[Use]]] = {}
+        groups: dict[int, tuple[tn.ScheduleTreeNode, list[Use]]] = {}
         for use in uses:
             child = self._path(use.node, context)[0]
             groups.setdefault(id(child), (child, []))[1].append(use)
@@ -258,15 +267,20 @@ class Liveness:
                 event = _Event(start, end, [self._read(u, context) for u in child_uses if not u.write])
             else:  # A statement reads its inputs before writing its outputs
                 event = _Event(start, start, [self._read(u, context) for u in child_uses if not u.write])
-            event.writes = [(self._box(u, context), g) for u in child_uses if u.write
-                            for g in [self._guards(u, context)] if g is not None]
+            event.writes = [
+                (self._box(u, context), g)
+                for u in child_uses
+                if u.write
+                for g in [self._guards(u, context)]
+                if g is not None
+            ]
             event.writes_at_all = any(u.write for u in child_uses)
             events.append(event)
 
         # Chains of events through which a value of the container stays live
-        chains: List[List[_Event]] = []
-        chain_writes: List[Tuple[Optional[_Box], frozenset]] = []
-        all_writes: List[Tuple[Optional[_Box], frozenset]] = []
+        chains: list[list[_Event]] = []
+        chain_writes: list[tuple[_Box | None, frozenset]] = []
+        all_writes: list[tuple[_Box | None, frozenset]] = []
         chain_written = any_written = False  # For trusted reads: whether the chain or context wrote at all before
         exposed = False
         for event in events:
@@ -306,14 +320,18 @@ class Liveness:
         return result, exposed
 
 
-def _overlaps(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> bool:
+def _overlaps(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> bool:
     return any(x0 <= y1 and y0 <= x1 for x0, x1 in a for y0, y1 in b)
 
 
 def _fits(desc: data.Array, slot: data.Array) -> bool:
     """Whether every element of ``desc`` can be addressed in ``slot`` with the same indices."""
-    if (desc.dtype != slot.dtype or len(desc.shape) != len(slot.shape) or desc.storage != slot.storage
-            or any(_integer(o) != 0 for o in list(desc.offset) + list(slot.offset))):
+    if (
+        desc.dtype != slot.dtype
+        or len(desc.shape) != len(slot.shape)
+        or desc.storage != slot.storage
+        or any(_integer(o) != 0 for o in list(desc.offset) + list(slot.offset))
+    ):
         return False
     for extent, slot_extent, stride, slot_stride in zip(desc.shape, slot.shape, desc.strides, slot.strides):
         extent, slot_extent = _integer(extent), _integer(slot_extent)
@@ -324,15 +342,15 @@ def _fits(desc: data.Array, slot: data.Array) -> bool:
     return True
 
 
-def usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[Use]], Set[str]]:
+def usable_accesses(root: tn.ScheduleTreeRoot) -> tuple[dict[str, list[Use]], set[str]]:
     """The memlet uses of every container, and the containers accessed in ways other than through the memlets of
     statements (e.g., by name in conditions, as copy targets or through views)."""
-    uses: Dict[str, List[Use]] = {}
-    opaque: Set[str] = set()
+    uses: dict[str, list[Use]] = {}
+    opaque: set[str] = set()
     names = set(root.containers.keys())
     for node in root.preorder_traversal():
         covered = set()
-        for attr, write in (('in_memlets', False), ('out_memlets', True)):
+        for attr, write in (("in_memlets", False), ("out_memlets", True)):
             memlets = getattr(node, attr, None)
             if isinstance(memlets, dict):
                 for connector, memlet in memlets.items():
@@ -342,7 +360,7 @@ def usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[Use]], Se
                         opaque.add(memlet.data)
             elif memlets is not None:
                 opaque |= {m.data for m in memlets_of(node, attr)}
-        opaque |= {m.data for m in memlets_of(node, 'memlet')}
+        opaque |= {m.data for m in memlets_of(node, "memlet")}
         if isinstance(node, tn.ViewNode):
             opaque |= {node.source, node.target}
         opaque |= (names_read(node) | names_written(node)) & names - covered
@@ -375,11 +393,22 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
     candidates = []
     for name, name_uses in uses.items():
         desc = containers.get(name)
-        if (desc is None or not desc.transient or type(desc) is not data.Array or name in opaque
-                or getattr(desc, 'may_alias', False) or _integer(desc.total_size) is None or desc.total_size == 1):
+        if (
+            desc is None
+            or not desc.transient
+            or type(desc) is not data.Array
+            or name in opaque
+            or getattr(desc, "may_alias", False)
+            or _integer(desc.total_size) is None
+            or desc.total_size == 1
+        ):
             continue
-        if desc.lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.SDFG,
-                                 dtypes.AllocationLifetime.State, dtypes.AllocationLifetime.Persistent):
+        if desc.lifetime not in (
+            dtypes.AllocationLifetime.Scope,
+            dtypes.AllocationLifetime.SDFG,
+            dtypes.AllocationLifetime.State,
+            dtypes.AllocationLifetime.Persistent,
+        ):
             continue
         segments, exposed = liveness.segments(name_uses)
         if exposed or not segments:
@@ -388,7 +417,7 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
 
     # Largest first within the sweep order, so that slots take the shape of their largest member
     candidates.sort(key=lambda c: (c[0], -int(containers[c[1]].total_size)))
-    slots: List[Tuple[data.Array, List[str], List[Tuple[int, int]]]] = []
+    slots: list[tuple[data.Array, list[str], list[tuple[int, int]]]] = []
     for _, name, segments in candidates:
         desc = containers[name]
         for k, (slot, members, occupied) in enumerate(slots):
@@ -412,7 +441,7 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
         slot_desc.transient = True
         if any(containers[m].lifetime == dtypes.AllocationLifetime.Persistent for m in members):
             slot_desc.lifetime = dtypes.AllocationLifetime.Persistent
-        slot_name = utils.find_new_name('__reused', containers)
+        slot_name = utils.find_new_name("__reused", containers)
         containers[slot_name] = slot_desc
         for member in members:
             for use in uses[member]:
@@ -425,10 +454,12 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
     return shared
 
 
-def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
-                                   max_array_bytes: int = 16 * 1024,
-                                   max_total_bytes: int = 512 * 1024,
-                                   zero_read_before_written: bool = False) -> int:
+def move_small_transients_to_stack(
+    stree: tn.ScheduleTreeScope,
+    max_array_bytes: int = 16 * 1024,
+    max_total_bytes: int = 512 * 1024,
+    zero_read_before_written: bool = False,
+) -> int:
     """
     Allocate small transient arrays of constant size on the stack (``StorageType.Register``) rather than on the heap,
     as auto-optimization does for SDFGs: their accesses need no base pointers loaded from memory, and they cannot
@@ -456,11 +487,16 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     containers = root.containers
     uses, opaque = usable_accesses(root)
     liveness = Liveness(root, trust_reads=False)
-    max_array_bytes = min(max_array_bytes, Config.get('compiler', 'max_stack_array_size'))
+    max_array_bytes = min(max_array_bytes, Config.get("compiler", "max_stack_array_size"))
     candidates = []
     for name, desc in containers.items():
-        if (not desc.transient or type(desc) is not data.Array or name in opaque or name not in uses
-                or desc.storage not in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)):
+        if (
+            not desc.transient
+            or type(desc) is not data.Array
+            or name in opaque
+            or name not in uses
+            or desc.storage not in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+        ):
             continue
         size = _integer(desc.total_size)
         if size is None or size * desc.dtype.bytes > max_array_bytes:

@@ -1,14 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Range facts about iteration variables, and folding the conditions they decide."""
+
 import ast
 import copy
-from typing import Dict, List, Optional, Tuple
 
 from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (condition_of, iteration_spaces, names_in_subtrees,
-                                                            names_written, range_analysis, repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    condition_of,
+    iteration_spaces,
+    names_in_subtrees,
+    names_written,
+    range_analysis,
+    repository_of,
+)
 
 
 def _boolean_leaves(node: ast.expr) -> int:
@@ -29,17 +35,17 @@ class RangeFacts:
     def __init__(self, repository, max_enumeration: int):
         self.repository = repository
         self.max_enumeration = max_enumeration
-        self.known: Dict[str, tuple] = {}
-        self.truths: Dict[str, bool] = {}  # Outcomes of condition atoms (by ``ast.dump``) of enclosing branches
+        self.known: dict[str, tuple] = {}
+        self.truths: dict[str, bool] = {}  # Outcomes of condition atoms (by ``ast.dump``) of enclosing branches
 
-    def _with(self, known: Dict[str, tuple], truths: Optional[Dict[str, bool]] = None) -> 'RangeFacts':
+    def _with(self, known: dict[str, tuple], truths: dict[str, bool] | None = None) -> "RangeFacts":
         result = copy.copy(self)
         result.known = known
         if truths is not None:
             result.truths = truths
         return result
 
-    def within(self, child: tn.ScheduleTreeScope, previous: Optional[tn.ScheduleTreeNode]) -> 'RangeFacts':
+    def within(self, child: tn.ScheduleTreeScope, previous: tn.ScheduleTreeNode | None) -> "RangeFacts":
         """The facts inside ``child`` (a scope whose preceding sibling is ``previous``)."""
         lrr = range_analysis()
         if isinstance(child, (tn.ForScope, tn.MapScope)):
@@ -67,7 +73,7 @@ class RangeFacts:
                 truths[ast.dump(atom)] = True
         return result._with(result.known, truths)
 
-    def assuming(self, atoms: List[ast.expr]) -> 'RangeFacts':
+    def assuming(self, atoms: list[ast.expr]) -> "RangeFacts":
         """The facts where all of ``atoms`` hold (narrowing the known intervals where an atom is a single one)."""
         lrr = range_analysis()
         known = dict(self.known)
@@ -79,7 +85,7 @@ class RangeFacts:
                     known[var] = (space, lrr.intersect(interval, intervals[0]))
         return self._with(known)
 
-    def verdict(self, atom: ast.expr) -> Optional[bool]:
+    def verdict(self, atom: ast.expr) -> bool | None:
         """Whether ``atom`` always (``True``) or never (``False``) holds here, or ``None`` if undecided."""
         lrr = range_analysis()
         if ast.dump(atom) in self.truths:
@@ -90,7 +96,7 @@ class RangeFacts:
                 return not self.truths[ast.dump(negation[0][0])]
         candidates = [self.known[var] for var in set(symbolic.symbols_in_ast(atom)) & self.known.keys()]
         if not candidates:  # Possibly an atom over compile-time constants alone
-            candidates = [(lrr.IterationSpace(self.repository, '', 0, 0, 1, ast.Lt, set()), lrr.UNBOUNDED)]
+            candidates = [(lrr.IterationSpace(self.repository, "", 0, 0, 1, ast.Lt, set()), lrr.UNBOUNDED)]
         for space, interval in candidates:
             intervals = lrr.atom_intervals(atom, space, self.max_enumeration)
             if intervals is None:
@@ -101,7 +107,7 @@ class RangeFacts:
                 return True
         return None
 
-    def fold(self, condition: ast.expr) -> Tuple[Optional[bool], Optional[ast.expr]]:
+    def fold(self, condition: ast.expr) -> tuple[bool | None, ast.expr | None]:
         """``(verdict, simplified condition)``: the verdict if the condition always or never holds, else the
         condition without its decided atoms (``None`` if nothing was decided)."""
         lrr = range_analysis()
@@ -135,7 +141,7 @@ class RangeFacts:
         return None, simplified
 
 
-def _fold_chains(children: List[tn.ScheduleTreeNode], facts: RangeFacts) -> Tuple[List[tn.ScheduleTreeNode], int]:
+def _fold_chains(children: list[tn.ScheduleTreeNode], facts: RangeFacts) -> tuple[list[tn.ScheduleTreeNode], int]:
     """``children`` with every if/elif/else chain among them folded under ``facts`` (including the chains that
     folding exposes), and the number of conditions folded or simplified. Does not descend into other scopes."""
     result, folded, k = [], 0, 0
@@ -151,7 +157,7 @@ def _fold_chains(children: List[tn.ScheduleTreeNode], facts: RangeFacts) -> Tupl
             k += 1
             if isinstance(chain[-1], tn.ElseScope):
                 break
-        kept: List[tn.ScheduleTreeScope] = []
+        kept: list[tn.ScheduleTreeScope] = []
         for branch in chain:
             if isinstance(branch, tn.ElseScope):
                 if kept:

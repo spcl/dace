@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Converting data-dependent branches in innermost loops to selects, and computing the arms of selects first."""
+
 import ast
 import copy
-from typing import Dict, Optional
 
 import sympy
 
@@ -11,10 +11,15 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, clone_subtree, condition_of, is_pure,
-                                                            range_analysis)
-from dace.sdfg.analysis.schedule_tree.passes.folding import (RangeFacts, facts_at)
-from dace.sdfg.analysis.schedule_tree.passes.rerolling import (roll_key)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    AccessIndex,
+    clone_subtree,
+    condition_of,
+    is_pure,
+    range_analysis,
+)
+from dace.sdfg.analysis.schedule_tree.passes.folding import RangeFacts, facts_at
+from dace.sdfg.analysis.schedule_tree.passes.rerolling import roll_key
 
 # Operators that may trap or have undefined behavior when evaluated speculatively
 _UNSAFE_OPERATORS = (ast.FloorDiv, ast.Mod)
@@ -24,7 +29,7 @@ def _speculatable(statement: tn.TaskletNode) -> bool:
     """Whether a tasklet may run where it did not before: Python code without side effects, integer division or
     modulo, and calls only to pure functions."""
     node = statement.node
-    if node.language != dtypes.Language.Python or getattr(node, 'side_effects', False):
+    if node.language != dtypes.Language.Python or getattr(node, "side_effects", False):
         return False
     for n in ast.walk(ast.Module(body=list(node.code.code), type_ignores=[])):
         if isinstance(n, ast.BinOp) and isinstance(n.op, _UNSAFE_OPERATORS):
@@ -39,7 +44,11 @@ def _cost(statements: list) -> int:
     return sum(
         sum(
             isinstance(n, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.Call, ast.BoolOp, ast.IfExp))
-            for n in ast.walk(ast.Module(body=list(s.node.code.code), type_ignores=[]))) + 1 for s in statements)
+            for n in ast.walk(ast.Module(body=list(s.node.code.code), type_ignores=[]))
+        )
+        + 1
+        for s in statements
+    )
 
 
 def _within_bounds(memlet: Memlet, desc: data.Data, facts: RangeFacts) -> bool:
@@ -71,9 +80,9 @@ def _element(memlet: Memlet) -> tuple:
     return memlet.data, str(memlet.subset)
 
 
-def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
-                                max_cost_ratio: float = 3.0,
-                                max_enumeration: int = 1 << 20) -> int:
+def convert_diamonds_to_selects(
+    stree: tn.ScheduleTreeScope, max_cost_ratio: float = 3.0, max_enumeration: int = 1 << 20
+) -> int:
     """
     Replace if/else pairs in innermost loops, whose branches compute the same outputs, with straight-line code that
     computes both branches and selects the results (if-conversion of diamonds), so the loop can be vectorized.
@@ -102,23 +111,25 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
     index = AccessIndex(root)
 
     def fresh(base: str, desc: data.Data) -> str:
-        name = utils.find_new_name(f'__sel_{base}', containers)
+        name = utils.find_new_name(f"__sel_{base}", containers)
         containers[name] = data.Scalar(desc.dtype, transient=True)
         return name
 
-    def reads_inside(scope: tn.ScheduleTreeScope) -> Dict[str, int]:
-        reads: Dict[str, int] = {}
+    def reads_inside(scope: tn.ScheduleTreeScope) -> dict[str, int]:
+        reads: dict[str, int] = {}
         index._count(scope, reads, {}, set())
         return reads
 
-    def convert(first: tn.IfScope, second: tn.ElseScope, facts: RangeFacts) -> Optional[list]:
+    def convert(first: tn.IfScope, second: tn.ElseScope, facts: RangeFacts) -> list | None:
         condition = condition_of(first)
         if condition is None or not is_pure(condition):
             return None
         branches = [list(first.children), list(second.children)]
         if not all(
-                isinstance(s, tn.TaskletNode) and roll_key(s) is not None and _speculatable(s) for body in branches
-                for s in body):
+            isinstance(s, tn.TaskletNode) and roll_key(s) is not None and _speculatable(s)
+            for body in branches
+            for s in body
+        ):
             return None
         costs = [_cost(body) for body in branches]
         if max(costs) > max_cost_ratio * max(min(costs), 1):
@@ -152,26 +163,26 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
             return None  # Some live element is written by one branch only
 
         from dace.frontend.python import astutils  # Avoid import loops
+
         result = []
         # The condition, evaluated first
         inputs = {}
 
         class Accesses(ast.NodeTransformer):
-
             def visit_Subscript(self, node: ast.Subscript):
                 if isinstance(node.value, ast.Name) and node.value.id in containers:
-                    connector = f'__in{len(inputs)}'
+                    connector = f"__in{len(inputs)}"
                     indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
-                    inputs[connector] = Memlet(f'{node.value.id}[{", ".join(ast.unparse(i) for i in indices)}]')
+                    inputs[connector] = Memlet(f"{node.value.id}[{', '.join(ast.unparse(i) for i in indices)}]")
                     return ast.copy_location(ast.Name(id=connector, ctx=ast.Load()), node)
                 return self.generic_visit(node)
 
             def visit_Name(self, node: ast.Name):
                 if node.id in containers:
                     if not isinstance(containers[node.id], data.Scalar):
-                        raise ValueError('whole array in condition')
-                    connector = f'__in{len(inputs)}'
-                    inputs[connector] = Memlet(f'{node.id}[0]')
+                        raise ValueError("whole array in condition")
+                    connector = f"__in{len(inputs)}"
+                    inputs[connector] = Memlet(f"{node.id}[0]")
                     return ast.copy_location(ast.Name(id=connector, ctx=ast.Load()), node)
                 return node
 
@@ -179,43 +190,44 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
             expression = Accesses().visit(astutils.copy_tree(condition))
         except ValueError:
             return None
-        predicate = fresh('cond', data.Scalar(dtypes.bool_))
-        tasklet = nodes.Tasklet('select_condition', {c: None
-                                                     for c in inputs}, {'__out': None},
-                                f'__out = {ast.unparse(expression)}')
-        result.append(tn.TaskletNode(node=tasklet, in_memlets=inputs, out_memlets={'__out': Memlet(f'{predicate}[0]')}))
+        predicate = fresh("cond", data.Scalar(dtypes.bool_))
+        tasklet = nodes.Tasklet(
+            "select_condition", dict.fromkeys(inputs), {"__out": None}, f"__out = {ast.unparse(expression)}"
+        )
+        result.append(tn.TaskletNode(node=tasklet, in_memlets=inputs, out_memlets={"__out": Memlet(f"{predicate}[0]")}))
         # Each branch into temporaries
         temporaries = []
         for body in branches:
-            renamed: Dict[tuple, str] = {}
+            renamed: dict[tuple, str] = {}
             for statement in body:
                 clone = clone_subtree(statement)
                 for connector, memlet in clone.in_memlets.items():
                     if _element(memlet) in renamed:
-                        clone.in_memlets[connector] = Memlet(f'{renamed[_element(memlet)]}[0]')
+                        clone.in_memlets[connector] = Memlet(f"{renamed[_element(memlet)]}[0]")
                 for connector, memlet in clone.out_memlets.items():
                     element = _element(memlet)
                     if element not in renamed:
                         renamed[element] = fresh(memlet.data, containers[memlet.data])
-                    clone.out_memlets[connector] = Memlet(f'{renamed[element]}[0]')
+                    clone.out_memlets[connector] = Memlet(f"{renamed[element]}[0]")
                 result.append(clone)
             temporaries.append(renamed)
         # Select the live elements into place
         for element in dict.fromkeys(selected):
             data_name, subset = element
-            tasklet = nodes.Tasklet('select', {
-                '__c': None,
-                '__a': None,
-                '__b': None
-            }, {'__out': None}, '__out = __a if __c else __b')
+            tasklet = nodes.Tasklet(
+                "select", {"__c": None, "__a": None, "__b": None}, {"__out": None}, "__out = __a if __c else __b"
+            )
             result.append(
-                tn.TaskletNode(node=tasklet,
-                               in_memlets={
-                                   '__c': Memlet(f'{predicate}[0]'),
-                                   '__a': Memlet(f'{temporaries[0][element]}[0]'),
-                                   '__b': Memlet(f'{temporaries[1][element]}[0]')
-                               },
-                               out_memlets={'__out': Memlet(f'{data_name}[{subset}]')}))
+                tn.TaskletNode(
+                    node=tasklet,
+                    in_memlets={
+                        "__c": Memlet(f"{predicate}[0]"),
+                        "__a": Memlet(f"{temporaries[0][element]}[0]"),
+                        "__b": Memlet(f"{temporaries[1][element]}[0]"),
+                    },
+                    out_memlets={"__out": Memlet(f"{data_name}[{subset}]")},
+                )
+            )
         return result
 
     converted = 0
@@ -223,15 +235,20 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
     def visit(scope: tn.ScheduleTreeScope, facts: RangeFacts):
         nonlocal converted
         innermost = isinstance(scope, (tn.ForScope, tn.MapScope)) and not any(
-            isinstance(n, (tn.ForScope, tn.MapScope)) for n in scope.preorder_traversal() if n is not scope)
+            isinstance(n, (tn.ForScope, tn.MapScope)) for n in scope.preorder_traversal() if n is not scope
+        )
         if innermost:
             children, result, k, changed = scope.children, [], 0, False
             while k < len(children):
                 node = children[k]
                 following = children[k + 1] if k + 1 < len(children) else None
                 after = children[k + 2] if k + 2 < len(children) else None
-                if (isinstance(node, tn.IfScope) and not isinstance(node, tn.StateIfScope)
-                        and isinstance(following, tn.ElseScope) and not isinstance(after, tn.ElifScope)):
+                if (
+                    isinstance(node, tn.IfScope)
+                    and not isinstance(node, tn.StateIfScope)
+                    and isinstance(following, tn.ElseScope)
+                    and not isinstance(after, tn.ElifScope)
+                ):
                     replacement = convert(node, following, facts)
                     if replacement is not None:
                         result += replacement
@@ -258,7 +275,8 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
 def _operations(expression: ast.expr) -> int:
     return sum(
         isinstance(n, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.Call, ast.BoolOp, ast.IfExp))
-        for n in ast.walk(expression))
+        for n in ast.walk(expression)
+    )
 
 
 def _speculatable_expression(expression: ast.expr) -> bool:
@@ -273,8 +291,11 @@ def _speculatable_expression(expression: ast.expr) -> bool:
         if isinstance(n, ast.Call):
             if not isinstance(n.func, (ast.Name, ast.Attribute)):
                 return False
-            if (isinstance(n.func, ast.Name) and n.func.id in ('int', 'round')
-                    and not all(isinstance(a, ast.Constant) for a in n.args)):
+            if (
+                isinstance(n.func, ast.Name)
+                and n.func.id in ("int", "round")
+                and not all(isinstance(a, ast.Constant) for a in n.args)
+            ):
                 return False
     return True
 
@@ -301,7 +322,7 @@ def hoist_select_arms(stree: tn.ScheduleTreeScope, min_operations: int = 1) -> i
     for node in stree.preorder_traversal():
         if not isinstance(node, tn.TaskletNode) or node.node.code.language != dtypes.Language.Python:
             continue
-        if getattr(node.node, 'side_effects', False):
+        if getattr(node.node, "side_effects", False):
             continue
         body = list(node.node.code.code)
         taken = {n.id for s in body for n in ast.walk(s) if isinstance(n, ast.Name)}
@@ -309,9 +330,9 @@ def hoist_select_arms(stree: tn.ScheduleTreeScope, min_operations: int = 1) -> i
         counter = [0]
 
         def fresh() -> str:
-            while f'__arm{counter[0]}' in taken:
+            while f"__arm{counter[0]}" in taken:
                 counter[0] += 1
-            name = f'__arm{counter[0]}'
+            name = f"__arm{counter[0]}"
             taken.add(name)
             return name
 
@@ -327,13 +348,14 @@ def hoist_select_arms(stree: tn.ScheduleTreeScope, min_operations: int = 1) -> i
 
             def visit_IfExp(self, node: ast.IfExp):
                 self.generic_visit(node)
-                for field in ('body', 'orelse'):
+                for field in ("body", "orelse"):
                     arm = getattr(node, field)
                     if _operations(arm) < max(min_operations, 1) or not _speculatable_expression(arm):
                         continue
                     name = fresh()
                     self.definitions.append(
-                        ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=arm, lineno=0, col_offset=0))
+                        ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=arm, lineno=0, col_offset=0)
+                    )
                     setattr(node, field, ast.copy_location(ast.Name(id=name, ctx=ast.Load()), arm))
                 return node
 

@@ -1,27 +1,35 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Rolling unrolled statements back into loops, and merging the resulting loop nests."""
-from typing import Callable, Dict, List, Optional, Tuple
+
+from collections.abc import Callable
 
 import sympy
 
 from dace import subsets, symbolic
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    clone_subtree,
+    iteration_spaces,
+    names_in_subtrees,
+    names_read,
+    names_written,
+    range_analysis,
+    repository_of,
+    trip_count,
+)
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.analysis.schedule_tree.passes.common import (clone_subtree, iteration_spaces, names_in_subtrees,
-                                                            names_read, names_written, range_analysis, repository_of,
-                                                            trip_count)
 
 
-def roll_key(node: tn.ScheduleTreeNode) -> Optional[Tuple[tuple, Tuple[int, ...], list]]:
+def roll_key(node: tn.ScheduleTreeNode) -> tuple[tuple, tuple[int, ...], list] | None:
     """``(signature, point, memlets)`` of a tasklet whose memlets each access a single element: statements with equal
     signatures differ only in the integer offsets of their indices, which form the point. ``None`` if the node
     cannot be rolled."""
-    if not isinstance(node, tn.TaskletNode) or getattr(node.node, 'side_effects', False):
+    if not isinstance(node, tn.TaskletNode) or getattr(node.node, "side_effects", False):
         return None
     if not isinstance(node.in_memlets, dict) or not isinstance(node.out_memlets, dict):
         return None
-    memlets = [('in', c, m) for c, m in sorted(node.in_memlets.items())]
-    memlets += [('out', c, m) for c, m in sorted(node.out_memlets.items())]
+    memlets = [("in", c, m) for c, m in sorted(node.in_memlets.items())]
+    memlets += [("out", c, m) for c, m in sorted(node.out_memlets.items())]
     signature = [node.node.language, node.node.code.as_string]
     point = []
     for direction, connector, memlet in memlets:
@@ -38,12 +46,13 @@ def roll_key(node: tn.ScheduleTreeNode) -> Optional[Tuple[tuple, Tuple[int, ...]
     return tuple(signature), tuple(point), memlets
 
 
-def _difference(a: Tuple[int, ...], b: Tuple[int, ...]) -> Tuple[int, ...]:
+def _difference(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(x - y for x, y in zip(a, b))
 
 
-def _rolled(nodes: List[tn.ScheduleTreeNode], points: List[Tuple[int, ...]], min_statements: int,
-            fresh: Callable[[], str]) -> List[tn.ScheduleTreeNode]:
+def _rolled(
+    nodes: list[tn.ScheduleTreeNode], points: list[tuple[int, ...]], min_statements: int, fresh: Callable[[], str]
+) -> list[tn.ScheduleTreeNode]:
     """``nodes`` (consecutive statements with one signature and the given points) with runs of constant difference
     rolled into loops, and consecutive equal runs stacked into two-dimensional loop nests. Order is preserved."""
     # One-dimensional runs: (first index, step, length)
@@ -68,7 +77,7 @@ def _rolled(nodes: List[tn.ScheduleTreeNode], points: List[Tuple[int, ...]], min
                 break
             stride, m = d, m + 1
         if n * m < min_statements:
-            result += nodes[first:first + n]
+            result += nodes[first : first + n]
             r += 1
             continue
         result.append(_roll(nodes[first], points[first], [(stride, m)] if m > 1 else [], (step, n), fresh))
@@ -76,15 +85,16 @@ def _rolled(nodes: List[tn.ScheduleTreeNode], points: List[Tuple[int, ...]], min
     return result
 
 
-def _roll(node: tn.TaskletNode, point: Tuple[int, ...], outer: list, inner: tuple, fresh: Callable[[],
-                                                                                                   str]) -> tn.ForScope:
+def _roll(
+    node: tn.TaskletNode, point: tuple[int, ...], outer: list, inner: tuple, fresh: Callable[[], str]
+) -> tn.ForScope:
     """A loop nest running ``node`` (at ``point``) over ``outer`` (``[(stride, count)]`` or ``[]``) and ``inner``
     (``(step, count)``) iterations, with its memlet offsets advanced by the strides."""
     dims = outer + [inner]
     variables = [fresh() for _ in dims]
     body = clone_subtree(node)
     offsets = iter(range(len(point)))
-    for attr in ('in_memlets', 'out_memlets'):
+    for attr in ("in_memlets", "out_memlets"):
         for connector in sorted(getattr(body, attr)):
             memlet = getattr(body, attr)[connector]
             indices = []
@@ -95,7 +105,7 @@ def _roll(node: tn.TaskletNode, point: Tuple[int, ...], outer: list, inner: tupl
             memlet.subset = subsets.Range([(i, i, 1) for i in indices])
     scope: tn.ScheduleTreeNode = body
     for var, (_, count) in reversed(list(zip(variables, dims))):
-        header = LoopRegion(f'rolled_{var}', f'{var} < {count}', var, f'{var} = 0', f'{var} = {var} + 1')
+        header = LoopRegion(f"rolled_{var}", f"{var} < {count}", var, f"{var} = 0", f"{var} = {var} + 1")
         scope = tn.ForScope(loop=header, children=[scope])
     return scope
 
@@ -121,9 +131,9 @@ def reroll_statements(stree: tn.ScheduleTreeScope, min_statements: int = 3) -> i
     counter = [0]
 
     def fresh() -> str:
-        while f'__roll{counter[0]}' in taken:
+        while f"__roll{counter[0]}" in taken:
             counter[0] += 1
-        name = f'__roll{counter[0]}'
+        name = f"__roll{counter[0]}"
         taken.add(name)
         return name
 
@@ -154,7 +164,7 @@ def reroll_statements(stree: tn.ScheduleTreeScope, min_statements: int = 3) -> i
     return created
 
 
-def _constant_nest(node: tn.ScheduleTreeNode, repository) -> Optional[Tuple[List[Tuple[str, int]], list]]:
+def _constant_nest(node: tn.ScheduleTreeNode, repository) -> tuple[list[tuple[str, int]], list] | None:
     """``(loops, statements)`` if ``node`` is a perfect nest of loops ``for v in range(0, n)`` with constant ``n``
     around single-element statements (as :func:`reroll_statements` creates), or ``([], [node])`` for a single such
     statement; ``None`` otherwise."""
@@ -178,11 +188,12 @@ def _constant_nest(node: tn.ScheduleTreeNode, repository) -> Optional[Tuple[List
     return loops, list(statements)
 
 
-def _element_accesses(loops: List[Tuple[str, int]], statements: list, limit: int) -> Optional[Tuple[dict, dict]]:
+def _element_accesses(loops: list[tuple[str, int]], statements: list, limit: int) -> tuple[dict, dict] | None:
     """``(reads, writes)`` of a constant nest: for each container, the elements accessed, as a map from the symbolic
     part of the indices to the set of integer offsets. ``None`` if the nest has more than ``limit`` iterations or an
     index is not affine in the loop variables with integer coefficients."""
     import itertools
+
     total = 1
     for _, count in loops:
         total *= count
@@ -208,8 +219,8 @@ def _element_accesses(loops: List[Tuple[str, int]], statements: list, limit: int
                         offset, part = sympy.Integer(0), rest
                     indices.append((str(part), int(offset), [int(c) for c in coefficients]))
                 patterns.append((write, memlet.data, indices))
-    reads: Dict[str, Dict[tuple, set]] = {}
-    writes: Dict[str, Dict[tuple, set]] = {}
+    reads: dict[str, dict[tuple, set]] = {}
+    writes: dict[str, dict[tuple, set]] = {}
     for write, data, indices in patterns:
         rest = tuple(part for part, _, _ in indices)
         elements = (reads if not write else writes).setdefault(data, {}).setdefault(rest, set())
@@ -226,7 +237,7 @@ def _union_accesses(a: dict, b: dict) -> dict:
     return result
 
 
-def _may_overlap(a: Dict[str, Dict[tuple, set]], b: Dict[str, Dict[tuple, set]]) -> bool:
+def _may_overlap(a: dict[str, dict[tuple, set]], b: dict[str, dict[tuple, set]]) -> bool:
     for data in a.keys() & b.keys():
         for rest_a, offsets_a in a[data].items():
             for rest_b, offsets_b in b[data].items():
@@ -287,8 +298,9 @@ def fuse_rolled_loops(stree: tn.ScheduleTreeScope, max_iterations: int = 1 << 12
             for statement in statements:
                 if renames:
                     for memlet in list(statement.in_memlets.values()) + list(statement.out_memlets.values()):
-                        memlet.subset = subsets.Range([(e, e, 1) for e in (sympy.sympify(i).subs(renames)
-                                                                           for i in memlet.subset.min_element())])
+                        memlet.subset = subsets.Range(
+                            [(e, e, 1) for e in (sympy.sympify(i).subs(renames) for i in memlet.subset.min_element())]
+                        )
                 entry[2].append(statement)
             entry[0] = None  # Rebuilt below
             entry[3] = (_union_accesses(entry[3][0], accesses[0]), _union_accesses(entry[3][1], accesses[1]))
@@ -303,7 +315,7 @@ def fuse_rolled_loops(stree: tn.ScheduleTreeScope, max_iterations: int = 1 << 12
                 continue
             nest = None
             for var, count in reversed(loops):
-                header = LoopRegion(f'rolled_{var}', f'{var} < {count}', var, f'{var} = 0', f'{var} = {var} + 1')
+                header = LoopRegion(f"rolled_{var}", f"{var} < {count}", var, f"{var} = 0", f"{var} = {var} + 1")
                 nest = tn.ForScope(loop=header, children=[nest] if nest is not None else statements)
             result.append(nest)
         scope.children = []

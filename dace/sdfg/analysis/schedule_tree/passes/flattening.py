@@ -1,19 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Flattening loop nests that traverse contiguous memory into single loops."""
+
 import ast
-from typing import Dict, Optional, Tuple
 
 import sympy
 
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (iteration_spaces, names_in_subtrees, names_read,
-                                                            names_written, range_analysis, repository_of, trip_count)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    iteration_spaces,
+    names_in_subtrees,
+    names_read,
+    names_written,
+    range_analysis,
+    repository_of,
+    trip_count,
+)
 from dace.sdfg.state import LoopRegion
 
 
-def _loop(scope: tn.ScheduleTreeNode, repository) -> Optional[Tuple[str, object]]:
+def _loop(scope: tn.ScheduleTreeNode, repository) -> tuple[str, object] | None:
     """``(variable, iteration space)`` of a ``for`` loop with unit step, or ``None``."""
     if not isinstance(scope, tn.ForScope):
         return None
@@ -31,8 +38,9 @@ def _is_zero(expr) -> bool:
     return sympy.simplify(sympy.sympify(expr)) == 0
 
 
-def _flat_access(memlet: Memlet, desc: data.Data, outer: sympy.Symbol, inner: sympy.Symbol, start: int,
-                 count: int) -> Optional[tuple]:
+def _flat_access(
+    memlet: Memlet, desc: data.Data, outer: sympy.Symbol, inner: sympy.Symbol, start: int, count: int
+) -> tuple | None:
     """How a single-element access indexes the flattened loop: ``()`` if it depends on neither loop variable,
     ``(inner dimension, outer dimension, offset)`` if the inner variable indexes a whole contiguous row of ``desc``
     (``index = inner + c`` over the row ``[0, count)``) and the outer variable the next row (``outer + d``, the
@@ -44,8 +52,12 @@ def _flat_access(memlet: Memlet, desc: data.Data, outer: sympy.Symbol, inner: sy
     uses = [(k, e) for k, e in enumerate(indices) if e.has(outer) or e.has(inner)]
     if not uses:
         return ()
-    if (not isinstance(desc, data.Array) or isinstance(desc, data.View) or len(uses) != 2
-            or any(not _is_zero(o) for o in desc.offset)):
+    if (
+        not isinstance(desc, data.Array)
+        or isinstance(desc, data.View)
+        or len(uses) != 2
+        or any(not _is_zero(o) for o in desc.offset)
+    ):
         return None
     inner_dims = [(k, e - inner) for k, e in uses if e.coeff(inner) == 1 and not (e - inner).has(inner, outer)]
     outer_dims = [(k, e - outer) for k, e in uses if e.coeff(outer) == 1 and not (e - outer).has(inner, outer)]
@@ -82,13 +94,13 @@ def flatten_contiguous_nests(stree: tn.ScheduleTreeScope, min_outer_trip_count: 
     containers = root.containers
     taken = set(root.symbols) | set(containers)
     taken |= names_in_subtrees([root], names_read) | names_in_subtrees([root], names_written)
-    views: Dict[tuple, str] = {}
+    views: dict[tuple, str] = {}
     counter = [0]
 
     def fresh(base: str) -> str:
-        while f'{base}{counter[0]}' in taken:
+        while f"{base}{counter[0]}" in taken:
             counter[0] += 1
-        name = f'{base}{counter[0]}'
+        name = f"{base}{counter[0]}"
         taken.add(name)
         return name
 
@@ -100,22 +112,24 @@ def flatten_contiguous_nests(stree: tn.ScheduleTreeScope, min_outer_trip_count: 
             strides = list(desc.strides)
             shape[row_dim] = shape[row_dim] * shape[next_dim]
             del shape[next_dim], strides[next_dim]
-            view = data.ArrayView(desc.dtype,
-                                  shape,
-                                  transient=True,
-                                  storage=desc.storage,
-                                  strides=strides,
-                                  offset=[0] * len(shape),
-                                  total_size=desc.total_size,
-                                  lifetime=dtypes.AllocationLifetime.Scope)
-            views[key] = utils.find_new_name(f'{name}_flat', containers)
+            view = data.ArrayView(
+                desc.dtype,
+                shape,
+                transient=True,
+                storage=desc.storage,
+                strides=strides,
+                offset=[0] * len(shape),
+                total_size=desc.total_size,
+                lifetime=dtypes.AllocationLifetime.Scope,
+            )
+            views[key] = utils.find_new_name(f"{name}_flat", containers)
             containers[views[key]] = view
             taken.add(views[key])
         return views[key]
 
-    flat_names: Dict[Tuple[str, str], str] = {}
+    flat_names: dict[tuple[str, str], str] = {}
 
-    def flatten(outer_scope: tn.ForScope, defined: set) -> Optional[list]:
+    def flatten(outer_scope: tn.ForScope, defined: set) -> list | None:
         outer = _loop(outer_scope, repository)
         if outer is None or len(outer_scope.children) != 1:
             return None
@@ -141,7 +155,7 @@ def flatten_contiguous_nests(stree: tn.ScheduleTreeScope, min_outer_trip_count: 
             if {outer_var, inner_var} & code_names:
                 return None
             accesses = {}
-            for kind, memlets in (('in', statement.in_memlets), ('out', statement.out_memlets)):
+            for kind, memlets in (("in", statement.in_memlets), ("out", statement.out_memlets)):
                 for connector, memlet in memlets.items():
                     if memlet.data not in containers:
                         return None
@@ -153,27 +167,32 @@ def flatten_contiguous_nests(stree: tn.ScheduleTreeScope, min_outer_trip_count: 
         # Rewrite
         # Loops flattened from the same variables share a name, so that contiguous ones can be merged
         if (outer_var, inner_var) not in flat_names:
-            flat_names[outer_var, inner_var] = fresh('__flat')
+            flat_names[outer_var, inner_var] = fresh("__flat")
         flat_var = flat_names[outer_var, inner_var]
         t = symbolic.symbol(flat_var)
         for statement, accesses in zip(body, plan):
             for (kind, connector), access in accesses.items():
                 if access == ():
                     continue
-                memlets = statement.in_memlets if kind == 'in' else statement.out_memlets
+                memlets = statement.in_memlets if kind == "in" else statement.out_memlets
                 memlet = memlets[connector]
                 row_dim, next_dim, offset = access
                 indices = list(memlet.subset.min_element())
                 indices[row_dim] = t + offset
                 del indices[next_dim]
                 name = view_of(memlet.data, row_dim, next_dim)
-                memlets[connector] = Memlet(data=name,
-                                            subset=subsets.Range([(x, x, 1) for x in indices]),
-                                            dynamic=memlet.dynamic)
+                memlets[connector] = Memlet(
+                    data=name, subset=subsets.Range([(x, x, 1) for x in indices]), dynamic=memlet.dynamic
+                )
         first = start + count * outer_space.start
         end = start + count * (outer_space.end + 1)
-        header = LoopRegion(f'{outer_scope.loop.label}_flat', f'{flat_var} < {symbolic.symstr(end)}', flat_var,
-                            f'{flat_var} = {symbolic.symstr(first)}', f'{flat_var} = {flat_var} + 1')
+        header = LoopRegion(
+            f"{outer_scope.loop.label}_flat",
+            f"{flat_var} < {symbolic.symstr(end)}",
+            flat_var,
+            f"{flat_var} = {symbolic.symstr(first)}",
+            f"{flat_var} = {flat_var} + 1",
+        )
         flat = tn.ForScope(loop=header, children=[])
         flat.add_children(body)
         definitions = []
@@ -183,11 +202,14 @@ def flatten_contiguous_nests(stree: tn.ScheduleTreeScope, min_outer_trip_count: 
             if any(m.data == view for s in body for m in list(s.in_memlets.values()) + list(s.out_memlets.values())):
                 defined.add(view)
                 definitions.append(
-                    tn.ViewNode(target=view,
-                                source=name,
-                                memlet=Memlet.from_array(name, containers[name]),
-                                src_desc=containers[name],
-                                view_desc=containers[view]))
+                    tn.ViewNode(
+                        target=view,
+                        source=name,
+                        memlet=Memlet.from_array(name, containers[name]),
+                        src_desc=containers[name],
+                        view_desc=containers[view],
+                    )
+                )
         return definitions + [flat]
 
     flattened = 0

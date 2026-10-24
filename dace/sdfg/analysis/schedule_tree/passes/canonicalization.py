@@ -1,46 +1,62 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Passes that bring conditions into a canonical form: pairing complementary guards, substituting the values conditions
 read, and reading containers before conditions."""
+
 import ast
-from typing import Dict, Optional, Set, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, ReplaceAccesses, bound_names, condition_of,
-                                                            condition_element_accesses, in_bounds, is_pure, loop_ranges,
-                                                            names_in_subtrees, names_written, range_analysis,
-                                                            repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.common import (
+    AccessIndex,
+    ReplaceAccesses,
+    bound_names,
+    condition_element_accesses,
+    condition_of,
+    in_bounds,
+    is_pure,
+    loop_ranges,
+    names_in_subtrees,
+    names_written,
+    range_analysis,
+    repository_of,
+)
 
 
-def _access(memlet: Memlet, containers: Dict[str, data.Data]) -> ast.expr:
+def _access(memlet: Memlet, containers: dict[str, data.Data]) -> ast.expr:
     """How a condition reads the data a memlet points to: scalars by name, other containers by subscript."""
     if isinstance(containers.get(memlet.data, None), data.Scalar):
         return ast.Name(id=memlet.data, ctx=ast.Load())
-    return ast.parse(f'{memlet.data}[{memlet.subset}]', mode='eval').body
+    return ast.parse(f"{memlet.data}[{memlet.subset}]", mode="eval").body
 
 
-def _assignment(node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> Optional[Tuple[str, ast.expr]]:
+def _assignment(node: tn.ScheduleTreeNode, containers: dict[str, data.Data]) -> tuple[str, ast.expr] | None:
     """A node as ``(target, value)`` if it assigns a single value that a condition may use in its place: a symbol
     assignment, a single-element copy, or a Python tasklet ``out = <expression of single-element inputs>``."""
     from dace.frontend.python import astutils  # Avoid import loops
+
     if isinstance(node, tn.AssignNode):
         code = node.value.code[0]
-        return node.name, astutils.copy_tree(getattr(code, 'value', code))
+        return node.name, astutils.copy_tree(getattr(code, "value", code))
     if isinstance(node, tn.CopyNode) and node.memlet.subset is not None and node.memlet.subset.num_elements() == 1:
         return node.target, _access(node.memlet, containers)
     if isinstance(node, tn.TaskletNode) and node.node.language == dtypes.Language.Python:
         code, outputs = node.node.code.code, list(node.out_memlets.items())
-        if (len(outputs) == 1 and len(code) == 1 and isinstance(code[0], ast.Assign) and len(code[0].targets) == 1
-                and isinstance(code[0].targets[0], ast.Name) and code[0].targets[0].id == outputs[0][0]
-                and all(m.subset.num_elements() == 1 for _, m in outputs + list(node.in_memlets.items()))):
+        if (
+            len(outputs) == 1
+            and len(code) == 1
+            and isinstance(code[0], ast.Assign)
+            and len(code[0].targets) == 1
+            and isinstance(code[0].targets[0], ast.Name)
+            and code[0].targets[0].id == outputs[0][0]
+            and all(m.subset.num_elements() == 1 for _, m in outputs + list(node.in_memlets.items()))
+        ):
             value = astutils.copy_tree(code[0].value)
-            value = astutils.ASTFindReplace({
-                c: _access(m, containers)
-                for c, m in node.in_memlets.items()
-            }).visit(value)
+            value = astutils.ASTFindReplace({c: _access(m, containers) for c, m in node.in_memlets.items()}).visit(
+                value
+            )
             return outputs[0][1].data, value
     return None
 
@@ -52,36 +68,45 @@ _MAX_SUBSTITUTED_NODES = 200
 class _ReplaceNames(ast.NodeTransformer):
     """Replaces names by (copies of) expressions."""
 
-    def __init__(self, values: Dict[str, ast.expr]):
+    def __init__(self, values: dict[str, ast.expr]):
         self.values = values
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.values:
             from dace.frontend.python import astutils  # Avoid import loops
+
             return astutils.copy_tree(self.values[node.id])
         return node
 
 
-def _tasklet_values(node: tn.TaskletNode, containers: Dict[str, data.Data]) -> Dict[str, ast.expr]:
+def _tasklet_values(node: tn.TaskletNode, containers: dict[str, data.Data]) -> dict[str, ast.expr]:
     """The values a straight-line Python tasklet writes, by written container, as expressions over what it reads
     (``{'mask': <expr>}`` for ``t = a * 2; mask = t > 1`` writing ``mask``). Empty if the tasklet is not straight-line
     single assignments over single-element accesses. Outputs whose value reads a container the tasklet also writes are
     left out: the expression would read the new value where it is substituted."""
     from dace.frontend.python import astutils  # Avoid import loops
-    if (node.node.language != dtypes.Language.Python or getattr(node.node, 'side_effects', False)
-            or not isinstance(node.in_memlets, dict) or not isinstance(node.out_memlets, dict)):
+
+    if (
+        node.node.language != dtypes.Language.Python
+        or getattr(node.node, "side_effects", False)
+        or not isinstance(node.in_memlets, dict)
+        or not isinstance(node.out_memlets, dict)
+    ):
         return {}
     memlets = list(node.in_memlets.values()) + list(node.out_memlets.values())
     if any(m.subset is None or m.subset.num_elements() != 1 for m in memlets):
         return {}
-    env: Dict[str, ast.expr] = {c: _access(m, containers) for c, m in node.in_memlets.items()}
+    env: dict[str, ast.expr] = {c: _access(m, containers) for c, m in node.in_memlets.items()}
     for statement in node.node.code.code:
         if isinstance(statement, ast.AnnAssign) and statement.value is None:
             continue  # A declaration
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
             target, value = statement.target.id, statement.value
-        elif (isinstance(statement, ast.Assign) and len(statement.targets) == 1
-              and isinstance(statement.targets[0], ast.Name)):
+        elif (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
             target, value = statement.targets[0].id, statement.value
         else:
             return {}
@@ -98,7 +123,7 @@ def _tasklet_values(node: tn.TaskletNode, containers: Dict[str, data.Data]) -> D
     return result
 
 
-def _assigned_values(node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> Dict[str, ast.expr]:
+def _assigned_values(node: tn.ScheduleTreeNode, containers: dict[str, data.Data]) -> dict[str, ast.expr]:
     """The values ``node`` assigns that a condition may use in their place, by target: see :func:`_assignment`, and
     every output of a straight-line tasklet (:func:`_tasklet_values`)."""
     if isinstance(node, tn.TaskletNode):
@@ -107,7 +132,7 @@ def _assigned_values(node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]
     return {} if assigned is None else {assigned[0]: assigned[1]}
 
 
-def _substitutable(target: str, value: ast.expr, node: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> bool:
+def _substitutable(target: str, value: ast.expr, node: tn.ScheduleTreeNode, containers: dict[str, data.Data]) -> bool:
     """Whether a condition may read ``value`` instead of ``target`` (as assigned by ``node``) with the same result:
     symbols hold values as they are computed, boolean containers hold truth values, an element of a container of the
     same type is copied exactly, and literals are exact in the type of their container."""
@@ -140,6 +165,7 @@ class _ReplaceReads(ast.NodeTransformer):
 
     def _replacement(self) -> ast.expr:
         from dace.frontend.python import astutils  # Avoid import loops
+
         self.replaced += 1
         return astutils.copy_tree(self.value)
 
@@ -176,26 +202,26 @@ def forward_substitute_conditions(stree: tn.ScheduleTreeScope) -> int:
     """
     root = stree.get_root()
     containers = root.containers
-    written_in: Dict[int, tuple] = {}  # Subtree writes, by node (the node is held so that ids are not reused)
+    written_in: dict[int, tuple] = {}  # Subtree writes, by node (the node is held so that ids are not reused)
 
-    def writes(node: tn.ScheduleTreeNode) -> Set[str]:
+    def writes(node: tn.ScheduleTreeNode) -> set[str]:
         entry = written_in.get(id(node))
         if entry is None:
             entry = written_in[id(node)] = (node, names_in_subtrees([node], names_written))
         return entry[1]
 
-    values_of: Dict[int, tuple] = {}  # Assigned values, by node (held so that ids are not reused)
+    values_of: dict[int, tuple] = {}  # Assigned values, by node (held so that ids are not reused)
 
-    def values(node: tn.ScheduleTreeNode) -> Dict[str, ast.expr]:
+    def values(node: tn.ScheduleTreeNode) -> dict[str, ast.expr]:
         entry = values_of.get(id(node))
         if entry is None:
             entry = values_of[id(node)] = (node, _assigned_values(node, containers))
         return entry[1]
 
-    def reaching(branch: tn.ScheduleTreeScope, name: str) -> Optional[ast.expr]:
+    def reaching(branch: tn.ScheduleTreeScope, name: str) -> ast.expr | None:
         """The value assigned to ``name`` that reaches the condition of ``branch``, or ``None``."""
-        between: Set[str] = set()
-        rebound: Set[str] = set()
+        between: set[str] = set()
+        rebound: set[str] = set()
         current = branch
         if isinstance(branch, tn.ElifScope):
             # Evaluated where its chain starts: the conditions before it have no effects, and their bodies do not run
@@ -289,19 +315,21 @@ def _negation_of(condition: ast.expr, other: ast.expr) -> bool:
     """Whether ``other`` is syntactically the negation of ``condition``, up to normalizing both (negations pushed into
     comparisons, disjunctive normal form)."""
     from dace.frontend.python import astutils  # Avoid import loops
+
     if ast.dump(astutils.negate_expr(condition).value) == ast.dump(other):
         return True
     lrr = range_analysis()
 
-    def normalized(clauses) -> Optional[frozenset]:
-        return None if clauses is None else frozenset(
-            frozenset(ast.dump(atom) for atom in clause) for clause in clauses)
+    def normalized(clauses) -> frozenset | None:
+        return (
+            None if clauses is None else frozenset(frozenset(ast.dump(atom) for atom in clause) for clause in clauses)
+        )
 
     negated = normalized(lrr.disjunctive_normal_form(condition, negate=True))
     return negated is not None and negated == normalized(lrr.disjunctive_normal_form(other))
 
 
-def _complementary(first: tn.ScheduleTreeNode, second: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> bool:
+def _complementary(first: tn.ScheduleTreeNode, second: tn.ScheduleTreeNode, containers: dict[str, data.Data]) -> bool:
     """Whether ``if c: A`` (``first``) directly followed by ``if not c: B`` (``second``) runs exactly one of the two
     bodies, i.e., may become ``if c: A else: B``. The conditions must be pure and negations of each other, and ``A``
     must not change what ``c`` reads: it writes none of its names, creates no aliases (views, references) and does not
@@ -323,7 +351,7 @@ def _complementary(first: tn.ScheduleTreeNode, second: tn.ScheduleTreeNode, cont
     for node in first.preorder_traversal():
         if isinstance(node, (tn.ViewNode, tn.RefSetNode, tn.GotoNode)):
             return False
-        if isinstance(node, (tn.TaskletNode, tn.LibraryCall)) and getattr(node.node, 'side_effects', False):
+        if isinstance(node, (tn.TaskletNode, tn.LibraryCall)) and getattr(node.node, "side_effects", False):
             return False  # E.g., a callback that may write anything
     return True
 
@@ -350,8 +378,11 @@ def pair_complementary_guards(stree: tn.ScheduleTreeScope) -> int:
             following = children[k + 1] if k + 1 < len(children) else None
             after = children[k + 2] if k + 2 < len(children) else None
             # ``node`` must end its chain (``following`` is an ``if``), and ``following`` must be a chain of its own
-            if (following is not None and not isinstance(after, (tn.ElifScope, tn.ElseScope))
-                    and _complementary(node, following, containers)):
+            if (
+                following is not None
+                and not isinstance(after, (tn.ElifScope, tn.ElseScope))
+                and _complementary(node, following, containers)
+            ):
                 result += [node, tn.ElseScope(children=list(following.children))]
                 paired += 1
                 k += 2
@@ -407,22 +438,21 @@ def hoist_condition_reads(stree: tn.ScheduleTreeScope) -> int:
                     if not all(in_bounds(n, containers[c], ranges) for c, n in conditional):
                         accesses = None
             if accesses and any(containers[c].transient and containers[c].total_size != 1 for c, *_ in accesses):
-                connectors: Dict[str, str] = {}  # By element read
+                connectors: dict[str, str] = {}  # By element read
                 for _, element, _, _ in accesses:
-                    connectors.setdefault(element, f'__in{len(connectors)}')
+                    connectors.setdefault(element, f"__in{len(connectors)}")
                 names = {id(node): connectors[element] for _, element, node, _ in accesses}
                 expression = ast.unparse(ReplaceAccesses(names).visit(condition))  # The condition is replaced below
-                name = data.find_new_name('__condition', containers)
+                name = data.find_new_name("__condition", containers)
                 containers[name] = data.Scalar(dtypes.bool_, transient=True)
-                tasklet = nodes.Tasklet('condition', {c: None
-                                                      for c in connectors.values()}, {'__out': None},
-                                        f'__out = {expression}')
-                read = tn.TaskletNode(node=tasklet,
-                                      in_memlets={
-                                          c: Memlet(e)
-                                          for e, c in connectors.items()
-                                      },
-                                      out_memlets={'__out': Memlet(f'{name}[0]')})
+                tasklet = nodes.Tasklet(
+                    "condition", dict.fromkeys(connectors.values()), {"__out": None}, f"__out = {expression}"
+                )
+                read = tn.TaskletNode(
+                    node=tasklet,
+                    in_memlets={c: Memlet(e) for e, c in connectors.items()},
+                    out_memlets={"__out": Memlet(f"{name}[0]")},
+                )
                 read.parent = scope
                 result.append(read)
                 child.condition = CodeBlock(name)

@@ -1,19 +1,30 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the schedule-tree guard folding and index-set splitting passes."""
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import (convert_diamonds_to_selects, fold_guards, flatten_contiguous_nests,
-                                                     forward_substitute_conditions, fuse_rolled_loops,
-                                                     hoist_condition_reads, hoist_select_arms, merge_contiguous_loops,
-                                                     pair_complementary_guards, remove_dead_assignments,
-                                                     remove_dead_stores, reroll_statements, split_iteration_spaces,
-                                                     unswitch_invariant_guards)
+from dace.sdfg.analysis.schedule_tree.passes import (
+    convert_diamonds_to_selects,
+    flatten_contiguous_nests,
+    fold_guards,
+    forward_substitute_conditions,
+    fuse_rolled_loops,
+    hoist_condition_reads,
+    hoist_select_arms,
+    merge_contiguous_loops,
+    pair_complementary_guards,
+    remove_dead_assignments,
+    remove_dead_stores,
+    reroll_statements,
+    split_iteration_spaces,
+    unswitch_invariant_guards,
+)
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 CSTARR = np.array([0, 0, 0, 1, 1, 0, 0, 2], dtype=np.int32)
 
 
@@ -33,7 +44,8 @@ def _conditions(stree: tn.ScheduleTreeRoot) -> list:
 
 def _for_headers(stree: tn.ScheduleTreeRoot, var: str = None) -> list:
     return [
-        f.loop.init_statement.as_string + ' ; ' + f.loop.loop_condition.as_string for f in _nodes(stree, tn.ForScope)
+        f.loop.init_statement.as_string + " ; " + f.loop.loop_condition.as_string
+        for f in _nodes(stree, tn.ForScope)
         if var is None or f.loop.loop_variable == var
     ]
 
@@ -52,7 +64,7 @@ def _split(stree: tn.ScheduleTreeRoot) -> int:
 
 def _run(stree: tn.ScheduleTreeRoot, **kwargs):
     # Simplification of the converted SDFG follows the configuration, as in ``roundtrip_test``.
-    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
+    sdfg = stree.as_sdfg(simplify=dace.config.Config.get_bool("optimizer", "automatic_simplification"))
     sdfg(**kwargs)
 
 
@@ -73,8 +85,8 @@ def test_fold_atom_implied_by_loop_range():
     # Without simplification, the frontend computes the condition into scalars first (``__tmp1 = ...; if __tmp1``)
     forward_substitute_conditions(stree)
     assert _fold(stree) == 1
-    (condition, ) = _conditions(stree)
-    assert '>= 1' not in condition
+    (condition,) = _conditions(stree)
+    assert ">= 1" not in condition
     a = np.random.rand(10)
     b = np.zeros(10)
     _run(stree, A=a, B=b, N=10)
@@ -140,7 +152,7 @@ def test_fold_nested_condition_narrows_range():
 
     stree = _tree(prog.to_sdfg())
     assert _fold(stree) == 1
-    assert _conditions(stree) == ['(i < 3)']
+    assert _conditions(stree) == ["(i < 3)"]
 
 
 def test_fold_constant_array_atom():
@@ -152,7 +164,7 @@ def test_fold_constant_array_atom():
                 B[i] = A[i] + 1.0
 
     sdfg = prog.to_sdfg()
-    sdfg.add_constant('cstarr', CSTARR)
+    sdfg.add_constant("cstarr", CSTARR)
     stree = _tree(sdfg)
     fold_guards(stree)
     # The guard reads a scalar the frontend computes from ``cstarr[i]``, which folding alone does not see through
@@ -167,18 +179,18 @@ def test_fold_constant_array_atom():
 
 def test_fold_does_not_use_symbol_assigned_in_body():
     """A bound that the loop body reassigns is not loop-invariant; nothing may be folded against it."""
-    sdfg = dace.SDFG('fold_assigned_symbol')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_symbol('M', dace.int64)
+    sdfg = dace.SDFG("fold_assigned_symbol")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_symbol("M", dace.int64)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('i < M'), children=[])
-    assign = tn.AssignNode(name='M', value=dace.properties.CodeBlock('i + 1'), edge=dace.InterstateEdge())
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("i < M"), children=[])
+    assign = tn.AssignNode(name="M", value=dace.properties.CodeBlock("i + 1"), edge=dace.InterstateEdge())
     stree.children = []
     stree.add_child(tn.ForScope(loop=loop, children=[guard, assign]))
     assert fold_guards(stree) == 0
-    assert _conditions(stree) == ['(i < M)']
+    assert _conditions(stree) == ["(i < M)"]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -203,7 +215,7 @@ def test_split_outer_loop_on_guards_in_inner_loop():
     assert _split(stree) == 1
     assert not _nodes(stree, tn.IfScope)
     # First row, interior, last row, and the row that is both first and last (only non-empty for ``N == 1``)
-    assert len(_for_headers(stree, 'j')) == 4
+    assert len(_for_headers(stree, "j")) == 4
     for n, m in ((6, 5), (1, 3)):
         a = np.random.rand(n, m)
         b = np.zeros((n, m))
@@ -214,27 +226,27 @@ def test_split_outer_loop_on_guards_in_inner_loop():
         assert np.allclose(b, expected)
 
 
-@pytest.mark.parametrize('callback_is_direct_child', [True, False])
-@pytest.mark.parametrize('exclude_callback_loops', [True, False])
+@pytest.mark.parametrize("callback_is_direct_child", [True, False])
+@pytest.mark.parametrize("exclude_callback_loops", [True, False])
 def test_split_excludes_loops_with_direct_callback_child(callback_is_direct_child, exclude_callback_loops):
-    sdfg = dace.SDFG('split_callback')
-    sdfg.add_symbol('cb', dace.callback(None))
+    sdfg = dace.SDFG("split_callback")
+    sdfg.add_symbol("cb", dace.callback(None))
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
 
-    callback = tn.TaskletNode(dace.nodes.Tasklet('callback', {}, {}, code='cb()', side_effects=True), {}, {})
-    body = tn.TaskletNode(dace.nodes.Tasklet('body', {}, {}, code='pass'), {}, {})
+    callback = tn.TaskletNode(dace.nodes.Tasklet("callback", {}, {}, code="cb()", side_effects=True), {}, {})
+    body = tn.TaskletNode(dace.nodes.Tasklet("body", {}, {}, code="pass"), {}, {})
     guard_children = [body] if callback_is_direct_child else [callback]
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('i < 3'), children=guard_children)
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("i < 3"), children=guard_children)
     loop_children = [guard, callback] if callback_is_direct_child else [guard]
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1")
     stree.add_child(tn.ForScope(loop=loop, children=loop_children))
 
     expected_splits = 0 if exclude_callback_loops and callback_is_direct_child else 1
     assert split_iteration_spaces(stree, exclude_callback_loops=exclude_callback_loops) == expected_splits
 
 
-@pytest.mark.parametrize('min_trip_count', [1, 8])
+@pytest.mark.parametrize("min_trip_count", [1, 8])
 def test_split_both_dimensions_of_nested_loops(min_trip_count):
     """Splitting ``j`` yields a boundary row (1 iteration) and the interior (15). The inner loop is split in both
     only without a trip-count threshold; with one, the boundary row keeps its (folded) guard on ``i``."""
@@ -252,7 +264,7 @@ def test_split_both_dimensions_of_nested_loops(min_trip_count):
     forward_substitute_conditions(stree)
     assert split_iteration_spaces(stree, min_trip_count=min_trip_count) >= 2
     tn.validate_children_and_parents_align(stree, root=True)
-    assert _conditions(stree) == ([] if min_trip_count == 1 else ['(i < 1)'])
+    assert _conditions(stree) == ([] if min_trip_count == 1 else ["(i < 1)"])
     a = np.random.rand(16, 16)
     b = np.zeros((16, 16))
     _run(stree, A=a, B=b)
@@ -306,20 +318,20 @@ def test_split_loop_keeps_values_flowing_between_parts():
 
 def test_split_constant_array_guard():
 
-    sdfg = dace.SDFG('split_constant_array')
-    sdfg.add_array('A', [8, 4], dace.float64)
-    sdfg.add_array('B', [8, 4], dace.float64)
-    sdfg.add_constant('cst', CSTARR)
+    sdfg = dace.SDFG("split_constant_array")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [8, 4], dace.float64)
+    sdfg.add_constant("cst", CSTARR)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    inner = dace.sdfg.state.LoopRegion('inner', 'i < 4', 'i', 'i = 0', 'i = i + 1')
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('cst[k] > 0'), children=[_scale_tasklet('k, i', 7.0)])
-    outer = dace.sdfg.state.LoopRegion('outer', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    inner = dace.sdfg.state.LoopRegion("inner", "i < 4", "i", "i = 0", "i = i + 1")
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("cst[k] > 0"), children=[_scale_tasklet("k, i", 7.0)])
+    outer = dace.sdfg.state.LoopRegion("outer", "k < 8", "k", "k = 0", "k = k + 1")
     stree.children = []
     stree.add_child(tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[guard])]))
     assert _split(stree) == 1
     assert not _nodes(stree, tn.IfScope)
-    assert _for_headers(stree, 'k') == ['k = 3 ; (k < 5)', 'k = 7 ; (k < 8)']
+    assert _for_headers(stree, "k") == ["k = 3 ; (k < 5)", "k = 7 ; (k < 8)"]
     a = np.random.rand(8, 4)
     b = a.copy()
     _run(stree, A=a, B=b)
@@ -330,10 +342,10 @@ def test_split_constant_array_guard():
 
 def _scale_tasklet(index: str, factor: float) -> tn.TaskletNode:
     """``B[index] = A[index] * factor`` as a tasklet node."""
-    tasklet = dace.nodes.Tasklet('scale', {'a'}, {'b'}, f'b = a * {factor}')
-    return tn.TaskletNode(node=tasklet,
-                          in_memlets={'a': dace.Memlet(f'A[{index}]')},
-                          out_memlets={'b': dace.Memlet(f'B[{index}]')})
+    tasklet = dace.nodes.Tasklet("scale", {"a"}, {"b"}, f"b = a * {factor}")
+    return tn.TaskletNode(
+        node=tasklet, in_memlets={"a": dace.Memlet(f"A[{index}]")}, out_memlets={"b": dace.Memlet(f"B[{index}]")}
+    )
 
 
 def test_split_not_applied_when_loop_variable_read_after():
@@ -351,12 +363,12 @@ def test_split_not_applied_when_loop_variable_read_after():
 
 
 def test_split_not_applied_with_break():
-    sdfg = dace.SDFG('split_break')
-    sdfg.add_array('A', [10], dace.float64)
+    sdfg = dace.SDFG("split_break")
+    sdfg.add_array("A", [10], dace.float64)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('i < 3'), children=[tn.BreakNode()])
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("i < 3"), children=[tn.BreakNode()])
     stree.children = []
     stree.add_child(tn.ForScope(loop=loop, children=[guard]))
     assert split_iteration_spaces(stree) == 0
@@ -369,30 +381,32 @@ def test_split_not_applied_with_break():
 
 def _bool_tasklet(target: str, code: str, inputs: dict) -> tn.TaskletNode:
     """``target = <code>`` as a tasklet reading ``inputs`` (connector -> memlet string)."""
-    tasklet = dace.nodes.Tasklet('compute', set(inputs), {'out'}, f'out = {code}')
-    return tn.TaskletNode(node=tasklet,
-                          in_memlets={
-                              c: dace.Memlet(m)
-                              for c, m in inputs.items()
-                          },
-                          out_memlets={'out': dace.Memlet(f'{target}[0]')})
+    tasklet = dace.nodes.Tasklet("compute", set(inputs), {"out"}, f"out = {code}")
+    return tn.TaskletNode(
+        node=tasklet,
+        in_memlets={c: dace.Memlet(m) for c, m in inputs.items()},
+        out_memlets={"out": dace.Memlet(f"{target}[0]")},
+    )
 
 
 def _mask_tree(between: list = None) -> tn.ScheduleTreeRoot:
     """``for k: mask = cst[k] > 0; <between>; for i: if mask: B[k, i] = A[k, i] * 7``, with a constant ``cst``."""
-    sdfg = dace.SDFG('substitute_mask')
-    sdfg.add_array('A', [8, 4], dace.float64)
-    sdfg.add_array('B', [8, 4], dace.float64)
-    sdfg.add_array('cst', [8], dace.int32)
-    sdfg.add_constant('cst', CSTARR, sdfg.arrays['cst'])
-    sdfg.add_scalar('mask', dace.bool_, transient=True)
+    sdfg = dace.SDFG("substitute_mask")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [8, 4], dace.float64)
+    sdfg.add_array("cst", [8], dace.int32)
+    sdfg.add_constant("cst", CSTARR, sdfg.arrays["cst"])
+    sdfg.add_scalar("mask", dace.bool_, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    inner = dace.sdfg.state.LoopRegion('inner', 'i < 4', 'i', 'i = 0', 'i = i + 1')
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('mask'), children=[_scale_tasklet('k, i', 7.0)])
-    outer = dace.sdfg.state.LoopRegion('outer', 'k < 8', 'k', 'k = 0', 'k = k + 1')
-    body = [_bool_tasklet('mask', 'c > 0', {'c': 'cst[k]'})] + (between
-                                                                or []) + [tn.ForScope(loop=inner, children=[guard])]
+    inner = dace.sdfg.state.LoopRegion("inner", "i < 4", "i", "i = 0", "i = i + 1")
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("mask"), children=[_scale_tasklet("k, i", 7.0)])
+    outer = dace.sdfg.state.LoopRegion("outer", "k < 8", "k", "k = 0", "k = k + 1")
+    body = (
+        [_bool_tasklet("mask", "c > 0", {"c": "cst[k]"})]
+        + (between or [])
+        + [tn.ForScope(loop=inner, children=[guard])]
+    )
     stree.children = []
     stree.add_child(tn.ForScope(loop=outer, children=body))
     return stree
@@ -401,12 +415,12 @@ def _mask_tree(between: list = None) -> tn.ScheduleTreeRoot:
 def test_substitute_mask_then_split_on_constant():
     stree = _mask_tree()
     assert forward_substitute_conditions(stree) == 1
-    assert _conditions(stree) == ['(cst[k] > 0)']
+    assert _conditions(stree) == ["(cst[k] > 0)"]
     assert remove_dead_assignments(stree) == 1
     assert not _nodes(stree, tn.TaskletNode)[:-1]  # Only the guarded tasklet remains
     assert _split(stree) == 1
     assert not _nodes(stree, tn.IfScope)
-    assert _for_headers(stree, 'k') == ['k = 3 ; (k < 5)', 'k = 7 ; (k < 8)']
+    assert _for_headers(stree, "k") == ["k = 3 ; (k < 5)", "k = 7 ; (k < 8)"]
     a = np.random.rand(8, 4)
     b = a.copy()
     _run(stree, A=a, B=b, cst=CSTARR)
@@ -420,32 +434,34 @@ def test_substitute_blocked_by_write_to_input_in_between():
     stree = _mask_tree()
     loop_body = stree.children[0].children
     # Rewrite the mask to read ``A[k, 0]`` and write ``A[k, 0]`` between the assignment and the guard
-    loop_body[0] = _bool_tasklet('mask', 'c > 0.5', {'c': 'A[k, 0]'})
+    loop_body[0] = _bool_tasklet("mask", "c > 0.5", {"c": "A[k, 0]"})
     loop_body[0].parent = stree.children[0]
-    writer = _scale_tasklet('k, 0', 2.0)
-    writer.out_memlets = {'b': dace.Memlet('A[k, 0]')}
+    writer = _scale_tasklet("k, 0", 2.0)
+    writer.out_memlets = {"b": dace.Memlet("A[k, 0]")}
     stree.children[0].children.insert(1, writer)
     writer.parent = stree.children[0]
     assert forward_substitute_conditions(stree) == 0
-    assert _conditions(stree) == ['mask']
+    assert _conditions(stree) == ["mask"]
 
 
 def test_substitute_constant_scalar_from_outer_scope():
     """A flag set once at the top reaches guards nested in later loops (e.g. a configuration flag)."""
-    sdfg = dace.SDFG('substitute_flag')
-    sdfg.add_array('A', [8, 4], dace.float64)
-    sdfg.add_array('B', [8, 4], dace.float64)
-    sdfg.add_scalar('flag', dace.bool_, transient=True)
+    sdfg = dace.SDFG("substitute_flag")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [8, 4], dace.float64)
+    sdfg.add_scalar("flag", dace.bool_, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    inner = dace.sdfg.state.LoopRegion('inner', 'i < 4', 'i', 'i = 0', 'i = i + 1')
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('flag'), children=[_scale_tasklet('k, i', 7.0)])
-    outer = dace.sdfg.state.LoopRegion('outer', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    inner = dace.sdfg.state.LoopRegion("inner", "i < 4", "i", "i = 0", "i = i + 1")
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("flag"), children=[_scale_tasklet("k, i", 7.0)])
+    outer = dace.sdfg.state.LoopRegion("outer", "k < 8", "k", "k = 0", "k = k + 1")
     stree.children = []
-    stree.add_children([
-        _bool_tasklet('flag', 'True', {}),
-        tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[guard])])
-    ])
+    stree.add_children(
+        [
+            _bool_tasklet("flag", "True", {}),
+            tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[guard])]),
+        ]
+    )
     assert forward_substitute_conditions(stree) == 1
     assert remove_dead_assignments(stree) == 1
     assert _fold(stree) == 1
@@ -458,34 +474,36 @@ def test_substitute_constant_scalar_from_outer_scope():
 
 def test_substitute_not_across_loop_writing_the_value():
     """The loop between the assignment and the guard rewrites the flag in a later iteration."""
-    sdfg = dace.SDFG('substitute_loop_write')
-    sdfg.add_array('A', [8, 4], dace.float64)
-    sdfg.add_array('B', [8, 4], dace.float64)
-    sdfg.add_scalar('flag', dace.bool_, transient=True)
+    sdfg = dace.SDFG("substitute_loop_write")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [8, 4], dace.float64)
+    sdfg.add_scalar("flag", dace.bool_, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('flag'), children=[_scale_tasklet('k, 0', 7.0)])
-    outer = dace.sdfg.state.LoopRegion('outer', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("flag"), children=[_scale_tasklet("k, 0", 7.0)])
+    outer = dace.sdfg.state.LoopRegion("outer", "k < 8", "k", "k = 0", "k = k + 1")
     stree.children = []
-    stree.add_children([
-        _bool_tasklet('flag', 'True', {}),
-        tn.ForScope(loop=outer, children=[guard, _bool_tasklet('flag', 'c > 0.5', {'c': 'A[k, 1]'})])
-    ])
+    stree.add_children(
+        [
+            _bool_tasklet("flag", "True", {}),
+            tn.ForScope(loop=outer, children=[guard, _bool_tasklet("flag", "c > 0.5", {"c": "A[k, 1]"})]),
+        ]
+    )
     assert forward_substitute_conditions(stree) == 0
 
 
 def test_substitute_skips_lossy_conversion():
     """``t: int32 = x * 0.5; if t:`` truncates; the condition must keep reading ``t``."""
-    sdfg = dace.SDFG('substitute_lossy')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
-    sdfg.add_scalar('t', dace.int32, transient=True)
+    sdfg = dace.SDFG("substitute_lossy")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_scalar("t", dace.int32, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    loop = dace.sdfg.state.LoopRegion('loop', 'k < 8', 'k', 'k = 0', 'k = k + 1')
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('t'), children=[_scale_tasklet('k', 7.0)])
+    loop = dace.sdfg.state.LoopRegion("loop", "k < 8", "k", "k = 0", "k = k + 1")
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("t"), children=[_scale_tasklet("k", 7.0)])
     stree.children = []
-    stree.add_child(tn.ForScope(loop=loop, children=[_bool_tasklet('t', 'a * 0.5', {'a': 'A[k]'}), guard]))
+    stree.add_child(tn.ForScope(loop=loop, children=[_bool_tasklet("t", "a * 0.5", {"a": "A[k]"}), guard]))
     assert forward_substitute_conditions(stree) == 0
     assert remove_dead_assignments(stree) == 0
 
@@ -493,30 +511,32 @@ def test_substitute_skips_lossy_conversion():
 def _condition_read_tree(condition: str) -> tn.ScheduleTreeRoot:
     """``for i in range(1, 7): T[i] = A[i] - 0.5; if <condition>: B[i] = 2 * T[i] else: B[i] = 1``, with a transient
     array ``T``."""
-    sdfg = dace.SDFG('hoist_condition_reads')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
-    sdfg.add_array('T', [8], dace.float64, transient=True)
+    sdfg = dace.SDFG("hoist_condition_reads")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_array("T", [8], dace.float64, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    guard = tn.IfScope(condition=dace.properties.CodeBlock(condition),
-                       children=[_tasklet('b = 2 * t', {'t': 'T[i]'}, {'b': 'B[i]'})])
-    otherwise = tn.ElseScope(children=[_tasklet('b = 1', {}, {'b': 'B[i]'})])
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 7', 'i', 'i = 1', 'i = i + 1')
+    guard = tn.IfScope(
+        condition=dace.properties.CodeBlock(condition), children=[_tasklet("b = 2 * t", {"t": "T[i]"}, {"b": "B[i]"})]
+    )
+    otherwise = tn.ElseScope(children=[_tasklet("b = 1", {}, {"b": "B[i]"})])
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 7", "i", "i = 1", "i = i + 1")
     stree.children = []
     stree.add_child(
-        tn.ForScope(loop=loop, children=[_tasklet('t = a - 0.5', {'a': 'A[i]'}, {'t': 'T[i]'}), guard, otherwise]))
+        tn.ForScope(loop=loop, children=[_tasklet("t = a - 0.5", {"a": "A[i]"}, {"t": "T[i]"}), guard, otherwise])
+    )
     return stree
 
 
 def test_hoist_condition_reads():
-    condition = 'T[i] * A[i] > T[i] - 0.25'
+    condition = "T[i] * A[i] > T[i] - 0.25"
     stree, reference = _condition_read_tree(condition), _condition_read_tree(condition)
     assert hoist_condition_reads(stree) == 1
     tn.validate_children_and_parents_align(stree, root=True)
-    hoisted, = [n for n in _nodes(stree, tn.TaskletNode) if n.node.label == 'condition']
-    assert sorted(m.data for m in hoisted.in_memlets.values()) == ['A', 'T']  # ``T[i]`` is read once
-    name = hoisted.out_memlets['__out'].data
+    (hoisted,) = [n for n in _nodes(stree, tn.TaskletNode) if n.node.label == "condition"]
+    assert sorted(m.data for m in hoisted.in_memlets.values()) == ["A", "T"]  # ``T[i]`` is read once
+    name = hoisted.out_memlets["__out"].data
     assert _conditions(stree) == [name] and stree.containers[name].dtype == dace.bool_
     A = np.random.default_rng(0).random(8)
     results = []
@@ -528,30 +548,32 @@ def test_hoist_condition_reads():
 
     # Forward substitution substitutes the value back into the condition
     assert forward_substitute_conditions(stree) > 0
-    assert 'T[i]' in _conditions(stree)[0]
+    assert "T[i]" in _conditions(stree)[0]
 
 
 @pytest.mark.parametrize(
-    'condition',
+    "condition",
     [
-        'A[i] > 0.5',  # No transient
-        'i > 1 and T[i - 2] > 0',  # Evaluated only if the first operand holds, out of bounds otherwise
-        '0 < A[i] < T[i + 2]',  # Evaluated only if the first comparison holds, out of bounds otherwise
-        '(T[i + 2] if i < 6 else A[i]) > 0',  # Evaluated in one arm, out of bounds in the other
-        'T[int(A[i] * 6)] > 0',  # Index read from a container
-    ])
+        "A[i] > 0.5",  # No transient
+        "i > 1 and T[i - 2] > 0",  # Evaluated only if the first operand holds, out of bounds otherwise
+        "0 < A[i] < T[i + 2]",  # Evaluated only if the first comparison holds, out of bounds otherwise
+        "(T[i + 2] if i < 6 else A[i]) > 0",  # Evaluated in one arm, out of bounds in the other
+        "T[int(A[i] * 6)] > 0",  # Index read from a container
+    ],
+)
 def test_hoist_condition_reads_not(condition):
     stree = _condition_read_tree(condition)
     assert hoist_condition_reads(stree) == 0
-    assert not stree.containers.keys() - {'A', 'B', 'T'}
+    assert not stree.containers.keys() - {"A", "B", "T"}
 
 
 @pytest.mark.parametrize(
-    'condition',
+    "condition",
     [
-        'A[i] > 0.5 and T[i - 1] > 0',  # Skipped by the condition, but in bounds for every i
-        'T[i] > 0 and T[i] < 0.25',  # Read anyway by the first operand
-    ])
+        "A[i] > 0.5 and T[i - 1] > 0",  # Skipped by the condition, but in bounds for every i
+        "T[i] > 0 and T[i] < 0.25",  # Read anyway by the first operand
+    ],
+)
 def test_hoist_condition_reads_short_circuit(condition):
     stree, reference = _condition_read_tree(condition), _condition_read_tree(condition)
     assert hoist_condition_reads(stree) == 1
@@ -571,27 +593,30 @@ def test_hoist_condition_reads_short_circuit(condition):
 
 def _pair_tree(first_condition: str, second_condition: str, first_body: list, trailing: list = None):
     """``for k in range(8): if <first>: <first_body>; if <second>: B[k] = A[k] * 3; <trailing>``."""
-    sdfg = dace.SDFG('pair_guards')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
-    sdfg.add_array('flag', [1], dace.float64)
+    sdfg = dace.SDFG("pair_guards")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_array("flag", [1], dace.float64)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
     first = tn.IfScope(condition=dace.properties.CodeBlock(first_condition), children=first_body)
-    second = tn.IfScope(condition=dace.properties.CodeBlock(second_condition), children=[_scale_tasklet('k', 3.0)])
-    loop = dace.sdfg.state.LoopRegion('loop', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    second = tn.IfScope(condition=dace.properties.CodeBlock(second_condition), children=[_scale_tasklet("k", 3.0)])
+    loop = dace.sdfg.state.LoopRegion("loop", "k < 8", "k", "k = 0", "k = k + 1")
     stree.children = []
     stree.add_child(tn.ForScope(loop=loop, children=[first, second] + (trailing or [])))
     return stree
 
 
-@pytest.mark.parametrize('first, second, taken', [
-    ('flag[0] > 0.5', 'not (flag[0] > 0.5)', lambda k, flag: np.full(8, flag > 0.5)),
-    ('k < 4', 'k >= 4', lambda k, flag: k < 4),
-    ('(k < 4) and (flag[0] > 0.5)', '(k >= 4) or (flag[0] <= 0.5)', lambda k, flag: (k < 4) & (flag > 0.5)),
-])
+@pytest.mark.parametrize(
+    "first, second, taken",
+    [
+        ("flag[0] > 0.5", "not (flag[0] > 0.5)", lambda k, flag: np.full(8, flag > 0.5)),
+        ("k < 4", "k >= 4", lambda k, flag: k < 4),
+        ("(k < 4) and (flag[0] > 0.5)", "(k >= 4) or (flag[0] <= 0.5)", lambda k, flag: (k < 4) & (flag > 0.5)),
+    ],
+)
 def test_pair_complementary_guards(first, second, taken):
-    stree = _pair_tree(first, second, [_scale_tasklet('k', 2.0)])
+    stree = _pair_tree(first, second, [_scale_tasklet("k", 2.0)])
     assert pair_complementary_guards(stree) == 1
     assert len(_nodes(stree, tn.IfScope)) == 1 and len(_nodes(stree, tn.ElseScope)) == 1
     for flag in (0.0, 1.0):
@@ -602,40 +627,40 @@ def test_pair_complementary_guards(first, second, taken):
 
 
 def test_pair_not_when_first_body_writes_condition():
-    clear = _bool_tasklet('flag', '0.0', {})
-    stree = _pair_tree('flag[0] > 0.5', 'not (flag[0] > 0.5)', [_scale_tasklet('k', 2.0), clear])
+    clear = _bool_tasklet("flag", "0.0", {})
+    stree = _pair_tree("flag[0] > 0.5", "not (flag[0] > 0.5)", [_scale_tasklet("k", 2.0), clear])
     assert pair_complementary_guards(stree) == 0
     assert len(_nodes(stree, tn.IfScope)) == 2
 
 
 def test_pair_not_for_unrelated_conditions():
-    stree = _pair_tree('k < 4', 'k > 4', [_scale_tasklet('k', 2.0)])
+    stree = _pair_tree("k < 4", "k > 4", [_scale_tasklet("k", 2.0)])
     assert pair_complementary_guards(stree) == 0
 
 
 def test_pair_not_when_second_guard_has_else():
-    stree = _pair_tree('k < 4', 'k >= 4', [_scale_tasklet('k', 2.0)], trailing=[tn.ElseScope(children=[])])
+    stree = _pair_tree("k < 4", "k >= 4", [_scale_tasklet("k", 2.0)], trailing=[tn.ElseScope(children=[])])
     assert pair_complementary_guards(stree) == 0
 
 
 def test_pair_then_fold_uses_negation():
     """After pairing, guards in the ``else`` are folded with the negated condition as a fact."""
-    stree = _pair_tree('k >= 4', 'k < 4', [_scale_tasklet('k', 2.0)])
+    stree = _pair_tree("k >= 4", "k < 4", [_scale_tasklet("k", 2.0)])
     loop = stree.children[0]
-    undecided = tn.IfScope(condition=dace.properties.CodeBlock('k < 2'), children=[_scale_tasklet('k', 5.0)])
-    decided = tn.IfScope(condition=dace.properties.CodeBlock('k < 6'), children=[_scale_tasklet('k', 7.0)])
+    undecided = tn.IfScope(condition=dace.properties.CodeBlock("k < 2"), children=[_scale_tasklet("k", 5.0)])
+    decided = tn.IfScope(condition=dace.properties.CodeBlock("k < 6"), children=[_scale_tasklet("k", 7.0)])
     loop.children[1].add_children([undecided, decided])  # Within ``k < 4``: ``k < 6`` always holds
     assert pair_complementary_guards(stree) == 1
     assert _fold(stree) == 1
-    assert _conditions(stree) == ['(k >= 4)', '(k < 2)']
+    assert _conditions(stree) == ["(k >= 4)", "(k < 2)"]
 
 
 def test_pair_nested_in_second_guard():
     """A pair inside the second guard's body is formed in the ``else`` that replaces it, with consistent parents."""
-    stree = _pair_tree('k < 4', 'k >= 4', [_scale_tasklet('k', 2.0)])
+    stree = _pair_tree("k < 4", "k >= 4", [_scale_tasklet("k", 2.0)])
     inner = [
-        tn.IfScope(condition=dace.properties.CodeBlock('k < 6'), children=[_scale_tasklet('k', 5.0)]),
-        tn.IfScope(condition=dace.properties.CodeBlock('k >= 6'), children=[_scale_tasklet('k', 7.0)]),
+        tn.IfScope(condition=dace.properties.CodeBlock("k < 6"), children=[_scale_tasklet("k", 5.0)]),
+        tn.IfScope(condition=dace.properties.CodeBlock("k >= 6"), children=[_scale_tasklet("k", 7.0)]),
     ]
     stree.children[0].children[1].add_children(inner)
     assert pair_complementary_guards(stree) == 2
@@ -655,24 +680,24 @@ def test_pair_nested_in_second_guard():
 
 def _loops_tree(ranges: list, bodies: list, prologue: list = None) -> tn.ScheduleTreeRoot:
     """Consecutive ``for k in range(lo, hi): <body>`` loops over ``A``/``B`` of 8 elements."""
-    sdfg = dace.SDFG('merge_loops')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
-    sdfg.add_symbol('M', dace.int64)
+    sdfg = dace.SDFG("merge_loops")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_symbol("M", dace.int64)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
     stree.children = []
     stree.add_children(prologue or [])
     for k, ((lo, hi), body) in enumerate(zip(ranges, bodies)):
-        loop = dace.sdfg.state.LoopRegion(f'loop{k}', f'k < {hi}', 'k', f'k = {lo}', 'k = k + 1')
+        loop = dace.sdfg.state.LoopRegion(f"loop{k}", f"k < {hi}", "k", f"k = {lo}", "k = k + 1")
         stree.add_child(tn.ForScope(loop=loop, children=body))
     return stree
 
 
 def test_merge_contiguous_identical_loops():
-    stree = _loops_tree([(0, 3), (3, 5), (5, 8)], [[_scale_tasklet('k', 2.0)] for _ in range(3)])
+    stree = _loops_tree([(0, 3), (3, 5), (5, 8)], [[_scale_tasklet("k", 2.0)] for _ in range(3)])
     assert merge_contiguous_loops(stree) == 2
-    assert _for_headers(stree) == ['k = 0 ; (k < 8)']
+    assert _for_headers(stree) == ["k = 0 ; (k < 8)"]
     a = np.random.rand(8)
     b = np.zeros(8)
     _run(stree, A=a, B=b)
@@ -680,21 +705,22 @@ def test_merge_contiguous_identical_loops():
 
 
 @pytest.mark.parametrize(
-    'ranges, second',
+    "ranges, second",
     [
         ([(0, 3), (3, 8)], 3.0),  # Same memlets, different code
         ([(0, 3), (4, 8)], 2.0),  # Not contiguous
         ([(0, 3), (2, 8)], 2.0),  # Overlapping
-    ])
+    ],
+)
 def test_merge_not_applied(ranges, second):
-    stree = _loops_tree(ranges, [[_scale_tasklet('k', 2.0)], [_scale_tasklet('k', second)]])
+    stree = _loops_tree(ranges, [[_scale_tasklet("k", 2.0)], [_scale_tasklet("k", second)]])
     assert merge_contiguous_loops(stree) == 0
     assert len(_nodes(stree, tn.ForScope)) == 2
 
 
 def test_merge_not_applied_when_first_body_changes_bound_of_second():
-    assign = tn.AssignNode(name='M', value=dace.properties.CodeBlock('8'), edge=dace.InterstateEdge())
-    stree = _loops_tree([(0, 3), (3, 'M')], [[_scale_tasklet('k', 2.0), assign], [_scale_tasklet('k', 2.0), assign]])
+    assign = tn.AssignNode(name="M", value=dace.properties.CodeBlock("8"), edge=dace.InterstateEdge())
+    stree = _loops_tree([(0, 3), (3, "M")], [[_scale_tasklet("k", 2.0), assign], [_scale_tasklet("k", 2.0), assign]])
     assert merge_contiguous_loops(stree) == 0
 
 
@@ -714,8 +740,8 @@ def test_merge_restores_map_split_with_privatized_transients():
     assert _split(stree) == 1
     assert len(_nodes(stree, tn.MapScope)) == 2 and not _nodes(stree, tn.IfScope)
     assert merge_contiguous_loops(stree) == 1
-    (map_scope, ) = _nodes(stree, tn.MapScope)
-    assert str(map_scope.node.map.range) == '0:10'
+    (map_scope,) = _nodes(stree, tn.MapScope)
+    assert str(map_scope.node.map.range) == "0:10"
     a = np.random.rand(10)
     b = np.zeros(10)
     _run(stree, A=a, B=b)
@@ -727,16 +753,16 @@ def test_merge_restores_map_split_with_privatized_transients():
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _copy_tasklet(out: str, inp: str, code: str = 'b = a') -> tn.TaskletNode:
-    tasklet = dace.nodes.Tasklet('copy', {'a'}, {'b'}, code)
-    return tn.TaskletNode(node=tasklet, in_memlets={'a': dace.Memlet(inp)}, out_memlets={'b': dace.Memlet(out)})
+def _copy_tasklet(out: str, inp: str, code: str = "b = a") -> tn.TaskletNode:
+    tasklet = dace.nodes.Tasklet("copy", {"a"}, {"b"}, code)
+    return tn.TaskletNode(node=tasklet, in_memlets={"a": dace.Memlet(inp)}, out_memlets={"b": dace.Memlet(out)})
 
 
 def _statements_tree(statements: list) -> tn.ScheduleTreeRoot:
-    sdfg = dace.SDFG('reroll')
-    sdfg.add_array('A', [6, 6], dace.float64)
-    sdfg.add_array('B', [6, 6], dace.float64)
-    sdfg.add_array('C', [6, 6], dace.float64)
+    sdfg = dace.SDFG("reroll")
+    sdfg.add_array("A", [6, 6], dace.float64)
+    sdfg.add_array("B", [6, 6], dace.float64)
+    sdfg.add_array("C", [6, 6], dace.float64)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
     stree.children = []
@@ -754,10 +780,10 @@ def _check_statements(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot
 
 def test_reroll_corner_block_into_2d_loop():
     """``B[x, y] = A[5 - y, x]`` for ``y`` outer and ``x`` inner (the SW corner fill of a cubed-sphere tile)."""
-    statements = lambda: [_copy_tasklet(f'B[{x}, {y}]', f'A[{5 - y}, {x}]') for y in range(3) for x in range(3)]
+    statements = lambda: [_copy_tasklet(f"B[{x}, {y}]", f"A[{5 - y}, {x}]") for y in range(3) for x in range(3)]
     stree, reference = _statements_tree(statements()), _statements_tree(statements())
     assert reroll_statements(stree) == 1
-    (outer, ) = stree.children
+    (outer,) = stree.children
     assert isinstance(outer, tn.ForScope) and isinstance(outer.children[0], tn.ForScope)
     assert len(_nodes(stree, tn.TaskletNode)) == 1
     _check_statements(stree, reference)
@@ -765,17 +791,19 @@ def test_reroll_corner_block_into_2d_loop():
 
 def test_reroll_keeps_order_between_signatures():
     """Runs are only formed from consecutive statements of one signature, so interleaved code keeps its order."""
-    statements = lambda: ([_copy_tasklet(f'B[0, {x}]', f'A[1, {x}]')
-                           for x in range(4)] + [_copy_tasklet('B[0, 1]', 'A[5, 5]', 'b = 2 * a')] +
-                          [_copy_tasklet(f'B[0, {x}]', f'A[2, {x}]') for x in range(4)])
+    statements = lambda: (
+        [_copy_tasklet(f"B[0, {x}]", f"A[1, {x}]") for x in range(4)]
+        + [_copy_tasklet("B[0, 1]", "A[5, 5]", "b = 2 * a")]
+        + [_copy_tasklet(f"B[0, {x}]", f"A[2, {x}]") for x in range(4)]
+    )
     stree, reference = _statements_tree(statements()), _statements_tree(statements())
     assert reroll_statements(stree) == 2
-    assert [type(n).__name__ for n in stree.children] == ['ForScope', 'TaskletNode', 'ForScope']
+    assert [type(n).__name__ for n in stree.children] == ["ForScope", "TaskletNode", "ForScope"]
     _check_statements(stree, reference)
 
 
 def test_reroll_leaves_irregular_runs():
-    statements = lambda: [_copy_tasklet(f'B[0, {x}]', f'A[0, {x}]') for x in (0, 1, 3, 5)]
+    statements = lambda: [_copy_tasklet(f"B[0, {x}]", f"A[0, {x}]") for x in (0, 1, 3, 5)]
     stree = _statements_tree(statements())
     assert reroll_statements(stree) == 0
     assert len(stree.children) == 4
@@ -783,7 +811,7 @@ def test_reroll_leaves_irregular_runs():
 
 def test_reroll_stacks_equal_runs():
     """Points 0, 1, 3, 4 are ``x + 3 * y`` over a 2x2 box."""
-    statements = lambda: [_copy_tasklet(f'B[0, {x}]', f'A[1, {x}]') for x in (0, 1, 3, 4)]
+    statements = lambda: [_copy_tasklet(f"B[0, {x}]", f"A[1, {x}]") for x in (0, 1, 3, 4)]
     stree, reference = _statements_tree(statements()), _statements_tree(statements())
     assert reroll_statements(stree) == 1
     assert len(_nodes(stree, tn.ForScope)) == 2
@@ -792,15 +820,16 @@ def test_reroll_stacks_equal_runs():
 
 def _two_corner_fills(second_input: str) -> list:
     """SW corner fills of ``B`` (from ``A``) and then of ``C`` (from the mirrored corner of ``second_input``)."""
-    return ([_copy_tasklet(f'B[{x}, {y}]', f'A[{5 - y}, {x}]') for y in range(3) for x in range(3)] +
-            [_copy_tasklet(f'C[{x}, {y}]', f'{second_input}[{2 - x}, {2 - y}]') for y in range(3) for x in range(3)])
+    return [_copy_tasklet(f"B[{x}, {y}]", f"A[{5 - y}, {x}]") for y in range(3) for x in range(3)] + [
+        _copy_tasklet(f"C[{x}, {y}]", f"{second_input}[{2 - x}, {2 - y}]") for y in range(3) for x in range(3)
+    ]
 
 
 def test_fuse_rolled_loops_of_independent_fields():
-    stree, reference = _statements_tree(_two_corner_fills('A')), _statements_tree(_two_corner_fills('A'))
+    stree, reference = _statements_tree(_two_corner_fills("A")), _statements_tree(_two_corner_fills("A"))
     assert reroll_statements(stree) == 2
     assert fuse_rolled_loops(stree) == 1
-    (outer, ) = stree.children
+    (outer,) = stree.children
     assert len(outer.children[0].children) == 2  # Both fields in one 3x3 nest
     _check_statements(stree, reference)
 
@@ -808,7 +837,7 @@ def test_fuse_rolled_loops_of_independent_fields():
 def test_fuse_rolled_loops_not_across_dependence():
     """``C[x, y]`` reads ``B[2 - x, 2 - y]``: in a merged nest, the first iterations would read ``B`` elements that
     are written only in later ones."""
-    stree = _statements_tree(_two_corner_fills('B'))
+    stree = _statements_tree(_two_corner_fills("B"))
     assert reroll_statements(stree) == 2
     assert fuse_rolled_loops(stree) == 0
     assert len(stree.children) == 2
@@ -819,28 +848,28 @@ def test_fuse_rolled_loops_not_across_dependence():
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _unswitch_tree(condition: str,
-                   body_before: list,
-                   then: list,
-                   otherwise: list = None,
-                   outer: bool = False,
-                   trips: str = '8') -> tn.ScheduleTreeRoot:
+def _unswitch_tree(
+    condition: str, body_before: list, then: list, otherwise: list = None, outer: bool = False, trips: str = "8"
+) -> tn.ScheduleTreeRoot:
     """``[for j in range(2):] for k in range(<trips>): <before>; if <condition>: <then> [else: <otherwise>]``."""
-    sdfg = dace.SDFG('unswitch')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_symbol('M', dace.int64)
+    sdfg = dace.SDFG("unswitch")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    sdfg.add_symbol("M", dace.int64)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
     chain = [tn.IfScope(condition=dace.properties.CodeBlock(condition), children=then)]
     if otherwise is not None:
         chain.append(tn.ElseScope(children=otherwise))
-    loop = tn.ForScope(loop=dace.sdfg.state.LoopRegion('inner', f'k < {trips}', 'k', 'k = 0', 'k = k + 1'),
-                       children=body_before + chain)
+    loop = tn.ForScope(
+        loop=dace.sdfg.state.LoopRegion("inner", f"k < {trips}", "k", "k = 0", "k = k + 1"),
+        children=body_before + chain,
+    )
     if outer:
-        loop = tn.ForScope(loop=dace.sdfg.state.LoopRegion('outer', 'j < 2', 'j', 'j = 0', 'j = j + 1'),
-                           children=[loop])
+        loop = tn.ForScope(
+            loop=dace.sdfg.state.LoopRegion("outer", "j < 2", "j", "j = 0", "j = j + 1"), children=[loop]
+        )
     stree.children = []
     stree.add_child(loop)
     return stree
@@ -848,13 +877,12 @@ def _unswitch_tree(condition: str,
 
 def _add_tasklet(value: float) -> tn.TaskletNode:
     """``B[k] = B[k] + value * A[k]``."""
-    tasklet = dace.nodes.Tasklet('add', {'a', 'b'}, {'c'}, f'c = b + {value} * a')
-    return tn.TaskletNode(node=tasklet,
-                          in_memlets={
-                              'a': dace.Memlet('A[k]'),
-                              'b': dace.Memlet('B[k]')
-                          },
-                          out_memlets={'c': dace.Memlet('B[k]')})
+    tasklet = dace.nodes.Tasklet("add", {"a", "b"}, {"c"}, f"c = b + {value} * a")
+    return tn.TaskletNode(
+        node=tasklet,
+        in_memlets={"a": dace.Memlet("A[k]"), "b": dace.Memlet("B[k]")},
+        out_memlets={"c": dace.Memlet("B[k]")},
+    )
 
 
 def _run_unswitch(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot, **symbols):
@@ -868,7 +896,7 @@ def _run_unswitch(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot, **
         assert np.allclose(results[0], results[1])
 
 
-@pytest.mark.parametrize('condition', ['M > 3', 'C[0] > 0'])
+@pytest.mark.parametrize("condition", ["M > 3", "C[0] > 0"])
 def test_unswitch_invariant_guard_with_other_statements(condition):
     make = lambda: _unswitch_tree(condition, [_add_tasklet(1.0)], [_add_tasklet(2.0)], [_add_tasklet(3.0)])
     stree, reference = make(), make()
@@ -882,7 +910,7 @@ def test_unswitch_invariant_guard_with_other_statements(condition):
 
 
 def test_unswitch_without_else_keeps_rest_of_body():
-    make = lambda: _unswitch_tree('C[0] > 0', [_add_tasklet(1.0)], [_add_tasklet(2.0)])
+    make = lambda: _unswitch_tree("C[0] > 0", [_add_tasklet(1.0)], [_add_tasklet(2.0)])
     stree, reference = make(), make()
     assert unswitch_invariant_guards(stree) == 1
     (guard, otherwise) = stree.children
@@ -891,18 +919,18 @@ def test_unswitch_without_else_keeps_rest_of_body():
 
 
 def test_unswitch_through_nested_loops():
-    make = lambda: _unswitch_tree('C[0] > 0', [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], outer=True)
+    make = lambda: _unswitch_tree("C[0] > 0", [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], outer=True)
     stree, reference = make(), make()
     assert unswitch_invariant_guards(stree) == 2  # Out of the inner loop, then out of the outer loop
     (guard, otherwise) = stree.children
     for branch in (guard, otherwise):  # Each branch: the outer loop around the inner loop, without guards
-        (outer, ) = branch.children
-        (inner, ) = outer.children
-        assert inner.loop.loop_variable == 'k' and not _nodes(inner, tn.IfScope)
+        (outer,) = branch.children
+        (inner,) = outer.children
+        assert inner.loop.loop_variable == "k" and not _nodes(inner, tn.IfScope)
     _run_unswitch(stree, reference, M=1)
 
 
-@pytest.mark.parametrize('condition', ['k > 3', 'B[0] > 1'])
+@pytest.mark.parametrize("condition", ["k > 3", "B[0] > 1"])
 def test_unswitch_not_applied_to_varying_condition(condition):
     """The loop variable, or data the loop writes."""
     stree = _unswitch_tree(condition, [], [_add_tasklet(2.0)], [_add_tasklet(3.0)])
@@ -912,15 +940,15 @@ def test_unswitch_not_applied_to_varying_condition(condition):
 def test_unswitch_data_condition_only_out_of_nonempty_loops():
     """With ``M`` iterations the loop may not run at all, and then reading ``C[0]`` early is not allowed; a condition
     on symbols alone may still move."""
-    stree = _unswitch_tree('C[0] > 0', [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], trips='M')
+    stree = _unswitch_tree("C[0] > 0", [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], trips="M")
     assert unswitch_invariant_guards(stree) == 0
-    stree = _unswitch_tree('M > 3', [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], trips='M')
+    stree = _unswitch_tree("M > 3", [], [_add_tasklet(2.0)], [_add_tasklet(3.0)], trips="M")
     assert unswitch_invariant_guards(stree) == 1
 
 
 def test_unswitch_respects_copy_budget():
-    guards = [tn.IfScope(condition=dace.properties.CodeBlock(f'M > {v}'), children=[_add_tasklet(v)]) for v in range(4)]
-    stree = _unswitch_tree('M > 10', guards, [_add_tasklet(9.0)])
+    guards = [tn.IfScope(condition=dace.properties.CodeBlock(f"M > {v}"), children=[_add_tasklet(v)]) for v in range(4)]
+    stree = _unswitch_tree("M > 10", guards, [_add_tasklet(9.0)])
     unswitch_invariant_guards(stree, max_copies=4)
     assert len(_nodes(stree, tn.ForScope)) <= 4
 
@@ -932,41 +960,39 @@ def test_unswitch_respects_copy_budget():
 
 def _tasklet(code: str, inputs: dict, outputs: dict) -> tn.TaskletNode:
     """A tasklet from connector-to-memlet-string maps."""
-    tasklet = dace.nodes.Tasklet('t', {c: None for c in inputs}, {c: None for c in outputs}, code)
-    return tn.TaskletNode(node=tasklet,
-                          in_memlets={
-                              c: dace.Memlet(m)
-                              for c, m in inputs.items()
-                          },
-                          out_memlets={
-                              c: dace.Memlet(m)
-                              for c, m in outputs.items()
-                          })
+    tasklet = dace.nodes.Tasklet("t", dict.fromkeys(inputs), dict.fromkeys(outputs), code)
+    return tn.TaskletNode(
+        node=tasklet,
+        in_memlets={c: dace.Memlet(m) for c, m in inputs.items()},
+        out_memlets={c: dace.Memlet(m) for c, m in outputs.items()},
+    )
 
 
-def _diamond_tree(then: list,
-                  otherwise: list,
-                  start: int = 1,
-                  condition: str = 'C[i] > 0',
-                  before: list = None,
-                  after: list = None,
-                  inner_loop: bool = False) -> tn.ScheduleTreeRoot:
+def _diamond_tree(
+    then: list,
+    otherwise: list,
+    start: int = 1,
+    condition: str = "C[i] > 0",
+    before: list = None,
+    after: list = None,
+    inner_loop: bool = False,
+) -> tn.ScheduleTreeRoot:
     """``<before>; for i in range(start, 7): [for j in range(2): pass]; if <condition>: <then> [else: <otherwise>];
     <after>`` over arrays ``A``, ``B``, ``C`` and ``D`` of 8 elements and a transient scalar ``t``."""
-    sdfg = dace.SDFG('diamond')
-    for name in 'ABCD':
+    sdfg = dace.SDFG("diamond")
+    for name in "ABCD":
         sdfg.add_array(name, [8], dace.float64)
-    sdfg.add_array('E', [8, 2], dace.float64)
-    sdfg.add_scalar('t', dace.float64, transient=True)
+    sdfg.add_array("E", [8, 2], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
     body = [tn.IfScope(condition=dace.properties.CodeBlock(condition), children=then)]
     if otherwise is not None:
         body.append(tn.ElseScope(children=otherwise))
     if inner_loop:
-        inner = dace.sdfg.state.LoopRegion('inner', 'j < 2', 'j', 'j = 0', 'j = j + 1')
-        body.insert(0, tn.ForScope(loop=inner, children=[_tasklet('b = a', {'a': 'A[j]'}, {'b': 'D[j]'})]))
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 7', 'i', f'i = {start}', 'i = i + 1')
+        inner = dace.sdfg.state.LoopRegion("inner", "j < 2", "j", "j = 0", "j = j + 1")
+        body.insert(0, tn.ForScope(loop=inner, children=[_tasklet("b = a", {"a": "A[j]"}, {"b": "D[j]"})]))
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 7", "i", f"i = {start}", "i = i + 1")
     stree.children = []
     stree.add_children((before or []) + [tn.ForScope(loop=loop, children=body)] + (after or []))
     return stree
@@ -982,11 +1008,13 @@ def _run_diamond(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot):
     assert np.allclose(results[0][0], results[1][0]) and np.allclose(results[0][1], results[1][1])
 
 
-@pytest.mark.parametrize('condition', ['C[i] > 0', 'E[i, 1] > 0 and C[i - 1] < 0'])
+@pytest.mark.parametrize("condition", ["C[i] > 0", "E[i, 1] > 0 and C[i - 1] < 0"])
 def test_convert_upwind_diamond(condition):
-    make = lambda: _diamond_tree([_tasklet('b = 2 * a', {'a': 'A[i - 1]'}, {'b': 'B[i]'})],
-                                 [_tasklet('b = 3 * a', {'a': 'A[i]'}, {'b': 'B[i]'})],
-                                 condition=condition)
+    make = lambda: _diamond_tree(
+        [_tasklet("b = 2 * a", {"a": "A[i - 1]"}, {"b": "B[i]"})],
+        [_tasklet("b = 3 * a", {"a": "A[i]"}, {"b": "B[i]"})],
+        condition=condition,
+    )
     stree, reference = make(), make()
     assert convert_diamonds_to_selects(stree) == 1
     assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.ElseScope)
@@ -994,11 +1022,10 @@ def test_convert_upwind_diamond(condition):
 
 
 def test_convert_diamond_with_branch_local_temporary():
-    make = lambda: _diamond_tree([
-        _tasklet('o = 2 * a', {'a': 'A[i]'}, {'o': 't[0]'}),
-        _tasklet('b = x + 1', {'x': 't[0]'}, {'b': 'B[i]'})
-    ], [_tasklet('o = 3 * a', {'a': 'A[i]'}, {'o': 't[0]'}),
-        _tasklet('b = x - 1', {'x': 't[0]'}, {'b': 'B[i]'})])
+    make = lambda: _diamond_tree(
+        [_tasklet("o = 2 * a", {"a": "A[i]"}, {"o": "t[0]"}), _tasklet("b = x + 1", {"x": "t[0]"}, {"b": "B[i]"})],
+        [_tasklet("o = 3 * a", {"a": "A[i]"}, {"o": "t[0]"}), _tasklet("b = x - 1", {"x": "t[0]"}, {"b": "B[i]"})],
+    )
     stree, reference = make(), make()
     assert convert_diamonds_to_selects(stree) == 1
     _run_diamond(stree, reference)
@@ -1006,37 +1033,34 @@ def test_convert_diamond_with_branch_local_temporary():
 
 def test_convert_diamond_with_loop_carried_value():
     """``t`` accumulates across iterations: each branch reads it before writing, so it must be selected too."""
-    make = lambda: _diamond_tree([_tasklet('o = x + a', {
-        'x': 't[0]',
-        'a': 'A[i]'
-    }, {'o': 't[0]'})], [_tasklet('o = x - a', {
-        'x': 't[0]',
-        'a': 'A[i]'
-    }, {'o': 't[0]'})],
-                                 before=[_tasklet('o = 0', {}, {'o': 't[0]'})],
-                                 after=[_tasklet('b = x', {'x': 't[0]'}, {'b': 'B[0]'})])
+    make = lambda: _diamond_tree(
+        [_tasklet("o = x + a", {"x": "t[0]", "a": "A[i]"}, {"o": "t[0]"})],
+        [_tasklet("o = x - a", {"x": "t[0]", "a": "A[i]"}, {"o": "t[0]"})],
+        before=[_tasklet("o = 0", {}, {"o": "t[0]"})],
+        after=[_tasklet("b = x", {"x": "t[0]"}, {"b": "B[0]"})],
+    )
     stree, reference = make(), make()
     assert convert_diamonds_to_selects(stree) == 1
     _run_diamond(stree, reference)
 
 
-@pytest.mark.parametrize('case', ['out of bounds', 'triangle', 'one-sided write', 'unbalanced', 'not innermost'])
+@pytest.mark.parametrize("case", ["out of bounds", "triangle", "one-sided write", "unbalanced", "not innermost"])
 def test_convert_not_applied(case):
-    then = [_tasklet('b = 2 * a', {'a': 'A[i]'}, {'b': 'B[i]'})]
-    otherwise = [_tasklet('b = 3 * a', {'a': 'A[i]'}, {'b': 'B[i]'})]
+    then = [_tasklet("b = 2 * a", {"a": "A[i]"}, {"b": "B[i]"})]
+    otherwise = [_tasklet("b = 3 * a", {"a": "A[i]"}, {"b": "B[i]"})]
     kwargs = {}
-    if case == 'out of bounds':  # ``A[i - 1]`` with ``i = 0``
-        then = [_tasklet('b = 2 * a', {'a': 'A[i - 1]'}, {'b': 'B[i]'})]
-        kwargs['start'] = 0
-    elif case == 'triangle':
+    if case == "out of bounds":  # ``A[i - 1]`` with ``i = 0``
+        then = [_tasklet("b = 2 * a", {"a": "A[i - 1]"}, {"b": "B[i]"})]
+        kwargs["start"] = 0
+    elif case == "triangle":
         otherwise = None
-    elif case == 'one-sided write':
-        otherwise = [_tasklet('b = 3 * a', {'a': 'A[i]'}, {'b': 'D[i]'})]
-    elif case == 'unbalanced':
-        then = [_tasklet('b = ((a * a + 1) * a + 2) * a / (a + 3) - a * a * a', {'a': 'A[i]'}, {'b': 'B[i]'})]
-        otherwise = [_tasklet('b = a', {'a': 'A[i]'}, {'b': 'B[i]'})]
-    elif case == 'not innermost':
-        kwargs['inner_loop'] = True
+    elif case == "one-sided write":
+        otherwise = [_tasklet("b = 3 * a", {"a": "A[i]"}, {"b": "D[i]"})]
+    elif case == "unbalanced":
+        then = [_tasklet("b = ((a * a + 1) * a + 2) * a / (a + 3) - a * a * a", {"a": "A[i]"}, {"b": "B[i]"})]
+        otherwise = [_tasklet("b = a", {"a": "A[i]"}, {"b": "B[i]"})]
+    elif case == "not innermost":
+        kwargs["inner_loop"] = True
     stree = _diamond_tree(then, otherwise, **kwargs)
     assert convert_diamonds_to_selects(stree) == 0
     assert _nodes(stree, tn.IfScope)
@@ -1047,21 +1071,24 @@ def _select_tree(code: str) -> tn.ScheduleTreeRoot:
     stree = _diamond_tree([], None)
     loop = stree.children[0]
     loop.children = []
-    loop.add_children([_tasklet(code, {'a': 'A[i]', 'c': 'C[i]'}, {'b': 'B[i]'})])
+    loop.add_children([_tasklet(code, {"a": "A[i]", "c": "C[i]"}, {"b": "B[i]"})])
     return stree
 
 
-@pytest.mark.parametrize('code, hoisted', [
-    ('b = (a / c) if c > 0 else (a * c)', 2),
-    ('b = ((a / c) if c > 0 else ((a - c) if c < -0.25 else 0.5 * a)) + 1', 4),
-    ('b = a if c > 0 else 1.0', 0),
-])
+@pytest.mark.parametrize(
+    "code, hoisted",
+    [
+        ("b = (a / c) if c > 0 else (a * c)", 2),
+        ("b = ((a / c) if c > 0 else ((a - c) if c < -0.25 else 0.5 * a)) + 1", 4),
+        ("b = a if c > 0 else 1.0", 0),
+    ],
+)
 def test_hoist_select_arms(code, hoisted):
     stree, reference = _select_tree(code), _select_tree(code)
     assert hoist_select_arms(stree) == hoisted
     if hoisted:
         tasklet = _nodes(stree, tn.TaskletNode)[0].node
-        assert tasklet.code.as_string.count('__arm') == 2 * hoisted
+        assert tasklet.code.as_string.count("__arm") == 2 * hoisted
     a, c = np.random.rand(8), np.random.rand(8) - 0.5
     results = []
     for tree in (reference, stree):
@@ -1071,7 +1098,7 @@ def test_hoist_select_arms(code, hoisted):
     assert np.array_equal(results[0], results[1])
 
 
-@pytest.mark.parametrize('code', ['b = (a // 2) if c > 0 else a', 'b = int(a) if c > 0 else a'])
+@pytest.mark.parametrize("code", ["b = (a // 2) if c > 0 else a", "b = int(a) if c > 0 else a"])
 def test_hoist_select_arms_not_unsafe(code):
     stree = _select_tree(code)
     assert hoist_select_arms(stree) == 0
@@ -1082,22 +1109,20 @@ def test_hoist_select_arms_not_unsafe(code):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _nest_tree(inner_start: int = 0,
-               inner_end: int = 4,
-               code: str = 'b = 2 * a',
-               read: str = 'A[i, j - 1]',
-               padded: bool = False) -> tn.ScheduleTreeRoot:
+def _nest_tree(
+    inner_start: int = 0, inner_end: int = 4, code: str = "b = 2 * a", read: str = "A[i, j - 1]", padded: bool = False
+) -> tn.ScheduleTreeRoot:
     """``for j in range(1, 5): for i in range(inner_start, inner_end): B[i, j] = <code>(a = <read>)`` over ``A``
     and ``B`` of shape (4, 6), stored column by column (rows of ``i`` contiguous; padded to 5 elements if
     ``padded``)."""
-    sdfg = dace.SDFG('nest')
-    for name in 'AB':
+    sdfg = dace.SDFG("nest")
+    for name in "AB":
         sdfg.add_array(name, [4, 6], dace.float64, strides=[1, 5 if padded else 4], total_size=30 if padded else 24)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    inner = dace.sdfg.state.LoopRegion('inner', f'i < {inner_end}', 'i', f'i = {inner_start}', 'i = i + 1')
-    outer = dace.sdfg.state.LoopRegion('outer', 'j < 5', 'j', 'j = 1', 'j = j + 1')
-    body = tn.ForScope(loop=inner, children=[_tasklet(code, {'a': read}, {'b': 'B[i, j]'})])
+    inner = dace.sdfg.state.LoopRegion("inner", f"i < {inner_end}", "i", f"i = {inner_start}", "i = i + 1")
+    outer = dace.sdfg.state.LoopRegion("outer", "j < 5", "j", "j = 1", "j = j + 1")
+    body = tn.ForScope(loop=inner, children=[_tasklet(code, {"a": read}, {"b": "B[i, j]"})])
     stree.children = []
     stree.add_children([tn.ForScope(loop=outer, children=[body])])
     return stree
@@ -1117,22 +1142,22 @@ def test_flatten_contiguous_nest():
     stree, reference = _nest_tree(), _nest_tree()
     assert flatten_contiguous_nests(stree) == 1
     loops = _nodes(stree, tn.ForScope)
-    assert len(loops) == 1 and _for_headers(stree) == ['__flat0 = 4 ; (__flat0 < 20)']
+    assert len(loops) == 1 and _for_headers(stree) == ["__flat0 = 4 ; (__flat0 < 20)"]
     assert len(_nodes(stree, tn.ViewNode)) == 2
     _run_nest(stree, reference)
 
 
-@pytest.mark.parametrize('case', ['partial row', 'padded rows', 'row-invariant access', 'variable in code'])
+@pytest.mark.parametrize("case", ["partial row", "padded rows", "row-invariant access", "variable in code"])
 def test_flatten_not_applied(case):
     kwargs = {}
-    if case == 'partial row':  # A halo row the loop does not cover
-        kwargs['inner_end'] = 3
-    elif case == 'padded rows':
-        kwargs['padded'] = True
-    elif case == 'row-invariant access':
-        kwargs['read'] = 'A[0, j - 1]'
-    elif case == 'variable in code':
-        kwargs['code'] = 'b = a * i'
+    if case == "partial row":  # A halo row the loop does not cover
+        kwargs["inner_end"] = 3
+    elif case == "padded rows":
+        kwargs["padded"] = True
+    elif case == "row-invariant access":
+        kwargs["read"] = "A[0, j - 1]"
+    elif case == "variable in code":
+        kwargs["code"] = "b = a * i"
     stree = _nest_tree(**kwargs)
     assert flatten_contiguous_nests(stree) == 0
     assert len(_nodes(stree, tn.ForScope)) == 2
@@ -1141,38 +1166,38 @@ def test_flatten_not_applied(case):
 def _multi_output_tree(code: str, inputs: dict, outputs: dict, guarded: tn.ScheduleTreeNode) -> tn.ScheduleTreeRoot:
     """``for k in range(8): for i in range(4): <tasklet>; if m: <guarded>`` over ``A``/``B`` (8x4), ``C`` (8) and
     transient scalars ``m`` (bool) and ``t``."""
-    sdfg = dace.SDFG('multi_output')
-    sdfg.add_array('A', [8, 4], dace.float64)
-    sdfg.add_array('B', [8, 4], dace.float64)
-    sdfg.add_array('C', [8], dace.float64)
-    sdfg.add_scalar('m', dace.bool_, transient=True)
-    sdfg.add_scalar('t', dace.float64, transient=True)
+    sdfg = dace.SDFG("multi_output")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [8, 4], dace.float64)
+    sdfg.add_array("C", [8], dace.float64)
+    sdfg.add_scalar("m", dace.bool_, transient=True)
+    sdfg.add_scalar("t", dace.float64, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
-    guard = tn.IfScope(condition=dace.properties.CodeBlock('m'), children=[guarded])
-    inner = dace.sdfg.state.LoopRegion('inner', 'i < 4', 'i', 'i = 0', 'i = i + 1')
-    outer = dace.sdfg.state.LoopRegion('outer', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    guard = tn.IfScope(condition=dace.properties.CodeBlock("m"), children=[guarded])
+    inner = dace.sdfg.state.LoopRegion("inner", "i < 4", "i", "i = 0", "i = i + 1")
+    outer = dace.sdfg.state.LoopRegion("outer", "k < 8", "k", "k = 0", "k = k + 1")
     stree.children = []
     stree.add_child(
-        tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[_tasklet(code, inputs, outputs), guard])]))
+        tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[_tasklet(code, inputs, outputs), guard])])
+    )
     return stree
 
 
 def test_substitute_output_of_multi_output_tasklet_then_unswitch():
     """``t = 2 * a; m = c > 0`` (as connectors ``tv``, ``mv``) computes an invariant mask next to a varying value: substituted, the guard reads
     ``C[k]`` and moves out of the ``i`` loop."""
-    make = lambda: _multi_output_tree('tv = 2 * a\nmv = c > 0', {
-        'a': 'A[k, i]',
-        'c': 'C[k]'
-    }, {
-        'tv': 't[0]',
-        'mv': 'm[0]'
-    }, _tasklet('b = x', {'x': 't[0]'}, {'b': 'B[k, i]'}))
+    make = lambda: _multi_output_tree(
+        "tv = 2 * a\nmv = c > 0",
+        {"a": "A[k, i]", "c": "C[k]"},
+        {"tv": "t[0]", "mv": "m[0]"},
+        _tasklet("b = x", {"x": "t[0]"}, {"b": "B[k, i]"}),
+    )
     stree, reference = make(), make()
     assert forward_substitute_conditions(stree) == 1
-    assert _conditions(stree) == ['(C[k] > 0)']
+    assert _conditions(stree) == ["(C[k] > 0)"]
     assert unswitch_invariant_guards(stree) == 1
-    (outer, ) = stree.children
+    (outer,) = stree.children
     assert isinstance(outer.children[0], tn.IfScope)  # Above the ``i`` loop
     a, c = np.random.rand(8, 4), np.random.rand(8) - 0.5
     results = []
@@ -1184,19 +1209,22 @@ def test_substitute_output_of_multi_output_tasklet_then_unswitch():
 
 
 def test_substitute_through_tasklet_locals():
-    stree = _multi_output_tree('x = a + 1\nmv = x > 1.5', {'a': 'A[k, i]'}, {'mv': 'm[0]'},
-                               _tasklet('b = 1', {}, {'b': 'B[k, i]'}))
+    stree = _multi_output_tree(
+        "x = a + 1\nmv = x > 1.5", {"a": "A[k, i]"}, {"mv": "m[0]"}, _tasklet("b = 1", {}, {"b": "B[k, i]"})
+    )
     assert forward_substitute_conditions(stree) == 1
-    assert _conditions(stree) == ['((A[k, i] + 1) > 1.5)']
+    assert _conditions(stree) == ["((A[k, i] + 1) > 1.5)"]
 
 
 def test_substitute_not_from_tasklet_overwriting_its_input():
     """``m = b > 0.5`` reads ``B[k, i]``, which the same tasklet overwrites: after it, ``B[k, i] > 0.5`` would read the
     new value."""
-    stree = _multi_output_tree('mv = b > 0.5\nb2 = 2 * b', {'b': 'B[k, i]'}, {
-        'mv': 'm[0]',
-        'b2': 'B[k, i]'
-    }, _tasklet('o = 1', {}, {'o': 'A[k, i]'}))
+    stree = _multi_output_tree(
+        "mv = b > 0.5\nb2 = 2 * b",
+        {"b": "B[k, i]"},
+        {"mv": "m[0]", "b2": "B[k, i]"},
+        _tasklet("o = 1", {}, {"o": "A[k, i]"}),
+    )
     assert forward_substitute_conditions(stree) == 0
 
 
@@ -1207,10 +1235,10 @@ def test_substitute_not_from_tasklet_overwriting_its_input():
 
 def _scalar_tree(children: list) -> tn.ScheduleTreeRoot:
     """A tree over arrays ``A``, ``B`` (8 elements) and a transient scalar ``t``."""
-    sdfg = dace.SDFG('dead_stores')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
-    sdfg.add_scalar('t', dace.float64, transient=True)
+    sdfg = dace.SDFG("dead_stores")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
     sdfg.add_state(is_start_block=True)
     stree = _tree(sdfg)
     stree.children = []
@@ -1219,15 +1247,15 @@ def _scalar_tree(children: list) -> tn.ScheduleTreeRoot:
 
 
 def _loop(children: list) -> tn.ForScope:
-    return tn.ForScope(loop=dace.sdfg.state.LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1'), children=children)
+    return tn.ForScope(loop=dace.sdfg.state.LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1"), children=children)
 
 
 def _set_t(value: str, inputs: dict = None) -> tn.TaskletNode:
-    return _tasklet(f'o = {value}', inputs or {}, {'o': 't[0]'})
+    return _tasklet(f"o = {value}", inputs or {}, {"o": "t[0]"})
 
 
-def _use_t(target: str = 'B[0]') -> tn.TaskletNode:
-    return _tasklet('b = x', {'x': 't[0]'}, {'b': target})
+def _use_t(target: str = "B[0]") -> tn.TaskletNode:
+    return _tasklet("b = x", {"x": "t[0]"}, {"b": target})
 
 
 def _check_dead_stores(make, removed: int):
@@ -1243,53 +1271,57 @@ def _check_dead_stores(make, removed: int):
 
 
 def test_dead_store_overwritten():
-    _check_dead_stores(lambda: _scalar_tree([_set_t('a', {'a': 'A[0]'}), _set_t('2 * a', {'a': 'A[1]'}), _use_t()]), 1)
+    _check_dead_stores(lambda: _scalar_tree([_set_t("a", {"a": "A[0]"}), _set_t("2 * a", {"a": "A[1]"}), _use_t()]), 1)
 
 
 def test_dead_store_overwritten_in_both_branches():
-    make = lambda: _scalar_tree([
-        _set_t('a', {'a': 'A[0]'}),
-        tn.IfScope(condition=dace.properties.CodeBlock('A[2] > 0.5'), children=[_set_t('1')]),
-        tn.ElseScope(children=[_set_t('2')]),
-        _use_t()
-    ])
+    make = lambda: _scalar_tree(
+        [
+            _set_t("a", {"a": "A[0]"}),
+            tn.IfScope(condition=dace.properties.CodeBlock("A[2] > 0.5"), children=[_set_t("1")]),
+            tn.ElseScope(children=[_set_t("2")]),
+            _use_t(),
+        ]
+    )
     _check_dead_stores(make, 1)
 
 
 def test_dead_store_kept_when_one_branch_keeps_it():
-    make = lambda: _scalar_tree([
-        _set_t('a', {'a': 'A[0]'}),
-        tn.IfScope(condition=dace.properties.CodeBlock('A[2] > 0.5'), children=[_set_t('1')]),
-        _use_t()
-    ])
+    make = lambda: _scalar_tree(
+        [
+            _set_t("a", {"a": "A[0]"}),
+            tn.IfScope(condition=dace.properties.CodeBlock("A[2] > 0.5"), children=[_set_t("1")]),
+            _use_t(),
+        ]
+    )
     _check_dead_stores(make, 0)
 
 
 def test_dead_store_kept_for_next_iteration():
     """``t`` written at the end of an iteration is read at the start of the next one."""
-    make = lambda: _scalar_tree([_set_t('0'), _loop([_use_t('B[i]'), _set_t('a', {'a': 'A[i]'})])])
+    make = lambda: _scalar_tree([_set_t("0"), _loop([_use_t("B[i]"), _set_t("a", {"a": "A[i]"})])])
     _check_dead_stores(make, 0)
 
 
 def test_dead_store_kept_when_read_after_loop():
-    make = lambda: _scalar_tree([_loop([_set_t('a', {'a': 'A[i]'})]), _use_t()])
+    make = lambda: _scalar_tree([_loop([_set_t("a", {"a": "A[i]"})]), _use_t()])
     _check_dead_stores(make, 0)
 
 
 def test_dead_store_in_loop_removed():
     """Each iteration overwrites ``t`` before reading it, and nothing reads it after the loop."""
-    make = lambda: _scalar_tree([_loop([_set_t('a', {'a': 'A[i]'}), _set_t('2 * a', {'a': 'A[i]'}), _use_t('B[i]')])])
+    make = lambda: _scalar_tree([_loop([_set_t("a", {"a": "A[i]"}), _set_t("2 * a", {"a": "A[i]"}), _use_t("B[i]")])])
     _check_dead_stores(make, 1)
 
 
 def test_dead_store_not_killed_by_dynamic_write():
-    dynamic = _set_t('3')
-    dynamic.out_memlets['o'].dynamic = True
-    stree = _scalar_tree([_set_t('a', {'a': 'A[0]'}), dynamic, _use_t()])
+    dynamic = _set_t("3")
+    dynamic.out_memlets["o"].dynamic = True
+    stree = _scalar_tree([_set_t("a", {"a": "A[0]"}), dynamic, _use_t()])
     assert remove_dead_stores(stree) == 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
     test_fold_elif_promoted_to_if_and_else_kept()
@@ -1316,14 +1348,14 @@ if __name__ == '__main__':
     test_substitute_through_tasklet_locals()
     test_substitute_not_from_tasklet_overwriting_its_input()
     test_hoist_condition_reads()
-    test_hoist_condition_reads_not('A[i] > 0.5')
-    test_hoist_condition_reads_not('i > 1 and T[i - 2] > 0')
-    test_hoist_condition_reads_not('0 < A[i] < T[i + 2]')
-    test_hoist_condition_reads_not('(T[i + 2] if i < 6 else A[i]) > 0')
-    test_hoist_condition_reads_short_circuit('A[i] > 0.5 and T[i - 1] > 0')
-    test_hoist_condition_reads_short_circuit('T[i] > 0 and T[i] < 0.25')
-    test_hoist_condition_reads_not('T[int(A[i] * 6)] > 0')
-    test_pair_complementary_guards('k < 4', 'k >= 4', lambda k, flag: k < 4)
+    test_hoist_condition_reads_not("A[i] > 0.5")
+    test_hoist_condition_reads_not("i > 1 and T[i - 2] > 0")
+    test_hoist_condition_reads_not("0 < A[i] < T[i + 2]")
+    test_hoist_condition_reads_not("(T[i + 2] if i < 6 else A[i]) > 0")
+    test_hoist_condition_reads_short_circuit("A[i] > 0.5 and T[i - 1] > 0")
+    test_hoist_condition_reads_short_circuit("T[i] > 0 and T[i] < 0.25")
+    test_hoist_condition_reads_not("T[int(A[i] * 6)] > 0")
+    test_pair_complementary_guards("k < 4", "k >= 4", lambda k, flag: k < 4)
     test_pair_not_when_first_body_writes_condition()
     test_pair_not_for_unrelated_conditions()
     test_pair_not_when_second_guard_has_else()
@@ -1339,20 +1371,20 @@ if __name__ == '__main__':
     test_reroll_stacks_equal_runs()
     test_fuse_rolled_loops_of_independent_fields()
     test_fuse_rolled_loops_not_across_dependence()
-    test_unswitch_invariant_guard_with_other_statements('C[0] > 0')
+    test_unswitch_invariant_guard_with_other_statements("C[0] > 0")
     test_unswitch_without_else_keeps_rest_of_body()
     test_unswitch_through_nested_loops()
-    test_unswitch_not_applied_to_varying_condition('B[0] > 1')
+    test_unswitch_not_applied_to_varying_condition("B[0] > 1")
     test_unswitch_data_condition_only_out_of_nonempty_loops()
     test_unswitch_respects_copy_budget()
-    test_convert_upwind_diamond('E[i, 1] > 0 and C[i - 1] < 0')
+    test_convert_upwind_diamond("E[i, 1] > 0 and C[i - 1] < 0")
     test_convert_diamond_with_branch_local_temporary()
     test_convert_diamond_with_loop_carried_value()
-    test_convert_not_applied('out of bounds')
-    test_hoist_select_arms('b = ((a / c) if c > 0 else ((a - c) if c < -0.25 else 0.5 * a)) + 1', 4)
-    test_hoist_select_arms_not_unsafe('b = int(a) if c > 0 else a')
+    test_convert_not_applied("out of bounds")
+    test_hoist_select_arms("b = ((a / c) if c > 0 else ((a - c) if c < -0.25 else 0.5 * a)) + 1", 4)
+    test_hoist_select_arms_not_unsafe("b = int(a) if c > 0 else a")
     test_flatten_contiguous_nest()
-    test_flatten_not_applied('partial row')
+    test_flatten_not_applied("partial row")
     test_dead_store_overwritten()
     test_dead_store_overwritten_in_both_branches()
     test_dead_store_kept_when_one_branch_keeps_it()
