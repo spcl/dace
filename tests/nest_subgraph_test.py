@@ -155,6 +155,52 @@ def test_tiled_program():
     sdfg.validate()
 
 
+def test_nest_scalar_with_none_subset_boundary():
+    """A scalar that crosses the nested-subgraph boundary can carry a bare,
+    whole-scalar memlet (``Memlet(data='s')``, ``subset is None``) on an internal
+    edge while its boundary edge carries an explicit ``s[0]`` subset. Re-basing a
+    ``None`` subset is a no-op, so ``nest_state_subgraph`` must skip it rather than
+    dereference ``None`` -- pre-fix this raised ``AttributeError: 'NoneType' object
+    has no attribute 'offset'`` (the azimint_hist histogram-accumulator shape that
+    ``MapToForLoop`` hit during canonicalization)."""
+    sdfg = dace.SDFG("none_subset_boundary")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    A = state.add_read("A")
+    me, mx = state.add_map("m", dict(i="0:4"))
+    t1 = state.add_tasklet("t1", {"a"}, {"o"}, "o = a * 2")
+    state.add_memlet_path(A, me, t1, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    # Internal edge into the map exit is a BARE whole-scalar memlet (subset None).
+    mx.add_in_connector("IN_s")
+    mx.add_out_connector("OUT_s")
+    state.add_edge(t1, "o", mx, "IN_s", dace.Memlet(data="s"))
+    s_out = state.add_access("s")
+    # Boundary edge out of the map carries an explicit point subset.
+    state.add_edge(mx, "OUT_s", s_out, None, dace.Memlet("s[0]"))
+    t3 = state.add_tasklet("t3", {"x"}, {"b"}, "b = x")
+    B = state.add_write("B")
+    state.add_edge(s_out, None, t3, "x", dace.Memlet("s[0]"))
+    state.add_edge(t3, "b", B, None, dace.Memlet("B[0]"))
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
+    sdfg.validate()
+
+
+def test_nesting_a_top_level_subgraph_consolidates_nothing(monkeypatch):
+    """A subgraph at the top of its state has no enclosing scope to consolidate, and the call scanned
+    every state of the SDFG to find that out -- once per map ``MapToForLoop`` lowers."""
+    from dace.sdfg import utils
+
+    sdfg, state, t, me, mx = create_sdfg()
+    calls = []
+    monkeypatch.setattr(utils, "consolidate_edges", lambda *args, **kwargs: calls.append(args))
+    nest_state_subgraph(sdfg, state, SubgraphView(state, [me, t, mx]))
+    assert calls == []
+    sdfg.validate()
+
+
 def test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy():
     """A map body whose own access node of ``A`` feeds the map exit: inside the nested SDFG that node
     already writes the ``A`` connector, so no ``A -> A`` copy into a second node may appear."""
@@ -198,4 +244,23 @@ if __name__ == "__main__":
     test_simple_sdfg_program()
     test_badscope()
     test_tiled_program()
+    test_nest_scalar_with_none_subset_boundary()
     test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy()
+
+
+@dace.program
+def interior_double(A: dace.float64[N], B: dace.float64[N]):
+    for i in dace.map[1 : N - 1]:
+        B[i] = A[i] * 2.0
+
+
+def test_a_nest_of_a_partial_write_claims_it_as_dynamic():
+    """The nest's connector passes all of ``B`` but writes only ``B[1:N-1]``: claimed exact, the offloader skipped
+    the copy-in and returned uninitialized border elements."""
+    sdfg = interior_double.to_sdfg(simplify=True)
+    state = sdfg.start_state
+
+    nested = nest_state_subgraph(sdfg, state, SubgraphView(state, state.nodes()))
+
+    (written,) = [e.data for e in state.out_edges(nested)]
+    assert (written.data, written.dynamic) == ("B", True)

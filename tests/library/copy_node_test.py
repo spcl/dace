@@ -11,11 +11,13 @@ import pytest
 
 import dace
 from dace import symbolic
+from dace.codegen.common import get_gpu_backend
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg.graph import SubgraphView
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_fill_libnode
 from dace.transformation.subgraph import GPUPersistentKernel
 
 
@@ -123,9 +125,9 @@ def _fortran_strides(shape):
 def _compile_no_copynd(sdfg: dace.SDFG):
     """Assert the generated C++ contains no ``dace::CopyND`` template, then compile.
 
-    The libnodes displace the runtime CopyND fallback entirely. The only intentional
-    ``CopyND`` user is ``ExpandSharedMemoryCollective``; tests exercising that expansion
-    inspect tasklet bodies directly and don't run codegen, so this assertion is safe here.
+    The libnodes displace the runtime CopyND fallback entirely, the shared-memory collective
+    included: a per-thread loop nest has every thread of the block copy the whole region, and
+    ``dace/codegen/cpf.py`` bans the template outright.
     """
     for obj in sdfg.generate_code():
         assert "CopyND<" not in obj.code, f"unexpected dace::CopyND in generated code object {obj.name}"
@@ -152,6 +154,24 @@ def test_copy_pure_cpu():
     np.testing.assert_array_equal(B[50:100], A[150:200])
     assert np.all(B[:50] == 0)
     assert np.all(B[100:] == 0)
+
+
+def test_copy_pure_moves_a_single_element():
+    """A Copy narrowed to one element (as moving a loop into its lanes does) collapses to no dimension at all."""
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[4, 8], storage=dace.dtypes.StorageType.CPU_Heap, subset="2, 5", name="A"),
+        _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.CPU_Heap, subset="3", name="B"),
+        implementation="MappedTasklet",
+        name="copy_pure_one",
+    )
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    A = np.arange(32, dtype=np.float64).reshape(4, 8)
+    B = np.zeros(8, dtype=np.float64)
+    sdfg(A=A, B=B)
+    want = np.zeros(8)
+    want[3] = A[2, 5]
+    np.testing.assert_array_equal(B, want)
 
 
 def test_copy_cpu_memcpy():
@@ -194,8 +214,8 @@ def test_copy_cpu_memcpy_non_trivially_copyable():
 
 def test_copy_fortran_packed_same_rank():
     """Same-rank Fortran-packed (column-major) full copy is contiguous and same-layout, so the
-    Auto path routes it to the serial ``std::memcpy`` (``MemcpyCPU``); a flat byte copy is exact
-    for two Fortran-packed operands."""
+    Auto path routes it to the serial ``std::memcpy`` (``MemcpyCPU``); it is well below the
+    parallel byte threshold. A flat byte copy is exact for two Fortran-packed operands."""
     sdfg, libnode = _make_copy_sdfg(
         _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
         _ArraySpec(shape=(4, 5, 6), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 4, 20)),
@@ -629,6 +649,290 @@ def test_copy_cuda_4d_strided_host_to_device():
     cp.testing.assert_array_equal(B, cp.asarray(expected))
 
 
+def _interior_copy_sdfg(host_to_device: bool, pool: bool = False) -> tuple[dace.SDFG, CopyLibraryNode]:
+    """Copy the interior ``1:N-1`` of a host ``(N, N, N)`` array to/from a device ``(N-2, N-2, N-2)`` one."""
+    host = _ArraySpec(shape=(9, 9, 9), storage=dace.dtypes.StorageType.CPU_Heap, subset="1:8, 1:8, 1:8", name="H")
+    device = _ArraySpec(shape=(7, 7, 7), storage=dace.dtypes.StorageType.GPU_Global, name="D", transient=pool)
+    src, dst = (host, device) if host_to_device else (device, host)
+    sdfg, node = _make_copy_sdfg(src, dst, name=f"copy_interior_{int(host_to_device)}", libnode_name="cp_interior")
+    if pool:
+        sdfg.arrays["D"].pool = True
+    return sdfg, node
+
+
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_interior_copy_across_the_boundary_is_one_pitched_copy(backend):
+    """A 3D interior crossing the CPU/GPU boundary is one ``Memcpy3DAsync``, not one ``gpuMemcpyAsync`` per row.
+
+    A pooled device operand on HIP is staged instead: HIP refuses pitched copies of pooled memory whose rows end
+    at the pitch, so the region is packed and moved in one ``gpuMemcpyAsync``.
+    """
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
+        sdfg, node = _interior_copy_sdfg(host_to_device=True)
+        assert select_copy_implementation(node, sdfg.start_state) == "MemcpyCUDANDStrided"
+        sdfg.expand_library_nodes()
+        codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+        assert len(codes) == 1 and f"{backend}Memcpy3DAsync(" in codes[0]
+        assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+
+        pooled, pooled_node = _interior_copy_sdfg(host_to_device=True, pool=True)
+        expected = "MemcpyCUDANDStrided" if backend == "cuda" else "MemcpyCUDAStaged"
+        assert select_copy_implementation(pooled_node, pooled.start_state) == expected
+        pooled.expand_library_nodes()
+        codes = [n.code.as_string for n, _ in pooled.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+        assert any("Memcpy3DAsync(" in c for c in codes) == (backend == "cuda")
+        if backend == "hip":
+            # The span of the host interior is under twice the interior: it is sent whole and filtered on the GPU
+            schedules = [n.map.schedule for n, _ in pooled.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+            assert schedules == [dace.dtypes.ScheduleType.GPU_Device]
+            assert sum("hipMemcpyAsync(" in c for c in codes) == 1
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("host_to_device", [True, False])
+def test_interior_copy_across_the_boundary_gpu(host_to_device):
+    """The pitched 3D interior copy moves exactly the interior, in both directions."""
+    import cupy as cp
+
+    sdfg, _ = _interior_copy_sdfg(host_to_device)
+    sdfg.expand_library_nodes()
+    exe = _compile_no_copynd(sdfg)
+    full = np.arange(9 * 9 * 9, dtype=np.float64).reshape(9, 9, 9)
+    if host_to_device:
+        D = cp.zeros((7, 7, 7), dtype=cp.float64)
+        exe(H=full, D=D)
+        cp.testing.assert_array_equal(D, cp.asarray(full[1:8, 1:8, 1:8]))
+    else:
+        H = np.zeros((9, 9, 9), dtype=np.float64)
+        exe(H=H, D=cp.asarray(full[1:8, 1:8, 1:8]))
+        expected = np.zeros((9, 9, 9))
+        expected[1:8, 1:8, 1:8] = full[1:8, 1:8, 1:8]
+        np.testing.assert_array_equal(H, expected)
+
+
+def _mirror_interior_sdfg(read_halo: bool) -> tuple[dace.SDFG, CopyLibraryNode]:
+    """Copy the interior of a host ``(N, N, N)`` array into the interior of a device transient of the same shape, then
+    back out to a host ``(N-2, N-2, N-2)`` array -- or, with ``read_halo``, the whole transient to a host ``(N, N, N)``."""
+    n = 12
+    sdfg = dace.SDFG(f"copy_mirror_{int(read_halo)}")
+    sdfg.add_array("H", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("D", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    out_shape = (n, n, n) if read_halo else (n - 2, n - 2, n - 2)
+    sdfg.add_array("O", out_shape, dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    first = sdfg.add_state("to_device", is_start_block=True)
+    node = CopyLibraryNode(name="cp_in")
+    first.add_node(node)
+    interior = f"1:{n - 1}, 1:{n - 1}, 1:{n - 1}"
+    first.add_edge(first.add_read("H"), None, node, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"H[{interior}]"))
+    first.add_edge(
+        node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_write("D"), None, dace.Memlet(f"D[{interior}]")
+    )
+    second = sdfg.add_state_after(first, "to_host")
+    back = CopyLibraryNode(name="cp_out")
+    second.add_node(back)
+    read = f"0:{n}, 0:{n}, 0:{n}" if read_halo else interior
+    second.add_edge(second.add_read("D"), None, back, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"D[{read}]"))
+    second.add_edge(
+        back, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, second.add_write("O"), None, sdfg.make_array_memlet("O")
+    )
+    return sdfg, node
+
+
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_interior_copy_with_unread_halo_is_pinned_to_one_flat_copy(backend):
+    """The interior of a host array copied into the same slots of a device transient whose halo nothing reads may move
+    as one ``gpuMemcpyAsync`` of the whole span: the halo it overwrites is never observed. The selector never picks
+    that on its own; canonicalization proves it and pins it. A transient whose halo is read is not pinned."""
+    from dace.transformation.passes.canonicalize.finalize import pin_span_copies
+
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
+        sdfg, node = _mirror_interior_sdfg(read_halo=False)
+        assert select_copy_implementation(node, sdfg.start_state) == "MemcpyCUDANDStrided"
+        assert pin_span_copies(sdfg) == 1 and node.implementation == "MemcpyCUDAHull"
+        read, read_node = _mirror_interior_sdfg(read_halo=True)
+        assert pin_span_copies(read) == 0 and read_node.implementation in (None, "Auto")
+
+
+def test_implicit_interior_copy_with_unread_halo_is_lifted_and_pinned():
+    """A strided host-to-device copy edge is lifted to a copy node and pinned; a contiguous one stays an edge."""
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode as Copy
+    from dace.transformation.passes.canonicalize.finalize import pin_span_copies
+
+    n = 12
+    sdfg = dace.SDFG("copy_mirror_implicit")
+    sdfg.add_array("H", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("D", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    sdfg.add_array("E", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+    interior = f"1:{n - 1}, 1:{n - 1}, 1:{n - 1}"
+    h = state.add_read("H")
+    state.add_nedge(h, state.add_write("D"), dace.Memlet(f"H[{interior}] -> [{interior}]"))
+    state.add_nedge(h, state.add_write("E"), dace.Memlet("H[0:12, 0:12, 0:12]"))
+    assert pin_span_copies(sdfg) == 1
+    copies = [n for n in state.nodes() if isinstance(n, Copy)]
+    assert [c.implementation for c in copies] == ["MemcpyCUDAHull"]
+    assert any(isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == "E" and e.src is h for e in state.edges())
+
+
+def test_interior_copy_with_halo_and_without_facts_is_not_flat():
+    """A symbolic extent whose span cannot be bounded by twice the region keeps the pitched copy."""
+    sdfg = dace.SDFG("copy_mirror_symbolic")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("H", ("N", "N", "N"), dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("D", ("N", "N", "N"), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+    node = CopyLibraryNode(name="cp_in")
+    state.add_node(node)
+    state.add_edge(
+        state.add_read("H"), None, node, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("H[1:N-1, 1:N-1, 1:N-1]")
+    )
+    state.add_edge(
+        node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("D"), None, dace.Memlet("D[1:N-1, 1:N-1, 1:N-1]")
+    )
+    assert select_copy_implementation(node, state) == "MemcpyCUDANDStrided"
+
+
+def _interior_4d_sdfg(host_to_device: bool) -> tuple[dace.SDFG, CopyLibraryNode]:
+    """Copy the interior of a host ``(8, 8, 8, 8)`` array to/from a device ``(6, 6, 6, 6)`` one: six pitched 3D copies."""
+    host = _ArraySpec(
+        shape=(8, 8, 8, 8), storage=dace.dtypes.StorageType.CPU_Heap, subset="1:7, 1:7, 1:7, 1:7", name="H"
+    )
+    device = _ArraySpec(shape=(6, 6, 6, 6), storage=dace.dtypes.StorageType.GPU_Global, name="D")
+    src, dst = (host, device) if host_to_device else (device, host)
+    return _make_copy_sdfg(src, dst, name=f"copy_interior4d_{int(host_to_device)}", libnode_name="cp_interior4d")
+
+
+def test_interior_4d_copy_across_the_boundary_is_staged():
+    """A 4D interior needs more than five pitched copies: host to device it moves in one ``gpuMemcpyAsync`` through a
+    buffer allocated once for the program and is filtered on the GPU. Device to host the filter would run on the host,
+    so the known loop of pitched copies stays."""
+    d2h, d2h_node = _interior_4d_sdfg(host_to_device=False)
+    assert select_copy_implementation(d2h_node, d2h.start_state) == "MemcpyCUDANDStrided"
+    sdfg, node = _interior_4d_sdfg(host_to_device=True)
+    assert select_copy_implementation(node, sdfg.start_state) == "MemcpyCUDAStaged"
+    sdfg.expand_library_nodes()
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    transfers = [c for c in codes if "MemcpyAsync(" in c]
+    assert len(transfers) == 1 and "Memcpy3D" not in transfers[0]
+    buffers = [d for _, name, d in sdfg.arrays_recursive() if name.startswith("__cpy_stage")]
+    assert buffers and all(d.lifetime == dace.dtypes.AllocationLifetime.Persistent for d in buffers)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("read_halo", [False, True])
+def test_interior_copy_with_unread_halo_gpu(read_halo):
+    """The pinned flat span copy moves the interior into its own slots; what is read of the transient is right."""
+    from dace.transformation.passes.canonicalize.finalize import pin_span_copies
+
+    sdfg, _ = _mirror_interior_sdfg(read_halo)
+    pin_span_copies(sdfg)
+    sdfg.expand_library_nodes()
+    exe = _compile_no_copynd(sdfg)
+    full = np.arange(12**3, dtype=np.float64).reshape(12, 12, 12)
+    out = np.zeros((12, 12, 12) if read_halo else (10, 10, 10))
+    exe(H=full, O=out)
+    got = out[1:11, 1:11, 1:11] if read_halo else out
+    np.testing.assert_array_equal(got, full[1:11, 1:11, 1:11])
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("host_to_device", [True, False])
+def test_interior_4d_copy_across_the_boundary_gpu(host_to_device):
+    """The 4D interior copy (staged to the device, pitched back) moves exactly the interior, in both directions."""
+    import cupy as cp
+
+    sdfg, _ = _interior_4d_sdfg(host_to_device)
+    sdfg.expand_library_nodes()
+    exe = _compile_no_copynd(sdfg)
+    full = np.arange(8**4, dtype=np.float64).reshape(8, 8, 8, 8)
+    if host_to_device:
+        D = cp.zeros((6, 6, 6, 6), dtype=cp.float64)
+        exe(H=full, D=D)
+        cp.testing.assert_array_equal(D, cp.asarray(full[1:7, 1:7, 1:7, 1:7]))
+    else:
+        H = np.zeros((8, 8, 8, 8), dtype=np.float64)
+        exe(H=H, D=cp.asarray(full[1:7, 1:7, 1:7, 1:7]))
+        expected = np.zeros((8, 8, 8, 8))
+        expected[1:7, 1:7, 1:7, 1:7] = full[1:7, 1:7, 1:7, 1:7]
+        np.testing.assert_array_equal(H, expected)
+
+
+@pytest.mark.gpu
+def test_symbolic_interior_copy_round_trip_gpu():
+    """A symbolic 4D interior is a loop of pitched copies whose count is known only at run time: both directions are
+    staged, through buffers sized by ``__dace_init`` from ``N``."""
+    sdfg = dace.SDFG("copy_symbolic_round_trip")
+    sdfg.add_symbol("N", dace.int64)
+    shape = ("N", "N", "N", "N")
+    sdfg.add_array("H", shape, dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("D", shape, dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    sdfg.add_array("O", shape, dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    interior = "1:N-1, 1:N-1, 1:N-1, 1:N-1"
+    copies = []
+    for label, src, dst in (("to_device", "H", "D"), ("to_host", "D", "O")):
+        state = sdfg.add_state(label, is_start_block=not copies)
+        if copies:
+            sdfg.add_edge(copies[-1][0], state, dace.InterstateEdge())
+        node = CopyLibraryNode(name=f"cp_{label}")
+        state.add_node(node)
+        state.add_edge(
+            state.add_read(src), None, node, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"{src}[{interior}]")
+        )
+        state.add_edge(
+            node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write(dst), None, dace.Memlet(f"{dst}[{interior}]")
+        )
+        copies.append((state, node))
+    assert [select_copy_implementation(n, st) for st, n in copies] == ["MemcpyCUDAStaged"] * 2
+    sdfg.expand_library_nodes()
+    exe = _compile_no_copynd(sdfg)
+    n = 7
+    full = np.arange(n**4, dtype=np.float64).reshape(n, n, n, n).copy()
+    out = np.zeros((n, n, n, n))
+    exe(H=full, O=out, N=n)
+    expected = np.zeros((n, n, n, n))
+    expected[1:-1, 1:-1, 1:-1, 1:-1] = full[1:-1, 1:-1, 1:-1, 1:-1]
+    np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.gpu
+def test_pooled_interior_copy_across_the_boundary_gpu():
+    """A pooled device transient (staged on HIP) receives exactly the interior."""
+    sdfg = dace.SDFG("copy_pooled_interior")
+    sdfg.add_array("H", (9, 9, 9), dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    sdfg.add_array("D", (9, 9, 9), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    sdfg.arrays["D"].pool = True
+    sdfg.add_array("O", (9, 9, 9), dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
+    first = sdfg.add_state("to_device", is_start_block=True)
+    zero = CopyLibraryNode(name="cp_zero")
+    first.add_node(zero)
+    first.add_edge(first.add_read("O"), None, zero, CopyLibraryNode.INPUT_CONNECTOR_NAME, sdfg.make_array_memlet("O"))
+    d = first.add_access("D")
+    first.add_edge(zero, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, d, None, sdfg.make_array_memlet("D"))
+    node = CopyLibraryNode(name="cp_in")
+    first.add_node(node)
+    first.add_edge(
+        first.add_read("H"), None, node, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("H[1:8, 1:8, 1:8]")
+    )
+    d2 = first.add_write("D")
+    first.add_edge(node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, d2, None, dace.Memlet("D[1:8, 1:8, 1:8]"))
+    first.add_edge(d, None, node, None, dace.Memlet())
+    second = sdfg.add_state_after(first, "to_host")
+    back = CopyLibraryNode(name="cp_out")
+    second.add_node(back)
+    second.add_edge(second.add_read("D"), None, back, CopyLibraryNode.INPUT_CONNECTOR_NAME, sdfg.make_array_memlet("D"))
+    second.add_edge(
+        back, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, second.add_write("O"), None, sdfg.make_array_memlet("O")
+    )
+    sdfg.expand_library_nodes()
+    exe = _compile_no_copynd(sdfg)
+    full = np.arange(9**3, dtype=np.float64).reshape(9, 9, 9)
+    out = np.zeros((9, 9, 9))
+    exe(H=full, O=out)
+    expected = np.zeros((9, 9, 9))
+    expected[1:8, 1:8, 1:8] = full[1:8, 1:8, 1:8]
+    np.testing.assert_array_equal(out, expected)
+
+
 def test_copy_fortran_packed_cpu_default_pure():
     """A same-side CPU copy of a Fortran-packed array expands and produces correct output."""
     shape = (4, 5, 6)
@@ -680,6 +984,56 @@ def test_copy_fortran_packed_gpu_falls_back_to_pure():
     cp.testing.assert_array_equal(B, A)
 
 
+def c_to_fortran_device_copy():
+    """A GPU_Global C-packed (6, 7) array copied into a GPU_Global Fortran-packed one."""
+    return _make_copy_sdfg(
+        _ArraySpec(shape=(6, 7), storage=dace.dtypes.StorageType.GPU_Global, strides=(7, 1)),
+        _ArraySpec(shape=(6, 7), storage=dace.dtypes.StorageType.GPU_Global, strides=(1, 6)),
+        name="copy_c_to_fortran_device",
+    )
+
+
+def test_a_device_copy_between_c_and_fortran_layouts_is_not_one_flat_memcpy():
+    """Both ends are contiguous, so the copy kept the one-call ``MemcpyCUDA1D``, which moves the
+    bytes in order and so transposes the elements. npbench vexx_k reshapes with ``order='F'``, and
+    every DFT of its GPU canonicalize column read transposed data."""
+    sdfg, libnode = c_to_fortran_device_copy()
+    sdfg.validate()
+    assert select_copy_implementation(libnode, sdfg.start_state) == "MappedTasklet"
+
+
+@pytest.mark.gpu
+def test_a_device_copy_between_c_and_fortran_layouts_keeps_the_values():
+    import cupy as cp
+
+    sdfg, _ = c_to_fortran_device_copy()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    host = np.arange(42, dtype=np.float64).reshape(6, 7)
+    src = cp.asarray(host)
+    dst = cp.asfortranarray(cp.zeros((6, 7), dtype=cp.float64))
+    sdfg(src=src, dst=dst)
+    cp.testing.assert_array_equal(dst, src)
+
+
+def test_a_sequential_device_copy_keeps_an_implementation_it_has():
+    """``set_fast_implementations`` stamped ``pure`` on every sequential node for the GPU, and a Copy
+    has no ``pure`` expansion: the fp64 x 2 vectorized CloudSC SDFG then failed to expand with
+    ``KeyError: Unknown implementation for node CopyLibraryNode: pure``."""
+    from dace.transformation.auto.auto_optimize import set_fast_implementations
+
+    sdfg, libnode = _make_copy_sdfg(
+        _ArraySpec(shape=(8,), storage=dace.dtypes.StorageType.GPU_Global),
+        _ArraySpec(shape=(8,), storage=dace.dtypes.StorageType.GPU_Global),
+        name="sequential_device_copy",
+    )
+    libnode.schedule = dace.dtypes.ScheduleType.Sequential
+    set_fast_implementations(sdfg, dace.dtypes.DeviceType.GPU)
+    # None is the default: the node's own selector.
+    assert libnode.implementation is None or libnode.implementation in libnode.implementations, libnode.implementation
+    sdfg.expand_library_nodes()
+
+
 @pytest.mark.gpu
 def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     """A cross-CPU/GPU copy of a Fortran-packed array expands and produces correct output."""
@@ -707,8 +1061,9 @@ def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     cp.testing.assert_array_equal(dev, cp.asarray(host))
 
 
-def test_copy_no_common_stride1_axis_raises():
-    """Cross-CPU/GPU copy with no shared stride-1 axis is rejected."""
+def test_copy_no_common_stride1_axis_is_staged():
+    """A cross-CPU/GPU copy with no shared stride-1 axis has no pitched or per-row form; it is packed on the host,
+    moved in one ``gpuMemcpyAsync`` and unpacked on the device."""
     # src C-packed (stride-1 innermost), dst Fortran-packed (stride-1
     # outermost): after the partial slice the two have no shared stride-1 axis.
     shape = (4, 5, 6)
@@ -732,8 +1087,10 @@ def test_copy_no_common_stride1_axis_raises():
         libnode_name="cp_no_common",
     )
     sdfg.validate()
-    with pytest.raises(ValueError, match="cross-CPU/GPU"):
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert len([c for c in codes if "MemcpyAsync(" in c]) == 1
 
 
 def test_copy_node_storage_from_edges():
@@ -760,6 +1117,34 @@ def test_copy_node_storage_defaults_when_unattached():
     assert node.dst_storage(state) == dace.dtypes.StorageType.Default
 
 
+def test_is_gpu_copy_libnode_detects_gpu_storage():
+    """A copy touching GPU memory is a GPU stream consumer. Regression: the helper
+    resolves src/dst storage live via ``src_storage(state)`` / ``dst_storage(state)``;
+    it must not pass a stale extra ``sdfg`` argument (which raised ``TypeError`` and
+    broke experimental GPU code generation)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.GPU_Global, name="B"),
+        name="gpu_copy_detect",
+        libnode_name="gpu_copy",
+    )
+    state = sdfg.start_state
+    assert is_gpu_copy_or_fill_libnode(node, state.sdfg, state) is True
+
+
+def test_is_gpu_copy_libnode_false_for_cpu_only():
+    """A purely CPU<->CPU copy is not a GPU stream consumer (exercises both the
+    src and dst storage resolution branches)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, name="B"),
+        name="cpu_copy_detect",
+        libnode_name="cpu_copy",
+    )
+    state = sdfg.start_state
+    assert is_gpu_copy_or_fill_libnode(node, state.sdfg, state) is False
+
+
 def test_copy_cross_storage_validation_rejects_without_flag():
     """The ``MemcpyCPU`` expansion rejects a CPU<->GPU storage mismatch at expansion time."""
     sdfg, _ = _make_copy_sdfg(
@@ -773,16 +1158,31 @@ def test_copy_cross_storage_validation_rejects_without_flag():
         sdfg.expand_library_nodes()
 
 
-def test_copy_dtype_mismatch_rejected():
-    """CopyLibraryNode must reject mismatched dtypes."""
+def test_copy_across_dtypes_casts_rather_than_memcpying():
+    """A copy that changes dtype is carried as a CAST, not refused and not memcpy'd.
+
+    No memcpy variant can convert, so the selector has to route this to a tasklet form and the
+    tasklet has to spell the conversion. Refusing it instead left the classic CPU generator
+    emitting a CopyND template instantiated on one element type and handed a pointer of the other,
+    which does not compile (npbench adi).
+    """
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float32, name="A"),
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="B"),
         name="dtype_mismatch",
-        libnode_name="cp_bad",
+        libnode_name="cp_cast",
     )
-    with pytest.raises(ValueError, match="data types must match"):
-        sdfg.expand_library_nodes()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    casts = [
+        n.code.as_string
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
+        if isinstance(n, dace.sdfg.nodes.Tasklet)
+    ]
+    assert casts, "the converting copy left no tasklet to carry the cast"
+    assert any("dace.float64(" in c for c in casts), casts
 
 
 def test_cpu_memcpy_rejects_non_contiguous_subset():
@@ -920,6 +1320,29 @@ def test_copy_padded_multirow_cross_storage_uses_pitched():
         assert select_copy_implementation(node, state) == "MemcpyCUDA2D"
 
 
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+def test_pitched_copy_out_of_a_level_slab(backend):
+    """A device-side copy of one level out of ``(5, L, N)`` is a checked pitched copy on CUDA and a kernel on HIP.
+
+    HIP refuses a pitched copy out of stream-ordered (pooled) memory whose rows end exactly at the pitch, as
+    the last level's do, with "invalid argument"; the unchecked call let the copy drop silently.
+    """
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[5, 7, 32], storage=dace.dtypes.StorageType.GPU_Global, subset="0:5, 6, 0:32", name="A"),
+        _ArraySpec(shape=[5, 32], storage=dace.dtypes.StorageType.GPU_Global, name="B"),
+        name="copy_level_slab",
+        libnode_name="cp_level",
+    )
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
+        impl = select_copy_implementation(node, sdfg.start_state)
+        if backend == "hip":
+            assert impl == "MappedTasklet"
+            return
+        assert impl == "MemcpyCUDA2D"
+        tasklet = type(node).implementations[impl].expansion(node, sdfg.start_state, sdfg)
+    assert tasklet.code.as_string.startswith("DACE_GPU_CHECK(cudaMemcpy2DAsync(")
+
+
 @pytest.mark.gpu
 def test_copy_padded_unit_dim_cross_storage_gpu():
     """Cross CPU->GPU copy of a padded (1, N) array expands to a pitched copy and is numerically exact."""
@@ -1037,26 +1460,48 @@ def test_direct_assignment_rejects_cross_boundary():
         sdfg.expand_library_nodes()
 
 
-def test_shared_memory_copy_global_to_shared_is_collective():
-    """Global -> Shared collective copy emits a CPP tasklet with __syncthreads() and no GPU_ThreadBlock map."""
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, name="G_in"),
-        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, name="S_out"),
-        implementation="SharedMemoryCollective",
-        name="shmcpy_collective",
-        libnode_name="shmcpy",
+def _global_to_shared_in_kernel(g_subset, s_subset, *, g_shape, s_shape, name):
+    """Global -> Shared ``CopyLibraryNode`` inside a ``GPU_Device`` map.
+
+    The collective needs a thread block to split across, so it only has a lowering in device-level
+    code; the same SDFG without the kernel map is refused at expansion.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("G_in", g_shape, dace.float64, dace.dtypes.StorageType.GPU_Global, transient=True)
+    sdfg.add_array("S_out", s_shape, dace.float64, dace.dtypes.StorageType.GPU_Shared, transient=True)
+    state = sdfg.add_state("main")
+    me, mx = state.add_map("kernel", dict(_k="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    libnode = CopyLibraryNode(name="shmcpy")
+    libnode.implementation = "SharedMemoryCollective"
+    state.add_node(libnode)
+    state.add_memlet_path(
+        state.add_access("G_in"),
+        me,
+        libnode,
+        dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet(f"G_in[{g_subset}]"),
     )
+    s_acc = state.add_access("S_out")
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, s_acc, None, dace.Memlet(f"S_out[{s_subset}]"))
+    state.add_memlet_path(s_acc, mx, memlet=dace.Memlet())
+    return sdfg
+
+
+def test_shared_memory_copy_global_to_shared_is_collective():
+    """Global -> Shared lowers to a block-collective runtime call with the barrier on, and no GPU_ThreadBlock map.
+
+    The barrier is the helper's trailing ``__syncthreads()``, requested by the ``false`` ASYNC
+    template argument rather than spelled in the tasklet.
+    """
+    sdfg = _global_to_shared_in_kernel("0:64", "0:64", g_shape=[64], s_shape=[64], name="shmcpy_collective")
     sdfg.expand_library_nodes()
 
-    found_syncthreads = False
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.sdfg.nodes.Tasklet):
-            if n.language == dace.Language.CPP and "__syncthreads" in n.code.as_string:
-                found_syncthreads = True
-                break
-    assert found_syncthreads, (
-        "SharedMemoryCopy (Global->Shared) should generate a CPP tasklet containing __syncthreads()."
-    )
+    bodies = [
+        n.code.as_string
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.CPP
+    ]
+    assert any("dace::GlobalToShared1D<" in b and ", false>" in b for b in bodies), bodies
 
     # No GPU_ThreadBlock map: the collective tasklet is itself the block-level op.
     for n, _ in sdfg.all_nodes_recursive():
@@ -1064,6 +1509,19 @@ def test_shared_memory_copy_global_to_shared_is_collective():
             assert n.schedule != dace.dtypes.ScheduleType.GPU_ThreadBlock, (
                 "SharedMemoryCopy (Global->Shared) should not generate a GPU_ThreadBlock map."
             )
+
+
+def test_shared_memory_collective_outside_a_kernel_is_refused():
+    """Without an enclosing kernel there is no thread block to split across, so refuse by name."""
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, name="G_in"),
+        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, name="S_out"),
+        implementation="SharedMemoryCollective",
+        name="shmcpy_no_kernel",
+        libnode_name="shmcpy",
+    )
+    with pytest.raises(Exception, match="not in device-level code"):
+        sdfg.expand_library_nodes()
 
 
 def _libnode_in_tblock_scope(src_storage, dst_storage, src_subset, dst_subset, src_shape=None, dst_shape=None):
@@ -1181,21 +1639,22 @@ def test_auto_dispatch_global_shared_inside_tblock_single_element_routes_to_task
     assert select_copy_implementation(node, state) == "Tasklet"
 
 
-def test_shared_memory_collective_single_element_emits_syncthreads():
-    """Single-element collective Global -> Shared must emit ``__syncthreads()`` (the barrier is volume-independent)."""
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, subset="5", name="G_in"),
-        _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, subset="3", name="S_out"),
-        name="auto_global_shm_single_e2e",
-        libnode_name="cp_global_shm_single_e2e",
-    )
+def test_shared_memory_collective_single_element_still_synchronizes():
+    """A single-element collective Global -> Shared still carries the barrier (it is volume-independent).
+
+    One element collapses to rank 0; the lowering hands it the degenerate 1x1x1 region rather than
+    an empty loop nest, and still asks the helper for its trailing ``__syncthreads()``.
+    """
+    sdfg = _global_to_shared_in_kernel("5", "3", g_shape=[64], s_shape=[8], name="auto_global_shm_single_e2e")
     sdfg.expand_library_nodes()
-    assert any(
-        isinstance(n, dace.sdfg.nodes.Tasklet)
-        and n.language == dace.Language.CPP
-        and "__syncthreads" in n.code.as_string
+    bodies = [
+        n.code.as_string
         for n, _ in sdfg.all_nodes_recursive()
-    ), "Single-element collective Global->Shared must still emit __syncthreads()."
+        if isinstance(n, dace.sdfg.nodes.Tasklet) and n.language == dace.Language.CPP
+    ]
+    assert any(
+        "dace::BlockCollective3D<" in b and ", false>::Copy" in b and b.rstrip().endswith("1, 1, 1);") for b in bodies
+    ), bodies
 
 
 _SINGLE_ELT_STORAGES = [
@@ -1224,6 +1683,19 @@ def test_auto_dispatch_single_element_never_mapped_tasklet(src_storage, dst_stor
         f"Single-element {src_storage.name} -> {dst_storage.name} routed to MappedTasklet; "
         "single-element copies must use Tasklet / MemcpyCUDA1D / SharedMemoryCollective."
     )
+
+
+# Auto-dispatch unit tests for Shared-involved copies. One exact-impl
+# assertion per unique routing rule (symmetric directions share the rule);
+# end-to-end correctness lives in the ``test_copy_*_roundtrip`` tests.
+# The "no single-element -> MappedTasklet" invariant is exhaustively
+# covered by ``test_auto_dispatch_single_element_never_mapped_tasklet``.
+
+# Auto-dispatch unit tests for Shared-involved copies. One exact-impl
+# assertion per unique routing rule (symmetric directions share the rule);
+# end-to-end correctness lives in the ``test_copy_*_roundtrip`` tests.
+# The "no single-element -> MappedTasklet" invariant is exhaustively
+# covered by ``test_auto_dispatch_single_element_never_mapped_tasklet``.
 
 
 def test_shared_memory_copy_rejects_no_shared():
@@ -1522,25 +1994,8 @@ def test_copy_single_element_d2h():
 # correct output, the test fails and should be deleted (the advantage is gone).
 
 
-def _legacy_fails(sdfg_leg: dace.SDFG, expected: np.ndarray, run) -> bool:
-    """``True`` if compiling/running the legacy SDFG raises OR produces output diverging from ``expected``.
-
-    :param sdfg_leg: SDFG with libnodes already replaced by direct edges.
-    :param expected: NumPy ground truth.
-    :param run: a callable ``run(exe) -> np.ndarray`` that runs the compiled SDFG and returns the dst array.
-    """
-    # ``compiler.cpu.explicit_copy`` defaults to on, which lifts this very direct edge to a
-    # CopyLibraryNode -- comparing against it would compare the libnode path with itself.
-    try:
-        with dace.config.set_temporary("compiler", "cpu", "explicit_copy", value=False):
-            exe = sdfg_leg.compile()
-        return not np.array_equal(run(exe), expected)
-    except Exception:
-        return True
-
-
-def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
-    """Pin: legacy direct-edge miscompiles a 4D->2D Fortran-packed reshape."""
+def test_legacy_matches_libnode_on_rank_mismatch_fortran_collapse():
+    """Legacy direct edge and the libnode agree on a 4D->2D Fortran-packed reshape."""
     src = _ArraySpec(
         shape=(2, 3, 4, 5), storage=dace.dtypes.StorageType.CPU_Heap, strides=(1, 2, 6, 24), total_size=120
     )
@@ -1572,9 +2027,9 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
         exe(src=A, dst=out)
         return out
 
-    assert _legacy_fails(sdfg_leg, expected, run), (
-        "Legacy direct-edge no longer fails on 4D->2D Fortran reshape; remove this test, the libnode advantage is gone."
-    )
+    # Was a pin on the legacy direct edge MISCOMPILING this reshape. Legacy now agrees with the
+    # libnode, so the case is kept as a positive test guarding the fix rather than deleted with it.
+    np.testing.assert_array_equal(run(sdfg_leg.compile()), expected)
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
@@ -1631,12 +2086,14 @@ def test_register_location_detection():
         f"Single-element in-kernel copy should expand to a direct Memcpy (cross-boundary), "
         f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s)."
     )
+    # ``cuda``/``hip``: the expansion spells the backend it was configured for, so ask which.
+    memcpy_call = f"{get_gpu_backend()}Memcpy"
     assignments = [
         n
         for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and "cudaMemcpy" in n.code.as_string
+        if isinstance(n, dace.nodes.Tasklet) and memcpy_call in n.code.as_string
     ]
-    assert assignments, "Expected at least one ``cudaMemcpy`` Tasklet from the expansion."
+    assert assignments, f"Expected at least one ``{memcpy_call}`` Tasklet from the expansion."
 
 
 def test_cuda2d_pitch_params_branches():
@@ -1683,6 +2140,18 @@ def _cpu_copy_sdfg(extent, name):
 
 def _generated_code(sdfg):
     return "\n".join(obj.code for obj in sdfg.generate_code())
+
+
+def _device_code(sdfg):
+    """The GPU target's code object, whatever the backend calls its file.
+
+    The CUDA target emits ``.cu`` for CUDA and ``.cpp`` for HIP, so selecting on the language
+    would silently find nothing on a HIP-configured machine (``StopIteration``, not a failed
+    assertion). Select on the target that produced it instead.
+    """
+    from dace.codegen.targets.cuda import CUDACodeGen
+
+    return next(obj.clean_code for obj in sdfg.generate_code() if obj.target is CUDACodeGen)
 
 
 def test_copy_below_threshold_emits_memcpy():
@@ -1845,9 +2314,14 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     state = sdfg.add_state("s0")
     state.add_nedge(state.add_read("s"), state.add_write("gs"), dace.Memlet("s"))
     state.add_nedge(state.add_read("gs"), state.add_write("out"), dace.Memlet("gs"))
-    code = _generated_code(sdfg)
-    assert "MemcpyAsync(_cpy_out, _cpy_in" in code
-    assert "_cpy_in = &s;" in code, code
+    # Legacy generator: the readable one inlines tasklet connectors, so the input connector the
+    # address binds to is spelled away. The address-taking itself is generator-independent.
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = _generated_code(sdfg)
+    src = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    dst = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
+    assert f"MemcpyAsync({dst}, {src}" in code
+    assert f"{src} = &s;" in code, code
 
 
 def test_opaque_handle_endpoint_is_not_addressed():
@@ -1864,8 +2338,13 @@ def test_opaque_handle_endpoint_is_not_addressed():
     state.add_edge(state.add_access("h"), None, tasklet, "_h", dace.memlet.Memlet("h"))
     state.add_edge(tasklet, "_o", state.add_write("out"), None, dace.memlet.Memlet("out[0]"))
 
-    code = _generated_code(sdfg)
-    assert "MPI_Comm _h = h;" in code, code
+    # Legacy generator, as in the sibling scalar-endpoint test: the readable one inlines the
+    # connector, so there is no binding left to look at. The binding may carry ``__restrict__``
+    # (this branch de-duplicates the qualifier when registering the pointer), which is why the
+    # assertion is on the initializer rather than on an exact spelling.
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = _generated_code(sdfg)
+    assert "_h = h;" in code, code
     assert "&h" not in code, code
 
 
@@ -1878,7 +2357,12 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     state = sdfg.add_state("s0")
     state.add_nedge(state.add_read("A"), state.add_write("gA"), dace.Memlet("A[0:64]"))
     state.add_nedge(state.add_read("gA"), state.add_write("B"), dace.Memlet("gA[0:64]"))
-    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
+    # Legacy generator: the readable one inlines the copy nest, so the connectors this orders the
+    # stream declaration against are spelled away.
+    with (
+        dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1),
+        dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"),
+    ):
         code = _generated_code(sdfg)
     stream_decl = code.find("__dace_current_stream = ")
     memcpy_call = code.find("MemcpyAsync(_cpy_out, _cpy_in")
@@ -1903,13 +2387,29 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
 
     sdfg = gbar_prog.to_sdfg()
     sdfg.apply_gpu_transformations()
-    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
+    # ``a`` is updated by a host-scheduled tasklet between kernel launches (an ordinary, correct
+    # placement: ``OffloadToAccelerator`` no longer claims a scalar as device-written just because
+    # an ordering edge follows a kernel, see 4301f15e6). GPUPersistentKernel does not promote
+    # storage on its callers' behalf either; gpu_scalar_execution_context_test.py's own scalar
+    # tester sets its accumulator's storage before applying the transform. Every thread here
+    # recomputes the same ``a`` sequence redundantly, so Register (one copy per thread) is exact.
+    sdfg.arrays["a"].storage = dace.StorageType.Register
+    # The compute states, named rather than positional: the offloading places its transfers where
+    # the control flow wants them, not only at the start and the sink, and a persistent kernel that
+    # swallowed one would be a kernel doing its own host copy.
+    # Everything between the start and the sink. GPUPersistentKernel launches its subgraph FROM a
+    # block outside it, so the start block has to stay out: it is the only one with no predecessor
+    # to launch from, and a subgraph holding it leaves the transform with no entry state at all.
+    content_nodes = set(sdfg.nodes()) - {sdfg.start_block, sdfg.sink_nodes()[0]}
     transform = GPUPersistentKernel()
     transform.setup_match(SubgraphView(sdfg, content_nodes))
     transform.kernel_prefix = "stuff"
     transform.apply(sdfg)
 
-    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+    # Legacy CUDA target: ``GPU_Persistent`` (and with it the grid barrier this pins) is the
+    # legacy generator's scope; the experimental one registers no dispatcher for that schedule.
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="legacy"):
+        cuda = _device_code(sdfg)
     marker = "DACE_DFI void copy_"
     assert marker in cuda, cuda
     start = cuda.index(marker)
@@ -1949,7 +2449,8 @@ def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
     )
     sdfg.validate()
 
-    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="legacy"):
+        cuda = _device_code(sdfg)
     # One barrier per inner state: the transition between them is a sync point.
     assert cuda.count("__gbar.Sync();") >= 2, cuda
 
@@ -2096,5 +2597,525 @@ def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet()
     assert select_copy_implementation(libnode, sdfg.start_state) == "MemcpyCUDA1D"
 
 
+def _shared_stage_sdfg(g_shape, tile, offset, *, s_shape=None, o_shape=None, dtype=dace.float64, sync=True):
+    """Kernel staging ``G[offset : offset+tile]`` through a ``GPU_Shared`` transient into ``O``.
+
+    Both hops are ``CopyLibraryNode``s, so one SDFG exercises the Global -> Shared and the
+    Shared -> Global directions of the collective. The GPU arrays are transients fed from host
+    arrays, so a running test needs a GPU but not cupy.
+
+    :param g_shape: source array shape.
+    :param tile: per-dim copy extents.
+    :param offset: per-dim start of the source region (the edge-tile case uses a non-zero one).
+    :param s_shape: shared transient shape; defaults to ``tile`` (a larger one gives it a padded stride).
+    :param o_shape: output shape; defaults to ``tile`` (a larger one leaves sentinel cells to check).
+    :param sync: the libnodes' ``sync`` property.
+    :returns: ``(sdfg, load_node, store_node)``.
+    """
+    s_shape = list(s_shape or tile)
+    o_shape = list(o_shape or tile)
+    gpu, shared = dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared
+    sdfg = dace.SDFG(f"shared_stage_{len(tile)}d_{'x'.join(str(t) for t in tile)}")
+    sdfg.add_array("G_h", g_shape, dtype)
+    sdfg.add_array("O_h", o_shape, dtype)
+    sdfg.add_array("G", g_shape, dtype, gpu, transient=True)
+    sdfg.add_array("O", o_shape, dtype, gpu, transient=True)
+    sdfg.add_array("S", s_shape, dtype, shared, transient=True)
+    g_full = ", ".join(f"0:{s}" for s in g_shape)
+    o_full = ", ".join(f"0:{s}" for s in o_shape)
+
+    # The sentinel travels to the device too, so an overrun by the store side is visible on the way back.
+    h2d = sdfg.add_state("h2d", is_start_block=True)
+    h2d.add_nedge(h2d.add_access("G_h"), h2d.add_access("G"), dace.Memlet(data="G", subset=g_full, other_subset=g_full))
+    h2d.add_nedge(h2d.add_access("O_h"), h2d.add_access("O"), dace.Memlet(data="O", subset=o_full, other_subset=o_full))
+    state = sdfg.add_state_after(h2d, "main")
+    d2h = sdfg.add_state_after(state, "d2h")
+    d2h.add_nedge(
+        d2h.add_access("O"), d2h.add_access("O_h"), dace.Memlet(data="O_h", subset=o_full, other_subset=o_full)
+    )
+
+    # A one-iteration GPU_Device map guards its body down to thread 0, which would run the
+    # block collective single-threaded. Range = block size is the shape a kernel really has.
+    me, mx = state.add_map("kernel", dict(_k="0:128"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    me.map.gpu_block_size = [128, 1, 1]
+    g_acc, s_acc, o_acc = state.add_access("G"), state.add_access("S"), state.add_access("O")
+    g_sub = ", ".join(f"{o}:{o + t}" for o, t in zip(offset, tile))
+    t_sub = ", ".join(f"0:{t}" for t in tile)
+
+    load = CopyLibraryNode(name="load", sync=sync)
+    store = CopyLibraryNode(name="store", sync=sync)
+    state.add_node(load)
+    state.add_node(store)
+    state.add_memlet_path(
+        g_acc, me, load, dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"G[{g_sub}]")
+    )
+    state.add_edge(load, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, s_acc, None, dace.Memlet(f"S[{t_sub}]"))
+    state.add_edge(s_acc, None, store, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"S[{t_sub}]"))
+    state.add_memlet_path(
+        store, mx, o_acc, src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"O[{t_sub}]")
+    )
+    return sdfg, load, store
+
+
+def _collective_bodies(sdfg: dace.SDFG):
+    """CPP tasklet bodies produced by expanding ``sdfg``'s copy libnodes."""
+    sdfg.expand_library_nodes()
+    return [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+
+
+@pytest.mark.parametrize("tile,offset", [([32, 32], [0, 0]), ([37, 53], [3, 5]), ([8, 256], [1, 0])])
+def test_shared_collective_2d_uses_block_collective(tile, offset):
+    """A 2-D staging load lowers to ``dace::BlockCollective3D``, never to the per-thread ``dace::CopyND``."""
+    sdfg, _, _ = _shared_stage_sdfg([64, 320], tile, offset)
+    bodies = _collective_bodies(sdfg)
+    assert sum("dace::BlockCollective3D<" in b for b in bodies) == 2, bodies
+    assert not any("CopyND" in b for b in bodies), bodies
+
+
+def test_shared_collective_3d_uses_block_collective():
+    """Same for a 3-D region: rank 3 is the collective's ceiling, not its fallback."""
+    sdfg, _, _ = _shared_stage_sdfg([16, 24, 40], [8, 16, 32], [2, 3, 4])
+    bodies = _collective_bodies(sdfg)
+    assert sum("dace::BlockCollective3D<" in b for b in bodies) == 2, bodies
+    assert not any("CopyND" in b for b in bodies), bodies
+
+
+def test_shared_collective_sync_property_controls_the_barrier():
+    """``sync=False`` passes ASYNC=true, so a chain of staged copies can share one barrier."""
+    on, _, _ = _shared_stage_sdfg([64, 64], [32, 32], [0, 0], sync=True)
+    off, _, _ = _shared_stage_sdfg([64, 64], [32, 32], [0, 0], sync=False)
+    on_bodies = [b for b in _collective_bodies(on) if "BlockCollective3D" in b]
+    off_bodies = [b for b in _collective_bodies(off) if "BlockCollective3D" in b]
+    assert on_bodies and all(b.split(">::Copy")[0].endswith("false") for b in on_bodies), on_bodies
+    assert off_bodies and all(b.split(">::Copy")[0].endswith("true") for b in off_bodies), off_bodies
+
+
+def test_shared_collective_rank4_loops_over_rank3_collectives():
+    """Rank 4 after collapsing is a loop over its outermost axis of asynchronous rank-3 collectives,
+    with the node's one barrier after the loop."""
+    sdfg, _, _ = _shared_stage_sdfg([8, 8, 8, 8], [4, 4, 4, 4], [1, 1, 1, 1])
+    bodies = [b for b in _collective_bodies(sdfg) if "BlockCollective3D" in b]
+    assert len(bodies) == 2, bodies
+    for body in bodies:
+        assert body.startswith("for (int64_t __cpy_o0 = 0; __cpy_o0 < 4; ++__cpy_o0)"), body
+        assert ", true>::Copy(" in body and body.rstrip().endswith("__syncthreads();"), body
+
+
+def test_shared_collective_aligned_words_moves_contiguous_rows_in_words():
+    """``aligned_words`` on rows contiguous on both sides lowers to the word-moving collective: Load into
+    shared memory, Store out of it."""
+    sdfg, load, store = _shared_stage_sdfg([64, 320], [37, 53], [3, 5], dtype=dace.float16)
+    load.aligned_words = store.aligned_words = True
+    bodies = [b for b in _collective_bodies(sdfg) if "BlockCollective3DVec" in b]
+    assert sorted(b.split(">::")[1].split("(")[0] for b in bodies) == ["Load", "Store"], bodies
+
+
+def test_shared_collective_refuses_reshape():
+    """A rank-mismatched (reshape) copy has no one-to-one index mapping; refuse rather than guess."""
+    sdfg = dace.SDFG("shared_reshape")
+    sdfg.add_array("G", [4, 5], dace.float64, dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("S", [20], dace.float64, dace.dtypes.StorageType.GPU_Shared, transient=True)
+    sdfg.add_array("O", [20], dace.float64, dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state("main")
+    me, mx = state.add_map("kernel", dict(_k="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    # A padded source stride keeps the 2-D side from collapsing to rank 1.
+    sdfg.arrays["G"].strides = [8, 1]
+    sdfg.arrays["G"].total_size = 32
+    load = CopyLibraryNode(name="load")
+    state.add_node(load)
+    state.add_memlet_path(
+        state.add_access("G"),
+        me,
+        load,
+        dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet("G[0:4, 0:5]"),
+    )
+    s_acc = state.add_access("S")
+    state.add_edge(load, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, s_acc, None, dace.Memlet("S[0:20]"))
+    state.add_memlet_path(s_acc, mx, state.add_access("O"), memlet=dace.Memlet("O[0:20]"))
+    with pytest.raises(Exception, match="rank-mismatched"):
+        sdfg.expand_library_nodes()
+
+
+def test_shared_collective_refuses_dtype_conversion():
+    """The collective moves bytes; a converting copy belongs to MappedTasklet."""
+    sdfg, load, _ = _shared_stage_sdfg([64, 64], [32, 32], [0, 0])
+    sdfg.arrays["S"].dtype = dace.float32
+    load.implementation = "SharedMemoryCollective"
+    with pytest.raises(Exception, match="cannot convert"):
+        sdfg.expand_library_nodes()
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "g_shape,tile,offset",
+    [
+        ([320], [96], [7]),
+        ([64, 320], [32, 32], [0, 0]),
+        ([64, 320], [37, 53], [3, 5]),
+        ([64, 320], [8, 256], [1, 0]),
+        ([16, 24, 40], [8, 16, 32], [2, 3, 4]),
+    ],
+)
+def test_shared_collective_moves_exactly_the_right_elements(g_shape, tile, offset):
+    """The staged region matches the source slice exactly, and nothing outside the tile is written.
+
+    ``O`` is one element wider than the tile in every dimension and pre-filled with a sentinel, so a
+    collective that overruns a partial (edge) tile shows up as a clobbered sentinel rather than as a
+    value that happens to be right.
+    """
+    o_shape = [t + 1 for t in tile]
+    sdfg, _, _ = _shared_stage_sdfg(g_shape, tile, offset, o_shape=o_shape)
+    g = np.arange(int(np.prod(g_shape)), dtype=np.float64).reshape(g_shape) + 0.5
+    o = np.full(o_shape, -7.0, dtype=np.float64)
+    sdfg(G_h=g, O_h=o)
+
+    expected = g[tuple(slice(s, s + t) for s, t in zip(offset, tile))]
+    tile_view = o[tuple(slice(0, t) for t in tile)]
+    assert np.array_equal(tile_view, expected), (tile_view, expected)
+    # Every cell outside the tile must still hold the sentinel.
+    mask = np.ones(o_shape, dtype=bool)
+    mask[tuple(slice(0, t) for t in tile)] = False
+    assert np.all(o[mask] == -7.0)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("dtype", [dace.float16, dace.float32, dace.float64])
+@pytest.mark.parametrize(
+    "g_shape,tile,offset,aligned_words",
+    [
+        ([64, 320], [37, 53], [3, 5], True),
+        ([64, 320], [8, 256], [1, 0], True),
+        ([16, 24, 40], [8, 16, 3], [2, 3, 1], True),
+        ([6, 8, 8, 40], [3, 4, 4, 29], [1, 2, 1, 3], True),
+        ([6, 8, 8, 40], [3, 4, 4, 29], [1, 2, 1, 3], False),
+    ],
+)
+def test_shared_collective_words_and_rank4_move_exactly_the_right_elements(g_shape, tile, offset, aligned_words, dtype):
+    """Aligned 16-byte words (any element type, rows starting off a word boundary) and the rank-4 loop nest
+    stage exactly the source slice and write nothing outside the tile."""
+    o_shape = [t + 1 for t in tile]
+    sdfg, load, store = _shared_stage_sdfg(g_shape, tile, offset, o_shape=o_shape, dtype=dtype)
+    sdfg.name = f"{sdfg.name}_{dtype.to_string()}_{int(aligned_words)}_{len(g_shape)}"
+    load.aligned_words = store.aligned_words = aligned_words
+    npdtype = dtype.as_numpy_dtype()
+    g = (np.arange(int(np.prod(g_shape))) % 2003).astype(npdtype).reshape(g_shape)
+    o = np.full(o_shape, -7, dtype=npdtype)
+    sdfg(G_h=g, O_h=o)
+
+    expected = g[tuple(slice(s, s + t) for s, t in zip(offset, tile))]
+    assert np.array_equal(o[tuple(slice(0, t) for t in tile)], expected)
+    mask = np.ones(o_shape, dtype=bool)
+    mask[tuple(slice(0, t) for t in tile)] = False
+    assert np.all(o[mask] == -7)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("aligned_words", [True, False])
+def test_shared_collective_row_offsets_past_int32(aligned_words):
+    """Rows more than 2**31 elements apart (a tile of a 144-level x 16M-column field): the collectives' strides and
+    offsets are 64-bit, so the second row is read from where it is, not from a wrapped-around address."""
+    row = 2**31 + 64
+    sdfg, load, store = _shared_stage_sdfg([2, row], [2, 64], [0, 0], dtype=dace.uint8)
+    sdfg.name = f"shared_stage_past_int32_{int(aligned_words)}"
+    load.aligned_words = store.aligned_words = aligned_words
+    g = np.zeros((2, row), dtype=np.uint8)
+    g[:, :64] = np.arange(128, dtype=np.uint8).reshape(2, 64)
+    o = np.zeros((2, 64), dtype=np.uint8)
+    sdfg(G_h=g, O_h=o)
+    assert np.array_equal(o, g[:, :64])
+
+
+@pytest.mark.gpu
+def test_shared_collective_honors_a_padded_shared_stride():
+    """A shared destination wider than the tile (the bank-conflict padding a staging pass may want:
+    measured 32287 vs 3412 GB/s on a 64x64 fp64 column read) still lands in the right cells."""
+    tile = [32, 32]
+    sdfg, _, _ = _shared_stage_sdfg([64, 320], tile, [1, 3], s_shape=[32, 33], o_shape=[33, 33])
+    g = np.arange(64 * 320, dtype=np.float64).reshape(64, 320) + 0.5
+    o = np.full((33, 33), -7.0, dtype=np.float64)
+    sdfg(G_h=g, O_h=o)
+    assert np.array_equal(o[0:32, 0:32], g[1:33, 3:35])
+    assert np.all(o[32, :] == -7.0) and np.all(o[:, 32] == -7.0)
+
+
+def _tb_sibling_stage_sdfg(tile, tb_range):
+    """Staging kernel in its real shape: collective load, ``GPU_ThreadBlock`` compute, collective store.
+
+    The libnodes are SIBLINGS of the thread-block map, which is the case ``devicelevel_block_size``
+    cannot see -- it walks up the scope chain and finds only the device map.
+    """
+    gpu, shared = dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared
+    sdfg = dace.SDFG("tb_sibling_stage")
+    sdfg.add_array("G_h", [64, 320], dace.float64)
+    sdfg.add_array("O_h", tile, dace.float64)
+    sdfg.add_array("G", [64, 320], dace.float64, gpu, transient=True)
+    sdfg.add_array("O", tile, dace.float64, gpu, transient=True)
+    sdfg.add_array("S", tile, dace.float64, shared, transient=True)
+    sdfg.add_array("S2", tile, dace.float64, shared, transient=True)
+    g_full, t_sub = "0:64, 0:320", ", ".join(f"0:{t}" for t in tile)
+
+    h2d = sdfg.add_state("h2d", is_start_block=True)
+    h2d.add_nedge(h2d.add_access("G_h"), h2d.add_access("G"), dace.Memlet(data="G", subset=g_full, other_subset=g_full))
+    st = sdfg.add_state_after(h2d, "main")
+    d2h = sdfg.add_state_after(st, "d2h")
+    d2h.add_nedge(d2h.add_access("O"), d2h.add_access("O_h"), dace.Memlet(data="O_h", subset=t_sub, other_subset=t_sub))
+
+    me, mx = st.add_map("blocks", dict(bi="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    g, s, s2, o = st.add_access("G"), st.add_access("S"), st.add_access("S2"), st.add_access("O")
+    load, store = CopyLibraryNode(name="load"), CopyLibraryNode(name="store")
+    st.add_node(load)
+    st.add_node(store)
+    st.add_memlet_path(
+        g,
+        me,
+        load,
+        dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet(f"G[1:{1 + tile[0]}, 3:{3 + tile[1]}]"),
+    )
+    st.add_edge(load, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, s, None, dace.Memlet(f"S[{t_sub}]"))
+    tme, tmx = st.add_map("threads", tb_range, schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
+    tl = st.add_tasklet("scale", {"i_"}, {"o_"}, "o_ = i_ * 2.0")
+    params = list(tb_range.keys())
+    st.add_memlet_path(s, tme, tl, dst_conn="i_", memlet=dace.Memlet(f"S[{', '.join(params)}]"))
+    st.add_memlet_path(tl, tmx, s2, src_conn="o_", memlet=dace.Memlet(f"S2[{', '.join(params)}]"))
+    st.add_edge(s2, None, store, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"S2[{t_sub}]"))
+    st.add_memlet_path(store, mx, o, src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"O[{t_sub}]"))
+    return sdfg
+
+
+def test_shared_collective_block_dims_come_from_sibling_thread_block_maps():
+    """The collective is sized from the kernel's thread-block map, not ``default_block_size``.
+
+    A libnode next to the thread-block map is outside it, so the scope walk reports the config
+    default (128,1,1) while codegen launches 32x8; ``GetLinearTID<128,1,1>`` would then hand 224 of
+    the 256 threads a duplicate id and leave most rows of the tile unwritten.
+    """
+    sdfg = _tb_sibling_stage_sdfg([8, 32], dict(ti="0:8", tj="0:32"))
+    bodies = [b for b in _collective_bodies(sdfg) if "BlockCollective3D" in b]
+    assert len(bodies) == 2, bodies
+    # Reversed map extents, as codegen orders them: tj is threadIdx.x.
+    assert all("dace::BlockCollective3D<double, 32, 8, 1," in b for b in bodies), bodies
+
+
+def test_shared_collective_refuses_conflicting_thread_block_sizes():
+    """Codegen launches the over-approximated maximum of differing thread-block maps; refuse rather
+    than guess a geometry the linear thread id would be built from."""
+    sdfg = _tb_sibling_stage_sdfg([8, 32], dict(ti="0:8", tj="0:32"))
+    state = sdfg.state(1)
+    tb = next(
+        n
+        for n in state.nodes()
+        if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
+    )
+    scope = state.entry_node(tb)
+    scope.map.gpu_block_size = [64, 1, 1]
+    with pytest.raises(Exception, match="single thread-block size"):
+        sdfg.expand_library_nodes()
+
+
+@pytest.mark.gpu
+def test_shared_collective_in_a_thread_block_kernel_moves_the_whole_tile():
+    """End to end in the staging shape: every element of the tile makes the round trip."""
+    sdfg = _tb_sibling_stage_sdfg([8, 32], dict(ti="0:8", tj="0:32"))
+    g = np.arange(64 * 320, dtype=np.float64).reshape(64, 320) + 0.5
+    o = np.full((8, 32), -7.0, dtype=np.float64)
+    sdfg(G_h=g, O_h=o)
+    assert np.array_equal(o, g[1:9, 3:35] * 2.0)
+
+
+def _kernel_collective_body(src: _ArraySpec, dst: _ArraySpec, name: str) -> str:
+    """Emitted tasklet body for a ``SharedMemoryCollective`` copy placed inside a ``GPU_Device`` map."""
+    sdfg = dace.SDFG(name)
+    for arr_name, spec in (("A", src), ("B", dst)):
+        sdfg.add_array(
+            arr_name,
+            spec.shape,
+            dace.float64,
+            storage=spec.storage,
+            transient=True,
+            strides=[dace.symbolic.pystr_to_symbolic(s) for s in spec.strides],
+            total_size=spec.total_size,
+        )
+    state = sdfg.add_state("main")
+    me, mx = state.add_map("kernel", dict(_k="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    libnode = CopyLibraryNode(name="cp")
+    libnode.implementation = "SharedMemoryCollective"
+    state.add_node(libnode)
+    sub = ", ".join(f"0:{s}" for s in src.shape)
+    state.add_memlet_path(
+        state.add_access("A"),
+        me,
+        libnode,
+        dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet(f"A[{sub}]"),
+    )
+    b_acc = state.add_access("B")
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b_acc, None, dace.Memlet(f"B[{sub}]"))
+    state.add_memlet_path(b_acc, mx, memlet=dace.Memlet())
+    sdfg.expand_library_nodes()
+    return next(
+        n.code.as_string
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and "BlockCollective3D" in n.code.as_string
+    )
+
+
+def test_shared_collective_lane_axis_follows_the_global_side_both_directions():
+    """Lanes walk the stride-1 axis of whichever operand is GPU_Global, on loads AND on stores.
+
+    Shared memory is banked rather than line-based, so coalescing is decided entirely by the global
+    end: a load must read contiguously, a store must WRITE contiguously. Choosing the axis from the
+    source position instead of from the global operand costs a measured 6.3x (64x64 fp64) to 8.1x
+    (64x64 fp32) on a transposed store on MI300A.
+
+    The emitted signature is ``Copy(src, sz, sy, sx, dst, dz, dy, dx, zlen, ylen, xlen)``, so the
+    global side's ``x`` stride being 1 is the property under test.
+    """
+    gpu, shared = dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared
+    # Global is column-major, shared is row-major, so the two disagree about which axis is fastest.
+    global_f = dict(shape=[32, 32], strides=[1, 64], total_size=64 * 32)
+    shared_c = dict(shape=[32, 32], strides=[32, 1], total_size=32 * 32)
+
+    load = _kernel_collective_body(
+        _ArraySpec(storage=gpu, **global_f), _ArraySpec(storage=shared, **shared_c), "lane_axis_load"
+    )
+    # src is the global side: its x stride (4th argument) must be 1.
+    assert "Copy(_cpy_in, 0, 64, 1, _cpy_out, 0, 1, 32, 1, 32, 32)" in load, load
+
+    store = _kernel_collective_body(
+        _ArraySpec(storage=shared, **shared_c), _ArraySpec(storage=gpu, **global_f), "lane_axis_store"
+    )
+    # dst is the global side now: its x stride (8th argument) must be 1, and the shared side follows.
+    assert "Copy(_cpy_in, 0, 1, 32, _cpy_out, 0, 64, 1, 1, 32, 32)" in store, store
+
+
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_copy_pure_cpu()
+    test_copy_cpu_memcpy()
+    test_copy_fortran_packed_same_rank()
+    test_copy_fortran_packed_strided_slice()
+    test_copy_mixed_c_fortran_via_mapped_tasklet()
+    test_copy_rank_mismatch_mixed_layouts_raises()
+    test_copy_rank_mismatch_padded_src_raises()
+    test_copy_rank_mismatch_strided_src_subset()
+    test_copy_rank_mismatch_strided_dst_subset()
+    test_copy_same_subset_different_array_shapes()
+    test_copy_1d_slice_from_2d_source()
+    test_copy_transpose_pattern_rejected()
+    test_copy_4d_to_1d_flatten_c_packed()
+    test_copy_1d_to_4d_inflate_c_packed()
+    test_copy_3d_to_2d_collapse_first_two_dims()
+    test_copy_4d_to_2d_collapse_pair_dims_fortran()
+    test_copy_strided_step_2_cpu_same_rank()
+    test_copy_pure_host_to_device_rejected()
+    test_copy_pure_device_to_host_rejected()
+    test_copy_fortran_packed_cpu_default_pure()
+    test_copy_no_common_stride1_axis_is_staged()
+    test_copy_node_storage_from_edges()
+    test_copy_node_storage_defaults_when_unattached()
+    test_copy_cross_storage_validation_rejects_without_flag()
+    test_copy_dtype_mismatch_rejected()
+    test_cpu_memcpy_rejects_non_contiguous_subset()
+    test_strided_expansions_accept_non_contiguous()
+    test_copy_padded_unit_dim_same_storage_cpu()
+    test_copy_padded_unit_dim_cross_storage_selection()
+    test_copy_padded_multirow_cross_storage_uses_pitched()
+    test_pitched_copy_out_of_a_level_slab("cuda")
+    test_pitched_copy_out_of_a_level_slab("hip")
+    test_register_copy_expands_with_register_storage()
+    test_direct_assignment_cpu_same_storage()
+    test_direct_assignment_register_to_register()
+    test_direct_assignment_rejects_multi_element()
+    test_direct_assignment_rejects_cross_boundary()
+    test_shared_memory_copy_global_to_shared_is_collective()
+    test_auto_dispatch_multi_element_shared_register_routes_to_mapped_tasklet()
+    test_auto_dispatch_single_element_shared_register_routes_to_tasklet()
+    test_auto_dispatch_global_shared_outside_tblock_routes_to_collective()
+    test_auto_dispatch_single_element_global_shared_outside_tblock_still_collective()
+    test_auto_dispatch_shared_shared_outside_tblock_routes_to_collective()
+    test_auto_dispatch_global_shared_inside_tblock_routes_to_mapped_tasklet()
+    test_auto_dispatch_global_shared_inside_tblock_single_element_routes_to_tasklet()
+    test_shared_memory_collective_single_element_emits_syncthreads()
+    for dst_storage in _SINGLE_ELT_STORAGES:
+        for src_storage in _SINGLE_ELT_STORAGES:
+            test_auto_dispatch_single_element_never_mapped_tasklet(src_storage, dst_storage)
+    test_shared_memory_copy_rejects_no_shared()
+    test_shared_memory_copy_rejects_cpu()
+    test_shared_memory_copy_rejects_inside_tblock_map()
+    test_copy_pure_cpu_2d()
+    test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse()
+    test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet()
+    test_register_location_detection()
+    test_cuda2d_pitch_params_branches()
+    test_copy_below_threshold_emits_memcpy()
+    test_copy_at_threshold_emits_omp_parallel_for()
+    test_copy_symbolic_size_emits_omp_parallel_for()
+    test_collapse_expands_tiled_dimension()
+    test_copy_tiled_subset_rank_mismatch_numbers()
+    test_copy_symbolic_shapes_that_cannot_be_compared_are_not_refused()
+    test_copy_zero_element_expands_to_an_empty_map()
+    test_copy_between_two_cpu_storages_is_a_memcpy()
+    test_copy_struct_member_name_is_a_valid_identifier()
+    test_single_element_in_kernel_cross_boundary_is_a_tasklet()
+    test_host_scalar_endpoint_memcpy_takes_its_address()
+    test_opaque_handle_endpoint_is_not_addressed()
+    test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope()
+    test_in_kernel_copy_does_not_emit_a_grid_barrier()
+    test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers()
+    test_shared_to_global_uses_the_block_collective_helper()
+    test_symbolic_extent_expansions_keep_their_ranges_symbolic()
+    test_in_kernel_cross_boundary_copy_is_refused_by_selection()
+    test_in_kernel_device_to_device_copy_still_maps()
+    test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet()
+    test_copy_pure_gpu()
+    test_copy_cuda_d2d()
+    test_copy_cuda_1d_single_element()
+    test_copy_cuda_host_to_device()
+    test_copy_cuda_device_to_host()
+    test_copy_cuda_4d_strided_host_to_device()
+    test_interior_copy_across_the_boundary_is_one_pitched_copy("cuda")
+    test_interior_copy_across_the_boundary_is_one_pitched_copy("hip")
+    test_interior_copy_across_the_boundary_gpu(True)
+    test_interior_copy_across_the_boundary_gpu(False)
+    test_interior_copy_with_unread_halo_is_pinned_to_one_flat_copy("cuda")
+    test_interior_copy_with_unread_halo_is_pinned_to_one_flat_copy("hip")
+    test_implicit_interior_copy_with_unread_halo_is_lifted_and_pinned()
+    test_interior_copy_with_halo_and_without_facts_is_not_flat()
+    test_interior_4d_copy_across_the_boundary_is_staged()
+    test_interior_copy_with_unread_halo_gpu(False)
+    test_interior_copy_with_unread_halo_gpu(True)
+    test_interior_4d_copy_across_the_boundary_gpu(True)
+    test_interior_4d_copy_across_the_boundary_gpu(False)
+    test_pooled_interior_copy_across_the_boundary_gpu()
+    test_symbolic_interior_copy_round_trip_gpu()
+    test_copy_fortran_packed_gpu_falls_back_to_pure()
+    test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk()
+    test_copy_padded_unit_dim_cross_storage_gpu()
+    test_copy_roundtrip_variant_a_cooperative_load()
+    test_copy_roundtrip_variant_b_per_thread_load()
+    test_copy_full_pipeline_roundtrip()
+    test_copy_single_element_h2d()
+    test_copy_two_element_h2d()
+    test_copy_single_element_d2h()
+    for tile, offset in (([32, 32], [0, 0]), ([37, 53], [3, 5]), ([8, 256], [1, 0])):
+        test_shared_collective_2d_uses_block_collective(tile, offset)
+    test_shared_collective_3d_uses_block_collective()
+    test_shared_collective_sync_property_controls_the_barrier()
+    test_shared_collective_rank4_loops_over_rank3_collectives()
+    test_shared_collective_aligned_words_moves_contiguous_rows_in_words()
+    test_shared_collective_refuses_reshape()
+    test_shared_collective_refuses_dtype_conversion()
+    for g_shape, tile, offset in (
+        ([320], [96], [7]),
+        ([64, 320], [32, 32], [0, 0]),
+        ([64, 320], [37, 53], [3, 5]),
+        ([64, 320], [8, 256], [1, 0]),
+        ([16, 24, 40], [8, 16, 32], [2, 3, 4]),
+    ):
+        test_shared_collective_moves_exactly_the_right_elements(g_shape, tile, offset)
+    test_shared_collective_honors_a_padded_shared_stride()
+    test_shared_collective_block_dims_come_from_sibling_thread_block_maps()
+    test_shared_collective_refuses_conflicting_thread_block_sizes()
+    test_shared_collective_in_a_thread_block_kernel_moves_the_whole_tile()
+    test_shared_collective_lane_axis_follows_the_global_side_both_directions()

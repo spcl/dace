@@ -4,6 +4,7 @@ from collections.abc import Generator
 import dace
 from dace import dtypes
 from dace.optimization import cutout_tuner
+from dace.optimization import utils as optim_utils
 from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.transformation import dataflow as df
 from dace.transformation import helpers as xfh
@@ -56,7 +57,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         df.MapTiling.apply_to(self._sdfg, map_entry=map_entry, options={"tile_sizes": config})
 
     def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
-        cutout.start_state.instrument = self.instrument
+        optim_utils.instrument_state(cutout.start_state, self.instrument)
 
         map_entry = None
         for node in cutout.start_state.nodes():

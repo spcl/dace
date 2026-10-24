@@ -1,10 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 from copy import deepcopy as dc
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
-from dace import data, dtypes
+import dace
+from dace import data, dtypes, symbolic
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
 def matrix_view(subset) -> tuple[list[Any], list[int]]:
@@ -65,6 +69,16 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
         raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
 
 
+def rocblas_type(ctype: str) -> str:
+    """Map a CUDA vendor C type from :func:`cublas_type_metadata` to its rocBLAS spelling.
+
+    Only the complex types differ; ``float`` and ``double`` are the same C type in both. A
+    rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
+    where that type does not exist, so quatrex_rgf's complex128 ``Inv`` failed to compile there.
+    """
+    return {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(ctype, ctype)
+
+
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
         dtypes.float16: "CUDA_R_16F",
@@ -102,6 +116,24 @@ def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
         dtypes.uint64: "32I",
     }
     return types[dtype]
+
+
+def packed_unit_extent(shape, strides) -> list:
+    """``strides`` with the free stride of a single row or column replaced by a packed matrix's.
+
+    A dimension of extent 1 is never stepped over, so its stride is free, but BLAS still checks the
+    leading dimension against the other extent: the ``(1, K)`` row an ``abij,ab->aij`` einsum lowers
+    to reached ``cblas_zgemm`` with ``lda = 1 < K``, which OpenBLAS refuses without computing anything
+    (npbench vexx_k's augmentation). Both strides 1 name a single row or column whose extents may be
+    symbolic; the row-major form with the column count as the row stride is exact for either.
+    """
+    *batch, s_rows, s_cols = strides
+    rows, cols = shape[-2:]
+    if symbolic.equal_valued(1, cols) and symbolic.equal_valued(1, s_rows):
+        s_cols = rows
+    elif symbolic.equal_valued(1, s_cols) and (symbolic.equal_valued(1, rows) or symbolic.equal_valued(1, s_rows)):
+        s_rows = cols
+    return [*batch, s_rows, s_cols]
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> dict[str, Any]:
@@ -192,3 +224,193 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+
+
+def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
+    """Shared validation for BLAS Level-1 nodes whose shape is
+    ``vector -> scalar`` (``ASUM``, ``NRM2``, ``IAMAX``, ``DOT``, ...).
+
+    Every such node takes one rank-1 input and writes a single-element
+    output; the only thing that differs across the operations is the
+    error-message name and the post-validation work the caller does
+    with the descriptor / stride / length.  Returns the same canonical
+    tuple every per-op ``validate`` was constructing by hand.
+
+    :param node: the library node being validated.
+    :param sdfg: parent SDFG.
+    :param state: parent state.
+    :param op_name: short operation name used in error messages
+        (``"ASUM"``, ``"NRM2"``, ...).
+    :returns: ``((desc_x, stride_x), desc_res, n)``.
+    :raises ValueError: arity / rank / output-size mismatches.
+    """
+    import copy as _copy
+
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        raise ValueError(f"{op_name} expects one input and one output")
+    in_memlet = in_edges[0].data
+    desc_x = sdfg.arrays[in_memlet.data]
+    desc_res = sdfg.arrays[out_edges[0].data.data]
+    squeezed = _copy.deepcopy(in_memlet.subset)
+    sqdims = squeezed.squeeze()
+    if len(squeezed.size()) != 1:
+        raise ValueError(f"{op_name} only supported on 1-D arrays")
+    stride_x = desc_x.strides[sqdims[0]]
+    n = squeezed.num_elements()
+    if out_edges[0].data.subset.num_elements() != 1:
+        raise ValueError(f"Output of {op_name} must be a single element")
+    return (desc_x, stride_x), desc_res, n
+
+
+def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
+    """Feed ``node`` a copy of every operand on ``connectors`` whose element type is not ``dtype``,
+    cast to ``dtype``.
+
+    A vendor BLAS routine takes ONE element type for all its matrices, and the expansions name it
+    after one operand while casting every pointer to it. A real matrix times a complex one (npbench
+    cegterg's ``deeq @ ps``) then reads the real buffer as complex numbers: the OpenBLAS build rejects
+    the pointer, the rocBLAS/cuBLAS C-style casts compile and return wrong numbers. NumPy promotes
+    the operands to the result type, so the copy is exactly that promotion. The copy covers the
+    memlet's subset only, with the same size, so every shape and matrix-view rule reading the
+    connector sees what it saw before; it is contiguous, so the leading dimension is its own.
+
+    :param node: The library node whose inputs are promoted.
+    :param state: The state containing ``node``.
+    :param connectors: The input connectors that carry matrix or vector operands.
+    :param dtype: The element type the vendor call computes in.
+    """
+    from dace import Memlet  # Avoid import loop
+    from dace.symbolic import symstr
+
+    sdfg = state.sdfg
+    for edge in [e for e in state.in_edges(node) if e.dst_conn in connectors]:
+        src_desc = sdfg.arrays[edge.data.data]
+        if src_desc.dtype == dtype:
+            continue
+        subset = edge.data.subset
+        shape = subset.size()
+        name, desc = sdfg.add_transient(
+            f"{node.label}{edge.dst_conn}_as_{dtype.to_string()}",
+            shape,
+            dtype,
+            storage=src_desc.storage,
+            find_new_name=True,
+        )
+        params = [f"__promote{d}" for d in range(len(shape))]
+        index = ", ".join(
+            f"{symstr(begin)} + ({symstr(step)}) * {p}" for (begin, _, step), p in zip(subset.ranges, params)
+        )
+        # A device-resident operand is cast by a kernel: host code cannot read GPU_Global memory.
+        schedule = (
+            dtypes.ScheduleType.GPU_Device
+            if src_desc.storage == dtypes.StorageType.GPU_Global
+            else dtypes.ScheduleType.Default
+        )
+        entry, exit_ = state.add_map(
+            f"{name}_cast", {p: f"0:{symstr(n)}" for p, n in zip(params, shape)}, schedule=schedule
+        )
+        cast = state.add_tasklet(f"{name}_cast", {"__inp"}, {"__out"}, "__out = __inp")
+        promoted = state.add_access(name)
+        state.add_memlet_path(
+            edge.src,
+            entry,
+            cast,
+            src_conn=edge.src_conn,
+            dst_conn="__inp",
+            memlet=Memlet(data=edge.data.data, subset=index),
+        )
+        state.add_memlet_path(
+            cast, exit_, promoted, src_conn="__out", memlet=Memlet(data=name, subset=", ".join(params))
+        )
+        state.add_edge(promoted, None, node, edge.dst_conn, Memlet.from_array(name, desc))
+        state.remove_edge(edge)
+
+
+class Operand(NamedTuple):
+    """The data on a BLAS connector, with its unit dimensions squeezed out."""
+
+    desc: data.Data
+    shape: list
+    strides: list
+
+
+def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", connector: str) -> Operand:
+    if connector in node.in_connectors:
+        edge = sdutil.in_edge_with_name(node, state, connector)
+    else:
+        edge = sdutil.out_edge_with_name(node, state, connector)
+    desc = sdfg.arrays[edge.data.data]
+    subset = copy.deepcopy(edge.data.subset)
+    dims = subset.squeeze()
+    return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
+
+
+class MatrixLayout(NamedTuple):
+    """How BLAS reads matrices: all in row-major or all in column-major order, each with its leading dimension."""
+
+    row_major: bool
+    leading: list
+
+
+def matrix_layout(*matrices: Operand) -> MatrixLayout | None:
+    """The common layout of ``matrices``, or ``None`` if one has no contiguous dimension or they differ."""
+    if all(m.strides[1] == 1 for m in matrices):
+        return MatrixLayout(True, [m.strides[0] for m in matrices])
+    if all(m.strides[0] == 1 for m in matrices):
+        return MatrixLayout(False, [m.strides[1] for m in matrices])
+    return None
+
+
+def blas_prefix(dtype: dtypes.typeclass) -> str | None:
+    """The BLAS letter of ``dtype`` (``D`` for ``double``), or ``None`` if BLAS has no routines for it."""
+    try:
+        func, _, _ = cublas_type_metadata(dtype)
+    except TypeError:
+        return None
+    return None if func == "H" else func
+
+
+def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[str, str]]:
+    """Declares each of ``values`` as a scalar of ``dtype``; returns the declarations and, per name, the argument
+    passing it to CBLAS: the value itself to a real routine, its address to a complex one."""
+    declarations = "".join(f"{dtype.ctype} __{name} = {dtype.ctype}({value});\n" for name, value in values.items())
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        return declarations, {name: f"&__{name}" for name in values}
+    return declarations, {name: f"__{name}" for name in values}
+
+
+def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
+    """A nested SDFG with one array per connector of ``node``, in the squeezed shape and strides of its data."""
+    nsdfg = dace.SDFG(f"{node.label}_sdfg")
+    for connector in list(node.in_connectors) + list(node.out_connectors):
+        desc, shape, strides = operand(node, state, sdfg, connector)
+        nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)
+    return nsdfg
+
+
+def in_place_call(
+    node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", source: str, target: str, code: str
+) -> "dace.SDFG":
+    """A nested SDFG for a BLAS routine that updates an operand in place: copies connector ``source`` to ``target``,
+    then runs ``code``, which reads the other inputs and updates ``target``, each by its connector's name with one
+    more leading underscore (``__A`` for ``_A``): a tasklet connector named as the array would shadow it."""
+    nsdfg = connector_sdfg(node, state, sdfg)
+    copy_state = nsdfg.add_state(f"{node.label}_copy")
+    copy_state.add_nedge(
+        copy_state.add_read(source), copy_state.add_write(target), dace.Memlet.from_array(source, nsdfg.arrays[source])
+    )
+    call_state = nsdfg.add_state_after(copy_state, f"{node.label}_call")
+    inputs = [c for c in node.in_connectors if c != source]
+    # The call reads ``target`` too, so the copy into it is not dead
+    reads = {f"_{c}": c for c in inputs} | {f"_{target}_before": target}
+    tasklet = call_state.add_tasklet(node.label, set(reads), {f"_{target}"}, code, language=dtypes.Language.CPP)
+    for connector, name in reads.items():
+        call_state.add_edge(
+            call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
+        )
+    call_state.add_edge(
+        tasklet, f"_{target}", call_state.add_write(target), None, dace.Memlet.from_array(target, nsdfg.arrays[target])
+    )
+    return nsdfg

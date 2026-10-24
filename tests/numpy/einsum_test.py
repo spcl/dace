@@ -4,6 +4,8 @@ import pytest
 
 import dace
 from dace import symbolic
+from dace.libraries.blas import MatMul
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -20,6 +22,34 @@ def test_general_einsum():
     C = np.random.rand(10)
     out = einsumtest(A, B, C)
     assert np.allclose(out, np.einsum("ij,ji,i->", A, B, C))
+
+
+@pytest.mark.parametrize("spec", ["abi,ab->ai", "ijou,aj,au,ao->ai"])
+def test_an_einsum_of_real_and_complex_operands_is_complex(spec):
+    """numpy's result type of float64 and complex128 operands is complex128. Typing the output after
+    the first operand alone cannot even hold the product: quantum espresso's exchange kernel contracts
+    a real table with complex projections, and the generated C++ refused the double assignment."""
+    rng = np.random.default_rng(0)
+    if spec == "abi,ab->ai":
+
+        @dace.program
+        def einsumtest(A: dace.float64[M, N, 3], B: dace.complex128[M, N]):
+            return np.einsum("abi,ab->ai", A, B)
+
+        operands = (rng.random((4, 5, 3)), rng.random((4, 5)) + 1j * rng.random((4, 5)))
+    else:
+
+        @dace.program
+        def einsumtest(
+            K: dace.float64[N, N, N, N], P: dace.complex128[M, N], Q: dace.complex128[M, N], R: dace.complex128[M, N]
+        ):
+            return np.einsum("ijou,aj,au,ao->ai", K, P, Q, R)
+
+        operands = (rng.random((3, 3, 3, 3)), *(rng.random((4, 3)) + 1j * rng.random((4, 3)) for _ in range(3)))
+    got = einsumtest(*operands)
+    want = np.einsum(spec, *operands)
+    assert got.dtype == want.dtype, (got.dtype, want.dtype)
+    assert np.allclose(got, want, rtol=1e-13, atol=0.0)
 
 
 def test_matmul():
@@ -57,11 +87,8 @@ def test_opteinsum_sym():
         return np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
-    try:
-        einsumtest(A, B, C, D, E)
-        raise AssertionError("Exception should have been raised")
-    except ValueError:
-        print("Exception successfully caught")
+    result = einsumtest(A, B, C, D, E)
+    assert np.allclose(result, np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E))
 
 
 def test_opteinsum():
@@ -166,7 +193,6 @@ def test_lift_einsum_mttkrp():
 
 
 def test_lift_einsum_reduce():
-    from dace.libraries.blas.nodes.einsum import Einsum
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.dataflow import LiftEinsum
 
@@ -178,23 +204,18 @@ def test_lift_einsum_reduce():
     B = np.random.rand(1)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
-    sdfg.expand_library_nodes()
-    assert sdfg.apply_transformations(LiftEinsum) == 1
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Einsum):
-            assert node.einsum_str == "ijk->"
-
-    # Specialize to ensure Reduce node is there
-    sdfg.expand_library_nodes(recursive=False)
+    # A reduction has one operand, so LiftEinsum leaves its expansion alone: it stays a Reduce.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
-    assert tuple(rnode.axes) == (0, 1, 2)
+    assert rnode.axes is None
+
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 0
 
     sdfg(A, B)
     assert np.allclose(B, np.einsum("ijk->", A))
 
 
 def test_lift_einsum_reduce_partial():
-    from dace.libraries.blas.nodes.einsum import Einsum
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.dataflow import LiftEinsum
 
@@ -206,16 +227,12 @@ def test_lift_einsum_reduce_partial():
     B = np.random.rand(10, 9)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
-    sdfg.expand_library_nodes()
-    assert sdfg.apply_transformations(LiftEinsum) == 1
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Einsum):
-            assert node.einsum_str == "ijk->ik"
-
-    # Specialize to ensure Reduce node is there
-    sdfg.expand_library_nodes(recursive=False)
+    # A reduction has one operand, so LiftEinsum leaves its expansion alone: it stays a Reduce.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
     assert tuple(rnode.axes) == (1,)
+
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 0
 
     sdfg(A, B)
     assert np.allclose(B, np.einsum("ijk->ik", A))
@@ -315,6 +332,53 @@ def test_lift_einsum_alpha_beta(symbolic_alpha):
         assert np.allclose(sdfg(A, B), C)
 
 
+def test_rowwise_dot():
+    """``ik,ik->i`` is a batched dot: the batch index survives into the output and neither operand
+    has a private index, so there is no GEMM/GEMV form -- it must lower to the pure einsum map."""
+
+    @dace.program
+    def einsumtest(A: dace.float64[M, N]):
+        return np.einsum("ik,ik->i", A, A)
+
+    A = np.random.rand(10, 20)
+    assert np.allclose(einsumtest(A), np.einsum("ik,ik->i", A, A), rtol=1e-12)
+
+
+def test_batched_dot_4d():
+    """Same batched-dot class over a 3-D batch. Simplify collapses the box into a flat view, which
+    the degenerate M=N=1 MatMul the contraction path used to mint could no longer dispatch. The
+    contracted extent is the symbol ``k``, the contraction index letter as well: the map parameter
+    must not shadow it."""
+    L = dace.symbol("L")
+    k = dace.symbol("k")
+
+    @dace.program
+    def einsumtest(A: dace.float64[L, L, L, k]):
+        return np.einsum("xyzk,xyzk->xyz", A, A)
+
+    A = np.random.rand(4, 4, 4, 7)
+    assert np.allclose(einsumtest(A), np.einsum("xyzk,xyzk->xyz", A, A), rtol=1e-12)
+
+
+def test_batched_dot_in_loop():
+    """The pure einsum path prepends a state that initializes the accumulator. Inside a loop body
+    that state belongs to the loop's region, not to the SDFG, and it must run on every iteration."""
+    F = dace.symbol("F")
+    L = dace.symbol("L")
+    k = dace.symbol("k")
+
+    @dace.program
+    def einsumtest(psi: dace.float64[F, L, L, L, k], out: dace.float64[F, L, L, L]):
+        for f in range(F):
+            dens = np.einsum("xyzk,xyzk->xyz", psi[f], psi[f])
+            out[f] = dens
+
+    psi = np.random.rand(3, 2, 2, 2, 5)
+    out = np.zeros((3, 2, 2, 2))
+    einsumtest(psi, out)
+    assert np.allclose(out, np.einsum("fxyzk,fxyzk->fxyz", psi, psi), rtol=1e-12)
+
+
 def test_c_transposed():
     N, F_in, F_out = 2, 3, 3
 
@@ -333,6 +397,281 @@ def test_c_transposed():
     assert np.allclose(c, c_expected)
 
 
+@pytest.mark.parametrize("beta", [0.0, 1.0])
+def test_einsum_dot_node(beta):
+    """A directly-constructed scalar-output ``i,i->`` Einsum node expands to a stride-aware DDOT
+    (a ``Dot`` node), NOT the degenerate 1x1 GEMM the contraction path emits (illegal ``lda=1``
+    for a strided operand -> silently dropped contraction). Covers the ``SpecializeEinsum`` dot
+    path that ``LiftEinsum`` deliberately no longer produces: ``out = alpha*dot(x,y) +
+    beta*out_prior``."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    n = 40
+    sdfg = dace.SDFG("einsum_dot")
+    sdfg.add_array("x", [n], dace.float64)
+    sdfg.add_array("y", [n], dace.float64)
+    sdfg.add_array("r", [1], dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "i,i->"
+    enode.alpha = 2.0
+    enode.beta = beta
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("x"), None, enode, "a", dace.Memlet(f"x[0:{n}]"))
+    state.add_edge(state.add_read("y"), None, enode, "b", dace.Memlet(f"y[0:{n}]"))
+    state.add_edge(enode, "out", state.add_write("r"), None, dace.Memlet("r[0]"))
+    sdfg.expand_library_nodes()
+
+    rng = np.random.default_rng(0)
+    x = rng.random(n)
+    y = rng.random(n)
+    r = np.array([7.0])
+    prior = r[0]
+    sdfg(x=x, y=y, r=r)
+    assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f"got {r[0]}"
+
+
+@pytest.mark.parametrize(
+    "spec,in_shape,out_shape,in_subset,out_subset",
+    [
+        ("i->i", [8], [8], "0:8", "0:8"),
+        ("i->i", [8], [8], "2:7", "1:6"),
+        ("ij->ji", [4, 6], [6, 4], "0:4, 0:6", "0:6, 0:4"),
+        ("ij->i", [4, 6], [4], "0:4, 0:6", "0:4"),
+        ("ijk->", [3, 4, 5], [1], "0:3, 0:4, 0:5", "0"),
+    ],
+)
+def test_one_operand_einsum_node(spec, in_shape, out_shape, in_subset, out_subset):
+    """A directly-constructed one-operand Einsum (copy, transpose, reduction) computes what numpy does, on a full
+    and on an offset range. LiftEinsum never produces one, so this is the only coverage of that expansion path."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG("one_operand_einsum")
+    sdfg.add_array("A", in_shape, dace.float64)
+    sdfg.add_array("B", out_shape, dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = spec
+    enode.in_connectors = {"a": None}
+    enode.out_connectors = {"b": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet(f"A[{in_subset}]"))
+    state.add_edge(enode, "b", state.add_write("B"), None, dace.Memlet(f"B[{out_subset}]"))
+
+    rng = np.random.default_rng(0)
+    A = rng.random(in_shape)
+    B = np.full(out_shape, -7.0)
+    expected = B.copy()
+    in_index = tuple(slice(*map(int, r.split(":"))) for r in in_subset.split(","))
+    out_index = tuple(slice(*map(int, r.split(":"))) if ":" in r else int(r) for r in out_subset.split(","))
+    expected[out_index] = np.einsum(spec, A[in_index])
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected)
+
+
+def test_lift_einsum_leaves_a_copy_map_alone():
+    """``y[i] = z[i]`` is a copy, not a contraction: LiftEinsum leaves the map for the copy passes."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    sdfg = dace.SDFG("lift_einsum_copy")
+    sdfg.add_array("y", [10], dace.float64)
+    sdfg.add_array("z", [10], dace.float64)
+    sdfg.add_state().add_mapped_tasklet(
+        "copy",
+        {"i": "0:10"},
+        {"__in": dace.Memlet("z[i]")},
+        "__out = __in",
+        {"__out": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    assert sdfg.apply_transformations(LiftEinsum) == 0
+    assert not any(isinstance(n, Einsum) for n, parent in sdfg.all_nodes_recursive())
+
+
+def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
+    """A host BLAS call cannot reach in-kernel shared memory."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    gpu = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG("matrix_vector_einsum")
+    sdfg.add_array("A", (5, 5), dace.float64, storage=gpu)
+    sdfg.add_array("x", (5,), dace.float64, storage=gpu)
+    sdfg.add_array("y", (5,), dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ij,j->i"
+    enode.beta = 1.0
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("x"), None, enode, "b", dace.Memlet("x"))
+    state.add_edge(enode, "out", state.add_write("y"), None, dace.Memlet("y"))
+
+    enode.expand(sdfg, state)
+
+    scratch = [desc for _, name, desc in sdfg.arrays_recursive() if name.endswith("_gemv")]
+    assert len(scratch) == 1, "the matrix-vector einsum did not lower to GEMV plus a beta fold"
+    assert scratch[0].storage == gpu
+
+
+def test_einsum_shape_check_equalizes_symbols():
+    """One symbol name can reach the shape check as several sympy instances -- a descriptor a layout
+    pass rebuilt against one parsed from a string -- which compare unequal by identity. The einsum
+    dimension check must go through the name, or it rejects a contraction whose shapes agree."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    rows, cols = 4, 6
+    wide = dace.symbol("ESN", dace.int32)
+    narrow = dace.symbol("ESN", dace.int64)
+    # a symbol is its name: the two spellings are one symbol
+    assert not symbolic.inequal_symbols(wide, narrow)
+
+    sdfg = dace.SDFG("einsum_symbol_instances")
+    sdfg.add_array("A", [rows, wide], dace.float64)
+    sdfg.add_array("v", [narrow], dace.float64)
+    sdfg.add_array("out", [rows], dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ij,j->i"
+    enode.in_connectors = {"_ein00": None, "_ein01": None}
+    enode.out_connectors = {"_out": None}
+    state.add_node(enode)
+    # from_array, not a parsed string: parsing both bounds from 'ESN' would mint ONE instance and
+    # the mismatch under test could not arise.
+    state.add_edge(state.add_read("A"), None, enode, "_ein00", dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("v"), None, enode, "_ein01", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(enode, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
+
+    # the two instances survive as far as the check; without equalization this raises
+    assert sdfg.arrays["A"].shape[1] is not sdfg.arrays["v"].shape[0]
+    sdfg.expand_library_nodes()
+    assert not any(isinstance(n, Einsum) for n in state.nodes())
+
+    rng = np.random.default_rng(3)
+    a = rng.random((rows, cols))
+    v = rng.random(cols)
+    out = np.zeros(rows)
+    sdfg(A=a, v=v, out=out, ESN=cols)
+    assert np.allclose(out, a @ v), f"got {out}, want {a @ v}"
+
+
+def test_einsum_libnode_ordering_edge():
+    """An ordering memlet into the Einsum node names no container; expansion must skip it."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG("tester_ordering")
+    sdfg.arg_names = ["A", "B"]
+    sdfg.add_array("A", (20, 21), dace.float64)
+    sdfg.add_array("B", (21, 22), dace.float64)
+    sdfg.add_array("__return", (20, 22), dace.float64)
+    sdfg.add_transient("anchor", (1,), dace.float64)
+
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ik,kj->ij"
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", state.add_write("__return"), None, dace.Memlet("__return"))
+
+    anchor = state.add_access("anchor")
+    state.add_edge(state.add_tasklet("t", {}, {"o": None}, "o = 1.0"), "o", anchor, None, dace.Memlet("anchor[0]"))
+    state.add_nedge(anchor, enode, dace.Memlet())
+    sdfg.validate()
+
+    A = np.random.rand(20, 21)
+    B = np.random.rand(21, 22)
+    assert np.allclose(sdfg(A, B), A @ B)
+
+
+def contraction_nodes(sdfg: dace.SDFG) -> set[str]:
+    """The library and map nodes a contraction lowered to."""
+    return {
+        type(node).__name__
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, (MatMul, TensorTranspose, dace.nodes.MapEntry))
+    }
+
+
+def test_contraction_with_summed_indices_in_different_orders_matches_numpy():
+    """``ijk,kj->i`` sums ``jk`` in A but ``kj`` in B: B is transposed to ``jk`` so one flattened GEMM K reads both."""
+
+    @dace.program
+    def einsumtest(A: dace.float64[3, 4, 5], B: dace.float64[5, 4]):
+        return np.einsum("ijk,kj->i", A, B)
+
+    sdfg = einsumtest.to_sdfg()
+    assert contraction_nodes(sdfg) == {"MatMul", "TensorTranspose"}
+    rng = np.random.default_rng(7)
+    A, B = rng.random((3, 4, 5)), rng.random((5, 4))
+    assert np.allclose(sdfg(A=A, B=B), np.einsum("ijk,kj->i", A, B))
+
+
+def test_a_contraction_in_no_gemm_order_transposes_the_small_operand():
+    """seissol's ``qpkl,blq->bkp``: ``lq`` is contracted in ``I``'s order, so only the small ``T`` is transposed."""
+
+    @dace.program
+    def einsumtest(T: dace.float64[3, 3, 4, 5], I: dace.float64[40, 5, 3]):
+        return np.einsum("qpkl,blq->bkp", T, I)
+
+    sdfg = einsumtest.to_sdfg()
+    assert contraction_nodes(sdfg) == {"MatMul", "TensorTranspose"}
+    transposed = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TensorTranspose)]
+    assert len(transposed) == 1
+    rng = np.random.default_rng(3)
+    T, I = rng.random((3, 3, 4, 5)), rng.random((40, 5, 3))
+    assert np.allclose(sdfg(T=T, I=I), np.einsum("qpkl,blq->bkp", T, I))
+
+
+def test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product():
+    @dace.program
+    def einsumtest(A: dace.float64[6, 7, 8], B: dace.float64[8, 9]):
+        return np.einsum("aik,kj->aji", A, B)
+
+    sdfg = einsumtest.to_sdfg()
+    assert contraction_nodes(sdfg) == {"MatMul", "TensorTranspose"}
+    rng = np.random.default_rng(5)
+    A, B = rng.random((6, 7, 8)), rng.random((8, 9))
+    assert np.allclose(sdfg(A=A, B=B), np.einsum("aik,kj->aji", A, B))
+
+
+def test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose():
+    """cp2k_trs4's ``ijk,ilkm->iljm`` accumulating into its buffer (``beta = 1``): a batched GEMM whose product the
+    transpose folds in, not a scalar nest of atomic adds."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG("accumulating_interleaved_einsum")
+    sdfg.add_array("A", (6, 5, 4), dace.float64)
+    sdfg.add_array("B", (6, 3, 4, 5), dace.float64)
+    sdfg.add_array("C", (6, 3, 5, 5), dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ijk,ilkm->iljm"
+    enode.beta = 1.0
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", state.add_write("C"), None, dace.Memlet("C"))
+    enode.expand(sdfg, state)
+
+    assert "TensorTranspose" in contraction_nodes(sdfg)
+    assert not any(e.data.wcr for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet))
+    sdfg = dace.SDFG.from_json(sdfg.to_json())  # the folded beta survives serialization
+    rng = np.random.default_rng(11)
+    A, B, C = rng.random((6, 5, 4)), rng.random((6, 3, 4, 5)), rng.random((6, 3, 5, 5))
+    expected = C + np.einsum("ijk,ilkm->iljm", A, B)
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, expected)
+
+
 if __name__ == "__main__":
     test_general_einsum()
     test_matmul()
@@ -340,6 +679,7 @@ if __name__ == "__main__":
     test_opteinsum_sym()
     test_opteinsum()
     test_einsum_libnode()
+    test_einsum_libnode_ordering_edge()
     test_lift_einsum()
     test_lift_einsum_mttkrp()
     test_lift_einsum_reduce()
@@ -348,4 +688,13 @@ if __name__ == "__main__":
     test_lift_einsum_beta()
     test_lift_einsum_alpha_beta(False)
     test_lift_einsum_alpha_beta(True)
+    test_rowwise_dot()
+    test_batched_dot_4d()
+    test_batched_dot_in_loop()
     test_c_transposed()
+    test_einsum_shape_check_equalizes_symbols()
+    test_lift_einsum_leaves_a_copy_map_alone()
+    test_contraction_with_summed_indices_in_different_orders_matches_numpy()
+    test_a_contraction_in_no_gemm_order_transposes_the_small_operand()
+    test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
+    test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose()

@@ -4,6 +4,7 @@ import pytest
 
 import dace
 from dace.libraries import blas
+from dace.library import change_default
 from dace.transformation.dataflow import RedundantSecondArray
 
 M = dace.symbol("M")
@@ -34,10 +35,8 @@ def test_gemv_strided(implementation):
         sdfg.apply_gpu_transformations()
         sdfg.apply_transformations_repeated(RedundantSecondArray)
 
-    blas.default_implementation = implementation
-    daceres = sdfg(A=A, x=x, M=20, N=30)
-
-    blas.default_implementation = None
+    with change_default(blas, implementation):
+        daceres = sdfg(A=A, x=x, M=20, N=30)
     assert np.allclose(daceres, reference)
 
 
@@ -88,10 +87,8 @@ def test_dot_strided(implementation):
     if implementation == "cuBLAS":
         sdfg.apply_gpu_transformations()
 
-    blas.default_implementation = implementation
-    daceres = sdfg(x=x, y=y, N=30)
-
-    blas.default_implementation = None
+    with change_default(blas, implementation):
+        daceres = sdfg(x=x, y=y, N=30)
     assert np.allclose(daceres, reference)
 
 

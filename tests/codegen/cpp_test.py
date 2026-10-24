@@ -1,14 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import re
 import warnings
 from functools import reduce
 from operator import mul
 
-from dace import SDFG, Memlet, dtypes, symbol
+from dace import SDFG, Memlet, config, dtypes, symbol
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import _use_aligned_operator_new
+from dace.codegen.targets.cpu import use_aligned_operator_new
 from dace.subsets import Range
+
+
+def test_ndcopy_to_strided_copy_declines_broadcast_source():
+    """A broadcast source (a Scalar / length-1 splatted into a width-W tile) has no
+    single strided source dimension the 1D fast path can name. It must decline
+    (return ``None``) so the caller falls back to the general ND-copy emitter --
+    not raise ``StopIteration`` on the bare ``next`` (the adi ``stage_v_w0 ->
+    v_tile_out`` scalar-broadcast miscompile)."""
+    src_subset = Range([(0, 0, 1)])  # size 1 -> broadcast source
+    dst_subset = Range([(0, 7, 1)])  # size 8
+    assert cpp.ndcopy_to_strided_copy([8], [1], [1], [8], [1], dst_subset, src_subset, dst_subset) is None
+    # Symmetric: a broadcast destination (all-ones dst shape) also declines.
+    assert cpp.ndcopy_to_strided_copy([8], [8], [1], [1], [1], src_subset, dst_subset, src_subset) is None
 
 
 def test_reshape_strides_multidim_array_all_dims_unit():
@@ -178,8 +192,9 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         code = program_objects[0].clean_code
         # Consult the active cpp_standard: C++ >= 17 emits the aligned
         # new/delete forms, earlier standards the plain ones.
-        if _use_aligned_operator_new(a_desc):
-            assert f"A = dace::aligned_new_array<double>(10000, {array_a_alignment})" in code, (
+        if use_aligned_operator_new(a_desc):
+            # The count is a literal under the legacy codegen and a size helper under the readable one.
+            assert re.search(rf"A = dace::aligned_new_array<double>\([^;]*, {array_a_alignment}\);", code), (
                 "A is allocated on the heap."
             )
             assert f"dace::aligned_delete_array(A, {array_a_alignment})" in code, "A is deallocated from the heap."
@@ -213,9 +228,15 @@ def test_pointer_argument_keeps_a_decimal_literal():
     state.add_memlet_path(nsdfg_node, exit, state.add_write("A"), src_conn="a", memlet=Memlet("A[0.5*j]"))
     nsdfg_node.integrate_into_parent()
 
-    code = codegen.generate_code(sdfg)[0].clean_code
+    # Only the legacy generator keeps the nested SDFG as a call, so only there does a pointer
+    # argument carry the index. experimental_readable inlines it and indexes through A_idx.
+    with config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = codegen.generate_code(sdfg)[0].clean_code
     assert "&A[(0.5 * j)]" in code
     assert "0->5" not in code
+
+    # The rewrite must leave the literal alone on the default path too, wherever it lands.
+    assert "0->5" not in codegen.generate_code(sdfg)[0].clean_code
 
 
 if __name__ == "__main__":

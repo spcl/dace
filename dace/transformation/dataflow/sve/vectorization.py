@@ -158,6 +158,11 @@ class SVEVectorization(transformation.SingleStateTransformation):
         # Set the schedule
         current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
 
+        # The vector length becomes part of the vector types; the SDFG declares the symbols it is written in
+        for name in sorted(str(free) for free in dace.symbolic.pystr_to_symbolic(self.vec_len).free_symbols):
+            if name not in sdfg.symbols:
+                sdfg.add_symbol(name, dace.int64)
+
         # Infer all connector types and apply them
         inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
         infer_types.apply_connector_types(inferred)

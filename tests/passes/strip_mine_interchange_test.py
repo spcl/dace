@@ -1,0 +1,342 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Strip-mining a carried loop nest into tiles outside the carry: one barrier for the nest instead of one per trip.
+
+The emitted text IS the product here, so the structural assertions read the generated C++ -- a
+numeric check alone passes on the untiled form this replaces. Every legality case is paired with
+a numeric check as well, because the failure mode of getting the predicate wrong is a WRONG ANSWER
+at a tile boundary, not a crash.
+"""
+
+import re
+
+import numpy as np
+import pytest
+
+import dace
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+N = dace.symbol("N")
+
+
+def finalized(program, tag):
+    """``program`` put through canonicalize and the CPU perf tail."""
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.name = tag
+    canonicalize(sdfg, validate=True)
+    finalize_for_target(sdfg, "cpu")
+    return sdfg
+
+
+def emitted(sdfg):
+    return sdfg.generate_code()[0].clean_code
+
+
+def is_tiled(sdfg):
+    return "__dace_tile" in emitted(sdfg)
+
+
+@dace.program
+def column_scan(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    """TSVC ``s231``: the carry runs down ``j``, the columns ``i`` are independent."""
+    for i in range(N):
+        for j in range(1, N):
+            aa[j, i] = aa[j - 1, i] + bb[j, i]
+
+
+@dace.program
+def diagonal_carry(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    """TSVC ``s119``: ``aa[i-1, j-1]`` reaches one column LEFT, across a tile boundary."""
+    for i in range(1, N):
+        for j in range(1, N):
+            aa[i, j] = aa[i - 1, j - 1] + bb[i, j]
+
+
+@dace.program
+def skewed_carry(a: dace.float64[N, N], b: dace.float64[N, N]):
+    """``wf_diff_skew``: ``a[i-1, j+1]`` reaches one column RIGHT, across a tile boundary."""
+    for i in range(1, N):
+        for j in range(0, N - 1):
+            a[i, j] = a[i - 1, j + 1] + b[i, j]
+
+
+def reference_column_scan(aa, bb):
+    out = aa.copy()
+    for j in range(1, out.shape[0]):
+        out[j, :] = out[j - 1, :] + bb[j, :]
+    return out
+
+
+def reference_diagonal_carry(aa, bb):
+    out = aa.copy()
+    for i in range(1, out.shape[0]):
+        for j in range(1, out.shape[1]):
+            out[i, j] = out[i - 1, j - 1] + bb[i, j]
+    return out
+
+
+def reference_skewed_carry(a, b):
+    out = a.copy()
+    for i in range(1, out.shape[0]):
+        for j in range(0, out.shape[1] - 1):
+            out[i, j] = out[i - 1, j + 1] + b[i, j]
+    return out
+
+
+def test_a_distance_zero_carry_is_tiled():
+    """The whole point: the worksharing loop moves OUTSIDE the carry.
+
+    ``#pragma omp parallel for`` over the tiles, and inside it a plain sequential carry -- so the
+    nest reaches one barrier, at the end, instead of one per trip.
+    """
+    code = emitted(finalized(column_scan, "tile_s231"))
+    assert "__dace_tile" in code, "a distance-zero carry must be tiled"
+    tile_loop = re.search(r"#pragma omp parallel for\s*\n\s*for \(\w+ __dace_tile", code)
+    assert tile_loop, f"the tile loop must be the worksharing construct:\n{code}"
+    # No worksharing construct may remain INSIDE the carry -- that is the barrier being removed.
+    assert not re.search(r"#pragma omp for", code), "no per-trip worksharing loop may survive"
+    assert "nowait" not in code, "tiling removes the barrier by structure, never by nowait"
+
+
+def test_the_tiles_cover_the_axis_exactly_once():
+    """Bounds must partition the axis: no gap (lost work) and no overlap (a race). Tile ``t`` starts at
+    ``t * T`` and stops before ``(t + 1) * T``, so consecutive tiles abut, and the last one stops at the
+    axis end."""
+    code = emitted(finalized(column_scan, "tile_cover"))
+    # The tile size is a multiple of the minimum tile, so the printer may group it with the tile index first:
+    # ``(16 * __dace_tile) * T`` as well as ``__dace_tile * T``.
+    assert re.search(r"__dace_tile\)? \* ", code), "tile lower bound missing"
+    assert re.search(r"\(__dace_tile \+ 1\)\)? \* ", code), "tile upper bound missing"
+    assert "Min(" in code, "the last tile must stop at the axis end"
+
+
+@pytest.mark.parametrize(
+    "program,reference,names,tag",
+    [
+        (column_scan, reference_column_scan, ("aa", "bb"), "num_s231"),
+        (diagonal_carry, reference_diagonal_carry, ("aa", "bb"), "num_s119"),
+        (skewed_carry, reference_skewed_carry, ("a", "b"), "num_skew"),
+    ],
+)
+def test_the_finalized_kernel_matches_the_reference(program, reference, names, tag):
+    """Tiled or refused, the values are the reference's.
+
+    The refused kernels matter most: a predicate that wrongly accepted them would return a wrong
+    answer only at the tile boundaries, which a coarse tolerance would hide.
+    """
+    sdfg = finalized(program, tag)
+    rng = np.random.default_rng(7)
+    size = 61  # not a multiple of any plausible thread count, so the tiles come out ragged
+    carried, addend = names
+    first = rng.random((size, size))
+    second = rng.random((size, size))
+    expected = reference(first, second)
+    got = first.copy()
+    sdfg.compile()(**{carried: got, addend: second}, N=size)
+    assert np.allclose(got, expected), f"{tag}: value mismatch, max |diff| {np.abs(got - expected).max()}"
+
+
+@pytest.mark.parametrize("program,tag", [(diagonal_carry, "refuse_s119"), (skewed_carry, "refuse_skew")])
+def test_a_carry_that_crosses_a_tile_boundary_is_refused(program, tag):
+    """``aa[i-1, j-1]`` and ``a[i-1, j+1]`` read a NEIGHBOUR's column.
+
+    Distance one in the map parameter, so the value a tile needs was produced by a different tile
+    on the previous trip. Only a barrier orders that, which is what the plain team hoist keeps.
+    """
+    sdfg = finalized(program, tag)
+    assert not is_tiled(sdfg), "a dependence crossing a tile boundary must not be tiled"
+
+
+def test_a_target_shared_by_every_tile_is_refused():
+    """A destination naming no map parameter is one location the whole team writes.
+
+    TSVC ``s115``'s shape: every tile needs a scalar only one tile writes. Tiling would race on
+    it however the columns are cut, so the write's own subset -- not just the distances -- has to
+    mention the axis being cut.
+    """
+
+    @dace.program
+    def shared_scalar(a: dace.float64[N, N], s: dace.float64[1]):
+        for i in range(1, N):
+            for j in range(N):
+                a[i, j] = a[i - 1, j] + s[0]
+            s[0] = a[i, 0]
+
+    sdfg = finalized(shared_scalar, "refuse_shared")
+    assert not is_tiled(sdfg), "a location every tile writes must not be tiled"
+
+
+def cloudsc_covptot_numpy(ztp1, za, pap, paph, zcovptot, zcovpmax, ncldtop):
+    """Plain-numpy oracle for :func:`cloudsc_covptot`, level by level.
+
+    The vertical loop is written out because it IS the carry under test; the horizontal axis is a
+    slice, which is exactly the claim the tiling makes about it.
+    """
+    ztp1, za = ztp1.copy(), za.copy()
+    zcovptot, zcovpmax = zcovptot.copy(), zcovpmax.copy()
+    for jk in range(ncldtop, ztp1.shape[0]):
+        zdtdp = 0.285 * 0.5 * (ztp1[jk - 1, :] + ztp1[jk, :]) / paph[jk, :]
+        zdtforc = zdtdp * (pap[jk, :] - pap[jk - 1, :])
+        ztp1[jk, :] = ztp1[jk - 1, :] + zdtforc
+        zcovptot[:] = 1.0 - (1.0 - zcovptot) * (1.0 - np.maximum(za[jk, :], za[jk - 1, :]))
+        zcovptot[:] = np.maximum(zcovptot, 1e-06)
+        zcovpmax[:] = np.maximum(zcovptot, zcovpmax)
+    return ztp1, zcovptot, zcovpmax
+
+
+def test_the_cloudsc_vertical_carry_is_tiled_and_matches_numpy():
+    """A real CLOUDSC block: sequential over levels, parallel over columns, tiled.
+
+    Reduced from ``tests/corpus/cloudsc/cloudsc.py`` -- the ``zdtdp`` / ``zdtforc`` level-offset
+    read at :603 and the ``zcovptot`` / ``zcovpmax`` per-column carry at :903-909 -- with the
+    external constants replaced by literals, the way ``cloudsc_python_extracts_test`` does. The
+    loop structure, which is what is under test, is the source's: ``for jk in NCLDTOP:KLEV`` around
+    ``for jl in KIDIA:KFDIA`` (cloudsc.py:454).
+
+    Every carried reference is at the SAME column -- ``ztp1[jk-1, jl]``, ``za[jk-1, jl]``,
+    ``zcovptot[jl]``. The reference Fortran (``ecmwf-ifs/dwarf-p-cloudsc``,
+    ``src/cloudsc_fortran/cloudsc.F90``) has no ``JL+-1`` anywhere either: the vertical carries and
+    the horizontal is DOALL. So a tile owns whole columns and the carry never leaves it.
+
+    Two carry shapes appear together here, and the second is the one that makes the level loop
+    sequential at all: a 2-D array read one level back, and per-column state in a 1-D array indexed
+    by ``jl`` alone.
+    """
+    ncldtop = 2
+
+    @dace.program
+    def cloudsc_covptot(
+        ztp1: dace.float64[N, N],
+        za: dace.float64[N, N],
+        pap: dace.float64[N, N],
+        paph: dace.float64[N, N],
+        zcovptot: dace.float64[N],
+        zcovpmax: dace.float64[N],
+    ):
+        for jk in range(2, N):
+            for jl in range(N):
+                zdtdp = 0.285 * 0.5 * (ztp1[jk - 1, jl] + ztp1[jk, jl]) / paph[jk, jl]
+                zdtforc = zdtdp * (pap[jk, jl] - pap[jk - 1, jl])
+                ztp1[jk, jl] = ztp1[jk - 1, jl] + zdtforc
+                zcovptot[jl] = 1.0 - (1.0 - zcovptot[jl]) * (1.0 - max(za[jk, jl], za[jk - 1, jl]))
+                zcovptot[jl] = max(zcovptot[jl], 1e-06)
+                zcovpmax[jl] = max(zcovptot[jl], zcovpmax[jl])
+
+    sdfg = finalized(cloudsc_covptot, "tile_cloudsc_covptot")
+    assert is_tiled(sdfg), "the CLOUDSC vertical carry must tile: every reference is distance-0 in jl"
+    assert "nowait" not in sdfg.generate_code()[0].clean_code
+
+    size = 61
+    rng = np.random.default_rng(11)
+    ztp1 = rng.random((size, size)) + 250.0
+    za = rng.random((size, size))
+    pap = rng.random((size, size)) + 1.0
+    paph = rng.random((size, size)) + 1.0
+    zcovptot, zcovpmax = rng.random(size), rng.random(size)
+    want_t, want_ct, want_cm = cloudsc_covptot_numpy(ztp1, za, pap, paph, zcovptot, zcovpmax, ncldtop)
+    got_t, got_ct, got_cm = ztp1.copy(), zcovptot.copy(), zcovpmax.copy()
+    sdfg.compile()(ztp1=got_t, za=za.copy(), pap=pap, paph=paph, zcovptot=got_ct, zcovpmax=got_cm, N=size)
+    assert np.allclose(got_t, want_t, equal_nan=True), f"ztp1 mismatch, max |diff| {np.abs(got_t - want_t).max()}"
+    assert np.allclose(got_ct, want_ct, equal_nan=True), "zcovptot mismatch"
+    assert np.allclose(got_cm, want_cm, equal_nan=True), "zcovpmax mismatch"
+
+
+def test_a_gather_on_the_carried_array_is_refused():
+    """``a[k, i] = a[k-1, idx[i]]``: the carried array is read through an index array.
+
+    Tile ``p`` writes column ``i`` and next trip reads column ``idx[i]``, which no local test can
+    bound to ``p``'s own columns -- so the value it needs may be one another tile wrote, and only a
+    barrier orders that. An unknown distance must refuse, never be mistaken for a zero one.
+
+    Interchanging the two loops is no way around it either: the distance vector is ``(1, unknown)``,
+    and putting ``i`` outside makes it ``(unknown, 1)``, which admits ``(-1, 1)`` -- lexicographically
+    negative, so the interchange reverses a dependence.
+    """
+
+    @dace.program
+    def gather_carried(a: dace.float64[N, N], idx: dace.int64[N]):
+        for k in range(1, N):
+            for i in range(N):
+                a[k, i] = a[k - 1, idx[i]] + 1.0
+
+    assert not is_tiled(finalized(gather_carried, "refuse_gather_carried")), (
+        "a gather on the carried array must not be tiled"
+    )
+
+
+def test_a_gather_on_a_read_only_operand_still_tiles():
+    """A gather does not block tiling by itself -- only a gather on what the loop CARRIES does.
+
+    ``a[k, i] = a[k-1, i] + b[idx[i]]``: ``b`` is read through an index array, but nothing writes
+    ``b`` in the nest, so wherever the gather lands that value is the same for every tile and no
+    ordering between tiles is needed. Only the carried array ``a`` constrains the cut, and it is at
+    the same column on both sides.
+
+    This is worth pinning because it is the shape a stencil on an unstructured mesh takes: ICON's
+    ``velocity_tendencies`` reaches its horizontal neighbours through
+    ``A[idx[:, :, n], jk, blk[:, :, n]]``, and every one of those gathered arrays is produced by an
+    earlier, already-finished loop. Refusing on the mere presence of a gather would give up every
+    such kernel for nothing.
+    """
+
+    @dace.program
+    def gather_readonly(a: dace.float64[N, N], b: dace.float64[N], idx: dace.int64[N]):
+        for k in range(1, N):
+            for i in range(N):
+                a[k, i] = a[k - 1, i] + b[idx[i]]
+
+    sdfg = finalized(gather_readonly, "tile_gather_readonly")
+    assert is_tiled(sdfg), "a gather on a read-only operand must not block tiling"
+
+    size = 61
+    rng = np.random.default_rng(5)
+    a = rng.random((size, size))
+    b = rng.random(size)
+    idx = rng.permutation(size).astype(np.int64)
+    want = a.copy()
+    for k in range(1, size):
+        want[k, :] = want[k - 1, :] + b[idx]
+    got = a.copy()
+    sdfg.compile()(a=got, b=b, idx=idx, N=size)
+    assert np.allclose(got, want), f"value mismatch, max |diff| {np.abs(got - want).max()}"
+
+
+B = dace.symbol("B")
+
+
+@dace.program
+def cube_sweep(out: dace.float64[N, N, N, B], inp: dace.float64[N, N, N, B], w: dace.float64[4]):
+    """vector_stencil_4d: a sequential loop over a map whose three leading axes all have extent ``N``."""
+    for r in range(4):
+        out += w[r] * inp
+
+
+def test_a_short_constant_loop_over_a_cube_moves_into_the_map():
+    """The four trips of ``r`` move into the cube map whole (``MoveLoopIntoMapGated``'s short constant trip): one
+    parallel sweep over the ``N^3 * B`` volume that accumulates in a register, instead of four strip-mined sweeps."""
+    sdfg = finalized(cube_sweep, "smi_cube_sweep")
+    code = emitted(sdfg)
+    body = code[code.index("_internal(") :]
+    assert "__dace_tile" not in body, code
+    assert re.search(r"#pragma omp parallel for\s*\n\s*for \(int __i0", body), code
+    n, b = 7, 3
+    rng = np.random.default_rng(0)
+    out, inp, w = rng.random((n, n, n, b)), rng.random((n, n, n, b)), rng.random(4)
+    expected = out + w.sum() * inp
+    sdfg(out=out, inp=inp, w=w, N=n, B=b)
+    assert np.allclose(out, expected)
+
+
+if __name__ == "__main__":
+    test_a_distance_zero_carry_is_tiled()
+    test_the_tiles_cover_the_axis_exactly_once()
+    test_the_finalized_kernel_matches_the_reference(column_scan, reference_column_scan, ("aa", "bb"), "num_s231")
+    test_the_finalized_kernel_matches_the_reference(diagonal_carry, reference_diagonal_carry, ("aa", "bb"), "num_s119")
+    test_the_finalized_kernel_matches_the_reference(skewed_carry, reference_skewed_carry, ("a", "b"), "num_skew")
+    test_a_carry_that_crosses_a_tile_boundary_is_refused(diagonal_carry, "refuse_s119")
+    test_a_carry_that_crosses_a_tile_boundary_is_refused(skewed_carry, "refuse_skew")
+    test_a_target_shared_by_every_tile_is_refused()
+    test_the_cloudsc_vertical_carry_is_tiled_and_matches_numpy()
+    test_a_gather_on_the_carried_array_is_refused()
+    test_a_gather_on_a_read_only_operand_still_tiles()
+    test_a_short_constant_loop_over_a_cube_moves_into_the_map()

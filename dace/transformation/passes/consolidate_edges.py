@@ -2,6 +2,7 @@
 
 from dace import SDFG, properties
 from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import memoize_facts
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -35,7 +36,9 @@ class ConsolidateEdges(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: Number of edges removed, or None if nothing was performed.
         """
-        edges_removed = sdutil.consolidate_edges(sdfg)
+        # Consolidation rewrites memlets and connectors only, so the facts of every SDFG hold throughout
+        with memoize_facts():
+            edges_removed = sdutil.consolidate_edges(sdfg)
         if edges_removed == 0:
             return None
         return edges_removed

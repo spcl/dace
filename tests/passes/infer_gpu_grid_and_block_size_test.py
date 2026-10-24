@@ -1,0 +1,95 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Reconciling an explicit ``gpu_block_size`` with the sizes of nested ``GPU_ThreadBlock`` maps."""
+
+import pytest
+
+import dace
+from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
+
+
+def _kernel_with_nested_threadblock(user_block_size, tb_extent: int) -> tuple:
+    """``(sdfg, state, kernel entry)`` of a kernel with ``gpu_block_size = user_block_size`` around one thread-block map."""
+    sdfg = dace.SDFG("infer_block")
+    sdfg.add_array("A", [tb_extent], dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=False)
+    state = sdfg.add_state("s")
+
+    dev_me, dev_mx = state.add_map("kernel", dict(i="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    dev_me.map.gpu_block_size = list(user_block_size)
+    tb_me, tb_mx = state.add_map("tb", dict(j=f"0:{tb_extent}"), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
+    t = state.add_tasklet("w", {}, {"o": None}, "o = 1.0")
+    a = state.add_write("A")
+
+    tb_mx.add_scope_connectors("A")
+    dev_mx.add_scope_connectors("A")
+    state.add_nedge(dev_me, tb_me, dace.Memlet())
+    state.add_nedge(tb_me, t, dace.Memlet())
+    state.add_edge(t, "o", tb_mx, "IN_A", dace.Memlet("A[j]"))
+    state.add_edge(tb_mx, "OUT_A", dev_mx, "IN_A", dace.Memlet(f"A[0:{tb_extent}]"))
+    state.add_edge(dev_mx, "OUT_A", a, None, dace.Memlet(f"A[0:{tb_extent}]"))
+    return sdfg, state, dev_me
+
+
+def test_infer_block_size_conflict_with_larger_threadblock_map():
+    """A user ``gpu_block_size`` smaller than a nested ``GPU_ThreadBlock`` map is a conflict and must
+    raise. Regression: the conflict check compared the running elementwise max against the current
+    size, so a monotonically larger thread-block size ([64,1,1] vs the declared [32,1,1]) was
+    silently accepted and the user's block size overridden."""
+    sdfg, _state, _dev = _kernel_with_nested_threadblock([32, 1, 1], tb_extent=64)
+    with pytest.raises(ValueError):
+        InferGPUGridAndBlockSize().infer(sdfg, set())
+
+
+def test_infer_block_size_matching_user_and_threadblock_no_conflict():
+    """A user ``gpu_block_size`` equal to the nested thread-block size is not a conflict."""
+    sdfg, _state, dev = _kernel_with_nested_threadblock([64, 1, 1], tb_extent=64)
+    dims = InferGPUGridAndBlockSize().infer(sdfg, set())
+    _grid, block = dims[dev]
+    assert [int(b) for b in block] == [64, 1, 1], block
+
+
+def test_infer_block_size_non_3d_user_size_matching_no_conflict():
+    """A user ``gpu_block_size`` given in non-3D form ([64]) that matches the nested thread-block
+    size must not be flagged as a conflict. Regression: ``detected_block_sizes`` was seeded with the
+    raw (non-3D) user value while the thread-block sizes are normalized to 3D, so [64] never compared
+    equal to [64,1,1] and a matching config raised a false 'conflicting sizes' ValueError."""
+    sdfg, _state, dev = _kernel_with_nested_threadblock([64], tb_extent=64)
+    dims = InferGPUGridAndBlockSize().infer(sdfg, set())
+    _grid, block = dims[dev]
+    assert [int(b) for b in block] == [64, 1, 1], block
+
+
+def test_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols():
+    """A thread-block map in a nested SDFG sized by the nested ``M`` (bound to 32 by the node) gives a
+    block of 32: the launch is sized on the host, where ``M`` does not exist."""
+    inner = dace.SDFG("inner_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols")
+    inner.add_symbol("M", dace.int64)
+    inner.add_array("a", [64], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state("s", is_start_block=True)
+    inner_state.add_mapped_tasklet(
+        "tb",
+        {"j": "0:M"},
+        {},
+        "o = 1.0",
+        {"o": dace.Memlet("a[j]")},
+        schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock,
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG("infer_block_nested")
+    sdfg.add_array("A", [64], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state("s")
+    dev_me, dev_mx = state.add_map("kernel", dict(i="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a": None}, symbol_mapping={"M": 32})
+    state.add_nedge(dev_me, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, dev_mx, state.add_write("A"), src_conn="a", memlet=dace.Memlet("A[0:64]"))
+    sdfg.validate()
+
+    _grid, block = InferGPUGridAndBlockSize().infer(sdfg, set())[dev_me]
+    assert [int(b) for b in block] == [32, 1, 1], block
+
+
+if __name__ == "__main__":
+    test_infer_block_size_conflict_with_larger_threadblock_map()
+    test_infer_block_size_matching_user_and_threadblock_no_conflict()
+    test_infer_block_size_non_3d_user_size_matching_no_conflict()
+    test_infer_block_size_of_a_threadblock_map_in_a_nested_sdfg_uses_outer_symbols()

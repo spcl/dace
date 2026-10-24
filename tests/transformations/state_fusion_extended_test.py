@@ -1110,6 +1110,81 @@ def test_war_read_through_a_view_orders_the_copy_out_of_the_view():
     )
 
 
+def rebound_read_view(write_through_view: bool) -> SDFG:
+    """Two statements that each bind their own read view ``V = H[1:9]``, as the frontend emits one view chain per
+    statement (ICON velocity's ``h = ddqz_z_half[:, band, :]``): s1 ``T[i] = 2 * V[i]``, s2 ``B[i] = T[i] + V[i]``.
+
+    With ``write_through_view`` s2 instead computes ``B[i] = T[i] + 1`` and overwrites ``H[1:9] = 7`` through a write
+    view ``W`` -- a real overwrite of what s1 read, which must stay ordered."""
+    sdfg = SDFG(f"rebound_read_view_{'write' if write_through_view else 'read'}")
+    sdfg.add_array("H", [10], dtypes.float64)
+    sdfg.add_array("B", [8], dtypes.float64)
+    sdfg.add_transient("T", [8], dtypes.float64)
+    sdfg.add_view("V", [8], dtypes.float64)
+    sdfg.add_view("W", [8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("produce", is_start_block=True)
+    s2 = sdfg.add_state("consume")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    view1 = s1.add_access("V")
+    s1.add_edge(s1.add_read("H"), None, view1, "views", Memlet("H[1:9]"))
+    me, mx = s1.add_map("m_produce", {"i": "0:8"})
+    t1 = s1.add_tasklet("x2", {"_v": None}, {"_o": None}, "_o = 2.0 * _v")
+    s1.add_memlet_path(view1, me, t1, dst_conn="_v", memlet=Memlet("V[i]"))
+    s1.add_memlet_path(t1, mx, s1.add_write("T"), src_conn="_o", memlet=Memlet("T[i]"))
+
+    me2, mx2 = s2.add_map("m_consume", {"i": "0:8"})
+    if write_through_view:
+        t2 = s2.add_tasklet("add", {"_t": None}, {"_o": None}, "_o = _t + 1.0")
+    else:
+        t2 = s2.add_tasklet("add", {"_t": None, "_v": None}, {"_o": None}, "_o = _t + _v")
+        view2 = s2.add_access("V")
+        s2.add_edge(s2.add_read("H"), None, view2, "views", Memlet("H[1:9]"))
+        s2.add_memlet_path(view2, me2, t2, dst_conn="_v", memlet=Memlet("V[i]"))
+    s2.add_memlet_path(s2.add_read("T"), me2, t2, dst_conn="_t", memlet=Memlet("T[i]"))
+    s2.add_memlet_path(t2, mx2, s2.add_write("B"), src_conn="_o", memlet=Memlet("B[i]"))
+    if write_through_view:
+        wview = s2.add_access("W")
+        me3, mx3 = s2.add_map("m_overwrite", {"i": "0:8"})
+        t3 = s2.add_tasklet("set", {}, {"_o": None}, "_o = 7.0")
+        s2.add_memlet_path(me3, t3, memlet=Memlet())
+        s2.add_memlet_path(t3, mx3, wview, src_conn="_o", memlet=Memlet("W[i]"))
+        s2.add_edge(wview, "views", s2.add_write("H"), None, Memlet("H[1:9]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_rebinding_a_read_view_is_neither_a_write_nor_a_hazard():
+    """Each statement re-binds the read view ``V``. The binding edge ``H -> V`` is a pointer, not a write, so the
+    two states share no WAR/WAW hazard: the fusion must add no ordering edge. ICON velocity got two WAR edges
+    (first reader -> the second ``H`` source) and two WAW edges per rebound view, which hung the first Map's exit
+    on a read-only source of the second Map and kept MapFusion from fusing the pair."""
+    sdfg = rebound_read_view(write_through_view=False)
+    fused, st = _fuse(sdfg)
+    assert st is not None, "the two states should fuse"
+    empty = [(e.src, e.dst) for e in st.edges() if e.data.is_empty() and e.src_conn is None and e.dst_conn is None]
+    assert not empty, f"rebinding a read view is no hazard, yet ordering edges were added: {empty}"
+
+    h = np.arange(10, dtype=np.float64) + 1.0
+    _assert_fusion_preserves_semantics(sdfg, 1, H=h, B=np.zeros(8))
+
+
+def test_writing_through_a_view_still_orders_the_overwrite_after_the_read():
+    """Control for the test above: the second state also overwrites ``H[1:9]`` through a WRITE view. That is a
+    real WAR against the first state's read of ``V`` and must stay ordered after it."""
+    sdfg = rebound_read_view(write_through_view=True)
+    fused, st = _fuse(sdfg)
+    if st is not None:
+        x2 = next(n for n in st.nodes() if isinstance(n, dnodes.Tasklet) and n.label == "x2")
+        h_writes = [n for n in _node_by(st, "H", want_write=True) if st.in_degree(n) > 0]
+        assert len(h_writes) == 1
+        _assert_ordered_before(st, x2, h_writes[0], "WAR through a write view")
+
+    h = np.arange(10, dtype=np.float64) + 1.0
+    _assert_fusion_preserves_semantics(sdfg, fused.number_of_nodes(), H=h, B=np.zeros(8))
+
+
 # Determinism. The pass reads several decisions out of `set`s -- of AccessNodes, which
 # hash by ``id()``, and of data names, whose hash is salted per process. Both iterate in a
 # different order on a different run, so the same SDFG used to fuse on one run and not on
@@ -1471,6 +1546,133 @@ def test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs():
     assert np.array_equal(a, x) and np.array_equal(c, x)
 
 
+def _start_state_with_assignment(name: str, rhs: str):
+    """``s1: A = B + 1``, then ``m = rhs`` on the edge out of the start state, then ``s2: C = A * m``."""
+    sdfg = SDFG(name)
+    for arr in ("A", "B", "C"):
+        sdfg.add_array(arr, [8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    sdfg.add_symbol("m", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge(assignments={"m": rhs}))
+    s1.add_mapped_tasklet(
+        "inc", {"i": "0:8"}, {"b": Memlet("B[i]")}, "a = b + 1", {"a": Memlet("A[i]")}, external_edges=True
+    )
+    s2.add_mapped_tasklet(
+        "scale", {"i": "0:8"}, {"a": Memlet("A[i]")}, "c = a * m", {"c": Memlet("C[i]")}, external_edges=True
+    )
+    return sdfg
+
+
+def test_extended_fusion_moves_a_start_state_edge_assignment_into_a_new_predecessor():
+    """The first state has no predecessor to absorb ``m = k + 1``: an empty one is added to carry it."""
+    sdfg = _start_state_with_assignment("sfx_start_assignment", "k + 1")
+    B = np.arange(8, dtype=np.float64)
+    ref = _run(sdfg, "ref", A=np.zeros(8), B=B, C=np.zeros(8))
+    plain = copy.deepcopy(sdfg)
+    plain.apply_transformations_repeated(StateFusionExtended)
+    assert sum(1 for st in plain.states() if not st.is_empty()) == 2  # main's behaviour: refused
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sum(1 for st in fused.states() if not st.is_empty()) == 1
+    out = _run(fused, "fused", A=np.zeros(8), B=B, C=np.zeros(8))
+    for name in ref:
+        np.testing.assert_array_equal(out[name], ref[name])
+
+
+def test_extended_fusion_keeps_a_start_state_edge_assignment_that_reads_its_writes():
+    """``m = A[0]`` reads what the first state writes: moving it before the state would read stale data."""
+    sdfg = _start_state_with_assignment("sfx_start_assignment_reads", "int(A[0])")
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sum(1 for st in fused.states() if not st.is_empty()) == 2
+
+
+def test_extended_fusion_orders_an_array_accumulation_after_its_seed():
+    """``A[:] = 0`` then ``A[i] (+)= B[i, j]``: with ``order_array_seeds`` the states fuse, the accumulation
+    ordered after the fill; plain fusion keeps them apart."""
+    sdfg = SDFG("sfx_array_seed")
+    sdfg.add_array("A", [8], dtypes.float64)
+    sdfg.add_array("B", [8, 8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    s1.add_mapped_tasklet("zero", {"i": "0:8"}, {}, "a = 0.0", {"a": Memlet("A[i]")}, external_edges=True)
+    s2.add_mapped_tasklet(
+        "acc",
+        {"i": "0:8", "j": "0:8"},
+        {"b": Memlet("B[i, j]")},
+        "a = b",
+        {"a": Memlet("A[i]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+    )
+    B = np.random.default_rng(5).random((8, 8))
+    ref = _run(sdfg, "ref", A=np.ones(8), B=B)
+    plain = copy.deepcopy(sdfg)
+    plain.apply_transformations_repeated(StateFusionExtended)
+    assert plain.number_of_nodes() == 2
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"order_array_seeds": True})
+    assert fused.number_of_nodes() == 1
+    fused.validate()
+    out = _run(fused, "fused", A=np.ones(8), B=B)
+    np.testing.assert_allclose(out["A"], ref["A"])
+    np.testing.assert_allclose(out["A"], B.sum(axis=1))
+
+
+def _sliced_build(name: str, second_reads: bool):
+    """``s1: T[0] = B[0]; T[1] = B[1]`` (two producers of disjoint slices), ``s2: T[2] = B[2]`` and, if
+    ``second_reads``, also ``C[0] = T[0] + T[1]``; ``s3: C[1:4] = T``."""
+    sdfg = SDFG(name)
+    sdfg.add_array("B", [8], dtypes.float64)
+    sdfg.add_array("C", [8], dtypes.float64)
+    sdfg.add_array("T", [3], dtypes.float64, transient=True)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    s3 = sdfg.add_state("s3")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    sdfg.add_edge(s2, s3, InterstateEdge())
+    for st, idx in ((s1, 0), (s1, 1), (s2, 2)):
+        st.add_nedge(st.add_read("B"), st.add_write("T"), Memlet(f"B[{idx}] -> [{idx}]"))
+    if second_reads:
+        t = s2.add_read("T")
+        tasklet = s2.add_tasklet("sum", {"a", "b"}, {"c"}, "c = a + b")
+        s2.add_edge(t, None, tasklet, "a", Memlet("T[0]"))
+        s2.add_edge(t, None, tasklet, "b", Memlet("T[1]"))
+        s2.add_edge(tasklet, "c", s2.add_write("C"), None, Memlet("C[0]"))
+    s3.add_nedge(s3.add_read("T"), s3.add_write("C"), Memlet("T[0:3] -> [1:4]"))
+    return sdfg
+
+
+def test_extended_fusion_fuses_a_transient_built_from_disjoint_slices():
+    sdfg = _sliced_build("sfx_disjoint_slices", second_reads=False)
+    B = np.arange(8, dtype=np.float64) + 1.0
+    ref = _run(sdfg, "ref", B=B, C=np.zeros(8))
+    s1, s2 = (next(st for st in sdfg.states() if st.label == label) for label in ("s1", "s2"))
+    assert not StateFusionExtended.can_be_applied_to(sdfg, first_state=s1, second_state=s2)
+    options = {"aggressive_merges": True}
+    assert StateFusionExtended.can_be_applied_to(sdfg, options=options, first_state=s1, second_state=s2)
+    fused = copy.deepcopy(sdfg)
+    f1, f2 = (next(st for st in fused.states() if st.label == label) for label in ("s1", "s2"))
+    StateFusionExtended.apply_to(fused, options=options, first_state=f1, second_state=f2)
+    assert fused.number_of_nodes() == 2
+    fused.validate()
+    np.testing.assert_array_equal(_run(fused, "fused", B=B, C=np.zeros(8))["C"], ref["C"])
+
+
+def test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads():
+    sdfg = _sliced_build("sfx_disjoint_slices_read", second_reads=True)
+    B = np.arange(8, dtype=np.float64) + 1.0
+    ref = _run(sdfg, "ref", B=B, C=np.zeros(8))
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    fused.validate()
+    np.testing.assert_array_equal(_run(fused, "fused", B=B, C=np.zeros(8))["C"], ref["C"])
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
@@ -1496,6 +1698,8 @@ if __name__ == "__main__":
     test_war_survives_downstream_simplify()
     test_war_from_dace_program_matches_reference()
     test_war_read_through_a_view_orders_the_copy_out_of_the_view()
+    test_rebinding_a_read_view_is_neither_a_write_nor_a_hazard()
+    test_writing_through_a_view_still_orders_the_overwrite_after_the_read()
     test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it()
     test_extended_fusion_orders_a_reused_transient()
     test_extended_fusion_orders_a_transient_with_two_producers()
@@ -1504,3 +1708,8 @@ if __name__ == "__main__":
     test_extended_fusion_a_read_behind_an_ordering_edge_is_a_read()
     test_extended_fusion_orders_a_fanned_out_read_before_an_in_place_write()
     test_extended_fusion_orders_a_rewrite_whose_source_feeds_other_outputs()
+    test_extended_fusion_moves_a_start_state_edge_assignment_into_a_new_predecessor()
+    test_extended_fusion_keeps_a_start_state_edge_assignment_that_reads_its_writes()
+    test_extended_fusion_orders_an_array_accumulation_after_its_seed()
+    test_extended_fusion_fuses_a_transient_built_from_disjoint_slices()
+    test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads()

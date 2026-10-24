@@ -38,7 +38,7 @@ class CusolverDnHandle {
 
   cusolverDnHandle_t& Get() {
     if (!handle_) {
-      auto handle = CreateCusolverDnHandle();
+      cusolverDnHandle_t handle = CreateCusolverDnHandle();
       handle_ = handle;
     }
     return *handle_;

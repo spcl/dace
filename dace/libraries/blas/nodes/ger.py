@@ -6,17 +6,20 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import data as dt
-from dace import library
+from dace import library, symbolic
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas.blas_helpers import operand
+from dace.ordered import OrderedSet
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.transformation import ExpandTransformation
 
 
-@library.expansion
+@dace.library.expansion
 class ExpandGerPure(ExpandTransformation):
     """
     Generic expansion of GER.
@@ -69,6 +72,90 @@ class ExpandGerPure(ExpandTransformation):
         return nsdfg_node
 
 
+def ger_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_res = _A``, then ``?ger`` (``?geru`` for complex data: ``Ger`` does not conjugate) updates ``_res`` in
+    place, through CBLAS or the GPU library of ``dialect``."""
+    res, x, y = (operand(node, state, sdfg, c) for c in ("_res", "_x", "_y"))
+    prefix = blas_helpers.blas_prefix(res.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, res)
+        return ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y)
+    layout = blas_helpers.matrix_layout(res)
+    if layout is None or prefix is None:
+        return ExpandGerPure.expansion(node, state, sdfg)
+    routine = f"{prefix}geru" if res.desc.dtype.is_complex() else f"{prefix}ger"
+    scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, alpha=node.alpha)
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    (m, n), (lda,) = res.shape, layout.leading
+    call = (
+        f"cblas_{routine.lower()}({order}, {m}, {n}, {arg['alpha']}, __x, {x.strides[0]}, __y, {y.strides[0]}, "
+        f"__res, {lda});"
+    )
+    return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
+
+
+def ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y) -> SDFG:
+    """The column-major vendor ``?ger``. A row-major ``_res`` is its transpose in column-major order, which is the
+    outer product of ``y`` and ``x``: the two vectors and the two dimensions swap."""
+    gpu = gpu_dialect.gpu_call(dialect, res.desc.dtype)
+    routine = gpu.routine("geru" if res.desc.dtype.is_complex() else "ger")
+    scalars, arg = gpu_dialect.scalar_pointers(gpu, res.desc.dtype, alpha=node.alpha)
+    (m, n), (lda,) = res.shape, layout.leading
+    first, second = (("__y", y), ("__x", x)) if layout.row_major else (("__x", x), ("__y", y))
+    rows, cols = (n, m) if layout.row_major else (m, n)
+    call = (
+        f"{routine}({dialect.handle}, {rows}, {cols}, {arg['alpha']}, {gpu.pointer(first[0])}, {first[1].strides[0]}, "
+        f"{gpu.pointer(second[0])}, {second[1].strides[0]}, {gpu.pointer('__res')}, {lda})"
+    )
+    code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+    return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", code)
+
+
+@dace.library.expansion
+class ExpandGerOpenBLAS(ExpandTransformation):
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
+
+
+@dace.library.expansion
+class ExpandGerMKL(ExpandTransformation):
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
+
+
+@dace.library.expansion
+class ExpandGerGPUBLAS(ExpandTransformation):
+    """The vendor ``?ger`` through :func:`ger_call`, which copies ``_A`` into ``_res`` and updates it in place."""
+
+    environments: list[type] = []
+    dialect: gpu_dialect.GpuBlasDialect
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg, cls.dialect, cls.environments[0])
+
+
+@dace.library.expansion
+class ExpandGerCuBLAS(ExpandGerGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandGerRocBLAS(ExpandGerGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @library.node
 class Ger(LibraryNode):
     """
@@ -80,7 +167,13 @@ class Ger(LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandGerPure}
+    implementations = {
+        "pure": ExpandGerPure,
+        "OpenBLAS": ExpandGerOpenBLAS,
+        "MKL": ExpandGerMKL,
+        "cuBLAS": ExpandGerCuBLAS,
+        "rocBLAS": ExpandGerRocBLAS,
+    }
     default_implementation = None
 
     # Object fields
@@ -97,7 +190,7 @@ class Ger(LibraryNode):
     )
 
     def __init__(self, name, n=dace.symbolic.symbol("n"), m=dace.symbolic.symbol("m"), alpha=1, location=None):
-        super().__init__(name, location=location, inputs={"_x", "_y", "_A"}, outputs={"_res"})
+        super().__init__(name, location=location, inputs=OrderedSet(("_x", "_y", "_A")), outputs={"_res"})
 
         self.n = n
         self.m = m
@@ -157,7 +250,7 @@ class Ger(LibraryNode):
         if len(size_y) != 1:
             raise ValueError("y must be a vector")
 
-        if size_a[0] != size_x[0] or size_a[1] != size_y[0]:
+        if symbolic.inequal_symbols(size_a[0], size_x[0]) or symbolic.inequal_symbols(size_a[1], size_y[0]):
             raise ValueError("Input vectors x and y (outer product) must match with the matrix A dimensions.")
 
         out_edges = state.out_edges(self)

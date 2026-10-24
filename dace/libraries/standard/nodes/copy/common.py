@@ -17,6 +17,8 @@ from dace.libraries.standard.helper import (
     CURRENT_STREAM_NAME,
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
+    collapse_to_elements,
+    exact_element_count,
 )
 from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
 
@@ -130,6 +132,110 @@ def cuda2d_pitch_params(
     return None
 
 
+def _divides(outer, inner) -> bool:
+    """Whether stride ``outer`` is a whole multiple of stride ``inner``, provably."""
+    if inner == 0:
+        return False
+    _, denominator = symbolic.simplify(outer / inner).as_numer_denom()
+    return denominator == 1
+
+
+def pitched_axes(src_strides, dst_strides) -> int:
+    """How many innermost axes (stride 1 last on both sides) one pitched copy covers: 3 when each side's
+    slice stride is a whole number of its rows, else 2."""
+    if len(src_strides) >= 3 and all(_divides(st[-3], st[-2]) for st in (src_strides, dst_strides)):
+        return 3
+    return 2
+
+
+def strided_copy_calls(
+    shape: list[symbolic.SymExpr],
+    src_strides: list[symbolic.SymExpr],
+    dst_strides: list[symbolic.SymExpr],
+    pitched: bool = True,
+) -> symbolic.SymExpr:
+    """How many ``gpuMemcpy*`` calls ``MemcpyCUDA2D`` / ``MemcpyCUDANDStrided`` issue for a collapsed region: one
+    pitched call per box of the innermost axes, or, without ``pitched`` (HIP, pooled operand), one call per row."""
+    if len(shape) <= 1:
+        return 1
+    rows = [d for d in range(len(shape)) if src_strides[d] == 1 and dst_strides[d] == 1]
+    if pitched and len(shape) == 2 and cuda2d_pitch_params(shape, src_strides, dst_strides) is not None:
+        return 1
+    if pitched and rows and rows[-1] == len(shape) - 1:
+        return functools.reduce(operator.mul, shape[: len(shape) - pitched_axes(src_strides, dst_strides)], 1)
+    chunk = rows[-1] if rows else len(shape) - 1
+    return functools.reduce(operator.mul, (n for d, n in enumerate(shape) if d != chunk), 1)
+
+
+def hull_elements(shape: list[symbolic.SymExpr], strides: list[symbolic.SymExpr]) -> symbolic.SymExpr:
+    """Elements from the first element of a ``shape`` box laid out with nonnegative ``strides`` to its last."""
+    return 1 + sum((n - 1) * s for n, s in zip(shape, strides))
+
+
+def span_is_bounded(shape: list[symbolic.SymExpr], strides: list[symbolic.SymExpr], facts: symbolic.Facts) -> bool:
+    """Whether the span a region occupies (:func:`hull_elements`) is provably at most twice the region, so moving the
+    span costs at most twice the region's bytes."""
+    if not all(symbolic.provably_nonnegative(s, facts) for s in strides):
+        return False
+    count = functools.reduce(operator.mul, shape, 1)
+    return symbolic.provably_le(hull_elements(shape, strides), 2 * count, facts)
+
+
+def hull_copy_is_safe(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> bool:
+    """Whether one flat copy of the span the region occupies (``MemcpyCUDAHull``) has the effect of the copy.
+
+    It does when:
+
+    * both sides lay the region out alike (equal collapsed shapes and nonnegative strides), so every element of the
+      region lands in its own slot;
+    * nothing observes the destination elements between the rows: it is a transient of this SDFG, no view aliases
+      it, and every read of it -- memlets, write-conflict resolutions, interstate and control flow code -- lies in
+      the copied region. The source's elements in between are read, which is harmless: the span lies inside its
+      allocation;
+    * the span is at most twice the region, from the facts of the SDFG, so the extra bytes cannot outweigh the calls
+      a strided copy needs.
+    """
+    sdfg = parent_state.sdfg
+    _, inp, in_subset, _, out, out_subset = node.validate(sdfg, parent_state, allow_cross_storage=True)
+    out_name = next(e.dst.data for e in parent_state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+    in_shape, in_strides = collapse_shape_and_strides(in_subset, inp.strides)
+    out_shape, out_strides = collapse_shape_and_strides(out_subset, out.strides)
+    facts = sdfg.facts()
+    if len(in_shape) != len(out_shape) or len(in_shape) < 2:
+        return False
+    if not all(symbolic.equal(a, b) is True for a, b in zip(in_shape + in_strides, out_shape + out_strides)):
+        return False
+    if not span_is_bounded(in_shape, in_strides, facts):
+        return False
+    if not out.transient or isinstance(out, data.View):
+        return False
+    for state in sdfg.states():
+        for access in state.data_nodes():
+            if access.data != out_name:
+                continue
+            for edge in state.all_edges(access):
+                other = edge.dst if edge.src is access else edge.src
+                if isinstance(other, nodes.AccessNode) and isinstance(sdfg.arrays[other.data], data.View):
+                    return False
+            reads = [(e, e.data.get_src_subset(e, state)) for e in state.out_edges(access)]
+            reads += [(e, e.data.get_dst_subset(e, state)) for e in state.in_edges(access) if e.data.wcr is not None]
+            for edge, subset in reads:
+                if edge.data.is_empty():
+                    continue
+                if subset is None or not out_subset.covers_precise(subset, facts):
+                    return False
+    for edge in sdfg.all_interstate_edges(recursive=False):
+        if out_name in edge.data.free_symbols:
+            return False
+    for block in sdfg.all_control_flow_blocks(recursive=False):
+        if isinstance(block, dace.SDFGState):
+            continue
+        for code in block.get_meta_codeblocks():
+            if out_name in code.get_free_symbols():
+                return False
+    return True
+
+
 def _make_expansion_sdfg(
     node: "CopyLibraryNode", parent_state: dace.SDFGState, allow_cross_storage: bool = False
 ) -> CopyExpansion:
@@ -144,8 +250,8 @@ def _make_expansion_sdfg(
         parent_state.sdfg, parent_state, allow_cross_storage=allow_cross_storage
     )
 
-    in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
-    out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+    in_shape_collapsed, in_strides_collapsed = collapse_to_elements(in_subset, inp.strides)
+    out_shape_collapsed, out_strides_collapsed = collapse_to_elements(out_subset, out.strides)
 
     # The label is built from data names, and a struct member carries a '.' -- the SDFG name reaches
     # C++ as an identifier (``dace/sdfg/sdfg.py`` sanitizes data names the same way).
@@ -291,7 +397,7 @@ def _make_mapped_tasklet_expansion(
         f"{node.label}_tasklet",
         map_rng,
         inputs,
-        f"{inner_out} = {inner_in}",
+        copy_assignment_code(inp, out, inner_in, inner_out),
         outputs,
         schedule=schedule,
         external_edges=True,
@@ -300,8 +406,22 @@ def _make_mapped_tasklet_expansion(
     return ctx.sdfg
 
 
+def copy_assignment_code(inp: data.Data, out: data.Data, in_conn: str, out_conn: str) -> str:
+    """The tasklet body for one element of a copy: an assignment, or a CAST when the copy changes
+    dtype.
+
+    Written out as ``dace.<dtype>(...)`` rather than left to C++'s implicit conversion so the
+    narrowing is visible in the graph and in the emitted code.
+    """
+    if inp.dtype == out.dtype:
+        return f"{out_conn} = {in_conn}"
+    name = out.dtype.to_string()
+    cast = name if out.dtype in (dtypes.bool, dtypes.bool_) else f"dace.{name}"
+    return f"{out_conn} = {cast}({in_conn})"
+
+
 def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
-    """``cudaMemcpy<src>To<dst>`` from endpoint storages."""
+    """``gpuMemcpy<src>To<dst>`` from endpoint storages."""
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     dst_loc = "Device" if out.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     backend = get_gpu_backend()
@@ -312,13 +432,13 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     """Build a Tasklet emitting one contiguous-block copy. Raises ``ValueError`` on a
     non-contiguous subset (the single-call form would overrun the region; use ``MappedTasklet``).
 
-    Emits ``cudaMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU allowed, direction
+    Emits ``gpuMemcpyAsync`` when ``cuda`` is set -- cross-CPU/GPU allowed, direction
     (HostToDevice/DeviceToHost/DeviceToDevice/HostToHost) inferred from endpoint storages --
     else a same-storage ``std::memcpy``.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :param cuda: emit ``cudaMemcpyAsync`` (else ``memcpy``).
+    :param cuda: emit ``gpuMemcpyAsync`` (else ``memcpy``).
     :returns: a :class:`~dace.sdfg.nodes.Tasklet` issuing the copy.
     :raises ValueError: a subset is non-contiguous.
     """
@@ -338,15 +458,13 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
 
     in_conn = INPUT_CONNECTOR_NAME
     out_conn = OUTPUT_CONNECTOR_NAME
-    nbytes = f"{sym2cpp(in_subset.num_elements_exact())} * sizeof({inp.dtype.ctype})"
+    nbytes = f"{sym2cpp(exact_element_count(in_subset))} * sizeof({inp.dtype.ctype})"
     if cuda:
         backend = get_gpu_backend()
-        code = (
-            f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
-        )
+        code = f"DACE_GPU_CHECK({backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME}));"
     else:
         code = (
-            f"dace::CopyImpl<{inp.dtype.ctype}, 1>({in_conn}, {out_conn}, {sym2cpp(in_subset.num_elements_exact())});"
+            f"dace::CopyImpl<{inp.dtype.ctype}, 1>({in_conn}, {out_conn}, {sym2cpp(exact_element_count(in_subset))});"
         )
 
     return nodes.Tasklet(
@@ -356,6 +474,91 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
         code=code,
         language=dace.Language.CPP,
     )
+
+
+def _thread_block_maps(graph) -> list[nodes.Map]:
+    """Every ``GPU_ThreadBlock`` map in ``graph``, descending into nested SDFGs."""
+    found = []
+    for n in graph.nodes():
+        if isinstance(n, nodes.NestedSDFG):
+            for st in n.sdfg.states():
+                found.extend(_thread_block_maps(st))
+        elif isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            found.append(n.map)
+    return found
+
+
+def _block_size_to_3d(size: list[symbolic.SymExpr]) -> tuple[symbolic.SymExpr, ...]:
+    """Codegen's block-size normalization: flatten past the third dimension, pad up to three."""
+    size = list(size)
+    if len(size) > 3:
+        size = size[:2] + [functools.reduce(operator.mul, size[2:], 1)]
+    return tuple(size + [1] * (3 - len(size)))
+
+
+def _collective_block_dims(
+    parent_state: dace.SDFGState, node: "CopyLibraryNode"
+) -> tuple[symbolic.SymExpr, ...] | None:
+    """Thread-block geometry the collective will actually run under, or ``None`` outside a kernel.
+
+    ``devicelevel_block_size`` only walks UP the scope chain, so a copy that is a SIBLING of the
+    kernel's ``GPU_ThreadBlock`` maps -- the staging shape, a collective load then thread-block
+    compute then a collective store -- gets the ``default_block_size`` config entry instead of the
+    launch geometry. Codegen instead sizes the launch from the thread-block maps inside the kernel
+    (``cuda.py::get_kernel_dimensions``), so mirror that: a block size that disagrees with the
+    launch builds ``GetLinearTID`` from the wrong extents and silently leaves rows unwritten.
+
+    Resolving it here rather than reading ``blockDim`` in the kernel is a measured choice: with the
+    block size a run-time value the lane arithmetic stops folding, worth 3.2x on a 128x128 fp32 tile
+    (1385 vs 436 GB/s on MI300A).
+
+    :param parent_state: state containing ``node``.
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :returns: a 3-tuple of block extents, or ``None`` if the node is not in device-level code.
+    :raises ValueError: the kernel has thread-block maps of differing sizes, so codegen's
+        over-approximated launch geometry is not something this can pin down.
+    """
+    sdict = parent_state.scope_dict()
+    scope = sdict[node]
+    while scope is not None and scope.schedule not in (
+        dtypes.ScheduleType.GPU_Device,
+        dtypes.ScheduleType.GPU_Persistent,
+    ):
+        scope = sdict[scope]
+    if scope is None:
+        return devicelevel_block_size(parent_state.sdfg, parent_state, node)
+
+    sizes = [
+        _block_size_to_3d([symbolic.overapproximate(e) for e in m.range.size()[::-1]])
+        for m in _thread_block_maps(parent_state.scope_subgraph(scope))
+    ]
+    if scope.map.gpu_block_size is not None:
+        sizes.append(_block_size_to_3d(scope.map.gpu_block_size))
+    # Ordered de-duplication: the message below names the sizes in the order they were found.
+    distinct = list(dict.fromkeys(sizes))
+    if len(distinct) > 1:
+        raise ValueError(
+            f"SharedMemoryCollective for '{node.label}' sits in kernel '{scope.map.label}', which "
+            f"declares thread-block sizes {distinct}. Codegen launches the over-approximated "
+            f"maximum, which this cannot pin down; give the kernel a single thread-block size."
+        )
+    if distinct:
+        return distinct[0]
+    return devicelevel_block_size(parent_state.sdfg, parent_state, node)
+
+
+def _collective_axis_order(ndims: int, lead_strides: list[symbolic.SymExpr]) -> list[int]:
+    """Loop-axis order for the block collective: the stride-1 axis of the coalescing side moves last.
+
+    Permuting is legal because both endpoints carry the same collapsed shape, so reordering the loop
+    nest identically on both sides visits the same index pairs.
+
+    :param ndims: collapsed rank.
+    :param lead_strides: strides of the side whose coalescing decides the mapping (the global one).
+    :returns: axis indices, fastest-varying last.
+    """
+    lead = next((d for d in range(ndims) if lead_strides[d] == 1), ndims - 1)
+    return [d for d in range(ndims) if d != lead] + [lead]
 
 
 def _build_shmem_collective_copy_code(
@@ -370,10 +573,14 @@ def _build_shmem_collective_copy_code(
 
     A static 1-D transfer inside a kernel uses DaCe's block-collective runtime helpers
     (``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``), which split the elements across the
-    thread block -- the same call plain copy-edge codegen emits. Everything else falls back to a
-    ``dace::CopyND<...>::Copy(...)`` plus ``__syncthreads()``: the most-specific static template
-    (``CopyNDDynamic`` for symbolic shapes), refined by ``ConstDst``/``ConstSrc``/``Dynamic`` on
-    whichever stride set is constexpr, with the rest passed as runtime args.
+    thread block -- the same call plain copy-edge codegen emits. Every other shape up to rank 3
+    (after collapsing singleton dimensions) uses ``dace::BlockCollective3D``, which hands each
+    wavefront one contiguous run of the fastest-varying axis; a higher rank loops over its outer axes
+    around rank-3 collectives, and a node with ``aligned_words`` whose rows are contiguous on both
+    sides uses ``dace::BlockCollective3DVec`` (aligned 16-byte words on the global side). Nothing here
+    emits ``dace::CopyND``:
+    a per-thread loop nest makes every thread of the block copy the whole region, measured at
+    50-142 GB/s against 780-3010 GB/s for the collective on MI300A.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node`` (supplies the enclosing thread-block size).
@@ -382,16 +589,19 @@ def _build_shmem_collective_copy_code(
     :param out: destination descriptor (provides ``strides``).
     :param out_subset: destination memlet subset.
     :returns: the tasklet body.
+    :raises ValueError: the copy is not expressible as a block-collective transfer (see the
+        individual messages: no enclosing kernel, rank mismatch, mismatched extents).
     """
     copy_shape, src_strides = collapse_shape_and_strides(in_subset, inp.strides)
-    _, dst_strides = collapse_shape_and_strides(out_subset, out.strides)
+    dst_shape, dst_strides = collapse_shape_and_strides(out_subset, out.strides)
     ndims = len(copy_shape)
 
     in_conn = INPUT_CONNECTOR_NAME
     out_conn = OUTPUT_CONNECTOR_NAME
-    block_dims = devicelevel_block_size(parent_state.sdfg, parent_state, node)
+    block_dims = _collective_block_dims(parent_state, node)
     if (
-        ndims == 1
+        not node.aligned_words
+        and ndims == 1
         and block_dims is not None
         and not any(symbolic.issymbolic(s) for s in (copy_shape[0], src_strides[0], dst_strides[0]))
     ):
@@ -407,42 +617,84 @@ def _build_shmem_collective_copy_code(
             f"({in_conn}, {sym2cpp(src_strides[0])}, {out_conn}, {sym2cpp(dst_strides[0])});"
         )
 
-    shape_strs = [sym2cpp(s) for s in copy_shape]
-    src_stride_strs = [sym2cpp(s) for s in src_strides]
-    dst_stride_strs = [sym2cpp(s) for s in dst_strides]
+    # Everything below linearizes the thread index, so the block geometry has to be known.
+    if block_dims is None:
+        raise ValueError(
+            f"SharedMemoryCollective for '{node.label}' in state '{parent_state.label}' needs an "
+            f"enclosing GPU_Device or GPU_ThreadBlock map to size the thread block; the node is "
+            f"not in device-level code. Place the copy inside the kernel, or pick an explicit "
+            f"implementation."
+        )
 
-    dims_static = not any(symbolic.issymbolic(s) for s in copy_shape)
-    src_static = not any(symbolic.issymbolic(s) for s in src_strides)
-    dst_static = not any(symbolic.issymbolic(s) for s in dst_strides)
+    if len(dst_shape) != ndims:
+        raise ValueError(
+            f"SharedMemoryCollective for '{node.label}' got a rank-mismatched (reshape) copy: src "
+            f"collapses to {tuple(copy_shape)} and dst to {tuple(dst_shape)}. A block-collective "
+            f"transfer maps index tuples one to one and has no flat-order lowering; make both "
+            f"subsets contiguous so they collapse to rank 1, or use MappedTasklet."
+        )
+    if any(symbolic.equal(a, b) is False for a, b in zip(copy_shape, dst_shape)):
+        raise ValueError(
+            f"SharedMemoryCollective for '{node.label}' got mismatched per-dim extents: src "
+            f"{tuple(copy_shape)} vs dst {tuple(dst_shape)}. Per-dim permutations are transposes, "
+            f"not copies -- use a Transpose libnode."
+        )
+    # A single element collapses to rank 0; the collective still has to move it, so give it the
+    # degenerate 1x1x1 region rather than an empty loop nest.
+    if ndims == 0:
+        copy_shape, src_strides, dst_strides, ndims = [1], [1], [1], 1
 
-    ctype = inp.dtype.ctype
-    if dims_static:
-        copy_tmpl = f"dace::CopyND<{ctype}, 1, false, {', '.join(shape_strs)}>"
+    # Coalescing is decided on the global side: shared memory is banked, not cache-line based, so the
+    # stride-1 axis that matters is the one facing global memory.
+    lead_strides = dst_strides if inp.storage == dtypes.StorageType.GPU_Shared else src_strides
+    order = _collective_axis_order(ndims, lead_strides)
+    shape = [copy_shape[d] for d in order]
+    src_ord = [src_strides[d] for d in order]
+    dst_ord = [dst_strides[d] for d in order]
+
+    # Pad up to the rank-3 signature; a missing outer axis is one iteration at stride 0.
+    pad = max(3 - ndims, 0)
+    shape = [1] * pad + shape
+    src_ord = [0] * pad + src_ord
+    dst_ord = [0] * pad + dst_ord
+
+    # A region of rank above 3 is a loop nest over its outer axes, each iteration one rank-3 collective. Every thread
+    # runs the same trip counts, so the collectives stay block-uniform; one barrier follows the whole nest.
+    outer = len(shape) - 3
+    loop_vars = [f"__cpy_o{d}" for d in range(outer)]
+    src_off = " + ".join([in_conn] + [f"{v} * ({sym2cpp(s)})" for v, s in zip(loop_vars, src_ord)])
+    dst_off = " + ".join([out_conn] + [f"{v} * ({sym2cpp(s)})" for v, s in zip(loop_vars, dst_ord)])
+    shape, src_ord, dst_ord = shape[outer:], src_ord[outer:], dst_ord[outer:]
+
+    bdims = ", ".join(sym2cpp(b) for b in block_dims)
+    # ``sync`` is per node: a staging pass chains several copies and leaves the barrier to the last.
+    is_async = "false" if node.sync and outer == 0 else "true"
+    if node.aligned_words and symbolic.equal(src_ord[-1], 1) is True and symbolic.equal(dst_ord[-1], 1) is True:
+        direction = "Store" if inp.storage == dtypes.StorageType.GPU_Shared else "Load"
+        call_args = (
+            [src_off]
+            + [sym2cpp(v) for v in src_ord[:2]]
+            + [dst_off]
+            + [sym2cpp(v) for v in dst_ord[:2]]
+            + [sym2cpp(v) for v in shape]
+        )
+        call = (
+            f"dace::BlockCollective3DVec<{inp.dtype.ctype}, {bdims}, {is_async}>::{direction}({', '.join(call_args)});"
+        )
     else:
-        copy_tmpl = f"dace::CopyNDDynamic<{ctype}, 1, false, {ndims}>"
-
-    # Prefer ConstDst, else ConstSrc, else Dynamic; the rest go as runtime args, per-dim order.
-    if dst_static:
-        shape_tmpl = f"template ConstDst<{', '.join(dst_stride_strs)}>"
-    elif src_static:
-        shape_tmpl = f"template ConstSrc<{', '.join(src_stride_strs)}>"
-    else:
-        shape_tmpl = "Dynamic"
-
-    stride_args = []
-    for d in range(ndims):
-        if not dims_static:
-            stride_args.append(shape_strs[d])
-        if not src_static or dst_static:
-            stride_args.append(src_stride_strs[d])
-        if not dst_static:
-            stride_args.append(dst_stride_strs[d])
-
-    all_args = [in_conn, out_conn] + stride_args
-    # Synchronize if moving to/from shared memory collectively, and the sync flag is set (default on)
-    sync_barrier = (
-        "__syncthreads();\n"
-        if node.sync and (inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared)
-        else ""
+        call_args = (
+            [src_off]
+            + [sym2cpp(v) for v in src_ord]
+            + [dst_off]
+            + [sym2cpp(v) for v in dst_ord]
+            + [sym2cpp(v) for v in shape]
+        )
+        call = f"dace::BlockCollective3D<{inp.dtype.ctype}, {bdims}, {is_async}>::Copy({', '.join(call_args)});"
+    if outer == 0:
+        return call
+    loops = "".join(
+        f"for (int64_t {v} = 0; {v} < {sym2cpp(n)}; ++{v}) "
+        for v, n in zip(loop_vars, [copy_shape[d] for d in order][:outer])
     )
-    return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"
+    barrier = "\n__syncthreads();" if node.sync else ""
+    return f"{loops}{{\n{call}\n}}{barrier}"

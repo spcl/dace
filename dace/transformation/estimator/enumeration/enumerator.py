@@ -5,8 +5,10 @@ import itertools
 from collections import defaultdict
 from collections.abc import Callable
 
+import dace.sdfg.nodes as nodes
+from dace.ordered import OrderedSet
 from dace.properties import Property, make_properties
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import helpers
 
@@ -70,7 +72,7 @@ class Enumerator:
 
         for node in extended_subgraph.nodes() if subgraph else graph.nodes():
             if isinstance(node, nodes.AccessNode):
-                adjacent_entries = set()
+                adjacent_entries = OrderedSet()
                 for e in graph.in_edges(node):
                     if isinstance(e.src, nodes.MapExit) and e.src in exit_nodes:
                         adjacent_entries.add(exit_nodes[e.src])

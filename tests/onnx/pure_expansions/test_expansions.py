@@ -15,6 +15,7 @@ from dace import data as dt
 from dace import transformation
 from dace.libraries import blas
 from dace.transformation.onnx import expand_onnx_nodes
+from tests.ml_gpu_utils import DEVICES, run_sdfg
 
 
 def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
@@ -22,10 +23,11 @@ def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("a_shape, b_shape", [([2, 4], [4, 3])])
-def test_matmul_expansion(a_shape, b_shape):
+def test_matmul_expansion(a_shape, b_shape, device):
     blas.Gemm.default_implementation = "pure"
-    sdfg = dace.SDFG("test_matmul_expansion")
+    sdfg = dace.SDFG(f"test_matmul_expansion_{device}")
 
     X = np.random.rand(*a_shape).astype(np.float32)
     Z = np.random.rand(*b_shape).astype(np.float32)
@@ -54,14 +56,15 @@ def test_matmul_expansion(a_shape, b_shape):
         isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
     )
 
-    result = sdfg(X=X, Z=Z)
+    result = run_sdfg(sdfg, device, X=X, Z=Z)
 
     assert_allclose(expected_result, result)
 
 
 @pytest.mark.onnx
-def test_cast_int_to_float():
-    sdfg = dace.SDFG("test_cast_int_to_float")
+@pytest.mark.parametrize("device", DEVICES)
+def test_cast_int_to_float(device):
+    sdfg = dace.SDFG(f"test_cast_int_to_float_{device}")
 
     sdfg.add_array("X", [2, 4], dace.int32)
     sdfg.add_array("__return", [2, 4], dace.float32)
@@ -86,14 +89,15 @@ def test_cast_int_to_float():
         isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
     )
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(X.astype(np.float32), result)
 
 
 @pytest.mark.onnx
-def test_cast_float_to_int():
-    sdfg = dace.SDFG("test_cast_float_to_int")
+@pytest.mark.parametrize("device", DEVICES)
+def test_cast_float_to_int(device):
+    sdfg = dace.SDFG(f"test_cast_float_to_int_{device}")
 
     sdfg.add_array("X", [2, 4], dace.float32)
     sdfg.add_array("__return", [2, 4], dace.int32)
@@ -118,14 +122,15 @@ def test_cast_float_to_int():
         isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
     )
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(X.astype(np.int32), result)
 
 
 @pytest.mark.onnx
-def test_cast_float_to_long():
-    sdfg = dace.SDFG("test_cast_float_to_long")
+@pytest.mark.parametrize("device", DEVICES)
+def test_cast_float_to_long(device):
+    sdfg = dace.SDFG(f"test_cast_float_to_long_{device}")
 
     sdfg.add_array("X", [2, 4], dace.float32)
     sdfg.add_array("__return", [2, 4], dace.int64)
@@ -150,12 +155,13 @@ def test_cast_float_to_long():
         isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
     )
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(X.astype(np.int64), result)
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("reduce_type, keepdims, axes",
                          [("Sum",  True,  [0]),
                           ("Sum",  False, [-1]),
@@ -166,11 +172,11 @@ def test_cast_float_to_long():
                           ("Mean", True,  [-1]),
                           ("Mean", True,  [0, -1]),
                           ("Mean", False, [0])])  # fmt: skip
-def test_reduce(keepdims, reduce_type, axes):
+def test_reduce(keepdims, reduce_type, axes, device):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG("test_reduce")
+    sdfg = dace.SDFG(f"test_reduce_{device}")
 
     sdfg.add_array("X", [2, 4, 10], dace.float32)
 
@@ -199,16 +205,17 @@ def test_reduce(keepdims, reduce_type, axes):
     assert not any(
         isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
     )
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(numpy_result, result, rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.onnx
-def test_reduce_scalar():
+@pytest.mark.parametrize("device", DEVICES)
+def test_reduce_scalar(device):
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG("test_reduce_scalar")
+    sdfg = dace.SDFG(f"test_reduce_scalar_{device}")
 
     numpy_result = np.mean(X)
 
@@ -233,17 +240,18 @@ def test_reduce_scalar():
 
     sdfg.expand_library_nodes()
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(numpy_result, result, rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("new_shape", [[8, 10], [80], [2, 40]])
-def test_reshape(new_shape):
+def test_reshape(new_shape, device):
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG("test_reshape")
+    sdfg = dace.SDFG(f"test_reshape_{device}")
 
     numpy_result = X.reshape(*new_shape)
 
@@ -269,18 +277,19 @@ def test_reshape(new_shape):
     # we don't need shape anymore
     del sdfg.arrays["shape"]
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(numpy_result, result)
 
 
 @pytest.mark.onnx
-def test_flatten():
+@pytest.mark.parametrize("device", DEVICES)
+def test_flatten(device):
 
     new_shape = [2, 40]
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG("test_flatten")
+    sdfg = dace.SDFG(f"test_flatten_{device}")
 
     numpy_result = X.reshape(*new_shape)
 
@@ -300,17 +309,18 @@ def test_flatten():
 
     sdfg.expand_library_nodes()
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(numpy_result, result)
 
 
 @pytest.mark.onnx
-def test_reciprocal():
+@pytest.mark.parametrize("device", DEVICES)
+def test_reciprocal(device):
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
     numpy_result = 1 / X
-    sdfg = dace.SDFG("test_reciprocal")
+    sdfg = dace.SDFG(f"test_reciprocal_{device}")
 
     sdfg.add_array("X", [2, 4, 10], dace.float32)
     sdfg.add_array("__return", numpy_result.shape, dace.float32)
@@ -333,13 +343,14 @@ def test_reciprocal():
         isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
     )
 
-    result = sdfg(X=X)
+    result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(numpy_result, result)
 
 
 @pytest.mark.onnx
-def test_einsum():
+@pytest.mark.parametrize("device", DEVICES)
+def test_einsum(device):
 
     @dace.program
     def test_einsum(A: dace.float64[5, 4, 3], B: dace.float64[3, 2]):
@@ -353,12 +364,13 @@ def test_einsum():
 
     A = np.random.rand(5, 4, 3).astype(np.float64)
     B = np.random.rand(3, 2).astype(np.float64)
-    result = test_einsum(A.copy(), B.copy())
+    result = run_sdfg(sdfg, device, A=A.copy(), B=B.copy())
     assert_allclose(result, np.einsum("bij ,jk -> bik", A, B))
 
 
 @pytest.mark.onnx
-def test_reshape_add():
+@pytest.mark.parametrize("device", DEVICES)
+def test_reshape_add(device):
 
     @dace.program
     def add_reshape(inp: dace.float64[9], bias: dace.float64[3], target_shape: dace.int64[2]):
@@ -373,14 +385,15 @@ def test_reshape_add():
 
     inp = np.arange(9).astype(np.float64)
     bias = np.arange(3).astype(np.float64)
-    result = sdfg(inp=inp.copy(), bias=bias.copy(), target_shape=np.array([3, 3]).astype(np.int64))
+    result = run_sdfg(sdfg, device, inp=inp.copy(), bias=bias.copy(), target_shape=np.array([3, 3]).astype(np.int64))
 
     assert_allclose(result, inp.reshape(3, 3) + bias)
 
 
 @pytest.mark.onnx
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("input_desc", [dace.float32[2, 3], dace.float32[1], dace.float32])
-def test_sum_arrays(input_desc):
+def test_sum_arrays(input_desc, device):
 
     if isinstance(input_desc, dt.Array):
         shape = input_desc.shape
@@ -392,20 +405,22 @@ def test_sum_arrays(input_desc):
         donnx.ONNXSum(data_0__0=inp0, data_0__1=inp1, data_0__2=inp2, sum=result)
         return result
 
-    prog.__name__ = "test_sum_arrays"
+    prog.__name__ = f"test_sum_arrays_{device}"
     prog = dace.program(prog)
 
     inputs = [np.random.randn(*shape).astype(np.float32) for _ in range(3)]
     if not isinstance(input_desc, dt.Array):
         inputs = [i[0] for i in inputs]
     np_result = (inputs[0] + inputs[1]) + inputs[2]
-    result = prog(*inputs)
+    sdfg = prog.to_sdfg()
+    result = run_sdfg(sdfg, device, inp0=inputs[0], inp1=inputs[1], inp2=inputs[2])
 
     assert_allclose(result, np_result)
 
 
 @pytest.mark.onnx
-def test_shape():
+@pytest.mark.parametrize("device", DEVICES)
+def test_shape(device):
 
     @dace.program
     def shape(inp: dace.float64[9, 5, 3]):
@@ -418,12 +433,13 @@ def test_shape():
     sdfg.simplify()
 
     inp = np.random.rand(9, 5, 3).astype(np.float64)
-    result = sdfg(inp=inp.copy())
+    result = run_sdfg(sdfg, device, inp=inp.copy())
     assert_allclose(result, [9, 5, 3]), result
 
 
 @pytest.mark.onnx
-def test_gather_onnx_1():
+@pytest.mark.parametrize("device", DEVICES)
+def test_gather_onnx_1(device):
     # gather in ONNX operators.md
     @dace.program
     def gather(inp: dace.float64[3, 2], indices: dace.int64[2, 2]):
@@ -437,12 +453,13 @@ def test_gather_onnx_1():
 
     data = np.array([[1.0, 1.2], [2.3, 3.4], [4.5, 5.7]])
     indices = np.array([[0, 1], [1, 2]])
-    result = sdfg(inp=data.copy(), indices=indices.copy())
+    result = run_sdfg(sdfg, device, inp=data.copy(), indices=indices.copy())
     assert_allclose(result, data[indices])
 
 
 @pytest.mark.onnx
-def test_gather_bert():
+@pytest.mark.parametrize("device", DEVICES)
+def test_gather_bert(device):
     # gather found at start of bert model
     @dace.program
     def gather(embs: dace.float64[64, 8], input_ids: dace.int64[8, 16]):
@@ -456,12 +473,13 @@ def test_gather_bert():
 
     embs = np.random.rand(64, 8).astype(np.float64)
     input_ids = np.random.randint(low=0, high=64, size=(8, 16)).astype(np.int64)
-    result = sdfg(embs=embs.copy(), input_ids=input_ids.copy())
+    result = run_sdfg(sdfg, device, embs=embs.copy(), input_ids=input_ids.copy())
     assert_allclose(result, embs[input_ids])
 
 
 @pytest.mark.onnx
-def test_gather_scalar():
+@pytest.mark.parametrize("device", DEVICES)
+def test_gather_scalar(device):
     # gather test 2 in BERT model (third last op)
     @dace.program
     def gather(inp: dace.float64[1, 8, 32], indices: dace.int64):
@@ -475,14 +493,15 @@ def test_gather_scalar():
 
     data = np.random.rand(1, 8, 32)
     indices = np.int64(5)
-    result = sdfg(inp=data.copy(), indices=indices.copy())
+    result = run_sdfg(sdfg, device, inp=data.copy(), indices=indices.copy())
     np_result = np.take(data, indices, axis=1)
 
     assert_allclose(result, np_result)
 
 
 @pytest.mark.onnx
-def test_gather_onnx_2():
+@pytest.mark.parametrize("device", DEVICES)
+def test_gather_onnx_2(device):
     # gather test 2 in ONNX operators.md
     @dace.program
     def gather(inp: dace.float64[3, 3], indices: dace.int64[1, 2]):
@@ -502,14 +521,15 @@ def test_gather_onnx_2():
         ]
     )
     indices = np.array([[0, 2]])
-    result = sdfg(inp=data.copy(), indices=indices.copy())
+    result = run_sdfg(sdfg, device, inp=data.copy(), indices=indices.copy())
     np_result = np.take(data, indices, axis=1)
 
     assert_allclose(result, np_result)
 
 
 @pytest.mark.onnx
-def test_unsqueeze():
+@pytest.mark.parametrize("device", DEVICES)
+def test_unsqueeze(device):
 
     @dace.program
     def unsqueeze(inp: dace.float64[3, 3]):
@@ -532,16 +552,60 @@ def test_unsqueeze():
 
     np_result = np.reshape(data, [3, 1, 3, 1])
 
-    result = sdfg(inp=data.copy())
+    result = run_sdfg(sdfg, device, inp=data.copy())
     assert result.shape == (3, 1, 3, 1)
     assert_allclose(result, np_result)
 
 
+@pytest.mark.onnx
+def test_pure_expansion_reads_gpu_staged_constant():
+    """A constant an op reads on the host must stay readable after GPU offloading.
+
+    Offloading puts the model's arrays on the device, and a container it stages back to the host
+    gets a new name. Whichever name the op's ``axes`` input ends up with, it has to answer to a model
+    weight, or the pure ReduceMean expansion declines and autodiff meets an ONNX node with no
+    differentiable form. Runs on the host: offloading is a graph rewrite, no device needed.
+    """
+    from onnx import TensorProto, helper, numpy_helper
+
+    from dace.frontend.ml.onnx import ONNXModel
+    from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+    from dace.libraries.onnx.op_implementations.reduction_ops import PureReduceMean
+    from dace.sdfg.utils import in_edge_with_name
+
+    node = helper.make_node("ReduceMean", ["data", "axes"], ["reduced"], keepdims=1)
+    graph = helper.make_graph(
+        [node],
+        "reduce_mean",
+        [helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 4, 10])],
+        [helper.make_tensor_value_info("reduced", TensorProto.FLOAT, [2, 4, 1])],
+        initializer=[numpy_helper.from_array(np.array([2], dtype=np.int64), name="axes")],
+    )
+    model = ONNXModel(
+        "test_pure_expansion_reads_gpu_staged_constant",
+        helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)]),
+        cuda=True,
+        onnx_simplify=False,
+    )
+
+    state, reduce_mean = next(
+        (state, n)
+        for state in model.sdfg.states()
+        for n in state.nodes()
+        if isinstance(n, ONNXOp) and n.schema.name == "ReduceMean"
+    )
+
+    staged = in_edge_with_name(reduce_mean, state, "axes").src.data
+    assert_allclose(model.clean_weights[staged].numpy(), np.array([2], dtype=np.int64))
+
+    assert PureReduceMean.forward_can_be_applied(reduce_mean, state, model.sdfg)
+
+
 if __name__ == "__main__":
-    test_matmul_expansion(a_shape=[2, 4], b_shape=[4, 3])
-    test_cast_int_to_float()
-    test_cast_float_to_int()
-    test_cast_float_to_long()
+    test_matmul_expansion(a_shape=[2, 4], b_shape=[4, 3], device="cpu")
+    test_cast_int_to_float(device="cpu")
+    test_cast_float_to_int(device="cpu")
+    test_cast_float_to_long(device="cpu")
 
     reduce_params = [
         (True, "Sum", [0]),
@@ -555,24 +619,25 @@ if __name__ == "__main__":
         (False, "Mean", [0]),
     ]
     for keepdims, reduce_type, axes in reduce_params:
-        test_reduce(keepdims=keepdims, reduce_type=reduce_type, axes=axes)
+        test_reduce(keepdims=keepdims, reduce_type=reduce_type, axes=axes, device="cpu")
 
-    test_reduce_scalar()
+    test_reduce_scalar(device="cpu")
 
     for new_shape in [[8, 10], [80], [2, 40]]:
-        test_reshape(new_shape=new_shape)
+        test_reshape(new_shape=new_shape, device="cpu")
 
-    test_flatten()
-    test_reciprocal()
-    test_einsum()
-    test_reshape_add()
+    test_flatten(device="cpu")
+    test_reciprocal(device="cpu")
+    test_einsum(device="cpu")
+    test_reshape_add(device="cpu")
 
     for input_desc in [dace.float32[2, 3], dace.float32[1], dace.float32]:
-        test_sum_arrays(input_desc=input_desc)
+        test_sum_arrays(input_desc=input_desc, device="cpu")
 
-    test_shape()
-    test_gather_onnx_1()
-    test_gather_bert()
-    test_gather_scalar()
-    test_gather_onnx_2()
-    test_unsqueeze()
+    test_shape(device="cpu")
+    test_gather_onnx_1(device="cpu")
+    test_gather_bert(device="cpu")
+    test_gather_scalar(device="cpu")
+    test_gather_onnx_2(device="cpu")
+    test_unsqueeze(device="cpu")
+    test_pure_expansion_reads_gpu_staged_constant()

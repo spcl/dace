@@ -309,7 +309,8 @@ def _inverted_loop_sdfg(name: str, loop: LoopRegion) -> dace.SDFG:
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [10], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
+    if not loop.loop_variable:
+        sdfg.add_symbol("i", dace.int64)
     init = sdfg.add_state("init", is_start_block=True)
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={} if loop.loop_variable else {"i": "0"}))
@@ -531,8 +532,7 @@ def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
     inner.add_array("X", [1], dace.float64)
     increment = dace.SDFGState("increment")
     if in_loop:
-        # for j in range(3): if j >= N: return; X[0] += 1
-        inner.add_symbol("j", dace.int64)
+        # for j in range(3): if j >= N: return; X[0] += 1 (the loop binds ``j``; it is not also a symbol)
         loop = LoopRegion("loop", "j < 3", "j", "j = 0", "j = j + 1")
         inner.add_node(loop, is_start_block=True)
         loop.add_node(increment)

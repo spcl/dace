@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Classes to handle Einstein-notation sums (einsum) as a library node."""
 
-from itertools import chain
+from itertools import chain, combinations
 from string import ascii_letters
 
-import numpy as np
+import sympy
 
 import dace
 from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, dealias
 from dace.sdfg.nodes import AccessNode
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.utils import prod
 
 
@@ -87,8 +88,39 @@ class EinsumParser:
     def is_bmm(self):
         if len(self.inputs) != 2:
             return False
+        # An index private to one operand must survive into the output. ``sum_vars`` only collects
+        # indices shared by BOTH inputs, so a private index missing from the output -- ``j`` in
+        # ``ij,i->i`` (``y[i] += A[i,j] * x[i]``) -- is a contraction no GEMM/GEMV form expresses:
+        # that is a broadcast multiply followed by a reduction. Its operand ranks match ``ij,j->i``,
+        # so without this the level-2 path below builds a GEMV whose ``_x`` length is the output
+        # extent, which Gemv.validate rejects.
+        if len(self.a_only) != len(self.c_a_only) or len(self.b_only) != len(self.c_b_only):
+            return False
+        # Batched dot (``ik,ik->i``, ``xyzk,xyzk->xyz``): batched indices, and NEITHER operand has a
+        # private index -- ``C[batch] = sum_k A[batch,k] * B[batch,k]``, which no BLAS-2/3 form
+        # expresses. The GEMM path below would mint a degenerate M=N=1 batched MatMul whose operand
+        # views collapse under simplify to two equal 2-D shapes MatMul's dispatch rejects. The
+        # unbatched dot ``i,i->`` has no batched index and keeps its (working) BLAS path.
+        if self.a_batch and not self.a_only and not self.b_only:
+            return False
+        # The GEMM path strides the batch as the OUTERMOST dimension of every operand (``sAB`` is the
+        # extent after the last batch index). A batch index after a matrix index -- ``ij,kj->ikj``,
+        # an outer product per innermost ``j`` -- leaves no unit-stride matrix dimension, which no
+        # BLAS call takes (``get_gemm_opts``: "sCM or sCN should be 1").
+        for batch, rest in (
+            (self.a_batch, self.a_only + self.a_sum),
+            (self.b_batch, self.b_only + self.b_sum),
+            (self.c_batch, self.c_a_only + self.c_b_only),
+        ):
+            if batch and rest and max(batch) > min(rest):
+                return False
         for val in self.fields().values():
             if not _is_sequential(val):
+                return False
+        # The GEMM path flattens each index group into one dimension, so the group must keep its order in every
+        # operand: ``ijk,kj->i`` sums ``jk`` in A but ``kj`` in B, which one flat K reads transposed.
+        for first, second in combinations((*self.inputs, self.output), 2):
+            if [d for d in first if d in second] != [d for d in second if d in first]:
                 return False
         return True
 
@@ -144,14 +176,121 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     from dace.libraries import blas  # Avoid import loop
 
     libnode = blas.MatMul("einsum_gemm")
-    libnode.alpha = alpha
-    libnode.beta = beta
+    libnode.alpha = plain_coefficient(alpha)
+    libnode.beta = plain_coefficient(beta)
     state.add_node(libnode)
     state.add_edge(gX, None, libnode, "_a", Memlet.from_array(gX.data, xarr))
     state.add_edge(gY, None, libnode, "_b", Memlet.from_array(gY.data, yarr))
     state.add_edge(libnode, "_c", gZ, None, Memlet.from_array(gZ.data, zarr))
 
     return sdfg
+
+
+def plain_coefficient(value):
+    """``value`` as a Python number when it is a SymPy constant. MatMul/Gemm keep ``alpha``/``beta`` in untyped
+    properties, which serialize a SymPy number as its text and reload it as a ``str`` no expansion can compare."""
+    if isinstance(value, sympy.Integer):
+        return int(value)
+    if isinstance(value, sympy.Float):
+        return float(value)
+    return value
+
+
+def _bmm_orders(einsum_string: str, sizes: dict[str, int]) -> tuple[int, int, tuple[str, str, str]] | None:
+    """A two-operand contraction as a batched GEMM: which operand is the GEMM's ``A``, which its ``B``, and their
+    index orders ``(batch, a-free, summed)``, ``(batch, summed, b-free)`` and ``(batch, a-free, b-free)``. Batch and
+    free indices keep the output's order, summed ones the larger operand's; of the two operand roles, the one that
+    transposes fewer elements. ``None`` when no batched GEMM computes it (a repeated index, a summed index private to
+    one operand, a batched dot) or when nothing is summed: a broadcast product is elementwise, a map."""
+    terms, out = einsum_string.split("->")
+    terms = terms.split(",")
+    if any(len(set(t)) != len(t) for t in (*terms, out)) or (set(terms[0]) ^ set(terms[1])) - set(out):
+        return None
+
+    def volume(term: str) -> int:
+        return prod(sizes[c] for c in term)
+
+    larger = max(terms, key=volume)
+    summed = [c for c in larger if c not in out]
+    if not summed:
+        return None
+    best = None
+    for first, second in ((0, 1), (1, 0)):
+        a, b = terms[first], terms[second]
+        batch = [c for c in out if c in a and c in b]
+        a_free = [c for c in out if c in a and c not in b]
+        b_free = [c for c in out if c in b and c not in a]
+        if batch and not a_free and not b_free:
+            return None
+        orders = ("".join(batch + a_free + summed), "".join(batch + summed + b_free), "".join(batch + a_free + b_free))
+        if not EinsumParser("%s,%s->%s" % orders).is_bmm():
+            continue
+        moved = sum(volume(t) for t, o in zip((a, b, out), orders) if t != o)
+        if best is None or moved < best[0]:
+            best = (moved, first, second, orders)
+    return best and best[1:]
+
+
+def _batched_dot_index(einsum: "EinsumParser") -> str | None:
+    """The one summed index of a batched dot ``bk,bk->b``: both operands index the batch in the output's order, then
+    the summed index last; ``None`` for any other contraction."""
+    if len(einsum.inputs) != 2 or einsum.inputs[0] != einsum.inputs[1] or not einsum.output:
+        return None
+    term = einsum.inputs[0]
+    if term[:-1] != einsum.output or term[-1] in einsum.output:
+        return None
+    return term[-1]
+
+
+def _permuted(sdfg: SDFG, state: SDFGState, node: AccessNode, term: str, order: str) -> AccessNode:
+    """``node``, indexed by ``term``, as a transient indexed by ``order``: a ``TensorTranspose`` unless they agree."""
+    if term == order:
+        return node
+    from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+
+    desc = sdfg.arrays[node.data]
+    axes = [term.index(c) for c in order]
+    name, tdesc = sdfg.add_temp_transient([desc.shape[i] for i in axes], desc.dtype, storage=desc.storage)
+    transpose = TensorTranspose("einsum_transpose", axes)
+    result = state.add_access(name)
+    state.add_edge(node, None, transpose, "_inp_tensor", Memlet.from_array(node.data, desc))
+    state.add_edge(transpose, "_out_tensor", result, None, Memlet.from_array(name, tdesc))
+    return result
+
+
+def tensordot_axes(einsum_string: str) -> tuple[list[int], list[int], list[int] | None] | None:
+    """``(left_axes, right_axes, permutation)`` of a two-operand contraction without batch indices as a
+    ``TensorDot``, or ``None``."""
+    terms, out = einsum_string.split("->")
+    a, b = terms.split(",")
+    if any(len(set(t)) != len(t) for t in (a, b, out)) or set(out) - set(a + b):
+        return None
+    summed = [c for c in a if c in b]
+    if any(c in out for c in summed) or any(c not in out for c in a + b if c not in summed):
+        return None
+    natural = [c for c in a if c not in summed] + [c for c in b if c not in summed]
+    permutation = [natural.index(c) for c in out]
+    return (
+        [a.index(c) for c in summed],
+        [b.index(c) for c in summed],
+        None if permutation == list(range(len(permutation))) else permutation,
+    )
+
+
+def gpu_tensor_library() -> str | None:
+    """The ``TensorDot`` implementation of the configured GPU backend's tensor library, if installed."""
+    from dace.codegen.common import get_gpu_backend  # Avoid import loop
+    from dace.libraries.linalg.environments import cutensor, hiptensor  # Avoid import loop
+
+    try:
+        backend = get_gpu_backend()
+    except RuntimeError:
+        return None
+    if backend == "hip":
+        return "hipTENSOR" if hiptensor.hipTensor.is_installed() else None
+    if backend == "cuda":
+        return "cuTENSOR" if cutensor.cuTensor.is_installed() else None
+    return None
 
 
 def create_einsum_sdfg(
@@ -180,17 +319,15 @@ def create_einsum_sdfg(
     )[0]
 
 
-def _build_einsum_views(tensors: str, dimension_dict: dict) -> list[np.ndarray]:
-    """
-    Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
-    Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
-    """
-    views = []
-    terms = tensors.split("->")[0].split(",")
-    for term in terms:
-        dims = [dimension_dict[x] for x in term]
-        views.append(np.random.rand(*dims))
-    return views
+#: Stand-in extents of symbolic dimensions for the contraction path: a ``SMALL`` symbol and any other one.
+PATH_SMALL_EXTENT, PATH_LARGE_EXTENT = 16, 4096
+
+
+def _path_extent(extent, facts) -> int:
+    """``extent`` as an integer for :func:`opt_einsum.contract_path`: its value, else a stand-in by scale."""
+    if not symbolic.issymbolic(extent):
+        return int(extent)
+    return PATH_SMALL_EXTENT if symbolic.is_small(extent, facts) else PATH_LARGE_EXTENT
 
 
 def _create_einsum_internal(
@@ -228,34 +365,32 @@ def _create_einsum_internal(
         if len(inp) != len(inparr.shape):
             raise ValueError(f'Dimensionality mismatch in input "{inpname}"')
         for char, shp in zip(inp, inparr.shape):
-            if char in chardict and shp != chardict[char]:
+            # Equalized, not raw '!=': one name can reach here as several sympy instances (a
+            # descriptor a layout pass rebuilt against one parsed from a string), which compare
+            # unequal by identity and would reject a shape that matches.
+            if char in chardict and symbolic.inequal_symbols(shp, chardict[char]):
                 raise ValueError("Dimension mismatch in einsum expression")
             chardict[char] = shp
 
-    if optimize:
-        # Try to import opt_einsum
-        try:
-            import opt_einsum as oe
-        except (ModuleNotFoundError, NameError, ImportError):
-            raise ImportError('To optimize einsum expressions, please install the "opt_einsum" package.')
+    if optimize or len(einsum.inputs) > 2:
+        # More than two operands contract pairwise along opt_einsum's path, each pair a GEMM-shaped step: one fused
+        # nest over every index costs the product of all extents (seissol's three-operand contraction, 8x the
+        # multiply-adds). Symbolic extents get stand-in sizes (a SMALL symbol small, any other large) for the path.
+        # As ``np.einsum(optimize=True)``, no intermediate outgrows the largest operand: seissol's FLOP-optimal path
+        # builds a 3x-larger-than-input intermediate whose transposes and re-reads cost more than the FLOPs saved.
+        import opt_einsum as oe  # a dace dependency
 
-        for char, shp in chardict.items():
-            if symbolic.issymbolic(shp):
-                raise ValueError(
-                    "Einsum optimization cannot be performed "
-                    f'on symbolically-sized array dimension "{shp}" '
-                    f'for subscript character "{char}"'
-                )
+        facts = sdfg.facts()
+        sizes = {char: _path_extent(shp, facts) for char, shp in chardict.items()}
+        terms = einsum_string.split("->")[0].split(",")
+        shapes = [tuple(sizes[char] for char in term) for term in terms]
+        _, path_info = oe.contract_path(einsum_string, *shapes, shapes=True, memory_limit="max_input")
 
-        # Create optimal contraction path
-        # noinspection PyTypeChecker
-        _, path_info = oe.contract_path(einsum_string, *_build_einsum_views(einsum_string, chardict))
-
-        input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
+        input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
         result_node = None
-
-        # Follow path and create a chain of operation SDFG states
-        for pair, nonfree, expr, after, blas in path_info.contraction_list:
+        steps = path_info.contraction_list
+        for step, (pair, _, expr, _, _) in enumerate(steps):
+            last = step == len(steps) - 1
             result, result_node = _create_einsum_internal(
                 sdfg,
                 state,
@@ -264,27 +399,33 @@ def _create_einsum_internal(
                 arrays[pair[1]],
                 dtype=dtype,
                 optimize=False,
-                output=None,
-                output_name=output_name,
+                output=output if last else None,
+                output_name=output_name if last else None,
                 nodes=input_nodes,
-                init_output=init_output,
-                alpha=alpha,
-                beta=beta,
+                init_output=init_output if last else None,
+                alpha=alpha if last else 1.0,
+                beta=beta if last else 0.0,
             )
             arrays = [a for i, a in enumerate(arrays) if i not in pair] + [result]
             input_nodes[result] = result_node
 
         return arrays[0], result_node
-        # END of einsum optimization
 
-    input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
+    # An operand may repeat (``np.einsum('ik,ik->i', a, a)``): read it ONCE, otherwise the extra
+    # ``add_read`` the comprehension drops on the floor stays behind as an isolated node.
+    input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
 
     # Get output shape from chardict, or [1] for a scalar output
     output_shape = [chardict[k] for k in einsum.output] or [1]
-    output_index = ",".join(o for o in einsum.output) or "0"
+    # The index letters name the parameters of the maps below. A bare letter that matches an SDFG
+    # symbol (``k`` contracted over a ``[..., k]``-shaped array) shadows it inside the map, emitting
+    # the self-referential bound ``k = 0:k`` -- zero iterations, silently. Prefix them instead.
+    param = {c: "__einsum_%s" % c for c in chardict}
+    output_index = ",".join(param[o] for o in einsum.output) or "0"
 
     if output is None:
-        dtype = dtype or sdfg.arrays[arrays[0]].dtype
+        # numpy's result type of every operand: a float64 x complex128 contraction is complex128.
+        dtype = dtype or dtypes.result_type_of(*(sdfg.arrays[array].dtype for array in arrays))
         if output_name is None:
             output, odesc = sdfg.add_temp_transient(output_shape, dtype)
         else:
@@ -316,20 +457,135 @@ def _create_einsum_internal(
 
         c = state.add_write(output)
         inode = next(iter(input_nodes.values()))
-        state.add_nedge(
+        state.add_edge(
             inode,
+            None,
             rnode,
+            "_in",
             dace.Memlet(data=inode.data, subset=subsets.Range([(0, chardict[k] - 1, 1) for k in einsum.inputs[0]])),
         )
-        state.add_nedge(rnode, c, dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
+        state.add_edge(
+            rnode,
+            "_out",
+            c,
+            None,
+            dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])),
+        )
 
-    elif not einsum.is_bmm():
+    # A host-issued contraction over GPU-resident tensors goes to the vendor tensor library; plain matrix products
+    # stay on the GEMM path below.
+    elif (
+        len(arrays) == 2
+        and any(len(term) > 2 for term in (*einsum.inputs, einsum.output))
+        and symbolic.equal_valued(1, alpha)
+        and symbolic.equal_valued(0, beta)
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and sdfg.arrays[output].storage == dtypes.StorageType.GPU_Global
+        and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
+        and (axes := tensordot_axes(einsum_string)) is not None
+        and (vendor := gpu_tensor_library()) is not None
+    ):
+        from dace.libraries.linalg.nodes.tensordot import TensorDot  # Avoid import loop
+
+        left_axes, right_axes, permutation = axes
+        tensordot = TensorDot("einsum_tensordot", left_axes, right_axes, permutation)
+        tensordot.implementation = vendor
+        c = state.add_write(output)
+        for node, conn in zip((input_nodes[arrays[0]], input_nodes[arrays[1]]), ("_left_tensor", "_right_tensor")):
+            state.add_edge(node, None, tensordot, conn, Memlet.from_array(node.data, sdfg.arrays[node.data]))
+        state.add_edge(tensordot, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
+    # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
+    elif (
+        len(arrays) == 2
+        and not einsum.is_bmm()
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
+        and (orders := _bmm_orders(einsum_string, {c: _path_extent(s, sdfg.facts()) for c, s in chardict.items()}))
+        and (orders[2][2] == einsum.output or sympy.sympify(beta).is_number)
+    ):
+        # Transpose-transpose-GEMM: permute the operands into a batched GEMM's index order, never a scalar nest
+        # over every index (seissol's ``qpkl,blq->bkp``).
+        first, second, (a_order, b_order, c_order) = orders
+        a = _permuted(sdfg, state, input_nodes[arrays[first]], einsum.inputs[first], a_order)
+        b = _permuted(sdfg, state, input_nodes[arrays[second]], einsum.inputs[second], b_order)
+        bmm = f"{a_order},{b_order}->{c_order}"
+        if c_order == einsum.output:
+            return _create_einsum_internal(
+                sdfg,
+                state,
+                bmm,
+                a.data,
+                b.data,
+                dtype=dtype,
+                output=output,
+                nodes={a.data: a, b.data: b},
+                init_output=init_output,
+                alpha=alpha,
+                beta=beta,
+            )
+        from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+
+        product, product_node = _create_einsum_internal(
+            sdfg, state, bmm, a.data, b.data, dtype=dtype, nodes={a.data: a, b.data: b}, alpha=alpha, beta=0.0
+        )
+        # ``C = perm(A B) + beta C``: the transpose folds the output's own term (cp2k_trs4's ``ijk,ilkm->iljm``
+        # accumulating into its product buffer ran as an atomic scalar nest).
+        # The node's beta is a plain number: a sympy value does not serialize into its numeric property.
+        folded = sympy.sympify(beta)
+        folded = float(folded) if folded.is_real else complex(folded)
+        transpose = TensorTranspose("einsum_transpose", [c_order.index(c) for c in einsum.output], beta=folded)
+        c = state.add_write(output)
+        state.add_edge(product_node, None, transpose, "_inp_tensor", Memlet.from_array(product, sdfg.arrays[product]))
+        state.add_edge(transpose, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
+    elif (
+        (summed := _batched_dot_index(einsum))
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and symbolic.equal_valued(1, alpha)
+        and symbolic.equal_valued(0, beta)
+    ):
+        # A batched dot (``ak,ak->a``) is a map over the batch around one ``Dot`` per element: a blackbox axis that
+        # lowers by scope (a block collective in a kernel, the single-core loop under a parallel map), not a scalar
+        # nest whose every term is an atomic add into its row.
+        from dace.libraries.blas.nodes.dot import Dot
+
+        c = state.add_write(output)
+        if is_devicelevel_gpu(sdfg, state, c):
+            schedule = dtypes.ScheduleType.Sequential
+        elif sdfg.arrays[output].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+            schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dtypes.ScheduleType.Default
+        entry, exit_ = state.add_map(
+            "einsum_dot", {param[k]: "0:%s" % chardict[k] for k in einsum.output}, schedule=schedule
+        )
+        dot = Dot("einsum_dot")
+        for term, arr, conn in zip(einsum.inputs, arrays, ("_x", "_y")):
+            index = ",".join(f"0:{chardict[ch]}" if ch == summed else param[ch] for ch in term)
+            state.add_memlet_path(input_nodes[arr], entry, dot, dst_conn=conn, memlet=Memlet(f"{arr}[{index}]"))
+        state.add_memlet_path(dot, exit_, c, src_conn="_result", memlet=Memlet(f"{output}[{output_index}]"))
+    elif not einsum.is_bmm() or any(sdfg.arrays[array].dtype != dtype for array in arrays):
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)
 
+        # A GPU-resident output needs device maps: the default schedule is host code, which cannot
+        # write GPU_Global memory, and validation rejects the graph (cp2k_density_matrix_trs4 on
+        # the canon GPU column, at the einsum_reset edge). Inside a kernel the same map would be a
+        # nested kernel, so there it stays sequential.
+        if is_devicelevel_gpu(sdfg, state, c):
+            schedule = dtypes.ScheduleType.Sequential
+        elif sdfg.arrays[output].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+            schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dtypes.ScheduleType.Default
+
         # Add state before this one to initialize the output value
         if to_init:
-            init_state = sdfg.add_state_before(state)
+            # The einsum state may live in a control-flow region (a loop body), not directly in the
+            # SDFG: prepend within its OWN parent graph, else looking up its predecessors fails.
+            # Prepending before the region's entry must also move the entry, otherwise the init is
+            # unreachable and the WCR accumulation reads stale values from the previous iteration.
+            region = state.parent_graph
+            init_state = region.add_state_before(state, is_start_block=state is region.start_block)
             if symbolic.equal_valued(0, beta):
                 inputs = {}
                 inputs_scalar = set()
@@ -342,10 +598,11 @@ def _create_einsum_internal(
             if len(einsum.output) > 0:
                 init_state.add_mapped_tasklet(
                     "einsum_reset",
-                    {k: f"0:{chardict[k]}" for k in einsum.output},
+                    {param[k]: "0:%s" % chardict[k] for k in einsum.output},
                     inputs,
                     code,
-                    {f"out_{output}": Memlet.simple(output, output_index)},
+                    {"out_%s" % output: Memlet.simple(output, output_index)},
+                    schedule=schedule,
                     external_edges=True,
                 )
             else:  # Scalar output
@@ -362,12 +619,16 @@ def _create_einsum_internal(
         # Pure einsum map
         state.add_mapped_tasklet(
             "einsum",
-            {k: f"0:{v}" for k, v in chardict.items()},
-            {f"inp_{arr}": Memlet.simple(arr, ",".join(inp)) for inp, arr in zip(einsum.inputs, arrays)},
-            "out_{} = {}{}".format(output, alphacode, " * ".join(f"inp_{arr}" for arr in arrays)),
-            {f"out_{output}": Memlet.simple(output, output_index, wcr_str=wcr)},
+            {param[k]: "0:%s" % v for k, v in chardict.items()},
+            {
+                "inp_%s" % arr: Memlet.simple(arr, ",".join(param[c] for c in inp))
+                for inp, arr in zip(einsum.inputs, arrays)
+            },
+            "out_%s = %s%s" % (output, alphacode, " * ".join("inp_%s" % arr for arr in arrays)),
+            {"out_%s" % output: Memlet.simple(output, output_index, wcr_str=wcr)},
             input_nodes=input_nodes,
             output_nodes={output: c},
+            schedule=schedule,
             external_edges=True,
         )
     else:
@@ -379,6 +640,59 @@ def _create_einsum_internal(
         a = input_nodes[arrays[0]]
         b = input_nodes[arrays[1]]
         c = state.add_write(output)
+
+        # Level-2 BLAS: a matrix-vector contraction -- one 2-D operand, one 1-D
+        # operand, 1-D output (``ij,j->i`` / ``ji,j->i``) -- lowers to a GEMV, NOT the
+        # degenerate GEMM the batch-gemm path builds. That path treats the 1-D operand
+        # as a 1-column matrix and mis-computes its leading dimension, emitting
+        # ``cblas_dgemm(..., CblasTrans, ..., _a, 1, ...)`` where ``CblasTrans`` requires
+        # ``LDA >= K`` -- an illegal ``LDA`` (BLAS aborts, wrong result). ``Gemv`` lowers
+        # matrix*vector correctly. Matmul (2-D output) is untouched -- it keeps the GEMM.
+        if len(c_shape) == 1 and sorted((len(a_shape), len(b_shape))) == [1, 2]:
+            from dace.libraries.blas.nodes.gemv import Gemv
+
+            mat_node, vec_node, mat_sum = (a, b, einsum.a_sum) if len(a_shape) == 2 else (b, a, einsum.b_sum)
+            mat_desc = sdfg.arrays[mat_node.data]
+            # GEMV's non-transposed form contracts the matrix's LAST index (``A[i, k]``
+            # * ``x[k]``); ``transA`` when the contracted index is the FIRST instead.
+            trans_a = bool(mat_sum) and mat_sum[0] != len(mat_desc.shape) - 1
+            # ``y = alpha*A*x + beta*y``. ``LiftEinsum`` sets ``beta`` from the
+            # accumulator's init: ``0`` for an identity-seeded (``setzero``) reduction
+            # (gesummv) -> GEMV overwrites ``y``; a non-zero ``beta`` folds onto the prior
+            # ``y`` (mvt's ``x1 += A*y1``). We do NOT use GEMV's inout ``_y`` for the
+            # accumulate: its BLAS expansion lowers that to an invalid inout tasklet.
+            # Instead GEMV overwrites a temp (``beta=0``) and a following elementwise map
+            # computes ``y = beta*y + tmp`` (a plain, tileable read-modify-write).
+            beta_nz = not symbolic.equal_valued(0, beta)
+            gemv_dst, gemv_desc = (c, sdfg.arrays[output])
+            if beta_nz:
+                buf_name, buf_desc = sdfg.add_transient(
+                    "%s_gemv" % output,
+                    output_shape,
+                    sdfg.arrays[output].dtype,
+                    storage=sdfg.arrays[output].storage,
+                    find_new_name=True,
+                )
+                state.remove_node(c)  # output is produced by the fold map below, not GEMV
+                gemv_dst, gemv_desc = (state.add_access(buf_name), buf_desc)
+            gemv = Gemv("einsum_gemv", transA=trans_a, alpha=alpha, beta=0)
+            state.add_node(gemv)
+            state.add_edge(mat_node, None, gemv, "_A", Memlet.from_array(mat_node.data, mat_desc))
+            state.add_edge(vec_node, None, gemv, "_x", Memlet.from_array(vec_node.data, sdfg.arrays[vec_node.data]))
+            state.add_edge(gemv, "_y", gemv_dst, None, Memlet.from_array(gemv_dst.data, gemv_desc))
+            if beta_nz:
+                c = state.add_write(output)
+                state.add_mapped_tasklet(
+                    "gemv_beta_fold",
+                    {"_gi": "0:%s" % output_shape[0]},
+                    {"_yin": Memlet.simple(output, "_gi"), "_b": Memlet.simple(gemv_dst.data, "_gi")},
+                    "_yout = (%s) * _yin + _b" % beta,
+                    {"_yout": Memlet.simple(output, "_gi")},
+                    input_nodes={gemv_dst.data: gemv_dst},
+                    output_nodes={output: c},
+                    external_edges=True,
+                )
+            return output, c
 
         # Compute GEMM dimensions and strides
         strides = dict(
@@ -426,7 +740,32 @@ def _create_einsum_internal(
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
 
-        nsdfg_node = state.add_nested_sdfg(nsdfg, {"X", "Y"}, {"Z"}, strides)
+        # ``strides`` is an explicit symbol mapping that already binds the inner
+        # GEMM's dimension/stride symbols (``M``/``K``/``N``/``sAM``/...) BY NAME.
+        # Only plumb EXTRA free symbols it does not already cover -- e.g. a runtime
+        # scalar alpha/beta promoted to a symbol by LiftEinsum. Comparing by NAME is
+        # essential: ``strides`` has string keys while ``free_symbols`` yields symbol
+        # OBJECTS, so a blanket ``setdefault(s, s)`` re-adds (and thus leaks) the
+        # already-bound dimension symbols as parent free symbols -- which breaks
+        # call-time symbol inference (the SDFG gains unsolvable free symbols).
+        sym_mapping = dict(strides)
+        for s in nsdfg.free_symbols:
+            if str(s) not in sym_mapping:
+                sym_mapping[str(s)] = s
+        # A runtime scalar alpha/beta (LiftEinsum's ``_alpha``/``_beta`` connector,
+        # promoted to the ``__einsum_alpha``/``__einsum_beta`` symbol above) lives in
+        # the still-unexpanded GEMM libnode's ``alpha``/``beta`` PROPERTY, so it is not
+        # yet in ``nsdfg.free_symbols`` -- it only surfaces once that libnode expands to
+        # a tasklet, by which point this ``symbol_mapping`` is fixed. Plumb the
+        # coefficients' symbols through now (identity map into the enclosing expansion
+        # SDFG, which binds them from the scalar connector) so the later expansion does
+        # not leave the inner SDFG missing them.
+        for coeff in (alpha, beta):
+            for s in symbolic.symlist(coeff).values():
+                if str(s) not in sym_mapping:
+                    sym_mapping[str(s)] = s
+        nsdfg_node = state.add_nested_sdfg(nsdfg, {"X": None, "Y": None}, {"Z": None}, sym_mapping)
+
         state.add_edge(a, None, nsdfg_node, "X", Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, "Y", Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, "Z", c, None, Memlet.from_array(c.data, c.desc(sdfg)))

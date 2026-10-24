@@ -1,0 +1,256 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""``LoopToMap`` and transients that live only inside the loop body.
+
+``apply`` privatizes every such transient into the loop-body NestedSDFG, so ``can_be_applied``
+exempts them from its dependence analysis. That exemption is sound only while each iteration writes
+the transient before it reads it. A partially-guarded write (``if c: t = x`` followed by an
+unconditional ``use(t)``) leaves the previous iteration's value visible, and privatizing it silently
+dropped the carry -- the loop lifted to a Map and produced zeros where the carry should have been.
+
+The first test pins that refusal. The remaining three pin the shapes that must keep parallelizing,
+because the cheap fix (never privatize) would cost the pipeline most of its parallelism: a plain
+per-iteration scratch value, an exhaustive if/else that writes on every branch, and the CloudSC
+shape where one inner loop fills a scratch row and the next reads it back.
+"""
+
+import numpy as np
+import pytest
+
+import dace
+from dace.sdfg import nodes
+from dace.transformation.interstate.loop_to_map import LoopToMap
+
+N = dace.symbol("N")
+M = dace.symbol("M")
+F = dace.symbol("F")
+
+
+def n_maps(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+@dace.program
+def guarded_carry(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        if i % 2 == 0:
+            t = A[i]
+        B[i] = t
+
+
+@dace.program
+def private_scratch(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        t = A[i] * 2.0
+        B[i] = t + 1.0
+
+
+@dace.program
+def exhaustive_branches(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        if A[i] > 0.5:
+            t = A[i]
+        else:
+            t = -A[i]
+        B[i] = t
+
+
+@dace.program
+def scratch_row_refilled(A: dace.float64[N, M], B: dace.float64[N, M]):
+    for i in range(N):
+        row = np.ndarray((M,), dtype=np.float64)
+        for j in range(M):
+            row[j] = A[i, j] * 3.0
+        for j in range(M):
+            B[i, j] = row[j] + 1.0
+
+
+@dace.program
+def same_guard_twice(A: dace.float64[N], B: dace.float64[N], flag: dace.int64):
+    for i in range(N):
+        if flag > 0:
+            t = A[i] * 2.0
+        B[i] = A[i]
+        if flag > 0:
+            B[i] = t + 1.0
+
+
+@dace.program
+def per_iteration_guard_in_branch(A: dace.float64[N], B: dace.float64[N], M: dace.float64[N], flag: dace.int64):
+    for i in range(N):
+        if flag > 0:
+            c = M[i] > 0.5
+            if c:
+                t = A[i] * 2.0
+            B[i] = A[i]
+            if c:
+                B[i] = t + 1.0
+
+
+@dace.program
+def guard_rewritten_between(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        c = A[i] > 0.5
+        if c:
+            t = A[i] * 2.0
+        c = A[i] < 0.2
+        if c:
+            B[i] = t + 1.0
+
+
+@dace.program
+def varying_guard_twice(A: dace.float64[N], B: dace.float64[N]):
+    for i in range(N):
+        if i % 2 == 0:
+            t = A[i] * 2.0
+        B[i] = A[i]
+        if i % 2 == 0:
+            B[i] = t + 1.0
+
+
+@dace.program
+def same_guard_inside_inner_map(A: dace.float64[N], B: dace.float64[N, M], C: dace.float64[M]):
+    for i in range(N):
+        if F > 0:
+            t = A[i] * 2.0
+        for j in range(M):
+            if F > 0:
+                B[i, j] = t + C[j]
+
+
+def test_guarded_write_carry_is_refused():
+    """The guarded write leaves ``t`` carrying the previous iteration, so the loop is not DOALL."""
+    sdfg = guarded_carry.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 0
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    a = rng.random(8)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, N=8)
+
+    ref = np.zeros(8)
+    carried = 0.0
+    for i in range(8):
+        if i % 2 == 0:
+            carried = a[i]
+        ref[i] = carried
+    assert np.array_equal(b, ref)
+
+
+def test_private_scratch_still_maps():
+    sdfg = private_scratch.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    assert n_maps(sdfg) > 0
+
+    rng = np.random.default_rng(1)
+    a = rng.random(8)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, N=8)
+    assert np.allclose(b, a * 2.0 + 1.0)
+
+
+def test_exhaustive_branches_still_map():
+    """Every branch of an if/else writes ``t``, so no iteration can observe an older value."""
+    sdfg = exhaustive_branches.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    assert n_maps(sdfg) > 0
+
+    rng = np.random.default_rng(2)
+    a = rng.random(8)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, N=8)
+    assert np.allclose(b, np.where(a > 0.5, a, -a))
+
+
+def test_scratch_filled_by_inner_loop_still_maps():
+    """A nested loop's write counts as written: the CloudSC fill-then-read-back scratch row."""
+    sdfg = scratch_row_refilled.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    assert n_maps(sdfg) > 0
+
+    rng = np.random.default_rng(3)
+    a = rng.random((4, 5))
+    b = np.zeros((4, 5))
+    sdfg(A=a, B=b, N=4, M=5)
+    assert np.allclose(b, a * 3.0 + 1.0)
+
+
+def test_a_read_under_the_same_invariant_guard_as_its_write_still_maps():
+    """warpx's two ``if rz_modes:`` blocks: the first fills a scratch the second reads. On a loop-invariant
+    condition both run in the same iterations, so the scratch is the iteration's own."""
+    sdfg = same_guard_twice.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    rng = np.random.default_rng(4)
+    a = rng.random(8)
+    for flag in (0, 1):
+        b = np.zeros(8)
+        sdfg(A=a, B=b, flag=flag, N=8)
+        assert np.allclose(b, a * 2.0 + 1.0 if flag else a)
+
+
+def test_a_read_under_the_same_varying_guard_still_maps():
+    """The guard reads the loop variable, which keeps its value within an iteration: both branches run in the
+    same iterations, so the scratch is still the iteration's own."""
+    sdfg = varying_guard_twice.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    rng = np.random.default_rng(5)
+    a = rng.random(8)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, N=8)
+    assert np.allclose(b, np.where(np.arange(8) % 2 == 0, a * 2.0 + 1.0, a))
+
+
+def test_a_per_iteration_guard_pair_inside_a_branch_still_maps():
+    """velocity_tendencies' ``continue`` guard: inside ``if lextra_diffu:`` a value set at the top of the iteration
+    guards both the write of a scratch and its read; both run in the same iterations."""
+    sdfg = per_iteration_guard_in_branch.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations_repeated(LoopToMap) > 0
+    sdfg.validate()
+    rng = np.random.default_rng(6)
+    a, m = rng.random(8), rng.random(8)
+    for flag in (0, 1):
+        b = np.zeros(8)
+        sdfg(A=a, B=b, M=m, flag=flag, N=8)
+        assert np.allclose(b, np.where(m > 0.5, a * 2.0 + 1.0, a) if flag else 0.0)
+
+
+def test_a_guard_whose_scalar_is_rewritten_between_the_branches_is_refused():
+    """``c`` changes between the two ``if c:`` blocks: the read may see the ``t`` of an earlier iteration."""
+    sdfg = guard_rewritten_between.to_sdfg(simplify=False)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, dace.sdfg.state.LoopRegion)]
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    names = {name for name, desc in sdfg.arrays.items() if desc.transient}
+    assert any("t" in read_before_written(loop, names) for loop in loops)
+
+
+def test_a_read_under_the_same_guard_inside_a_map_is_not_carried():
+    """warpx's azimuthal-mode loop after ``MoveIfIntoLoop``: the scratch is written under ``if F > 0:`` and read by
+    an inner map whose body repeats that guard, so the map's outer read runs only when the write did."""
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    sdfg = same_guard_inside_inner_map.to_sdfg(simplify=False)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, dace.sdfg.state.LoopRegion)]
+    inner = next(r for r in loops if r.loop_variable == "j")
+    outer = next(r for r in loops if r.loop_variable == "i")
+    xform = LoopToMap()
+    xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: inner}, 0, override=True)
+    assert xform.can_be_applied(inner.parent_graph, 0, sdfg)
+    xform.apply(inner.parent_graph, sdfg)
+    names = {name for name, desc in sdfg.arrays.items() if desc.transient}
+    assert "t" not in read_before_written(outer, names)
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main([__file__]))
+    test_a_read_under_the_same_invariant_guard_as_its_write_still_maps()
+    test_a_read_under_the_same_varying_guard_still_maps()
+    test_a_per_iteration_guard_pair_inside_a_branch_still_maps()
+    test_a_guard_whose_scalar_is_rewritten_between_the_branches_is_refused()

@@ -4,6 +4,8 @@
 import pytest
 
 import dace
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis import ScalarWriteShadowScopes
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -481,7 +483,21 @@ def test_loop_fake_shadow(with_raising):
     ppl = Pipeline([ScalarWriteShadowScopes()])
     res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
-    assert res[0]["A"][(init, init_access)] == {(loop, loop_access), (loop2, loop2_access), (end, end_access)}
+    if with_raising:
+        # Raised into a LoopRegion, the trip count of ``i = 0; i < 10`` is a concrete 10, so the
+        # loop provably runs and the read in ``end`` sees what ``loop2`` wrote on the last
+        # iteration -- the shadow is not fake here at all, and ``init``'s value is dead. There is
+        # no upward-exposed read anywhere in the body (both accesses are written before they are
+        # read in their own state), which is what would make a body write a fake shadow; see
+        # ``test_loop_fake_complex_shadow`` for that shape, which still collapses.
+        assert res[0]["A"][(loop, loop_access)] == {(loop, loop_access)}
+        assert res[0]["A"][(loop2, loop2_access)] == {(loop2, loop2_access), (end, end_access)}
+        assert res[0]["A"][None] == {(init, init_access)}
+    else:
+        # Without raising the guard is an ordinary state and there is no loop bound to analyze, so
+        # the read in ``end`` may still be reached with zero iterations and everything collapses
+        # into ``init``'s scope.
+        assert res[0]["A"][(init, init_access)] == {(loop, loop_access), (loop2, loop2_access), (end, end_access)}
 
 
 @pytest.mark.parametrize("with_raising", (False, True))
@@ -623,6 +639,209 @@ def test_dominationless_write_branch(with_raising):
     assert res[0]["A"][(guard, guard_a)] == {(merge, merge_a), (left, left_a)}
 
 
+# #
+#  Dominating writes found INSIDE a control flow region
+#
+#  A canonicalized kernel's top-level blocks are typically all ``LoopRegion``s. Accepting only an
+#  ``SDFGState`` as a dominating write block means the walk up the idom chain never finds one, and
+#  EVERY access of such a container -- the producing write included -- falls into the undominated
+#  (``None``) scope. ``must_write_state`` closes that, but only where a must-def can be PROVEN;
+#  each refusal below is the difference between a missed optimization and a wrong answer.
+# #
+
+
+def region_scope_fixture(name: str, condition: str, init: str = "i = 0", guard_body_write: bool = False):
+    """``for i in <condition>: A = 1`` followed by a state reading ``A``.
+
+    :param name: SDFG name.
+    :param condition: The loop condition, which decides whether the trip count is provable.
+    :param init: The loop's init statement.
+    :param guard_body_write: Put the body's write under a non-exhaustive ``if`` inside the loop.
+    :returns: ``(sdfg, loop_write_access, end_read_access)``.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [1], dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+    if "N" in condition:
+        sdfg.add_symbol("N", dace.int64)
+
+    loop = LoopRegion("loop", condition, "i", init, "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    if guard_body_write:
+        branch = ConditionalBlock("guarded")
+        loop.add_node(branch)
+        loop.add_edge(body, branch, dace.InterstateEdge())
+        body = ControlFlowRegion("then", sdfg=sdfg)
+        branch.add_branch(CodeBlock("i > 2"), body)
+        body = body.add_state("then_body", is_start_block=True)
+
+    loop_write = body.add_access("A")
+    write_tasklet = body.add_tasklet("w", {}, {"a"}, "a = 1")
+    body.add_edge(write_tasklet, "a", loop_write, None, dace.Memlet("A[0]"))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    end_read = end.add_access("A")
+    end_b = end.add_access("B")
+    end_tasklet = end.add_tasklet("r", {"a"}, {"b"}, "b = a")
+    end.add_edge(end_read, None, end_tasklet, "a", dace.Memlet("A[0]"))
+    end.add_edge(end_tasklet, "b", end_b, None, dace.Memlet("B[0]"))
+
+    sdfg.validate()
+    return sdfg, loop_write, end_read
+
+
+def write_scopes(sdfg: dace.SDFG):
+    return Pipeline([ScalarWriteShadowScopes()]).apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__][0]
+
+
+def state_named(sdfg: dace.SDFG, label: str):
+    return next(s for s in sdfg.states() if s.label == label)
+
+
+def test_loop_region_write_dominates_read_after_loop():
+    """Positive: a concrete trip count makes the body's write a must-def after the loop."""
+    sdfg, loop_write, end_read = region_scope_fixture("region_write_concrete", "i < 4")
+    res = write_scopes(sdfg)
+
+    body, end = state_named(sdfg, "body"), state_named(sdfg, "end")
+    assert res["A"][(body, loop_write)] == {(end, end_read)}
+    assert not res["A"][None], "the producing write must not fall into the undominated scope"
+
+
+def test_symbolic_trip_count_loop_is_refused():
+    """Refusal: ``for i in range(N)`` may run zero times.
+
+    The nonnegative-symbol assumption gives ``N >= 0``, not ``N >= 1``, so the write inside the
+    body defines nothing after the loop and the read stays undominated.
+    """
+    sdfg, loop_write, end_read = region_scope_fixture("region_write_symbolic", "i < N")
+    res = write_scopes(sdfg)
+
+    body, end = state_named(sdfg, "body"), state_named(sdfg, "end")
+    assert (end, end_read) in res["A"][None]
+    assert (body, loop_write) in res["A"][None]
+
+
+def test_conditional_write_inside_provable_loop_is_refused():
+    """Refusal: the write is unconditional in the LOOP but not in the loop BODY.
+
+    A block that must-write has to dominate every sink of its region; a write nested under a
+    further conditional does not, however many times the loop runs.
+    """
+    sdfg, _, end_read = region_scope_fixture("region_write_guarded", "i < 4", guard_body_write=True)
+    res = write_scopes(sdfg)
+
+    assert (state_named(sdfg, "end"), end_read) in res["A"][None]
+
+
+def conditional_block_fixture(name: str, exhaustive: bool):
+    """``if c: A = 1 [else: A = 2]`` followed by a state reading ``A``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [1], dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_symbol("c", dace.int64)
+
+    branch = ConditionalBlock("branch")
+    sdfg.add_node(branch, is_start_block=True)
+    writes = []
+    conditions = [CodeBlock("c > 0")] + ([None] if exhaustive else [])
+    for idx, cond in enumerate(conditions):
+        region = ControlFlowRegion(f"br{idx}", sdfg=sdfg)
+        branch.add_branch(cond, region)
+        state = region.add_state(f"br{idx}_body", is_start_block=True)
+        access = state.add_access("A")
+        tasklet = state.add_tasklet(f"w{idx}", {}, {"a"}, f"a = {idx}")
+        state.add_edge(tasklet, "a", access, None, dace.Memlet("A[0]"))
+        writes.append((state, access))
+
+    end = sdfg.add_state("end")
+    sdfg.add_edge(branch, end, dace.InterstateEdge())
+    end_read = end.add_access("A")
+    end_b = end.add_access("B")
+    end_tasklet = end.add_tasklet("r", {"a"}, {"b"}, "b = a")
+    end.add_edge(end_read, None, end_tasklet, "a", dace.Memlet("A[0]"))
+    end.add_edge(end_tasklet, "b", end_b, None, dace.Memlet("B[0]"))
+
+    sdfg.validate()
+    return sdfg, writes, (end, end_read)
+
+
+def test_conditional_block_without_else_is_refused():
+    """``if c: A = 1`` has no dominating write: the branch may not run, so the read stays unscoped."""
+    sdfg, _, end_access = conditional_block_fixture("conditional_no_else", exhaustive=False)
+    res = write_scopes(sdfg)
+
+    assert end_access in res["A"][None]
+
+
+def test_conditional_block_writing_every_branch_is_one_scope():
+    """``if c: A = 1 else: A = 2``: every branch writes, so the block dominates the read. Both branch
+    writes share ONE scope (rooted at the first), so a consumer versions them together."""
+    sdfg, (first, second), end_access = conditional_block_fixture("conditional_else", exhaustive=True)
+    res = write_scopes(sdfg)
+
+    assert set(res["A"][first]) == {second, end_access}
+    assert second not in res["A"]
+    assert not res["A"][None]
+
+
+def test_loop_carried_read_is_not_split_from_the_body_write():
+    """The producer loop is a must-def, yet the consumer loop's own carry must stay in one scope.
+
+    ``loop A`` (provable trip count) writes ``A``; ``loop B`` reads it at the top of its body and
+    rewrites it at the bottom, so from the second iteration on the read sees B's own write, not
+    A's. Attributing the read to A while keeping B's write as a separate root would let the
+    consumer version them apart and leave the read on a container nobody writes -- the coarsening
+    step has to fold them back into a single scope.
+    """
+    sdfg = dace.SDFG("loop_carried_after_region_write")
+    sdfg.add_array("A", [1], dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+
+    producer = LoopRegion("producer", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(producer, is_start_block=True)
+    pbody = producer.add_state("pbody", is_start_block=True)
+    pw = pbody.add_access("A")
+    pt = pbody.add_tasklet("pw", {}, {"a"}, "a = 1")
+    pbody.add_edge(pt, "a", pw, None, dace.Memlet("A[0]"))
+
+    consumer = LoopRegion("consumer", "j < 4", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(consumer)
+    sdfg.add_edge(producer, consumer, dace.InterstateEdge())
+    cread = consumer.add_state("cread", is_start_block=True)
+    cwrite = consumer.add_state("cwrite")
+    cafter = consumer.add_state("cafter")
+    consumer.add_edge(cread, cwrite, dace.InterstateEdge())
+    consumer.add_edge(cwrite, cafter, dace.InterstateEdge())
+
+    cr = cread.add_access("A")
+    cb = cread.add_access("B")
+    crt = cread.add_tasklet("cr", {"a"}, {"b"}, "b = a")
+    cread.add_edge(cr, None, crt, "a", dace.Memlet("A[0]"))
+    cread.add_edge(crt, "b", cb, None, dace.Memlet("B[0]"))
+
+    cw = cwrite.add_access("A")
+    cwt = cwrite.add_tasklet("cw", {}, {"a"}, "a = 2")
+    cwrite.add_edge(cwt, "a", cw, None, dace.Memlet("A[0]"))
+
+    ca = cafter.add_access("A")
+    cab = cafter.add_access("B")
+    cat = cafter.add_tasklet("ca", {"a"}, {"b"}, "b = a")
+    cafter.add_edge(ca, None, cat, "a", dace.Memlet("A[0]"))
+    cafter.add_edge(cat, "b", cab, None, dace.Memlet("B[0]"))
+    sdfg.validate()
+
+    res = write_scopes(sdfg)
+
+    roots = [w for w in res["A"] if w is not None and res["A"][w]]
+    assert len(roots) == 1, f"the loop-carried chain was split into {len(roots)} scopes: {roots}"
+    scope = res["A"][roots[0]]
+    assert (cread, cr) in scope and (cafter, ca) in scope
+    assert (cwrite, cw) in scope
+
+
 if __name__ == "__main__":
     test_scalar_write_shadow_split(False)
     test_scalar_write_shadow_fused(False)
@@ -640,3 +859,9 @@ if __name__ == "__main__":
     test_loop_fake_complex_shadow(True)
     test_loop_real_shadow(True)
     test_dominationless_write_branch(True)
+    test_loop_region_write_dominates_read_after_loop()
+    test_symbolic_trip_count_loop_is_refused()
+    test_conditional_write_inside_provable_loop_is_refused()
+    test_conditional_block_without_else_is_refused()
+    test_conditional_block_writing_every_branch_is_one_scope()
+    test_loop_carried_read_is_not_split_from_the_body_write()

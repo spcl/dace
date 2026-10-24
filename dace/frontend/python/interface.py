@@ -38,6 +38,7 @@ def program(
     regenerate_code: bool = True,
     recompile: bool = True,
     constant_functions=False,
+    facts: parser.FactsSpec | None = None,
     **kwargs,
 ) -> Callable[..., parser.DaceProgram]: ...
 
@@ -54,6 +55,7 @@ def program(
     distributed_compilation: bool = False,
     constant_functions=False,
     use_explicit_cf=True,
+    facts: parser.FactsSpec | None = None,
     **kwargs,
 ) -> Callable[..., parser.DaceProgram]:
     """
@@ -80,6 +82,8 @@ def program(
                                This will hardcode their return values into the
                                resulting program.
     :param use_explicit_cf: If True, makes use of explicit control flow constructs.
+    :param facts: Facts assumed of the contents of the arguments when the program is called, registered as data
+                  assumptions of the parsed SDFG (see :func:`~dace.frontend.python.parser.register_data_facts`).
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """
@@ -98,6 +102,7 @@ def program(
         recompile=recompile,
         distributed_compilation=distributed_compilation,
         use_explicit_cf=use_explicit_cf,
+        facts=facts,
     )
 
 
