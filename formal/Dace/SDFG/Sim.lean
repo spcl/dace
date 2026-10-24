@@ -706,14 +706,16 @@ theorem merge_sim {π : Equiv.Perm Name} {P : Name → Prop} {w : WcrSem} (hu : 
 
 /-! ## Contexts agreeing on names -/
 
-/-- Contexts related by `π` on what every run reads: the interpretation,
-the memory names of fresh names (`Ctx.scope`, nested invocations), the
-control-flow hierarchy (mention counts of private transients). -/
+/-- Contexts related by `π` on what every run reads: the interpretation and
+the control-flow hierarchy (mention counts of private transients). -/
 structure CtxSim (π : Equiv.Perm Name) (P : Name → Prop) (ctx₂ ctx₁ : Ctx) : Prop where
   I : ctx₂.I = ctx₁.I
-  scope : ∀ x, ctx₂.scope x = π (ctx₁.scope x)
-  scopeP : ∀ x, P (ctx₁.scope x)
   top : ctx₂.g.top = ctx₁.g.top
+
+/-- The memory names of fresh names (`Ctx.scope`, read by nested
+invocations only) are related by `π` and satisfy `P`. -/
+def ScopeSim (π : Equiv.Perm Name) (P : Name → Prop) (ctx₂ ctx₁ : Ctx) : Prop :=
+  ∀ x, ctx₂.scope x = π (ctx₁.scope x) ∧ P (ctx₁.scope x)
 
 namespace Ctx
 
@@ -1088,6 +1090,8 @@ end St
 structure SNames (π : Equiv.Perm Name) (P : Name → Prop) (ctx₂ ctx₁ : Ctx) (s : State) : Prop where
   data : ∀ x ∈ s.dataNames, Ctx.Strong π P ctx₂ ctx₁ x
   expr : ∀ x ∈ s.exprNames, Ctx.Good₀ π P ctx₂ ctx₁ x
+  /-- Only states with nested SDFGs read the fresh-name scope. -/
+  scope : (∃ n ∈ s.nodes, ∃ g mapping ni, n.kind = .nested g mapping ni) → ScopeSim π P ctx₂ ctx₁
 
 namespace SNames
 
@@ -2473,30 +2477,33 @@ theorem lookup_P {conns : List (Name × Name)} (hP : ∀ x ∈ conns, P x.2) {n 
     · cases h; exact hP _ List.mem_cons_self
     · exact ih (fun y hy => hP y (List.mem_cons_of_mem _ hy)) h
 
-theorem enter_cname_ren (inner : SDFG) (node : NodeId) :
+omit hc in
+theorem enter_cname_ren (hsc : ScopeSim π P ctx₂ ctx₁) (inner : SDFG) (node : NodeId) :
     ∀ (conns : List (Name × Name)) (x : Name),
       (ctx₂.enter inner node (renConns π conns)).cname x = π ((ctx₁.enter inner node conns).cname x)
-  | [], x => by simp only [Ctx.enter, renConns, List.map_nil, List.lookup, Option.getD_none, hc.scope]
+  | [], x => by simp only [Ctx.enter, renConns, List.map_nil, List.lookup, Option.getD_none, (hsc _).1]
   | (c, l) :: cs, x => by
-    have ih := enter_cname_ren inner node cs x
+    have ih := enter_cname_ren hsc inner node cs x
     simp only [Ctx.enter, renConns, List.map_cons, List.lookup] at ih ⊢
     split <;> simp_all
 
 /-- Entering a nested SDFG from contexts related by `π`, with connector
 bindings related by `π` and satisfying `P`: the inner contexts agree on every
 name. -/
-theorem enter_sim (inner : SDFG) (node : NodeId) (conns : List (Name × Name)) (hP : ∀ x ∈ conns, P x.2) :
+theorem enter_sim (hsc : ScopeSim π P ctx₂ ctx₁) (inner : SDFG) (node : NodeId) (conns : List (Name × Name))
+    (hP : ∀ x ∈ conns, P x.2) :
     CtxSim π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) ∧
-      ∀ x, Ctx.Strong π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) x := by
+      (∀ x, Ctx.Strong π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) x) ∧
+      ScopeSim π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) := by
   have hcn : ∀ x, (ctx₂.enter inner node (renConns π conns)).cname x = π ((ctx₁.enter inner node conns).cname x) :=
-    fun x => enter_cname_ren hc inner node conns x
+    fun x => enter_cname_ren hsc inner node conns x
   have hPc : ∀ x, P ((ctx₁.enter inner node conns).cname x) := by
     intro x
     simp only [Ctx.enter]
     cases h : conns.lookup x with
-    | none => exact hc.scopeP _
+    | none => exact (hsc _).2
     | some l => exact lookup_P hP h
-  refine ⟨⟨hc.I, fun x => by simp only [Ctx.enter, hc.scope], fun x => hc.scopeP _, rfl⟩, fun x => ?_⟩
+  refine ⟨⟨hc.I, rfl⟩, fun x => ?_, fun x => ⟨by simp only [Ctx.enter, (hsc _).1], (hsc _).2⟩⟩
   exact ⟨rfl, hcn x, hPc x, fun d _ y _ => ⟨rfl, fun _ => ⟨hcn y, hPc y⟩⟩⟩
 
 theorem nestedValuation_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNode} (hn : n ∈ s.nodes)
@@ -2510,8 +2517,9 @@ theorem nestedValuation_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : 
   exact List.mem_flatMap.2 ⟨xe, hxe, List.mem_cons_of_mem _ hx⟩
 
 /-- Contexts agreeing on every name agree on the names of any state. -/
-theorem SNames.ofAll (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (s : State) : SNames π P ctx₂ ctx₁ s :=
-  ⟨fun x _ => hall x, fun x _ => (hall x).good₀⟩
+theorem SNames.ofAll (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (hsc : ScopeSim π P ctx₂ ctx₁) (s : State) :
+    SNames π P ctx₂ ctx₁ s :=
+  ⟨fun x _ => hall x, fun x _ => (hall x).good₀, fun _ => hsc⟩
 
 theorem bindCodeInputs_sim (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (ρ' : Valuation) (s : State) (n : DNode)
     {st₂ st₁ : St} (h : St.Sim π P st₂ st₁) :
@@ -2590,8 +2598,8 @@ theorem nestedBindings_P {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNo
 same inner valuation, simulating states, renamed private names satisfying
 `P`. -/
 def NestedSim (π : Equiv.Perm Name) (P : Name → Prop) (x₂ x₁ : Ctx × Valuation × St × List Name) : Prop :=
-  (CtxSim π P x₂.1 x₁.1 ∧ ∀ y, Ctx.Strong π P x₂.1 x₁.1 y) ∧ x₂.2.1 = x₁.2.1 ∧ St.Sim π P x₂.2.2.1 x₁.2.2.1 ∧
-    x₂.2.2.2 = x₁.2.2.2.map π ∧ ∀ y ∈ x₁.2.2.2, P y
+  (CtxSim π P x₂.1 x₁.1 ∧ (∀ y, Ctx.Strong π P x₂.1 x₁.1 y) ∧ ScopeSim π P x₂.1 x₁.1) ∧ x₂.2.1 = x₁.2.1 ∧
+    St.Sim π P x₂.2.2.1 x₁.2.2.1 ∧ x₂.2.2.2 = x₁.2.2.2.map π ∧ ∀ y ∈ x₁.2.2.2, P y
 
 theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNode} (hn : n ∈ s.nodes) {inner : SDFG}
     {mapping : List (Sym × Expr)} {ni : Bool} (hk : n.kind = .nested inner mapping ni) {st₂ st₁ : St}
@@ -2603,7 +2611,8 @@ theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
   | err e => exact ResSim.err e
   | ok conns =>
     simp only [Res.map, Res.ok_bind]
-    obtain ⟨hcI, hall⟩ := enter_sim hc inner n.id conns (nestedBindings_P hS n hb)
+    obtain ⟨hcI, hall, hscI⟩ := enter_sim hc (hS.scope ⟨n, hn, inner, mapping, ni, hk⟩) inner n.id conns
+      (nestedBindings_P hS n hb)
     refine ResSim.bindEq (nestedValuation_sim hc ρ hS hn hk h.mem) fun ρ' => ?_
     have hs : St.Sim π P
         { st₂ with mem := (ctx₂.enter inner n.id (renConns π conns)).allocate inner.callTransients st₂.mem }
@@ -2615,7 +2624,7 @@ theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
     obtain ⟨a₁, c₁⟩ := y
     obtain ⟨ha, hcs, hP⟩ := hxy
     simp only at ha hcs hP ⊢
-    refine ResSim.ok ⟨⟨hcI, hall⟩, rfl, ha, ?_, ?_⟩
+    refine ResSim.ok ⟨⟨hcI, hall, hscI⟩, rfl, ha, ?_, ?_⟩
     · simp only [hcs, List.map_append, List.map_map]
       congr 1
       exact List.map_congr_left fun t _ => (hall t).cname
@@ -2759,13 +2768,14 @@ theorem Region.Names.assigns {rg : Region} (h : Region.Names π P ctx₂ ctx₁ 
     ∀ x ∈ e.assigns.flatMap (fun (_, x) => x.names), Ctx.Good₀ π P ctx₂ ctx₁ x :=
   fun x hx => h.edges e he x (List.mem_append_right _ hx)
 
-theorem SNames.ofAll' (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (s : State) : SNames π P ctx₂ ctx₁ s :=
-  ⟨fun x _ => hall x, fun x _ => (hall x).good₀⟩
+theorem SNames.ofAll' (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (hsc : ScopeSim π P ctx₂ ctx₁) (s : State) :
+    SNames π P ctx₂ ctx₁ s :=
+  ⟨fun x _ => hall x, fun x _ => (hall x).good₀, fun _ => hsc⟩
 
 section OfAll
 
-variable (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x)
-include hall
+variable (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (hsc : ScopeSim π P ctx₂ ctx₁)
+include hall hsc
 
 mutual
 
@@ -2778,7 +2788,7 @@ theorem Blocks.Names.ofAll : ∀ bs : List Block, Blocks.Names π P ctx₂ ctx�
   | b :: bs => ⟨Block.Names.ofAll b, Blocks.Names.ofAll bs⟩
 
 theorem Block.Names.ofAll : ∀ b : Block, Block.Names π P ctx₂ ctx₁ b
-  | .state s => SNames.ofAll' hall s
+  | .state s => SNames.ofAll' hall hsc s
   | .region r => Region.Names.ofAll r
   | .loop ⟨_, _, _, _, _, _, _, body⟩ =>
     ⟨fun x _ => (hall x).good₀, fun x _ => (hall x).good₀, fun x _ => (hall x).good₀, Region.Names.ofAll body⟩
@@ -2972,22 +2982,22 @@ theorem NodeExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw 
     exact ⟨_, .nestedSetupErr hk h₂, ResSim.of_err hu⟩
   | .nestedInnerErr hk hs hr, st₂, h => by
     rcases ResSim.ok_cases (hs ▸ nestedSetup_sim hc ρ hS hn hk h) with
-      ⟨e, h₂, hu⟩ | ⟨⟨c₂, ρ₂, a₂, d₂⟩, h₂, ⟨hcI, hall⟩, hρ, ha, hd, hdP⟩
+      ⟨e, h₂, hu⟩ | ⟨⟨c₂, ρ₂, a₂, d₂⟩, h₂, ⟨hcI, hall, hscI⟩, hρ, ha, hd, hdP⟩
     · exact ⟨_, .nestedSetupErr hk h₂, ResSim.ub hu _⟩
-    · simp only at hcI hall hρ ha hd hdP
+    · simp only at hcI hall hscI hρ ha hd hdP
       rw [hρ, hd] at h₂
       obtain ⟨r₂, hr₂, hres⟩ := SDFGExec.sim hcI (by rw [nestedSetup_I hs]; exact hw)
-        (Region.Names.ofAll hall _) hr _ ha.mem
+        (Region.Names.ofAll hall hscI _) hr _ ha.mem
       obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hres
       exact ⟨_, .nestedInnerErr hk h₂ hr₂, ResSim.of_err hu⟩
   | .nested hk hs hr, st₂, h => by
     rcases ResSim.ok_cases (hs ▸ nestedSetup_sim hc ρ hS hn hk h) with
-      ⟨e, h₂, hu⟩ | ⟨⟨c₂, ρ₂, a₂, d₂⟩, h₂, ⟨hcI, hall⟩, hρ, ha, hd, hdP⟩
+      ⟨e, h₂, hu⟩ | ⟨⟨c₂, ρ₂, a₂, d₂⟩, h₂, ⟨hcI, hall, hscI⟩, hρ, ha, hd, hdP⟩
     · exact ⟨_, .nestedSetupErr hk h₂, ResSim.ub hu _⟩
-    · simp only at hcI hall hρ ha hd hdP
+    · simp only at hcI hall hscI hρ ha hd hdP
       rw [hρ, hd] at h₂
       obtain ⟨r₂, hr₂, hres⟩ := SDFGExec.sim hcI (by rw [nestedSetup_I hs]; exact hw)
-        (Region.Names.ofAll hall _) hr _ ha.mem
+        (Region.Names.ofAll hall hscI _) hr _ ha.mem
       rcases ResSim.ok_cases hres with ⟨e, rfl, hu⟩ | ⟨⟨ρ₃, m₃, g₃⟩, rfl, hρ₃, hm₃, hg₃, hgP⟩
       · exact ⟨_, .nestedInnerErr hk h₂ hr₂, ResSim.ub hu _⟩
       · simp only at hρ₃ hm₃ hg₃ hgP
@@ -3454,13 +3464,13 @@ end Rel
 /-! ## The identity case -/
 
 /-- A context simulates itself, with no renaming and no restriction. -/
-theorem CtxSim.refl (ctx : Ctx) : CtxSim 1 (fun _ => True) ctx ctx := ⟨rfl, fun _ => rfl, fun _ => trivial, rfl⟩
+theorem CtxSim.refl (ctx : Ctx) : CtxSim 1 (fun _ => True) ctx ctx := ⟨rfl, rfl⟩
 
 theorem Ctx.Strong.refl (ctx : Ctx) (n : Name) : Ctx.Strong 1 (fun _ => True) ctx ctx n :=
   ⟨rfl, rfl, trivial, fun _ _ _ _ => ⟨rfl, fun _ => ⟨rfl, trivial⟩⟩⟩
 
 theorem SNames.refl (ctx : Ctx) (s : State) : SNames 1 (fun _ => True) ctx ctx s :=
-  ⟨fun x _ => Ctx.Strong.refl ctx x, fun x _ => (Ctx.Strong.refl ctx x).good₀⟩
+  ⟨fun x _ => Ctx.Strong.refl ctx x, fun x _ => (Ctx.Strong.refl ctx x).good₀, fun _ _ => ⟨rfl, trivial⟩⟩
 
 theorem Log.AliasP.true (g : Log) : Log.AliasP (fun _ => True) g := fun _ _ _ => trivial
 
