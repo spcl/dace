@@ -201,12 +201,13 @@ def test_region_persistent_data_with_nested_sdfg():
     """Persistent data stays in the state struct if a nested SDFG in the region could reach it there."""
     sdfg = _transient_loops_sdfg("fnregion_persistent_nested", dtypes.AllocationLifetime.Persistent)
     inner = dace.SDFG("noop")
-    inner.add_array("X", [1], dace.float64)
+    inner.add_symbol("N", dace.int64)
+    inner.add_array("X", [N], dace.float64)  # The inner array is the outer one
     state = inner.add_state()
     state.add_edge(state.add_tasklet("noop", {}, {"o"}, "o = 0"), "o", state.add_write("X"), None, dace.Memlet("X[0]"))
     loops = _top_level_loops(sdfg)
     body = loops[0].start_block
-    nested = body.add_nested_sdfg(inner, {}, {"X"})
+    nested = body.add_nested_sdfg(inner, {}, {"X"}, {"N": N})
     body.add_edge(nested, "X", body.add_write("B"), None, dace.Memlet("B[0]"))
     xfh.wrap_in_function_region(loops, "loops", dtypes.FunctionPlacement.SeparateUnit)
     sdfg.validate()

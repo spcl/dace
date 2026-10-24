@@ -309,18 +309,18 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     ]
 
     # Create code objects for the functions placed in separate translation units
-    for unit in frame.translation_units:
-        target_objects.append(
-            CodeObject(
-                f"{sdfg.name}_{unit}",
-                frame.generate_translation_unit(sdfg, unit),
-                "cpp",
-                cpu.CPUCodeGen,
-                "TranslationUnit",
-                environments=used_environments,
-                sdfg=sdfg,
-            )
+    target_objects.extend(
+        CodeObject(
+            f"{sdfg.name}_{unit}",
+            frame.generate_translation_unit(sdfg, unit),
+            "cpp",
+            cpu.CPUCodeGen,
+            "TranslationUnit",
+            environments=used_environments,
+            sdfg=sdfg,
         )
+        for unit in frame.translation_units
+    )
 
     # Create code objects for each target
     for tgt in used_targets:

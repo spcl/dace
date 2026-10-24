@@ -101,12 +101,13 @@ def test_region_reaching_state_struct_uses_member():
     """A region that keeps persistent data in the state struct (it contains a nested SDFG) does not see the locals."""
     sdfg = _loops_sdfg("persistent_pointer_region_nested")
     inner = dace.SDFG("noop")
-    inner.add_array("X", [1], dace.float64)
+    inner.add_symbol("N", dace.int64)
+    inner.add_array("X", [N], dace.float64)  # The inner array is the outer one
     state = inner.add_state()
     state.add_edge(state.add_tasklet("noop", {}, {"o"}, "o = 0"), "o", state.add_write("X"), None, dace.Memlet("X[0]"))
     loops = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
     body = loops[0].start_block
-    nested = body.add_nested_sdfg(inner, {}, {"X"})
+    nested = body.add_nested_sdfg(inner, {}, {"X"}, {"N": N})
     body.add_edge(nested, "X", body.add_write("B"), None, dace.Memlet("B[0]"))
     xfh.wrap_in_function_region(loops, "loops", dtypes.FunctionPlacement.SeparateUnit)
     sdfg.validate()

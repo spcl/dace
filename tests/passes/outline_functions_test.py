@@ -57,7 +57,7 @@ def test_maximal_chains():
 
     # A conditional edge ends a chain
     sdfg = _chain_of_loops("outline_chains_cond", 3)
-    first, second = [e for e in sdfg.edges()]
+    first, second = sdfg.edges()
     first.data.condition = dace.properties.CodeBlock("N > 1")
     chains = maximal_chains(sdfg)
     assert sorted(len(c) for c in chains) == [1, 2]

@@ -217,7 +217,7 @@ class OutliningPlanner:
         states = (
             [block]
             if isinstance(block, SDFGState)
-            else (block.all_states() if isinstance(block, AbstractControlFlowRegion) else [])
+            else (block.states() if isinstance(block, AbstractControlFlowRegion) else [])
         )
         for state in states:
             names |= {node.data.split(".")[0] for node in state.data_nodes()}
@@ -370,7 +370,7 @@ class OutliningPlanner:
             states = (
                 [block]
                 if isinstance(block, SDFGState)
-                else (list(block.all_states()) if isinstance(block, AbstractControlFlowRegion) else [])
+                else (list(block.states()) if isinstance(block, AbstractControlFlowRegion) else [])
             )
             cached = sdutils.calls_opaque_code(block.sdfg, states)
             self._opaque[block] = cached
