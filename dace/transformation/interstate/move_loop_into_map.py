@@ -1,23 +1,26 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Moves a loop around a map into the map """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Moves a loop around a map into the map"""
 
 import copy
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-import dace.transformation.helpers as helpers
-import networkx as nx
-from dace.sdfg.scope import ScopeTree
-from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import nodes, propagation, utils as sdutil
-from dace.transformation import transformation
-from sympy import diff
-from typing import List, Set, Tuple
 
+import networkx as nx
+from sympy import diff
+
+from dace import Memlet, nodes, symbol, symbolic
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.sdfg import propagation
+from dace.sdfg import utils as sdutil
+from dace.sdfg.scope import ScopeTree
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):
-    return [(r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2])
-            for r in memlet_subset_ranges]
+    return [
+        (r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2]) for r in memlet_subset_ranges
+    ]
 
 
 def offset(memlet_subset_ranges, value):
@@ -75,7 +78,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         # Check for iteration variable in map and data descriptors
         if str(itervar) in map_entry.free_symbols:
             return False
-        for arr in (read_set | write_set):
+        for arr in read_set | write_set:
             if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
                 return False
 
@@ -104,7 +107,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             if str(itervar) in n.free_symbols:
                 return False
 
-        def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
+        def test_subset_dependency(subset: sbs.Subset, mparams: set[int]) -> tuple[bool, list[int]]:
             dims = []
             for i, r in enumerate(subset):
                 if not isinstance(r, (list, tuple)):
@@ -168,13 +171,20 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
-        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
+        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
         nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg
-        inner_loop = LoopRegion(self.loop.label, self.loop.loop_condition, self.loop.loop_variable,
-                                self.loop.init_statement, self.loop.update_statement, self.loop.inverted, nsdfg,
-                                self.loop.update_before_condition)
+        inner_loop = LoopRegion(
+            self.loop.label,
+            self.loop.loop_condition,
+            self.loop.loop_variable,
+            self.loop.init_statement,
+            self.loop.update_statement,
+            self.loop.inverted,
+            nsdfg,
+            self.loop.update_before_condition,
+        )
         inner_loop.add_node(nested_state, is_start_block=True)
         nsdfg.sdfg.remove_node(nested_state)
         nsdfg.sdfg.add_node(inner_loop, is_start_block=True)
@@ -197,6 +207,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                 continue
             if s in sdfg.symbols:
                 nsdfg.symbol_mapping[s] = s
+                if s not in nsdfg.sdfg.symbols:
+                    nsdfg.sdfg.add_symbol(s, sdfg.symbols[s])
             elif s in sdfg.arrays:
                 desc = sdfg.arrays[s]
                 access = body.add_access(s)
@@ -225,12 +237,3 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                 sdfg.remove_symbol(s)
 
         sdfg.reset_cfg_list()
-
-        from dace.transformation.interstate import RefineNestedAccess
-        transformation = RefineNestedAccess()
-        transformation.setup_match(sdfg, body.parent_graph.cfg_id, body.block_id,
-                                   {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
-        transformation.apply(body, sdfg)
-
-        # Second propagation for refined accesses.
-        propagation.propagate_memlets_scope(sdfg, body, scope_tree)

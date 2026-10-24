@@ -1,26 +1,27 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.sdfg.validation import InvalidSDFGInterstateEdgeError, InvalidSDFGEdgeError
 import pytest
+
+import dace
+from dace.sdfg.validation import InvalidSDFGEdgeError, InvalidSDFGInterstateEdgeError
 
 
 @pytest.mark.gpu
 def test_gpu_access_on_host_interstate_ok():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
-    me, mx = state.add_map('map', dict(i='0:20'), dace.ScheduleType.GPU_Device)
+    me, mx = state.add_map("map", dict(i="0:20"), dace.ScheduleType.GPU_Device)
 
-    nsdfg = dace.SDFG('inner')
-    nsdfg.add_array('a', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    nsdfg = dace.SDFG("inner")
+    nsdfg.add_array("a", [20], dace.float64, storage=dace.StorageType.GPU_Global)
     state1 = nsdfg.add_state()
     state2 = nsdfg.add_state()
-    nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s='a[i]')))
+    nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s="a[i]")))
 
-    nnode = state.add_nested_sdfg(nsdfg, {'a'}, {}, {'i': 'i'})
-    r = state.add_read('A')
-    state.add_memlet_path(r, me, nnode, dst_conn='a', memlet=dace.Memlet('A[0:20]'))
+    nnode = state.add_nested_sdfg(nsdfg, {"a"}, {}, {"i": "i"})
+    r = state.add_read("A")
+    state.add_memlet_path(r, me, nnode, dst_conn="a", memlet=dace.Memlet("A[0:20]"))
     state.add_nedge(nnode, mx, dace.Memlet())
 
     sdfg.validate()
@@ -28,11 +29,11 @@ def test_gpu_access_on_host_interstate_ok():
 
 @pytest.mark.gpu
 def test_gpu_access_on_host_interstate_invalid():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
-    sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s='A[4]')))
+    sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s="A[4]")))
 
     with pytest.raises(InvalidSDFGInterstateEdgeError):
         sdfg.validate()
@@ -52,26 +53,26 @@ def test_gpu_access_on_host_tasklet():
 
 @pytest.mark.gpu
 def test_gpu_access_on_device_interstate_edge_default():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
 
-    me, mx = state.add_map('test', dict(i='0:20'))
+    me, mx = state.add_map("test", dict(i="0:20"))
 
-    nsdfg = dace.SDFG('nester')
-    nsdfg.add_array('A', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    nsdfg = dace.SDFG("nester")
+    nsdfg.add_array("A", [20], dace.float64, storage=dace.StorageType.GPU_Global)
     state1 = nsdfg.add_state()
     state2 = nsdfg.add_state()
-    nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s='A[4]')))
+    nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s="A[4]")))
 
-    nsdfg_node = state.add_nested_sdfg(nsdfg, {'A'}, {})
-    state.add_memlet_path(state.add_read('A'), me, nsdfg_node, dst_conn='A', memlet=dace.Memlet('A[0:20]'))
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {"A"}, {})
+    state.add_memlet_path(state.add_read("A"), me, nsdfg_node, dst_conn="A", memlet=dace.Memlet("A[0:20]"))
     state.add_nedge(nsdfg_node, mx, dace.Memlet())
 
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_gpu_access_on_host_interstate_ok()
     test_gpu_access_on_host_interstate_invalid()
     test_gpu_access_on_host_tasklet()

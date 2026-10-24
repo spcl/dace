@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
 import pytest
 
-H = dace.symbol('H')
-W = dace.symbol('W')
+import dace
+from dace.transformation.dataflow import GPUTransformMap
+
+H = dace.symbol("H")
+W = dace.symbol("W")
 
 
 @dace.program
@@ -22,7 +23,7 @@ def _test(sdfg):
     W = 128
     H = 64
 
-    print('Vector double CUDA (grid 2D) %dx%d' % (W, H))
+    print("Vector double CUDA (grid 2D) %dx%d" % (W, H))
 
     V = dace.ndarray([H, W], dace.float64)
     Vout = dace.ndarray([H, W], dace.float64)

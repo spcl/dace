@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-import dace
 from common import compare_numpy_output
+
+import dace
 
 
 @compare_numpy_output()
@@ -24,7 +25,7 @@ def test_rot90_2d_k3(A: dace.int32[10, 10]):
     return np.rot90(A, k=3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_rot90_2d_k0()
     test_rot90_2d_k1()
     test_rot90_2d_k2()

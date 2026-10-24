@@ -1,16 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
-from dace.sdfg import SDFG, SDFGState, state as dstate
-from dace.sdfg.state import LoopRegion
+import dace.autodiff.utils as ad_utils
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
 
 
 def resolve_overwrite_with_recomputation(
@@ -26,20 +25,26 @@ def resolve_overwrite_with_recomputation(
     """
 
     # Add the nsdfg where it is required
-    _connect_recomputation_nsdfg(forward_state=forward_state,
-                                 backward_state=backward_state,
-                                 nsdfg=recomputation_nsdfg,
-                                 target_an=target_an,
-                                 target_node=target_node,
-                                 starting_edge=starting_edge)
+    _connect_recomputation_nsdfg(
+        forward_state=forward_state,
+        backward_state=backward_state,
+        nsdfg=recomputation_nsdfg,
+        target_an=target_an,
+        target_node=target_node,
+        starting_edge=starting_edge,
+    )
 
 
-def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
-                                 backward_state: SDFGState, target_an: nodes.AccessNode, target_node: nodes.Node,
-                                 nsdfg: nodes.NestedSDFG, starting_edge: dstate.MultiConnectorEdge):
-    """
-
-    """
+def _connect_recomputation_nsdfg(
+    bwd_generator: "BackwardPassGenerator",
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    target_an: nodes.AccessNode,
+    target_node: nodes.Node,
+    nsdfg: nodes.NestedSDFG,
+    starting_edge: dstate.MultiConnectorEdge,
+):
+    """ """
     # Connect all the SDFG inputs to the nested SDFG
     # First, add the nested sdfg
     for input in nsdfg.in_connectors.keys():
@@ -80,7 +85,7 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
 
     # Get the new array shape
     # This will be the shape of the current array
-    shape: List[int] = list(bwd_generator.forward_sdfg.arrays[target_an.data].shape)
+    shape: list[int] = list(bwd_generator.forward_sdfg.arrays[target_an.data].shape)
 
     # Add the array descriptor and AccessNode to the forward state
     original_desc = target_an.desc(forward_state)
@@ -104,16 +109,19 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
     backward_state.add_edge(nsdfg, nsdfg_out_conn, new_recomp_node, None, memlet)
 
     # Connect the new AccessNode to the required computation
-    bwd_generator._connect_forward_accessnode_not_overwritten(forward_state=forward_state,
-                                                              backward_state=backward_state,
-                                                              forward_node=target_an,
-                                                              target_node=target_node,
-                                                              starting_edge=starting_edge,
-                                                              replicated_node=new_recomp_node)
+    bwd_generator._connect_forward_accessnode_not_overwritten(
+        forward_state=forward_state,
+        backward_state=backward_state,
+        forward_node=target_an,
+        target_node=target_node,
+        starting_edge=starting_edge,
+        replicated_node=new_recomp_node,
+    )
 
 
-def _prune_descendants_recomputation_nsdfg(forward_state: SDFGState, target_an: nodes.AccessNode,
-                                           nsdfg: nodes.NestedSDFG):
+def _prune_descendants_recomputation_nsdfg(
+    forward_state: SDFGState, target_an: nodes.AccessNode, nsdfg: nodes.NestedSDFG
+):
     """
     1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
     2: Prune the unnecessary computation inside the forward state
@@ -122,16 +130,16 @@ def _prune_descendants_recomputation_nsdfg(forward_state: SDFGState, target_an: 
 
     # 1
     # Get the states order for the nested_sdfg
-    states_order: List[SDFGState] = ad_utils.get_state_topological_order(nsdfg.sdfg)
+    states_order: list[SDFGState] = ad_utils.get_state_topological_order(nsdfg.sdfg)
     state_index = states_order.index(forward_state)
-    descendant_states: List[SDFGState] = states_order[state_index:]
+    descendant_states: list[SDFGState] = states_order[state_index:]
     assert descendant_states.pop(0) == forward_state
 
     # Check if the target state is within a loop
     target_within_loop, target_loop = ad_utils.state_within_loop(forward_state)
 
     # We will save the states that are within the same loop because they require special treatement
-    same_loop_states: List[SDFGState] = []
+    same_loop_states: list[SDFGState] = []
     for state in descendant_states:
         # We want to avoid removing the descendant states that are inside the same loop region
         if target_within_loop:
@@ -187,8 +195,7 @@ def _prune_recomputation_sdfg(forward_state: SDFGState, target_an: nodes.AccessN
 
 
 def _rename_descriptors_for_recomputation_nsdfg(forward_sdfg: SDFG, nsdfg: nodes.NestedSDFG):
-    """
-    """
+    """ """
     # Get all the nodes to rename in the NestedSDFG
     to_rename = []
     for inp in nsdfg.in_connectors:
@@ -248,8 +255,9 @@ def _rename_descriptors_for_recomputation_nsdfg(forward_sdfg: SDFG, nsdfg: nodes
             nsdfg.add_out_connector(new_name)
 
 
-def get_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
-                            target_an: nodes.AccessNode) -> nodes.NestedSDFG:
+def get_recomputation_nsdfg(
+    bwd_generator: "BackwardPassGenerator", forward_state: SDFGState, target_an: nodes.AccessNode
+) -> nodes.NestedSDFG:
     """
     Given an AccessNode for data that needs to be forwarded from the forward pass to the backward pass,
     Return a nested SDFG that recomputes this data from input data.
@@ -258,10 +266,12 @@ def get_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward_stat
 
     # Initially, we will replicate the whole SDFG into a Nested-SDFG and connect it
     # TODO: we likely need a copy of the SDFG before starting AD if separate_sdfgs
-    nsdfg = nodes.NestedSDFG(label=nsdfg_label,
-                             sdfg=copy.deepcopy(bwd_generator.sdfg),
-                             inputs=bwd_generator.sdfg.arg_names,
-                             outputs=[target_an.data])
+    nsdfg = nodes.NestedSDFG(
+        label=nsdfg_label,
+        sdfg=copy.deepcopy(bwd_generator.sdfg),
+        inputs=bwd_generator.sdfg.arg_names,
+        outputs=[target_an.data],
+    )
 
     # We need to make sure the output inside the NestedSDFG is not a transient (anymore)
     nsdfg.sdfg.arrays[target_an.data].transient = False
@@ -282,8 +292,11 @@ def get_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward_stat
     nsdfg_target_node: nodes.AccessNode = None
     nb_occurrences = 0
     for node in nsdfg_forward_state.nodes():
-        if isinstance(node, nodes.AccessNode) and node.data == target_an.data and nsdfg_forward_state.node_id(
-                node) == forward_state.node_id(target_an):
+        if (
+            isinstance(node, nodes.AccessNode)
+            and node.data == target_an.data
+            and nsdfg_forward_state.node_id(node) == forward_state.node_id(target_an)
+        ):
             nsdfg_target_node = node
             nb_occurrences += 1
 

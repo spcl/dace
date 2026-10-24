@@ -285,8 +285,10 @@ required:
                 default: 65536
                 title: Max stack-allocated array size (bytes)
                 description: >
-                    All stack allocated arrays (i.e. StorageType.Register) with
-                    size larger than this will be allocated on the heap.
+                    Constant-sized register arrays larger than this are allocated on the
+                    heap. By default symbolically-sized register arrays are allocated on the
+                    heap. StorageType.Register(force=True) will force stack allocation, also
+                    for symbolic sizes.
 
             extra_cmake_args:
                 type: str
@@ -611,6 +613,100 @@ required:
                         default_Darwin: ''
                         default_Windows: ''
 
+    ai:
+        type: dict
+        title: AI-generated code
+        description: >
+            Settings of the "ai" library node implementation, a tasklet written by a language model.
+        required:
+            provider:
+                type: str
+                default: 'anthropic'
+                title: Model provider
+                description: >
+                    "anthropic" (Messages API, dace[agent-anthropic]), "openai" (Responses API,
+                    dace[agent-openai]), or "manual", which writes the prompt to a file and reads
+                    the reply from the terminal.
+
+            api_key_envvar:
+                type: str
+                default: ''
+                title: API key environment variable
+                description: >
+                    Environment variable holding the API key. Empty means ANTHROPIC_API_KEY or
+                    OPENAI_API_KEY. If the variable is unset, the SDK's own credential lookup is used.
+
+            base_url:
+                type: str
+                default: ''
+                title: API base URL
+                description: >
+                    Endpoint of the provider's API, e.g. a gateway or a compatible server. Empty
+                    means the SDK default (or ANTHROPIC_BASE_URL / OPENAI_BASE_URL).
+
+            model:
+                type: str
+                default: 'claude-opus-5-5'
+                title: Model
+                description: Identifier of the model used to generate tasklets.
+
+            effort:
+                type: str
+                default: 'high'
+                title: Reasoning effort
+                description: Reasoning effort, where supported (low, medium, high, xhigh, max).
+
+            max_tokens:
+                type: int
+                default: 64000
+                title: Maximum response tokens
+                description: Maximum length of one response.
+
+            timeout:
+                type: int
+                default: 600
+                title: Request timeout
+                description: Timeout of one request, in seconds.
+
+            compile_check:
+                type: bool
+                default: true
+                title: Compile-check generated code
+                description: >
+                    Compile a program containing only the generated tasklet before using it, and
+                    send compiler errors back to the model. Results are not checked.
+
+            max_repair_attempts:
+                type: int
+                default: 2
+                title: Maximum repair attempts
+                description: >
+                    How many times the model is asked to fix an answer that fails the compile check.
+
+            cache:
+                type: bool
+                default: true
+                title: Reuse model answers
+                description: >
+                    Store answers in <build folder root>/ai-cache, keyed by the request settings and
+                    the conversation, and reuse them for identical requests.
+
+            sessions:
+                type: bool
+                default: true
+                title: Record generation sessions
+                description: >
+                    Write the prompts, answers and compile checks of each node to
+                    <build folder root>/ai-sessions. dace.libraries.ai.refine continues these
+                    sessions.
+
+            extra_instructions:
+                type: str
+                default: ''
+                title: Extra prompt instructions
+                description: >
+                    Text appended to every prompt, e.g. coding conventions or preferred libraries.
+
     instrumentation:
         type: dict
         title: Instrumentation
@@ -928,6 +1024,28 @@ required:
                         default: pure
                         title: Default implementation
                         description: Default implementation for BLAS library nodes.
+
+                    override:
+                        type: bool
+                        default: false
+                        title: Force configured implementation
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+
+            comm:
+                type: dict
+                title: Communication
+                description: Built-in communication (MPI/NCCL) DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: MPI
+                        title: Default implementation
+                        description: >
+                            Default implementation for communication library nodes:
+                            MPI, or NCCL (RCCL on the HIP backend) for buffers in GPU
+                            memory. Nodes that only MPI implements keep using it.
 
                     override:
                         type: bool

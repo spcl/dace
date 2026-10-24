@@ -2,7 +2,7 @@
 import dace
 from tests.codegen.sve.common import get_code
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_map_simple():
@@ -17,14 +17,14 @@ def test_map_simple():
 
     code = get_code(program)
 
-    assert '__pg_i' in code
+    assert "__pg_i" in code
 
 
 def test_map_advanced():
     # Multidimensional + stride
     @dace.program
     def program(A: dace.float64[16 * N], B: dace.float64[16 * N]):
-        for i, j, k in dace.map[0:N, 0:N:2, 1:8 * N + 1:N * 2]:
+        for i, j, k in dace.map[0:N, 0:N:2, 1 : 8 * N + 1 : N * 2]:
             with dace.tasklet:
                 a << A[k]
                 b >> B[k]
@@ -33,19 +33,19 @@ def test_map_advanced():
     code = get_code(program)
 
     # Only innermost should be SVE
-    assert '__pg_i' not in code
-    assert '__pg_j' not in code
+    assert "__pg_i" not in code
+    assert "__pg_j" not in code
 
     # Check for stride of N * 2
-    assert '(2 * N)' in code
+    assert "(2 * N)" in code
 
     # Offset initial
-    assert 'k = 1' in code
+    assert "k = 1" in code
 
     # Upper bound (minus 1)
-    assert '(8 * N)' in code
+    assert "(8 * N)" in code
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_map_simple()
     test_map_advanced()

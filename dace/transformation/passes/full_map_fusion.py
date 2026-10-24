@@ -1,9 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, properties, transformation
-from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
-from dace.transformation.passes import analysis as ap, pattern_matching as pmp
+from dace.transformation import dataflow as dftrans
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes import analysis as ap
+from dace.transformation.passes import pattern_matching as pmp
 
 
 @properties.make_properties
@@ -18,94 +20,109 @@ class FullMapFusion(ppl.Pass):
     flags, both default to `True`. They allow to enable disable the two fusion components.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     # Settings
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are inner Maps, i.e., does not have top level scope.",
     )
 
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
+        category="Applicability",
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
 
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` then all intermediates will be classified as shared.",
     )
     require_exclusive_intermediates = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` then all intermediates need to be 'exclusive', i.e., they will be removed by the fusion.",
     )
     require_all_intermediates = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
 
     perform_vertical_map_fusion = properties.Property(
         dtype=bool,
         default=True,
+        category="Parameters",
         desc="If `True`, the default, then allow vertical Map fusion, see `MapFusionVertical`.",
     )
     perform_horizontal_map_fusion = properties.Property(
         dtype=bool,
         default=True,
+        category="Parameters",
         desc="If `True`, the default, then also perform horizontal Map fusion, see `MapFusionHorizontal`.",
     )
 
     only_if_common_ancestor = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` restrict parallel map fusion to maps that have a direct common ancestor.",
     )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
     validate = properties.Property(
         dtype=bool,
         default=True,
-        desc='If True, validates the SDFG after all transformations have been applied.',
+        category="Diagnostics",
+        desc="If True, validates the SDFG after all transformations have been applied.",
     )
-    validate_all = properties.Property(dtype=bool,
-                                       default=False,
-                                       desc='If True, validates the SDFG after each transformation applies.')
+    validate_all = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Diagnostics",
+        desc="If True, validates the SDFG after each transformation applies.",
+    )
 
     def __init__(
         self,
-        perform_vertical_map_fusion: Optional[bool] = None,
-        perform_horizontal_map_fusion: Optional[bool] = None,
-        only_inner_maps: Optional[bool] = None,
-        only_toplevel_maps: Optional[bool] = None,
-        strict_dataflow: Optional[bool] = None,
-        assume_always_shared: Optional[bool] = None,
-        require_exclusive_intermediates: Optional[bool] = None,
-        require_all_intermediates: Optional[bool] = None,
-        only_if_common_ancestor: Optional[bool] = None,
-        consolidate_edges_only_if_not_extending: Optional[bool] = None,
-        never_consolidate_edges: Optional[bool] = None,
-        validate: Optional[bool] = None,
-        validate_all: Optional[bool] = None,
+        perform_vertical_map_fusion: bool | None = None,
+        perform_horizontal_map_fusion: bool | None = None,
+        only_inner_maps: bool | None = None,
+        only_toplevel_maps: bool | None = None,
+        strict_dataflow: bool | None = None,
+        assume_always_shared: bool | None = None,
+        require_exclusive_intermediates: bool | None = None,
+        require_all_intermediates: bool | None = None,
+        only_if_common_ancestor: bool | None = None,
+        consolidate_edges_only_if_not_extending: bool | None = None,
+        never_consolidate_edges: bool | None = None,
+        validate: bool | None = None,
+        validate_all: bool | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -137,7 +154,7 @@ class FullMapFusion(ppl.Pass):
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
-            raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
+            raise ValueError("Neither perform `MapFusionVertical` nor `MapFusionHorizontal`")
         if not self.perform_vertical_map_fusion:
             unique_vertical_arguments = {
                 "strict_dataflow": strict_dataflow,
@@ -148,12 +165,13 @@ class FullMapFusion(ppl.Pass):
             specified_vertical_arguments = [arg for arg, val in unique_vertical_arguments.items() if val is not None]
             if specified_vertical_arguments:
                 raise ValueError(
-                    f'Used `FullMapFusion` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
+                    f"Used `FullMapFusion` without vertical Map fusion, but speciefied: {', '.join(specified_vertical_arguments)}"
                 )
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
+                    "Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
+                )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -164,7 +182,7 @@ class FullMapFusion(ppl.Pass):
     def depends_on(self):
         return [ap.FindSingleUseData]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """
         Fuses all Maps that can be fused in the SDFG, including its nested SDFGs.
 
@@ -172,12 +190,14 @@ class FullMapFusion(ppl.Pass):
         object.
 
         :param sdfg: The SDFG to modify.
-        :param pipeline_results: The result of previous pipeline steps. The pass expects
-            at least the result of the `FindSingleUseData`.
+        :param pipeline_results: The result of previous pipeline steps; `FindSingleUseData` runs here if missing.
         :return: The numbers of Maps that were fused or `None` if none were fused.
         """
         if ap.FindSingleUseData.__name__ not in pipeline_results:
-            raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
+            pipeline_results = {
+                **pipeline_results,
+                ap.FindSingleUseData.__name__: ap.FindSingleUseData().apply_pass(sdfg, {}),
+            }
 
         fusion_transforms = []
         if self.perform_vertical_map_fusion:
@@ -196,7 +216,8 @@ class FullMapFusion(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                     # TODO: Remove once issue#1911 has been solved.
                     _single_use_data=pipeline_results["FindSingleUseData"],
-                ))
+                )
+            )
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
@@ -209,7 +230,8 @@ class FullMapFusion(ppl.Pass):
                     only_if_common_ancestor=self.only_if_common_ancestor,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                ))
+                )
+            )
 
         pazz = pmp.PatternMatchAndApplyRepeated(
             fusion_transforms,

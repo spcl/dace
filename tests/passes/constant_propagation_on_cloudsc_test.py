@@ -5,6 +5,7 @@ CloudSC is the scaling case for this pass: thousands of blocks and loop regions 
 deep, which is where the collection schedule dominates the runtime. The last test closes the loop
 by compiling and running, so a schedule change that quietly altered a value cannot pass.
 """
+
 import pytest
 
 import dace
@@ -30,7 +31,7 @@ def test_constant_propagation_cloudsc():
     sdfg = promoted_cloudsc()
 
     propagated = ConstantPropagation().apply_pass(sdfg, {})
-    assert propagated, 'expected constants to propagate in cloudsc'
+    assert propagated, "expected constants to propagate in cloudsc"
     sdfg.validate()
 
     # No constant assignment may survive on an interstate edge for a symbol that was propagated away.
@@ -48,7 +49,7 @@ def test_constant_propagation_cloudsc_is_numerically_faithful():
     reference = build_cloudsc_sdfg(simplify=False)
     candidate = promoted_cloudsc()
     # Under the 'name' cache config the build folder is just the SDFG name, so equal names collide.
-    candidate.name = f'{candidate.name}_propagated'
+    candidate.name = f"{candidate.name}_propagated"
 
     assert ConstantPropagation().apply_pass(candidate, {})
     assert run_and_compare(reference, candidate)
@@ -59,7 +60,7 @@ def test_simplified_cloudsc_is_numerically_faithful():
     """The same check through the full ``simplify``, which runs ConstantPropagation in a pipeline."""
     reference = build_cloudsc_sdfg(simplify=False)
     candidate = build_cloudsc_sdfg(simplify=False)
-    candidate.name = f'{candidate.name}_simplified'
+    candidate.name = f"{candidate.name}_simplified"
 
     candidate.simplify(validate=True)
     assert sum(1 for _ in candidate.all_control_flow_blocks()) < sum(1 for _ in reference.all_control_flow_blocks())
@@ -67,7 +68,7 @@ def test_simplified_cloudsc_is_numerically_faithful():
     assert run_and_compare(reference, candidate)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_constant_propagation_cloudsc()
     test_constant_propagation_cloudsc_is_numerically_faithful()
     test_simplified_cloudsc_is_numerically_faithful()

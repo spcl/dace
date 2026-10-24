@@ -1,13 +1,16 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace
-import pytest
 import argparse
+
+import numpy as np
+import pytest
+
+import dace
+import dace.dtypes
+from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-N, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'npt'))
+N, npt = (dace.symbol(s, dtype=dace.int64) for s in ("N", "npt"))
 
 
 def relerror(val, ref):
@@ -19,7 +22,7 @@ def relerror(val, ref):
 @dace.program
 def dace_azimint_naive(data: dace.float64[N], radius: dace.float64[N]):
     rmax = np.amax(radius)
-    res = np.zeros((npt, ), dtype=np.float64)
+    res = np.zeros((npt,), dtype=np.float64)
     for i in range(npt):
         r1 = rmax * i / npt
         r2 = rmax * (i + 1) / npt
@@ -48,16 +51,17 @@ def numpy_azimint_naive(data, radius, npt):
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    data, radius = rng.random((N, )), rng.random((N, ))
+    data, radius = rng.random((N,)), rng.random((N,))
     return data, radius
 
 
 def run_azimint_naive(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs azimint-naive for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench S size)
     N, npt = (40000, 100)
@@ -69,11 +73,11 @@ def run_azimint_naive(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         val = sdfg(data=data, radius=radius, N=N, npt=npt)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     ref = numpy_azimint_naive(data, radius, npt)
-    assert (np.allclose(val, ref) or relerror(val, ref) < 1e-10)
+    assert np.allclose(val, ref) or relerror(val, ref) < 1e-10
     return sdfg
 
 
@@ -82,14 +86,17 @@ def test_cpu():
 
 
 @pytest.mark.gpu
+@pytest.mark.skipif(
+    common.get_gpu_backend() == "hip",
+    reason="Dynamic memory allocation inside GPU kernels is not supported on AMD/HIP",
+)
 def test_gpu():
     run_azimint_naive(dace.dtypes.DeviceType.GPU)
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

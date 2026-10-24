@@ -1,13 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.memlet import Memlet
-from dace.sdfg import nodes, graph
-from dace.transformation import helpers, dataflow
+from dace.sdfg import graph, nodes
+from dace.transformation import dataflow, helpers
 
 from .utility import count_nodes, unique_name
 
@@ -36,27 +35,21 @@ def make_vecAdd_sdfg(symbol_name: str, sdfg_name: str, access_nodes_dict: dict, 
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = vecAdd_state.add_map('vecAdd_map', dict(i='0:{}'.format(n)))
+    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i=f"0:{n}"))
 
-    vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'], ['z_con'], 'z_con = x_con + y_con')
+    vecAdd_tasklet = vecAdd_state.add_tasklet("vecAdd_task", ["x_con", "y_con"], ["z_con"], "z_con = x_con + y_con")
 
-    vecAdd_state.add_memlet_path(x_in,
-                                 vecMap_entry,
-                                 vecAdd_tasklet,
-                                 dst_conn='x_con',
-                                 memlet=dace.Memlet.simple(x_in.data, 'i'))
+    vecAdd_state.add_memlet_path(
+        x_in, vecMap_entry, vecAdd_tasklet, dst_conn="x_con", memlet=dace.Memlet.simple(x_in.data, "i")
+    )
 
-    vecAdd_state.add_memlet_path(y_in,
-                                 vecMap_entry,
-                                 vecAdd_tasklet,
-                                 dst_conn='y_con',
-                                 memlet=dace.Memlet.simple(y_in.data, 'i'))
+    vecAdd_state.add_memlet_path(
+        y_in, vecMap_entry, vecAdd_tasklet, dst_conn="y_con", memlet=dace.Memlet.simple(y_in.data, "i")
+    )
 
-    vecAdd_state.add_memlet_path(vecAdd_tasklet,
-                                 vecMap_exit,
-                                 z_out,
-                                 src_conn='z_con',
-                                 memlet=dace.Memlet.simple(z_out.data, 'i'))
+    vecAdd_state.add_memlet_path(
+        vecAdd_tasklet, vecMap_exit, z_out, src_conn="z_con", memlet=dace.Memlet.simple(z_out.data, "i")
+    )
 
     return vecAdd_sdfg
 
@@ -111,8 +104,9 @@ def make_nested_sdfg_cpu():
     return sdfg
 
 
-def _make_state_fission_with_access_nodes_sdfg(
-) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_with_access_nodes_sdfg() -> tuple[
+    dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode
+]:
     sdfg = dace.SDFG(unique_name("split_with_access_nodes_sdfg"))
     state = sdfg.add_state()
 
@@ -140,18 +134,30 @@ def _make_state_fission_with_access_nodes_sdfg(
     return sdfg, state, a, tlet, b, c
 
 
-def _make_state_fission_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry,
-                                                 nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_with_map_sdfg() -> tuple[
+    dace.SDFG,
+    dace.SDFGState,
+    nodes.AccessNode,
+    nodes.MapEntry,
+    nodes.Tasklet,
+    nodes.AccessNode,
+    nodes.AccessNode,
+    nodes.AccessNode,
+]:
     sdfg = dace.SDFG(unique_name("split_with_map_sdfg"))
     state = sdfg.add_state()
 
     for name in "abc":
         sdfg.add_array(
             name,
-            shape=((
-                20,
-                10,
-            ) if name != "c" else (10, )),
+            shape=(
+                (
+                    20,
+                    10,
+                )
+                if name != "c"
+                else (10,)
+            ),
             dtype=dace.float64,
             transient=False,
         )
@@ -183,16 +189,24 @@ def _make_state_fission_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, node
     return sdfg, state, a, me, tlet, t, b, c
 
 
-def _make_state_fission_multiple_reads_sdfg(
-) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet, nodes.Tasklet, nodes.AccessNode,
-           nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_multiple_reads_sdfg() -> tuple[
+    dace.SDFG,
+    dace.SDFGState,
+    nodes.AccessNode,
+    nodes.Tasklet,
+    nodes.Tasklet,
+    nodes.Tasklet,
+    nodes.AccessNode,
+    nodes.AccessNode,
+    nodes.AccessNode,
+]:
 
     sdfg = dace.SDFG(unique_name("split_with_multiple_reads"))
     state = sdfg.add_state()
 
     sdfg.add_array(
         "a",
-        shape=(2, ),
+        shape=(2,),
         dtype=dace.float64,
         transient=False,
     )
@@ -237,9 +251,17 @@ def _make_state_fission_multiple_reads_sdfg(
     return sdfg, state, a, tlet1, tlet2, tlet3, b, c, d
 
 
-def _make_state_fission_multiple_writes_sdfg(
-) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet, nodes.Tasklet, nodes.AccessNode,
-           nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_multiple_writes_sdfg() -> tuple[
+    dace.SDFG,
+    dace.SDFGState,
+    nodes.AccessNode,
+    nodes.Tasklet,
+    nodes.Tasklet,
+    nodes.Tasklet,
+    nodes.AccessNode,
+    nodes.AccessNode,
+    nodes.AccessNode,
+]:
     sdfg = dace.SDFG(unique_name("split_with_multiple_writes"))
     state = sdfg.add_state()
 
@@ -251,7 +273,7 @@ def _make_state_fission_multiple_writes_sdfg(
     for name in "bc":
         sdfg.add_array(
             name,
-            shape=(3, ),
+            shape=(3,),
             dtype=dace.float64,
             transient=False,
         )
@@ -290,20 +312,21 @@ def _make_state_fission_multiple_writes_sdfg(
     return sdfg, state, a, tlet1, tlet2, tlet3, b, c
 
 
-def _make_state_fission_with_view_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry,
-                                                  nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_with_view_sdfg() -> tuple[
+    dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode
+]:
     sdfg = dace.SDFG(unique_name("split_with_view"))
     state = sdfg.add_state()
 
     sdfg.add_array(
         "a",
-        shape=(10, ),
+        shape=(10,),
         dtype=dace.float64,
         transient=False,
     )
     sdfg.add_view(
         "v",
-        shape=(10, ),
+        shape=(10,),
         dtype=dace.float64,
     )
     for name in "bc":
@@ -336,8 +359,9 @@ def _make_state_fission_with_view_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nod
     return sdfg, state, ar, tlet1, tlet2, b, aw
 
 
-def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet,
-                                                          nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_with_empty_memlet_sdfg() -> tuple[
+    dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode
+]:
     sdfg = dace.SDFG(unique_name("split_with_empty_memlet_sdfg"))
     state = sdfg.add_state()
 
@@ -374,9 +398,16 @@ def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[dace.SDFG, dace.SDFGSt
     return sdfg, state, ar, tlet1, tlet2, b, aw
 
 
-def _make_state_fission_tower_of_viewes(
-) -> Tuple[dace.SDFG, dace.SDFGState, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode,
-           nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_tower_of_viewes() -> tuple[
+    dace.SDFG,
+    dace.SDFGState,
+    nodes.Tasklet,
+    nodes.AccessNode,
+    nodes.AccessNode,
+    nodes.AccessNode,
+    nodes.AccessNode,
+    nodes.AccessNode,
+]:
     sdfg = dace.SDFG(unique_name("split_with_empty_memlet_sdfg"))
     state = sdfg.add_state()
 
@@ -390,7 +421,7 @@ def _make_state_fission_tower_of_viewes(
 
     sdfg.add_view(
         "v1",
-        shape=(4, ),
+        shape=(4,),
         dtype=dace.float64,
     )
     sdfg.add_view(
@@ -435,7 +466,7 @@ def test_state_fission():
     sdfg = make_nested_sdfg_cpu()
 
     # state fission
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node_x = state.nodes()[0]
     node_y = state.nodes()[1]
     node_z = state.nodes()[2]
@@ -445,7 +476,7 @@ def test_state_fission():
     helpers.state_fission(subg)
     sdfg.validate()
 
-    assert (len(sdfg.states()) == 2)
+    assert sdfg.num_states() == 2
 
     # run the program
     vec_add = sdfg.compile()
@@ -466,7 +497,7 @@ def test_state_fission():
     diff1 = np.linalg.norm(ref1 - z) / size_n
     diff2 = np.linalg.norm(ref2 - u) / size_m
 
-    assert (diff1 <= 1e-5 and diff2 <= 1e-5)
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
 
 
 @pytest.mark.parametrize("allow_isolated_nodes", [True, False])
@@ -543,7 +574,7 @@ def test_state_fission_with_access_nodes_2(relocation_set: int):
     elif relocation_set == 2:
         subgraph = graph.SubgraphView(state, [tlet])
     else:
-        raise NotImplementedError(f'`relocation_set={relocation_set}` is unknown.')
+        raise NotImplementedError(f"`relocation_set={relocation_set}` is unknown.")
 
     new_state = helpers.state_fission(subgraph)
     sdfg.validate()
@@ -565,7 +596,7 @@ def test_state_fission_with_access_nodes_2(relocation_set: int):
     assert {a, tlet}.issubset(new_state.nodes())
     assert a in new_state_ac
     assert b not in new_state_ac
-    assert {'a', 'b'} == {ac.data for ac in new_state_ac}
+    assert {"a", "b"} == {ac.data for ac in new_state_ac}
 
     # The second (original) state contains the `b` AccessNode that copies into the
     #  `c` AccessNode. Both are the originals, which is an implementation detail.
@@ -576,8 +607,7 @@ def test_state_fission_with_access_nodes_2(relocation_set: int):
 
 
 def test_state_fission_with_map_1():
-    """We only select `v`, however, we have to include all of its dependencies.
-    """
+    """We only select `v`, however, we have to include all of its dependencies."""
     sdfg, state, a, me, tlet, t, b, c = _make_state_fission_with_map_sdfg()
     assert sdfg.number_of_nodes() == 1
     assert state.number_of_nodes() == 7
@@ -717,14 +747,12 @@ def test_state_fission_with_map_2_with_partial_map_scope():
 
 
 def test_state_fission_with_map_2_only_tasklet():
-    """If we only include the Tasklet then the MapExit node will not be included.
-    """
+    """If we only include the Tasklet then the MapExit node will not be included."""
     _test_state_fission_with_map_2_impl(include="tasklet")
 
 
 def test_state_fission_with_map_2_only_tasklet_nested_scope():
-    """The Map is expanded, i.e. we have nesting Maps and only specify the Tasklet.
-    """
+    """The Map is expanded, i.e. we have nesting Maps and only specify the Tasklet."""
     _test_state_fission_with_map_2_impl(include="tasklet2")
 
 

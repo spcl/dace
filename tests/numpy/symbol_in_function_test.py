@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from dace.data import Array
-import numpy as np
 
 
 def myfunction(mytype: Array) -> dace.SDFG:
@@ -14,7 +15,7 @@ def myfunction(mytype: Array) -> dace.SDFG:
 
 
 def test_symbol_in_function():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
     dtype = dace.float32
     sdfg = myfunction(Array(dtype, [N, N]))
     A = np.ones((20, 20), dtype=np.float32)
@@ -22,5 +23,5 @@ def test_symbol_in_function():
     assert np.allclose(B, 2 * A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symbol_in_function()

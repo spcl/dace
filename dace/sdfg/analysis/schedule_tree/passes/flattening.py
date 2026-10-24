@@ -5,7 +5,7 @@ from typing import Dict, Optional, Tuple
 
 import sympy
 
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (iteration_spaces, names_in_subtrees, names_read,
@@ -108,7 +108,7 @@ def flatten_contiguous_nests(stree: tn.ScheduleTreeScope, min_outer_trip_count: 
                                   offset=[0] * len(shape),
                                   total_size=desc.total_size,
                                   lifetime=dtypes.AllocationLifetime.Scope)
-            views[key] = data.find_new_name(f'{name}_flat', containers)
+            views[key] = utils.find_new_name(f'{name}_flat', containers)
             containers[views[key]] = view
             taken.add(views[key])
         return views[key]

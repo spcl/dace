@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that patterns of two unconnected nodes match exactly as with the VF2 subgraph matcher. """
+"""Tests that patterns of two unconnected nodes match exactly as with the VF2 subgraph matcher."""
+
 import random
 
 import networkx as nx
@@ -16,13 +17,13 @@ from dace.transformation.passes import pattern_matching as pm
 def _random_digraph(rng: random.Random, num_nodes: int) -> nx.DiGraph:
     graph = nx.DiGraph()
     for i in range(num_nodes):
-        kind = rng.choice(['map', 'access', 'tasklet'])
-        if kind == 'map':
-            node = nodes.MapEntry(nodes.Map(f'map_{i}', ['i'], subsets.Range([(0, 9, 1)])))
-        elif kind == 'access':
-            node = nodes.AccessNode(f'data_{i}')
+        kind = rng.choice(["map", "access", "tasklet"])
+        if kind == "map":
+            node = nodes.MapEntry(nodes.Map(f"map_{i}", ["i"], subsets.Range([(0, 9, 1)])))
+        elif kind == "access":
+            node = nodes.AccessNode(f"data_{i}")
         else:
-            node = nodes.Tasklet(f'tasklet_{i}')
+            node = nodes.Tasklet(f"tasklet_{i}")
         graph.add_node(i, node=node)
     for _ in range(rng.randint(0, 3 * num_nodes)):
         src, dst = rng.randrange(num_nodes), rng.randrange(num_nodes)
@@ -51,11 +52,11 @@ def test_same_matches_as_vf2_on_random_graphs():
 
 
 def test_same_matches_as_vf2_on_long_path():
-    """ Two nodes at distance > 2 along a chain are not adjacent, so both matchers pair them up.
+    """Two nodes at distance > 2 along a chain are not adjacent, so both matchers pair them up.
 
-        This documents that VF2 (and hence the fast matcher) matches an unconnected two-node
-        pattern based on direct adjacency only, not reachability: chained map entries several
-        hops apart still form a match.
+    This documents that VF2 (and hence the fast matcher) matches an unconnected two-node
+    pattern based on direct adjacency only, not reachability: chained map entries several
+    hops apart still form a match.
     """
     # A chain map_0 -> access_1 -> map_2 -> ... -> map_8 with 5 map entries at even indices,
     # so the map entries are pairwise at distance >= 2 and never directly connected.
@@ -65,9 +66,9 @@ def test_same_matches_as_vf2_on_long_path():
     assert len(map_indices) == 5
     for i, kind in enumerate(types):
         if kind is nodes.MapEntry:
-            node = nodes.MapEntry(nodes.Map(f'map_{i}', ['i'], subsets.Range([(0, 9, 1)])))
+            node = nodes.MapEntry(nodes.Map(f"map_{i}", ["i"], subsets.Range([(0, 9, 1)])))
         else:
-            node = nodes.AccessNode(f'data_{i}')
+            node = nodes.AccessNode(f"data_{i}")
         graph.add_node(i, node=node)
     for src in range(len(types) - 1):
         graph.add_edge(src, src + 1)
@@ -79,8 +80,7 @@ def test_same_matches_as_vf2_on_long_path():
     # VF2 pairs every ordered pair of distinct, non-adjacent map entries. None of the map
     # entries are directly connected in the chain, so all 5 * 4 ordered pairs match.
     expected_pairs = sorted((u, v) for u in map_indices for v in map_indices if u != v)
-    assert sorted((u, v) for m in expected for u, v in [sorted(m)]) == \
-        sorted(tuple(sorted(p)) for p in expected_pairs)
+    assert sorted((u, v) for m in expected for u, v in [sorted(m)]) == sorted(tuple(sorted(p)) for p in expected_pairs)
     assert len(expected) == len(map_indices) * (len(map_indices) - 1)
     assert actual == expected
 
@@ -112,8 +112,10 @@ def test_same_matches_as_vf2_on_sdfg():
     vf2_metadata = (metadata[0], [(x, i, p, pm._subgraph_isomorphism_matcher, o) for x, i, p, _, o in metadata[1]])
 
     def matched(meta):
-        return [(match.state_id, sorted(match.subgraph.values()))
-                for match in pm.match_patterns(sdfg, [xform], metadata=meta)]
+        return [
+            (match.state_id, sorted(match.subgraph.values()))
+            for match in pm.match_patterns(sdfg, [xform], metadata=meta)
+        ]
 
     expected = matched(vf2_metadata)
     assert len(expected) > 0
@@ -124,8 +126,10 @@ def _fuse_horizontally(sdfg: dace.SDFG, force_vf2: bool):
     pipeline = pm.PatternMatchAndApplyRepeated([MapFusionHorizontal()], validate=True)
     if force_vf2:
         interstate, singlestate = pipeline._metadata
-        pipeline._metadata = (interstate, [(x, i, p, pm._subgraph_isomorphism_matcher, o)
-                                           for x, i, p, _, o in singlestate])
+        pipeline._metadata = (
+            interstate,
+            [(x, i, p, pm._subgraph_isomorphism_matcher, o) for x, i, p, _, o in singlestate],
+        )
     return pipeline.apply_pass(sdfg, {})
 
 
@@ -145,7 +149,7 @@ def test_fusion_result_unchanged():
     assert np.allclose(b, a + 1.0) and np.allclose(c, a * 2.0) and np.allclose(d[:10], a[:10] - 1.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_same_matches_as_vf2_on_random_graphs()
     test_same_matches_as_vf2_on_long_path()
     test_metadata_selects_pair_matcher()

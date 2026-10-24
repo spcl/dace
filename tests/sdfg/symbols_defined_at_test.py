@@ -18,10 +18,7 @@ def _make_sdfg(name: str, nested: bool = False) -> dace.SDFG:
     state = sdfg.add_state(is_start_block=True)
     state.add_mapped_tasklet(
         "comp",
-        map_ranges={
-            "__i": "0:N",
-            "__j": "0:10"
-        },
+        map_ranges={"__i": "0:N", "__j": "0:10"},
         inputs={"__in": dace.Memlet("a[__i, __j]")},
         outputs={"__out": dace.Memlet("b[__i, __j]")},
         code="__out = __in + 1.0",
@@ -39,7 +36,7 @@ def _make_sdfg(name: str, nested: bool = False) -> dace.SDFG:
 
 def test_state_symbols_give_the_same_result():
     sdfg = _make_sdfg("same_result")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     state_symbols = state.symbols_defined_at_state()
 
     for node in state.nodes():
@@ -61,10 +58,9 @@ def test_propagation_resolves_the_state_symbols_once_per_state():
     states = [state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()]
     assert sum(len(state.edges()) for state in states) > len(states)
 
-    with mock.patch.object(SDFGState,
-                           "symbols_defined_at_state",
-                           autospec=True,
-                           side_effect=SDFGState.symbols_defined_at_state) as spy:
+    with mock.patch.object(
+        SDFGState, "symbols_defined_at_state", autospec=True, side_effect=SDFGState.symbols_defined_at_state
+    ) as spy:
         propagation.propagate_memlets_sdfg(sdfg)
 
     assert spy.call_count <= len(states)
@@ -72,7 +68,7 @@ def test_propagation_resolves_the_state_symbols_once_per_state():
 
 def test_propagation_is_unchanged():
     sdfg = _make_sdfg("unchanged")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     map_entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
     for edge in state.in_edges(map_entry):
         edge.data = dace.Memlet("a[0, 0]")
@@ -96,7 +92,7 @@ def _make_sdfg_with_loop_region(name: str) -> tuple[dace.SDFG, SDFGState, SDFGSt
     sdfg = dace.SDFG(name)
     N = dace.symbol("N")
     for array in "abc":
-        sdfg.add_array(array, shape=(N, ), dtype=dace.float64, transient=False)
+        sdfg.add_array(array, shape=(N,), dtype=dace.float64, transient=False)
     top_level = sdfg.add_state("top_level", is_start_block=True)
     top_level.add_mapped_tasklet(
         "top_level_comp",
@@ -157,7 +153,7 @@ def test_declared_symbol_types_win_over_descriptor_instances():
     """A shape given as a string builds its symbols with the default dtype; the SDFG's declaration decides."""
     sdfg = dace.SDFG("declared_symbol_types")
     sdfg.add_symbol("N", dace.int64)
-    sdfg.add_array("a", shape=("N", ), dtype=dace.float64)
+    sdfg.add_array("a", shape=("N",), dtype=dace.float64)
     state = sdfg.add_state()
     me, _ = state.add_map("m", {"i": "0:N"})
 
@@ -197,6 +193,29 @@ def test_inter_state_edges_define_symbols_in_nested_regions():
     assert "k" not in top_level.symbols_defined_at_state()
 
 
+def test_forgetting_an_sdfg_resolves_it_again():
+    """
+    A resolver holds on to what it resolved until it is told that the SDFG changed, and then only drops that SDFG.
+    """
+    sdfg = _make_sdfg("forget", nested=True)
+    outer_state = next(iter(sdfg.states()))
+    nsdfg_node = next(n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG))
+    inner_state = next(iter(nsdfg_node.sdfg.states()))
+    tasklet = next(n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet))
+
+    resolver = SymbolResolver()
+    assert "M" not in resolver.defined_at(inner_state, tasklet)
+    outer_symbols = resolver.defined_at(outer_state, outer_state.nodes()[0])
+    nsdfg_node.sdfg.add_symbol("M", dace.int32)
+    assert "M" not in resolver.defined_at(inner_state, tasklet)
+
+    resolver.forget(nsdfg_node.sdfg)
+    assert resolver.defined_at(inner_state, tasklet)["M"] == dace.int32
+    with mock.patch.object(SDFGState, "symbols_defined_at_state", autospec=True) as spy:
+        assert resolver.defined_at(outer_state, outer_state.nodes()[0]) == outer_symbols
+    assert spy.call_count == 0
+
+
 if __name__ == "__main__":
     test_state_symbols_give_the_same_result()
     test_propagation_resolves_the_state_symbols_once_per_state()
@@ -207,3 +226,4 @@ if __name__ == "__main__":
     test_declared_symbol_types_win_over_descriptor_instances()
     test_inter_state_edges_define_symbols_for_the_states_after_them()
     test_inter_state_edges_define_symbols_in_nested_regions()
+    test_forgetting_an_sdfg_resolves_it_again()

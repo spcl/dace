@@ -1,30 +1,37 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import polybench
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+import dace
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+N = dace.symbol("N")
+M = dace.symbol("M")
+
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    M: 38,
-    N: 42,
-}, {
-    M: 116,
-    N: 124,
-}, {
-    M: 390,
-    N: 410,
-}, {
-    M: 1900,
-    N: 2100,
-}, {
-    M: 1800,
-    N: 2200,
-}]
+sizes = [
+    {
+        M: 38,
+        N: 42,
+    },
+    {
+        M: 116,
+        N: 124,
+    },
+    {
+        M: 390,
+        N: 410,
+    },
+    {
+        M: 1900,
+        N: 2100,
+    },
+    {
+        M: 1800,
+        N: 2200,
+    },
+]
 
 args = [([M, N], datatype), ([N], datatype), ([N], datatype)]
 
@@ -65,5 +72,5 @@ def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
             outy = inA * intmp
 
 
-if __name__ == '__main__':
-    polybench.main(sizes, args, [(2, 'y')], init_array, atax)
+if __name__ == "__main__":
+    polybench.main(sizes, args, [(2, "y")], init_array, atax)

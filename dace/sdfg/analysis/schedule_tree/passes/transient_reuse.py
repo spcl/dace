@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import sympy
 
-from dace import data, dtypes
+from dace import data, dtypes, utils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (bound_names, iteration_spaces, memlets_of,
                                                             names_in_subtrees, names_read, names_written, repository_of)
@@ -400,7 +400,7 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
         slot_desc.transient = True
         if any(containers[m].lifetime == dtypes.AllocationLifetime.Persistent for m in members):
             slot_desc.lifetime = dtypes.AllocationLifetime.Persistent
-        slot_name = data.find_new_name('__reused', containers)
+        slot_name = utils.find_new_name('__reused', containers)
         containers[slot_name] = slot_desc
         for member in members:
             for use in uses[member]:

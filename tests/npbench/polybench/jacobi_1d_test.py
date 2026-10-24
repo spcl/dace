@@ -1,17 +1,19 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Dataset sizes
 # TSTEPS, N
 sizes = {"mini": (20, 30), "small": (40, 120), "medium": (100, 400), "large": (500, 2000), "extra-large": (1000, 4000)}
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
@@ -32,8 +34,8 @@ def jacobi_1d_jax_kernel(jax, jnp, TSTEPS, A, B):
 
 
 def initialize(N, datatype=np.float64):
-    A = np.fromfunction(lambda i: (i + 2) / N, (N, ), dtype=datatype)
-    B = np.fromfunction(lambda i: (i + 3) / N, (N, ), dtype=datatype)
+    A = np.fromfunction(lambda i: (i + 2) / N, (N,), dtype=datatype)
+    B = np.fromfunction(lambda i: (i + 3) / N, (N,), dtype=datatype)
 
     return A, B
 
@@ -46,10 +48,10 @@ def ground_truth(TSTEPS, A, B):
 
 
 def run_jacobi_1d(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Jacobi 1d for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench small size)
     TSTEPS, N = sizes["small"]
@@ -79,7 +81,7 @@ def run_jacobi_1d_autodiff():
 
     # Intiialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -118,9 +120,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

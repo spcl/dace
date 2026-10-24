@@ -1,17 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dataclasses import dataclass
-import struct
-from typing import Any, Dict, List, Set, Tuple, Union
-from numbers import Number
 import os
-
-from dace import dtypes, SDFG
-try:
-    from numpy.typing import ArrayLike
-except ImportError:
-    ArrayLike = Any  # type: ignore
+import struct
+from dataclasses import dataclass
+from numbers import Number
 
 import numpy as np
+from numpy.typing import ArrayLike
+
+from dace import SDFG, dtypes
 
 
 @dataclass
@@ -46,10 +42,11 @@ class InstrumentedDataReport:
     :seealso: dace.dtypes.DataInstrumentationType.Save
     :seealso: dace.dtypes.DataInstrumentationType.Restore
     """
+
     sdfg: SDFG
     folder: str
-    files: Dict[str, List[str]]
-    loaded_values: Dict[Tuple[str, int], Union[ArrayLike, Number]]
+    files: dict[str, list[str]]
+    loaded_values: dict[tuple[str, int], ArrayLike | Number]
 
     def __init__(self, sdfg: SDFG, folder: str) -> None:
         """
@@ -66,31 +63,28 @@ class InstrumentedDataReport:
         # Prepare file mapping
         array_names = os.listdir(folder)
         for aname in array_names:
-            files = []
-
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
-            filenames = sorted([(*(int(s) for s in f.split('.')[0].split('_')), f) for f in filenames])
-            for entry in filenames:
-                files.append(os.path.join(folder, aname, entry[-1]))
+            filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])
+            files = [os.path.join(folder, aname, entry[-1]) for entry in filenames]
 
             self.files[aname] = files
 
-    def keys(self) -> Set[str]:
-        """ Returns the array names available in this data report. """
+    def keys(self) -> set[str]:
+        """Returns the array names available in this data report."""
         return self.files.keys()
 
-    def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
+    def _read_array_file(self, filename: str, npdtype: np.dtype) -> tuple[ArrayLike, ArrayLike]:
         """
         Reads a formatted instrumented data file.
 
         :return: A 2-tuple of (original buffer, array view)
         """
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             # Recreate runtime shape and strides from buffer
-            ndims, = struct.unpack('i', fp.read(4))
-            shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
-            strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
+            (ndims,) = struct.unpack("i", fp.read(4))
+            shape = struct.unpack("i" * ndims, fp.read(4 * ndims))
+            strides = struct.unpack("i" * ndims, fp.read(4 * ndims))
             strides = tuple(s * npdtype.itemsize for s in strides)
 
             # Make numpy array from data descriptor
@@ -100,13 +94,13 @@ class InstrumentedDataReport:
         return nparr, view
 
     def _read_symbol_file(self, filename: str, npdtype: np.dtype) -> Number:
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             npclass = getattr(np, str(npdtype))
             byteval = fp.read(npdtype.itemsize)
             val = npclass(byteval)
         return val
 
-    def __getitem__(self, item: str) -> Union[ArrayLike, Number, List[ArrayLike], List[Number]]:
+    def __getitem__(self, item: str) -> ArrayLike | Number | list[ArrayLike] | list[Number]:
         """
         Returns the instrumented (saved) data from the report according to the data descriptor (array) or symbol name.
 
@@ -132,13 +126,13 @@ class InstrumentedDataReport:
                 self.loaded_values[item, i] = val
                 results.append(val)
         else:
-            raise KeyError(f'Item {item} not found in report')
+            raise KeyError(f"Item {item} not found in report")
 
         if len(results) == 1:
             return results[0]
         return results
 
-    def get_first_version(self, item: str) -> Union[ArrayLike, Number]:
+    def get_first_version(self, item: str) -> ArrayLike | Number:
         """
         Returns the first version of the instrumented (saved) data from the report according to the data descriptor
         (array) or symbol name.
@@ -162,7 +156,7 @@ class InstrumentedDataReport:
             val = self._read_symbol_file(file, dtype.as_numpy_dtype())
             self.loaded_values[item, 0] = val
         else:
-            raise KeyError(f'Item not found in report: {item}')
+            raise KeyError(f"Item not found in report: {item}")
 
     def update_report(self):
         """
@@ -174,8 +168,8 @@ class InstrumentedDataReport:
         for (k, i), loaded in self.loaded_values.items():
             if isinstance(loaded, np.ndarray):
                 dtype_bytes = loaded.dtype.itemsize
-                with open(self.files[k][i], 'wb') as fp:
-                    fp.write(struct.pack('i', loaded.ndim))
-                    fp.write(struct.pack('i' * loaded.ndim, *loaded.shape))
-                    fp.write(struct.pack('i' * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
+                with open(self.files[k][i], "wb") as fp:
+                    fp.write(struct.pack("i", loaded.ndim))
+                    fp.write(struct.pack("i" * loaded.ndim, *loaded.shape))
+                    fp.write(struct.pack("i" * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
                     loaded.tofile(fp)

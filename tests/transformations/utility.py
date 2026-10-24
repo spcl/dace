@@ -1,21 +1,23 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""Helper functions for compilation. """
-from typing import Any, Union, Tuple, Type, List
+"""Helper functions for compilation."""
 
 import copy
-import numpy as np
-import dace
 import uuid
+from typing import Any
 
-from dace import SDFG, SDFGState, data as dace_data
+import numpy as np
+
+import dace
+from dace import SDFG, SDFGState
+from dace import data as dace_data
 from dace.sdfg import nodes
 
 
 def count_nodes(
-    graph: Union[SDFG, SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
+    graph: SDFG | SDFGState,
+    node_type: tuple[type, ...] | type,
     return_nodes: bool = False,
-) -> Union[int, List[nodes.Node]]:
+) -> int | list[nodes.Node]:
     """Counts the number of nodes of a particular type in `graph`.
 
     If `graph` is an SDFGState then only count the nodes inside this state,
@@ -28,10 +30,7 @@ def count_nodes(
 
     states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
     found_nodes: list[nodes.Node] = []
-    for state_nodes in states:
-        for node in state_nodes.nodes():
-            if isinstance(node, node_type):
-                found_nodes.append(node)
+    found_nodes.extend(node for state_nodes in states for node in state_nodes.nodes() if isinstance(node, node_type))
     if return_nodes:
         return found_nodes
     return len(found_nodes)
@@ -42,15 +41,21 @@ def unique_name(name: str) -> str:
     maximal_length = 200
     unique_sufix = str(uuid.uuid1()).replace("-", "_")
     if len(name) > (maximal_length - len(unique_sufix)):
-        name = name[:(maximal_length - len(unique_sufix) - 1)]
+        name = name[: (maximal_length - len(unique_sufix) - 1)]
     return f"{name}_{unique_sufix}"
 
 
-def make_sdfg_args(sdfg: dace.SDFG, ) -> tuple[dict[str, Any], dict[str, Any]]:
+def make_sdfg_args(
+    sdfg: dace.SDFG,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     ref = {
-        name: (np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype()) if isinstance(
-            desc, dace_data.Array) else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0])
-        for name, desc in sdfg.arrays.items() if (not desc.transient) and (not name.startswith("__return"))
+        name: (
+            np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype())
+            if isinstance(desc, dace_data.Array)
+            else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0]
+        )
+        for name, desc in sdfg.arrays.items()
+        if (not desc.transient) and (not name.startswith("__return"))
     }
     res = copy.deepcopy(ref)
     return ref, res

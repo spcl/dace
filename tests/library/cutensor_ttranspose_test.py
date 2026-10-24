@@ -3,8 +3,10 @@
 Unit tests for the TensorTranspose library node with the cuTENSOR v2 expansion.
 Tests float64 and int32 tensors using parametrization.
 """
+
 import numpy as np
 import pytest
+
 import dace
 from dace import dtypes
 from dace.libraries.linalg import TensorTranspose
@@ -174,7 +176,7 @@ def test_transpose_pure_3d_jik(dtype_np, dtype_dace, type_name):
 
 
 if __name__ == "__main__":
-    for (nptype, dacetype, strtype) in dtype_params:
+    for nptype, dacetype, strtype in dtype_params:
         test_transpose_pure_3d_jik(nptype, dacetype, strtype)
         test_transpose_3d_jik(nptype, dacetype, strtype)
         test_transpose_4d_reverse(nptype, dacetype, strtype)

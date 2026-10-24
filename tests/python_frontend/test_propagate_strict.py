@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Test that the simplify argument to to_sdfg is propagated when parsing calls to other dace programs """
+"""Test that the simplify argument to to_sdfg is propagated when parsing calls to other dace programs"""
 
 import dace
 

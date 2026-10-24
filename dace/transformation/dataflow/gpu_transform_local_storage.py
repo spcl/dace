@@ -1,19 +1,32 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes and functions that implement the GPU transformation
-    (with local storage). """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Contains classes and functions that implement the GPU transformation
+(with local storage)."""
 
-import copy
 import collections
+import copy
+import dataclasses
 
-from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
-from dace.sdfg import nodes, SDFGState
+from dace import data, dtypes, symbolic
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import Property, make_properties
+
+
+@dataclasses.dataclass
+class CloneWindow:
+    """Where a device clone sits in the container it was cloned from, to rebase connectors from one to the other."""
+
+    #: The clone's origin, one index per dimension of the original container
+    offset: sbs.Range
+    #: The dimensions of the original container that the clone does not have
+    lost_dims: list[int]
 
 
 def in_scope(graph, node, parent):
-    """ Returns True if `node` is in the scope of `parent`. """
+    """Returns True if `node` is in the scope of `parent`."""
     scope_dict = graph.scope_dict()
     scope = scope_dict[node]
     while scope is not None:
@@ -37,15 +50,16 @@ def in_path(path, edge, nodetype, forward=True):
 class GPUTransformLocalStorage(transformation.SingleStateTransformation):
     """Implements the GPUTransformLocalStorage transformation.
 
-        Similar to GPUTransformMap, but takes multiple maps leading from the
-        same data node into account, creating a local storage for each range.
+    Similar to GPUTransformMap, but takes multiple maps leading from the
+    same data node into account, creating a local storage for each range.
 
-        :seealso: GPUTransformMap
+    :seealso: GPUTransformMap
     """
 
-    fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
+    fullcopy = Property(category="Memory", desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
     nested_seq = Property(
+        category="Scheduling",
         desc="Makes nested code semantically-equivalent to single-core code,"
         "transforming nested maps and memory into sequential and "
         "local memory respectively.",
@@ -56,6 +70,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
+
     reduce = transformation.PatternNode(stdlib.Reduce)
 
     @classmethod
@@ -76,10 +91,12 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     return False
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule == dtypes.ScheduleType.MPI
-                    or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
-                    or candidate_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-                    or candidate_map.schedule == dtypes.ScheduleType.Sequential):
+            if (
+                candidate_map.schedule == dtypes.ScheduleType.MPI
+                or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
+                or candidate_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                or candidate_map.schedule == dtypes.ScheduleType.Sequential
+            ):
                 return False
 
             # Dynamic map ranges cannot become kernels
@@ -90,8 +107,10 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             sdict = graph.scope_dict()
             current_node = map_entry
             while current_node is not None:
-                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
+                if (
+                    current_node.map.schedule == dtypes.ScheduleType.GPU_Device
+                    or current_node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                ):
                     return False
                 current_node = sdict[current_node]
 
@@ -99,15 +118,18 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and node.desc(sdfg).storage != dtypes.StorageType.Register):
+                if (
+                    isinstance(node, nodes.AccessNode)
+                    and node.desc(sdfg).storage != dtypes.StorageType.Default
+                    and node.desc(sdfg).storage != dtypes.StorageType.Register
+                ):
                     return False
 
             # If one of the outputs is a stream, do not match
             map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
-                if (isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream)):
+                if isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream):
                     return False
 
             return True
@@ -118,8 +140,10 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
             while current_node is not None:
-                if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
+                if (
+                    current_node.map.schedule == dtypes.ScheduleType.GPU_Device
+                    or current_node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                ):
                     return False
                 current_node = sdict[current_node]
 
@@ -239,20 +263,24 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                 if len(actual_dims) == 0:  # abort
                     actual_dims = [len(full_shape) - 1]
                 if isinstance(array, data.Scalar):
-                    sdfg.add_array(name=cloned_name,
-                                   shape=[1],
-                                   dtype=array.dtype,
-                                   transient=True,
-                                   storage=dtypes.StorageType.GPU_Global)
+                    sdfg.add_array(
+                        name=cloned_name,
+                        shape=[1],
+                        dtype=array.dtype,
+                        transient=True,
+                        storage=dtypes.StorageType.GPU_Global,
+                    )
                 elif isinstance(array, data.Stream):
-                    sdfg.add_stream(name=cloned_name,
-                                    dtype=array.dtype,
-                                    shape=[full_shape[d] for d in actual_dims],
-                                    veclen=array.veclen,
-                                    buffer_size=array.buffer_size,
-                                    storage=dtypes.StorageType.GPU_Global,
-                                    transient=True,
-                                    offset=[array.offset[d] for d in actual_dims])
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        offset=[array.offset[d] for d in actual_dims],
+                    )
                 else:
                     sdfg.add_array(
                         name=cloned_name,
@@ -306,20 +334,24 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                 if len(actual_dims) == 0:  # abort
                     actual_dims = [len(full_shape) - 1]
                 if isinstance(array, data.Scalar):
-                    sdfg.add_array(name=cloned_name,
-                                   shape=[1],
-                                   dtype=array.dtype,
-                                   transient=True,
-                                   storage=dtypes.StorageType.GPU_Global)
+                    sdfg.add_array(
+                        name=cloned_name,
+                        shape=[1],
+                        dtype=array.dtype,
+                        transient=True,
+                        storage=dtypes.StorageType.GPU_Global,
+                    )
                 elif isinstance(array, data.Stream):
-                    sdfg.add_stream(name=cloned_name,
-                                    dtype=array.dtype,
-                                    shape=[full_shape[d] for d in actual_dims],
-                                    veclen=array.veclen,
-                                    buffer_size=array.buffer_size,
-                                    storage=dtypes.StorageType.GPU_Global,
-                                    transient=True,
-                                    offset=[array.offset[d] for d in actual_dims])
+                    sdfg.add_stream(
+                        name=cloned_name,
+                        dtype=array.dtype,
+                        shape=[full_shape[d] for d in actual_dims],
+                        veclen=array.veclen,
+                        buffer_size=array.buffer_size,
+                        storage=dtypes.StorageType.GPU_Global,
+                        transient=True,
+                        offset=[array.offset[d] for d in actual_dims],
+                    )
                 else:
                     sdfg.add_array(
                         name=cloned_name,
@@ -336,6 +368,9 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             cloned_node.setzero = True
 
             out_cloned_arraynodes[array_node.data] = cloned_node
+
+        # Origin and removed dimensions of each clone, relative to the original container
+        clone_windows: dict[str, CloneWindow] = {}
 
         # Third, connect the cloned arrays to the originals
         for array_name, node in in_cloned_arraynodes.items():
@@ -371,6 +406,9 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                             newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
+                        clone_windows[node.data] = CloneWindow(
+                            offset=sbs.Range.from_indices(offset), lost_dims=list(lost_dims)
+                        )
 
                     graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
 
@@ -448,6 +486,9 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                             newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
+                        clone_windows[node.data] = CloneWindow(
+                            offset=sbs.Range.from_indices(offset), lost_dims=list(lost_dims)
+                        )
 
                     graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
 
@@ -500,3 +541,13 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             for edge in scope_subgraph.edges():
                 if edge.data.data is not None and edge.data.data in cloned_arrays:
                     edge.data.data = cloned_arrays[edge.data.data]
+
+            # Connectors inside the scope now read the device copies
+            for scope_node in scope_subgraph.nodes():
+                if not isinstance(scope_node, nodes.NestedSDFG):
+                    continue
+                for edge in graph.all_edges(scope_node):
+                    window = clone_windows.get(edge.data.data)
+                    connector = edge.dst_conn if edge.dst is scope_node else edge.src_conn
+                    if window is not None and connector:
+                        dealias.rebase_connector(scope_node, connector, offset=window.offset, squeeze=window.lost_dims)

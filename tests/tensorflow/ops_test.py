@@ -1,13 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
-import numpy as np
 from importlib.util import find_spec
+
+import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_shapen():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
+
     myshape = [69, 96, 666]
     num_inputs = 5
 
@@ -18,18 +21,20 @@ def test_shapen():
 
     shapes_tf = sess_tf.run(tf.shape_n(inpList))
     shapes_dace = sess_dace.run(tf.shape_n(inpList))
-    for dc, tf in zip(shapes_dace, shapes_tf):
+    for dc, tf_out in zip(shapes_dace, shapes_tf):
         try:
-            assert (dc == tf).all()
-        except (AssertionError):
+            assert (dc == tf_out).all()
+        except AssertionError:
             print(dc)
-            print(tf)
+            print(tf_out)
 
 
 @pytest.mark.tensorflow
 def test_mean():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
+
     shape = [10, 11, 12, 13]
 
     inp = tf.placeholder(tf.float64, shape)
@@ -51,7 +56,7 @@ def test_mean():
             print(output_dace)
             print(output_tf)
             print(tf.norm(output_dace - output_tf).eval(session=sess_tf))
-            raise AssertionError("mean test {i} failed".format(i=index))
+            raise AssertionError(f"mean test {index} failed")
 
     print("mean tests passed!")
 
@@ -59,7 +64,9 @@ def test_mean():
 @pytest.mark.tensorflow
 def test_addn():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
+
     shape = [10, 11, 12, 13]
     inputs = [np.random.rand(*shape) for _ in range(10)]
     addn_test_0 = tf.add_n(inputs)
@@ -82,7 +89,9 @@ def test_addn():
 @pytest.mark.tensorflow
 def test_slice():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
+
     t = tf.placeholder(tf.int32, [3, 2, 3])
     b = tf.placeholder(tf.int32, [3])
     s = tf.placeholder(tf.int32, [3])
@@ -104,7 +113,7 @@ def test_slice():
     assert (tf_out == dace_out).all()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if find_spec("tensorflow"):
         test_shapen()
         test_mean()

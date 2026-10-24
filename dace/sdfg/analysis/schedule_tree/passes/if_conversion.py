@@ -6,7 +6,7 @@ from typing import Dict, Optional
 
 import sympy
 
-from dace import data, dtypes
+from dace import data, dtypes, utils
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -102,7 +102,7 @@ def convert_diamonds_to_selects(stree: tn.ScheduleTreeScope,
     index = AccessIndex(root)
 
     def fresh(base: str, desc: data.Data) -> str:
-        name = data.find_new_name(f'__sel_{base}', containers)
+        name = utils.find_new_name(f'__sel_{base}', containers)
         containers[name] = data.Scalar(desc.dtype, transient=True)
         return name
 

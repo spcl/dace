@@ -1,16 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Union
 
 import numpy as np
 
 import dace
-from dace import SDFG, SDFGState, nodes as nd
-
-from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node
-from dace.libraries.onnx.nodes import onnx_op
+from dace import SDFG, SDFGState
+from dace import nodes as nd
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
-
+from dace.libraries.onnx.nodes import onnx_op
+from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node
 from dace.sdfg.utils import in_desc_with_name
 
 
@@ -36,15 +34,15 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
 
         # The weights and log_prob arguments are optional
         # We don't support them in this implementation
-        if 'weights' in node.in_connectors:
+        if "weights" in node.in_connectors:
             return False
-        if 'log_prob' in node.out_connectors:
+        if "log_prob" in node.out_connectors:
             return False
 
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Union[nd.Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> nd.Node | SDFG:
         """Generate the forward pass implementation for SoftmaxCrossEntropyLoss.
 
         :param node: The SoftmaxCrossEntropyLoss ONNX node.
@@ -53,20 +51,20 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
         :return: A nested SDFG implementing the SoftmaxCrossEntropyLoss operation.
         """
 
-        if node.reduction == 'mean':
+        if node.reduction == "mean":
 
             def reduction(x):
                 return np.mean(x)
-        elif node.reduction == 'none':
+        elif node.reduction == "none":
 
             def reduction(x):
                 return x
-        elif node.reduction == 'sum':
+        elif node.reduction == "sum":
 
             def reduction(x):
                 return np.sum(x)
         else:
-            raise ValueError("Unsupported reduction: {}".format(node.reduction))
+            raise ValueError(f"Unsupported reduction: {node.reduction}")
         reduction = dace.program(reduction)
 
         # This implementation doesn't use ONNX LogSoftmax, and thus saves the

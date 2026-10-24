@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+
 import dace
 from dace import nodes
 from dace.dtypes import ScheduleType
@@ -27,7 +28,7 @@ def test_persistent_thread_block():
     sdfg = dot.to_sdfg()
 
     sdfg.apply_gpu_transformations()
-    sdfg.apply_transformations(StripMining, options={'tile_size': '256'})
+    sdfg.apply_transformations(StripMining, options={"tile_size": "256"})
 
     for state in sdfg:
         for scope in state.nodes():
@@ -40,7 +41,7 @@ def test_persistent_thread_block():
 
     N = 1050
 
-    print('Dot product (N = {})'.format(N))
+    print(f"Dot product (N = {N})")
 
     A = np.random.rand(N).astype(np.float32)
     B = np.random.rand(N).astype(np.float32)
@@ -51,7 +52,7 @@ def test_persistent_thread_block():
 
     sdfg(A=A, B=A, out=out_AA, N=N)
 
-    assert (np.allclose(out_AB, np.dot(A, B)) and np.allclose(out_AA, np.dot(A, A))), "Result doesn't match!"
+    assert np.allclose(out_AB, np.dot(A, B)) and np.allclose(out_AA, np.dot(A, A)), "Result doesn't match!"
     print("Complete.")
 
 

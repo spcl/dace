@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set, Union
+from typing import Any
 
 import dace
 from dace import properties, transformation
@@ -65,37 +65,42 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
     only_if_common_ancestor = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="If `True` restrict parallel Map fusion to maps that have a direct common ancestor.",
     )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
     )
     consolidate_edges_only_if_not_extending = properties.Property(
         dtype=bool,
         default=False,
+        category="Parameters",
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
     def __init__(
         self,
-        only_inner_maps: Optional[bool] = None,
-        only_toplevel_maps: Optional[bool] = None,
-        only_if_common_ancestor: Optional[bool] = None,
-        consolidate_edges_only_if_not_extending: Optional[bool] = None,
-        never_consolidate_edges: Optional[bool] = None,
+        only_inner_maps: bool | None = None,
+        only_toplevel_maps: bool | None = None,
+        only_if_common_ancestor: bool | None = None,
+        consolidate_edges_only_if_not_extending: bool | None = None,
+        never_consolidate_edges: bool | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -118,7 +123,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
     def can_be_applied(
         self,
-        graph: Union[dace.SDFGState, SDFG],
+        graph: dace.SDFGState | SDFG,
         expr_index: int,
         sdfg: dace.SDFG,
         permissive: bool = False,
@@ -138,7 +143,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
         # Test if they have they share a node as direct ancestor.
         if self.only_if_common_ancestor:
-            first_ancestors: Set[nodes.Node] = {e1.src for e1 in graph.in_edges(first_map_entry)}
+            first_ancestors: set[nodes.Node] = {e1.src for e1 in graph.in_edges(first_map_entry)}
             if not any(e2.src in first_ancestors for e2 in graph.in_edges(second_map_entry)):
                 return False
 
@@ -164,7 +169,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
     def apply(
         self,
-        graph: Union[dace.SDFGState, dace.SDFG],
+        graph: dace.SDFGState | dace.SDFG,
         sdfg: dace.SDFG,
     ) -> None:
         # NOTE: The after this point it is not legal to access the matched nodes
@@ -190,7 +195,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
                 oedge.data.try_initialize(sdfg, graph, oedge)
 
         # We have to get the scope_dict before we start mutating the graph.
-        scope_dict: Dict = graph.scope_dict().copy()
+        scope_dict: dict = graph.scope_dict().copy()
 
         # Before we do anything we perform the renaming, i.e. we will rename the
         #  parameters of the second Map such that they match the one of the first Map.

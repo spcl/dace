@@ -1,30 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import polybench
 
-N = dace.symbol('N')
-tsteps = dace.symbol('tsteps')
+import dace
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+N = dace.symbol("N")
+tsteps = dace.symbol("tsteps")
+
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    tsteps: 20,
-    N: 20
-}, {
-    tsteps: 40,
-    N: 60
-}, {
-    tsteps: 100,
-    N: 200
-}, {
-    tsteps: 500,
-    N: 1000
-}, {
-    tsteps: 1000,
-    N: 2000
-}]
+sizes = [
+    {tsteps: 20, N: 20},
+    {tsteps: 40, N: 60},
+    {tsteps: 100, N: 200},
+    {tsteps: 500, N: 1000},
+    {tsteps: 1000, N: 2000},
+]
 
 args = [([N, N], datatype)]
 
@@ -64,7 +56,7 @@ def adi(u: datatype[N, N]):
 
     for t in range(tsteps):
         # Column Sweep
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             with dace.tasklet:
                 v0i >> v[0, i]
                 pi0 >> p[i, 0]
@@ -102,7 +94,7 @@ def adi(u: datatype[N, N]):
                     vji = pij * vjp1 + qij
 
         # Row Sweep
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             with dace.tasklet:
                 ui0 >> u[i, 0]
                 pi0 >> p[i, 0]
@@ -140,5 +132,5 @@ def adi(u: datatype[N, N]):
                     uij = pij * ujp1 + qij
 
 
-if __name__ == '__main__':
-    polybench.main(sizes, args, [(0, 'u')], init_array, adi)
+if __name__ == "__main__":
+    polybench.main(sizes, args, [(0, "u")], init_array, adi)

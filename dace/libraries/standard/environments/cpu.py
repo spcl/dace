@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment exposing the C++ standard headers used by CPU-side libnode expansions."""
+
 import dace.library
 
 
@@ -16,7 +17,7 @@ class CPU:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["cstring"]}
+    headers = {"frame": ["cstring"]}
     state_fields = []
     init_code = ""
     finalize_code = ""

@@ -11,30 +11,33 @@ the layout of dynamic shared memory is part of the SDFG.
 The passes run in this order: ``PrivatizeKernelSharedMemory``, ``LowerDynamicMapState``, ``PlanSharedMemory``,
 ``LowerDynamicSharedMemory``.
 """
+
 import copy
 import warnings
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 
-from dace import config, data as dt, dtypes, properties, subsets, symbolic
+from dace import config, dtypes, properties, subsets, symbolic
+from dace import data as dt
 from dace.codegen import common
 from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState, nodes, utils as sdutil
-from dace.transformation import gpu_helpers, pass_pipeline as ppl
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import gpu_helpers
+from dace.transformation import pass_pipeline as ppl
 
 #: Alignment of every container in dynamic shared memory, which suffices for all types up to 16-byte vectors
 DYNAMIC_SHARED_MEMORY_ALIGNMENT = 16
 
 #: Name of the symbol that holds the offset of a nested SDFG's part of dynamic shared memory, if not a constant
-DYNAMIC_SHARED_MEMORY_BASE = '__dace_dynsmem_base'
+DYNAMIC_SHARED_MEMORY_BASE = "__dace_dynsmem_base"
 
 #: Name of the flat dynamic shared memory buffers
-DYNAMIC_SHARED_MEMORY_BUFFER = '__dace_dynsmem'
+DYNAMIC_SHARED_MEMORY_BUFFER = "__dace_dynsmem"
 
 
-def _nested_sdfg_nodes(sdfg: SDFG) -> List[nodes.NestedSDFG]:
+def _nested_sdfg_nodes(sdfg: SDFG) -> list[nodes.NestedSDFG]:
     """Returns the nested SDFG nodes directly in ``sdfg``, in a deterministic order."""
-    return [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
 
 
 def is_shared_container(desc: dt.Data) -> bool:
@@ -45,8 +48,12 @@ def is_shared_container(desc: dt.Data) -> bool:
     :param desc: The data descriptor.
     :return: True if the descriptor is such a container.
     """
-    return (desc.transient and isinstance(desc, dt.Array) and not isinstance(desc, dt.View)
-            and desc.storage == dtypes.StorageType.GPU_Shared)
+    return (
+        desc.transient
+        and isinstance(desc, dt.Array)
+        and not isinstance(desc, dt.View)
+        and desc.storage == dtypes.StorageType.GPU_Shared
+    )
 
 
 def dynamic_map_state_elements(fine_grained: bool, block_size: int) -> int:
@@ -73,7 +80,7 @@ class PrivatizeKernelSharedMemory(ppl.Pass):
     an SDFG belongs to one kernel, and the kernels' shared memory can be placed independently.
     """
 
-    CATEGORY: str = 'GPU'
+    CATEGORY: str = "GPU"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -81,17 +88,19 @@ class PrivatizeKernelSharedMemory(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, List[str]]]:
-        owned: Dict[SDFG, Set[str]] = {}
-        copies: Dict[str, List[str]] = {}
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[str, list[str]] | None:
+        owned: dict[SDFG, set[str]] = {}
+        copies: dict[str, list[str]] = {}
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             kernel_scope = kernel_state.scope_subgraph(kernel_entry)
             owned_here = owned.setdefault(kernel_sdfg, set())
-            names = sorted({
-                n.data
-                for n in kernel_scope.nodes()
-                if isinstance(n, nodes.AccessNode) and is_shared_container(kernel_sdfg.arrays[n.data])
-            })
+            names = sorted(
+                {
+                    n.data
+                    for n in kernel_scope.nodes()
+                    if isinstance(n, nodes.AccessNode) and is_shared_container(kernel_sdfg.arrays[n.data])
+                }
+            )
             for name in names:
                 if name not in owned_here:
                     owned_here.add(name)
@@ -117,7 +126,7 @@ class LowerDynamicMapState(ppl.Pass):
     the container is stored in the ``_cuda_dynmap_state`` attribute of each dynamic map entry.
     """
 
-    CATEGORY: str = 'GPU'
+    CATEGORY: str = "GPU"
 
     def depends_on(self):
         return {PrivatizeKernelSharedMemory}
@@ -128,8 +137,8 @@ class LowerDynamicMapState(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, int]]:
-        fine_grained = config.Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained')
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[str, int] | None:
+        fine_grained = config.Config.get_bool("compiler", "cuda", "dynamic_map_fine_grained")
         elements = dynamic_map_state_elements(fine_grained, gpu_helpers.dynamic_map_block_size())
         added = {}
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
@@ -137,14 +146,17 @@ class LowerDynamicMapState(ppl.Pass):
             if not dynamic_maps:
                 continue
             index_type = common.gpu_dynamic_map_index_type(kernel_sdfg, kernel_state, kernel_entry)
-            state_names: Dict[SDFG, str] = {}
+            state_names: dict[SDFG, str] = {}
             for map_sdfg, map_state, map_entry in dynamic_maps:
                 if map_sdfg not in state_names:
-                    state_names[map_sdfg], _ = map_sdfg.add_array('__dace_dynmap_state', [elements],
-                                                                  index_type,
-                                                                  storage=dtypes.StorageType.GPU_Shared,
-                                                                  transient=True,
-                                                                  find_new_name=True)
+                    state_names[map_sdfg], _ = map_sdfg.add_array(
+                        "__dace_dynmap_state",
+                        [elements],
+                        index_type,
+                        storage=dtypes.StorageType.GPU_Shared,
+                        transient=True,
+                        find_new_name=True,
+                    )
                     added[state_names[map_sdfg]] = elements
                 name = state_names[map_sdfg]
 
@@ -158,13 +170,13 @@ class LowerDynamicMapState(ppl.Pass):
         return added or None
 
     @staticmethod
-    def _dynamic_maps(sdfg: SDFG, state: SDFGState, graph) -> List[Tuple[SDFG, SDFGState, nodes.MapEntry]]:
+    def _dynamic_maps(sdfg: SDFG, state: SDFGState, graph) -> list[tuple[SDFG, SDFGState, nodes.MapEntry]]:
         result = []
         for node in graph.nodes():
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 result.append((sdfg, state, node))
             elif isinstance(node, nodes.NestedSDFG):
-                for nstate in node.sdfg.all_states():
+                for nstate in node.sdfg.states():
                     result.extend(LowerDynamicMapState._dynamic_maps(node.sdfg, nstate, nstate))
         return result
 
@@ -172,10 +184,11 @@ class LowerDynamicMapState(ppl.Pass):
 @dataclass
 class SharedMemoryLevel:
     """The dynamic shared memory of one SDFG within a GPU kernel."""
+
     #: The SDFG
     sdfg: SDFG
     #: The offset and size (in bytes, in the symbols of ``sdfg``) of each of its dynamic containers
-    containers: Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = field(default_factory=dict)
+    containers: dict[str, tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = field(default_factory=dict)
     #: The end of the part of dynamic shared memory that the SDFG and its nested SDFGs use (in the symbols of ``sdfg``)
     end: symbolic.SymbolicType = 0
 
@@ -183,12 +196,13 @@ class SharedMemoryLevel:
 @dataclass
 class KernelSharedMemory:
     """The shared memory layout of a GPU kernel."""
+
     #: The bytes of static shared memory the kernel's containers use
     static_bytes: int = 0
     #: The bytes of dynamic shared memory to launch the kernel with, in the symbols of the kernel's SDFG
     dynamic_bytes: symbolic.SymbolicType = 0
     #: The dynamic shared memory of each SDFG in the kernel that has any
-    levels: List[SharedMemoryLevel] = field(default_factory=list)
+    levels: list[SharedMemoryLevel] = field(default_factory=list)
 
 
 @properties.make_properties
@@ -206,7 +220,7 @@ class PlanSharedMemory(ppl.Pass):
     ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry.
     """
 
-    CATEGORY: str = 'GPU'
+    CATEGORY: str = "GPU"
 
     def depends_on(self):
         return {LowerDynamicMapState}
@@ -217,7 +231,7 @@ class PlanSharedMemory(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[nodes.MapEntry, KernelSharedMemory]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[nodes.MapEntry, KernelSharedMemory] | None:
         result = {}
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             plan = self._plan_kernel(kernel_sdfg, kernel_state, kernel_entry)
@@ -231,30 +245,35 @@ class PlanSharedMemory(ppl.Pass):
         kernel_label = kernel_entry.map.label
 
         # The shared containers of each SDFG in the kernel. At the kernel's level, only those accessed in the kernel
-        kernel_level = sorted({
-            n.data
-            for n in kernel_nodes if isinstance(n, nodes.AccessNode) and is_shared_container(sdfg.arrays[n.data])
-        })
+        kernel_level = sorted(
+            {
+                n.data
+                for n in kernel_nodes
+                if isinstance(n, nodes.AccessNode) and is_shared_container(sdfg.arrays[n.data])
+            }
+        )
         top_nested = [n for n in kernel_nodes if isinstance(n, nodes.NestedSDFG)]
 
         # Decide the placement of each container
         plan = KernelSharedMemory()
         limit = common.gpu_max_static_shared_memory()
-        candidates: List[Tuple[SDFG, str, int]] = []
-        dynamic: Set[Tuple[SDFG, str]] = set()
+        candidates: list[tuple[SDFG, str, int]] = []
+        dynamic: set[tuple[SDFG, str]] = set()
         for level_sdfg, names in self._containers(sdfg, kernel_level, top_nested):
             for name in names:
                 desc = level_sdfg.arrays[name]
                 size = desc.total_size_in_bytes
                 is_symbolic = symbolic.issymbolic(size, level_sdfg.constants)
-                placement = dtypes.is_dynamic_shared(desc.storage)
+                placement = desc.storage.dynamic
                 if placement is False:
                     if is_symbolic:
-                        raise ValueError(f'Shared memory container "{name}" of kernel "{kernel_label}" is placed in '
-                                         f'static shared memory, which requires a constant size (got {size} bytes). '
-                                         'Place it in dynamic shared memory with '
-                                         '`StorageType.GPU_Shared(dynamic=True)`, or leave the placement to the code '
-                                         'generator with `StorageType.GPU_Shared`.')
+                        raise ValueError(
+                            f'Shared memory container "{name}" of kernel "{kernel_label}" is placed in '
+                            f"static shared memory, which requires a constant size (got {size} bytes). "
+                            "Place it in dynamic shared memory with "
+                            "`StorageType.GPU_Shared(dynamic=True)`, or leave the placement to the code "
+                            "generator with `StorageType.GPU_Shared`."
+                        )
                     plan.static_bytes += int(symbolic.evaluate(size, level_sdfg.constants))
                 elif placement is True or is_symbolic:
                     dynamic.add((level_sdfg, name))
@@ -265,9 +284,11 @@ class PlanSharedMemory(ppl.Pass):
             if plan.static_bytes + size <= limit:
                 plan.static_bytes += size
             else:
-                warnings.warn(f'Shared memory container "{name}" ({size} bytes) of kernel "{kernel_label}" does not '
-                              f'fit in the static shared memory of a thread-block ({plan.static_bytes} of {limit} '
-                              'bytes already used), so it is placed in dynamic shared memory.')
+                warnings.warn(
+                    f'Shared memory container "{name}" ({size} bytes) of kernel "{kernel_label}" does not '
+                    f"fit in the static shared memory of a thread-block ({plan.static_bytes} of {limit} "
+                    "bytes already used), so it is placed in dynamic shared memory."
+                )
                 dynamic.add((level_sdfg, name))
         # Make every decision explicit in the SDFG
         for level_sdfg, names in self._containers(sdfg, kernel_level, top_nested):
@@ -280,7 +301,7 @@ class PlanSharedMemory(ppl.Pass):
             self._check_launch_symbols(state, kernel_entry, kernel_nodes, plan.dynamic_bytes)
         return plan
 
-    def _containers(self, sdfg: SDFG, names: List[str], nested: List[nodes.NestedSDFG]) -> List[Tuple[SDFG, List[str]]]:
+    def _containers(self, sdfg: SDFG, names: list[str], nested: list[nodes.NestedSDFG]) -> list[tuple[SDFG, list[str]]]:
         """Returns the shared containers of an SDFG level and, recursively, of its nested SDFGs, in layout order."""
         result = [(sdfg, names)]
         for nsdfg_node in nested:
@@ -289,8 +310,15 @@ class PlanSharedMemory(ppl.Pass):
             result.extend(self._containers(nsdfg, nested_names, _nested_sdfg_nodes(nsdfg)))
         return result
 
-    def _layout(self, sdfg: SDFG, names: List[str], nested: List[nodes.NestedSDFG], base: symbolic.SymbolicType,
-                dynamic: Set[Tuple[SDFG, str]], levels: List[SharedMemoryLevel]) -> symbolic.SymbolicType:
+    def _layout(
+        self,
+        sdfg: SDFG,
+        names: list[str],
+        nested: list[nodes.NestedSDFG],
+        base: symbolic.SymbolicType,
+        dynamic: set[tuple[SDFG, str]],
+        levels: list[SharedMemoryLevel],
+    ) -> symbolic.SymbolicType:
         """
         Lays out the dynamic containers of an SDFG, followed by those of its nested SDFGs, starting at ``base``.
 
@@ -313,12 +341,17 @@ class PlanSharedMemory(ppl.Pass):
         for nsdfg_node in nested:
             nsdfg = nsdfg_node.sdfg
             nested_names = sorted(n for n, d in nsdfg.arrays.items() if is_shared_container(d))
-            if not any((level_sdfg, name) in dynamic
-                       for level_sdfg, level_names in self._containers(nsdfg, nested_names, _nested_sdfg_nodes(nsdfg))
-                       for name in level_names):
+            if not any(
+                (level_sdfg, name) in dynamic
+                for level_sdfg, level_names in self._containers(nsdfg, nested_names, _nested_sdfg_nodes(nsdfg))
+                for name in level_names
+            ):
                 continue
-            nested_base = (cursor if cursor_alignment % DYNAMIC_SHARED_MEMORY_ALIGNMENT == 0 else symbolic.align(
-                cursor, DYNAMIC_SHARED_MEMORY_ALIGNMENT))
+            nested_base = (
+                cursor
+                if cursor_alignment % DYNAMIC_SHARED_MEMORY_ALIGNMENT == 0
+                else symbolic.align(cursor, DYNAMIC_SHARED_MEMORY_ALIGNMENT)
+            )
             if symbolic.issymbolic(nested_base):
                 # Pass the offset of the nested SDFG's part as a symbol
                 symbol_name = DYNAMIC_SHARED_MEMORY_BASE
@@ -332,8 +365,9 @@ class PlanSharedMemory(ppl.Pass):
 
             # Translate the end of the nested part to the symbols of this SDFG
             mapping = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
-            cursor = symbolic.pystr_to_symbolic(inner_end).subs(mapping) if symbolic.issymbolic(
-                inner_end) else inner_end
+            cursor = (
+                symbolic.pystr_to_symbolic(inner_end).subs(mapping) if symbolic.issymbolic(inner_end) else inner_end
+            )
             cursor_alignment = 1
 
         level.end = cursor
@@ -342,8 +376,9 @@ class PlanSharedMemory(ppl.Pass):
         return cursor
 
     @staticmethod
-    def _check_launch_symbols(state: SDFGState, kernel_entry: nodes.MapEntry, kernel_nodes,
-                              size: symbolic.SymbolicType) -> None:
+    def _check_launch_symbols(
+        state: SDFGState, kernel_entry: nodes.MapEntry, kernel_nodes, size: symbolic.SymbolicType
+    ) -> None:
         """Raises if the dynamic shared memory size of a kernel depends on symbols defined only within the kernel."""
         if not symbolic.issymbolic(size):
             return
@@ -356,8 +391,10 @@ class PlanSharedMemory(ppl.Pass):
         defined |= {e.dst_conn for e in sdutil.dynamic_map_inputs(state, kernel_entry)}
         undefined = free & inner | (free - defined - set(state.sdfg.constants.keys()))
         if undefined:
-            raise ValueError(f'The dynamic shared memory of kernel "{kernel_entry.map.label}" ({size} bytes) depends '
-                             f'on {", ".join(sorted(undefined))}, which are not known when the kernel is launched.')
+            raise ValueError(
+                f'The dynamic shared memory of kernel "{kernel_entry.map.label}" ({size} bytes) depends '
+                f"on {', '.join(sorted(undefined))}, which are not known when the kernel is launched."
+            )
 
 
 @properties.make_properties
@@ -369,7 +406,7 @@ class LowerDynamicSharedMemory(ppl.Pass):
     shared memory of the kernel.
     """
 
-    CATEGORY: str = 'GPU'
+    CATEGORY: str = "GPU"
 
     def depends_on(self):
         return {PlanSharedMemory}
@@ -380,16 +417,19 @@ class LowerDynamicSharedMemory(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[int]:
-        plans: Dict[nodes.MapEntry, KernelSharedMemory] = pipeline_results.get(PlanSharedMemory.__name__) or {}
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
+        plans: dict[nodes.MapEntry, KernelSharedMemory] = pipeline_results.get(PlanSharedMemory.__name__) or {}
         converted = 0
         for plan in plans.values():
             for level in plan.levels:
-                buffer, _ = level.sdfg.add_array(DYNAMIC_SHARED_MEMORY_BUFFER, [level.end],
-                                                 dtypes.uint8,
-                                                 storage=dtypes.StorageType.GPU_Shared(dynamic=True),
-                                                 transient=True,
-                                                 find_new_name=True)
+                buffer, _ = level.sdfg.add_array(
+                    DYNAMIC_SHARED_MEMORY_BUFFER,
+                    [level.end],
+                    dtypes.uint8,
+                    storage=dtypes.StorageType.GPU_Shared(dynamic=True),
+                    transient=True,
+                    find_new_name=True,
+                )
                 for name, (offset, size) in level.containers.items():
                     sdutil.convert_to_view(level.sdfg, name, buffer, subsets.Range([(offset, offset + size - 1, 1)]))
                     converted += 1
@@ -403,11 +443,12 @@ def is_dynamic_shared_memory_buffer(desc: dt.Data) -> bool:
     :param desc: The data descriptor.
     :return: True if the descriptor is such a buffer.
     """
-    return (not isinstance(desc, dt.View) and desc.storage == dtypes.StorageType.GPU_Shared
-            and dtypes.is_dynamic_shared(desc.storage) is True)
+    return (
+        not isinstance(desc, dt.View) and desc.storage == dtypes.StorageType.GPU_Shared and desc.storage.dynamic is True
+    )
 
 
-def plan_gpu_shared_memory(sdfg: SDFG) -> Dict[nodes.MapEntry, KernelSharedMemory]:
+def plan_gpu_shared_memory(sdfg: SDFG) -> dict[nodes.MapEntry, KernelSharedMemory]:
     """
     Runs the shared memory passes on an SDFG.
 
@@ -415,9 +456,7 @@ def plan_gpu_shared_memory(sdfg: SDFG) -> Dict[nodes.MapEntry, KernelSharedMemor
     :return: The shared memory layout of each GPU kernel that uses shared memory.
     """
     pipeline = ppl.Pipeline(
-        [PrivatizeKernelSharedMemory(),
-         LowerDynamicMapState(),
-         PlanSharedMemory(),
-         LowerDynamicSharedMemory()])
+        [PrivatizeKernelSharedMemory(), LowerDynamicMapState(), PlanSharedMemory(), LowerDynamicSharedMemory()]
+    )
     results = pipeline.apply_pass(sdfg, {}) or {}
     return results.get(PlanSharedMemory.__name__) or {}

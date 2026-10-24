@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -6,7 +6,6 @@ from dace import dtypes, symbolic
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
-
 from dace.sdfg.state import LoopRegion
 
 
@@ -32,9 +31,9 @@ def test_fortran_frontend_array_access():
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 5.5)
-    assert (a[2] == 42)
+    assert a[0] == 42
+    assert a[1] == 5.5
+    assert a[2] == 42
 
 
 def test_fortran_frontend_array_ranges():
@@ -65,11 +64,11 @@ def test_fortran_frontend_array_ranges():
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 0] == 15)
-    assert (d[0, 1, 0] == 10)
-    assert (d[1, 0, 0] == 3)
-    assert (d[2, 3, 3] == 4)
-    assert (d[0, 0, 2] == 5)
+    assert d[0, 0, 0] == 15
+    assert d[0, 1, 0] == 10
+    assert d[1, 0, 0] == 3
+    assert d[2, 3, 3] == 4
+    assert d[0, 0, 2] == 5
 
 
 def test_fortran_frontend_array_3dmap():
@@ -94,11 +93,12 @@ def test_fortran_frontend_array_3dmap():
     sdfg.simplify(verbose=True)
     sdutil.normalize_offsets(sdfg)
     from dace.transformation.auto import auto_optimize as aopt
+
     aopt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
     a = np.full([4, 4, 4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0, 0, 0] == 7)
-    assert (a[3, 3, 3] == 7)
+    assert a[0, 0, 0] == 7
+    assert a[3, 3, 3] == 7
 
 
 def test_fortran_frontend_twoconnector():
@@ -123,9 +123,9 @@ def test_fortran_frontend_twoconnector():
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 84)
-    assert (a[2] == 42)
+    assert a[0] == 42
+    assert a[1] == 84
+    assert a[2] == 42
 
 
 def test_fortran_frontend_input_output_connector():
@@ -154,9 +154,9 @@ def test_fortran_frontend_input_output_connector():
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0, 0] == 0)
-    assert (a[0, 1] == 5)
-    assert (a[1, 2] == 0)
+    assert a[0, 0] == 0
+    assert a[0, 1] == 5
+    assert a[1, 2] == 0
 
 
 def test_fortran_frontend_memlet_in_map_test():
@@ -198,18 +198,18 @@ def test_fortran_frontend_memlet_in_map_test():
     for state in sdfg.states():
         if len(state.nodes()) > 1:
             for node in state.nodes():
-                if isinstance(node, AccessNode) and node.data in ['INP', 'OUT']:
+                if isinstance(node, AccessNode) and node.data in ["INP", "OUT"]:
                     edges = [*state.in_edges(node), *state.out_edges(node)]
                     # There should be only one edge in/to the access node
                     assert len(edges) == 1
                     memlet = edges[0].data
                     # Check that the correct memlet has the iteration variable
-                    assert memlet.subset[0] == (iter_var, iter_var, 1)
-                    assert memlet.subset[1] == (1, 10, 1)
+                    subset = memlet.subset if memlet.data in ("INP", "OUT") else memlet.other_subset
+                    assert subset[0] == (iter_var, iter_var, 1)
+                    assert subset[1] == (1, 10, 1)
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_array_3dmap()
     test_fortran_frontend_array_access()
     test_fortran_frontend_input_output_connector()

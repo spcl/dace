@@ -1,15 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from collections import defaultdict
 import copy
-from dace import data, Memlet, subsets, symbolic, dtypes
-from dace.frontend.python import memlet_parser
-from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.frontend.python import memlet_parser
 import itertools
-from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union, Generator, Any
+from collections import defaultdict
+from collections.abc import Callable, Generator, Iterable
+from typing import Any, TypeVar
+
+from dace import Memlet, data, dtypes, subsets, symbolic
+from dace.frontend.python import memlet_parser
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 class MemletReplacer(ast.NodeTransformer):
@@ -18,10 +20,12 @@ class MemletReplacer(ast.NodeTransformer):
     The callable can also return another memlet to replace the current one.
     """
 
-    def __init__(self,
-                 arrays: Dict[str, data.Data],
-                 process: Callable[[Memlet], Union[Memlet, None]],
-                 array_filter: Optional[Set[str]] = None) -> None:
+    def __init__(
+        self,
+        arrays: dict[str, data.Data],
+        process: Callable[[Memlet], Memlet | None],
+        array_filter: set[str] | None = None,
+    ) -> None:
         """
         Create a new memlet replacer.
 
@@ -33,7 +37,7 @@ class MemletReplacer(ast.NodeTransformer):
         self.arrays = arrays
         self.array_filter = array_filter or self.arrays.keys()
 
-    def _parse_memlet(self, node: Union[ast.Name, ast.Subscript]) -> Memlet:
+    def _parse_memlet(self, node: ast.Name | ast.Subscript) -> Memlet:
         """
         Parses a memlet from a subscript or name node.
 
@@ -46,13 +50,13 @@ class MemletReplacer(ast.NodeTransformer):
         elif isinstance(node, ast.Subscript):
             data = node.value.id
         else:
-            raise TypeError('Expected Name or Subscript')
+            raise TypeError("Expected Name or Subscript")
 
         # Parse memlet subset
         array = self.arrays[data]
         subset, newaxes, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
         if newaxes:
-            raise NotImplementedError('Adding new axes to memlets is not supported')
+            raise NotImplementedError("Adding new axes to memlets is not supported")
 
         return Memlet(data=data, subset=subset)
 
@@ -63,9 +67,9 @@ class MemletReplacer(ast.NodeTransformer):
         :param memlet: The memlet to convert.
         :return: The converted node.
         """
-        return ast.parse(f'{memlet.data}[{memlet.subset}]').body[0].value
+        return ast.parse(f"{memlet.data}[{memlet.subset}]").body[0].value
 
-    def _replace(self, node: Union[ast.Name, ast.Subscript]) -> ast.Subscript:
+    def _replace(self, node: ast.Name | ast.Subscript) -> ast.Subscript:
         cur_memlet = self._parse_memlet(node)
         new_memlet = self.process(cur_memlet)
         if new_memlet is None:
@@ -85,13 +89,13 @@ class MemletReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class MemletSet(Set[Memlet]):
+class MemletSet(set[Memlet]):
     """
     Implements a set of memlets that considers subsets that intersect or are covered by its other memlets.
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, *, intersection_is_contained: bool = True) -> None:
+    def __init__(self, iterable: Iterable[Memlet] | None = None, *, intersection_is_contained: bool = True) -> None:
         """
         Initializes a memlet set.
 
@@ -100,7 +104,7 @@ class MemletSet(Set[Memlet]):
                                           only intersects with the contents of the set. If False, only completely
                                           covered subsets would return True.
         """
-        self.internal_set: Dict[str, Set[Memlet]] = {}
+        self.internal_set: dict[str, set[Memlet]] = {}
         self.intersection_is_contained = intersection_is_contained
         if iterable is not None:
             self.update(iterable)
@@ -123,7 +127,7 @@ class MemletSet(Set[Memlet]):
                 self.update(i)
             return
 
-        to_update, = iterable
+        (to_update,) = iterable
         for elem in to_update:
             self.add(elem)
 
@@ -174,7 +178,7 @@ class MemletSet(Set[Memlet]):
 
         return False
 
-    def union(self, *s: Iterable[Memlet]) -> 'MemletSet':
+    def union(self, *s: Iterable[Memlet]) -> "MemletSet":
         """
         Performs a set-union (with memlet union) over the given sets of memlets.
 
@@ -185,18 +189,18 @@ class MemletSet(Set[Memlet]):
         return newset
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
-class MemletDict(Dict[Memlet, T]):
+class MemletDict(dict[Memlet, T]):
     """
     Implements a dictionary with memlet keys that considers subsets that intersect
     or are covered by its other memlets.
     """
 
     def __init__(self, **kwargs) -> None:
-        self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
-        self.covers_cache: Dict[Tuple, bool] = defaultdict()
+        self.internal_dict: dict[str, dict[Memlet, T]] = defaultdict(dict)
+        self.covers_cache: dict[tuple, bool] = defaultdict()
 
         if kwargs:
             self.update(kwargs)
@@ -204,7 +208,7 @@ class MemletDict(Dict[Memlet, T]):
     def __len__(self) -> int:
         return len(self.internal_dict)
 
-    def _getkey(self, elem: Memlet) -> Optional[Memlet]:
+    def _getkey(self, elem: Memlet) -> Memlet | None:
         """
         Returns the corresponding key (exact, covered, intersecting, or indeterminately intersecting memlet)
         if it exists in the dictionary, or None if it does not.
@@ -238,7 +242,7 @@ class MemletDict(Dict[Memlet, T]):
     def clear(self) -> None:
         self.internal_dict.clear()
 
-    def update(self, mapping: Dict[Memlet, T]) -> None:
+    def update(self, mapping: dict[Memlet, T]) -> None:
         for key, value in mapping.items():
             actual_key = self._getkey(key)
             if actual_key is None:
@@ -272,7 +276,7 @@ def memlet_to_map(
     state: SDFGState,
     sdfg: SDFG,
     ignore_strides: bool = True,
-) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+) -> tuple[nodes.MapEntry, nodes.MapExit]:
     """Change a Memlet into a Map.
 
     The function returns a pair consisting of the new Map entry and exit.
@@ -320,37 +324,39 @@ def memlet_to_map(
     if tuple(src_subset_size) == tuple(dst_subset_size):
         # The two subsets have exactly the same shape, so we can just copying with an offset.
         #  We use another index variables for the tests only.
-        maprange = {f'__j{i}': (0, s - 1, 1) for i, s in enumerate(copy_shape)}
-        a_index = [symbolic.pystr_to_symbolic(f'__j{i} + ({src_subset[i][0]})') for i in range(len(copy_shape))]
-        b_index = [symbolic.pystr_to_symbolic(f'__j{i} + ({dst_subset[i][0]})') for i in range(len(copy_shape))]
+        maprange = {f"__j{i}": (0, s - 1, 1) for i, s in enumerate(copy_shape)}
+        a_index = [symbolic.pystr_to_symbolic(f"__j{i} + ({src_subset[i][0]})") for i in range(len(copy_shape))]
+        b_index = [symbolic.pystr_to_symbolic(f"__j{i} + ({dst_subset[i][0]})") for i in range(len(copy_shape))]
     elif red_src_subset_size == red_dst_subset_size and (len(red_dst_subset_size) > 0):
         # If we remove all size 1 dimensions that the two subsets have the same size.
         #  This is essentially the memlet `a[0:10, 2, 0:10] -> 0:10, 10:20`
         #  We use another index variable only for the tests but we would have to
         #  recreate the index anyways.
-        maprange = {f'__j{i}': (0, s - 1, 1) for i, s in enumerate(red_src_subset_size)}
+        maprange = {f"__j{i}": (0, s - 1, 1) for i, s in enumerate(red_src_subset_size)}
         cnt = itertools.count(0)
         a_index = [
-            symbolic.pystr_to_symbolic(f'{src_subset[i][0]}')
-            if s == 1 else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({src_subset[i][0]})')
+            symbolic.pystr_to_symbolic(f"{src_subset[i][0]}")
+            if s == 1
+            else symbolic.pystr_to_symbolic(f"__j{next(cnt)} + ({src_subset[i][0]})")
             for i, s in enumerate(src_subset_size)
         ]
         cnt = itertools.count(0)
         b_index = [
-            symbolic.pystr_to_symbolic(f'{dst_subset[i][0]}')
-            if s == 1 else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({dst_subset[i][0]})')
+            symbolic.pystr_to_symbolic(f"{dst_subset[i][0]}")
+            if s == 1
+            else symbolic.pystr_to_symbolic(f"__j{next(cnt)} + ({dst_subset[i][0]})")
             for i, s in enumerate(dst_subset_size)
         ]
     else:
         # We have to delinearize and linearize
         #  We use another index variable for the tests.
-        maprange = {f'__i{i}': (0, s - 1, 1) for i, s in enumerate(copy_shape)}
+        maprange = {f"__i{i}": (0, s - 1, 1) for i, s in enumerate(copy_shape)}
         if copy_a:
-            a_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+            a_index = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
             b_index = _memlet_to_copy_delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
         else:
             a_index = _memlet_to_copy_delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
-            b_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+            b_index = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
 
     a_subset = subsets.Range([(ind, ind, 1) for ind in a_index])
     b_subset = subsets.Range([(ind, ind, 1) for ind in b_index])
@@ -365,20 +371,22 @@ def memlet_to_map(
             schedule = dtypes.ScheduleType.GPU_Device
 
     # Add copy map
-    t, me, mx = state.add_mapped_tasklet(f'copy_{av}_{bv}',
-                                         maprange,
-                                         dict(__inp=Memlet(data=av, subset=a_subset)),
-                                         '__out = __inp',
-                                         dict(__out=Memlet(data=bv, subset=b_subset)),
-                                         schedule,
-                                         external_edges=True,
-                                         input_nodes={av: avnode},
-                                         output_nodes={bv: bvnode})
+    t, me, mx = state.add_mapped_tasklet(
+        f"copy_{av}_{bv}",
+        maprange,
+        dict(__inp=Memlet(data=av, subset=a_subset)),
+        "__out = __inp",
+        dict(__out=Memlet(data=bv, subset=b_subset)),
+        schedule,
+        external_edges=True,
+        input_nodes={av: avnode},
+        output_nodes={bv: bvnode},
+    )
 
     # Set connector types (due to this transformation appearing in codegen, after connector
     # types have been resolved)
-    t.in_connectors['__inp'] = adesc.dtype
-    t.out_connectors['__out'] = bdesc.dtype
+    t.in_connectors["__inp"] = adesc.dtype
+    t.out_connectors["__out"] = bdesc.dtype
 
     # Remove old edge
     state.remove_edge(edge)
@@ -422,9 +430,10 @@ def can_memlet_be_turned_into_a_map(
     return True
 
 
-def _memlet_to_copy_delinearize_linearize(desc: data.Array, copy_shape: Tuple[symbolic.SymbolicType],
-                                          rng: subsets.Range) -> Tuple[symbolic.SymbolicType]:
-    indices = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+def _memlet_to_copy_delinearize_linearize(
+    desc: data.Array, copy_shape: tuple[symbolic.SymbolicType], rng: subsets.Range
+) -> tuple[symbolic.SymbolicType]:
+    indices = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
 
     # Special case for when both dimensionalities are equal
     if tuple(desc.shape) == tuple(copy_shape):
@@ -433,7 +442,7 @@ def _memlet_to_copy_delinearize_linearize(desc: data.Array, copy_shape: Tuple[sy
     if rng is not None:  # Deal with offsets and strides in range
         indices = rng.coord_at(indices)
 
-    linear_index = sum(indices[i] * data._prod(copy_shape[i + 1:]) for i in range(len(indices)))
+    linear_index = sum(indices[i] * data._prod(copy_shape[i + 1 :]) for i in range(len(indices)))
 
     cur_index = [0] * len(desc.shape)
     divide_by = 1

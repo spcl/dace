@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import importlib.util
+import json
 import os
 import pathlib
-import subprocess
-import importlib.util
 import shutil
-import dace
-import json
+import subprocess
 import tempfile
+
+import dace
 
 REPO_URL = "https://github.com/spcl/TransformationsTest.git"
 REPO_NAME = "external_transformations"
@@ -121,8 +122,9 @@ def _test_import_empty_transformation(env_key: str, env_value: str):
     file_path = list(import_path.rglob(EXPECTED_FILE))
     assert file_path, f"{EXPECTED_FILE} not found"
 
-    spec = importlib.util.spec_from_file_location(f"external_transformations.{REPO_NAME}.{EXPECTED_FILE[:-3]}",
-                                                  file_path[0])
+    spec = importlib.util.spec_from_file_location(
+        f"external_transformations.{REPO_NAME}.{EXPECTED_FILE[:-3]}", file_path[0]
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 

@@ -1,12 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" State elimination transformations """
+"""State elimination transformations"""
 
 import networkx as nx
-from typing import Dict, Set
 
-from dace import data as dt, sdfg, symbolic
+from dace import data as dt
+from dace import sdfg, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion
@@ -224,11 +224,11 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
 
 def _alias_assignments(sdfg: SDFG, edge: InterstateEdge):
-    assignments_to_consider = {}
-    for var, assign in edge.assignments.items():
-        if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(sdfg.arrays[assign], dt.Scalar)):
-            assignments_to_consider[var] = assign
-    return assignments_to_consider
+    return {
+        var: assign
+        for var, assign in edge.assignments.items()
+        if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(sdfg.arrays[assign], dt.Scalar))
+    }
 
 
 @transformation.explicit_cf_compatible
@@ -338,7 +338,8 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
 
 @transformation.explicit_cf_compatible
 class HoistState(transformation.SingleStateTransformation):
-    """ Move a state out of a nested SDFG """
+    """Move a state out of a nested SDFG"""
+
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     @classmethod
@@ -360,7 +361,7 @@ class HoistState(transformation.SingleStateTransformation):
                 return False
             if nsdfg.sdfg.start_state.number_of_nodes() != 0:
                 return False
-            if any([not isinstance(x, SDFGState) for x in nsdfg.sdfg.nodes()]):
+            if any(not isinstance(x, SDFGState) for x in nsdfg.sdfg.nodes()):
                 return False
 
         # Must have at least two states with a hoistable source state
@@ -375,7 +376,7 @@ class HoistState(transformation.SingleStateTransformation):
             return False
 
         # Keep all data descriptors to check for potential issues
-        data_to_check: Set[str] = set()
+        data_to_check: set[str] = set()
 
         # Add data descriptors from interstate edge
         syms = nisedge.data.free_symbols
@@ -396,7 +397,7 @@ class HoistState(transformation.SingleStateTransformation):
 
         # Nested SDFG surrounding edges must contain all of the array
         # TODO(later): Allow this case (with offsetting)
-        outer_data_to_check: Set[str] = set()
+        outer_data_to_check: set[str] = set()
         for e in graph.in_edges(nsdfg):
             if e.dst_conn in data_to_check:
                 outer_data_to_check.add(e.data.data)
@@ -435,7 +436,7 @@ class HoistState(transformation.SingleStateTransformation):
         isedge = state.parent_graph.edges_between(new_state, state)[0]
 
         # Find relevant symbol and data descriptor mapping
-        mapping: Dict[str, str] = {}
+        mapping: dict[str, str] = {}
         mapping.update({k: str(v) for k, v in nsdfg.symbol_mapping.items()})
         mapping.update({k: next(iter(state.in_edges_by_connector(nsdfg, k))).data.data for k in nsdfg.in_connectors})
         mapping.update({k: next(iter(state.out_edges_by_connector(nsdfg, k))).data.data for k in nsdfg.out_connectors})
@@ -473,7 +474,7 @@ class HoistState(transformation.SingleStateTransformation):
             if akey not in sdfg.symbols and akey not in sdfg.arrays:
                 newname = akey
             else:
-                newname = nsdfg.label + '_' + akey
+                newname = nsdfg.label + "_" + akey
 
             isedge.data.assignments[newname] = aval
 

@@ -1,7 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import ctypes
+
 import numpy as np
+
+import dace
 
 
 def test_uintp_size():
@@ -29,9 +31,9 @@ def test_uintp_use():
     ptr = np.empty([1], dtype=np.uintp)
     arr = np.random.rand(20)
     tester(arr, ptr)
-    assert arr.__array_interface__['data'][0] == ptr[0]
+    assert arr.__array_interface__["data"][0] == ptr[0]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_uintp_size()
     test_uintp_use()

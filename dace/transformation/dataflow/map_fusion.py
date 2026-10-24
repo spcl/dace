@@ -18,4 +18,4 @@ class MapFusion(MapFusionVertical):
         """Deprecated: use `MapFusionVertical` instead."""
         super().__init__(*args, **kwargs)
 
-        warnings.warn('MapFusion is deprecated please use MapFusionVertical instead.', DeprecationWarning, stacklevel=2)
+        warnings.warn("MapFusion is deprecated please use MapFusionVertical instead.", DeprecationWarning, stacklevel=2)

@@ -1,15 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains class decorators to ease creating classes and enumerations whose
-    subclasses and values can be registered externally. """
+"""Contains class decorators to ease creating classes and enumerations whose
+subclasses and values can be registered externally."""
+
+from typing import TypeVar
 
 from dace import attr_enum
-from typing import Dict, Type, TypeVar
 
-T = TypeVar('T')
-E = TypeVar('E', bound=attr_enum.ExtensibleAttributeEnum)
+T = TypeVar("T")
+E = TypeVar("E", bound=attr_enum.ExtensibleAttributeEnum)
 
 
-def make_registry(cls: Type[T]) -> Type[T]:
+def make_registry(cls: type[T]) -> type[T]:
     """
     Decorator that turns a class into a user-extensible class with three
     class methods: ``register``, ``unregister``, and ``extensions``.
@@ -20,10 +21,10 @@ def make_registry(cls: Type[T]) -> Type[T]:
     extensions.
     """
 
-    def _register(cls: Type, subclass: Type, kwargs: Dict):
+    def _register(cls: type, subclass: type, kwargs: dict):
         cls._registry_[subclass] = kwargs
 
-    def _unregister(cls: Type, subclass: Type):
+    def _unregister(cls: type, subclass: type):
         del cls._registry_[subclass]
 
     cls._registry_ = {}
@@ -34,7 +35,7 @@ def make_registry(cls: Type[T]) -> Type[T]:
     return cls
 
 
-def autoregister(cls: Type, **kwargs):
+def autoregister(cls: type, **kwargs):
     """
     Decorator for subclasses of user-extensible classes (see ``make_registry``)
     that automatically registers the subclass with the superclass registry upon
@@ -42,11 +43,11 @@ def autoregister(cls: Type, **kwargs):
     """
     registered = False
     for base in cls.__bases__:
-        if hasattr(base, '_registry_') and hasattr(base, 'register'):
+        if hasattr(base, "_registry_") and hasattr(base, "register"):
             base.register(cls, **kwargs)
             registered = True
     if not registered:
-        raise TypeError('Class does not extend registry classes')
+        raise TypeError("Class does not extend registry classes")
     return cls
 
 
@@ -65,5 +66,5 @@ def undefined_safe_enum(cls: type[E]) -> type[E]:
     """
     if not issubclass(cls, attr_enum.ExtensibleAttributeEnum):
         raise TypeError("Only ExtensibleAttributeEnum subclasses may be used with undefined values")
-    cls.register('Undefined')
+    cls.register("Undefined")
     return cls

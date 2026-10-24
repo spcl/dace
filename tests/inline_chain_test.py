@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -30,7 +31,7 @@ def test():
     inline_chain_test(A)
 
     diff = np.linalg.norm(A - (refA + 2)) / 400
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 

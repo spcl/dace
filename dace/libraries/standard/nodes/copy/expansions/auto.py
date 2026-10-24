@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Default expansion: dispatches via :func:`select_copy_implementation`.
-"""
+"""Default expansion: dispatches via :func:`select_copy_implementation`."""
+
 from typing import TYPE_CHECKING
 
 from dace import library
@@ -13,10 +13,11 @@ if TYPE_CHECKING:
     pass
 
 
-@library.register_expansion(CopyLibraryNode, 'Auto')
+@library.register_expansion(CopyLibraryNode, "Auto")
 class ExpandAuto(ExpandTransformation):
     """Default expansion: dispatches to the implementation chosen by
     :func:`select_copy_implementation` from endpoint storages, subset shapes, and scope."""
+
     environments = []
 
     @staticmethod

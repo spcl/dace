@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import polybench
 
-N = dace.symbol('N')
+import dace
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+N = dace.symbol("N")
+
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.int32
 base = dace.int8
 
@@ -74,16 +75,15 @@ def nussinov(seq: datatype[N], table: datatype[N, N]):
 
 
 def print_result(filename, *args, n=None, **kwargs):
-    with open(filename, 'w') as fp:
+    with open(filename, "w") as fp:
         fp.write("==BEGIN DUMP_ARRAYS==\n")
-        fp.write("begin dump: %s\n" % 'table')
+        fp.write("begin dump: {}\n".format("table"))
         for i in range(0, n):
-            for j in range(i, n):
-                fp.write("{} ".format(args[1][i, j]))
+            fp.writelines(f"{args[1][i, j]} " for j in range(i, n))
             fp.write("\n")
-        fp.write("\nend   dump: %s\n" % 'table')
+        fp.write("\nend   dump: {}\n".format("table"))
         fp.write("==END   DUMP_ARRAYS==\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     polybench.main(sizes, args, print_result, init_array, nussinov)

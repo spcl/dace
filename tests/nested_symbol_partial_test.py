@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 def test_nested_symbol_partial():
@@ -25,5 +26,5 @@ def test_nested_symbol_partial():
     assert np.allclose(out, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_symbol_partial()

@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 ##################
 # Lists
@@ -43,7 +44,7 @@ def test_local_list():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_local_list_with_slice():
     local_axes = [1, 2, 0, 100]
 
@@ -57,7 +58,7 @@ def test_local_list_with_slice():
 
 
 def test_local_list_with_symbols():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
     local_shape = [N, 4]
 
     @dace
@@ -72,7 +73,7 @@ def test_local_list_with_symbols():
 
 
 def test_local_list_nested_lists():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
     local_shape = [[N], 4]
 
     @dace

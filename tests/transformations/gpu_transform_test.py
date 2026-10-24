@@ -1,14 +1,16 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Unit tests for the GPU to-device transformation. """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Unit tests for the GPU to-device transformation."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
+from dace.transformation.dataflow import GPUTransformLocalStorage
 from dace.transformation.interstate import GPUTransformSDFG
 
 
 def test_toplevel_transient_lifetime():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def program(A: dace.float64[20, 20]):
@@ -22,7 +24,7 @@ def test_toplevel_transient_lifetime():
     sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
 
     for name, desc in sdfg.arrays.items():
-        if name == 'tmp2' and type(desc) is dace.data.Array:
+        if name == "tmp2" and type(desc) is dace.data.Array:
             assert desc.lifetime is dace.AllocationLifetime.SDFG
         else:
             assert desc.lifetime is not dace.AllocationLifetime.SDFG
@@ -48,7 +50,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
 
     @dace.program
     def main_program(a: dace.int32):
-        out = np.ndarray((10, ), dtype=np.int32)
+        out = np.ndarray((10,), dtype=np.int32)
         nested_program(a, out)
         return out
 
@@ -80,7 +82,7 @@ def test_write_subset():
 
 def test_write_full():
 
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def write_full(A: dace.int32[M, N]):
@@ -92,7 +94,7 @@ def test_write_full():
 
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace.nodes.AccessNode) and node.data == 'A':
+            if isinstance(node, dace.nodes.AccessNode) and node.data == "A":
                 assert state.out_degree(node) == 0
 
 
@@ -127,7 +129,7 @@ def test_free_tasklet(transient, scalar):
     if scalar:
         arr_name, arr = sdfg.add_scalar("A", dace.float32, transient=transient)
     else:
-        arr_name, arr = sdfg.add_array("A", (4, ), dace.float32, transient=transient)
+        arr_name, arr = sdfg.add_array("A", (4,), dace.float32, transient=transient)
 
     an = state.add_access(arr_name)
 
@@ -136,17 +138,70 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(validate=True,
-                                   validate_all=True,
-                                   permissive=True,
-                                   sequential_innermaps=True,
-                                   register_transients=False,
-                                   simplify=False)
+    sdfg.apply_gpu_transformations(
+        validate=True,
+        validate_all=True,
+        permissive=True,
+        sequential_innermaps=True,
+        register_transients=False,
+        simplify=False,
+    )
 
     sdfg.validate()
 
 
-if __name__ == '__main__':
+def _row_doubling_body(shape):
+    """``b[0, j] = 2 * a[0, j]``, with both connectors describing the whole container."""
+    sdfg = dace.SDFG("body")
+    sdfg.add_array("a", shape, dace.float64)
+    sdfg.add_array("b", shape, dace.float64)
+    sdfg.add_symbol("j", dace.int64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {"x"}, {"y"}, "y = x * 2")
+    state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[0, j]"))
+    state.add_edge(tasklet, "y", state.add_write("b"), None, dace.Memlet("b[0, j]"))
+    return sdfg
+
+
+def test_gpu_local_storage_of_a_nested_sdfg_row():
+    """The copy on the device holds one row, so the connectors describe a row rather than a matrix.
+
+    ``GPUTransformLocalStorage`` copies only the part of each array the map reads, dropping the
+    dimensions the copy is a single index of. Under the nested SDFG contract (see
+    ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector is the container it is connected to,
+    so the connectors below have to be restated the same way.
+    """
+    shape = (4, 5)
+    sdfg = dace.SDFG("gpu_local_storage_nested")
+    sdfg.add_array("A", shape, dace.float64)
+    sdfg.add_array("B", shape, dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", dict(j="0:%d" % shape[1]))
+    node = state.add_nested_sdfg(_row_doubling_body(shape), {"a"}, {"b"}, {"j": "j"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="a", memlet=dace.Memlet("A[0, j]"))
+    state.add_memlet_path(node, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[0, j]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(GPUTransformLocalStorage) == 1
+
+    for edge in state.all_edges(node):
+        connector = edge.dst_conn if edge.dst is node else edge.src_conn
+        assert len(node.sdfg.arrays[connector].shape) == 1
+        assert node.sdfg.arrays[connector].is_equivalent(sdfg.arrays[edge.data.data])
+    sdfg.validate()
+
+
+def test_interstate_condition_reads_a_host_copy_of_a_gpu_map_output():
+    sdfg = dace.SDFG("gpu_output_read_by_a_condition")
+    sdfg.add_array("flag", [4], dace.int32, transient=True)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_mapped_tasklet("set", {"i": "0:4"}, {}, "o = 1", {"o": dace.Memlet("flag[i]")}, external_edges=True)
+    sdfg.add_edge(first, sdfg.add_state("second"), dace.InterstateEdge("flag[0] > 0"))
+    sdfg.apply_transformations(GPUTransformSDFG, options=dict(simplify=False))
+    sdfg.validate()
+
+
+if __name__ == "__main__":
     test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
@@ -155,3 +210,5 @@ if __name__ == '__main__':
     for scalar in [False, True]:
         for transient in [False, True]:
             test_free_tasklet(transient, scalar)
+    test_gpu_local_storage_of_a_nested_sdfg_row()
+    test_interstate_condition_reads_a_host_copy_of_a_gpu_map_output()

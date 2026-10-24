@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-symsym = dace.symbol('symsym', dace.float64)
-value1 = dace.symbol('value1', dace.float64)
-value2 = dace.symbol('value2', dace.float64)
+import dace
+
+symsym = dace.symbol("symsym", dace.float64)
+value1 = dace.symbol("value1", dace.float64)
+value2 = dace.symbol("value2", dace.float64)
 
 
 @dace.program
@@ -35,8 +36,8 @@ def test_symbol_mapping_replace():
     c = 2.0
     outer(A, inp1=b, inp2=c)
     outer.f(ref, inp1=b, inp2=c)
-    assert (np.allclose(A, ref))
+    assert np.allclose(A, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symbol_mapping_replace()

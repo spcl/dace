@@ -1,10 +1,11 @@
-import numpy as np
 import argparse
-import scipy
-import dace
-from dace.memlet import Memlet
 
-import dace.libraries.blas as blas
+import numpy as np
+import scipy
+
+import dace
+from dace.libraries import blas
+from dace.memlet import Memlet
 
 
 def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):
@@ -44,14 +45,16 @@ def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args
     return sdfg
 
 
-def run_gemv(target: str,
-             n: int,
-             m: int,
-             alpha: float = 1,
-             transposed: bool = False,
-             vectorize: int = 1,
-             tile_size_x: int = 32,
-             tile_size_y: int = 32):
+def run_gemv(
+    target: str,
+    n: int,
+    m: int,
+    alpha: float = 1,
+    transposed: bool = False,
+    vectorize: int = 1,
+    tile_size_x: int = 32,
+    tile_size_y: int = 32,
+):
 
     beta = 0  # TODO: GEMV is not currently implemented for beta != 0
     if target == "pure":
@@ -80,6 +83,27 @@ def test_pure():
     run_gemv("pure", 256, 512, transposed=True)
 
 
+def test_pure_with_a_register_vector():
+    """A heap matrix and a register vector both live on the host, so the pure expansion multiplies them."""
+    sdfg = dace.SDFG("gemv_register_operand")
+    sdfg.add_array("A", [3, 3], dace.float64)
+    sdfg.add_array("x", [3], dace.float64)
+    sdfg.add_array("y", [3], dace.float64)
+    sdfg.add_array("xr", [3], dace.float64, transient=True, storage=dace.StorageType.Register)
+    state = sdfg.add_state()
+    xr = state.add_access("xr")
+    state.add_nedge(state.add_read("x"), xr, Memlet("x[0:3]"))
+    node = blas.Gemv("gemv")
+    node.implementation = "pure"
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_A", Memlet("A[0:3, 0:3]"))
+    state.add_edge(xr, None, node, "_x", Memlet("xr[0:3]"))
+    state.add_edge(node, "_y", state.add_write("y"), None, Memlet("y[0:3]"))
+    A, x, y = np.random.rand(3, 3), np.random.rand(3), np.zeros(3)
+    sdfg(A=A, x=x, y=y)
+    assert np.allclose(y, A @ x)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=256)
@@ -94,5 +118,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_gemv(args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x,
-             args.tile_size_y)
+    run_gemv(
+        args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x, args.tile_size_y
+    )

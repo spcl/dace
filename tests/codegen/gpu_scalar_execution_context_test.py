@@ -3,11 +3,12 @@
 Tests how code is generated for free tasklets inside a GPU kernel nested SDFG.
 """
 
+import numpy as np
+import pytest
+
 import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
-import numpy as np
-import pytest
 
 
 def _tester(A: dace.float64[64]):
@@ -19,14 +20,14 @@ def _tester(A: dace.float64[64]):
 
 def _modify_array(sdfg: dace.SDFG, storage: dace.StorageType):
     for nsdfg, aname, aval in sdfg.arrays_recursive():
-        if aname == 't':
+        if aname == "t":
             if storage == dace.StorageType.GPU_Shared:
                 aval = dace.data.Array(aval.dtype, [1], transient=aval.transient)
                 nsdfg.arrays[aname] = aval
             aval.storage = storage
             break
     else:
-        raise ValueError('Array not found')
+        raise ValueError("Array not found")
 
 
 def _make_program(storage: dace.StorageType, persistent=False):
@@ -63,16 +64,16 @@ def test_shared_scalar_update():
     _tester(aref)
 
     # Ensure block size will create at least two thread-blocks
-    with dace.config.set_temporary('compiler', 'cuda', 'persistent_map_SM_fraction', value=0.0001):
-        with dace.config.set_temporary('compiler', 'cuda', 'persistent_map_occupancy', value=2):
-            with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='32,1,1'):
+    with dace.config.set_temporary("compiler", "cuda", "persistent_map_SM_fraction", value=0.0001):
+        with dace.config.set_temporary("compiler", "cuda", "persistent_map_occupancy", value=2):
+            with dace.config.set_temporary("compiler", "cuda", "default_block_size", value="32,1,1"):
                 sdfg(a)
 
     assert np.allclose(a, aref)
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('persistent', (False, True))
+@pytest.mark.parametrize("persistent", (False, True))
 def test_register_scalar_update(persistent):
     sdfg = _make_program(dace.StorageType.Register, persistent)
 
@@ -84,7 +85,7 @@ def test_register_scalar_update(persistent):
     assert np.allclose(a, aref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_global_scalar_update()
     test_shared_scalar_update()
     test_register_scalar_update(False)

@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-
 from dace import nodes
 from dace.sdfg import utils
 
@@ -32,10 +31,7 @@ def test_get_view_node() -> None:
         map_entry_j, map_exit_j = state.add_map("j_map", {"__j": dace.subsets.Range.from_string("0:20")})
         tasklet = state.add_tasklet(
             "increment",
-            inputs={
-                "a": None,
-                "inc": None
-            },
+            inputs={"a": None, "inc": None},
             outputs={"b": None},
             code="b = a + inc",
         )

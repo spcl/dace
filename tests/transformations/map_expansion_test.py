@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 from dace.transformation.dataflow import MapExpansion
 
 
@@ -97,7 +98,7 @@ def test_expand_without_dynamic_inputs():
     def expansion(A: dace.float32[20, 30, 5], rng: dace.int32[2]):
 
         @dace.map
-        def mymap(i: _[0:20], j: _[rng[0]:rng[1]], k: _[0:5]):
+        def mymap(i: _[0:20], j: _[rng[0] : rng[1]], k: _[0:5]):
             a << A[i, j, k]
             b >> A[i, j, k]
             b = a * 2
@@ -110,14 +111,14 @@ def test_expand_without_dynamic_inputs():
     sdfg = expansion.to_sdfg()
     sdfg(A=A, rng=b)
     diff = np.linalg.norm(A - expected)
-    print('Difference (before transformation):', diff)
+    print("Difference (before transformation):", diff)
 
     sdfg.apply_transformations(MapExpansion)
 
     sdfg(A=A, rng=b)
     expected[:, 5:10, :] *= 2
     diff2 = np.linalg.norm(A - expected)
-    print('Difference:', diff2)
+    print("Difference:", diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
 
 
@@ -140,7 +141,7 @@ def test_expand_with_limits():
     sdfg.simplify()
     sdfg(A=A)
     diff = np.linalg.norm(A - expected)
-    print('Difference (before transformation):', diff)
+    print("Difference (before transformation):", diff)
 
     sdfg.apply_transformations(MapExpansion, options=dict(expansion_limit=1))
 
@@ -161,14 +162,14 @@ def test_expand_with_limits():
             assert state.out_degree(node) == 1
             assert len(node.out_connectors) == 1
             assert len(node.map.range.ranges) == 2
-            assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
+            assert [x[1] - x[0] + 1 for x in node.map.range.ranges] == [30, 5]
 
         map_entries.add(node)
 
     sdfg(A=A)
     expected *= 2
     diff2 = np.linalg.norm(A - expected)
-    print('Difference:', diff2)
+    print("Difference:", diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
     assert len(map_entries) == 2
 
@@ -205,9 +206,41 @@ def test_expand_with_dependency_edges():
     assert np.all(B == B_expected)
 
 
-if __name__ == '__main__':
+def test_collapse_is_clamped_to_the_remaining_dimensions():
+    """``collapse(n)`` fuses the next n loops. The first map is reused with fewer parameters, so a
+    stale count would emit ``collapse(2)`` on a one-dimensional loop, which no compiler accepts."""
+    sdfg = dace.SDFG("expansion_collapse")
+    sdfg.add_array("a", (16, 16), dace.float64)
+    sdfg.add_array("b", (16, 16), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    state.add_mapped_tasklet(
+        "m",
+        {"i": "0:16", "j": "0:16"},
+        {"inp": dace.Memlet("a[i, j]")},
+        "o = inp * 2.0",
+        {"o": dace.Memlet("b[i, j]")},
+        schedule=dace.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    entry.map.collapse = 2
+
+    assert sdfg.apply_transformations(MapExpansion) == 1
+    for node in state.nodes():
+        if isinstance(node, dace.nodes.MapEntry):
+            assert node.map.collapse <= len(node.map.params)
+    assert "collapse(2)" not in sdfg.generate_code()[0].clean_code
+
+    a = np.random.rand(16, 16)
+    b = np.zeros((16, 16))
+    sdfg(a=a, b=b)
+    assert np.allclose(b, a * 2.0)
+
+
+if __name__ == "__main__":
     test_expand_with_inputs()
     test_expand_without_inputs()
     test_expand_without_dynamic_inputs()
     test_expand_with_limits()
     test_expand_with_dependency_edges()
+    test_collapse_is_clamped_to_the_remaining_dimensions()

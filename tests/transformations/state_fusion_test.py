@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.interstate import StateFusion
 import networkx as nx
 import numpy as np
+
+import dace
+from dace.transformation.interstate import StateFusion
 
 
 # Inter-state condition tests
@@ -11,12 +12,12 @@ def test_fuse_assignments():
     Two states in which the interstate assignment depends on an interstate
     value going into the first state. Should fail.
     """
-    sdfg = dace.SDFG('state_fusion_test')
+    sdfg = dace.SDFG("state_fusion_test")
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
-    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k="k + 1")))
     sdfg.apply_transformations_repeated(StateFusion)
     assert sdfg.number_of_nodes() == 3
 
@@ -26,16 +27,16 @@ def test_fuse_assignments_2():
     Two states in which the first's state's input assignment depends on a symbol assigned (again)
     on the common interstate edge. Should fail.
     """
-    sdfg = dace.SDFG('state_fusion_test')
+    sdfg = dace.SDFG("state_fusion_test")
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
     state4 = sdfg.add_state()
     state5 = sdfg.add_state()
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
-    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
-    sdfg.add_edge(state3, state4, dace.InterstateEdge(assignments=dict(l='k + 1')))
-    sdfg.add_edge(state4, state5, dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k="k + 1")))
+    sdfg.add_edge(state3, state4, dace.InterstateEdge(assignments=dict(l="k + 1")))
+    sdfg.add_edge(state4, state5, dace.InterstateEdge(assignments=dict(k="k + 1")))
     sdfg.apply_transformations_repeated(StateFusion)
     assert sdfg.number_of_nodes() == 5
 
@@ -45,123 +46,125 @@ def test_fuse_assignment_in_use():
     Two states with an interstate assignment in between, where the assigned
     value is used in the first state. Should fail.
     """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [2], dace.int32)
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [2], dace.int32)
     state1, state2, state3, state4 = tuple(sdfg.add_state() for _ in range(4))
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3, dace.InterstateEdge())
     sdfg.add_edge(state3, state4, dace.InterstateEdge(assignments=dict(k=2)))
 
-    state3.add_edge(state3.add_tasklet('one', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
-                    dace.Memlet('A[0]'))
+    state3.add_edge(
+        state3.add_tasklet("one", {}, {"a"}, "a = k"), "a", state3.add_write("A"), None, dace.Memlet("A[0]")
+    )
 
-    state4.add_edge(state3.add_tasklet('two', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
-                    dace.Memlet('A[1]'))
+    state4.add_edge(
+        state3.add_tasklet("two", {}, {"a"}, "a = k"), "a", state3.add_write("A"), None, dace.Memlet("A[1]")
+    )
 
     try:
         StateFusion.apply_to(sdfg, first_state=state3, second_state=state4)
-        raise AssertionError('States fused, test failed')
+        raise AssertionError("States fused, test failed")
     except ValueError:
-        print('Exception successfully caught')
+        print("Exception successfully caught")
 
 
 # Connected components tests
 def test_two_to_one_cc_fusion():
-    """ Two states, first with two connected components, second with one. """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [1], dace.int32)
-    sdfg.add_array('B', [1], dace.int32)
-    sdfg.add_array('C', [1], dace.int32)
+    """Two states, first with two connected components, second with one."""
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    sdfg.add_array("C", [1], dace.int32)
     state1, state2 = tuple(sdfg.add_state() for _ in range(2))
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a', state1.add_write('A'), None, dace.Memlet('A'))
+    state1.add_edge(state1.add_tasklet("one", {}, {"a"}, "a = 1"), "a", state1.add_write("A"), None, dace.Memlet("A"))
 
-    t2 = state1.add_tasklet('two', {}, {'b', 'c'}, 'b = 2; c = 3')
-    state1.add_edge(t2, 'b', state1.add_write('B'), None, dace.Memlet('B'))
-    state1.add_edge(t2, 'c', state1.add_write('C'), None, dace.Memlet('C'))
+    t2 = state1.add_tasklet("two", {}, {"b", "c"}, "b = 2; c = 3")
+    state1.add_edge(t2, "b", state1.add_write("B"), None, dace.Memlet("B"))
+    state1.add_edge(t2, "c", state1.add_write("C"), None, dace.Memlet("C"))
 
     # Second state
-    t2 = state2.add_tasklet('three', {'a', 'b', 'c'}, {'out'}, 'out = a+b+c')
-    state2.add_edge(state2.add_read('A'), None, t2, 'a', dace.Memlet('A'))
-    state2.add_edge(state2.add_read('B'), None, t2, 'b', dace.Memlet('B'))
-    state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
-    state2.add_edge(t2, 'out', state2.add_write('C'), None, dace.Memlet('C'))
+    t2 = state2.add_tasklet("three", {"a", "b", "c"}, {"out"}, "out = a+b+c")
+    state2.add_edge(state2.add_read("A"), None, t2, "a", dace.Memlet("A"))
+    state2.add_edge(state2.add_read("B"), None, t2, "b", dace.Memlet("B"))
+    state2.add_edge(state2.add_read("C"), None, t2, "c", dace.Memlet("C"))
+    state2.add_edge(t2, "out", state2.add_write("C"), None, dace.Memlet("C"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 def test_one_to_two_cc_fusion():
-    """ Two states, first with one connected component, second with two. """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [1], dace.int32)
-    sdfg.add_array('B', [1], dace.int32)
+    """Two states, first with one connected component, second with two."""
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
     state1, state2 = tuple(sdfg.add_state() for _ in range(2))
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    t1 = state1.add_tasklet('one', {}, {'a', 'b'}, 'a = 1; b = 2')
-    state1.add_edge(t1, 'a', state1.add_write('A'), None, dace.Memlet('A'))
-    state1.add_edge(t1, 'b', state1.add_write('B'), None, dace.Memlet('B'))
+    t1 = state1.add_tasklet("one", {}, {"a", "b"}, "a = 1; b = 2")
+    state1.add_edge(t1, "a", state1.add_write("A"), None, dace.Memlet("A"))
+    state1.add_edge(t1, "b", state1.add_write("B"), None, dace.Memlet("B"))
 
     # Second state
-    state2.add_edge(state2.add_read('A'), None, state2.add_tasklet('one', {'a'}, {}, ''), 'a', dace.Memlet('A'))
-    state2.add_edge(state2.add_read('B'), None, state2.add_tasklet('two', {'b'}, {}, ''), 'b', dace.Memlet('B'))
+    state2.add_edge(state2.add_read("A"), None, state2.add_tasklet("one", {"a"}, {}, ""), "a", dace.Memlet("A"))
+    state2.add_edge(state2.add_read("B"), None, state2.add_tasklet("two", {"b"}, {}, ""), "b", dace.Memlet("B"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 def test_two_cc_fusion_separate():
-    """ Two states, both with two connected components, fused separately. """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [1], dace.int32)
-    sdfg.add_array('B', [1], dace.int32)
-    sdfg.add_array('C', [1], dace.int32)
+    """Two states, both with two connected components, fused separately."""
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    sdfg.add_array("C", [1], dace.int32)
     state1, state2 = tuple(sdfg.add_state() for _ in range(2))
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a', state1.add_write('A'), None, dace.Memlet('A'))
+    state1.add_edge(state1.add_tasklet("one", {}, {"a"}, "a = 1"), "a", state1.add_write("A"), None, dace.Memlet("A"))
 
-    t2 = state1.add_tasklet('two', {}, {'b', 'c'}, 'b = 2; c = 3')
-    state1.add_edge(t2, 'b', state1.add_write('B'), None, dace.Memlet('B'))
-    state1.add_edge(t2, 'c', state1.add_write('C'), None, dace.Memlet('C'))
+    t2 = state1.add_tasklet("two", {}, {"b", "c"}, "b = 2; c = 3")
+    state1.add_edge(t2, "b", state1.add_write("B"), None, dace.Memlet("B"))
+    state1.add_edge(t2, "c", state1.add_write("C"), None, dace.Memlet("C"))
 
     # Second state
-    state2.add_edge(state2.add_read('A'), None, state2.add_tasklet('one', {'a'}, {}, ''), 'a', dace.Memlet('A'))
+    state2.add_edge(state2.add_read("A"), None, state2.add_tasklet("one", {"a"}, {}, ""), "a", dace.Memlet("A"))
 
-    t2 = state2.add_tasklet('two', {'b', 'c'}, {}, '')
-    state2.add_edge(state2.add_read('B'), None, t2, 'b', dace.Memlet('B'))
-    state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
+    t2 = state2.add_tasklet("two", {"b", "c"}, {}, "")
+    state2.add_edge(state2.add_read("B"), None, t2, "b", dace.Memlet("B"))
+    state2.add_edge(state2.add_read("C"), None, t2, "c", dace.Memlet("C"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 def test_two_cc_fusion_together():
-    """ Two states, both with two connected components, fused to one CC. """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [1], dace.int32)
-    sdfg.add_array('B', [1], dace.int32)
-    sdfg.add_array('C', [1], dace.int32)
+    """Two states, both with two connected components, fused to one CC."""
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    sdfg.add_array("C", [1], dace.int32)
     state1, state2 = tuple(sdfg.add_state() for _ in range(2))
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a', state1.add_write('A'), None, dace.Memlet('A'))
+    state1.add_edge(state1.add_tasklet("one", {}, {"a"}, "a = 1"), "a", state1.add_write("A"), None, dace.Memlet("A"))
 
-    t2 = state1.add_tasklet('two', {}, {'b', 'c'}, 'b = 2; c = 3')
-    state1.add_edge(t2, 'b', state1.add_write('B'), None, dace.Memlet('B'))
-    state1.add_edge(t2, 'c', state1.add_write('C'), None, dace.Memlet('C'))
+    t2 = state1.add_tasklet("two", {}, {"b", "c"}, "b = 2; c = 3")
+    state1.add_edge(t2, "b", state1.add_write("B"), None, dace.Memlet("B"))
+    state1.add_edge(t2, "c", state1.add_write("C"), None, dace.Memlet("C"))
 
     # Second state
-    state2.add_edge(state2.add_read('B'), None, state2.add_tasklet('one', {'a'}, {}, ''), 'a', dace.Memlet('B'))
+    state2.add_edge(state2.add_read("B"), None, state2.add_tasklet("one", {"a"}, {}, ""), "a", dace.Memlet("B"))
 
-    t2 = state2.add_tasklet('two', {'b', 'c'}, {'d', 'e'}, 'd = b + c; e = b')
-    state2.add_edge(state2.add_read('A'), None, t2, 'b', dace.Memlet('A'))
-    state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
-    state2.add_edge(t2, 'd', state2.add_write('A'), None, dace.Memlet('A'))
-    state2.add_edge(t2, 'e', state2.add_write('C'), None, dace.Memlet('C'))
+    t2 = state2.add_tasklet("two", {"b", "c"}, {"d", "e"}, "d = b + c; e = b")
+    state2.add_edge(state2.add_read("A"), None, t2, "b", dace.Memlet("A"))
+    state2.add_edge(state2.add_read("C"), None, t2, "c", dace.Memlet("C"))
+    state2.add_edge(t2, "d", state2.add_write("A"), None, dace.Memlet("A"))
+    state2.add_edge(t2, "e", state2.add_write("C"), None, dace.Memlet("C"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
@@ -188,11 +191,11 @@ def test_write_write_no_overlap():
     """
     Two states where both write to different ranges of an array.
     """
-    N = dace.symbol('N', positive=True)
+    N = dace.symbol("N", positive=True)
 
     @dace.program
     def state_fusion_test(A: dace.int32[N, N]):
-        A[0:N - 1, :] = 1
+        A[0 : N - 1, :] = 1
         A[N - 1, :] = 2
 
     sdfg = state_fusion_test.to_sdfg(simplify=False)
@@ -205,7 +208,7 @@ def test_read_write_no_overlap():
     Two states where two separate CCs write and read to/from an array, but
     in different ranges.
     """
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def state_fusion_test(A: dace.int32[N, N], B: dace.int32[N, N]):
@@ -222,27 +225,27 @@ def test_array_in_middle_no_overlap():
     Two states that write and read from an array without overlap. Should be
     fused to two separate components.
     """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [10, 10], dace.int32)
-    sdfg.add_array('B', [5, 5], dace.int32)
-    sdfg.add_array('C', [5, 5], dace.int32)
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [10, 10], dace.int32)
+    sdfg.add_array("B", [5, 5], dace.int32)
+    sdfg.add_array("C", [5, 5], dace.int32)
     state = sdfg.add_state()
-    t1 = state.add_tasklet('init_a1', {}, {'a'}, '')
-    rw1 = state.add_access('A')
-    t2 = state.add_tasklet('a2b', {'a'}, {'b'}, '')
-    wb = state.add_write('B')
-    state.add_edge(t1, 'a', rw1, None, dace.Memlet('A[0:5, 0:5]'))
-    state.add_edge(rw1, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
-    state.add_edge(t2, 'b', wb, None, dace.Memlet('B'))
+    t1 = state.add_tasklet("init_a1", {}, {"a"}, "")
+    rw1 = state.add_access("A")
+    t2 = state.add_tasklet("a2b", {"a"}, {"b"}, "")
+    wb = state.add_write("B")
+    state.add_edge(t1, "a", rw1, None, dace.Memlet("A[0:5, 0:5]"))
+    state.add_edge(rw1, None, t2, "a", dace.Memlet("A[0:5, 0:5]"))
+    state.add_edge(t2, "b", wb, None, dace.Memlet("B"))
 
     state2 = sdfg.add_state_after(state)
-    t1 = state2.add_tasklet('init_a2', {}, {'a'}, '')
-    rw2 = state2.add_access('A')
-    t2 = state2.add_tasklet('a2c', {'a'}, {'c'}, '')
-    wc = state2.add_write('C')
-    state2.add_edge(t1, 'a', rw2, None, dace.Memlet('A[5:10, 5:10]'))
-    state2.add_edge(rw2, None, t2, 'a', dace.Memlet('A[5:10, 5:10]'))
-    state2.add_edge(t2, 'c', wc, None, dace.Memlet('C'))
+    t1 = state2.add_tasklet("init_a2", {}, {"a"}, "")
+    rw2 = state2.add_access("A")
+    t2 = state2.add_tasklet("a2c", {"a"}, {"c"}, "")
+    wc = state2.add_write("C")
+    state2.add_edge(t1, "a", rw2, None, dace.Memlet("A[5:10, 5:10]"))
+    state2.add_edge(rw2, None, t2, "a", dace.Memlet("A[5:10, 5:10]"))
+    state2.add_edge(t2, "c", wc, None, dace.Memlet("C"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
     assert len(list(nx.weakly_connected_components(sdfg.node(0).nx))) == 2
@@ -253,27 +256,27 @@ def test_array_in_middle_overlap():
     Two states that write and read from an array with overlap. Should not be
     fused.
     """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [10, 10], dace.int32)
-    sdfg.add_array('B', [5, 5], dace.int32)
-    sdfg.add_array('C', [5, 5], dace.int32)
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [10, 10], dace.int32)
+    sdfg.add_array("B", [5, 5], dace.int32)
+    sdfg.add_array("C", [5, 5], dace.int32)
     state = sdfg.add_state()
-    t1 = state.add_tasklet('init_a1', {}, {'a'}, '')
-    rw1 = state.add_access('A')
-    t2 = state.add_tasklet('a2b', {'a'}, {'b'}, '')
-    wb = state.add_write('B')
-    state.add_edge(t1, 'a', rw1, None, dace.Memlet('A[0:5, 0:5]'))
-    state.add_edge(rw1, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
-    state.add_edge(t2, 'b', wb, None, dace.Memlet('B'))
+    t1 = state.add_tasklet("init_a1", {}, {"a"}, "")
+    rw1 = state.add_access("A")
+    t2 = state.add_tasklet("a2b", {"a"}, {"b"}, "")
+    wb = state.add_write("B")
+    state.add_edge(t1, "a", rw1, None, dace.Memlet("A[0:5, 0:5]"))
+    state.add_edge(rw1, None, t2, "a", dace.Memlet("A[0:5, 0:5]"))
+    state.add_edge(t2, "b", wb, None, dace.Memlet("B"))
 
     state2 = sdfg.add_state_after(state)
-    t1 = state2.add_tasklet('init_a2', {}, {'a'}, '')
-    rw2 = state2.add_access('A')
-    t2 = state2.add_tasklet('a2c', {'a'}, {'c'}, '')
-    wc = state2.add_write('C')
-    state2.add_edge(t1, 'a', rw2, None, dace.Memlet('A[0:5, 0:5]'))
-    state2.add_edge(rw2, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
-    state2.add_edge(t2, 'c', wc, None, dace.Memlet('C'))
+    t1 = state2.add_tasklet("init_a2", {}, {"a"}, "")
+    rw2 = state2.add_access("A")
+    t2 = state2.add_tasklet("a2c", {"a"}, {"c"}, "")
+    wc = state2.add_write("C")
+    state2.add_edge(t1, "a", rw2, None, dace.Memlet("A[0:5, 0:5]"))
+    state2.add_edge(rw2, None, t2, "a", dace.Memlet("A[0:5, 0:5]"))
+    state2.add_edge(t2, "c", wc, None, dace.Memlet("C"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 0
 
@@ -284,26 +287,26 @@ def test_two_outputs_same_name():
     Should be fused to the right node in the second state or a data race will
     occur.
     """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [2], dace.int32)
-    sdfg.add_scalar('scal', dace.int32)
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_scalar("scal", dace.int32)
     state = sdfg.add_state()
-    r = state.add_read('scal')
-    t1 = state.add_tasklet('init_a1', {'s'}, {'a'}, 'a = 1 + s')
-    w1 = state.add_write('A')
-    t2 = state.add_tasklet('init_a2', {'s'}, {'a'}, 'a = 2 + s')
-    w2 = state.add_write('A')
-    state.add_edge(r, None, t1, 's', dace.Memlet('scal'))
-    state.add_edge(t1, 'a', w1, None, dace.Memlet('A[0]'))
-    state.add_edge(r, None, t2, 's', dace.Memlet('scal'))
-    state.add_edge(t2, 'a', w2, None, dace.Memlet('A[1]'))
+    r = state.add_read("scal")
+    t1 = state.add_tasklet("init_a1", {"s"}, {"a"}, "a = 1 + s")
+    w1 = state.add_write("A")
+    t2 = state.add_tasklet("init_a2", {"s"}, {"a"}, "a = 2 + s")
+    w2 = state.add_write("A")
+    state.add_edge(r, None, t1, "s", dace.Memlet("scal"))
+    state.add_edge(t1, "a", w1, None, dace.Memlet("A[0]"))
+    state.add_edge(r, None, t2, "s", dace.Memlet("scal"))
+    state.add_edge(t2, "a", w2, None, dace.Memlet("A[1]"))
 
     state2 = sdfg.add_state_after(state)
-    r1 = state2.add_read('A')
-    t1 = state2.add_tasklet('update_a2', {'a'}, {'b'}, 'b = a + 2')
-    w1 = state2.add_write('A')
-    state2.add_edge(r1, None, t1, 'a', dace.Memlet('A[1]'))
-    state2.add_edge(t1, 'b', w1, None, dace.Memlet('A[1]'))
+    r1 = state2.add_read("A")
+    t1 = state2.add_tasklet("update_a2", {"a"}, {"b"}, "b = a + 2")
+    w1 = state2.add_write("A")
+    state2.add_edge(r1, None, t1, "a", dace.Memlet("A[1]"))
+    state2.add_edge(t1, "b", w1, None, dace.Memlet("A[1]"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
@@ -318,27 +321,27 @@ def test_inout_read_after_write():
     state both reads and writes to that same array. Fusion will then cause
     a RAW conflict.
     """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [1], dace.int32)
-    sdfg.add_array('B', [1], dace.int32)
-    sdfg.add_array('C', [1], dace.int32)
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    sdfg.add_array("C", [1], dace.int32)
     state = sdfg.add_state()
-    r = state.add_read('A')
-    t1 = state.add_tasklet('init_b', {'a'}, {'b'}, 'b = a + 1')
-    rw = state.add_access('B')
-    t2 = state.add_tasklet('init_c', {'b'}, {'c'}, 'c = 2 + b')
-    w = state.add_access('C')
-    state.add_edge(r, None, t1, 'a', dace.Memlet('A[0]'))
-    state.add_edge(t1, 'b', rw, None, dace.Memlet('B[0]'))
-    state.add_edge(rw, None, t2, 'b', dace.Memlet('B[0]'))
-    state.add_edge(t2, 'c', w, None, dace.Memlet('C[0]'))
+    r = state.add_read("A")
+    t1 = state.add_tasklet("init_b", {"a"}, {"b"}, "b = a + 1")
+    rw = state.add_access("B")
+    t2 = state.add_tasklet("init_c", {"b"}, {"c"}, "c = 2 + b")
+    w = state.add_access("C")
+    state.add_edge(r, None, t1, "a", dace.Memlet("A[0]"))
+    state.add_edge(t1, "b", rw, None, dace.Memlet("B[0]"))
+    state.add_edge(rw, None, t2, "b", dace.Memlet("B[0]"))
+    state.add_edge(t2, "c", w, None, dace.Memlet("C[0]"))
 
     state2 = sdfg.add_state_after(state)
-    r1 = state2.add_read('B')
-    t1 = state2.add_tasklet('update_b', {'bin'}, {'bout'}, 'bout = bin + bin')
-    w1 = state2.add_write('B')
-    state2.add_edge(r1, None, t1, 'bin', dace.Memlet('B[0]'))
-    state2.add_edge(t1, 'bout', w1, None, dace.Memlet('B[0]'))
+    r1 = state2.add_read("B")
+    t1 = state2.add_tasklet("update_b", {"bin"}, {"bout"}, "bout = bin + bin")
+    w1 = state2.add_write("B")
+    state2.add_edge(r1, None, t1, "bin", dace.Memlet("B[0]"))
+    state2.add_edge(t1, "bout", w1, None, dace.Memlet("B[0]"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 0
 
@@ -356,22 +359,22 @@ def test_inout_second_state():
     while the first state also reads from that same array. Fusion will then
     cause a potential data race.
     """
-    sdfg = dace.SDFG('state_fusion_test')
-    sdfg.add_array('A', [1], dace.int32)
-    sdfg.add_array('B', [1], dace.int32)
+    sdfg = dace.SDFG("state_fusion_test")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
     state = sdfg.add_state()
-    r = state.add_read('A')
-    t1 = state.add_tasklet('init_b', {'a'}, {'b'}, 'b = a + 1')
-    w = state.add_write('B')
-    state.add_edge(r, None, t1, 'a', dace.Memlet('A[0]'))
-    state.add_edge(t1, 'b', w, None, dace.Memlet('B[0]'))
+    r = state.add_read("A")
+    t1 = state.add_tasklet("init_b", {"a"}, {"b"}, "b = a + 1")
+    w = state.add_write("B")
+    state.add_edge(r, None, t1, "a", dace.Memlet("A[0]"))
+    state.add_edge(t1, "b", w, None, dace.Memlet("B[0]"))
 
     state2 = sdfg.add_state_after(state)
-    r1 = state2.add_read('A')
-    t1 = state2.add_tasklet('update_a', {'a'}, {'aout'}, 'aout = a + 5')
-    w1 = state2.add_write('A')
-    state2.add_edge(r1, None, t1, 'a', dace.Memlet('A[0]'))
-    state2.add_edge(t1, 'aout', w1, None, dace.Memlet('A[0]'))
+    r1 = state2.add_read("A")
+    t1 = state2.add_tasklet("update_a", {"a"}, {"aout"}, "aout = a + 5")
+    w1 = state2.add_write("A")
+    state2.add_edge(r1, None, t1, "a", dace.Memlet("A[0]"))
+    state2.add_edge(t1, "aout", w1, None, dace.Memlet("A[0]"))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 0
 
@@ -479,10 +482,7 @@ def test_check_paths():
     do_fuse = StateFusion()._check_paths(
         first_state=block_0,
         second_state=block_5,
-        match_nodes={
-            qm_b0_w: qm_b5,
-            m1_b0_w: m1_b5
-        },
+        match_nodes={qm_b0_w: qm_b5, m1_b0_w: m1_b5},
         nodes_first=[q_b0_w],
         nodes_second=[q_b5_w],
         second_input={precip_fall_b5, m1_b5, qm_b5},
@@ -490,6 +490,130 @@ def test_check_paths():
         second_read=False,
     )
     assert not do_fuse
+
+
+def test_one_ordered_writer_does_not_exempt_an_unordered_one():
+    """``a1`` reaches the second state through ``m``; ``a2`` writes the same element as the second state unordered."""
+    sdfg = dace.SDFG("ordered_and_unordered_writers")
+    for name in ("x", "a", "m"):
+        sdfg.add_array(name, [2], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+
+    x = first.add_read("x")
+    t0 = first.add_tasklet("t0", {"i"}, {"o"}, "o = i")
+    a1 = first.add_access("a")
+    t1 = first.add_tasklet("t1", {"i"}, {"o"}, "o = i")
+    t2 = first.add_tasklet("t2", {"i"}, {"o"}, "o = i + 1")
+    first.add_edge(x, None, t0, "i", dace.Memlet("x[0]"))
+    first.add_edge(t0, "o", a1, None, dace.Memlet("a[0]"))
+    first.add_edge(a1, None, t1, "i", dace.Memlet("a[0]"))
+    first.add_edge(t1, "o", first.add_write("m"), None, dace.Memlet("m[0]"))
+    first.add_edge(x, None, t2, "i", dace.Memlet("x[1]"))
+    first.add_edge(t2, "o", first.add_write("a"), None, dace.Memlet("a[1]"))
+
+    t3 = second.add_tasklet("t3", {"i"}, {"o"}, "o = i * 2")
+    second.add_edge(second.add_read("m"), None, t3, "i", dace.Memlet("m[0]"))
+    second.add_edge(t3, "o", second.add_write("a"), None, dace.Memlet("a[1]"))
+
+    assert sdfg.apply_transformations(StateFusion) == 0
+
+
+def test_check_all_paths_checks_every_reader():
+    """``r1`` reaches the second state's write through ``m``, ``r2`` does not; ``r2`` alone must fail the check."""
+    sdfg = dace.SDFG("every_reader")
+    for name in ("a", "b", "m"):
+        sdfg.add_array(name, [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+
+    r1, r2, m = first.add_read("a"), first.add_read("a"), first.add_write("m")
+    t1 = first.add_tasklet("t1", {"i"}, {"o"}, "o = i")
+    t2 = first.add_tasklet("t2", {"i"}, {"o"}, "o = i")
+    first.add_edge(r1, None, t1, "i", dace.Memlet("a[0]"))
+    first.add_edge(t1, "o", m, None, dace.Memlet("m[0]"))
+    first.add_edge(r2, None, t2, "i", dace.Memlet("a[0]"))
+    first.add_edge(t2, "o", first.add_write("b"), None, dace.Memlet("b[0]"))
+
+    m2, w = second.add_read("m"), second.add_write("a")
+    t3 = second.add_tasklet("t3", {"i"}, {"o"}, "o = i")
+    second.add_edge(m2, None, t3, "i", dace.Memlet("m[0]"))
+    second.add_edge(t3, "o", w, None, dace.Memlet("a[0]"))
+
+    assert not StateFusion()._check_all_paths(first, second, {m: m2}, [r1, r2], [w], True, False)
+    assert StateFusion()._check_all_paths(first, second, {m: m2}, [r1], [w], True, False)
+
+
+def test_subset_union_memlets_may_intersect():
+    sdfg = dace.SDFG("subset_union")
+    sdfg.add_array("a", [8], dace.float64)
+    states = []
+    for label in ("first", "second"):
+        state = sdfg.add_state(label)
+        tasklet = state.add_tasklet("w", set(), {"o"}, "o = 1")
+        write = state.add_write("a")
+        state.add_edge(tasklet, "o", write, None, dace.Memlet("a[0:4]"))
+        state.in_edges(write)[0].data.subset = dace.subsets.SubsetUnion([dace.subsets.Range.from_string("0:4")])
+        states.append((state, write))
+    (first, a1), (second, a2) = states
+    assert StateFusion.memlets_intersect(first, [a1], False, second, [a2], False)
+
+
+def test_copy_without_other_subset_is_compared_at_its_destination():
+    # ``A[5:10] -> B`` writes ``B[0:5]``, which the second state writes again
+    sdfg = dace.SDFG("copy_other_subset")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [5], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_nedge(first.add_read("A"), first.add_write("B"), dace.Memlet("A[5:10]"))
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet("w", {"i": "0:5"}, {}, "b = 1.0", {"b": dace.Memlet("B[i]")}, external_edges=True)
+    assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
+def test_one_writer_ordered_through_a_match_does_not_order_its_sibling():
+    # ``B[0]`` reaches the second state through ``C``; its sibling ``B[1]`` writer does not, and the second state
+    # writes ``B[1]``
+    sdfg = dace.SDFG("one_writer_ordered_through_a_match_")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    a = first.add_read("A")
+    t0 = first.add_tasklet("w0", {"i"}, {"o"}, "o = i")
+    first.add_edge(a, None, t0, "i", dace.Memlet("A[0]"))
+    b0 = first.add_access("B")
+    first.add_edge(t0, "o", b0, None, dace.Memlet("B[0]"))
+    copy = first.add_tasklet("cp", {"i"}, {"o"}, "o = i")
+    first.add_edge(b0, None, copy, "i", dace.Memlet("B[0]"))
+    first.add_edge(copy, "o", first.add_write("C"), None, dace.Memlet("C[0]"))
+    t1 = first.add_tasklet("w1", {"i"}, {"o"}, "o = i + 1")
+    first.add_edge(a, None, t1, "i", dace.Memlet("A[0]"))
+    first.add_edge(t1, "o", first.add_write("B"), None, dace.Memlet("B[1]"))
+    second = sdfg.add_state_after(first, "second")
+    t2 = second.add_tasklet("w2", {"i"}, {"o"}, "o = i")
+    second.add_edge(second.add_read("C"), None, t2, "i", dace.Memlet("C[0]"))
+    second.add_edge(t2, "o", second.add_write("B"), None, dace.Memlet("B[1]"))
+    sdfg.validate()
+    assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
+def test_a_read_behind_an_ordering_edge_is_a_read():
+    # ``B`` is only read in the first state; its one in-edge orders, it writes nothing
+    sdfg = dace.SDFG("a_read_behind_an_ordering_edge_is_a_read")
+    for name in "ABC":
+        sdfg.add_array(name, [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    b = first.add_access("B")
+    first.add_nedge(first.add_access("A"), b, dace.Memlet())
+    read = first.add_tasklet("rd", {"i"}, {"o"}, "o = i")
+    first.add_edge(b, None, read, "i", dace.Memlet("B[0]"))
+    first.add_edge(read, "o", first.add_write("C"), None, dace.Memlet("C[0]"))
+    second = sdfg.add_state_after(first, "second")
+    write = second.add_tasklet("w", {}, {"o"}, "o = 7.0")
+    second.add_edge(write, "o", second.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+    assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
 
 
 if __name__ == "__main__":
@@ -510,3 +634,9 @@ if __name__ == "__main__":
     test_inout_second_state()
     test_inout_second_state_2()
     test_check_paths()
+    test_one_ordered_writer_does_not_exempt_an_unordered_one()
+    test_check_all_paths_checks_every_reader()
+    test_subset_union_memlets_may_intersect()
+    test_copy_without_other_subset_is_compared_at_its_destination()
+    test_one_writer_ordered_through_a_match_does_not_order_its_sibling()
+    test_a_read_behind_an_ordering_edge_is_a_read()

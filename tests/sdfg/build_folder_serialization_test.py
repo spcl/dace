@@ -16,45 +16,45 @@ import dace
 
 
 def _make_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('bf_ser_probe')
-    sdfg.add_array('A', [4], dace.float64)
+    sdfg = dace.SDFG("bf_ser_probe")
+    sdfg.add_array("A", [4], dace.float64)
     return sdfg
 
 
 def test_explicit_build_folder_roundtrip():
     sdfg = _make_sdfg()
-    sdfg.build_folder = '/some/explicit/folder'
+    sdfg.build_folder = "/some/explicit/folder"
 
     j = sdfg.to_json()
-    assert j['attributes']['build_folder'] == '/some/explicit/folder'
+    assert j["attributes"]["build_folder"] == "/some/explicit/folder"
 
     with warnings.catch_warnings():
         # A leftover 'build_folder' key would trigger the "Unused properties"
         # warning of set_properties_from_json; it must be consumed cleanly.
-        warnings.simplefilter('error')
+        warnings.simplefilter("error")
         restored = dace.SDFG.from_json(j)
-    assert restored._build_folder == '/some/explicit/folder'
-    assert restored.build_folder == '/some/explicit/folder'
+    assert restored._build_folder == "/some/explicit/folder"
+    assert restored.build_folder == "/some/explicit/folder"
 
 
 def test_relative_explicit_build_folder_kept_verbatim():
     sdfg = _make_sdfg()
-    sdfg.build_folder = 'relative/dir'
+    sdfg.build_folder = "relative/dir"
     restored = dace.SDFG.from_json(sdfg.to_json())
-    assert restored._build_folder == 'relative/dir'
+    assert restored._build_folder == "relative/dir"
 
 
 def test_pathlib_build_folder_serializes_as_string():
     sdfg = _make_sdfg()
-    sdfg.build_folder = pathlib.Path('/pathlib/folder')
+    sdfg.build_folder = pathlib.Path("/pathlib/folder")
 
     # As an implementation detail it is transformed into a string.
     assert isinstance(sdfg._build_folder, str)
 
     j = sdfg.to_json()
-    assert j['attributes']['build_folder'] == '/pathlib/folder'
-    assert isinstance(j['attributes']['build_folder'], str)
-    assert dace.SDFG.from_json(j)._build_folder == '/pathlib/folder'
+    assert j["attributes"]["build_folder"] == "/pathlib/folder"
+    assert isinstance(j["attributes"]["build_folder"], str)
+    assert dace.SDFG.from_json(j)._build_folder == "/pathlib/folder"
 
 
 def test_derived_build_folder_not_serialized():
@@ -62,7 +62,7 @@ def test_derived_build_folder_not_serialized():
     # SDFGs is byte-identical to before the feature (no hash/cache impact).
     sdfg = _make_sdfg()
     j = sdfg.to_json()
-    assert 'build_folder' not in j['attributes']
+    assert "build_folder" not in j["attributes"]
 
     restored = dace.SDFG.from_json(j)
     assert restored._build_folder is None
@@ -71,9 +71,9 @@ def test_derived_build_folder_not_serialized():
 def test_legacy_json_without_key_restores_derived():
     # Files written before the key existed: nothing to consume, folder derives.
     sdfg = _make_sdfg()
-    sdfg.build_folder = '/explicit/but/stripped'
+    sdfg.build_folder = "/explicit/but/stripped"
     j = sdfg.to_json()
-    del j['attributes']['build_folder']
+    del j["attributes"]["build_folder"]
 
     restored = dace.SDFG.from_json(j)
     assert restored._build_folder is None
@@ -83,11 +83,11 @@ def test_explicit_build_folder_enters_hash():
     # Pinning a build location is content: it changes the SDFG hash.
     plain = _make_sdfg().hash_sdfg()
     pinned = _make_sdfg()
-    pinned.build_folder = '/some/explicit/folder'
+    pinned.build_folder = "/some/explicit/folder"
     assert pinned.hash_sdfg() != plain
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_explicit_build_folder_roundtrip()
     test_relative_explicit_build_folder_kept_verbatim()
     test_pathlib_build_folder_serializes_as_string()

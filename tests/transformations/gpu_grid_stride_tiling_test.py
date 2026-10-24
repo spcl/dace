@@ -1,14 +1,15 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for GPU grid-strided tiling transformation."""
-from typing import List, Tuple
-import pytest
-import dace
-from dace.transformation.dataflow import TrivialTaskletElimination, GPUGridStridedTiling
+
 import numpy as np
-import scipy.sparse as sparse
+import pytest
+from scipy import sparse
+
+import dace
+from dace.transformation.dataflow import GPUGridStridedTiling, TrivialTaskletElimination
 
 
-def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg.nodes.MapEntry]:
+def find_map_entry(sdfg: dace.SDFG, map_name_list: list[str]) -> tuple[dace.sdfg.nodes.MapEntry]:
     if isinstance(map_name_list, str):
         map_name_list = [
             map_name_list,
@@ -21,7 +22,7 @@ def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg
                     if map_name == node.map.params[0]:
                         ret_list[i] = node
     # check if all map entries are found
-    assert all([x is not None for x in ret_list])
+    assert all(x is not None for x in ret_list)
 
     # unpack if only one map entry is found
     if len(ret_list) == 1:
@@ -66,7 +67,7 @@ def test_gpu_grid_stride_tiling_with_indirection():
     K = 300
     density = 0.01
     dtype = np.float32
-    A = sparse.random(M, N, density=density, format='csr', dtype=dtype)
+    A = sparse.random(M, N, density=density, format="csr", dtype=dtype)
     nnz = A.nnz
     B = np.random.rand(M, K).astype(dtype)
     C = np.random.rand(K, N).astype(dtype)
@@ -74,10 +75,16 @@ def test_gpu_grid_stride_tiling_with_indirection():
     D_ref = np.zeros_like(A.data)
 
     @dace.program
-    def sddmm(D_vals: dace.float32[nnz], A2_crd: dace.int32[nnz], A2_pos: dace.int32[M + 1], A_vals: dace.float32[nnz],
-              B: dace.float32[M, K], C: dace.float32[K, N]):
+    def sddmm(
+        D_vals: dace.float32[nnz],
+        A2_crd: dace.int32[nnz],
+        A2_pos: dace.int32[M + 1],
+        A_vals: dace.float32[nnz],
+        B: dace.float32[M, K],
+        C: dace.float32[K, N],
+    ):
         for i in dace.map[0:M]:
-            for j in dace.map[A2_pos[i]:A2_pos[i + 1]]:
+            for j in dace.map[A2_pos[i] : A2_pos[i + 1]]:
                 for k in dace.map[0:K]:
                     D_vals[j] += A_vals[j] * B[i, k] * C[k, A2_crd[j]]
 
@@ -102,6 +109,6 @@ def test_gpu_grid_stride_tiling_with_indirection():
     assert np.allclose(D_ref, D_test)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_gpu_grid_stride_tiling()
     test_gpu_grid_stride_tiling_with_indirection()

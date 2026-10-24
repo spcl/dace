@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests lambda functions. """
-import dace
+"""Tests lambda functions."""
+
 import numpy as np
 import pytest
+
+import dace
 
 
 def test_inline_lambda_tasklet():
@@ -24,7 +26,7 @@ def test_inline_lambda_tasklet():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_inline_lambda_scalar():
 
     @dace.program
@@ -40,7 +42,7 @@ def test_inline_lambda_scalar():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_inline_lambda_array():
 
     @dace.program
@@ -55,7 +57,7 @@ def test_inline_lambda_array():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_lambda_global():
     f = lambda a, b: a + b
 
@@ -70,7 +72,7 @@ def test_lambda_global():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_lambda_call_jit():
 
     @dace.program
@@ -85,7 +87,7 @@ def test_lambda_call_jit():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_lambda_nested_call():
 
     @dace.program
@@ -104,7 +106,7 @@ def test_lambda_nested_call():
     assert np.allclose(A, B + C)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_inline_lambda_tasklet()
     # test_inline_lambda_scalar()
     # test_inline_lambda_array()

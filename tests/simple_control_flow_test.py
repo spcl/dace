@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 
 
 @dace.program
@@ -50,7 +50,7 @@ def myprogram(A, B, tol):
     while tol[0] < 4:
 
         @dace.map(_[0:W])
-        def something(i):
+        def something_while(i):
             a << A[0, i]
             b >> B[0, i]
             t >> tol(1, lambda x, y: x + y)

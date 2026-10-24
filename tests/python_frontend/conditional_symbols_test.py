@@ -3,15 +3,15 @@
 Tests that free symbols which only appear inside the condition of an ``if`` statement (or ``while`` loop) are
 registered as SDFG symbols, so that they are part of the SDFG's argument list.
 """
+
 import numpy as np
 import pytest
-from typing import Optional
 
 import dace
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K', dtype=dace.int64)
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K", dtype=dace.int64)
 
 
 def test_symbol_only_in_if_condition():
@@ -23,9 +23,9 @@ def test_symbol_only_in_if_condition():
                 B[i] = A[i] * 2.0
 
     sdfg = symbol_only_in_if_condition.to_sdfg(simplify=True)
-    assert 'M' in sdfg.symbols
-    assert sdfg.symbols['M'] == M.dtype
-    assert 'M' in sdfg.arglist()
+    assert "M" in sdfg.symbols
+    assert sdfg.symbols["M"] == M.dtype
+    assert "M" in sdfg.arglist()
 
     A = np.arange(16, dtype=np.float64)
     B = np.zeros(16, dtype=np.float64)
@@ -46,8 +46,8 @@ def test_symbol_only_in_if_condition_dtype():
             A[:] = 2.0
 
     sdfg = symbol_only_in_if_condition_dtype.to_sdfg(simplify=True)
-    assert 'K' in sdfg.symbols
-    assert sdfg.symbols['K'] == dace.int64
+    assert "K" in sdfg.symbols
+    assert sdfg.symbols["K"] == dace.int64
 
     A = np.zeros(8, dtype=np.float64)
     sdfg(A=A, N=8, K=5)
@@ -69,7 +69,7 @@ def test_symbol_only_in_elif_condition():
                 A[i] = 2.0
 
     sdfg = symbol_only_in_elif_condition.to_sdfg(simplify=True)
-    assert 'M' in sdfg.symbols
+    assert "M" in sdfg.symbols
 
     A = np.zeros(10, dtype=np.float64)
     sdfg(A=A, N=10, M=6)
@@ -87,7 +87,7 @@ def test_symbol_only_in_while_condition():
             i += 1
 
     sdfg = symbol_only_in_while_condition.to_sdfg(simplify=True)
-    assert 'M' in sdfg.symbols
+    assert "M" in sdfg.symbols
 
     A = np.zeros(10, dtype=np.float64)
     sdfg(A=A, N=10, M=4)
@@ -112,18 +112,18 @@ def test_none_comparison_in_if_condition():
     """``is None`` comparisons must not register the ``None`` placeholder as a symbol."""
 
     @dace.program
-    def none_comparison_in_if_condition(A: dace.float64[N], B: Optional[dace.float64[N]] = None):
+    def none_comparison_in_if_condition(A: dace.float64[N], B: dace.float64[N] | None = None):
         if B is None:
             A[:] = 1.0
         else:
             A[:] = B
 
     sdfg = none_comparison_in_if_condition.to_sdfg(simplify=False)
-    assert 'NoneSymbol' not in sdfg.symbols
-    assert 'NoneSymbol' not in sdfg.arglist()
+    assert "NoneSymbol" not in sdfg.symbols
+    assert "NoneSymbol" not in sdfg.arglist()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symbol_only_in_if_condition()
     test_symbol_only_in_if_condition_dtype()
     test_symbol_only_in_elif_condition()

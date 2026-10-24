@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Default expansion: dispatches via :func:`select_fill_implementation`."""
+
 from typing import TYPE_CHECKING
 
 import dace
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.register_expansion(FillLibraryNode, 'Auto')
+@library.register_expansion(FillLibraryNode, "Auto")
 class ExpandAuto(ExpandTransformation):
     environments = []
 

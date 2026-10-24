@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 
 
@@ -27,5 +28,5 @@ def test_regression_transient_not_allocated():
     assert np.allclose(result, inp + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_regression_transient_not_allocated()

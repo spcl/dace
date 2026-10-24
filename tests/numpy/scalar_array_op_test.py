@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -19,9 +20,9 @@ def test():
 
     saoptest(A, 10, B)
     diff = np.linalg.norm(B - (50 * A))
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

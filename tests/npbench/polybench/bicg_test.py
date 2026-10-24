@@ -1,12 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Data set sizes
 # M, N
@@ -15,16 +17,16 @@ sizes = {
     "small": (116, 124),
     "medium": (390, 410),
     "large": (1900, 2100),
-    "extra-large": (1800, 2200)
+    "extra-large": (1800, 2200),
 }
 
-M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
+M, N = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N"))
 
 
 def initialize(M, N, datatype=np.float64):
     A = np.fromfunction(lambda i, j: (i * (j + 1) % N) / N, (N, M), dtype=datatype)
-    p = np.fromfunction(lambda i: (i % M) / M, (M, ), dtype=datatype)
-    r = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
+    p = np.fromfunction(lambda i: (i % M) / M, (M,), dtype=datatype)
+    r = np.fromfunction(lambda i: (i % N) / N, (N,), dtype=datatype)
 
     return A, p, r
 
@@ -40,10 +42,10 @@ def bicg_jax_kernel(jnp, A, p, r):
 
 
 def run_bicg(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs BiCG for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench small size)
     M, N = sizes["small"]
@@ -71,10 +73,10 @@ def run_bicg_autodiff():
     A, p, r = initialize(M, N)
 
     # Initialize gradient computation data
-    B = np.zeros((M, ), dtype=np.float64)
-    D = np.zeros((N, ), dtype=np.float64)
+    B = np.zeros((M,), dtype=np.float64)
+    D = np.zeros((N,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -113,9 +115,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

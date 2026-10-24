@@ -7,7 +7,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import sympy
 
-from dace import data, dtypes
+from dace import dtypes, utils
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -243,7 +243,7 @@ def clone_body(scope: tn.ScheduleTreeScope, body: list, used_outside: Callable[[
     for name in (names_in_subtrees(body, names_written) if isinstance(scope, tn.MapScope) else ()):
         desc = root.containers.get(name, None)
         if desc is not None and desc.transient and not used_outside(scope, name):
-            renames[name] = data.find_new_name(name, root.containers)
+            renames[name] = utils.find_new_name(name, root.containers)
             root.containers[renames[name]] = copy.deepcopy(desc)
     if not renames:
         return clones

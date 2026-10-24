@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
 import pytest
 
 import dace
+from dace.libraries import blas
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
-import numpy as np
 
 ###############################################################################
 
@@ -16,7 +16,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("dot_product_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG(f"dot_product_{implementation}_{dtype}")
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x" + suffix, [n], dtype, storage=storage, transient=transient)
@@ -35,7 +35,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet.simple(result, "0", num_accesses=1))
 
     if storage != dace.StorageType.Default:
-
         sdfg.add_array("x", [n], dtype)
         sdfg.add_array("y", [n], dtype)
         sdfg.add_array("result", [1], dtype)
@@ -55,9 +54,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
         result_device = finalize_state.add_write("result" + suffix)
         result_host = finalize_state.add_read("result")
-        finalize_state.add_memlet_path(result_device,
-                                       result_host,
-                                       memlet=Memlet.simple(result_device, "0", num_accesses=1))
+        finalize_state.add_memlet_path(
+            result_device, result_host, memlet=Memlet.simple(result_device, "0", num_accesses=1)
+        )
 
     return sdfg
 
@@ -65,16 +64,19 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+    ],
+)
 def test_dot(implementation, dtype):
-    storage = (dace.StorageType.GPU_Global if implementation == 'cuBLAS' else dace.StorageType.Default)
+    storage = dace.StorageType.GPU_Global if implementation == "cuBLAS" else dace.StorageType.Default
     sdfg = make_sdfg(implementation, dtype, storage=storage)
     np_dtype = getattr(np, dtype.to_string())
 
@@ -98,6 +100,28 @@ def test_dot(implementation, dtype):
     assert diff < 1e-6 * ref
 
 
+def test_dot_into_one_element_of_an_array():
+    """The expansion happens at code generation, after the out connector was typed as a scalar for its
+    one-element memlet; the result must still land in that element."""
+    sdfg = dace.SDFG("dot_into_element")
+    sdfg.add_array("x", [5], dace.float64)
+    sdfg.add_array("y", [5], dace.float64)
+    sdfg.add_array("res", [7], dace.float64)
+    state = sdfg.add_state()
+    dot = blas.nodes.dot.Dot("dot")
+    dot.implementation = "pure"
+    state.add_node(dot)
+    state.add_edge(state.add_read("x"), None, dot, "_x", Memlet("x[0:5]"))
+    state.add_edge(state.add_read("y"), None, dot, "_y", Memlet("y[0:5]"))
+    state.add_edge(dot, "_result", state.add_write("res"), None, Memlet("res[3]"))
+
+    x = np.ones(5)
+    y = np.arange(5.0)
+    res = np.zeros(7)
+    sdfg(x=x, y=y, res=res)
+    assert np.array_equal(res, [0, 0, 0, 10, 0, 0, 0])
+
+
 ###############################################################################
 
 if __name__ == "__main__":
@@ -107,3 +131,4 @@ if __name__ == "__main__":
     test_dot("MKL", dace.float64)
     test_dot("cuBLAS", dace.float32)
     test_dot("cuBLAS", dace.float64)
+    test_dot_into_one_element_of_an_array()

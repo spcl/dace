@@ -1,35 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement transformations relating to streams
-    and transient nodes. """
+"""Contains classes that implement transformations relating to streams
+and transient nodes."""
 
 import copy
-from dace.symbolic import symstr
 import warnings
 
-from dace import data, symbolic, subsets
-from dace.properties import SymbolicProperty, make_properties, Property
-from dace.sdfg import nodes
-from dace.sdfg import SDFG
-from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
 import dace
-from dace.transformation.helpers import nest_state_subgraph
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import SDFGState
-from dace.sdfg.nodes import NestedSDFG
+from dace import data, subsets, symbolic
 from dace.data import Array
-
-
-def calc_set_image_index(map_idx, map_set, array_idx):
-    image = []
-    for a_idx in array_idx.indices:
-        new_range = [a_idx, a_idx, 1]
-        for m_idx, m_range in zip(map_idx, map_set):
-            symbol = symbolic.pystr_to_symbolic(m_idx)
-            new_range[0] = new_range[0].subs(symbol, m_range[0])
-            new_range[1] = new_range[1].subs(symbol, m_range[1])
-        image.append(new_range)
-    return subsets.Range(image)
+from dace.properties import Property, SymbolicProperty, make_properties
+from dace.sdfg import SDFG, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import NestedSDFG
+from dace.sdfg.state import SDFGState
+from dace.symbolic import symstr
+from dace.transformation import transformation
+from dace.transformation.helpers import nest_state_subgraph
 
 
 def calc_set_image_range(map_idx, map_set, array_range):
@@ -46,18 +33,18 @@ def calc_set_image_range(map_idx, map_set, array_range):
 def calc_set_image(map_idx, map_set, array_set):
     if isinstance(array_set, subsets.Range):
         return calc_set_image_range(map_idx, map_set, array_set)
-    if isinstance(array_set, subsets.Indices):
-        return calc_set_image_index(map_idx, map_set, array_set)
 
 
 @make_properties
 class StreamTransient(transformation.SingleStateTransformation):
-    """ Implements the StreamTransient transformation, which adds a transient
-        and stream nodes between nested maps that lead to a stream. The
-        transient then acts as a local buffer.
+    """Implements the StreamTransient transformation, which adds a transient
+    and stream nodes between nested maps that lead to a stream. The
+    transient then acts as a local buffer.
     """
 
-    with_buffer = Property(dtype=bool, default=True, desc="Use an intermediate buffer for accumulation")
+    with_buffer = Property(
+        dtype=bool, default=True, category="Memory", desc="Use an intermediate buffer for accumulation"
+    )
 
     tasklet = transformation.PatternNode(nodes.Tasklet)
     map_exit = transformation.PatternNode(nodes.MapExit)
@@ -101,12 +88,14 @@ class StreamTransient(transformation.SingleStateTransformation):
         dataname = memlet.data
 
         # Create the new node: Temporary stream and an access node
-        newname, _ = sdfg.add_stream('trans_' + dataname,
-                                     sdfg.arrays[memlet.data].dtype,
-                                     bbox_approx[0],
-                                     storage=sdfg.arrays[memlet.data].storage,
-                                     transient=True,
-                                     find_new_name=True)
+        newname, _ = sdfg.add_stream(
+            "trans_" + dataname,
+            sdfg.arrays[memlet.data].dtype,
+            bbox_approx[0],
+            storage=sdfg.arrays[memlet.data].storage,
+            transient=True,
+            find_new_name=True,
+        )
         snode = graph.add_access(newname)
 
         to_stream_mm = copy.deepcopy(memlet)
@@ -114,9 +103,9 @@ class StreamTransient(transformation.SingleStateTransformation):
         tasklet_memlet.data = snode.data
 
         if self.with_buffer:
-            newname_arr, _ = sdfg.add_transient('strans_' + dataname, [bbox_approx[0]],
-                                                sdfg.arrays[memlet.data].dtype,
-                                                find_new_name=True)
+            newname_arr, _ = sdfg.add_transient(
+                "strans_" + dataname, [bbox_approx[0]], sdfg.arrays[memlet.data].dtype, find_new_name=True
+            )
             anode = graph.add_access(newname_arr)
             to_array_mm = copy.deepcopy(memlet)
             to_array_mm.data = anode.data
@@ -134,20 +123,23 @@ class StreamTransient(transformation.SingleStateTransformation):
 
 @make_properties
 class AccumulateTransient(transformation.SingleStateTransformation):
-    """ Implements the AccumulateTransient transformation, which adds
-        transient stream and data nodes between nested maps that lead to a
-        stream. The transient data nodes then act as a local accumulator.
+    """Implements the AccumulateTransient transformation, which adds
+    transient stream and data nodes between nested maps that lead to a
+    stream. The transient data nodes then act as a local accumulator.
     """
 
     map_exit = transformation.PatternNode(nodes.MapExit)
     outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
-    array = Property(dtype=str,
-                     desc="Array to create local storage for (if empty, first available)",
-                     default=None,
-                     allow_none=True)
+    array = Property(
+        dtype=str,
+        category="Parameters",
+        desc="Array to create local storage for (if empty, first available)",
+        default=None,
+        allow_none=True,
+    )
 
-    identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
+    identity = SymbolicProperty(category="Parameters", desc="Identity value to set", default=None, allow_none=True)
 
     @classmethod
     def expressions(cls):
@@ -176,25 +168,21 @@ class AccumulateTransient(transformation.SingleStateTransformation):
         # Avoid import loop
         from dace.transformation.dataflow.local_storage import OutLocalStorage
 
-        data_node: nodes.AccessNode = OutLocalStorage.apply_to(sdfg,
-                                                               dict(array=array),
-                                                               verify=False,
-                                                               save=False,
-                                                               node_a=map_exit,
-                                                               node_b=outer_map_exit)
+        data_node: nodes.AccessNode = OutLocalStorage.apply_to(
+            sdfg, dict(array=array), verify=False, save=False, node_a=map_exit, node_b=outer_map_exit
+        )
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize '
-                          'newly-created transient!')
+            warnings.warn("AccumulateTransient did not properly initialize newly-created transient!")
             return
 
         map_entry = graph.entry_node(map_exit)
 
-        nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg,
-                                                      state=graph,
-                                                      subgraph=SubgraphView(
-                                                          graph, {map_entry, map_exit}
-                                                          | graph.all_nodes_between(map_entry, map_exit)))
+        nested_sdfg: NestedSDFG = nest_state_subgraph(
+            sdfg=sdfg,
+            state=graph,
+            subgraph=SubgraphView(graph, {map_entry, map_exit} | graph.all_nodes_between(map_entry, map_exit)),
+        )
 
         nested_sdfg_state: SDFGState = nested_sdfg.sdfg.nodes()[0]
 
@@ -202,19 +190,17 @@ class AccumulateTransient(transformation.SingleStateTransformation):
 
         temp_array: Array = sdfg.arrays[data_node.data]
 
-        init_state.add_mapped_tasklet(name='acctrans_init',
-                                      map_ranges={
-                                          '_o%d' % i: '0:%s' % symstr(d)
-                                          for i, d in enumerate(temp_array.shape)
-                                      },
-                                      inputs={},
-                                      code='out = %s' % self.identity,
-                                      outputs={
-                                          'out':
-                                          dace.Memlet.simple(data=data_node.data,
-                                                             subset_str=','.join(
-                                                                 ['_o%d' % i for i, _ in enumerate(temp_array.shape)]))
-                                      },
-                                      external_edges=True)
+        init_state.add_mapped_tasklet(
+            name="acctrans_init",
+            map_ranges={"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(temp_array.shape)},
+            inputs={},
+            code=f"out = {self.identity}",
+            outputs={
+                "out": dace.Memlet.simple(
+                    data=data_node.data, subset_str=",".join(["_o%d" % i for i, _ in enumerate(temp_array.shape)])
+                )
+            },
+            external_edges=True,
+        )
 
         # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges

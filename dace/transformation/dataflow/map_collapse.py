@@ -1,22 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the map-collapse transformation. """
+"""Contains classes that implement the map-collapse transformation."""
 
+from dace.properties import make_properties
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symlist
-from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
-from typing import Tuple
 
 
 @make_properties
 class MapCollapse(transformation.SingleStateTransformation):
-    """ Implements the Map Collapse pattern.
+    """Implements the Map Collapse pattern.
 
-        Map-collapse takes two nested maps with M and N dimensions respectively,
-        and collapses them to a single M+N dimensional map.
+    Map-collapse takes two nested maps with M and N dimensions respectively,
+    and collapses them to a single M+N dimensional map.
     """
 
     outer_map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -52,7 +51,7 @@ class MapCollapse(transformation.SingleStateTransformation):
 
             # Check that dynamic input range memlets are independent of
             # first map range
-            if dst_conn is not None and not dst_conn.startswith('IN_'):
+            if dst_conn is not None and not dst_conn.startswith("IN_"):
                 memlet_deps = set()
                 for s in memlet.subset:
                     memlet_deps |= set(map(str, symlist(s)))
@@ -85,10 +84,11 @@ class MapCollapse(transformation.SingleStateTransformation):
         outer_map_entry = self.outer_map_entry
         inner_map_entry = self.inner_map_entry
 
-        return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
-                           for entry in [outer_map_entry, inner_map_entry])
+        return " -> ".join(
+            entry.map.label + ": " + str(entry.map.params) for entry in [outer_map_entry, inner_map_entry]
+        )
 
-    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> tuple[nodes.MapEntry, nodes.MapExit]:
         """
         Collapses two maps into one.
 

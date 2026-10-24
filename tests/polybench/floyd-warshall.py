@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+
 try:
     import polybench
 except ImportError:
     polybench = None
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.int32
 
 # Dataset sizes
@@ -38,9 +39,9 @@ def floyd_warshall(path: datatype[N, N]):
             out = ik_dist + kj_dist
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if polybench:
-        polybench.main(sizes, args, [(0, 'path')], init_array, floyd_warshall)
+        polybench.main(sizes, args, [(0, "path")], init_array, floyd_warshall)
     else:
         init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         floyd_warshall(*args)

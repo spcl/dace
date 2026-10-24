@@ -1,13 +1,15 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-R, K, M1, M2 = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True) for s in ('R', 'K', 'M1', 'M2'))
+R, K, M1, M2 = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True) for s in ("R", "K", "M1", "M2"))
 N = R**K
 
 
@@ -53,35 +55,35 @@ def stockham_fft_kernel(x: dc.complex128[R**K], y: dc.complex128[R**K]):
 
     # Main Stockham loop
     for i in range(K):
-
         # Stride permutation
-        yv = np.reshape(y, (R**i, R, R**(K - i - 1)))
+        yv = np.reshape(y, (R**i, R, R ** (K - i - 1)))
         # tmp_perm = np.transpose(yv, axes=(1, 0, 2))
-        tmp_perm[:] = np.reshape(np.transpose(yv, axes=(1, 0, 2)), (N, ))
+        tmp_perm[:] = np.reshape(np.transpose(yv, axes=(1, 0, 2)), (N,))
         # Twiddle Factor multiplication
         # D = np.empty((R, R ** i, R ** (K-i-1)), dtype=np.complex128)
-        Dv = np.reshape(D, (R, R**i, R**(K - i - 1)))
-        tmpv = np.reshape(tmp, (R**(K - i - 1), R, R**i))
-        tmpv[0] = np.exp(-2.0j * np.pi * ii_coord[:, :R**i] * jj_coord[:, :R**i] / R**(i + 1))
-        for k in range(R**(K - i - 1)):
+        Dv = np.reshape(D, (R, R**i, R ** (K - i - 1)))
+        tmpv = np.reshape(tmp, (R ** (K - i - 1), R, R**i))
+        tmpv[0] = np.exp(-2.0j * np.pi * ii_coord[:, : R**i] * jj_coord[:, : R**i] / R ** (i + 1))
+        for k in range(R ** (K - i - 1)):
             # D[:, :, k] = tmp
             Dv[:, :, k] = np.reshape(tmpv[0], (R, R**i, 1))
         # tmp_twid = np.reshape(tmp_perm, (N, )) * np.reshape(D, (N, ))
         tmp_twid = tmp_perm * D
         # Product with Butterfly
-        y[:] = np.reshape(dft_mat @ np.reshape(tmp_twid, (R, R**(K - 1))), (N, ))
+        y[:] = np.reshape(dft_mat @ np.reshape(tmp_twid, (R, R ** (K - 1))), (N,))
 
 
 def rng_complex(shape, rng):
-    return (rng.random(shape) + rng.random(shape) * 1j)
+    return rng.random(shape) + rng.random(shape) * 1j
 
 
 def initialize(R, K):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     N = R**K
-    X = rng_complex((N, ), rng)
+    X = rng_complex((N,), rng)
     Y = np.zeros_like(X, dtype=np.complex128)
 
     return N, X, Y
@@ -98,28 +100,27 @@ def ground_truth(N, R, K, x, y):
     # to avoid overwriting the input.
     y[:] = x[:]
 
-    ii_coord, jj_coord = np.mgrid[0:R, 0:R**K]
+    ii_coord, jj_coord = np.mgrid[0:R, 0 : R**K]
 
     # Main Stockham loop
     for i in range(K):
-
         # Stride permutation
-        yv = np.reshape(y, (R**i, R, R**(K - i - 1)))
+        yv = np.reshape(y, (R**i, R, R ** (K - i - 1)))
         tmp_perm = np.transpose(yv, axes=(1, 0, 2))
         # Twiddle Factor multiplication
-        D = np.empty((R, R**i, R**(K - i - 1)), dtype=np.complex128)
-        tmp = np.exp(-2.0j * np.pi * ii_coord[:, :R**i] * jj_coord[:, :R**i] / R**(i + 1))
-        D[:] = np.repeat(np.reshape(tmp, (R, R**i, 1)), R**(K - i - 1), axis=2)
-        tmp_twid = np.reshape(tmp_perm, (N, )) * np.reshape(D, (N, ))
+        D = np.empty((R, R**i, R ** (K - i - 1)), dtype=np.complex128)
+        tmp = np.exp(-2.0j * np.pi * ii_coord[:, : R**i] * jj_coord[:, : R**i] / R ** (i + 1))
+        D[:] = np.repeat(np.reshape(tmp, (R, R**i, 1)), R ** (K - i - 1), axis=2)
+        tmp_twid = np.reshape(tmp_perm, (N,)) * np.reshape(D, (N,))
         # Product with Butterfly
-        y[:] = np.reshape(dft_mat @ np.reshape(tmp_twid, (R, R**(K - 1))), (N, ))
+        y[:] = np.reshape(dft_mat @ np.reshape(tmp_twid, (R, R ** (K - 1))), (N,))
 
 
 def run_stockham_fft(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs SPMV for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (small size)
     R, K = 2, 15
@@ -132,7 +133,7 @@ def run_stockham_fft(device_type: dace.dtypes.DeviceType):
         sdfg.expand_library_nodes()
         sdfg(x=x, y=y, N=N, R=R, K=K)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     ground_truth(N, R, K, x, y_ref)
@@ -140,21 +141,19 @@ def run_stockham_fft(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Assertion error in read_and_write_sets")
 def test_cpu():
     run_stockham_fft(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Assertion error in read_and_write_sets")
+@pytest.mark.skip(reason="stockham GPU codegen: invalid argument at runtime (CPU path is bit-exact)")
 @pytest.mark.gpu
 def test_gpu():
     run_stockham_fft(dace.dtypes.DeviceType.GPU)
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

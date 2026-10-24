@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace
@@ -13,5 +14,5 @@ def test_short_decorator():
     assert np.allclose(short_decorator(A), A + A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_short_decorator()
