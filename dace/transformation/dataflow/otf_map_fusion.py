@@ -141,10 +141,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if any(w not in before for w in writers):
                 return False
 
-        # Condition: Equations solvable (dims(first map) <= dims(second map))
-        if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):
-            return False
-
         # Condition: Consumed is covered by produced data
         produce_edge = next(graph.edges_between(self.first_map_exit, self.array).__iter__())
         consume_edges = graph.edges_between(self.array, self.second_map_entry)
@@ -214,7 +210,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if param_mapping is None:
                 return False
 
-            # Condition: every producer parameter is SOLVED from the consumer's read. Fusion re-executes
+            # Condition: every producer parameter is SOLVED from the consumer's read -- by a consumer parameter or a
+            # constant, so a producer may have more parameters than the consumer (``T[i, 4]`` of a ``T[i, k]``
+            # producer pins ``k = 4``). Fusion re-executes
             # the producer body once per consumer iteration, so a parameter the read cannot pin down is
             # one the copied body still names with nothing left to bind it -- the fused graph then reads
             # a free symbol (or, worse, the same name a surviving sibling map defines, which validates

@@ -40,6 +40,12 @@ def cfl_clip(z: dace.float64[N, N], h: dace.float64[N, N], dt: dace.float64):
     z[:] = np.where(lo, -0.85 * h / dt, np.where(hi, 0.85 * h / dt, z))
 
 
+@dace.program
+def pairwise_sep(pos: dace.float64[N, 3], d: dace.float64[N, N]):
+    x = pos[:, 0:1]
+    d[:] = x.T - x
+
+
 def full_size_transients(sdfg: dace.SDFG) -> list[str]:
     """The transients of ``sdfg`` (any nesting level) whose size grows with ``N``: a copy of a whole grid."""
     return [
@@ -107,6 +113,20 @@ def test_a_where_chain_fuses_into_one_map_without_temporaries():
     assert np.allclose(z, expected)
 
 
+def test_a_column_transpose_becomes_a_gather_map():
+    """``x.T`` of an ``(N, 1)`` column only reshapes; it expands to a gather map that the CPU recompute can inline."""
+    from dace.libraries.linalg.nodes.transpose import Transpose
+
+    sdfg = pairwise_sep.to_sdfg(simplify=True)
+    assert any(isinstance(n, Transpose) for n, _ in sdfg.all_nodes_recursive()), "no transpose to expand"
+    canonicalize(sdfg, validate=True)
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Transpose)]
+    pos = np.random.default_rng(2).random((7, 3))
+    d = np.zeros((7, 7))
+    sdfg(pos=pos, d=d, N=7)
+    assert np.allclose(d, pos[:, 0:1].T - pos[:, 0:1])
+
+
 def test_rolls_and_wheres_are_maps_from_the_ingest_on():
     """The remaps and selects are expanded in ingest, before the first normalization pass, so no later pass meets
     an opaque ``CShift`` or ``MergeLibraryNode``: their nested SDFGs are already inlined by ingest's simplify."""
@@ -128,4 +148,5 @@ if __name__ == "__main__":
     test_a_rolled_stencil_canonicalizes_to_one_map_and_no_shift_copies()
     test_a_broadcast_fuses_into_its_consumer()
     test_a_where_chain_fuses_into_one_map_without_temporaries()
+    test_a_column_transpose_becomes_a_gather_map()
     test_rolls_and_wheres_are_maps_from_the_ingest_on()

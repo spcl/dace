@@ -1379,6 +1379,50 @@ def test_map_invariant_scalar_read_hoist_uses_inner_memlet():
     assert np.allclose(got["a"], a_ref)
 
 
+_N, _M, _K = (dace.symbol(s) for s in "NMK")
+
+
+@dace.program
+def _scatter_rows(idx: dace.int64[_N], b: dace.float64[_N, _M], a: dace.float64[_K, _M]):
+    for i in range(_N):
+        for j in range(_M):
+            a[idx[i], j] = a[idx[i], j] + b[i, j]
+
+
+def test_an_invariant_interstate_assignment_moves_out_of_the_inner_loop():
+    """``a_slice = idx[i]`` on the ``j`` body's start edge reads nothing ``j`` changes: it moves to the edge into the
+    ``j`` loop, which leaves a single-state body."""
+    sdfg = _scatter_rows.to_sdfg(simplify=True)
+    inner = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.parent_graph is not sdfg]
+    assert len(inner) == 1 and any(e.data.assignments for e in inner[0].edges())
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    assert not any(e.data.assignments for e in inner[0].edges())
+    rng = np.random.default_rng(0)
+    idx, b, a = rng.integers(0, 4, 6), rng.random((6, 5)), rng.random((4, 5))
+    expected = a.copy()
+    for i in range(6):
+        expected[idx[i]] += b[i]
+    sdfg(idx=idx, b=b, a=a, N=6, M=5, K=4)
+    assert np.allclose(a, expected)
+
+
+def test_a_data_indexed_row_accumulation_canonicalizes_to_a_wcr_map():
+    """With the row index hoisted, both loops of the scatter map, the update as WCR (OPT-7)."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = _scatter_rows.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert any(e.data.wcr is not None for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, mm.Memlet))
+    rng = np.random.default_rng(1)
+    idx, b, a = rng.integers(0, 4, 6), rng.random((6, 5)), rng.random((4, 5))
+    expected = a.copy()
+    for i in range(6):
+        expected[idx[i]] += b[i]
+    sdfg(idx=idx, b=b, a=a, N=6, M=5, K=4)
+    assert np.allclose(a, expected)
+
+
 if __name__ == "__main__":
     test_pure_tasklet_hoisted_from_loop_region()
     test_invariant_load_without_inloop_writer_is_hoisted()
@@ -1412,3 +1456,5 @@ if __name__ == "__main__":
     test_an_invariant_scalar_under_a_guard_is_hoisted()
     test_a_guarded_scalar_read_after_the_loop_stays()
     test_a_guarded_read_not_provably_in_bounds_stays()
+    test_an_invariant_interstate_assignment_moves_out_of_the_inner_loop()
+    test_a_data_indexed_row_accumulation_canonicalizes_to_a_wcr_map()

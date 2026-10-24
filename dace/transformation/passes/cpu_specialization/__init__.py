@@ -10,7 +10,7 @@ from dace.transformation.passes.cpu_specialization.calibrate_thresholds import C
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
-    RecomputeOversizedIntermediates,
+    RecomputeIntermediates,
 )
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
     SequentializeUnprofitableParallelScopes,

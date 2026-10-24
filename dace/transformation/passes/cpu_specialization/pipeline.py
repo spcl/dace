@@ -25,13 +25,11 @@ Order within the stage, and why:
    cost models so they read the chunked shape: the prologue and the seam-iteration map it emits are
    a 1-iteration and an ``nchunks``-iteration region, and sequentializing those is exactly the
    verdict the fork/join model exists to give.
-3. :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.RecomputeOversizedIntermediates`
-   -- collapses a producer map into its single consumer and drops the intermediate when nothing is
-   recomputed (each element read once), or when the intermediate is not provably below the per-core
-   L2 cache and the producer is pointwise and cheap.
+3. :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.RecomputeIntermediates`
+   -- recomputes a producer map inside every consumer map and drops the intermediate, wherever legal.
 4. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` -- a
-   parallel map never shares out a ``SMALL`` axis (``nblks``): those run in an inner sequential map under the other
-   axes, and a map over ``SMALL`` axes only is collapsed with the map over larger ones it holds. Before the reduction
+   parallel map never shares out a ``SMALL`` axis (``nblks``) alone: the leading ones are collapsed with the first
+   larger axis, and a map over ``SMALL`` axes only is collapsed with the map over larger ones it holds. Before the reduction
    split and the cost model, which then rule on the map that is actually shared out.
 5. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes.SequentializeReductionAxes`
    -- a parallel map that reduces over some of its axes shares out the others and walks the reduced
@@ -69,7 +67,7 @@ from dace.transformation.passes.cpu_specialization.range_privatize_scatter_reduc
     RangePrivatizeScatterReductions,
 )
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
-    RecomputeOversizedIntermediates,
+    RecomputeIntermediates,
 )
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
@@ -104,7 +102,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     hoist_invariant_guards(sdfg, require_full_hoist=False)
     if break_anti_dependence:
         ChunkAntiDependence().apply_pass(sdfg, {})
-    RecomputeOversizedIntermediates().apply_pass(sdfg, {})
+    RecomputeIntermediates().apply_pass(sdfg, {})
     SequentializeSmallAxes().apply_pass(sdfg, {})
     SequentializeReductionAxes().apply_pass(sdfg, {})
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})

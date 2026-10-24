@@ -195,6 +195,48 @@ def test_redundant_copy_refuses_when_source_is_a_war_carrier():
     assert len(snap_nodes) == 1, "the a_snap snapshot AccessNode must survive (its read still routes through it)"
 
 
+def test_redundant_copy_folds_when_its_readers_precede_the_source_write():
+    """A copy of a WAR carrier folds when every read of the copy is ordered before the source's
+    write (heat_3d: ``Ac = A[1:-1]; B = f(Ac); A[1:-1] = g(B)``): the write depends on the read."""
+    sdfg = dace.SDFG("redundant_copy_ordered_war")
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_array("b", [10], dace.float64)
+    sdfg.add_transient("a_snap", [10], dace.float64)
+    state = sdfg.add_state()
+    a_snap = state.add_access("a_snap")
+    state.add_nedge(state.add_read("a"), a_snap, dace.Memlet("a[0:10]"))
+    b = state.add_access("b")
+    state.add_mapped_tasklet(
+        "f",
+        {"i": "0:10"},
+        {"x": dace.Memlet("a_snap[i]")},
+        "y = x + 1.0",
+        {"y": dace.Memlet("b[i]")},
+        external_edges=True,
+        input_nodes={"a_snap": a_snap},
+        output_nodes={"b": b},
+    )
+    state.add_mapped_tasklet(
+        "g",
+        {"i": "0:10"},
+        {"x": dace.Memlet("b[i]")},
+        "y = x * 2.0",
+        {"y": dace.Memlet("a[i]")},
+        external_edges=True,
+        input_nodes={"b": b},
+    )
+    sdfg.validate()
+    a = np.random.rand(10)
+    ref_a, ref_b = (a + 1.0) * 2.0, a + 1.0
+
+    Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
+
+    assert "a_snap" not in sdfg.arrays
+    b_out = np.zeros(10)
+    sdfg(a=a, b=b_out)
+    assert np.allclose(a, ref_a) and np.allclose(b_out, ref_b)
+
+
 def test_source_merge_allowed_when_write_is_in_another_state():
     """Cross-state case: state S1 holds two source AccessNodes for ``b`` and
     no write; a separate state S2 (successor in the control-flow graph)
@@ -475,6 +517,7 @@ if __name__ == "__main__":
     test_redundant_simple()
     test_merge_simple()
     test_source_merge_refuses_when_data_is_also_written()
+    test_redundant_copy_folds_when_its_readers_precede_the_source_write()
     test_sink_merge_refuses_when_data_is_also_read()
     test_source_merge_allowed_when_write_is_in_another_state()
     test_source_merge_preserves_carrier_raw_order_on_sibling_transient()

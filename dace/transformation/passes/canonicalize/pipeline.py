@@ -56,10 +56,13 @@ from dace.transformation.passes.canonicalize.empty_state_elimination import Empt
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.forward_iota_reads import ForwardIotaReads
+from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
+from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import FuseElementwiseIntoGemv
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
+from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.hold_sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (
@@ -97,6 +100,7 @@ from dace.transformation.passes.canonicalize.reverse_map_traversal import Revers
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
 from dace.transformation.passes.canonicalize.route_ordering_through_data import RouteOrderingThroughData
 from dace.transformation.passes.canonicalize.segment_confined_loops import SegmentConfinedLoops
+from dace.transformation.passes.canonicalize.select_branch_maps import SelectBranchMaps
 from dace.transformation.passes.canonicalize.sink_last_only_scan_store import SinkLastOnlyScanStore
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
@@ -308,14 +312,17 @@ class StructuralCleanup(ppl.Pass):
             EmptyStateElimination(),
             DeadStateElimination(),
             RedundantOrderingEdgeElimination(),
+            # After the state fusion above, so a copy and its readers share a state: redundant copies fold away
+            ppl.Pipeline([ArrayElimination()]),
+            # A shifted copy array elimination keeps (read in several states) is read at the shifted source index
+            ForwardOffsetCopies(),
             PruneUnreferencedTransients(),
         ]
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         changed = 0
         for unit in self.units():
-            if unit.apply_pass(sdfg, {}) is not None:
-                changed += 1
+            changed += changed_the_graph(unit, unit.apply_pass(sdfg, {}))
         return changed or None
 
 
@@ -783,6 +790,8 @@ def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
         SetSymbolNonnegativeAssumptions(),
         parallelize(propagate=False),
         PatternApplyOnceEverywhere([PruneConnectors()]),
+        # What the lifts leave (empty states, dead copies, unused symbols) goes before the next phase reads the graph
+        StructuralCleanup(),
     ]
 
 
@@ -1056,7 +1065,7 @@ def derive_parallelism(
 
 
 def maximal_fusion(target: str) -> PhaseFixpoint:
-    """Maximal map fusion: (MapCollapse x FuseMaps x FuseStates, single-state bodies inlined first) to a fixpoint
+    """Maximal fusion: (FuseStates x FuseLoops x MapCollapse x FuseMaps, single-state bodies inlined first) to a fixpoint
     inside a fixpoint that re-permutes, interchanges and fuses conditions. The recompose phase runs it, and so does
     specialization after hoisting guards (``hoist_invariant_guards``): one definition of "fuse everything"."""
 
@@ -1065,9 +1074,17 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             # States first: map fusion only sees maps that share a state
             HoistAssignmentsToLoopBodyHead(),
             FuseStates(aggressive_merges=True, order_array_seeds=True),
+            # Loops next: two fused loops put their maps in one body
+            FuseLoops(),
             PatternApplyOnceEverywhere([MapCollapse()]),
             PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]),
-            ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True)]),
+            ppl.Pipeline(
+                [
+                    FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True),
+                    # A producer over more axes than its consumer fuses in as an inner map over the rest
+                    FuseMapsAtSharedAxes(),
+                ]
+            ),
             PatternApplyOnceEverywhere([MapReduceFusion(), MapWCRFusion()]),
             *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
             StructuralCleanup(),
@@ -1081,6 +1098,8 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
             PhaseFixpoint("fusion", inner_round, FUSION_INNER_ROUNDS),
             MergeGuards(),
+            # An if/else of two same-range maps becomes one selecting map, its guard trivial for the lift below
+            SelectBranchMaps(),
             LiftTrivialIf(),
             NormalizeMapBody(),
             *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
@@ -1095,6 +1114,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     the specialization step ``hoist_invariant_guards``."""
     label = RECOMPOSE
     s: Stages = [(label, NormalizeWCRSource()), (label, RevertNonReductionWCR())]
+    # Before fusion: the WCR map it leaves fuses with the matrix's producer
+    s += [(label, FuseElementwiseIntoGemv())]
     s += [
         (label, CascadeInterstateEdgeAssignmentsUp()),
         # A per-iteration assignment between two body states keeps them, and the maps in them, apart
@@ -1204,6 +1225,8 @@ def build_stages(
     )
     s += rail()
     s += recompose(lift, lift_copy, target)
+    # Once more after the lifts recompose ends with: what they exposed fuses too
+    s += [(FUSE, maximal_fusion(target))]
     s += finish()
     prepared([unit for stage_label, unit in s])
     return s

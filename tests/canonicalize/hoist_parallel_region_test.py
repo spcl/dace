@@ -322,7 +322,8 @@ def test_sequential_map_around_a_parallel_map_is_refused():
     sdfg.add_array("a", [N], dace.float64)
     sdfg.add_array("b", [N, N], dace.float64)
     outer = loop_region(sdfg, "outer", "N")
-    mapped_state(outer, "par", "a", "1.0", ["0:N"])
+    # The map writes ``b`` too, so loop distribution cannot set the nest apart and hoist the map alone
+    mapped_state(outer, "par", "b", "1.0", ["0:N", "0:N"])
     nest = outer.add_state("nest")
     seq_entry, seq_exit = nest.add_map("seq", {"j": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
     par_entry, par_exit = nest.add_map("inner", {"k": "0:N"}, schedule=dtypes.ScheduleType.CPU_Multicore)
@@ -409,20 +410,52 @@ def test_top_level_nested_sdfg_in_the_loop_is_refused():
     """A nested SDFG beside the maps is a statement nothing can share out. Refuse."""
     sdfg = dace.SDFG("nested_neighbour")
     sdfg.add_array("a", [N], dace.float64)
-    sdfg.add_array("b", [1], dace.float64)
     outer = loop_region(sdfg, "outer", "N")
     mapped_state(outer, "par", "a", "1.0", ["0:N"])
     inner = dace.SDFG("nested_neighbour_body")
-    inner.add_array("o", [1], dace.float64)
+    inner.add_array("o", [N], dace.float64)
     inner_state = inner.add_state("set", is_start_block=True)
     tasklet = inner_state.add_tasklet("set", {}, {"out"}, "out = 1.0")
     inner_state.add_edge(tasklet, "out", inner_state.add_access("o"), None, dace.Memlet("o[0]"))
     nest_state = outer.add_state("nest")
     nsdfg = nest_state.add_nested_sdfg(inner, {}, {"o"})
-    nest_state.add_edge(nsdfg, "o", nest_state.add_access("b"), None, dace.Memlet("b[0]"))
+    # Into ``a``, which the map writes, so loop distribution cannot set the nested SDFG apart
+    nest_state.add_edge(nsdfg, "o", nest_state.add_access("a"), None, dace.Memlet("a[0:N]"))
     outer.add_edge(outer.nodes()[0], nest_state, dace.InterstateEdge())
     sdfg.validate()
     assert_declined(sdfg, "a top-level nested SDFG breaks replication-freedom (H)")
+
+
+def test_a_private_scalar_statement_runs_on_every_thread_without_a_barrier():
+    """``s = 2 * c`` reads nothing the loop writes and writes a loop-local scalar: every thread computes its own
+    ``s``, so it needs no one-iteration ``omp for`` (a barrier per trip), and the map reading ``s`` stays exact."""
+    sdfg = dace.SDFG("private_scalar_statement")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_scalar("c", dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    outer = loop_region(sdfg, "outer", "N")
+    head = outer.add_state("head", is_start_block=True)
+    t = head.add_tasklet("scale", {"__c"}, {"__s"}, "__s = 2.0 * __c")
+    head.add_edge(head.add_read("c"), None, t, "__c", dace.Memlet("c[0]"))
+    head.add_edge(t, "__s", head.add_write("s"), None, dace.Memlet("s[0]"))
+    body = outer.add_state("body")
+    body.add_mapped_tasklet(
+        "acc",
+        {"i": "0:N"},
+        {"__s": dace.Memlet("s[0]"), "__a": dace.Memlet("a[i]")},
+        "__o = __a + __s",
+        {"__o": dace.Memlet("a[i]")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    outer.add_edge(head, body, dace.InterstateEdge())
+    sdfg.validate()
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    singles = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry) and "_single" in n.map.label]
+    assert not singles, f"the scalar statement was wrapped in a one-iteration worksharing map: {singles}"
+    a = np.zeros(64)
+    sdfg(a=a, c=1.5, N=64)
+    assert np.allclose(a, 64 * 3.0)
 
 
 def test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team():

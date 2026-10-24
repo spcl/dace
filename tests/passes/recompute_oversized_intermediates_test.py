@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the CPU specialization RecomputeOversizedIntermediates (gated producer -> consumer recompute).
+"""Tests for the CPU specialization RecomputeIntermediates (producer -> consumer recompute wherever legal).
 
 Every "declines" case asserts that the UNGATED ``OTFMapFusion`` would have applied, so a shape change that makes the
 pattern disappear fails the test instead of passing it vacuously.
@@ -12,10 +12,7 @@ import numpy as np
 import dace
 from dace import data, symbolic
 from dace.sdfg import nodes
-from dace.transformation.dataflow import OTFMapFusion
-from dace.transformation.passes.cpu_specialization import RecomputeOversizedIntermediates
-from dace.transformation.passes.cpu_specialization.machine import topology
-from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import intermediate_outgrows_cache
+from dace.transformation.passes.cpu_specialization import RecomputeIntermediates
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -109,12 +106,6 @@ def top_level_maps(sdfg):
     return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
 
 
-def assert_ungated_fusion_applies(prog):
-    """The pattern is there: only the gate is what declines it below."""
-    probe = prog.to_sdfg(simplify=True)
-    assert probe.apply_transformations_repeated(OTFMapFusion, validate_all=False) > 0
-
-
 def assert_matches_unfused(fused: dace.SDFG, unfused: dace.SDFG, n: int, halo: int = 0, **symbols) -> None:
     """The fused SDFG computes the unfused SDFG's output on random input."""
     unfused.name = fused.name + "_unfused"
@@ -131,7 +122,7 @@ def test_oversized_intermediate_is_recomputed():
     before = transients(sdfg)
     assert len(before) == 1 and len(top_level_maps(sdfg)) == 2
 
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) == 1
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert_cfg_list_matches_reset(sdfg)
     assert before[0] not in sdfg.arrays
@@ -150,7 +141,7 @@ def test_small_read_once_intermediate_is_fused():
     sdfg = chain_small.to_sdfg(simplify=True)
     unfused = copy.deepcopy(sdfg)
     intermediate = transients(sdfg)
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) == 1
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert intermediate[0] not in sdfg.arrays and len(top_level_maps(sdfg)) == 1
     assert_matches_unfused(sdfg, unfused, SMALL)
@@ -161,43 +152,42 @@ def test_large_multiply_read_pointwise_intermediate_is_recomputed():
     sdfg = stencil_symbolic.to_sdfg(simplify=True)
     unfused = copy.deepcopy(sdfg)
     intermediate = transients(sdfg)
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) == 1
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert_cfg_list_matches_reset(sdfg)
     assert intermediate[0] not in sdfg.arrays and len(top_level_maps(sdfg)) == 1
     assert_matches_unfused(sdfg, unfused, 64, halo=2, N=64)
 
 
-def test_small_multiply_read_intermediate_stays_materialized():
-    """A 144-byte intermediate read at three offsets is below L2: reading it back beats recomputing."""
-    assert_ungated_fusion_applies(stencil_small)
-
+def test_small_multiply_read_intermediate_is_recomputed():
+    """A 144-byte intermediate read at three offsets is recomputed too: registers beat a store and three loads."""
     sdfg = stencil_small.to_sdfg(simplify=True)
     unfused = copy.deepcopy(sdfg)
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
-    assert len(transients(sdfg)) == 1 and len(top_level_maps(sdfg)) == 2
+    intermediate = transients(sdfg)
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert intermediate[0] not in sdfg.arrays and len(top_level_maps(sdfg)) == 1
     assert_matches_unfused(sdfg, unfused, SMALL, halo=2)
 
 
-def test_small_symbol_multiply_read_intermediate_stays_materialized():
-    """An intermediate sized by a SMALL symbol only is cache-resident by the size facts."""
-    assert_ungated_fusion_applies(stencil_small_symbol)
-
+def test_small_symbol_multiply_read_intermediate_is_recomputed():
+    """The size facts do not keep an intermediate: a SMALL-sized one is recomputed as well."""
     sdfg = stencil_small_symbol.to_sdfg(simplify=True)
     sdfg.set_symbol_scale("M", symbolic.Scale.SMALL)
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
-    assert len(transients(sdfg)) == 1 and len(top_level_maps(sdfg)) == 2
+    intermediate = transients(sdfg)
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert intermediate[0] not in sdfg.arrays and len(top_level_maps(sdfg)) == 1
 
 
-def test_two_consumers_stay_materialized():
-    """Sharing one buffer across consumers is what the cache is for; fusing would re-read the
-    producer's inputs once per consumer, which this pass has no model for."""
-    assert_ungated_fusion_applies(chain_two_consumers)
-
+def test_two_consumers_each_recompute_the_producer():
+    """Both consumers recompute the producer, and the intermediate goes."""
     sdfg = chain_two_consumers.to_sdfg(simplify=True)
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
-    assert len(transients(sdfg)) == 1
-    assert len(top_level_maps(sdfg)) == 3
+    intermediate = transients(sdfg)
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    assert intermediate[0] not in sdfg.arrays
+    assert len(top_level_maps(sdfg)) == 2
 
 
 def test_consumers_in_separate_states_stay_materialized():
@@ -212,7 +202,7 @@ def test_consumers_in_separate_states_stay_materialized():
     intermediate = transients(sdfg)
     assert len(intermediate) == 1
 
-    assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) is None
+    assert RecomputeIntermediates().apply_pass(sdfg, {}) is None
     sdfg.validate()
     assert intermediate[0] in sdfg.arrays
 
@@ -232,34 +222,11 @@ def test_consumers_in_separate_states_stay_materialized():
     assert np.allclose(out, 3.0 * (a * 2.0))
 
 
-def test_the_gate_reads_the_host_l2_cache_and_size_facts():
-    """The threshold is the host's own per-core L2; a size over SMALL symbols only is below it."""
-    l2 = topology().l2_bytes
-    sdfg = dace.SDFG("gate")
-    sdfg.add_symbol("M", dace.int64)
-    sdfg.set_symbol_scale("M", symbolic.Scale.SMALL)
-    sdfg.add_array("over", [l2 // 8 + 1], dace.float64, transient=True)
-    sdfg.add_array("under", [l2 // 8 - 1], dace.float64, transient=True)
-    sdfg.add_array("symbolic", [N], dace.float64, transient=True)
-    sdfg.add_array("small_symbol", [M, M], dace.float64, transient=True)
-    sdfg.add_array("mixed", [M, N], dace.float64, transient=True)
-    sdfg.add_scalar("scalar", dace.float64, transient=True)
-    facts = sdfg.facts()
-
-    assert intermediate_outgrows_cache(sdfg, "over", facts)
-    assert not intermediate_outgrows_cache(sdfg, "under", facts)
-    assert intermediate_outgrows_cache(sdfg, "symbolic", facts)
-    assert not intermediate_outgrows_cache(sdfg, "small_symbol", facts)
-    assert intermediate_outgrows_cache(sdfg, "mixed", facts)
-    assert not intermediate_outgrows_cache(sdfg, "scalar", facts)
-
-
 if __name__ == "__main__":
     test_oversized_intermediate_is_recomputed()
     test_small_read_once_intermediate_is_fused()
     test_large_multiply_read_pointwise_intermediate_is_recomputed()
-    test_small_multiply_read_intermediate_stays_materialized()
-    test_small_symbol_multiply_read_intermediate_stays_materialized()
-    test_two_consumers_stay_materialized()
+    test_small_multiply_read_intermediate_is_recomputed()
+    test_small_symbol_multiply_read_intermediate_is_recomputed()
+    test_two_consumers_each_recompute_the_producer()
     test_consumers_in_separate_states_stay_materialized()
-    test_the_gate_reads_the_host_l2_cache_and_size_facts()

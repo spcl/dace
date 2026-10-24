@@ -1093,6 +1093,57 @@ def test_a_producer_whose_input_is_overwritten_before_the_consumer_is_not_fused(
     assert np.allclose(out, 2.0 * np.arange(8) + 5.0)
 
 
+@dace.program
+def fixed_columns_of_rows(A: dace.float64[12, 8], B: dace.float64[12]):
+    T = dace.define_local([12, 8], dtype=A.dtype)
+    for i, k in dace.map[0:12, 0:8]:
+        with dace.tasklet:
+            a << A[i, k]
+            t >> T[i, k]
+            t = a * 2.0
+    for j in dace.map[0:12]:
+        with dace.tasklet:
+            x << T[j, 4]
+            y << T[j, 7]
+            b >> B[j]
+            b = x + y
+
+
+@dace.program
+def whole_rows(A: dace.float64[12, 8], B: dace.float64[12]):
+    T = dace.define_local([12, 8], dtype=A.dtype)
+    for i, k in dace.map[0:12, 0:8]:
+        with dace.tasklet:
+            a << A[i, k]
+            t >> T[i, k]
+            t = a * 2.0
+    for j in dace.map[0:12]:
+        with dace.tasklet:
+            r << T[j, :]
+            b >> B[j]
+            b = r[0] + r[7]
+
+
+def test_a_producer_with_more_parameters_fuses_when_each_read_pins_them():
+    """``T[j, 4]`` of a ``T[i, k]`` producer pins ``i = j`` and ``k = 4``: the consumer recomputes both elements."""
+    sdfg = fixed_columns_of_rows.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+    assert sdfg.apply_transformations(OTFMapFusion) == 1
+    assert count_maps(sdfg) == 1
+    A = np.random.rand(12, 8)
+    B = np.zeros(12)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, 2.0 * (A[:, 4] + A[:, 7]))
+
+
+def test_a_read_of_a_whole_row_leaves_a_producer_parameter_unsolved():
+    """``T[j, 0:8]`` binds ``i`` but no single ``k``: recomputing one producer iteration cannot supply it."""
+    sdfg = whole_rows.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations(OTFMapFusion) == 0
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -1119,6 +1170,8 @@ if __name__ == "__main__":
 
     # Recomputation
     test_recomputation_fusion()
+    test_a_producer_with_more_parameters_fuses_when_each_read_pins_them()
+    test_a_read_of_a_whole_row_leaves_a_producer_parameter_unsolved()
 
     # Local buffer
     test_local_storage_fusion()

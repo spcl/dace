@@ -86,7 +86,13 @@ class NormalizeNegativeStride(ppl.Pass):
     def _try_normalize(self, loop: LoopRegion, sdfg: SDFG) -> bool:
         """Rewrite one loop if its stride is a numeric negative; return whether it ran."""
         stride = loop_analysis.get_loop_stride(loop)
-        if stride is None or not is_negative_number(stride, sdfg.facts()):
+        if stride is None:
+            return False
+        # A literal stride (almost every loop's ``1``) needs no facts to read its sign
+        if stride.is_number:
+            if not stride < 0:
+                return False
+        elif not is_negative_number(stride, sdfg.facts()):
             return False
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)

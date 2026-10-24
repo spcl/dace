@@ -11,6 +11,7 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -35,14 +36,18 @@ def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subs
 
     An overlap ``subsets.intersects`` cannot decide counts as one.
     """
+    others = [
+        other
+        for other in state.in_edges(target)
+        if other is not edge and not other.data.is_empty() and other.data.data == name
+    ]
+    if not others:
+        return []
     facts = SymbolResolver().facts_at(state, target)
     return [
         other
-        for other in state.in_edges(target)
-        if other is not edge
-        and not other.data.is_empty()
-        and other.data.data == name
-        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset, facts)
+        for other in others
+        if subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset, facts)
         is not symbolic.Truth.FALSE
     ]
 
@@ -186,16 +191,18 @@ class InsertExplicitCopies(ppl.Pass):
         :returns: The number of copy nodes inserted, or ``None`` if none.
         """
         count = 0
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            self.free_copy_connector_names(nsdfg, connectors=False)
-            inserted = 0
-            for state in nsdfg.states():
-                inserted += self._replace_direct_copies(state)
-                if self._only is None:
-                    inserted += self._replace_map_staging_copies(state)
-            if inserted:
-                self.free_copy_connector_names(nsdfg)
-            count += inserted
+        # The copies it inserts change no symbol, interstate edge or existing descriptor: the facts hold throughout
+        with memoize_facts():
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                self.free_copy_connector_names(nsdfg, connectors=False)
+                inserted = 0
+                for state in nsdfg.states():
+                    inserted += self._replace_direct_copies(state)
+                    if self._only is None:
+                        inserted += self._replace_map_staging_copies(state)
+                if inserted:
+                    self.free_copy_connector_names(nsdfg)
+                count += inserted
         return count if count > 0 else None
 
     @classmethod

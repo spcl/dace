@@ -1340,6 +1340,8 @@ class BreakAntiDependence(ppl.Pass):
                 continue
             self._unproven_offsets = []
             renames = list(self._renamable_arrays(loop, sdfg))
+            if not renames and not self._unproven_offsets:
+                continue
             facts = self.offset_facts(loop, sdfg)
             unproven = [
                 g

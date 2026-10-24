@@ -309,6 +309,7 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
     # mis-maps threads whenever the block is 2-D/3-D (it assumes threadIdx.y == threadIdx.z == 0).
     block_x, block_y, block_z = (int(block_dims[0]), int(block_dims[1]), int(block_dims[2]))
     map_params = set(scope_entry.map.params)
+    outer_symbols: set[str] | None = None
     seen_targets: set[str] = set()
     for i, iedge in enumerate(state.in_edges(map_exit)):
         if iedge.data is None or iedge.data.wcr is None:
@@ -322,18 +323,29 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
             continue
         if len(subset) != 1 or subset.ranges[0][2] != 1:
             continue
-        base, end, _ = subset.ranges[0]
-        try:
-            m = int(end - base) + 1
-        except (TypeError, ValueError):
-            continue  # symbolic length: cannot size the register partial / drain loop
-        # Loop-invariant target: not indexed by this map's iteration variables.
-        if any(str(s) in map_params for s in subset.free_symbols):
-            continue
         redtype = operations.detect_reduction_type(iedge.data.wcr)
         identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
         if redtype == dtypes.ReductionType.Custom or identity is None:
             continue  # only built-in ops with a known identity element
+        base, end, _ = subset.ranges[0]
+        # Loop-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        if outer_symbols is None:
+            outer_symbols = set(map(str, frame.symbols_defined_at(state, scope_entry))) - map_params
+        shared = iedge.data.dynamic or any(str(s) not in outer_symbols for s in subset.free_symbols)
+        if shared:
+            # A scatter into a small array: privatized per block in shared memory instead (``shared_scatter_target``)
+            if not shared_scatter_target(sdfg, state, scope_entry, iedge.data.data, acc_desc):
+                continue
+            base = 0
+            size = acc_desc.total_size
+            m = SHARED_SCATTER_ELEMENTS if symbolic.issymbolic(size, sdfg.constants) else int(size)
+            extent = sym2cpp(size)
+        else:
+            try:
+                m = int(end - base) + 1
+            except (TypeError, ValueError):
+                continue  # symbolic length: cannot size the register partial / drain loop
+            extent = str(m)
         seen_targets.add(iedge.data.data)
         ctype = acc_desc.dtype.ctype
         partial = f"__bpart_{state.block_id}_{state.node_id(scope_entry)}_{i}"
@@ -363,9 +375,41 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
                 "m": m,
                 "base": base,
                 "data": iedge.data.data,
+                "shared": shared,
+                # A symbolic target size is checked against the shared capacity ``m`` at run time
+                "extent": extent,
+                "guarded": shared and extent != str(m),
+                "sdfg": sdfg,
             }
         )
     return out
+
+
+#: Elements a block may privatize in shared memory for one scatter target (16 KiB of doubles); a target of symbolic
+#: size gets this capacity and uses it when it fits at run time.
+SHARED_SCATTER_ELEMENTS = 2048
+
+
+def shared_scatter_target(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, name: str, desc) -> bool:
+    """Whether the scatter WCR target ``name`` of ``scope_entry`` can be privatized per block in shared memory: a
+    1-D array of at most :data:`SHARED_SCATTER_ELEMENTS` elements (or of a symbolic size the scope knows, checked at run
+    time), which the scope does not read, and which a nested SDFG in the scope writes only as a whole (it is handed
+    the copy). Not in standalone CPF."""
+    if cpf_lowering.standalone() or not isinstance(desc, data.Array) or len(desc.shape) != 1:
+        return False
+    scope = state.scope_subgraph(scope_entry)
+    if symbolic.issymbolic(desc.total_size, sdfg.constants):
+        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(map(str, scope.free_symbols)):
+            return False
+    elif int(desc.total_size) > SHARED_SCATTER_ELEMENTS:
+        return False
+    # A nested SDFG writing the target is handed the block's copy whole, so it must address the whole array
+    for node in scope.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            for edge in state.out_edges(node):
+                if edge.data.data == name and edge.data.subset != subsets.Range.from_array(desc):
+                    return False
+    return not any(e.data.data == name for e in state.in_edges(scope_entry) if not e.data.is_empty())
 
 
 def register_gpu_block_reduction(red: dict, covered: dict) -> str:
@@ -380,11 +424,32 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
         "ctype": red["ctype"],
         "base": red["base"],
         "m": red["m"],
+        "shared": red["shared"],
+        "guarded": red["guarded"],
+        "sdfg": red["sdfg"],
     }
+    if red["shared"]:
+        # One copy per block, initialized by the block's threads together; ``{partial}_on`` is uniform per kernel
+        on = f"({red['extent']} <= {red['m']})" if red["guarded"] else "true"
+        return (
+            f"__shared__ {red['ctype']} {red['partial']}[{red['m']}];\n"
+            f"const bool {red['partial']}_on = {on};\n"
+            f"if ({red['partial']}_on) for (int __bi = {_FLAT_TID}; __bi < {red['extent']}; __bi += "
+            f"{_block_threads(red)}) {red['partial']}[__bi] = {red['identity']};\n"
+            "__syncthreads();"
+        )
     return (
         f"{red['ctype']} {red['partial']}[{red['m']}];\n"
         f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};"
     )
+
+
+#: The flat thread index within a block.
+_FLAT_TID = "(threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z))"
+
+
+def _block_threads(red: dict) -> int:
+    return red["block_x"] * red["block_y"] * red["block_z"]
 
 
 def standalone_wcr_expression(
@@ -453,6 +518,16 @@ def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
     """
     covered.pop(red["data"], None)
     base_cpp = sym2cpp(red["base"])
+    if red["shared"]:
+        # After the block's last shared-memory update: each element of the copy commits with one global atomic
+        return (
+            "{{\n"
+            "__syncthreads();\n"
+            "if ({partial}_on) for (int __bk_{id} = {tid}; __bk_{id} < {extent}; __bk_{id} += {threads}) {{\n"
+            "    dace::wcr_fixed<{credtype}, {ctype}>::reduce_atomic({acc_ptr} + __bk_{id}, {partial}[__bk_{id}]);\n"
+            "}}\n"
+            "}}"
+        ).format(id=idstr, tid=_FLAT_TID, threads=_block_threads(red), **red)
     if cpf_lowering.standalone():
         # Same fold, none of the runtime: the reduction functor becomes a lambda, and the one atomic
         # per block becomes the preamble's CAS loop, which covers every operator rather than the few
@@ -1874,8 +1949,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # index is the accumulator offset relative to the reduced range base, so a single scalar
         # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
         cover = self._gpu_block_reduction_covered.get(memlet.data)
-        if cover is not None:
+        if cover is not None and cover["sdfg"] is sdfg:
             slot = gpu_block_reduction_write_slot(memlet.subset, cover["base"], cover["m"])
+            # A vector into the shared copy has no atomic fold here: it commits to memory directly instead
+            if cover["shared"] and isinstance(dtype, dtypes.vector):
+                slot = None
             if slot is not None:
                 lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
                 # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
@@ -1898,6 +1976,18 @@ class CPUCodeGen(TargetCodeGenerator):
                         sdfg, memlet, redtype, lhs, inname, f"{memlet.data}[{memlet.subset}]"
                     )
                     return f"{lhs} = {value}"
+                if cover["shared"]:
+                    # The block's shared copy: other threads of the block update it too
+                    into = f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::reduce_atomic(&{lhs}, {inname})"
+                    if not cover["guarded"]:
+                        return into
+                    # Too large for the copy at run time: the global atomic, as without one
+                    del self._gpu_block_reduction_covered[memlet.data]
+                    try:
+                        direct = self.write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices, dtype)
+                    finally:
+                        self._gpu_block_reduction_covered[memlet.data] = cover
+                    return f"(({cover['partial']}_on) ? ({into}) : ({direct}))"
                 return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         # Skip the atomic call entirely when an enclosing OMP map has put this
         # target in a ``reduction(...)`` clause -- the OMP runtime privatizes
@@ -3100,11 +3190,18 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ""):
             if out_memlet.data is not None:
-                memlet_references.append(
-                    cpp.emit_memlet_reference(
-                        self._dispatcher, sdfg, out_memlet, uconn, codegen=self, conntype=node.out_connectors[uconn]
-                    )
+                reference = cpp.emit_memlet_reference(
+                    self._dispatcher, sdfg, out_memlet, uconn, codegen=self, conntype=node.out_connectors[uconn]
                 )
+                # A target privatized per block in shared memory: the body folds into the block's copy (its own
+                # WCR is atomic already), which the kernel exit commits
+                cover = self._gpu_block_reduction_covered.get(out_memlet.data)
+                if cover is not None and cover["shared"] and cover["sdfg"] is sdfg:
+                    copy = f"&{cover['partial']}[0]"
+                    if cover["guarded"]:
+                        copy = f"({cover['partial']}_on ? {copy} : {reference[2]})"
+                    reference = (reference[0], reference[1], copy)
+                memlet_references.append(reference)
 
         # Transients of the nested SDFG that the frame allocated in an ancestor scope must be passed in
         for aname, adesc in node.sdfg.arrays.items():
@@ -3578,10 +3675,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if not in_conn or not in_conn.startswith("IN_"):
                 continue
             out_edges = [e for e in state.out_edges(map_exit) if e.src_conn == "OUT_" + in_conn[3:]]
-            if len(out_edges) != 1 or not isinstance(out_edges[0].dst, nodes.AccessNode):
+            # Into an access node, or into the exit of an enclosing map (a row reduction under a parallel map)
+            if len(out_edges) != 1 or not isinstance(out_edges[0].dst, (nodes.AccessNode, nodes.MapExit)):
                 continue
-            desc = sdfg.arrays.get(out_edges[0].dst.data)
-            if desc is None or out_edges[0].dst.data in read_names:
+            desc = sdfg.arrays.get(iedge.data.data)
+            if desc is None or iedge.data.data in read_names:
                 continue
             if iedge.data.subset.num_elements() != 1:
                 continue

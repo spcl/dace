@@ -13,11 +13,15 @@ its output and nothing a library does faster. Kept, it is the one node of an ele
 so every operand and the result stay full-size transients and the chain is cut in two. ``velocity_tendencies``'
 CFL clip ``np.where(lo_clip, -0.85 * h / dtime, np.where(hi_clip, 0.85 * h / dtime, zc))`` kept five such
 ``(nblks, nlev, nproma)`` temporaries, each allocated, written and re-read per call.
+
+A ``Transpose`` of an operand with at most one non-unit dimension (``x.T`` of an ``(N, 1)`` column) only reshapes:
+no locality for a library to win, and nbody's 20 per step each kept an ``N``-vector transient.
 """
 
 from typing import Any
 
 from dace import SDFG, properties
+from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.libraries.standard.nodes.broadcast import Broadcast
 from dace.libraries.standard.nodes.cshift import CShift
 from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
@@ -29,6 +33,12 @@ INDEX_REMAPS: tuple[type, ...] = (CShift, Broadcast)
 
 #: The library nodes whose only expansion is one element-wise select map over their output.
 ELEMENTWISE_SELECTS: tuple[type, ...] = (MergeLibraryNode,)
+
+
+def _is_reshape(state, node: Transpose) -> bool:
+    """Whether the transposed operand has at most one non-unit dimension."""
+    edges = state.in_edges(node)
+    return len(edges) == 1 and sum(1 for s in edges[0].data.subset.size() if s != 1) <= 1
 
 
 @properties.make_properties
@@ -49,7 +59,12 @@ class ExpandIndexRemaps(ppl.Pass):
         expanded = 0
         for sd in list(sdfg.all_sdfgs_recursive()):
             for state in sd.states():
-                for node in [n for n in state.nodes() if isinstance(n, INDEX_REMAPS + ELEMENTWISE_SELECTS)]:
+                for node in [
+                    n
+                    for n in state.nodes()
+                    if isinstance(n, INDEX_REMAPS + ELEMENTWISE_SELECTS)
+                    or (isinstance(n, Transpose) and _is_reshape(state, n))
+                ]:
                     # A CShift whose amount is still unknown has no map yet; it expands at code generation
                     if isinstance(node, CShift) and node.shift is None:
                         continue

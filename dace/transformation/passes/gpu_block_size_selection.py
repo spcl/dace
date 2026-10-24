@@ -197,8 +197,13 @@ def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     :data:`TREE_REDUCTION_BLOCK_SIZE`); a plain elementwise / scatter map does not."""
     if cuda_emits_tree_reductions():
         map_exit = state.exit_node(map_entry)
-        for edge in state.out_edges(map_exit):
-            if edge.data is not None and edge.data.wcr is not None:
+        params = set(map_entry.map.params)
+        # The block folds a target every thread shares; a scatter (data-indexed, or indexed by the map's own
+        # parameters) has no block-wide fold and keeps the domain-matched block
+        for edge in state.in_edges(map_exit):
+            if edge.data is None or edge.data.wcr is None or edge.data.dynamic or edge.data.subset is None:
+                continue
+            if not {str(sym) for sym in edge.data.subset.free_symbols} & params:
                 return True
     return scope_contains_block_reduce(state, map_entry)
 

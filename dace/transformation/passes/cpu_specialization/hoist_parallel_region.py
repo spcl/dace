@@ -124,6 +124,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.loop_fission import LoopFission, _block_rw, _independent_block_groups
 
 #: The schedule whose maps become ``#pragma omp for`` once a ``CPU_Persistent`` scope encloses them.
 #: ``Default`` is not accepted: this pass runs after ``cpu_specialize`` has resolved every schedule,
@@ -644,6 +645,61 @@ def top_level_loop_locals(sdfg: SDFG, loop: LoopRegion) -> set[str]:
     }
 
 
+def replicable_tasklets(sdfg: SDFG, loop: LoopRegion) -> tuple[set[nodes.Tasklet], set[str]]:
+    """The top-level tasklets of ``loop`` every thread may run itself, and the scalars they write, which then become
+    thread-private: no barrier instead of a one-iteration ``omp for`` each.
+
+    A scalar qualifies when it is a loop-local transient of one element that only top-level tasklets of ``loop``
+    write; a tasklet qualifies when it has no side effects, writes only such scalars, and reads only them or data
+    nothing in ``loop`` writes (a read of written data could see a neighbour thread's next write, with no barrier
+    between). Iterated to a fixpoint: a refused writer makes its scalar shared, and so its readers refused.
+
+    :returns: the tasklets and the scalar names.
+    """
+    locals_ = loop_local_transients(sdfg, loop)
+    written: set[str] = set()
+    writers: dict[str, list[nodes.Node]] = {}
+    tasklets: list[tuple[SDFGState, nodes.Tasklet]] = []
+    top: set[nodes.Node] = set()
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        level = top_level_nodes(block)
+        top.update(level)
+        tasklets += [(block, n) for n in level if isinstance(n, nodes.Tasklet)]
+        for node in block.data_nodes():
+            for edge in block.in_edges(node):
+                if not edge.data.is_empty():
+                    written.add(node.data)
+                    writers.setdefault(node.data, []).append(edge.src)
+    scalars = {
+        name
+        for name in locals_
+        if sdfg.arrays[name].total_size == 1
+        and sdfg.arrays[name].lifetime not in SHARED_LIFETIMES
+        and not isinstance(sdfg.arrays[name], data.View)
+        and all(isinstance(w, nodes.Tasklet) and w in top for w in writers.get(name, []))
+    }
+    chosen = {t for _, t in tasklets}
+    changed = True
+    while changed:
+        changed = False
+        for state, tasklet in tasklets:
+            if tasklet not in chosen:
+                continue
+            outs = [e.data.data for e in state.out_edges(tasklet) if not e.data.is_empty()]
+            ins = [e.data.data for e in state.in_edges(tasklet) if not e.data.is_empty()]
+            if (
+                tasklet.has_side_effects(sdfg)
+                or not all(name in scalars for name in outs)
+                or any(name in written and name not in scalars for name in ins)
+            ):
+                chosen.discard(tasklet)
+                scalars -= set(outs)
+                changed = True
+    return chosen, scalars
+
+
 def loop_defined_symbols(loop: LoopRegion) -> set[str]:
     """The symbols ``loop`` defines: its iterators and those of the loops inside it, and every symbol an
     interstate edge inside it assigns. None of them has a value before the loop runs.
@@ -710,6 +766,32 @@ def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
     xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
 
 
+def distribute_over_components(loop: LoopRegion) -> list[LoopRegion] | None:
+    """Distribute a loop the hoist refused over its independent block groups, in body order.
+
+    Canonicalization fuses freely; distributing along groups that share no written container is always legal, so a
+    statement the hoist cannot take (a library node, a loop of scalar statements) is split off instead of keeping
+    the whole loop sequential. Blocks that access no data ride with the group before them.
+
+    :returns: The loops replacing ``loop``, or ``None`` if it has fewer than two independent groups.
+    """
+    groups = _independent_block_groups(loop)
+    if groups is None:
+        return None
+    merged: list[list] = []
+    for group in groups:
+        if merged and not any(any(_block_rw(b)) for b in group):
+            merged[-1].extend(group)
+        else:
+            merged.append(group)
+    if len(merged) < 2:
+        return None
+    parent = loop.parent_graph
+    before = set(parent.nodes())
+    LoopFission._fission_blocks(loop, merged)
+    return [b for b in parent.nodes() if b not in before and isinstance(b, LoopRegion)]
+
+
 @properties.make_properties
 class HoistParallelRegion(ppl.Pass):
     """Wrap a sequential loop over parallel maps in one persistent OpenMP team."""
@@ -758,18 +840,14 @@ class HoistParallelRegion(ppl.Pass):
         :param sdfg: the SDFG owning ``region``.
         """
         for block in list(region.nodes()):
-            # One resolver and verdict memo per candidate: both checks run before anything is rewritten.
-            resolver, memo = SymbolResolver(), {}
-            if (
-                isinstance(block, LoopRegion)
-                and replication_free(block, resolver, memo)
-                and repairs_amortized(block, resolver, memo)
-                and outlinable(sdfg, block)
-            ):
-                share_out_bulk_statements(sdfg, block)
-                if self.hoistable(block, sdfg):
-                    self.hoist(block, sdfg)
-                    self.hoisted += 1
+            if isinstance(block, LoopRegion):
+                if self.try_hoist(block, sdfg):
+                    continue
+                parts = distribute_over_components(block)
+                if parts is not None:
+                    for part in parts:
+                        if not self.try_hoist(part, sdfg):
+                            self.visit_region(part, sdfg)
                     continue
             if isinstance(block, AbstractControlFlowRegion):
                 self.visit_region(block, sdfg)
@@ -777,6 +855,26 @@ class HoistParallelRegion(ppl.Pass):
                 for node in block.nodes():
                     if isinstance(node, nodes.NestedSDFG) and node.sdfg is not None and block.entry_node(node) is None:
                         self.visit_sdfg(node.sdfg)
+
+    def try_hoist(self, loop: LoopRegion, sdfg: SDFG) -> bool:
+        """Hoist ``loop`` if it satisfies (H), is amortized, outlinable and :meth:`hoistable`.
+
+        :returns: Whether ``loop`` was hoisted.
+        """
+        # One resolver and verdict memo per candidate: both checks run before anything is rewritten.
+        resolver, memo = SymbolResolver(), {}
+        if not (
+            replication_free(loop, resolver, memo)
+            and repairs_amortized(loop, resolver, memo)
+            and outlinable(sdfg, loop)
+        ):
+            return False
+        share_out_bulk_statements(sdfg, loop)
+        if not self.hoistable(loop, sdfg):
+            return False
+        self.hoist(loop, sdfg)
+        self.hoisted += 1
+        return True
 
     def hoistable(self, loop: LoopRegion, sdfg: SDFG) -> bool:
         """Whether this pass rewrites the replication-free, shared-out ``loop``: always, for the team.
@@ -793,11 +891,12 @@ class HoistParallelRegion(ppl.Pass):
         :param loop: the loop region to wrap; must satisfy :meth:`hoistable`.
         :param sdfg: the SDFG owning ``loop``.
         """
+        replicated, private = replicable_tasklets(sdfg, loop)
         for block in loop.all_control_flow_blocks():
             if isinstance(block, SDFGState):
                 for node in top_level_nodes(block):
                     # A statement outside a worksharing construct would run once per THREAD. One
                     # iteration of ``omp for`` runs it once, on one thread, with the barrier kept.
-                    if isinstance(node, nodes.Tasklet):
+                    if isinstance(node, nodes.Tasklet) and node not in replicated:
                         xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, "_single")
-        outline(loop, sdfg, top_level_loop_locals(sdfg, loop))
+        outline(loop, sdfg, top_level_loop_locals(sdfg, loop) - private)

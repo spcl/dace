@@ -153,7 +153,52 @@ def _hoist_loop_region(loop: LoopRegion) -> int:
                 break
             count += 1
 
+    # (5) Invariant interstate assignments on the edge out of the body's start state (``a_slice = idx[i]`` in a ``j``
+    # loop): moved to the preheader edge, they leave a single-state body the lift can inline.
+    count += _hoist_invariant_assignments(loop, variant_syms, variant_data)
+
     return count
+
+
+def _hoist_invariant_assignments(loop: LoopRegion, variant_syms: set[str], variant_data: set[str]) -> int:
+    """Move each assignment ``s = expr`` on an unconditional edge out of ``loop``'s start state to the edge into
+    ``loop`` when ``expr`` reads no variant symbol or written container, ``s`` is assigned nowhere else in ``loop``,
+    the start state does not read ``s``, and nothing outside ``loop`` reads ``s``."""
+    start = loop.start_block
+    out = loop.out_edges(start) if isinstance(start, SDFGState) else []
+    if len(out) != 1 or not out[0].data.is_unconditional() or not out[0].data.assignments:
+        return 0
+    edge = out[0]
+    assigned: dict[str, int] = {}
+    for e in loop.all_interstate_edges():
+        for name in e.data.assignments:
+            assigned[name] = assigned.get(name, 0) + 1
+    inside = set(loop.all_control_flow_blocks())
+    used_outside: set[str] = set()
+    for e in loop.sdfg.all_interstate_edges():
+        if e.src not in inside or e.dst not in inside:
+            used_outside |= e.data.free_symbols
+    for block in loop.sdfg.all_control_flow_blocks():
+        if block not in inside and block is not loop and isinstance(block, SDFGState):
+            used_outside |= block.free_symbols
+    moved = 0
+    for name, value in list(edge.data.assignments.items()):
+        reads = {str(sym) for sym in symbolic.pystr_to_symbolic(value).free_symbols} | set(
+            re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
+        )
+        if (
+            name == loop.loop_variable
+            or assigned.get(name, 0) != 1
+            or reads & ((variant_syms - {name}) | variant_data | {name})
+            or name in start.free_symbols
+            or name in used_outside
+        ):
+            continue
+        preheader = _get_or_create_preheader(loop)
+        (into,) = loop.parent_graph.edges_between(preheader, loop)
+        into.data.assignments[name] = edge.data.assignments.pop(name)
+        moved += 1
+    return moved
 
 
 def _speculation_states(loop: LoopRegion) -> list[SDFGState]:

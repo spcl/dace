@@ -97,7 +97,7 @@ def test_block_reduction():
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
     if dace.Config.get_bool("optimizer", "autotile_partial_parallelism"):
-        assert "reduce(" in code and code.count("atomic") == 0
+        assert ("reduce(" in code or "__acc_" in code) and code.count("atomic") == 0
     _runtest2d(sdfg, 257, 257)
     del sdfg
 
@@ -112,7 +112,8 @@ def test_block_reduction_short():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert "reduce(" in code and code.count("atomic") == 1
+    # The tile-local half accumulates in a register when its sequential loop sits under the parallel tile map
+    assert ("reduce(" in code or "__acc_" in code) and code.count("atomic") == 1
     _runtest2d(sdfg, 257, 2)
     del sdfg
 

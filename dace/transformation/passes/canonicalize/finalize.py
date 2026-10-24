@@ -72,6 +72,7 @@ from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.fusion_inline import FuseStates
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
+from dace.transformation.passes.gpu_specialization.coarsen_scatter_kernels import CoarsenScatterKernels
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -728,9 +729,9 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     reads, and recomputes it per consumer iteration; it is numerically faithful to the
     materialized form (verified to machine epsilon on hdiff / jacobi_2d / heat_3d).
 
-    The CPU runs the same fusion behind a cost gate instead (``cpu_specialize``'s
+    The CPU runs the same fusion (``cpu_specialize``'s
     :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.
-    RecomputeOversizedIntermediates`). Called by :func:`offload_to_gpu` as its first step, so the
+    RecomputeIntermediates`). Called by :func:`offload_to_gpu` as its first step, so the
     fusion sees plain (device-agnostic) maps and the single fused map is what gets offloaded.
 
     :param sdfg: The SDFG to fuse in place.
@@ -808,6 +809,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     # BOTH a declared block size and a thread-block map -- which is the conflict codegen refuses.
     PromoteWarpTiles().apply_pass(sdfg, {})
     select_gpu_device_block_size(sdfg)
+    # Sized by the block just chosen: a scatter kernel covers enough elements per block for its private copy
+    CoarsenScatterKernels().apply_pass(sdfg, {})
     if validate:
         sdfg.validate()
 
@@ -1080,10 +1083,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     # team, gets both. Connector types are re-inferred because the hoist outlines the loop into a
     # nested SDFG, whose boundary connectors are new.
     if device == dtypes.DeviceType.CPU:
-        # Strip-mining runs FIRST and takes the loops it can: it produces the same one-region nest
-        # the hoist does, but with the worksharing construct outside the carry rather than inside
-        # it, so the nest pays one barrier instead of one per trip. A loop it declines -- a
-        # dependence crossing a tile boundary -- still wants the plain hoist, which runs next.
+        # Strip-mining takes the carried nests it can tile: one worksharing construct outside the carry. A loop it
+        # declines gets one team around the loop, so each trip pays a barrier per map instead of a fork/join.
         tiled = StripMineInterchange().apply_pass(sdfg, {})
         if HoistParallelRegion().apply_pass(sdfg, {}) or tiled:
             infer_types.infer_connector_types(sdfg)

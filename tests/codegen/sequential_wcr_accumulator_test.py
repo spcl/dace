@@ -196,31 +196,71 @@ def test_a_wcr_a_nested_sdfg_resolves_is_not_hoisted():
     handed. The caller's register is never added to, so hoisting stores the pre-loop value back
     over the real result -- silently, with a valid SDFG and C++ that compiles.
 
-    Spelled through the frontend rather than hand-built, because whether the body stays outlined
-    is the whole point: a nested SDFG holding a single tasklet is inlined during codegen
-    preprocessing, which turns the source into a Tasklet and makes hoisting correct again.
+    The body has two states, so codegen preprocessing does not inline it (a single-state body
+    becomes a Tasklet source, which makes hoisting correct again).
     """
+    body = dace.SDFG("wcr_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("inp", [N], dace.float64)
+    body.add_array("o", [1], dace.float64)
+    first = body.add_state("first")
+    second = body.add_state_after(first, "second")
+    t = second.add_tasklet("t", {"__i"}, {"__o"}, "__o = __i")
+    second.add_edge(second.add_read("inp"), None, t, "__i", dace.Memlet("inp[i]"))
+    second.add_edge(t, "__o", second.add_write("o"), None, dace.Memlet("o[0]", wcr="lambda a, b: a + b"))
 
-    @dace.program
-    def rowsums(x: dace.float64[N, K], out: dace.float64[N]):
-
-        @dace.mapscope
-        def rows(i: _[0:N]):
-
-            @dace.map
-            def cols(k: _[0:K]):
-                inp << x[i, k]
-                o >> out(1, lambda a, b: a + b)[i]
-                o = inp
-
-    sdfg = rowsums.to_sdfg()
+    sdfg = dace.SDFG("seq_nested_wcr")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("seq", {"i": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
+    nested = state.add_nested_sdfg(body, {"inp"}, {"o"}, symbol_mapping={"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("x"), entry, nested, dst_conn="inp", memlet=dace.Memlet("x[0:N]"))
+    state.add_memlet_path(
+        nested, exit_, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[0]", wcr="lambda a, b: a + b")
+    )
+    sdfg.validate()
     assert "__acc_" not in generated_cpu_code(sdfg), "a WCR a nested SDFG resolves must not be hoisted"
 
-    n, k = 32, 7
-    x = np.random.default_rng(4).random((n, k))
-    out = np.zeros(n)
-    sdfg(x=x, out=out, N=n, K=k)
-    assert np.allclose(out, x.sum(axis=1)), f"{out!r} != {x.sum(axis=1)!r}"
+    x = np.random.default_rng(4).random(32)
+    out = np.zeros(1)
+    sdfg(x=x, out=out, N=32)
+    assert np.isclose(out[0], x.sum())
+
+
+def test_a_row_target_under_a_parallel_map_is_hoisted():
+    """``out[j] += x[j, i]``: the parallel map owns row ``j``, so the inner sequential map's WCR edge, which leads to
+    the outer map's exit rather than to an access node, still accumulates in a register."""
+    sdfg = dace.SDFG("par_outer_row_sum")
+    sdfg.add_array("x", [M, N], dace.float64)
+    sdfg.add_array("out", [M], dace.float64)
+    state = sdfg.add_state()
+    outer_entry, outer_exit = state.add_map("outer", {"j": "0:M"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    inner_entry, inner_exit = state.add_map("inner", {"i": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("t", {"__x"}, {"__o"}, "__o = __x")
+    state.add_memlet_path(
+        state.add_read("x"), outer_entry, inner_entry, tasklet, dst_conn="__x", memlet=dace.Memlet("x[j, i]")
+    )
+    state.add_memlet_path(
+        tasklet,
+        inner_exit,
+        outer_exit,
+        state.add_write("out"),
+        src_conn="__o",
+        memlet=dace.Memlet("out[j]", wcr="lambda a, b: a + b"),
+    )
+    sdfg.validate()
+
+    code = generated_cpu_code(sdfg)
+    acc = [ln.strip() for ln in code.splitlines() if "__acc_" in ln]
+    assert len(acc) == 3, f"expected declare / accumulate / store-back, got {acc}"
+    assert "reduce_atomic" not in code
+
+    m, n = 64, 200
+    x = np.random.default_rng(2).random((m, n))
+    out = np.zeros(m)
+    sdfg(x=x, out=out, M=m, N=n)
+    assert np.allclose(out, x.sum(axis=1))
 
 
 if __name__ == "__main__":

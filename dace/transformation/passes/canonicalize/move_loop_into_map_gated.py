@@ -221,12 +221,19 @@ class MoveLoopIntoMapGated(ppl.Pass):
         """
         gpu = self.target == "gpu"
         applied = 0
-        # Re-scan after each apply: MoveLoopIntoMap rewrites the CFG (removes the
-        # loop, nests a new one), invalidating the iterator.
+
+        # Sweep until a sweep applies nothing: an apply removes its loop and nests a new one, which the next sweep
+        # sees; a loop an apply moved or removed since the sweep began is skipped.
+        def live_loops() -> list[LoopRegion]:
+            return [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+
         changed = True
         while changed:
             changed = False
-            for loop in [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]:
+            live: set[LoopRegion] | None = None
+            for loop in live_loops():
+                if live is not None and loop not in live:
+                    continue
                 if self.single_iteration_only and not single_iteration_lanes(loop):
                     continue
                 if gpu and not interchange_pays_on_gpu(loop, loop.sdfg):
@@ -242,5 +249,5 @@ class MoveLoopIntoMapGated(ppl.Pass):
                 MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False)
                 applied += 1
                 changed = True
-                break
+                live = set(live_loops())
         return applied or None

@@ -83,6 +83,34 @@ def _is_war_carrier(state: SDFGState, data_name: str) -> bool:
     return has_read_only and has_write_only
 
 
+def _ordered_before(state: SDFGState, sources: list[nodes.Node], targets: list[nodes.Node]) -> bool:
+    """True iff every node of ``targets`` is reachable in ``state`` from every node of ``sources``."""
+    if not targets:
+        return True
+    for src in sources:
+        reached = set(state.bfs_nodes(src))
+        if any(t not in reached for t in targets):
+            return False
+    return True
+
+
+def _copy_fold_races(state: SDFGState, source: str, copy: nodes.AccessNode, first: bool) -> bool:
+    """True iff folding ``copy`` onto ``source`` (a WAR carrier) could reorder a read past a write.
+
+    ``first`` (``copy`` is removed, its writers write ``source``): every old-value reader of ``source``
+    must precede ``copy``'s writers. Otherwise (``copy`` is removed, its readers read ``source``):
+    every reader of ``copy`` must precede every write of ``source``.
+    """
+    if not _is_war_carrier(state, source):
+        return False
+    anodes = [n for n in state.data_nodes() if n.data == source]
+    if first:
+        readers = [e.dst for n in anodes if state.in_degree(n) == 0 for e in state.out_edges(n)]
+        return not _ordered_before(state, readers, [e.src for e in state.in_edges(copy)])
+    writes = [n for n in anodes if state.in_degree(n) > 0]
+    return not _ordered_before(state, [e.dst for e in state.out_edges(copy)], writes)
+
+
 def _view_fold_breaks_anti_dependence(state: SDFGState, view: nodes.AccessNode) -> bool:
     """True iff folding ``view`` into the container it views would reorder a read past a write.
 
@@ -439,8 +467,8 @@ class ArrayElimination(ppl.Pass):
                     if state.out_degree(anode) == 1:
                         succ = state.successors(anode)[0]
                         if isinstance(succ, nodes.AccessNode):
-                            if _is_war_carrier(state, succ.data):
-                                continue  # folding anode's read onto a WAR carrier is unsound
+                            if _copy_fold_races(state, succ.data, anode, first=True):
+                                continue  # folding anode onto a WAR carrier would reorder a read past a write
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
@@ -461,8 +489,8 @@ class ArrayElimination(ppl.Pass):
                     if state.in_degree(anode) == 1:
                         pred = state.predecessors(anode)[0]
                         if isinstance(pred, nodes.AccessNode):
-                            if _is_war_carrier(state, pred.data):
-                                continue  # folding anode's readers onto a WAR carrier is unsound
+                            if _copy_fold_races(state, pred.data, anode, first=False):
+                                continue  # folding anode onto a WAR carrier would reorder a read past a write
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
