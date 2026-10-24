@@ -690,6 +690,15 @@ get an empty queue, other containers uninitialized cells. -/
 def Ctx.allocate (ctx : Ctx) (ts : List Name) (m : Mem) : Mem :=
   ts.foldl (fun m t => if ctx.isStream t then m.alloc (ctx.cname t) else m.allocCells (ctx.cname t)) m
 
+@[simp] theorem Ctx.allocate_aliases (ctx : Ctx) (ts : List Name) (m : Mem) :
+    (ctx.allocate ts m).aliases = m.aliases := by
+  induction ts generalizing m with
+  | nil => rfl
+  | cons t ts ih =>
+    simp only [Ctx.allocate, List.foldl_cons] at ih ⊢
+    rw [ih]
+    split <;> rfl
+
 /-- Set-up of a nested invocation: connector bindings, inner context,
 valuation, the per-call transients allocated, scalar code inputs copied.
 Returns the memory names whose log entries stay inside the call: the

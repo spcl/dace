@@ -625,6 +625,8 @@ structure OuterFacts (ctx : Ctx) (s' s : State) (M : NodeId) : Prop where
     s'.components s.components
   priv : ∀ n ∈ s.outerNodes (s.scopeNodes M), ∀ mp, n.kind = .mapEntry mp →
     ctx.privateTransients s' n.id = ctx.privateTransients s n.id
+  /-- The two states allocate the same transients (`Decisions.md#D68`). -/
+  stateT : ctx.stateTransients s' = ctx.stateTransients s
   scopes : ∀ n ∈ s.outerNodes (s.scopeNodes M), ∀ mp, n.kind = .mapEntry mp → n.id ≠ M →
     ScopeCorr (s'.scopeNodes M) (s.scopeNodes M) M (s'.scopeNodes n.id) (s.scopeNodes n.id) ∧
     s'.directChildren (some n.id) = s.directChildren (some n.id) ∧
@@ -1178,9 +1180,11 @@ theorem StateExec.matchedB {cst : CSt} {r' : Res (Ctl × CSt)} (h : StateExec ct
     MatchedE CtlRel (StateExec ctx cst s) r' := by
   cases h with
   | compsErr hc =>
+    rw [hF.stateT] at hc
     obtain ⟨e₀, hr, hb⟩ := MatchedE.err_cases (CompsExec.matchedB hF hw hbody hc hF.comps)
     exact ⟨_, .compsErr hr, hb _⟩
   | run hc =>
+    rw [hF.stateT] at hc
     rcases MatchedE.ok_cases (CompsExec.matchedB hF hw hbody hc hF.comps) with ⟨e, he, hx⟩ | ⟨logs, hx, hl⟩
     · exact MatchedE.of_ub (.compsErr hx) he
     · exact ⟨_, .run hx, stateFinish_below hw cst hl⟩
@@ -1297,7 +1301,7 @@ theorem sameOutside?_spec {g : SDFG} {s' s : State} {M : NodeId} (h : sameOutsid
     OuterFacts { I, g } s' s M := by
   unfold sameOutside? at h
   simp only [Bool.and_eq_true] at h
-  obtain ⟨⟨⟨hb, ho⟩, hs⟩, -⟩ := h
+  obtain ⟨⟨⟨hb, ho⟩, hs⟩, hm⟩ := h
   unfold bodyShape? at hb
   simp only [Bool.and_eq_true, Bool.not_eq_true', List.contains_eq_mem, decide_eq_false_iff_not,
     List.all_eq_true, Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, List.any_eq_true] at hb
@@ -1327,6 +1331,7 @@ theorem sameOutside?_spec {g : SDFG} {s' s : State} {M : NodeId} (h : sameOutsid
       reach := fun a b ha hb hr => ?_
       comps := ?_
       priv := fun n hn mp hk => ?_
+      stateT := ?_
       scopes := fun n hn mp hk hnM => ?_ }
   · rcases hsrc e he with (h | h) | h
     · exact absurd hd h
@@ -1375,6 +1380,15 @@ theorem sameOutside?_spec {g : SDFG} {s' s : State} {M : NodeId} (h : sameOutsid
     rw [hk] at this
     simp only [Bool.and_eq_true, beq_iff_eq] at this
     exact this.1
+  · unfold Ctx.stateTransients
+    refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
+    simp only
+    split
+    · rename_i hd
+      have hc := sameTransientMentions?_count hm hmem hd
+      simp only [Block.countMentions] at hc
+      rw [hc]
+    · rfl
   · have := hscopes n hn
     rw [hk] at this
     simp only [Bool.and_eq_true, beq_iff_eq, Bool.or_eq_true, hnM, false_or, List.all_eq_true,

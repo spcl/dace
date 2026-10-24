@@ -737,9 +737,10 @@ theorem StateExec.good {cst : CSt} {s : State} {r : Res (Ctl × CSt)} {C : Const
     r.Clean ∧ ∀ ctl cst', r = .ok (ctl, cst') → cst'.ρ = cst.ρ ∧ NoAlias cst'.mem := by
   cases h with
   | compsErr hc =>
-    refine ⟨Res.Clean.err_of rfl (CompsExec.clean horc hinj hc hC hna (stateOk_spec horc hinj hok).1), fun _ _ h => by cases h⟩
+    refine ⟨Res.Clean.err_of rfl (CompsExec.clean horc hinj hc hC (by simpa [NoAlias] using hna)
+      (stateOk_spec horc hinj hok).1), fun _ _ h => by cases h⟩
   | @run _ _ _ logs hc =>
-    obtain ⟨hfree, hal⟩ := CompsExec.logs_free horc hinj hc hok hna
+    obtain ⟨hfree, hal⟩ := CompsExec.logs_free horc hinj hc hok (by simpa [NoAlias] using hna)
     refine ⟨stateFinish_clean hfree, fun ctl cst' hr => ?_⟩
     unfold stateFinish at hr
     split at hr

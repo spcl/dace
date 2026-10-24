@@ -1,5 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Equiv.CorrMatch
+import Dace.SDFG.Sim
 import Dace.Equiv.Equiv
 
 /-!
@@ -28,6 +29,9 @@ namespace Corr
 /-- The tree segment `cs` corresponds to state `s`. -/
 structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop where
   pure : SeqPureP ctx s
+  /-- The transients the state allocates are no streams (a fresh stream is
+  empty, which the tree, allocating less, does not reproduce). -/
+  noStreams : ∀ t ∈ ctx.stateTransients s, ctx.isStream t = false
   comps : (s.components = [] ∧ cs = []) ∨
     ∃ c o full, s.components = [c] ∧ SegCorr ctx tc s o cs ∧ s.isTopologicalOrder c full = true ∧
       full.filter (s.topLevelOf c).contains = o
@@ -35,11 +39,18 @@ structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop
 theorem unionAll_single (g : Log) : Log.unionAll [g] = g := by
   cases g; simp [Log.unionAll]
 
+/-- Allocating transients that are no streams makes the memory less
+initialized (`Decisions.md#D68`). -/
+theorem allocate_left_one (ctx : Ctx) (ts : List Name) (hs : ∀ t ∈ ts, ctx.isStream t = false) {m : Mem} :
+    Mem.Sim 1 (ctx.allocate ts m) m :=
+  allocate_left ctx (Mem.Sim.refl m) ts hs
+
 section State
 
 variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+  (hw : ∀ op v, ctx.I.wcr op .undef v = .undef)
 
-include he hcons in
+include he hcons hw in
 /-- **Matching of a state**: the tree runs the segment, the SDFG the state;
 undefined behavior, the same error, or the same control-flow state. -/
 theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc s cs) {full : List SNode} {gb : Bool}
@@ -62,25 +73,35 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
   · let st₀ : St := { mem := cst.mem, log := cst.log }
     have hrel : StRel st₀ cst := ⟨rfl, rfl, rfl⟩
     let base : St := { mem := cst.mem }
+    let abase : St := { mem := ctx.allocate (ctx.stateTransients s) cst.mem }
     have hst₀ : st₀ = { base with log := cst.log } := rfl
     have hp : bindViews ctx cst.ρ s (s.topLevelOf c) base = .ok base := bindViews_eq cst.ρ h _ _
-    -- one SDFG component run from the state's memory, as an outcome of the state
+    -- the component run from the allocated memory simulates the one from the state's memory
+    have hab : St.Sim 1 abase base :=
+      ⟨Corr.allocate_left_one ctx (ctx.stateTransients s) hsc.noStreams, (Log.ren_one _).symm, rfl⟩
     have hstate : ∀ {rc : Res St}, OrderedExec ctx cst.ρ s c (s.topLevelOf c) base rc →
-        (∀ e, rc = .err e → StateExec ctx cst s (.err e)) ∧
-        (∀ st'', rc = .ok st'' → StateExec ctx cst s
+        (∀ e, rc = .err e → ∃ e', StateExec ctx cst s (.err e') ∧ (e'.isUB = true ∨ e' = e)) ∧
+        (∀ st'', rc = .ok st'' → (∃ e', e'.isUB = true ∧ StateExec ctx cst s (.err e')) ∨ StateExec ctx cst s
           (.ok (.normal, { cst with mem := st''.log.apply ctx.I.wcr cst.mem, log := cst.log.seq st''.log }))) := by
       intro rc hrc
+      obtain ⟨r₂, hr₂, hsim⟩ := OrderedExec.sim (π := 1) hw hrc abase hab
+      rw [Ctx.ren_one] at hr₂
       refine ⟨fun e he' => ?_, fun st'' hok => ?_⟩
       · subst he'
-        exact .compsErr (by rw [hc]; exact CompsExec.headErr hrc)
+        obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hsim
+        exact ⟨e', .compsErr (by rw [hc]; exact CompsExec.headErr hr₂), hu⟩
       · subst hok
-        have := StateExec.run (ctx := ctx) (cst := cst) (s := s) (logs := [st''.log])
-          (by rw [hc]; exact CompsExec.cons hrc .nil)
-        have hf : stateFinish ctx cst [st''.log] =
-            .ok (.normal, { cst with mem := st''.log.apply ctx.I.wcr cst.mem, log := cst.log.seq st''.log }) := by
-          simp only [stateFinish]
-          rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
-        rwa [hf] at this
+        rcases ResSim.ok_cases hsim with ⟨e, rfl, hu⟩ | ⟨st₂, rfl, hs₂⟩
+        · exact .inl ⟨e, hu, .compsErr (by rw [hc]; exact CompsExec.headErr hr₂)⟩
+        · refine .inr ?_
+          have := StateExec.run (ctx := ctx) (cst := cst) (s := s) (logs := [st₂.log])
+            (by rw [hc]; exact CompsExec.cons hr₂ .nil)
+          have hlog : st₂.log = st''.log := by rw [hs₂.log, Log.ren_one]
+          have hf : stateFinish ctx cst [st₂.log] =
+              .ok (.normal, { cst with mem := st''.log.apply ctx.I.wcr cst.mem, log := cst.log.seq st''.log }) := by
+            simp only [stateFinish, hlog]
+            rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
+          rwa [hf] at this
     rcases SegCorr.matched h he hcons hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
@@ -89,7 +110,10 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
       | err e' =>
         cases he₀
         rw [← hdir] at hs₀
-        exact .inl ⟨_, hu, (hstate (.seqErr hto hp hs₀)).1 _ rfl⟩
+        obtain ⟨e'', hx', hu'⟩ := (hstate (.seqErr hto hp hs₀)).1 _ rfl
+        rcases hu' with hu' | rfl
+        · exact .inl ⟨_, hu', hx'⟩
+        · exact .inl ⟨_, hu, hx'⟩
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
       cases r₀ with
@@ -97,7 +121,10 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
       | err e' =>
         cases he₀
         rw [← hdir] at hs₀
-        exact .inr (.inl ⟨_, hr, (hstate (.seqErr hto hp hs₀)).1 _ rfl⟩)
+        obtain ⟨e'', hx', hu'⟩ := (hstate (.seqErr hto hp hs₀)).1 _ rfl
+        rcases hu' with hu' | rfl
+        · exact .inl ⟨_, hu', hx'⟩
+        · exact .inr (.inl ⟨_, hr, hx'⟩)
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
       cases r₀ with
@@ -108,12 +135,17 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
         obtain ⟨rfl, rfl⟩ := he₀
         rw [← hdir] at hs₀
         cases hf : s.hbFree tr with
-        | false => exact .inl ⟨_, rfl, (hstate (.hbRace hto hp hs₀ hf)).1 _ rfl⟩
+        | false =>
+          obtain ⟨e'', hx', hu'⟩ := (hstate (.hbRace hto hp hs₀ hf)).1 _ rfl
+          rcases hu' with hu' | rfl
+          · exact .inl ⟨_, hu', hx'⟩
+          · exact .inl ⟨_, rfl, hx'⟩
         | true =>
           have hrun : OrderedExec ctx cst.ρ s c (s.topLevelOf c) base (.ok st'') := .run hto hp hs₀ hf
           have hcoh := (OrderedExec.coh h (st := base) hrun).1
+          rcases (hstate hrun).2 _ rfl with ⟨e, hu, hx'⟩ | this
+          · exact .inl ⟨e, hu, hx'⟩
           refine .inr (.inr ⟨cst', hl, ?_⟩)
-          have := (hstate hrun).2 _ rfl
           have hcst : ({ cst with mem := st''.log.apply ctx.I.wcr cst.mem, log := cst.log.seq st''.log } : CSt) =
               cst' := by
             obtain ⟨hm, hlg, -⟩ := hrel'

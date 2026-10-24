@@ -310,6 +310,8 @@ end Sound
 /-- Check one state against the head of the tree list; the rest of the list. -/
 def stateCheck (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Except String (List SNode) :=
   if seqPureP? ctx s = false then .error s!"state '{s.label}': outside the fragment (seqPureP?)"
+  else if !(ctx.stateTransients s).all (fun t => !ctx.isStream t) then
+    .error s!"state '{s.label}': allocates a transient stream"
   else
     match s.components with
     | [] => .ok cs
@@ -329,9 +331,14 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {s : State} {cs rest : List SNo
   · rename_i hp
     have hpure : SeqPureP ctx s := seqPureP?_sound (by simpa using hp)
     split at h
+    · cases h
+    rename_i hns
+    have hns' : ∀ t ∈ ctx.stateTransients s, ctx.isStream t = false := by
+      simpa using hns
+    split at h
     · rename_i hc
       cases h
-      exact ⟨[], rfl, hpure, .inl ⟨hc, rfl⟩⟩
+      exact ⟨[], rfl, hpure, hns', .inl ⟨hc, rfl⟩⟩
     · rename_i c hc
       split at h
       · rename_i o full rest' hm
@@ -339,7 +346,7 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {s : State} {cs rest : List SNo
         · rename_i hto
           cases h
           obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound _ _ _ _ _ _ hm
-          exact ⟨pre, hpre, hpure, .inr ⟨c, o, full, hc, hseg, hto.1, hto.2⟩⟩
+          exact ⟨pre, hpre, hpure, hns', .inr ⟨c, o, full, hc, hseg, hto.1, hto.2⟩⟩
         · cases h
       · cases h
     · cases h
@@ -686,7 +693,7 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I�
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s cs) :
     StateCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s cs := by
-  refine ⟨SeqPureP.withI I₁ I₂ h.pure, ?_⟩
+  refine ⟨SeqPureP.withI I₁ I₂ h.pure, h.noStreams, ?_⟩
   rcases h.comps with h₁ | ⟨c, o, full, hc, hseg, hto, hdir⟩
   · exact .inl h₁
   · exact .inr ⟨c, o, full, hc, SegCorr.withI I₁ I₂ hseg, hto, hdir⟩
@@ -772,10 +779,10 @@ theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) :
 
 /-- **Certified pairs (M5a)**: every outcome of the schedule tree is an
 outcome of the SDFG, or the SDFG may end in undefined behavior. -/
-theorem corr?_exec {g : SDFG} {t : STree} (h : corr? g t = true) {I : Interp} {ρ₀ : Valuation} {m₀ : Mem}
-    {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
+theorem corr?_exec {g : SDFG} {t : STree} (h : corr? g t = true) {I : Interp} (hl : I.Lawful) {ρ₀ : Valuation}
+    {m₀ : Mem} {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
     (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r :=
-  (corr?_sound h I).exec ht
+  (corr?_sound h I).exec hl.undef_absorb ht
 
 /-- **Certified pairs (M5a)**: the schedule tree refines a supported SDFG. -/
 theorem corr?_refines {g : SDFG} {t : STree} (h : corr? g t = true) (hs : Supported g.prog) :

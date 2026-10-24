@@ -180,7 +180,7 @@ def execState (fuel : Nat) (ctx : Ctx) (cst : CSt) (s : State) : Option (Res (Ct
   match fuel with
   | 0 => none
   | fuel + 1 =>
-    match execComps fuel ctx cst.ρ s cst.mem s.components with
+    match execComps fuel ctx cst.ρ s (ctx.allocate (ctx.stateTransients s) cst.mem) s.components with
     | none => none
     | some (.err e) => some (.err e)
     | some (.ok logs) => some (stateFinish ctx cst logs)

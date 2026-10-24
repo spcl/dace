@@ -258,3 +258,6 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.St.readAt_foot
 #print axioms Dace.SDFG.startMem_setBlockAt
 #print axioms Dace.Corr.keepAtStart_eq
+#print axioms Dace.NodeExec.sim
+#print axioms Dace.SDFGExec.sim
+#print axioms Dace.merge_sim

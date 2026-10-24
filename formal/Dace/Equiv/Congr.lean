@@ -109,20 +109,27 @@ for every scope of every state. -/
 structure Agree (ctx' ctx : Ctx) : Prop where
   erase : ctx'.erase = ctx.erase
   priv : ∀ (s : State) (entry : NodeId), ctx'.privateTransients s entry = ctx.privateTransients s entry
+  stateT : ∀ s : State, ctx'.stateTransients s = ctx.stateTransients s
 
-theorem Agree.refl (ctx : Ctx) : Agree ctx ctx := ⟨rfl, fun _ _ => rfl⟩
+theorem Agree.refl (ctx : Ctx) : Agree ctx ctx := ⟨rfl, fun _ _ => rfl, fun _ => rfl⟩
 
 theorem Agree.symm {ctx' ctx : Ctx} (h : Agree ctx' ctx) : Agree ctx ctx' :=
-  ⟨h.erase.symm, fun s e => (h.priv s e).symm⟩
+  ⟨h.erase.symm, fun s e => (h.priv s e).symm, fun s => (h.stateT s).symm⟩
 
 theorem Agree.trans {a b c : Ctx} (h₁ : Agree a b) (h₂ : Agree b c) : Agree a c :=
-  ⟨h₁.erase.trans h₂.erase, fun s e => (h₁.priv s e).trans (h₂.priv s e)⟩
+  ⟨h₁.erase.trans h₂.erase, fun s e => (h₁.priv s e).trans (h₂.priv s e), fun s => (h₁.stateT s).trans (h₂.stateT s)⟩
+
 
 /-- A function of the context that only reads its erased part agrees on
 agreeing contexts. -/
 theorem Agree.leaf {α : Sort _} {ctx' ctx : Ctx} (h : Agree ctx' ctx) (f : Ctx → α)
     (hf : ∀ c, f c = f c.erase) : f ctx' = f ctx := by
   rw [hf ctx', h.erase, ← hf ctx]
+
+theorem Agree.allocate {ctx' ctx : Ctx} (h : Agree ctx' ctx) (s : State) (m : Mem) :
+    ctx'.allocate (ctx'.stateTransients s) m = ctx.allocate (ctx.stateTransients s) m := by
+  rw [h.stateT s]
+  exact h.leaf (fun c => c.allocate (ctx.stateTransients s) m) (fun _ => rfl)
 
 variable {ctx' ctx : Ctx}
 
@@ -232,8 +239,8 @@ theorem CompsExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {
 
 theorem StateExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {cst : CSt} {s : State} {r : Res (Ctl × CSt)} :
     StateExec ctx' cst s r → StateExec ctx cst s r
-  | .compsErr hc => .compsErr (CompsExec.congr h hc)
-  | .run hc => by rw [h.stateFinish]; exact .run (CompsExec.congr h hc)
+  | .compsErr hc => .compsErr (h.allocate s _ ▸ CompsExec.congr h hc)
+  | .run hc => by rw [h.stateFinish]; exact .run (h.allocate s _ ▸ CompsExec.congr h hc)
 
 mutual
 
@@ -1245,15 +1252,19 @@ theorem SDFG.startMem_setBlockAt {g : SDFG} {p : List PathStep} {i : BlockId} {b
 private-transient set of `g` (`Ctx.agree_setBlockAt`) and the start memory. -/
 def sameTransientMentions? (g : SDFG) (b' b : Block) : Bool :=
   (g.arrays.all fun (t, d) =>
-    !(d.transient && decide (d.lifetime = .scope)) || Block.countMentions t b' == Block.countMentions t b) &&
+    !(d.transient && (d.lifetime == .scope || d.lifetime == .state)) ||
+      Block.countMentions t b' == Block.countMentions t b) &&
   Block.externalNames "" b' == Block.externalNames "" b
 
-theorem sameTransientMentions?_counts {g : SDFG} {b' b : Block} (h : sameTransientMentions? g b' b = true) :
-    (g.arrays.all fun (t, d) =>
-      !(d.transient && decide (d.lifetime = .scope)) || Block.countMentions t b' == Block.countMentions t b) = true := by
+theorem sameTransientMentions?_count {g : SDFG} {b' b : Block} (h : sameTransientMentions? g b' b = true)
+    {t : Name} {d : DataDesc} (hmem : (t, d) ∈ g.arrays)
+    (hd : (d.transient && (d.lifetime == .scope || d.lifetime == .state)) = true) :
+    Block.countMentions t b' = Block.countMentions t b := by
   unfold sameTransientMentions? at h
   simp only [Bool.and_eq_true] at h
-  exact h.1
+  have := List.all_eq_true.1 h.1 (t, d) hmem
+  simp only [hd, Bool.not_true, Bool.false_or, beq_iff_eq] at this
+  exact this
 
 theorem sameTransientMentions?_externals {g : SDFG} {b' b : Block} (h : sameTransientMentions? g b' b = true) :
     Block.externalNames "" b' = Block.externalNames "" b := by
@@ -1277,18 +1288,28 @@ two blocks mention every `Scope`-lifetime transient equally often. -/
 theorem Ctx.agree_setBlockAt {I : Interp} {cn sc : Name → Name} {g : SDFG} {p : List PathStep} {i : BlockId}
     {b' b : Block} (hat : g.top.blockAt? p i = some b) (hm : sameTransientMentions? g b' b = true) :
     Ctx.Agree { I, g := g.setBlockAt p i b', cname := cn, scope := sc } { I, g, cname := cn, scope := sc } := by
-  refine ⟨rfl, fun s entry => ?_⟩
-  unfold Ctx.privateTransients
-  refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
-  have h := List.all_eq_true.1 (sameTransientMentions?_counts hm) (t, d) hmem
-  simp only at h ⊢
-  split
-  · rename_i hsc
-    simp only [hsc, Bool.not_true, Bool.false_or, beq_iff_eq] at h
-    have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
-      Region.countMentions_setBlockAt t h p g.top hat
-    rw [hc]
-  · rfl
+  refine ⟨rfl, fun s entry => ?_, fun s => ?_⟩
+  · unfold Ctx.privateTransients
+    refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
+    simp only
+    split
+    · rename_i hsc
+      have hd : (d.transient && (d.lifetime == .scope || d.lifetime == .state)) = true := by
+        simp only [Bool.and_eq_true, decide_eq_true_eq] at hsc
+        simp [hsc.1, hsc.2]
+      have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
+        Region.countMentions_setBlockAt t (sameTransientMentions?_count hm hmem hd) p g.top hat
+      rw [hc]
+    · rfl
+  · unfold Ctx.stateTransients
+    refine List.filterMap_congr fun ⟨t, d⟩ hmem => ?_
+    simp only
+    split
+    · rename_i hd
+      have hc : SDFG.countMentions (g.setBlockAt p i b') t = g.countMentions t :=
+        Region.countMentions_setBlockAt t (sameTransientMentions?_count hm hmem hd) p g.top hat
+      rw [hc]
+    · rfl
 
 /-! ## Congruence for SDFGs -/
 

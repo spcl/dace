@@ -253,13 +253,15 @@ inductive CompsExec : Ctx → Valuation → State → Mem → List (List NodeId)
       (hr : CompsExec ctx ρ s m rest (.ok logs)) :
       CompsExec ctx ρ s m (comp :: rest) (.ok (st.log :: logs))
 
-/-- A state: its components run concurrently and their logs are merged. -/
+/-- A state: its components run concurrently from the state's memory with
+the state's transients allocated (`Ctx.stateTransients`,
+`Decisions.md#D68`), and their logs are merged onto the state's memory. -/
 inductive StateExec : Ctx → CSt → State → Res (Ctl × CSt) → Prop where
   | compsErr {ctx : Ctx} {cst : CSt} {s : State} {e : ErrReason}
-      (hc : CompsExec ctx cst.ρ s cst.mem s.components (.err e)) :
+      (hc : CompsExec ctx cst.ρ s (ctx.allocate (ctx.stateTransients s) cst.mem) s.components (.err e)) :
       StateExec ctx cst s (.err e)
   | run {ctx : Ctx} {cst : CSt} {s : State} {logs : List Log}
-      (hc : CompsExec ctx cst.ρ s cst.mem s.components (.ok logs)) :
+      (hc : CompsExec ctx cst.ρ s (ctx.allocate (ctx.stateTransients s) cst.mem) s.components (.ok logs)) :
       StateExec ctx cst s (stateFinish ctx cst logs)
 
 /-- A control-flow block. -/

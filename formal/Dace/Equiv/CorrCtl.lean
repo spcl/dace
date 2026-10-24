@@ -826,6 +826,7 @@ theorem namedRegion_inv {tc : TCtx} {label : String} {body : List SNode} {cst : 
 section Matched
 
 variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+  (hw : ∀ op v, ctx.I.wcr op .undef v = .undef)
 
 include he in
 /-- One `if`/`elif` scope of a chain, from either sibling context. -/
@@ -878,7 +879,7 @@ theorem chain_step {full : List SNode} {gb : Bool} {sc : SibCtx} {n : SNode} {c 
       · simp only [chainOut, Res.map, Res.ok.injEq, Prod.mk.injEq] at he'
         exact absurd he'.2.1 (Ctl.toT_ne_goto _ _)
 
-include he hcons
+include he hcons hw
 
 set_option linter.unusedSectionVars false
 
@@ -916,7 +917,7 @@ theorem BlockCorr.matched {b : Block} {cs : List SNode} :
       {r : Res (TCtl × CSt)}, HeadOk rest → STree.ListExec tc full gb {} (cs ++ rest) cst r →
       BOut (BlockExec ctx cst b) (fun c => STree.ListExec tc full gb {} rest c r) r
   | .state hs, full, gb, rest, cst, r, _, hx => by
-    rcases hs.matched he hcons hx with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨c, hl, h⟩
+    rcases hs.matched he hcons hw hx with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨c, hl, h⟩
     · exact .inl ⟨e, hu, .state h⟩
     · exact .inr (.inl ⟨e, hr, .state h⟩)
     · exact .inr (.inr (.inr ⟨c, hl, .state h⟩))
@@ -983,7 +984,8 @@ structure ProgCorr (I : Interp) (g : SDFG) (t : STree) : Prop where
 
 /-- **Programs**: every outcome of the tree is an outcome of the SDFG, or the
 SDFG may end in undefined behavior. -/
-theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) {ρ₀ : Valuation} {m₀ : Mem}
+theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t)
+    (hw : ∀ op v, I.wcr op .undef v = .undef) {ρ₀ : Valuation} {m₀ : Mem}
     {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
     (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r := by
   obtain ⟨res, hx, rfl⟩ := ht
@@ -992,7 +994,7 @@ theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t) 
   have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := g.startMem m₀ } := by
     simp [rootStart, hc.consts, hc.start, SDFG.startMem]
   rw [hstart] at hx
-  rcases (hc.reg.matched he rfl HeadOk.nil (ListExec.append_nil hx)).toOut with
+  rcases (hc.reg.matched he rfl hw HeadOk.nil (ListExec.append_nil hx)).toOut with
     ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩
   · exact .inl ⟨e, hu, _, .err (.start hy), rfl⟩
   · exact .inr ⟨_, .err (.start hy), rfl⟩
@@ -1009,7 +1011,7 @@ theorem ProgCorr.refines {g : SDFG} {t : STree} (hc : ∀ I, ProgCorr I g t) (hs
   by_cases hmu : mayUB g.prog I ρ₀ m₀
   · exact .inl hmu
   · refine .inr fun r hr => ?_
-    rcases (hc I).exec hr with ⟨e, hu, hy⟩ | hy
+    rcases (hc I).exec hpre.1.undef_absorb hr with ⟨e, hu, hy⟩ | hy
     · exact absurd ⟨e, hu, hy⟩ hmu
     · cases r with
       | ok m => exact ⟨m, rfl, m, hy, obsEq.refl _ _⟩

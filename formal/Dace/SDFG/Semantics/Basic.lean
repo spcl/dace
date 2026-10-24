@@ -724,6 +724,17 @@ def privateTransients (ctx : Ctx) (s : State) (entry : NodeId) : List Name :=
       if here = ctx.g.countMentions t then some (ctx.cname t) else none
     else none
 
+/-- Transients allocated per execution of state `s` (`Decisions.md#D68`):
+`Scope` or `State` lifetime, mentioned in `s`, and not shared: every mention
+of it in the SDFG (`SDFG.countMentions`, control-flow expressions included)
+is a node of `s`.  Container names (not memory names). -/
+def stateTransients (ctx : Ctx) (s : State) : List Name :=
+  ctx.g.arrays.filterMap fun (t, d) =>
+    if d.transient && (d.lifetime == .scope || d.lifetime == .state) then
+      let here := (s.nodes.filter (·.mentions t)).length
+      if 0 < here && here = ctx.g.countMentions t then some t else none
+    else none
+
 end Ctx
 
 end Dace
