@@ -9,6 +9,8 @@ import functools
 import inspect
 import itertools
 import re
+import sys
+import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from typing import (
@@ -49,6 +51,7 @@ from dace.sdfg.graph import (
     OrderedDiGraph,
     OrderedMultiDiConnectorGraph,
     SubgraphView,
+    frozen_node_ids,
     generate_element_id,
 )
 from dace.sdfg.replace import replace_in_codeblock
@@ -79,10 +82,24 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
-        return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+        lineno, filename = caller_position(sys._getframe(2))
+        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
 
     return None
+
+
+#: ``(code, instruction offset) -> (line, file)`` per resolved call site; ``getframeinfo`` stats the file each call.
+CALLER_POSITIONS: dict[tuple[types.CodeType, int], tuple[int, str]] = {}
+
+
+def caller_position(frame: types.FrameType) -> tuple[int, str]:
+    """``(lineno, filename)`` as ``inspect.getframeinfo(frame, context=0)`` reports them, once per call site."""
+    key = (frame.f_code, frame.f_lasti)
+    position = CALLER_POSITIONS.get(key)
+    if position is None:
+        info = inspect.getframeinfo(frame, context=0)
+        position = CALLER_POSITIONS[key] = (info.lineno, info.filename)
+    return position
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -813,10 +830,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
+        # ``new_symbols(sdfg, ...)`` rebuilds this type environment per edge; keep it alongside ``defined_syms``
+        array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
+        environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
-            update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
+            if edge.data.assignments:
+                defined = {k: v for k, v in edge.data.new_symbols(None, environment).items() if v is not None}
+                defined_syms.update(defined)
+                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
             if isinstance(edge.dst, AbstractControlFlowRegion):
-                update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+                defined = {k: v for k, v in edge.dst.new_symbols(defined_syms).items() if v is not None}
+                defined_syms.update(defined)
+                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
         regions = []
         region = state.parent_graph
         while region is not None and region is not sdfg:
@@ -1419,6 +1444,9 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @label.setter
     def label(self, label: str):
         self._label = label
+        # An in-place rename reserves the new name in the parent region too
+        if self._parent_graph is not None:
+            self._parent_graph._labels.add(label)
 
     @property
     def name(self) -> str:
@@ -3046,9 +3074,12 @@ class AbstractControlFlowRegion(
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
-        for g in cfg_list:
-            if g not in sub_cfg_list:
-                sub_cfg_list.append(g)
+        if cfg_list is not sub_cfg_list:
+            present = {id(g) for g in sub_cfg_list}
+            for g in cfg_list:
+                if id(g) not in present:
+                    present.add(id(g))
+                    sub_cfg_list.append(g)
         ptarget = None
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
             ptarget = self.parent_sdfg
@@ -3149,7 +3180,6 @@ class AbstractControlFlowRegion(
     def add_return(self, label=None) -> ReturnBlock:
         label = self._ensure_unique_block_name(label)
         block = ReturnBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
@@ -3171,9 +3201,7 @@ class AbstractControlFlowRegion(
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
-        # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
-        # count guard rots.
-        self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
+        # ``add_node`` and the ``label`` setter record every name; a removed block keeps its name reserved
         return utils.find_new_name(proposed or "block", self._labels)
 
     def add_node(
@@ -3202,6 +3230,7 @@ class AbstractControlFlowRegion(
         if ensure_unique_name:
             node.label = self._ensure_unique_block_name(node.label)
 
+        self._labels.add(node.label)
         super().add_node(node)
         self._cached_start_block = None
         node.parent_graph = self
@@ -3246,7 +3275,6 @@ class AbstractControlFlowRegion(
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool | None = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
-        self._labels.add(label)
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn("is_start_state is deprecated, use is_start_block instead", DeprecationWarning)
@@ -3318,7 +3346,8 @@ class AbstractControlFlowRegion(
     ) -> Iterator["AbstractControlFlowRegion"]:
         """Iterate over this and all nested control flow regions."""
         if parent_first:
-            yield self
+            yield from self.control_flow_regions_preorder(recursive, load_ext)
+            return
         for block in self.nodes():
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
@@ -3338,6 +3367,30 @@ class AbstractControlFlowRegion(
                 )
         if not parent_first:
             yield self
+
+    def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator["AbstractControlFlowRegion"]:
+        """``all_control_flow_regions(parent_first=True)`` with an explicit stack instead of one generator per level."""
+        yield self
+        # (remaining items, their state, or None for a region's blocks)
+        stack: list[tuple[Iterator[Any], SDFGState | None]] = [(iter(self.nodes()), None)]
+        while stack:
+            items, owner = stack[-1]
+            item = next(items, None)
+            if item is None:
+                stack.pop()
+            elif owner is not None:
+                if isinstance(item, nd.NestedSDFG):
+                    if not item.sdfg and load_ext:
+                        item.load_external(owner)
+                    if item.sdfg:
+                        yield item.sdfg
+                        stack.append((iter(item.sdfg.nodes()), None))
+            elif isinstance(item, SDFGState):
+                if recursive:
+                    stack.append((iter(item.nodes()), item))
+            elif isinstance(item, AbstractControlFlowRegion):
+                yield item
+                stack.append((iter(item.nodes()), None))
 
     def all_sdfgs_recursive(self, load_ext=False) -> Iterator["SDFG"]:
         """Iterate over this and all nested SDFGs."""
@@ -3451,7 +3504,8 @@ class AbstractControlFlowRegion(
         return free_syms, defined_syms, used_before_assignment
 
     def to_json(self, parent=None):
-        graph_json = OrderedDiGraph.to_json(self)
+        with frozen_node_ids():
+            graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
 
@@ -4212,14 +4266,12 @@ class LoopRegion(ControlFlowRegion):
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
         block = BreakBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
     def add_continue(self, label=None) -> ContinueBlock:
         label = self._ensure_unique_block_name(label)
         block = ContinueBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
@@ -4281,6 +4333,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         if condition is not None and not isinstance(condition, CodeBlock):
             condition = CodeBlock(condition)
         self._branches.append([condition, branch])
+        self._labels.add(branch.label)
         branch.parent_graph = self
         branch.sdfg = self.sdfg
         # A branch is reached only through this list, never through ``nodes()``, so the generic
