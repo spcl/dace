@@ -736,3 +736,41 @@ def args_regions(seed: int = 0) -> dict:
 
 
 PROGRAMS.append(("regions", _BuiltProgram("regions", _build_regions), args_regions))
+
+
+def _build_nested_renamed_map() -> dace.SDFG:
+    """A map whose body is a nested SDFG that names its containers differently: ``B[i] = 2 * A[i]`` through the
+    connectors ``_x`` (bound to ``A``) and ``_y`` (bound to ``B``), like ``symbol_mapping`` renames symbols.
+
+    The schedule tree inlines the nested SDFG under the outer names; the pair checker relates the two by renaming
+    the tree body to the connector names.
+    """
+    sdfg = dace.SDFG("nested_renamed_map")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    inner = dace.SDFG("scale")
+    inner.add_symbol("N", dace.int64)
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("_x", [N], dace.float64)
+    inner.add_array("_y", [N], dace.float64)
+    istate = inner.add_state("scale_state")
+    tasklet = istate.add_tasklet("twice", {"x"}, {"y"}, "y = 2 * x")
+    istate.add_edge(istate.add_read("_x"), None, tasklet, "x", dace.Memlet("_x[i]"))
+    istate.add_edge(tasklet, "y", istate.add_write("_y"), None, dace.Memlet("_y[i]"))
+    state = sdfg.add_state("main")
+    entry, exit_ = state.add_map("rows", dict(i="0:N"))
+    node = state.add_nested_sdfg(inner, {"_x"}, {"_y"}, {"N": "N", "i": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="_x", memlet=dace.Memlet("A[0:N]"))
+    state.add_memlet_path(node, exit_, state.add_write("B"), src_conn="_y", memlet=dace.Memlet("B[0:N]"))
+    return sdfg
+
+
+def args_nested_renamed_map(seed: int = 0) -> dict:
+    r = _rng(31, seed)
+    return dict(A=r.random(5), B=np.zeros(5), N=5)
+
+
+PROGRAMS.append(
+    ("nested_renamed_map", _BuiltProgram("nested_renamed_map", _build_nested_renamed_map), args_nested_renamed_map)
+)

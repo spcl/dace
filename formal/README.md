@@ -41,6 +41,9 @@ representations:
   SDFG matches the tree's inlined inner region; the per-call transients are
   related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation
   theorem `SDFGExec.sim` over a name permutation, `Corr.flatCtx`).
+  Connectors may name their containers differently from the outer edges:
+  the tree body is renamed to the connector names (`STree/Rename.lean`,
+  `STree.ListExec.ren`, `Corr.connPerm`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).

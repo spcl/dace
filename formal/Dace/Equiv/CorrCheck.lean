@@ -101,6 +101,40 @@ theorem takeDyn_sound : ∀ {k : Nat} {cs : List SNode} {ks : List InKey} {rest 
 
 /-! ## Nested SDFGs -/
 
+/-- Swap each pair of names (pairs on disjoint names make an involution). -/
+def swapsPerm : List (Name × Name) → Equiv.Perm Name
+  | [] => 1
+  | (a, b) :: ps => Equiv.swap a b * swapsPerm ps
+
+/-- The names of the pairs. -/
+def pairNames (ps : List (Name × Name)) : List Name := ps.flatMap fun p => [p.1, p.2]
+
+theorem swapsPerm_of_not_mem : ∀ (ps : List (Name × Name)) (x : Name), x ∉ pairNames ps → swapsPerm ps x = x
+  | [], _, _ => rfl
+  | (a, b) :: ps, x, h => by
+    simp only [pairNames, List.flatMap_cons, List.mem_append, List.mem_cons, List.not_mem_nil, or_false,
+      not_or] at h
+    obtain ⟨⟨ha, hb⟩, hr⟩ := h
+    simp only [swapsPerm, Equiv.Perm.mul_apply]
+    rw [swapsPerm_of_not_mem ps x hr, Equiv.swap_apply_of_ne_of_ne ha hb]
+
+/-- The renaming of a nested call's tree body (`InnerCorr`): each outer
+container swapped with the connector it is bound to (`nestedBindings`), like
+`symbol_mapping` does for symbols.  The name checks (`innerNames?`) verify
+that it relates every inner name to its outer name. -/
+def connPerm (conns : List (Name × Name)) : Equiv.Perm Name :=
+  swapsPerm ((conns.filter fun p => p.1 != p.2).map fun p => (p.2, p.1))
+
+/-- Decision procedure for `Ctx.DescFixed`. -/
+def descFixed? (σ : Equiv.Perm Name) (ctx : Ctx) : Bool := ctx.g.arrays.all fun p => fixedB σ p.2.fullRange.names
+
+theorem descFixed?_sound {σ : Equiv.Perm Name} {ctx : Ctx} (h : descFixed? σ ctx = true) : ctx.DescFixed σ := by
+  intro n d hd
+  simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hd
+  obtain ⟨p, hp, rfl⟩ := hd
+  exact fixedB_iff.1 (List.all_eq_true.1 h p (List.mem_of_find?_eq_some hp))
+
+
 /-- `l₁` and `l₂` have the same members. -/
 def sameMembers? (l₁ l₂ : List Name) : Bool := l₁.all l₂.contains && l₂.all l₁.contains
 
@@ -177,7 +211,7 @@ theorem idle?_sound {ctx : Ctx} {s : State} {xs : List NodeId} (h : idle? ctx s 
 
 /-- Recognize a map scope whose body is one nested SDFG (`SegCorr.nestedMap`;
 `nest` checks the inlined inner region): the order of the scope. -/
-def nestedChild (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool) (s : State) (n : DNode)
+def nestedChild (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) (n : DNode)
     (body : List SNode) : Option (List NodeId) :=
   match s.topoOrder (s.scopeNodes n.id) with
   | none => none
@@ -195,7 +229,8 @@ def nestedChild (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool) (s
                 (s.outEdges nd.id).all (fun e => (s.dstEndpoint e).isData) = true ∧
                 sameMembers? (tc.privateTransients body)
                   (ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname) = true ∧
-                innerNames? ctx tc inner nd.id conns = true ∧ nest inner body = true ∧
+                innerNames? ctx (tc.renT (connPerm conns)) inner nd.id conns = true ∧
+                nest (connPerm conns) inner body = true ∧
                 s.isTopologicalOrder (s.scopeNodes n.id) full = true
             then some full else none
         | .err _ => none
@@ -203,8 +238,8 @@ def nestedChild (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool) (s
     | none => none
   | _ => none
 
-theorem nestedChild_sound {ctx : Ctx} {tc : TCtx} {nest : SDFG → List SNode → Bool} {s : State}
-    (hnest : ∀ inner body, nest inner body = true → InnerCorr tc inner body)
+theorem nestedChild_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode → Bool} {s : State}
+    (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
     {n : DNode} {body : List SNode} {full : List NodeId} (h : nestedChild ctx tc nest s n body = some full) :
     ∀ {id : NodeId} {o : List NodeId} {cs : List SNode} {mp : MapNode} {keys : List InKey} {ds : List SNode},
       s.node? id = some n → n.kind = .mapEntry mp → s.dynKeys? n = some keys → DynOk ctx keys → DynNodes keys ds →
@@ -228,7 +263,7 @@ theorem nestedChild_sound {ctx : Ctx} {tc : TCtx} {nest : SDFG → List SNode �
             cases h
             exact .nestedMap hn hk hkeys hok hds hto hdir (idle?_sound hidle) hnd hkn hb (nestedMapOk?_sound hm)
               (List.all_eq_true.1 hcode) (List.all_eq_true.1 hout) (sameMembers?_sound hpriv)
-              (innerNames?_sound hnames) (hnest _ _ hn') ht
+              (innerNames?_sound hnames) (hnest _ _ _ hn') ht
           · cases h
         · cases h
       · cases h
@@ -241,7 +276,7 @@ abbrev MatchRes := List NodeId × List NodeId × List SNode
 
 section Check
 
-variable (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool) (s : State)
+variable (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State)
 
 /-- Match the image of node `n` at the head of `cs` (`rec` matches a scope
 body): the full order nested in `n` and the rest of the list. -/
@@ -321,8 +356,8 @@ end Check
 
 section Sound
 
-variable {ctx : Ctx} {tc : TCtx} {nest : SDFG → List SNode → Bool} {s : State}
-  (hnest : ∀ inner body, nest inner body = true → InnerCorr tc inner body)
+variable {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode → Bool} {s : State}
+  (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
 include hnest
 
 theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
@@ -463,7 +498,7 @@ end Sound
 /-! ## States, the chain and the program -/
 
 /-- Check one state against the head of the tree list; the rest of the list. -/
-def stateCheck (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool) (s : State) (cs : List SNode) :
+def stateCheck (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) (cs : List SNode) :
     Except String (List SNode) :=
   if seqPlain? ctx s = false then .error s!"state '{s.label}': outside the fragment (seqPlain?)"
   else if !(ctx.stateTransients s).all (fun t => !ctx.isStream t) then
@@ -479,8 +514,8 @@ def stateCheck (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool) (s 
       | none => .error s!"state '{s.label}': no tree segment matches"
     | _ => .error s!"state '{s.label}': several components"
 
-theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : SDFG → List SNode → Bool} {s : State} {cs rest : List SNode}
-    (hnest : ∀ inner body, nest inner body = true → InnerCorr tc inner body)
+theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode → Bool} {s : State} {cs rest : List SNode}
+    (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
     (h : stateCheck ctx tc nest s cs = .ok rest) : ∃ pre, cs = pre ++ rest ∧ StateCorr ctx tc s pre := by
   unfold stateCheck at h
   split at h
@@ -532,7 +567,7 @@ end
 
 section Check
 
-variable (ctx : Ctx) (tc : TCtx) (nest : SDFG → List SNode → Bool)
+variable (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool)
 
 mutual
 
@@ -652,8 +687,8 @@ end Check
 
 section CheckSound
 
-variable {ctx : Ctx} {tc : TCtx} {nest : SDFG → List SNode → Bool}
-  (hnest : ∀ inner body, nest inner body = true → InnerCorr tc inner body)
+variable {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode → Bool}
+  (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
 include hnest
 
 mutual
@@ -925,51 +960,50 @@ theorem RegionAt.normal_of_states {ctx : Ctx} {rg : Region} (hs : rg.statesOnly 
   | _, _, _, .ambiguous .., _, _, hr => by cases hr
   | _, _, _, .assignErr .., _, _, hr => by cases hr
 
+/-- A tree outcome matched up to the error is matched. -/
+theorem NestedOut.of_get? {X : Res (Ctl × CSt) → Prop} {r' r : Res (TCtl × CSt)} (hr : r'.get? = r.get?)
+    (h : NestedOut X r') : NestedOut X r := by
+  rcases h with h | ⟨e, e', rfl, hx⟩ | ⟨c, rfl, hx⟩
+  · exact .inl h
+  · obtain ⟨e₀, rfl⟩ := Res.exists_err_of_get? (by rw [← hr]; rfl)
+    exact .inr (.inl ⟨e₀, e', rfl, hx⟩)
+  · rw [Res.get?_ok, eq_comm, Res.get?_eq_some] at hr
+    exact .inr (.inr ⟨c, hr, hx⟩)
+
 /-- Check the inlined top region of a nested SDFG (`InnerCorr`): a chain of
-states without nested SDFGs. -/
-def innerCheck (tc : TCtx) (inner : SDFG) (body : List SNode) : Bool :=
-  inner.top.statesOnly &&
-    match regCheck (tc.innerCtx inner) tc (fun _ _ => false) (3 * Region.size inner.top + 3) inner.top inner.top.start
-        body with
+states without nested SDFGs, matched against the tree body renamed by `σ`
+(`SNode.ren`) in the renamed tree context (`TCtx.renT`); the renaming theorem
+(`STree.ListExec.ren`) carries the tree's runs over. -/
+def innerCheck (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNode) : Bool :=
+  inner.top.statesOnly && descFixed? σ tc.ctx &&
+    SNodes.renOk σ (tc.renT σ).privateTransients tc.privateTransients body &&
+    match regCheck ((tc.renT σ).innerCtx inner) (tc.renT σ) (fun _ _ _ => false) (3 * Region.size inner.top + 3)
+        inner.top inner.top.start (SNodes.ren σ body) with
     | .ok [] => true
     | _ => false
 
-theorem innerCheck_sound {tc : TCtx} {inner : SDFG} {body : List SNode} (hcons : tc.consumed = none)
-    (h : innerCheck tc inner body = true) : InnerCorr tc inner body := by
+theorem innerCheck_sound {tc : TCtx} {σ : Equiv.Perm Name} {inner : SDFG} {body : List SNode}
+    (hcons : tc.consumed = none) (h : innerCheck tc σ inner body = true) : InnerCorr tc σ inner body := by
   simp only [innerCheck, Bool.and_eq_true] at h
-  obtain ⟨hs, h⟩ := h
+  obtain ⟨⟨⟨hs, hd⟩, hok⟩, h⟩ := h
   split at h
   · rename_i hr
-    obtain ⟨pre, hpre, hc⟩ := regCheck_sound (fun _ _ h => by cases h) _ _ _ _ _ hr
+    obtain ⟨pre, hpre, hc⟩ := regCheck_sound (fun _ _ _ h => by cases h) _ _ _ _ _ hr
     rw [List.append_nil] at hpre
-    subst hpre
     intro I hw cst r hx
-    have hc' : RegCorr ((tc.withI I).innerCtx inner) (tc.withI I) inner.top inner.top.start body := RegCorr.withI I hc
-    rcases (RegCorr.matched (ctx := (tc.withI I).innerCtx inner) (tc := tc.withI I) rfl hcons hw hc' HeadOk.nil
-        (ListExec.append_nil hx)).toOut with ⟨e, hu, h⟩ | ⟨e, he, h⟩ | ⟨ctl, c, rfl, h⟩
+    have hR : TCtx.Ren σ ((tc.withI I).renT σ) (tc.withI I) := ⟨Ctx.ren_ren σ _, descFixed?_sound hd, rfl, hcons⟩
+    obtain ⟨r', hx', hr'⟩ := STree.ListExec.ren hR hx hok hok
+    refine NestedOut.of_get? hr' ?_
+    have hc' : RegCorr (((tc.withI I).renT σ).innerCtx inner) ((tc.withI I).renT σ) inner.top inner.top.start
+        (SNodes.ren σ body) := by rw [hpre]; exact RegCorr.withI I hc
+    rcases (RegCorr.matched (ctx := ((tc.withI I).renT σ).innerCtx inner) (tc := (tc.withI I).renT σ) rfl rfl hw hc'
+        HeadOk.nil (ListExec.append_nil hx')).toOut with ⟨e, hu, h⟩ | ⟨e, e', he, h⟩ | ⟨ctl, c, rfl, h⟩
     · exact .inl ⟨e, hu, h⟩
-    · exact .inr (.inl ⟨e, he, h⟩)
+    · exact .inr (.inl ⟨e, e', he, h⟩)
     · have hn := RegionAt.normal_of_states hs h ctl c rfl
       subst hn
       exact .inr (.inr ⟨c, rfl, h⟩)
   · cases h
-
-/-- Swap each pair of names (pairs on disjoint names make an involution). -/
-def swapsPerm : List (Name × Name) → Equiv.Perm Name
-  | [] => 1
-  | (a, b) :: ps => Equiv.swap a b * swapsPerm ps
-
-/-- The names of the pairs. -/
-def pairNames (ps : List (Name × Name)) : List Name := ps.flatMap fun p => [p.1, p.2]
-
-theorem swapsPerm_of_not_mem : ∀ (ps : List (Name × Name)) (x : Name), x ∉ pairNames ps → swapsPerm ps x = x
-  | [], _, _ => rfl
-  | (a, b) :: ps, x, h => by
-    simp only [pairNames, List.flatMap_cons, List.mem_append, List.mem_cons, List.not_mem_nil, or_false,
-      not_or] at h
-    obtain ⟨⟨ha, hb⟩, hr⟩ := h
-    simp only [swapsPerm, Equiv.Perm.mul_apply]
-    rw [swapsPerm_of_not_mem ps x hr, Equiv.swap_apply_of_ne_of_ne ha hb]
 
 /-- The per-call transients of the nested SDFGs of `g`'s states, each with
 its memory name in `g` (`Ctx.enter` at top level): the tree's flattened name
@@ -1076,7 +1110,7 @@ theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I :
       simp [SDFG.withConstants, STree.toSDFG, hc.1, hc.2]
     · split at h
       · rename_i hr
-        obtain ⟨pre, hpre, hc⟩ := regCheck_sound (fun _ _ hb => innerCheck_sound rfl hb) _ _ _ _ _ hr
+        obtain ⟨pre, hpre, hc⟩ := regCheck_sound (fun _ _ _ hb => innerCheck_sound rfl hb) _ _ _ _ _ hr
         rw [List.append_nil] at hpre
         subst hpre
         exact RegCorr.withI I hc

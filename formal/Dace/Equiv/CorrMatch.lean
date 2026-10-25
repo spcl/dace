@@ -2,6 +2,7 @@
 import Dace.Equiv.CorrLeaf
 import Dace.SDFG.Footprint
 import Dace.SDFG.Sim
+import Dace.STree.Rename
 
 /-!
 # SDFG and schedule tree: matching of a dataflow segment (M5a)
@@ -194,6 +195,10 @@ theorem _root_.Dace.TCtx.innerCtx_eraseL (tc : TCtx) (inner : SDFG) : (tc.innerC
 
 theorem _root_.Dace.TCtx.innerCtx_I (tc : TCtx) (inner : SDFG) : (tc.innerCtx inner).I = tc.ctx.I := rfl
 
+/-- The tree context renamed by `σ` (outer name ↦ inner name of a nested
+SDFG, `Ctx.ren`), outside consume scopes. -/
+def _root_.Dace.TCtx.renT (tc : TCtx) (σ : Equiv.Perm Name) : TCtx := { tc with ctx := tc.ctx.ren σ, consumed := none }
+
 /-- The tree outcome `r` of a scope body is matched by the SDFG outcomes `X`:
 `X` may be undefined, or has an error when `r` has one, or the body ends normally in
 the same state. -/
@@ -343,12 +348,14 @@ theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inn
 /-- The tree context with another interpretation. -/
 def _root_.Dace.TCtx.withI (tc : TCtx) (I : Interp) : TCtx := { tc with ctx := { tc.ctx with I } }
 
-/-- The tree list `body` matches the top region of `inner`, for every
-interpretation (the checker proves this under one and transports it). -/
-def InnerCorr (tc : TCtx) (inner : SDFG) (body : List SNode) : Prop :=
+/-- The tree list `body` matches the top region of `inner` run in the tree's
+context renamed by `σ` (the tree inlines the nested SDFG under the outer
+names, `TCtx.renT`), for every interpretation (the checker proves this under
+one and transports it). -/
+def InnerCorr (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNode) : Prop :=
   ∀ I : Interp, (∀ op v, I.wcr op .undef v = .undef) → ∀ (cst : CSt) (r : Res (TCtl × CSt)),
     STree.ListExec (tc.withI I) body false {} body cst r →
-    NestedOut (RegionAt ((tc.withI I).innerCtx inner) inner.top cst inner.top.start) r
+    NestedOut (RegionAt (((tc.withI I).renT σ).innerCtx inner) inner.top cst inner.top.start) r
 
 /-- The context of a nested call and the tree's context agree on the names
 of the inner SDFG's top region, for every interpretation. -/
@@ -401,11 +408,12 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hb : SegCorr ctx tc s oM body) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
   /-- A map scope whose body is one nested SDFG: the tree inlines the inner
-  top region (`InnerCorr`); the per-call transients of the inner SDFG are
-  private to the tree's iteration (`Decisions.md#D68`). -/
+  top region under the outer names (`InnerCorr`, renamed by `σ`); the
+  per-call transients of the inner SDFG are private to the tree's iteration
+  (`Decisions.md#D68`). -/
   | nestedMap {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {full : List NodeId}
       {body : List SNode} {keys : List InKey} {ds : List SNode} {nid : NodeId} {nd : DNode} {inner : SDFG}
-      {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)}
+      {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} {σ : Equiv.Perm Name}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
       (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
       {xs : List NodeId}
@@ -417,7 +425,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
       (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
         x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
-      (hnames : InnerNames ctx tc inner nd.id conns) (hinner : InnerCorr tc inner body)
+      (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
 
@@ -971,9 +979,10 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
     (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
       x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
-    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) inner.top)
+    {cT : Ctx} (hcI : cT.I = tc.ctx.I) (hct : cT.g.top = inner.top)
+    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) cT inner.top)
     (hinner : ∀ (cst : CSt) (r : Res (TCtl × CSt)), STree.ListExec tc body false {} body cst r →
-      NestedOut (RegionAt (tc.innerCtx inner) inner.top cst inner.top.start) r)
+      NestedOut (RegionAt cT inner.top cst inner.top.start) r)
     {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem) (i : Idx) {res : Res (TCtl × CSt)}
     (hbd : STree.ListExec tc body false {} body (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res) :
     (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
@@ -1022,15 +1031,16 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     refine (Mem.Sim.refl pre.mem).allocAll_congr fun x => ?_
     simp only [Equiv.Perm.coe_one, List.map_id_fun, id_eq]
     exact (hpriv x).symm
-  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) := ⟨(I_eq he).symm, rfl⟩
-  have hw' : ∀ op v, (tc.innerCtx inner).I.wcr op .undef v = .undef := by
-    rw [TCtx.innerCtx_I, I_eq he]; exact hw
+  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner nd.id conns) cT :=
+    ⟨by rw [hcI, I_eq he]; rfl, hct.symm⟩
+  have hw' : ∀ op v, cT.I.wcr op .undef v = .undef := by
+    rw [hcI, I_eq he]; exact hw
   have hcst : CSt.mk (inner.withConstants (pre.ρ.bindIdx mp.params i))
       (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem Log.empty =
       iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i) := by
     simp only [hmap.consts]; rfl
   rcases hinner _ _ hbd with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨c, rfl, hR⟩
-  · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
+  · have hx : SDFGExec cT (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.err e) :=
       .err (by rw [hcst]; exact .start hR)
     obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
@@ -1038,7 +1048,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     refine .inl ⟨e', ?_, herr e' (.nestedInnerErr hkn hset hx₂)⟩
     rcases hu' with hu' | rfl
     exacts [hu', hu]
-  · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
+  · have hx : SDFGExec cT (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.err e) :=
       .err (by rw [hcst]; exact .start hR)
     obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
@@ -1046,7 +1056,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     rcases hu' with hu' | rfl
     · exact .inl ⟨e', hu', herr e' (.nestedInnerErr hkn hset hx₂)⟩
     · exact .inr (.inl ⟨e₀, e', rfl, herr e' (.nestedInnerErr hkn hset hx₂)⟩)
-  · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
+  · have hx : SDFGExec cT (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.ok (c.ρ, c.mem, c.log)) :=
       .run (by rw [hcst]; exact .start hR) rfl
     obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
@@ -1244,22 +1254,24 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     intro full' gb rest cst r st hx hrel
     exact map_node he hcons hn hk hkeys hok hds
       (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) hm hv hi) ih hx hrel
-  | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns hn hk hkeys hok hds xs hto hdir hxs hnd hkn
-      hb hmap hcode hout hpriv hnames hinner _ ih =>
+  | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns σ hn hk hkeys hok hds xs hto hdir hxs hnd
+      hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
     intro full' gb rest cst r st hx hrel
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
-    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) inner.top := by
+    have htcR : (tc.renT σ).withI ctx.I = tc.renT σ := by rw [← I_eq he]; rfl
+    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) ((tc.renT σ).innerCtx inner)
+        inner.top := by
       have := hnames ctx.I
-      rw [htc] at this
+      rw [htcR] at this
       exact this
     have hinner' : ∀ (cst : CSt) (r : Res (TCtl × CSt)), STree.ListExec tc body false {} body cst r →
-        NestedOut (RegionAt (tc.innerCtx inner) inner.top cst inner.top.start) r := by
+        NestedOut (RegionAt ((tc.renT σ).innerCtx inner) inner.top cst inner.top.start) r := by
       have := hinner ctx.I hw
       rw [htc] at this
       exact this
     exact map_node he hcons hn hk hkeys hok hds
       (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hxs hnd hkn hb hmap
-        hcode hout hpriv hnames' hinner' hm i hbd) hi) ih hx hrel
+        hcode hout hpriv (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' hinner' hm i hbd) hi) ih hx hrel
 
 end Matched
 
