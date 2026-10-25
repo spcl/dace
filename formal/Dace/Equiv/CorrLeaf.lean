@@ -20,7 +20,7 @@ of the SDFG semantics).  This file states when the two calls coincide:
   `State.CopyShape`), the SDFG leaf function equals the tree leaf function
   on every state (`execCode_eq`, `execReduce_eq`, `execCopiesInto_eq`,
   `mapSetup_eq`), in contexts that agree on what leaf functions read
-  (`Ctx.erase`).
+  (`Ctx.eraseL`).
 -/
 
 set_option autoImplicit false
@@ -260,15 +260,21 @@ theorem MemletMap.memlets_eq (mm : MemletMap) : mm.memlets = mm.pairs.map Prod.s
 
 /-! ## Contexts that agree on what leaf functions read -/
 
-theorem Ctx.leaf_eq {α : Sort _} {c₁ c₂ : Ctx} (he : c₁.erase = c₂.erase) (f : Ctx → α)
-    (hf : ∀ c, f c = f c.erase) : f c₁ = f c₂ := by
+/-- The part of a context the leaf functions read: interpretation, memory
+names and descriptor repository; unlike `Ctx.erase`, not the fresh-name scope
+(read by nested invocations only). -/
+def Ctx.eraseL (ctx : Ctx) : Ctx :=
+  { I := ctx.I, g := { name := "", arrays := ctx.g.arrays, top := {} }, cname := ctx.cname }
+
+theorem Ctx.leaf_eq {α : Sort _} {c₁ c₂ : Ctx} (he : c₁.eraseL = c₂.eraseL) (f : Ctx → α)
+    (hf : ∀ c, f c = f c.eraseL) : f c₁ = f c₂ := by
   rw [hf c₁, he, ← hf c₂]
 
 namespace Corr
 
 section Leaf
 
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
   (ρ : Valuation) {s : State}
 
 theorem TCtx.inData_none {tc : TCtx} (hcons : tc.consumed = none) (m : Memlet) :

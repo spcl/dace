@@ -47,7 +47,7 @@ theorem allocate_left_one (ctx : Ctx) (ts : List Name) (hs : ∀ t ∈ ts, ctx.i
 
 section State
 
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
   (hw : ∀ op v, ctx.I.wcr op .undef v = .undef)
 
 include he hcons hw in

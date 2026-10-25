@@ -345,7 +345,7 @@ abbrev pendingSc (syms : List (Sym × Val)) : SibCtx := { pending := { syms } }
 
 /-- **A run of `DynScopeCopyNode`s**: reads the inputs under the scope's
 valuation into the pending symbols. -/
-theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
     {full : List SNode} {gb : Bool} {rest : List SNode} {r : Res (TCtl × CSt)} :
     ∀ {keys : List InKey} {ds : List SNode}, DynNodes keys ds → (∀ k ∈ keys, k.conn ≠ "IN_stream") →
       ∀ {acc : List (Sym × Val)} {cst : CSt}, STree.ListExec tc full gb (pendingSc acc) (ds ++ rest) cst r →
@@ -477,7 +477,7 @@ theorem mapSetup_dyn {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {mp : 
     cases ctx.rangePoints (Valuation.setAll ρ p.1) p.2.mem mp.range <;> rfl
 
 /-- **Map set-up with pending dynamic inputs** in the tree. -/
-theorem mapSetupT_dyn {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) {mp : MapNode}
+theorem mapSetupT_dyn {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) {mp : MapNode}
     (syms : List (Sym × Val)) (cst : CSt) :
     mapSetupT tc (pendingSc syms) mp cst =
       (ctx.rangePoints (Valuation.setAll cst.ρ syms) cst.mem mp.range).map fun pts => (Valuation.setAll cst.ρ syms, pts) := by
@@ -523,14 +523,14 @@ theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).s
 
 section Matched
 
-variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPureP ctx s) (he : tc.ctx.erase = ctx.erase)
+variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPureP ctx s) (he : tc.ctx.eraseL = ctx.eraseL)
   (hcons : tc.consumed = none)
 
 omit hcons in
 include he in
 theorem I_eq : tc.ctx.I = ctx.I := by
   have := congrArg Ctx.I he
-  simpa [Ctx.erase] using this
+  simpa [Ctx.eraseL] using this
 
 include he hcons in
 /-- The tree runs copy nodes one after the other: the fold of `copyData`

@@ -532,7 +532,7 @@ theorem loopCorr?_sound {l : LoopRegion} {lm : LoopMeta} (h : loopCorr? l lm = t
 
 section Loop
 
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase)
+variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL)
 
 include he in
 theorem evalBoolR_tc (ρ : Valuation) (m : Mem) (e : Expr) : tc.ctx.evalBoolR ρ m e = ctx.evalBoolR ρ m e :=
@@ -683,7 +683,7 @@ theorem takeAssignNodes_sound : ∀ {k : Nat} {cs : List SNode} {as : List (Sym 
 
 section Assigns
 
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase)
+variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL)
 include he
 
 /-- A run of the `AssignNode`s of an edge, followed by `rest`. -/
@@ -825,7 +825,7 @@ theorem namedRegion_inv {tc : TCtx} {label : String} {body : List SNode} {cst : 
 
 section Matched
 
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.erase = ctx.erase) (hcons : tc.consumed = none)
+variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
   (hw : ∀ op v, ctx.I.wcr op .undef v = .undef)
 
 include he in
@@ -989,8 +989,8 @@ theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t)
     {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
     (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r := by
   obtain ⟨res, hx, rfl⟩ := ht
-  have he : (TCtx.ofTree I t).ctx.erase = (sctx I g).erase :=
-    Ctx.erase_eq_of rfl rfl rfl (by simp [TCtx.ofTree, STree.toSDFG, sctx, hc.arrays])
+  have he : (TCtx.ofTree I t).ctx.eraseL = (sctx I g).eraseL := by
+    simp [Ctx.eraseL, TCtx.ofTree, STree.toSDFG, sctx, hc.arrays]
   have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := g.startMem m₀ } := by
     simp [rootStart, hc.consts, hc.start, SDFG.startMem]
   rw [hstart] at hx
