@@ -16,10 +16,16 @@
     #undef __out
     #define DACE_EXPORTED extern "C" __declspec(dllexport)
     #define DACE_PRAGMA(x) __pragma(x)
+    #define DACE_NOINLINE __declspec(noinline)
+    #define DACE_FORCEINLINE __forceinline
+    #define DACE_HIDDEN
 #else
     #define DACE_ALIGN(N) __attribute__((aligned(N)))
     #define DACE_EXPORTED extern "C"
     #define DACE_PRAGMA(x) _Pragma(#x)
+    #define DACE_NOINLINE __attribute__((noinline))
+    #define DACE_FORCEINLINE inline __attribute__((always_inline))
+    #define DACE_HIDDEN __attribute__((visibility("hidden")))
 #endif
 
 // Visual Studio (<=2017) + CUDA support

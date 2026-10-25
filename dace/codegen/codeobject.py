@@ -5,6 +5,19 @@ import dace
 from dace import sourcemap
 from dace.properties import DictProperty, Property, SetProperty, make_properties
 
+# The comments that code generation adds to map generated code back to SDFG elements
+_CODEGEN_COMMENT = re.compile(r"[ \t]*////__(DACE:|CODEGEN;)[^\n]*")
+
+
+def strip_codegen_comments(code: str) -> str:
+    """
+    Removes the comments that code generation adds to map generated code back to SDFG elements.
+
+    :param code: Generated code.
+    :return: The code without those comments.
+    """
+    return _CODEGEN_COMMENT.sub("", code)
+
 
 @make_properties
 class CodeObject:
@@ -65,7 +78,7 @@ class CodeObject:
 
     @property
     def clean_code(self):
-        return re.sub(r"[ \t]*////__(DACE:|CODEGEN;)[^\n]*", "", self.code)
+        return strip_codegen_comments(self.code)
 
     def create_source_map(self, sdfg: "dace.SDFG") -> None:
         sourcemap.create_maps(sdfg, self.code, self.target.target_name)

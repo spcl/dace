@@ -4576,6 +4576,72 @@ class NamedRegion(ControlFlowRegion):
 
 
 @make_properties
+class CodeGeneratorFunctionRegion(NamedRegion):
+    """
+    A region whose contents code generation emits as a function of its own, called where the region is.
+
+    The region only marks where to divide the generated code: it neither changes what its contents compute nor which
+    data and symbols they access. Code generation derives the function's arguments from what the contents use, and
+    data the region allocates is allocated inside the function. Control flow must not leave the region other than by
+    completing it (no ``break``/``continue`` of an enclosing loop, no ``return``).
+    """
+
+    function_placement = EnumProperty(
+        dtype=dtypes.FunctionPlacement,
+        desc="Where code generation emits the function of this region",
+        default=dtypes.FunctionPlacement.CallerUnit,
+    )
+    translation_unit = Property(
+        dtype=str,
+        desc="Name of the translation unit of a function placed in a separate unit. Functions "
+        "with the same name share one unit, and an empty name gives the function a unit of its "
+        "own",
+        default="",
+    )
+    inlining = EnumProperty(
+        dtype=dtypes.FunctionInlining,
+        desc="The inlining hint for the function. Inline and ForceInline require the caller's translation unit",
+        default=dtypes.FunctionInlining.Default,
+    )
+    function_name = Property(
+        dtype=str,
+        desc="Name of the generated function (e.g., to find it in a profile). If empty, it is "
+        "derived from the label of the region",
+        default="",
+    )
+    attributes = Property(
+        dtype=str,
+        desc="Additional specifiers of the function, written before its return type (e.g., ``__attribute__((cold))``)",
+        default="",
+    )
+    restrict_arguments = Property(
+        dtype=bool, desc="Whether pointer arguments that cannot alias are marked ``__restrict__``", default=True
+    )
+    persistent_arguments = Property(
+        dtype=bool,
+        desc="Whether persistent data is passed as arguments instead of being reached "
+        "through the state struct (compilers do not treat struct members as unaliased). "
+        "Code generation still uses the state struct if code in the region may reach "
+        "the data through it by other means (e.g., nested SDFGs or callbacks)",
+        default=True,
+    )
+
+    def __init__(
+        self,
+        label: str,
+        sdfg: Optional["SDFG"] = None,
+        debuginfo: dtypes.DebugInfo | None = None,
+        function_placement: dtypes.FunctionPlacement = dtypes.FunctionPlacement.CallerUnit,
+        translation_unit: str = "",
+        inlining: dtypes.FunctionInlining = dtypes.FunctionInlining.Default,
+    ):
+        super().__init__(label, sdfg, debuginfo)
+        self.function_placement = function_placement
+        self.translation_unit = translation_unit
+        self.inlining = inlining
+
+
+@make_properties
 class FunctionCallRegion(NamedRegion):
     arguments = DictProperty(str, str, category="Frontend")
 

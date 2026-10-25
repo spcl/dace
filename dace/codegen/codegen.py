@@ -12,6 +12,7 @@ from dace.config import Config
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.outlining import OutlineFunctions
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -243,6 +244,17 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
     RelaxIntegerPowers().apply_pass(sdfg, {})
 
+    # Divide a large program into functions and translation units. Last, since simplification would inline them.
+    if config.Config.get_bool("compiler", "outlining", "enabled"):
+        outlining = functools.partial(config.Config.get, "compiler", "outlining")
+        OutlineFunctions(
+            max_basic_blocks=outlining("max_basic_blocks"),
+            min_basic_blocks=outlining("min_basic_blocks"),
+            max_statements=outlining("max_statements"),
+            translation_units=outlining("translation_units"),
+            min_unit_statements=outlining("min_unit_statements"),
+        ).apply_pass(sdfg, {})
+
     frame = framecode.DaCeCodeGenerator(sdfg)
 
     # Test for undefined symbols in SDFG arguments
@@ -295,6 +307,20 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
             sdfg=sdfg,
         )
     ]
+
+    # Create code objects for the functions placed in separate translation units
+    target_objects.extend(
+        CodeObject(
+            f"{sdfg.name}_{unit}",
+            frame.generate_translation_unit(sdfg, unit),
+            "cpp",
+            cpu.CPUCodeGen,
+            "TranslationUnit",
+            environments=used_environments,
+            sdfg=sdfg,
+        )
+        for unit in frame.translation_units
+    )
 
     # Create code objects for each target
     for tgt in used_targets:
