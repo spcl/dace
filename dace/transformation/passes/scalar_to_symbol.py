@@ -138,6 +138,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             continue
         if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             continue
+        if aname in sdfg.constants_prop:
+            # A compile-time constant container is never assigned; promoting it would turn its reads into a symbol
+            # whose name the code generator resolves to the constant (an array), not to its value
+            continue
         candidates.add(aname)
 
     # Check all occurrences of candidates in SDFG and filter out
