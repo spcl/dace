@@ -1179,3 +1179,25 @@ if __name__ == "__main__":
     test_fission_promoted_transient_of_nested_sdfg()
     test_mapfission_keeps_connector_offset()
     test_fission_keeps_copy_into_a_wider_array_valid()
+
+
+def test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps():
+    """A later writer is ordered after the map by an empty memlet off its exit. MapFission read that memlet's
+    descriptor (``KeyError: None``); the order must survive the split."""
+    A, expected = config()
+    B = np.random.rand(2)
+    sdfg = mapfission_sdfg()
+    sdfg.add_array("D", [1], dace.float64)
+    state = sdfg.nodes()[0]
+    topmap = next(node for node in state.nodes() if isinstance(node, nodes.MapEntry) and node.label == "outer")
+    body = nest_state_subgraph(sdfg, state, state.scope_subgraph(topmap, include_entry=False, include_exit=False))
+    later = state.add_tasklet("later", {}, {"out"}, "out = 7.0")
+    state.add_edge(later, "out", state.add_write("D"), None, dace.Memlet("D[0]"))
+    state.add_nedge(state.exit_node(topmap), later, dace.Memlet())
+
+    assert sdfg.apply_transformations(MapFission) > 0
+
+    assert later in state.successors(body), "the later writer must stay ordered after the split maps"
+    D = np.zeros(1)
+    sdfg(A=A, B=B, D=D)
+    assert np.allclose(B, expected) and D[0] == 7.0
