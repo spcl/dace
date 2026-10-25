@@ -707,6 +707,9 @@ def memory_engine_geometry(
         return None, (
             f"the shared region {list(ssizes)} does not match the global box {list(gsizes)} "
             "(reshapes and transposes are not supported)")
+    if len(sdims) > 1 and _sym_equal(gdesc.strides[-1], 1) != _sym_equal(sdesc.strides[-1], 1):
+        # The engine stores the box in the global array's order, so a differently ordered shared array would be transposed
+        return None, "the global and shared arrays have different memory orders (transposes are not supported)"
     packed = 1
     for d in sdims:
         if not _sym_equal(sdesc.strides[d], packed):
