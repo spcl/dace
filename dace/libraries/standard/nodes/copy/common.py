@@ -559,18 +559,18 @@ def _tma_order(strides: list[symbolic.SymExpr]) -> list[int] | None:
     return None
 
 
-def _unclamp(size: symbolic.SymExpr, extent: symbolic.SymExpr) -> symbolic.SymExpr:
-    """Remove memlet propagation's clamp to the array bound (``Min(extent - 1, ...)``) from ``size``.
+def _unclamp(size: symbolic.SymExpr, extents: list[symbolic.SymExpr]) -> symbolic.SymExpr:
+    """Remove memlet propagation's clamp to the array bounds (``Min(extent - 1, ...)``) from ``size``.
 
     The memory engine zero-fills out-of-bounds elements. This means, we don't need to clamp the sizes manually.
-    This function removes the ``Min(extent - 1, ...)`` clamps.
+    This function removes the ``Min(extent - 1, ...)`` clamps for any of the given ``extents``.
     """
-    bound = symbolic.pystr_to_symbolic(extent) - 1
+    bounds = [symbolic.pystr_to_symbolic(extent) - 1 for extent in extents]
 
     def drop_bound(*args):
         # make sure to keep clamps that are not due to array bounds
-        rest = [a for a in args if not _sym_equal(a, bound)]
-        return sympy.Min(*rest) if rest else bound
+        rest = [a for a in args if not any(_sym_equal(a, bound) for bound in bounds)]
+        return sympy.Min(*rest) if rest else bounds[0]
 
     size = symbolic.pystr_to_symbolic(size)
     return symbolic.simplify(size.replace(sympy.Min, drop_bound))
@@ -632,11 +632,12 @@ def memory_engine_geometry(node: nodes.Node,
         return None, "both sides need a contiguous (stride 1) first or last dimension"
 
     elem_bytes = gdesc.dtype.bytes
-    gsizes = [_unclamp(size, extent) for size, extent in zip(gsubset.size_exact(), gdesc.shape)]
+    gsizes = [_unclamp(size, [extent]) for size, extent in zip(gsubset.size_exact(), gdesc.shape)]
     box = [gsizes[d] for d in gorder]
 
     # The memory engine writes/reads the box densely: the shared region must be the box, packed in TMA order
-    ssizes = ssubset.size_exact()
+    # (a partial tile clamps the shared region to the global bounds as well)
+    ssizes = [_unclamp(size, gdesc.shape) for size in ssubset.size_exact()]
     sdims = [d for d in sorder if not _sym_equal(ssizes[d], 1)]
     squeezed_box = [b for b in box if not _sym_equal(b, 1)]
     if len(sdims) != len(squeezed_box) or any(not _sym_equal(ssizes[d], b) for d, b in zip(sdims, squeezed_box)):

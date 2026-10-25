@@ -343,6 +343,8 @@ def test_dynamic_map_with_64bit_row_pointers(fine_grained: bool, block_size: int
         dace.config.Config.set("compiler", "cuda", "dynamic_map_fine_grained", value=fine_grained)
         dace.config.Config.set("compiler", "cuda", "dynamic_map_block_size", value=f"{block_size},1,1")
         sdfg = _spmv()
+        # Parametrizations run in parallel and must not share a build folder
+        sdfg.name = f"spmv_{fine_grained}_{block_size}"
         sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=height, W=width, nnz=A_row[-1])
 
     expected = np.array([A_val[A_row[r] : A_row[r + 1]] @ x[A_col[A_row[r] : A_row[r + 1]]] for r in range(height)])

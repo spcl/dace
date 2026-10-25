@@ -311,10 +311,32 @@ def test_insert_accepts_squeezed_unit_dims(global_shape, global_subset, shared_s
     _assert_libnode_implementation(sdfg)
 
 
+@_DIRECTIONS
+def test_insert_accepts_bound_clamped_shared_region(load):
+    """A partial tile clamps both regions to the array bound, which the memory engine handles itself."""
+    NI = dace.symbol("NI")
+    g = "b:Min(NI - 1, b + 31) + 1, 0:32"
+    s = "0:Min(NI - 1, b + 31) - b + 1, 0:32"
+    sdfg = _build_kernel_copy("insert_bound_clamp", load, [NI, 64], [32, 32], g, s)
+    assert _insert(sdfg) == 1
+    _assert_libnode_implementation(sdfg)
+
+
+def test_insert_rejects_non_bound_clamp():
+    """A clamp that is not the array bound changes the region the copy moves, so it is still a mismatch."""
+    NI = dace.symbol("NI")
+    sdfg = _build_kernel_copy("insert_other_clamp", True, [NI, 64], [32, 32], "b:b + 32, 0:32",
+                              "0:Min(20, NI - b), 0:32")
+    assert _insert(sdfg) is None
+    _assert_libnode_implementation(sdfg, none=True)
+
+
 def _tma_kernel_without_implementation(kernel, dtype=dace.float64):
     """A memory engine kernel of ``copy_node_test`` whose copy leaves the implementation to be selected."""
     builder, expected, is_load = _TMA_KERNELS[kernel]
     sdfg = builder(dtype)
+    # Same kernel as in ``copy_node_test`` but another codegen: a build folder of its own
+    sdfg.name += "_auto"
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, CopyLibraryNode):
             node.implementation = None
