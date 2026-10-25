@@ -437,6 +437,18 @@ def test_preprocess_pipeline_memory_engine_copies_disabled():
         label.startswith("tma_copy_tma") for label in _tasklet_labels(sdfg))
 
 
+@pytest.mark.parametrize("kernel", ["transpose", "store"])
+def test_codegen_selects_memory_engine_copies(kernel):
+    """Code generation applies ``compiler.cuda.memory_engine_copies`` before library nodes get a default expansion."""
+    _, _, is_load = _TMA_KERNELS[kernel]
+    for enabled in (True, False):
+        sdfg, _, _ = _tma_kernel_without_implementation(kernel)
+        with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'), \
+                dace.config.set_temporary('compiler', 'cuda', 'memory_engine_copies', value=enabled):
+            code = {obj.title: obj.clean_code for obj in sdfg.generate_code()}
+        assert (f"dace::cuda::tma_{'load' if is_load else 'store'}<2>" in code["CUDA"]) == enabled
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("kernel", ["transpose", "store"])
 def test_experimental_codegen_memory_engine_copies(kernel):
