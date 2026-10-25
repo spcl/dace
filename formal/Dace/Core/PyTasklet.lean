@@ -128,6 +128,10 @@ inductive Stmt where
   /-- A bare expression statement (stream push/pop or a discarded read). -/
   | exprStmt (e : Expr)
   | pass
+  /-- `if c₁: b₁ elif c₂: b₂ … else: orelse` (`orelse = []` without `else`). -/
+  | ifElse (branches : List (Expr × List Stmt)) (orelse : List Stmt)
+  /-- `for var in range(args):` with one to three integer arguments. -/
+  | forRange (var : Name) (args : List Expr) (body : List Stmt)
   deriving Inhabited
 
 /-- Statement keywords of compound/flow statements we do not interpret. -/
@@ -194,12 +198,95 @@ def parseStmt (line : String) : Option Stmt := do
     let e ← Parse.parseFromToks toks
     pure (.exprStmt e)
 
+/-- A logical line: its indentation width and its trimmed text. -/
+private abbrev Line := Nat × String
+
+private def strStartsWith (s pre : String) : Bool := pre.toList.isPrefixOf s.toList
+
+/-- The text of a compound-statement header `kw rest:` after `kw`, if `l` is one. -/
+private def header? (kw : String) (l : String) : Option String :=
+  if l.endsWith ":" && (l == kw ++ ":" || strStartsWith l (kw ++ " ") || strStartsWith l (kw ++ "(")) then
+    some (strTrim (strDropRight (strDrop l kw.length) 1))
+  else none
+
+/-- `var in range(args)` of a `for` header. -/
+private def forHeader? (h : String) : Option (Name × List Expr) := do
+  match h.splitOn " in " with
+  | [v, it] =>
+    let v := strTrim v
+    let toks ← Parse.tokenize v
+    match toks.filter (· != Token.eof) with
+    | [Token.ident name] =>
+      match ← Parse.parseFromToks (← Parse.tokenize it) with
+      | .app "range" args =>
+        let args := Exprs.toList args
+        if 1 ≤ args.length && args.length ≤ 3 then pure (name, args) else none
+      | _ => none
+    | _ => none
+  | _ => none
+
+private def parseCond (c : String) : Option Expr := do Parse.parseFromToks (← Parse.tokenize c)
+
+mutual
+
+/-- Parse the statements at indentation `ind` from the front of `ls`; stops at
+the first line indented less, returns the remaining lines. -/
+private partial def parseBlock (ls : List Line) (ind : Nat) (acc : List Stmt) :
+    Option (List Stmt × List Line) :=
+  match ls with
+  | [] => some (acc.reverse, [])
+  | (i, l) :: rest =>
+    if i < ind then some (acc.reverse, ls)
+    else if i > ind then none
+    else if let some c := header? "if" l then do
+      let (body, rest) ← parseSuite rest ind
+      let (branches, orelse, rest) ← parseElifs rest ind [(← parseCond c, body)]
+      parseBlock rest ind (.ifElse branches orelse :: acc)
+    else if let some h := header? "for" l then do
+      let (v, args) ← forHeader? h
+      let (body, rest) ← parseSuite rest ind
+      parseBlock rest ind (.forRange v args body :: acc)
+    else do
+      let stmts ← ((l.splitOn ";").map strTrim |>.filter (!·.isEmpty)).mapM parseStmt
+      parseBlock rest ind (stmts.reverse ++ acc)
+
+/-- The indented block after a compound-statement header at indentation `ind`. -/
+private partial def parseSuite (ls : List Line) (ind : Nat) : Option (List Stmt × List Line) :=
+  match ls with
+  | (i, _) :: _ => if i > ind then parseBlock ls i [] else none
+  | [] => none
+
+/-- The `elif`/`else` clauses following an `if` block at indentation `ind`. -/
+private partial def parseElifs (ls : List Line) (ind : Nat) (branches : List (Expr × List Stmt)) :
+    Option (List (Expr × List Stmt) × List Stmt × List Line) :=
+  match ls with
+  | (i, l) :: rest =>
+    if i != ind then some (branches.reverse, [], ls)
+    else if let some c := header? "elif" l then do
+      let (body, rest) ← parseSuite rest ind
+      parseElifs rest ind ((← parseCond c, body) :: branches)
+    else if header? "else" l == some "" then do
+      let (body, rest) ← parseSuite rest ind
+      some (branches.reverse, body, rest)
+    else some (branches.reverse, [], ls)
+  | [] => some (branches.reverse, [], [])
+
+end
+
 /-- Parse a tasklet body into a statement list (`none` if any statement is
-unsupported). -/
-def parseStmts (code : String) : Option (List Stmt) :=
-  let pieces := (code.splitOn "\n").flatMap fun l => (stripComment l).splitOn ";"
-  let lines := (pieces.map strTrim).filter (fun l => !l.isEmpty)
-  lines.mapM parseStmt
+unsupported).  Compound statements are `if`/`elif`/`else` and
+`for v in range(…)`, with blocks given by indentation. -/
+def parseStmts (code : String) : Option (List Stmt) := do
+  let lines : List Line := (code.splitOn "\n").filterMap fun l =>
+    let l := stripComment l
+    let t := strTrim l
+    if t.isEmpty then none
+    else some ((l.toList.takeWhile Char.isWhitespace).length, t)
+  match lines with
+  | [] => pure []
+  | (i, _) :: _ =>
+    let (stmts, rest) ← parseBlock lines i []
+    if rest.isEmpty then pure stmts else none
 
 /-! ## Evaluation -/
 
@@ -348,8 +435,26 @@ def assignTo (target : Expr) (v : Val) : M Unit := do
   | _ => ofOpt none
 
 /-- Execute one statement. -/
-def execStmt : Stmt → M Unit
+partial def execStmt : Stmt → M Unit
   | .pass => pure ()
+  | .ifElse branches orelse => do
+    let rec go : List (Expr × List Stmt) → M Unit
+      | [] => orelse.forM execStmt
+      | (c, body) :: rest => do
+        if (← ofOpt (← evalE c).toBool?) then body.forM execStmt else go rest
+    go branches
+  | .forRange var args body => do
+    let vs ← (← evalEs (Exprs.ofList args)).mapM fun v => ofOpt v.toInt?
+    let (lo, hi, step) ← match vs with
+      | [hi] => pure (0, hi, 1)
+      | [lo, hi] => pure (lo, hi, 1)
+      | [lo, hi, step] => pure (lo, hi, step)
+      | _ => ofOpt none
+    if step = 0 then ofOpt none
+    let n := if step > 0 then (hi - lo + step - 1) / step else (lo - hi - step - 1) / (-step)
+    for k in List.range n.toNat do
+      assignTo (.sym var) (.int (lo + k * step))
+      body.forM execStmt
   | .assign target none rhs => do assignTo target (← evalE rhs)
   | .assign target (some op) rhs => do
     let cur ← readTarget target

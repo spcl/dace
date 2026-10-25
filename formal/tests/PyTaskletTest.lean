@@ -33,10 +33,17 @@ def i64 : Dtype := .int 64 true
 #guard (PyTasklet.parseStmts "# a comment\nx = 1  # trailing\npass").isSome
 #guard (PyTasklet.parseStmts "x = a if c else b").isSome
 #guard (PyTasklet.parseStmts "x += 1; y -= 2").isSome
--- Compound statements are unsupported.
-#guard (PyTasklet.parseStmts "if x > 0:\n  y = 1").isNone
-#guard (PyTasklet.parseStmts "for i in range(3):\n  pass").isNone
+-- Compound statements: if/elif/else and for-range blocks.
+#guard (PyTasklet.parseStmts "if x > 0:\n  y = 1").isSome
+#guard (PyTasklet.parseStmts "if (s == 1):\n    v = 1\nelif (s > 1):\n    o = (s - 1)\n    o = (s - 2)").isSome
+#guard (PyTasklet.parseStmts "for i in range(3):\n  pass").isSome
+#guard (PyTasklet.parseStmts "for i in range(n):\n    if (a[i] == 1):\n        v = 1\n    else:\n        v = 2").isSome
+-- Unsupported: other compound statements, bad indentation, an empty block.
 #guard (PyTasklet.parseStmts "return x").isNone
+#guard (PyTasklet.parseStmts "while x:\n  pass").isNone
+#guard (PyTasklet.parseStmts "x = 1\n  y = 2").isNone
+#guard (PyTasklet.parseStmts "if x:\ny = 1").isNone
+#guard (PyTasklet.parseStmts "for i in items:\n  pass").isNone
 
 /-! ## Running -/
 
@@ -72,6 +79,18 @@ def i64 : Dtype := .int 64 true
   (scalarIns [("x", .float 3.9)]) == some [("out", .int 3)]
 #guard runScalars (mkT "out = x" [("x", some fl)] [("out", some i64)])
   (scalarIns [("x", .float (-3.9))]) == some [("out", .int (-3))]
+
+-- if/elif/else
+#guard runScalars (mkT "if (s == 1):\n    out = 10\nelif (s > 1):\n    out = 20\nelse:\n    out = 30"
+  [("s", some i64)] [("out", some i64)]) (scalarIns [("s", .int 5)]) == some [("out", .int 20)]
+#guard runScalars (mkT "out = 0\nif (s > 1):\n    out = 1" [("s", some i64)] [("out", some i64)])
+  (scalarIns [("s", .int 0)]) == some [("out", .int 0)]
+
+-- for-range: sum 0..4, and a stepped range
+#guard runScalars (mkT "out = 0\nfor i in range(5):\n    out += i" [] [("out", some i64)])
+  (fun _ => none) == some [("out", .int 10)]
+#guard runScalars (mkT "out = 0\nfor i in range(10, 0, -3):\n    out += i" [] [("out", some i64)])
+  (fun _ => none) == some [("out", .int 22)]
 
 -- ternary
 #guard runScalars (mkT "out = (a if c else b)"

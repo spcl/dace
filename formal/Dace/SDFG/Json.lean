@@ -305,8 +305,11 @@ def consumeOf (label : String) (a : Json) : P ConsumeNode := do
   let condition ← match field? a "condition" with
     | some c => some <$> codeExpr c
     | none => pure none
+  let conditionSrc ← match field? a "condition" with
+    | some c => some <$> (·.code) <$> codeBlock c
+    | none => pure none
   let chunksize ← (natField? a "chunksize").map (·.getD 1)
-  pure { label := (strField? a "label").getD label, peIndex, numPes, condition, chunksize }
+  pure { label := (strField? a "label").getD label, peIndex, numPes, condition, conditionSrc, chunksize }
 
 /-- A `LibraryNode` from its JSON object (`classpath` at the top level). -/
 def libNodeOf (j : Json) (label : String) : P LibNode := do

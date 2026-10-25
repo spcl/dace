@@ -103,7 +103,11 @@ def libraryProps (j : Json) : P (List (String × String)) := do
 partial def codeNodeGuids (j : Json) : List (String × String) :=
   let own := match field? j "node" with
     | some n =>
-      match strField? (attrs n) "guid", strField? n "type" with
+      -- a library node's Python class is the last component of its class path
+      let cls := match strField? n "classpath" with
+        | some cp => some ((cp.splitOn ".").getLast?.getD cp)
+        | none => strField? n "type"
+      match strField? (attrs n) "guid", cls with
       | some g, some t => [(g, t)]
       | _, _ => []
     | none => []

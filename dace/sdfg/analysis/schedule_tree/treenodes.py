@@ -1008,12 +1008,13 @@ class LibraryCall(ScheduleTreeNode):
     out_memlets: dict[str, Memlet] | MemletSet
 
     def as_string(self, indent: int = 0):
+        # Set entries are sorted, since set iteration order is not deterministic
         if isinstance(self.in_memlets, set):
-            in_memlets = ", ".join(f"{v}" for v in self.in_memlets)
+            in_memlets = ", ".join(sorted(f"{v}" for v in self.in_memlets))
         else:
             in_memlets = ", ".join(f"{v}" for v in self.in_memlets.values())
         if isinstance(self.out_memlets, set):
-            out_memlets = ", ".join(f"{v}" for v in self.out_memlets)
+            out_memlets = ", ".join(sorted(f"{v}" for v in self.out_memlets))
         else:
             out_memlets = ", ".join(f"{v}" for v in self.out_memlets.values())
         libname = type(self.node).__name__

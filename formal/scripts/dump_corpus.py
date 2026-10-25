@@ -8,7 +8,8 @@ Usage (from the repository root, with DaCe importable)::
 For every program in ``corpus_programs.PROGRAMS`` this writes
 ``<name>.sdfg.json`` (simplified unless ``--no-simplify``) and, for a few
 programs, transformed variants (``<name>.tiled.sdfg.json``,
-``<name>.expanded.sdfg.json``).  Alongside each SDFG it also writes the schedule
+``<name>.expanded.sdfg.json``), followed by the SDFGs of ``tests/schedule_tree/roundtrip_test.py``
+(``rt.<test>.sdfg.json``, see ``roundtrip_corpus.py``; ``--no-roundtrip`` skips them).  Alongside each SDFG it also writes the schedule
 tree of the same SDFG as ``<name>.stree.json`` (machine-readable, see
 ``dace.sdfg.analysis.schedule_tree.serialize``) and ``<name>.stree.txt``
 (``as_string()`` for human review and Lean-side pretty-printer checks).
@@ -25,6 +26,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from corpus_programs import PROGRAMS  # noqa: E402
+from roundtrip_corpus import collect as collect_roundtrip  # noqa: E402
 
 import dace  # noqa: E402
 from dace.sdfg.analysis.schedule_tree import serialize as stree_serialize  # noqa: E402
@@ -79,6 +81,9 @@ def main() -> None:
     parser.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "tests", "corpus"))
     parser.add_argument("--no-simplify", action="store_true")
     parser.add_argument("--only", nargs="*", default=None, help="subset of program names")
+    parser.add_argument(
+        "--no-roundtrip", action="store_true", help="skip the SDFGs of tests/schedule_tree/roundtrip_test.py"
+    )
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -99,6 +104,16 @@ def main() -> None:
             expanded.expand_library_nodes()
             expanded.validate()
             print("wrote", save(expanded, args.out, f"{name}.expanded"))
+
+    if args.no_roundtrip:
+        return
+    for name, sdfg, note in collect_roundtrip():
+        if args.only and name not in args.only:
+            continue
+        if sdfg is None:
+            print("skipped", name, "--", note)
+            continue
+        print("wrote", save(sdfg, args.out, name))
 
 
 if __name__ == "__main__":

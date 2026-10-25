@@ -81,6 +81,13 @@ python scripts/difftest.py --check --ir sdfg
 python scripts/difftest.py --check --ir stree
 ```
 
+Besides the programs of `scripts/corpus_programs.py`, `dump_corpus.py` also
+writes the SDFGs of `tests/schedule_tree/roundtrip_test.py` as `rt.<test>[.<params>]`
+(`scripts/roundtrip_corpus.py` runs every test case until its first
+`as_schedule_tree` call and records that SDFG; `--no-roundtrip` skips them).
+They have no argument factory, so `difftest.py` skips them; the Lean corpus
+tests (import, structure, tasklet parsing, determinism, pair checker) cover them.
+
 The Lean corpus tests read `tests/corpus` relative to `formal/`; set
 `DACE_FORMAL_CORPUS=<dir>` to point them elsewhere (`--corpus`/`--out` do the
 same for the Python scripts).

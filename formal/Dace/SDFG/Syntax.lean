@@ -36,6 +36,8 @@ structure ConsumeNode where
   peIndex : Sym
   numPes : Expr := 1
   condition : Option Expr := none
+  /-- The source text of `condition`, only for printing (`ConsumeScope.as_string`). -/
+  conditionSrc : Option String := none
   chunksize : Nat := 1
   deriving DecidableEq, Repr, Inhabited
 

@@ -555,7 +555,11 @@ def memletStr (m : Memlet) : String :=
       s!"{src} -> {dst}"
     | none => base
 
-def memletMapStr (mm : MemletMap) : String := ", ".intercalate (mm.memlets.map memletStr)
+/-- The memlets of a mapping, comma-separated; the entries of a set are sorted (`LibraryCall.as_string`). -/
+def memletMapStr (mm : MemletMap) : String :=
+  match mm with
+  | .dict _ => ", ".intercalate (mm.memlets.map memletStr)
+  | .set ms => ", ".intercalate ((ms.map memletStr).mergeSort fun a b => !decide (b < a))
 
 def indentation : String := "  "
 
@@ -604,9 +608,10 @@ partial def asString (indent : Nat) : SNode → String
   | .mapScope mp cs =>
     ind indent ++ s!"map {", ".intercalate mp.params} in [{rangeStr mp.range}]:\n" ++ scopeBody indent cs
   | .consumeScope c cs =>
-    let cond := match c.condition with
-      | none => "stream not empty"
-      | some e => SymStr.str e
+    let cond := match c.conditionSrc, c.condition with
+      | some src, _ => src
+      | none, none => "stream not empty"
+      | none, some e => SymStr.str e
     ind indent ++ s!"consume (PE {c.peIndex} out of {SymStr.str c.numPes}) while {cond}:\n" ++ scopeBody indent cs
   | .taskletNode _ ins outs =>
     if outs.isEmpty then ind indent ++ s!"tasklet({memletMapStr ins})"

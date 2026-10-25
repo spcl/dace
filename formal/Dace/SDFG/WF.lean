@@ -117,7 +117,8 @@ def checkState (g : SDFG) (s : State) : WFReport :=
       let connOk :=
         (match e.srcConn with
          | some c => if (sn.outConns.map Prod.fst).contains c then {} else err s!"{ectx}: unknown source connector {c}"
-         | none => if sn.isCodeNode && !sn.isLibrary then err s!"{ectx}: code node edge without source connector" else {}) ++
+         | none => if sn.isCodeNode && !sn.isLibrary && e.data matches .memlet _
+                   then err s!"{ectx}: code node edge without source connector" else {}) ++
         (match e.dstConn with
          | some c => if (dn.inConns.map Prod.fst).contains c then {} else err s!"{ectx}: unknown destination connector {c}"
          | none => if dn.isCodeNode && !dn.isLibrary && e.data matches .memlet _
@@ -131,9 +132,11 @@ def checkState (g : SDFG) (s : State) : WFReport :=
       let scopeOk := if scopeLegal then {} else err s!"{ectx}: crosses scopes illegally"
       let dataOk := match e.data with
         | .dep =>
-          -- empty memlets: tasklet→tasklet ordering, or locking a node into a scope
-          if (sn.isCodeNode && dn.isCodeNode) || sn.isEntry || dn.isExit then {}
-          else err s!"{ectx}: empty memlet between non-code nodes"
+          -- empty memlets order any two nodes (`_validate_memlet_tree_roots`); between two code
+          -- nodes they name no connector
+          if sn.isCodeNode && dn.isCodeNode && (e.srcConn.isSome || e.dstConn.isSome) then
+            err s!"{ectx}: empty memlet between code nodes names a connector"
+          else {}
         | .memlet m =>
           let arr := arrayOf g m.data
           (match arr with
