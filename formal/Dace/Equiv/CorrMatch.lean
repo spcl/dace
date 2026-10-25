@@ -3,6 +3,7 @@ import Dace.Equiv.CorrLeaf
 import Dace.SDFG.Footprint
 import Dace.SDFG.Sim
 import Dace.STree.Rename
+import Dace.STree.LogShift
 
 /-!
 # SDFG and schedule tree: matching of a dataflow segment (M5a)
@@ -377,6 +378,76 @@ theorem DNode.isSimple_of_copyTarget' {n : DNode} (hk : DNode.isCopyTarget n = t
   unfold DNode.isSimple
   split at hk <;> simp_all
 
+/-- Tree nodes that end normally with an empty sibling context and the same
+valuation (dataflow nodes, no symbol assignments, no dynamic inputs). -/
+def _root_.Dace.SNode.isFlatT : SNode → Bool
+  | .mapScope .. | .taskletNode .. | .libraryCall .. | .copyNode .. | .viewNode .. | .refSetNode .. => true
+  | _ => false
+
+theorem leafOut_lift_ok {cst : CSt} {R : Res St} {sc' : SibCtx} {ctl : TCtl} {c : CSt}
+    (h : leafOut (cst.lift R) = .ok (sc', ctl, c)) : sc' = {} ∧ ctl = .normal ∧ c.ρ = cst.ρ := by
+  cases R with
+  | err e => cases h
+  | ok a =>
+    simp only [leafOut, CSt.lift, Res.map_ok, Res.ok_inj, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    exact ⟨rfl, rfl, rfl⟩
+
+theorem STree.NodeExec.flatT_ok {tc : TCtx} {n : SNode} {cst : CSt} {sc' : SibCtx} {ctl : TCtl} {c : CSt}
+    (hn : n.isFlatT = true) (hx : STree.NodeExec tc {} n cst (.ok (sc', ctl, c))) :
+    sc' = {} ∧ ctl = .normal ∧ c.ρ = cst.ρ := by
+  generalize hr : (Res.ok (sc', ctl, c) : Res NodeOut) = r at hx
+  cases hx with
+  | pendingErr => cases hr
+  | leaf _ hs =>
+    cases n <;> simp only [SNode.isFlatT, reduceCtorEq] at hn <;>
+      simp only [stepLeaf, Option.some.injEq, reduceCtorEq] at hs <;> subst hs <;> exact leafOut_lift_ok hr.symm
+  | mapScope _ _ =>
+    cases h : scopeFinishT tc cst _ with
+    | err e => rw [h] at hr; cases hr
+    | ok a =>
+      rw [h] at hr
+      simp only [dataflowOut, Res.map_ok, Res.ok_inj, Prod.mk.injEq] at hr
+      obtain ⟨rfl, rfl, rfl⟩ := hr
+      refine ⟨rfl, rfl, ?_⟩
+      simp only [scopeFinishT] at h
+      cases h' : scopeFinish tc.ctx cst.st _ with
+      | err e => rw [h'] at h; cases h
+      | ok b => rw [h'] at h; simp only [Res.map_ok, Res.ok_inj] at h; subst h; rfl
+  | mapSetupErr => cases hr
+  | mapIterErr => cases hr
+  | loop _ hl _ => cases n <;> simp [SNode.isFlatT, SNode.loop?] at hn hl
+  | _ => simp [SNode.isFlatT] at hn
+
+/-- A run of a list of flat tree nodes followed by `rest`: the run of the flat
+prefix alone (in any enclosing list), then of `rest`. -/
+theorem STree.ListExec.split_flat {tc : TCtx} {full : List SNode} {gb : Bool} {rest : List SNode} :
+    ∀ {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)}, body.all SNode.isFlatT = true →
+      STree.ListExec tc full gb {} (body ++ rest) cst r →
+      (∃ e, r = .err e ∧ ∀ full', STree.ListExec tc full' false {} body cst (.err e)) ∨
+      ∃ cst', (∀ full', STree.ListExec tc full' false {} body cst (.ok (.normal, cst'))) ∧ cst'.ρ = cst.ρ ∧
+        STree.ListExec tc full gb {} rest cst' r
+  | [], cst, _, _, hx => .inr ⟨cst, fun _ => .nil rfl, rfl, hx⟩
+  | n :: body, cst, r, hb, hx => by
+    simp only [List.all_cons, Bool.and_eq_true] at hb
+    rw [List.cons_append] at hx
+    cases hx with
+    | headErr hn => exact .inl ⟨_, rfl, fun _ => .headErr hn⟩
+    | step hn hr =>
+      obtain ⟨rfl, -, hρ₁⟩ := STree.NodeExec.flatT_ok hb.1 hn
+      rcases STree.ListExec.split_flat hb.2 hr with ⟨e, rfl, hb'⟩ | ⟨cst', hb', hρ, hr'⟩
+      · exact .inl ⟨e, rfl, fun full' => .step hn (hb' full')⟩
+      · exact .inr ⟨cst', fun full' => .step hn (hb' full'), hρ.trans hρ₁, hr'⟩
+    | jump hn hc =>
+      obtain ⟨-, rfl, -⟩ := STree.NodeExec.flatT_ok hb.1 hn
+      cases hc
+    | gotoResume hn _ _ =>
+      obtain ⟨-, h, -⟩ := STree.NodeExec.flatT_ok hb.1 hn
+      cases h
+    | gotoEscape hn _ =>
+      obtain ⟨-, h, -⟩ := STree.NodeExec.flatT_ok hb.1 hn
+      cases h
+
 /-- The tree list `cs` is the image of the SDFG nodes `o` of state `s`. -/
 inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNode → Prop where
   | nil : SegCorr ctx tc s [] []
@@ -428,6 +499,19 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
+  /-- A nested SDFG node outside map scopes: the tree inlines the inner top
+  region (a region of states, flat tree nodes) in the sibling list. -/
+  | nested {id : NodeId} {nd : DNode} {o : List NodeId} {cs body : List SNode} {inner : SDFG}
+      {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} {σ : Equiv.Perm Name}
+      (hnd : s.node? id = some nd) (hkn : nd.kind = .nested inner mapping ni)
+      (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
+      (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
+      (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
+      (hst : inner.top.statesOnly = true) (hctr : inner.callTransients = [])
+      (hflat : body.all SNode.isFlatT = true)
+      (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
+      (h : SegCorr ctx tc s o cs) :
+      SegCorr ctx tc s (id :: o) (body ++ cs)
 
 /-- The nodes of a segment run by themselves: simple nodes and map scopes. -/
 theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs : List SNode}
@@ -445,6 +529,13 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
         | exact .inr ⟨_, hk⟩
         | exact .inl (DNode.isSimple_of_copyTarget' hk)
         | (left; simp [DNode.isSimple, hk])
+    · exact ih id hid n' hn'
+  | nested hn hkn _ _ hcode hout hst hctr _ _ _ _ ih =>
+    intro id hid n' hn'
+    rcases List.mem_cons.1 hid with rfl | hid
+    · rw [hn] at hn'
+      cases hn'
+      exact .inr ⟨_, _, _, hkn, hst, hctr, hcode, hout⟩
     · exact ih id hid n' hn'
 
 /-- The outcomes of the sequential SDFG run of `o` from `st` that match a
@@ -1073,6 +1164,84 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
         simp only [St.afterNode, iterStart, St.forNode, hg₂, Log.empty_seq, Log.dropNames_dropNames]
         exact Log.dropNames_congr fun x => by rw [hpriv x, List.mem_append, List.mem_append, or_comm]
 
+/-- An exact simulation under the identity renaming is equality. -/
+theorem Mem.Sim.eq_one {m₂ m₁ : Mem} (hm : Mem.Sim 1 (fun _ => True) (fun _ => False) m₂ m₁) : m₂ = m₁ := by
+  obtain ⟨ha, -, hc, hq⟩ := hm
+  have hl : ∀ l : Loc, l.ren 1 = l := fun l => rfl
+  cases m₂ with
+  | mk c₂ q₂ a₂ =>
+    cases m₁ with
+    | mk c₁ q₁ a₁ =>
+      simp only [Mem.mk.injEq]
+      refine ⟨funext fun l => ?_, funext fun l => ?_, funext fun n => ?_⟩
+      · rcases hc l trivial with ⟨h, -⟩ | h
+        · exact h.elim
+        · simpa [hl] using h
+      · simpa [hl] using hq l trivial
+      · have := ha n trivial
+        simp only [Equiv.Perm.coe_one, id_eq] at this
+        rw [this]
+        cases a₁ n with
+        | none => rfl
+        | some b => rfl
+
+include he in
+/-- **A nested call outside map scopes**: the tree's run of the inlined region
+from the call's memory (`hR`, matched by the inner region in the tree-named
+context `cT`) is matched by the call, which ends in the inner memory and log
+(no per-call transients, data connectors only). -/
+theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode} {inner : SDFG}
+    {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} (hkn : nd.kind = .nested inner mapping ni)
+    (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
+    (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
+    (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true) (hctr : inner.callTransients = [])
+    {cT : Ctx} (hcI : cT.I = tc.ctx.I) (hct : cT.g.top = inner.top)
+    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) cT inner.top)
+    (ρ : Valuation) (st₀ : St) {res : Res (TCtl × CSt)}
+    (hR : NestedOut (RegionAt cT inner.top { ρ, mem := st₀.mem } inner.top.start) res) :
+    (∃ e, e.isUB = true ∧ NodeExec ctx ρ s nd st₀ (.err e)) ∨
+    (∃ e e', res = .err e ∧ NodeExec ctx ρ s nd st₀ (.err e')) ∨
+    ∃ c, res = .ok (.normal, c) ∧ NodeExec ctx ρ s nd st₀ (.ok { mem := c.mem, log := st₀.log.seq c.log, vals := st₀.vals }) := by
+  have hset := nestedSetup_eq (ρ := ρ) (inner := inner) (mapping := mapping) (st := st₀) hb hcode
+  rcases nestedValuation_id hmap ρ st₀.mem with hval | ⟨e, hval, hu⟩
+  rotate_left
+  · rw [hval] at hset
+    exact .inl ⟨e, hu, .nestedSetupErr hkn hset⟩
+  rw [hval] at hset
+  simp only [Res.bind, hctr, List.map_nil] at hset
+  have hst₀ : ({ st₀ with mem := st₀.mem.allocAll [] } : St) = st₀ := by cases st₀; rfl
+  rw [hst₀] at hset
+  have hmem : Mem.Sim 1 (fun _ => True) (fun _ => False) st₀.mem st₀.mem := Mem.Sim.refl _
+  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner nd.id conns) cT :=
+    ⟨by rw [hcI, I_eq he]; rfl, hct.symm⟩
+  have hw' : ∀ op v, cT.I.wcr op .undef v = .undef := by
+    rw [hcI, I_eq he]; exact hw
+  have hcst : ({ ρ := inner.withConstants ρ, mem := st₀.mem } : CSt) = { ρ, mem := st₀.mem } := by
+    simp only [hmap.consts]
+  rcases hR with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨c, rfl, hR⟩
+  · have hx : SDFGExec cT ρ st₀.mem inner (.err e) := .err (by rw [hcst]; exact .start hR)
+    obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
+    obtain ⟨e', rfl, hu'⟩ := ResSim.err_inv hr
+    refine .inl ⟨e', ?_, .nestedInnerErr hkn hset hx₂⟩
+    rcases hu' with hu' | rfl
+    exacts [hu', hu]
+  · have hx : SDFGExec cT ρ st₀.mem inner (.err e) := .err (by rw [hcst]; exact .start hR)
+    obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
+    obtain ⟨e', rfl, hu'⟩ := ResSim.err_inv hr
+    rcases hu' with hu' | rfl
+    · exact .inl ⟨e', hu', .nestedInnerErr hkn hset hx₂⟩
+    · exact .inr (.inl ⟨e₀, e', rfl, .nestedInnerErr hkn hset hx₂⟩)
+  · have hx : SDFGExec cT ρ st₀.mem inner (.ok (c.ρ, c.mem, c.log)) := .run (by rw [hcst]; exact .start hR) rfl
+    obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
+    rcases ResSim.ok_cases hr with ⟨e', rfl, hu'⟩ | ⟨⟨ρ₂, m₂, g₂⟩, rfl, -, hm₂, hg₂, -⟩
+    · exact .inl ⟨e', hu', .nestedInnerErr hkn hset hx₂⟩
+    · have hnode := NodeExec.nested hkn hset hx₂
+      rw [nestedFinish_data hout] at hnode
+      simp only at hm₂ hg₂
+      rw [Mem.Sim.eq_one hm₂] at hnode
+      rw [hg₂, Log.ren_one, Log.dropNames_nil'] at hnode
+      exact .inr (.inr ⟨c, rfl, hnode⟩)
+
 include he hcons in
 /-- **A map scope node**, given its iterations (`hiter`) and the rest of the
 segment (`ih`). -/
@@ -1273,6 +1442,56 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     exact map_node he hcons hn hk hkeys hok hds
       (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hxs hnd hkn hb hmap
         hcode hout hpriv (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' hinner' hm i hbd) hi) ih hx hrel
+  | @nested id nd o cs body inner mapping ni conns σ hn hkn hb hmap hcode hout hst hctr hflat hnames hinner _ ih =>
+    intro full gb rest cst r st hx hrel
+    rw [List.append_assoc] at hx
+    have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
+    have htcR : (tc.renT σ).withI ctx.I = tc.renT σ := by rw [← I_eq he]; rfl
+    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) ((tc.renT σ).innerCtx inner)
+        inner.top := by
+      have := hnames ctx.I
+      rw [htcR] at this
+      exact this
+    have hinner' : ∀ (cst : CSt) (r : Res (TCtl × CSt)), STree.ListExec tc body false {} body cst r →
+        NestedOut (RegionAt ((tc.renT σ).innerCtx inner) inner.top cst inner.top.start) r := by
+      have := hinner ctx.I hw
+      rw [htc] at this
+      exact this
+    have hlog : ∀ {rb : Res (TCtl × CSt)}, STree.ListExec tc body false {} body cst rb →
+        ∃ r₀, STree.ListExec tc body false {} body { ρ := cst.ρ, mem := st.forNode.mem } r₀ ∧
+          rb = r₀.map (shiftT cst.log) := by
+      intro rb hb'
+      have hb'' : STree.ListExec tc body false {} body { cst with log := cst.log } rb := hb'
+      obtain ⟨r₀, h₀, hr₀⟩ := (STree.ListExec.log_iff cst.log).1 hb''
+      refine ⟨r₀, ?_, hr₀⟩
+      have hst : ({ cst with log := Log.empty } : CSt) = { ρ := cst.ρ, mem := st.forNode.mem } := by
+        simp only [St.forNode, hrel.1]
+      rwa [hst] at h₀
+    apply SeqOut.cons hn
+    rcases STree.ListExec.split_flat hflat hx with ⟨e, rfl, hbE⟩ | ⟨cst', hbO, hρ', hrest⟩
+    · obtain ⟨r₀, h₀, hr₀⟩ := hlog (hbE body)
+      rcases nested_call he hw hkn hb hmap hcode hout hctr (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' cst.ρ
+        st.forNode (hinner' _ _ h₀) with
+        ⟨e', hu, hx'⟩ | ⟨e₀, e', -, hx'⟩ | ⟨c, rfl, -⟩
+      · exact .inl ⟨e', hu, hx'⟩
+      · exact .inr (.inl ⟨e, e', rfl, hx'⟩)
+      · cases hr₀
+    · obtain ⟨r₀, h₀, hr₀⟩ := hlog (hbO body)
+      rcases nested_call he hw hkn hb hmap hcode hout hctr (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' cst.ρ
+        st.forNode (hinner' _ _ h₀) with
+        ⟨e', hu, hx'⟩ | ⟨e₀, e', rfl, -⟩ | ⟨c, rfl, hx'⟩
+      · exact .inl ⟨e', hu, hx'⟩
+      · cases hr₀
+      · simp only [Res.map_ok, shiftT, Res.ok_inj, Prod.mk.injEq] at hr₀
+        obtain ⟨-, rfl⟩ := hr₀
+        refine .inr (.inr ⟨_, hx', ?_⟩)
+        have hrel' : StRel (st.afterNode { mem := c.mem, log := st.forNode.log.seq c.log, vals := st.forNode.vals })
+            (c.shift cst.log) := by
+          refine ⟨rfl, ?_, ?_⟩
+          · simp only [St.afterNode, St.forNode, Log.empty_seq, CSt.shift, hrel.2.1]
+          · simpa [St.afterNode, St.forNode] using hrel.2.2
+        have := ih hrest hrel'
+        rwa [hρ'] at this
 
 end Matched
 

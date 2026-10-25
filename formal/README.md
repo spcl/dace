@@ -43,7 +43,11 @@ representations:
   theorem `SDFGExec.sim` over a name permutation, `Corr.flatCtx`).
   Connectors may name their containers differently from the outer edges:
   the tree body is renamed to the connector names (`STree/Rename.lean`,
-  `STree.ListExec.ren`, `Corr.connPerm`).
+  `STree.ListExec.ren`, `Corr.connPerm`).  A nested SDFG outside map scopes
+  (`SegCorr.nested`) matches its inlined region in the sibling list when the
+  inner top region holds states only, the call allocates no transients and
+  the inlined tree nodes are dataflow nodes (`SNode.isFlatT`); such a call
+  steps the state by its inner log (`NodeExec.steps`, `DNode.FlatIn`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).

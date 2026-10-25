@@ -270,6 +270,57 @@ theorem nestedChild_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SD
     · cases h
   · cases h
 
+/-- The longest prefix of `cs` satisfying `p`, with the rest of `cs`. -/
+def longestPrefix (p : List SNode → Bool) (cs : List SNode) : Option (List SNode × List SNode) :=
+  ((List.range (cs.length + 1)).reverse.find? fun k => p (cs.take k)).map fun k => (cs.take k, cs.drop k)
+
+theorem longestPrefix_sound {p : List SNode → Bool} {cs body rest : List SNode}
+    (h : longestPrefix p cs = some (body, rest)) : p body = true ∧ cs = body ++ rest := by
+  simp only [longestPrefix, Option.map_eq_some_iff, Prod.mk.injEq] at h
+  obtain ⟨k, hk, rfl, rfl⟩ := h
+  exact ⟨by simpa using List.find?_some hk, (List.take_append_drop k cs).symm⟩
+
+/-- Recognize a nested SDFG node outside map scopes (`SegCorr.nested`; `nest`
+checks the inlined inner region): the inlined body at the head of `cs` and
+the rest. -/
+def nestedCall (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) (n : DNode)
+    (cs : List SNode) : Option (List SNode × List SNode) :=
+  match n.kind with
+  | .nested inner mapping _ =>
+    match nestedBindings ctx s n with
+    | .ok conns =>
+      if nestedMapOk? ctx inner mapping = true ∧
+          (nestedConns n).all (fun c => (nestedEndpoint s n c).isData) = true ∧
+          (s.outEdges n.id).all (fun e => (s.dstEndpoint e).isData) = true ∧
+          inner.top.statesOnly = true ∧ inner.callTransients = [] ∧
+          innerNames? ctx (tc.renT (connPerm conns)) inner n.id conns = true
+      then longestPrefix (fun body => body.all SNode.isFlatT && nest (connPerm conns) inner body) cs
+      else none
+    | .err _ => none
+  | _ => none
+
+theorem nestedCall_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode → Bool} {s : State}
+    (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
+    {n : DNode} {cs body rest : List SNode} (h : nestedCall ctx tc nest s n cs = some (body, rest)) :
+    cs = body ++ rest ∧
+      ∀ id o tail, s.node? id = some n → SegCorr ctx tc s o tail → SegCorr ctx tc s (id :: o) (body ++ tail) := by
+  unfold nestedCall at h
+  split at h
+  · rename_i inner mapping ni hkn
+    split at h
+    · rename_i conns hb
+      split at h
+      · rename_i hc
+        obtain ⟨hm, hcode, hout, hst, hctr, hnames⟩ := hc
+        obtain ⟨hp, hcs⟩ := longestPrefix_sound h
+        simp only [Bool.and_eq_true] at hp
+        refine ⟨hcs, fun id o tail hn ht => ?_⟩
+        exact .nested hn hkn hb (nestedMapOk?_sound hm) (List.all_eq_true.1 hcode) (List.all_eq_true.1 hout) hst
+          hctr hp.1 (innerNames?_sound hnames) (hnest _ _ _ hp.2) ht
+      · cases h
+    · cases h
+  · cases h
+
 /-- A matched scope: the order of its direct nodes, the full (nested) order
 and the rest of the tree list. -/
 abbrev MatchRes := List NodeId × List NodeId × List SNode
@@ -329,6 +380,10 @@ def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) 
           else none
         | none => none
       else none
+  | .nested _ _ _ =>
+    match nestedCall ctx tc nest s n cs with
+    | some (_, rest) => some ([], rest)
+    | none => none
   | _ => none
 
 /-- The unplaced nodes and the nodes nested in them. -/
@@ -465,6 +520,13 @@ theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
           · cases hm
         · cases hm
       · cases hm
+  · split at hm
+    · rename_i body rest' hnc
+      simp only [Option.some.injEq, Prod.mk.injEq] at hm
+      obtain ⟨-, rfl⟩ := hm
+      obtain ⟨hcs, hseg⟩ := nestedCall_sound hnest hnc
+      exact ⟨body, hcs, hseg⟩
+    · cases hm
   · cases hm
 
 theorem matchSeg_sound : ∀ (fuel : Nat) (U : List NodeId) (cs : List SNode) (o full : List NodeId) (rest : List SNode),
@@ -869,6 +931,8 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
     exact .nestedMap hn hk hkeys hok hds hto hdir
       (fun x hx => let ⟨xn, h₁, h₂, h₃, h₄⟩ := hxs x hx; ⟨xn, h₁, h₂, CopyShape.withI I₂ h₃, h₄⟩)
       hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hpriv hnames hinner ih
+  | nested hnd hkn hb hmap hcode hout hst hctr hflat hnames hinner _ ih =>
+    exact .nested hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hst hctr hflat hnames hinner ih
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr ctx tc s cs) :
     StateCorr { ctx with I := I₂ } (tc.withI I₂) s cs := by
