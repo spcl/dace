@@ -501,7 +501,7 @@ theorem stateDet?_sound {I : Interp} {g : SDFG} {s : State}
     SeqPure { I, g } s ∧ ScopesOk s := by
   simp only [stateDet?, Bool.and_eq_true] at h
   have hs := seqPure?_sound h.1
-  exact ⟨⟨⟨hs.plain, hs.shapes, hs.memlets, hs.kinds, hs.ranges, hs.reduces, hs.codeOut⟩, hs.noPriv⟩, scopesOk?_sound h.2⟩
+  exact ⟨⟨⟨⟨hs.plain, hs.shapes, hs.memlets, hs.ranges, hs.reduces, hs.codeOut⟩, hs.kinds⟩, hs.noPriv⟩, scopesOk?_sound h.2⟩
 
 /-- **Determinism of programs**: for a lawful WCR semantics, a program
 passing `SDFG.det?` with a normal outcome has no other outcome. -/

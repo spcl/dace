@@ -680,7 +680,7 @@ theorem CopyShape.withI {n : DNode} (h : s.CopyShape (sctx I₁ g) n) : s.CopySh
   ⟨h.noRef, h.dst⟩
 
 theorem SeqPureP.withI (h : SeqPureP (sctx I₁ g) s) : SeqPureP (sctx I₂ g) s :=
-  ⟨h.plain, h.shapes, h.memlets, h.kinds, h.ranges, h.reduces, h.codeOut⟩
+  ⟨⟨h.plain, h.shapes, h.memlets, h.ranges, h.reduces, h.codeOut⟩, h.kinds⟩
 
 theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s o cs) :
     SegCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s o cs := by
