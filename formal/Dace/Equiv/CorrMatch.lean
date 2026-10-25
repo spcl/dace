@@ -629,47 +629,26 @@ theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o :
       subst hR
       exact .inr (.inr ⟨y, hy ▸ NodeExec.simple hsimp, ih hx₁ (hrel.afterNode hyv ⟨rfl, rfl⟩) rfl⟩)
 
-include h in
-/-- **The iterations of a map**: the tree's iterations, each matched by
-the SDFG's run of the scope body along the tree's order. -/
-theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : List SNode}
-    (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
-    (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
-    (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
-    (ihb : ∀ {cst : CSt} {r : Res (TCtl × CSt)} {st : St}, STree.ListExec tc body false {} (body ++ []) cst r →
-      StRel st cst → SeqOut ctx s oM cst.ρ st tc body false [] r)
-    {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem) (hv : st₁.vals = []) :
-    ∀ {pts : List Idx} {rT : Res (List Log)},
-      STree.IterExec tc mp.params body (tc.privateTransients body) pre pts rT →
-      (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
-      (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
-      ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs) := by
-  have hrel : ∀ i, StRel (iterStart (ctx.privateTransients s n.id) st₁) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) :=
-    fun i => ⟨by simp only [iterStart, iterStartT, hm, hpriv], rfl, hv⟩
-  have hp : ∀ ρ', bindViews ctx ρ' s (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
-    fun ρ' => bindViews_eq ρ' h _ _
-  -- the body of one iteration
-  have hbody : ∀ (i : Idx) {res : Res (TCtl × CSt)},
-      STree.ListExec tc body false {} body (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res →
+omit he hcons in
+/-- **The iterations of a map**, given one iteration: the tree's iterations,
+each matched by an SDFG iteration whose log without the SDFG's private
+transients is the tree's without the tree's. -/
+theorem iter_matched_of {n : DNode} {mp : MapNode} {body : List SNode} {privS privT : List Name}
+    {pre : CSt} {st₁ : St}
+    (hbody : ∀ (i : Idx) {res : Res (TCtl × CSt)},
+      STree.ListExec tc body false {} body (iterStartT privT pre (pre.ρ.bindIdx mp.params i)) res →
       (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
-        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
+        (s.directChildren (some n.id)) (iterStart privS st₁) (.err e)) ∨
       (∃ e, res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
-        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
+        (s.directChildren (some n.id)) (iterStart privS st₁) (.err e)) ∨
       ∃ st', OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
-        (iterStart (ctx.privateTransients s n.id) st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧ st'.log = cst'.log := by
-    intro i res hb
-    have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res := by
-      rw [List.append_nil]; exact hb
-    rcases ihb hb' (hrel i) with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, -, hst⟩
-    · rw [← hdir] at hs
-      exact .inl ⟨e, hu, .seqErr hto (hp _) hs⟩
-    · rw [← hdir] at hs
-      exact .inr (.inl ⟨e, hr, .seqErr hto (hp _) hs⟩)
-    · rw [← hdir] at hs
-      have hres := STree.ListExec_nil (by rfl) hl
-      cases hf : s.hbFree tr with
-      | false => exact .inl ⟨_, rfl, .hbRace hto (hp _) hs hf⟩
-      | true => exact .inr (.inr ⟨st', .run hto (hp _) hs hf, cst', hres, hst.2.1⟩)
+        (iterStart privS st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧
+          st'.log.dropNames privS = cst'.log.dropNames privT) :
+    ∀ {pts : List Idx} {rT : Res (List Log)},
+      STree.IterExec tc mp.params body privT pre pts rT →
+      (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.err e)) ∨
+      (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.err e)) ∨
+      ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.ok logs) := by
   intro pts
   induction pts with
   | nil =>
@@ -703,8 +682,42 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
           simp only [iterLog, Res.ok.injEq] at hlog
           subst hlog
           refine .inr (.inr ⟨_, rfl, ?_⟩)
-          rw [hpriv, ← hlg]
+          rw [← hlg]
           exact IterExec.cons hx hy
+
+include h in
+/-- **The iterations of a map**: the tree's iterations, each matched by the
+SDFG's run of the scope body along the tree's order. -/
+theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : List SNode}
+    (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
+    (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
+    (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
+    (ihb : ∀ {cst : CSt} {r : Res (TCtl × CSt)} {st : St}, STree.ListExec tc body false {} (body ++ []) cst r →
+      StRel st cst → SeqOut ctx s oM cst.ρ st tc body false [] r)
+    {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem) (hv : st₁.vals = []) :
+    ∀ {pts : List Idx} {rT : Res (List Log)},
+      STree.IterExec tc mp.params body (tc.privateTransients body) pre pts rT →
+      (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
+      (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
+      ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs) := by
+  have hrel : ∀ i, StRel (iterStart (ctx.privateTransients s n.id) st₁) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) :=
+    fun i => ⟨by simp only [iterStart, iterStartT, hm, hpriv], rfl, hv⟩
+  have hp : ∀ ρ', bindViews ctx ρ' s (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
+    fun ρ' => bindViews_eq ρ' h _ _
+  intro pts rT hi
+  refine iter_matched_of (n := n) (fun i {res} hb => ?_) hi
+  have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res := by
+    rw [List.append_nil]; exact hb
+  rcases ihb hb' (hrel i) with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, -, hst⟩
+  · rw [← hdir] at hs
+    exact .inl ⟨e, hu, .seqErr hto (hp _) hs⟩
+  · rw [← hdir] at hs
+    exact .inr (.inl ⟨e, hr, .seqErr hto (hp _) hs⟩)
+  · rw [← hdir] at hs
+    have hres := STree.ListExec_nil (by rfl) hl
+    cases hf : s.hbFree tr with
+    | false => exact .inl ⟨_, rfl, .hbRace hto (hp _) hs hf⟩
+    | true => exact .inr (.inr ⟨st', .run hto (hp _) hs hf, cst', hres, by rw [hst.2.1, hpriv]⟩)
 
 omit h hcons in
 include he in
@@ -724,6 +737,111 @@ theorem DNode.isSimple_of_copyTarget {n : DNode} (hk : DNode.isCopyTarget n = tr
   unfold DNode.isCopyTarget at hk
   unfold DNode.isSimple
   split at hk <;> simp_all
+
+include he hcons in
+/-- **A map scope node**, given its iterations (`hiter`) and the rest of the
+segment (`ih`). -/
+theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {body : List SNode}
+    {keys : List InKey} {ds : List SNode} (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
+    (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
+    (hiter : ∀ {pre : CSt} {st₁ : St}, st₁.mem = pre.mem → st₁.vals = [] →
+      ∀ {pts : List Idx} {rT : Res (List Log)},
+        STree.IterExec tc mp.params body (tc.privateTransients body) pre pts rT →
+        (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
+        (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
+        ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs))
+    (ih : ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St},
+      STree.ListExec tc full gb {} (cs ++ rest) cst r → StRel st cst → SeqOut ctx s o cst.ρ st tc full gb rest r)
+    {full' : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St}
+    (hx : STree.ListExec tc full' gb {} ((ds ++ .mapScope mp body :: cs) ++ rest) cst r) (hrel : StRel st cst) :
+    SeqOut ctx s (id :: o) cst.ρ st tc full' gb rest r := by
+    have hn' := List.mem_of_find?_eq_some hn
+    apply SeqOut.cons hn
+    have hx₁ : STree.ListExec tc full' gb (pendingSc []) (ds ++ (.mapScope mp body :: (cs ++ rest))) cst r := by
+      simpa only [List.append_assoc, List.cons_append] using hx
+    have hshift : cst.st = st.forNode.shift cst.log := hrel.forNode_shift
+    rcases dscopies_run he hcons hds (fun k hk' => (hok.2 k hk').1) hx₁ with
+      ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx₂⟩
+    · rw [hshift, dynReadAcc_shift] at hd
+      cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
+      | ok _ => rw [hd₀] at hd; cases hd
+      | err e' =>
+        rw [hd₀] at hd; cases hd
+        exact .inr (.inl ⟨_, rfl, .mapSetupErr hk (by rw [mapSetup_dyn hkeys hok, hd₀]; rfl)⟩)
+    · rw [hshift, dynReadAcc_shift] at hd
+      cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
+      | err _ => rw [hd₀] at hd; cases hd
+      | ok p =>
+        obtain ⟨syms₀, y⟩ := p
+        rw [hd₀] at hd
+        simp only [Res.map, St.shiftR, Prod.map, _root_.id, Res.ok.injEq, Prod.mk.injEq] at hd
+        obtain ⟨rfl, rfl⟩ := hd
+        have hyv : y.vals = [] := hyv'
+        have hset := mapSetup_dyn (ρ := cst.ρ) (mp := mp) hkeys hok st.forNode
+        rw [hd₀] at hset
+        simp only [Res.ok_bind] at hset
+        have hsetT := mapSetupT_dyn he (mp := mp) syms₀ (cst.withSt (y.shift cst.log))
+        have hm₂ : (cst.withSt (y.shift cst.log)).mem = y.mem := rfl
+        have hρ₂ : (cst.withSt (y.shift cst.log)).ρ = cst.ρ := rfl
+        rw [hm₂, hρ₂] at hsetT
+        rcases map_inv hx₂ with ⟨e, hs, rfl⟩ | ⟨ρ', pts, e, hs, hi, rfl⟩ | ⟨ρ', pts, logs, hs, hi, hfin⟩
+        · rw [hsetT] at hs
+          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
+          | ok _ => rw [hp] at hs; cases hs
+          | err e' =>
+            rw [hp] at hs hset; cases hs
+            exact .inr (.inl ⟨_, rfl, .mapSetupErr hk hset⟩)
+        · rw [hsetT] at hs
+          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
+          | err _ => rw [hp] at hs; cases hs
+          | ok pts' =>
+            rw [hp] at hs hset
+            simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
+            obtain ⟨rfl, rfl⟩ := hs
+            rcases hiter (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
+                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl, -⟩
+            · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
+            · cases he'; exact .inr (.inl ⟨_, rfl, .mapIterErr hk hset hy⟩)
+            · cases hl
+        · rw [hsetT] at hs
+          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
+          | err _ => rw [hp] at hs; cases hs
+          | ok pts' =>
+            rw [hp] at hs hset
+            simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
+            obtain ⟨rfl, rfl⟩ := hs
+            rcases hiter (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
+                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', -⟩ | ⟨logs', hl, hy⟩
+            · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
+            · cases he'
+            · cases hl
+              have hst₂ : (cst.withSt (y.shift cst.log)).st = y.shift cst.log := by
+                obtain ⟨m', l', v'⟩ := y
+                simp only at hyv
+                simp [CSt.withSt, CSt.st, St.shift, hyv]
+              have hfinS := scopeFinish_shift ctx cst.log y logs
+              rw [← hst₂] at hfinS
+              rw [scopeFinishT_eq he, hfinS] at hfin
+              cases hy' : scopeFinish ctx y logs with
+              | err e' =>
+                rw [hy'] at hfin
+                rcases hfin with ⟨e'', hf, rfl⟩ | ⟨cst', hf, -⟩
+                · cases hf; exact .inr (.inl ⟨_, rfl, hy' ▸ NodeExec.mapScope hk hset hy⟩)
+                · cases hf
+              | ok y₂ =>
+                rw [hy'] at hfin
+                rcases hfin with ⟨e'', hf, -⟩ | ⟨cst', hf, hx'⟩
+                · cases hf
+                · simp only [Res.map, Res.ok.injEq] at hf
+                  subst hf
+                  have hyv₂ : y₂.vals = [] := by
+                    obtain ⟨-, hyd⟩ := scopeFinish_ok hy'
+                    rw [hyd]; simpa [St.step] using hyv
+                  have hc : ((cst.withSt (y.shift cst.log)).withSt (y₂.shift cst.log)) = cst.withSt (y₂.shift cst.log) := rfl
+                  rw [hc] at hx'
+                  exact .inr (.inr ⟨y₂, hy' ▸ NodeExec.mapScope hk hset hy,
+                    ih (cst := cst.withSt (y₂.shift cst.log)) hx' (hrel.afterNode hyv₂ ⟨rfl, rfl⟩)⟩)
+
 
 include h he hcons in
 /-- **Matching of a dataflow segment** (see the module documentation). -/
@@ -799,94 +917,8 @@ theorem SegCorr.matched {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc
     simp only [stepLeaf, this]
   | @map id n o cs mp oM full body keys ds hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih =>
     intro full' gb rest cst r st hx hrel
-    have hn' := List.mem_of_find?_eq_some hn
-    apply SeqOut.cons hn
-    have hx₁ : STree.ListExec tc full' gb (pendingSc []) (ds ++ (.mapScope mp body :: (cs ++ rest))) cst r := by
-      simpa only [List.append_assoc, List.cons_append] using hx
-    have hshift : cst.st = st.forNode.shift cst.log := hrel.forNode_shift
-    rcases dscopies_run he hcons hds (fun k hk' => (hok.2 k hk').1) hx₁ with
-      ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx₂⟩
-    · rw [hshift, dynReadAcc_shift] at hd
-      cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
-      | ok _ => rw [hd₀] at hd; cases hd
-      | err e' =>
-        rw [hd₀] at hd; cases hd
-        exact .inr (.inl ⟨_, rfl, .mapSetupErr hk (by rw [mapSetup_dyn hkeys hok, hd₀]; rfl)⟩)
-    · rw [hshift, dynReadAcc_shift] at hd
-      cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
-      | err _ => rw [hd₀] at hd; cases hd
-      | ok p =>
-        obtain ⟨syms₀, y⟩ := p
-        rw [hd₀] at hd
-        simp only [Res.map, St.shiftR, Prod.map, _root_.id, Res.ok.injEq, Prod.mk.injEq] at hd
-        obtain ⟨rfl, rfl⟩ := hd
-        have hyv : y.vals = [] := hyv'
-        have hset := mapSetup_dyn (ρ := cst.ρ) (mp := mp) hkeys hok st.forNode
-        rw [hd₀] at hset
-        simp only [Res.ok_bind] at hset
-        have hsetT := mapSetupT_dyn he (mp := mp) syms₀ (cst.withSt (y.shift cst.log))
-        have hm₂ : (cst.withSt (y.shift cst.log)).mem = y.mem := rfl
-        have hρ₂ : (cst.withSt (y.shift cst.log)).ρ = cst.ρ := rfl
-        rw [hm₂, hρ₂] at hsetT
-        rcases map_inv hx₂ with ⟨e, hs, rfl⟩ | ⟨ρ', pts, e, hs, hi, rfl⟩ | ⟨ρ', pts, logs, hs, hi, hfin⟩
-        · rw [hsetT] at hs
-          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
-          | ok _ => rw [hp] at hs; cases hs
-          | err e' =>
-            rw [hp] at hs hset; cases hs
-            exact .inr (.inl ⟨_, rfl, .mapSetupErr hk hset⟩)
-        · rw [hsetT] at hs
-          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
-          | err _ => rw [hp] at hs; cases hs
-          | ok pts' =>
-            rw [hp] at hs hset
-            simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
-            obtain ⟨rfl, rfl⟩ := hs
-            rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr)
-                (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
-                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl, -⟩
-            · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
-            · cases he'; exact .inr (.inl ⟨_, rfl, .mapIterErr hk hset hy⟩)
-            · cases hl
-        · rw [hsetT] at hs
-          cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
-          | err _ => rw [hp] at hs; cases hs
-          | ok pts' =>
-            rw [hp] at hs hset
-            simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
-            obtain ⟨rfl, rfl⟩ := hs
-            rcases iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr)
-                (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
-                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', -⟩ | ⟨logs', hl, hy⟩
-            · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
-            · cases he'
-            · cases hl
-              have hst₂ : (cst.withSt (y.shift cst.log)).st = y.shift cst.log := by
-                obtain ⟨m', l', v'⟩ := y
-                simp only at hyv
-                simp [CSt.withSt, CSt.st, St.shift, hyv]
-              have hfinS := scopeFinish_shift ctx cst.log y logs
-              rw [← hst₂] at hfinS
-              rw [scopeFinishT_eq he, hfinS] at hfin
-              cases hy' : scopeFinish ctx y logs with
-              | err e' =>
-                rw [hy'] at hfin
-                rcases hfin with ⟨e'', hf, rfl⟩ | ⟨cst', hf, -⟩
-                · cases hf; exact .inr (.inl ⟨_, rfl, hy' ▸ NodeExec.mapScope hk hset hy⟩)
-                · cases hf
-              | ok y₂ =>
-                rw [hy'] at hfin
-                rcases hfin with ⟨e'', hf, -⟩ | ⟨cst', hf, hx'⟩
-                · cases hf
-                · simp only [Res.map, Res.ok.injEq] at hf
-                  subst hf
-                  have hyv₂ : y₂.vals = [] := by
-                    obtain ⟨-, hyd⟩ := scopeFinish_ok hy'
-                    rw [hyd]; simpa [St.step] using hyv
-                  have hc : ((cst.withSt (y.shift cst.log)).withSt (y₂.shift cst.log)) = cst.withSt (y₂.shift cst.log) := rfl
-                  rw [hc] at hx'
-                  exact .inr (.inr ⟨y₂, hy' ▸ NodeExec.mapScope hk hset hy,
-                    ih (cst := cst.withSt (y₂.shift cst.log)) hx' (hrel.afterNode hyv₂ ⟨rfl, rfl⟩)⟩)
+    exact map_node he hcons hn hk hkeys hok hds
+      (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) hm hv hi) ih hx hrel
 
 end Matched
 
