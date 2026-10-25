@@ -143,7 +143,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
           · exact .inl ⟨_, rfl, hx'⟩
         | true =>
           have hrun : OrderedExec ctx cst.ρ s c (s.topLevelOf c) base (.ok st'') := .run hto hp hs₀ hf
-          have hflat : ∀ id ∈ s.topLevelOf c, ∀ n, s.node? id = some n → n.IsFlat := by
+          have hflat : ∀ id ∈ s.topLevelOf c, ∀ n, s.node? id = some n → n.FlatIn s := by
             intro id hid n hn
             have hc' : id ∈ c := (List.mem_filter.1 hid).1
             have hfull : id ∈ ofull := by

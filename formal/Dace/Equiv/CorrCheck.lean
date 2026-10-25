@@ -921,12 +921,6 @@ checker verifies that the renaming fixes every name of the SDFG's own states
 (`outerNames?`), the interface, and that renamed names are undefined at the
 start (`ProgCorrWith`). -/
 
-/-- Do all blocks of a region hold states? -/
-def _root_.Dace.Region.statesOnly (rg : Region) : Bool :=
-  rg.blocks.all fun b => match b with
-    | .state _ => true
-    | _ => false
-
 theorem StateExec.normal {ctx : Ctx} {cst : CSt} {s : State} {ctl : Ctl} {c : CSt}
     (h : StateExec ctx cst s (.ok (ctl, c))) : ctl = .normal := by
   generalize hr : (Res.ok (ctl, c) : Res (Ctl × CSt)) = r at h

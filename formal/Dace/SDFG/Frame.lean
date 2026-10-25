@@ -969,12 +969,154 @@ section Coherence
 /-- The node runs by itself: a simple node or a map scope. -/
 def DNode.IsFlat (n : DNode) : Prop := n.isSimple = true ∨ ∃ mp, n.kind = .mapEntry mp
 
+/-- Do all blocks of a region hold states? -/
+def Region.statesOnly (rg : Region) : Bool :=
+  rg.blocks.all fun b => match b with
+    | .state _ => true
+    | _ => false
+
+/-- A nested SDFG node whose call steps the state by the inner log: the inner
+top region holds states only, the call allocates no transients and passes no
+scalars to or from code nodes. -/
+def DNode.NestedFlat (s : State) (n : DNode) : Prop :=
+  ∃ inner mapping ni, n.kind = .nested inner mapping ni ∧ inner.top.statesOnly = true ∧ inner.callTransients = [] ∧
+    (∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) ∧ (∀ e ∈ s.outEdges n.id, (s.dstEndpoint e).isData = true)
+
+/-- A node whose normal runs step the state by a delta (`NodeExec.steps`). -/
+def DNode.FlatIn (s : State) (n : DNode) : Prop := n.IsFlat ∨ n.NestedFlat s
+
+theorem DNode.FlatIn.of_flat {s : State} {n : DNode} (h : n.IsFlat) : n.FlatIn s := .inl h
+
+/-! ### Regions of states step the state by their log -/
+
+theorem applyAssigns_mem_log {ctx : Ctx} {cst c : CSt} {as : List (Sym × Expr)} (h : applyAssigns ctx cst as = .ok c) :
+    c.mem = cst.mem ∧ c.log = cst.log := by
+  unfold applyAssigns at h
+  cases hv : as.mapM (fun (x, e) => do let v ← ctx.evalR cst.ρ cst.mem e; pure (x, v)) with
+  | err e => rw [hv] at h; cases h
+  | ok vs =>
+    rw [hv] at h
+    cases h
+    exact ⟨rfl, rfl⟩
+
+theorem merge_ok_free' {w : WcrSem} {m m' : Mem} {gs : List Log} (h : merge w m gs = .ok m') :
+    Log.pairwiseFree gs = true :=
+  (merge_isOk_iff _ _ _).1 ⟨m', h⟩
+
+theorem StateExec.steps {ctx : Ctx} {cst : CSt} {s : State} {ctl : Ctl} {c : CSt}
+    (h : StateExec ctx cst s (.ok (ctl, c))) : ∃ δ, c.mem = δ.apply ctx.I.wcr cst.mem ∧ c.log = cst.log.seq δ := by
+  generalize hr : (Res.ok (ctl, c) : Res (Ctl × CSt)) = r at h
+  cases h with
+  | compsErr => cases hr
+  | @run _ _ _ logs _ =>
+    unfold stateFinish at hr
+    split at hr
+    · rename_i m' hm
+      have hm' : m' = (Log.unionAll logs).apply ctx.I.wcr cst.mem := by
+        rw [merge_eq_apply _ _ (merge_ok_free' hm)] at hm
+        injection hm with h
+        exact h.symm
+      simp only [Res.ok.injEq, Prod.mk.injEq] at hr
+      obtain ⟨-, rfl⟩ := hr
+      exact ⟨_, hm', rfl⟩
+    · cases hr
+
+theorem Region.statesOnly_block {rg : Region} (hs : rg.statesOnly = true) {bid : BlockId} {b : Block}
+    (hb : rg.block? bid = some b) : ∃ st, b = .state st := by
+  have hmem : b ∈ rg.blocks := List.mem_of_getElem? hb
+  have := List.all_eq_true.1 hs b hmem
+  cases b with
+  | state st => exact ⟨st, rfl⟩
+  | _ => simp at this
+
+/-- A normal run of a region of states steps the state by its log. -/
+theorem RegionAt.steps {ctx : Ctx} {rg : Region} (hs : rg.statesOnly = true) :
+    ∀ {cst : CSt} {bid : BlockId} {r : Res (Ctl × CSt)}, RegionAt ctx rg cst bid r →
+      ∀ ctl c, r = .ok (ctl, c) → ∃ δ, c.mem = δ.apply ctx.I.wcr cst.mem ∧ c.log = cst.log.seq δ
+  | _, _, _, .exit hb hbx _, ctl, c, hr => by
+    cases hr
+    obtain ⟨st, rfl⟩ := Region.statesOnly_block hs hb
+    cases hbx with
+    | state h' => exact StateExec.steps h'
+  | _, _, _, .stop hb hbx _, ctl, c, hr => by
+    cases hr
+    obtain ⟨st, rfl⟩ := Region.statesOnly_block hs hb
+    cases hbx with
+    | state h' => exact StateExec.steps h'
+  | _, _, _, .step hb hbx _ ha hn, ctl, c, hr => by
+    obtain ⟨st, rfl⟩ := Region.statesOnly_block hs hb
+    cases hbx with
+    | state h' =>
+      obtain ⟨δ₁, hm₁, hl₁⟩ := StateExec.steps h'
+      obtain ⟨hm₂, hl₂⟩ := applyAssigns_mem_log ha
+      obtain ⟨δ₂, hm, hl⟩ := RegionAt.steps hs hn ctl c hr
+      refine ⟨δ₁.seq δ₂, ?_, ?_⟩
+      · rw [hm, hm₂, hm₁, Log.apply_seq]
+      · rw [hl, hl₂, hl₁, Log.seq_assoc]
+  | _, _, _, .missing _, _, _, hr => by cases hr
+  | _, _, _, .blockErr .., _, _, hr => by cases hr
+  | _, _, _, .edgesErr .., _, _, hr => by cases hr
+  | _, _, _, .ambiguous .., _, _, hr => by cases hr
+  | _, _, _, .assignErr .., _, _, hr => by cases hr
+
+theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode}
+    (h : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) (st : St) :
+    bindCodeInputs ctx' ρ' s n st = .ok (st, []) := by
+  unfold bindCodeInputs
+  generalize nestedConns n = cs at h
+  suffices H : ∀ (acc : St × List Name), (∀ c ∈ cs, (nestedEndpoint s n c).isData = true) →
+      cs.foldlM (fun (p : St × List Name) c =>
+        match nestedEndpoint s n c with
+        | .code key =>
+          match p.1.val? key with
+          | some v => do
+            let l ← ctx'.loc ρ' p.1.mem c []
+            pure ({ p.1 with mem := p.1.mem.write l v }, p.2 ++ [ctx'.cname c])
+          | none => pure (p.1, p.2 ++ [ctx'.cname c])
+        | _ => pure (p.1, p.2)) acc = .ok acc from H (st, []) h
+  intro acc hcs
+  induction cs generalizing acc with
+  | nil => rfl
+  | cons c cs ih =>
+    simp only [List.foldlM_cons]
+    have hc := hcs c List.mem_cons_self
+    cases he : nestedEndpoint s n c with
+    | code key => rw [he] at hc; cases hc
+    | data _ _ =>
+      have := ih (fun c' hc' => hcs c' (List.mem_cons_of_mem _ hc')) acc (fun c' hc' => hcs c' (List.mem_cons_of_mem _ hc'))
+      simpa [he, Bind.bind, Res.bind, Pure.pure] using this
+    | invalid =>
+      have := ih (fun c' hc' => hcs c' (List.mem_cons_of_mem _ hc')) acc (fun c' hc' => hcs c' (List.mem_cons_of_mem _ hc'))
+      simpa [he, Bind.bind, Res.bind, Pure.pure] using this
+
+theorem nestedFinish_data' {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
+    {m₂ : Mem} {g₂ : Log} (hout : ∀ e ∈ s.outEdges n.id, (s.dstEndpoint e).isData = true) :
+    nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
+      .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
+  unfold nestedFinish
+  generalize (s.outEdges n.id) = es at hout
+  generalize ({ mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = st₀
+  induction es generalizing st₀ with
+  | nil => rfl
+  | cons e es ih =>
+    simp only [List.foldlM_cons]
+    have he := hout e List.mem_cons_self
+    have ih' := ih (fun e' he' => hout e' (List.mem_cons_of_mem _ he'))
+    split
+    · split
+      · rename_i hd; rw [hd] at he; cases he
+      · exact ih' _
+    · exact ih' _
+
+theorem Log.dropNames_nil' (g : Log) : g.dropNames [] = g := by
+  cases g; simp [Log.dropNames]
+
 variable {ctx : Ctx} {s : State} (h : SeqPlain ctx s)
 include h
 
 /-- A normal run of a simple node or a map scope steps the state by a delta
 (the body of a map scope is unrestricted). -/
-theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.nodes) (hk : n.IsFlat)
+theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.nodes) (hk : n.FlatIn s)
     (hx : NodeExec ctx ρ s n st (.ok a)) : ∃ δ, a = st.step ctx.I.wcr δ := by
   suffices H : ∀ r, NodeExec ctx ρ s n st r → r = .ok a → ∃ δ, a = st.step ctx.I.wcr δ from H _ hx rfl
   intro r hx hr
@@ -994,20 +1136,46 @@ theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.no
   | nestedInnerErr => cases hr
   | consumeScope hk' _ _ =>
     exfalso
-    rcases hk with hs | ⟨mp, hm⟩
+    rcases hk with (hs | ⟨mp, hm⟩) | ⟨_, _, _, hm, -⟩
     · simp [DNode.isSimple, hk'] at hs
     · rw [hk'] at hm; cases hm
-  | nested hk' _ _ =>
-    exfalso
-    rcases hk with hs | ⟨mp, hm⟩
-    · simp [DNode.isSimple, hk'] at hs
     · rw [hk'] at hm; cases hm
+  | @nested _ ctx' _ ρ' ρ₂ _ _ _ st₁ inner mapping _ aliased m₂ g₂ hk' hs hx =>
+    rcases hk with (hs' | ⟨mp, hm⟩) | ⟨inner', mapping', ni', hkn, hst, hct, hcode, hout⟩
+    · simp [DNode.isSimple, hk'] at hs'
+    · rw [hk'] at hm; cases hm
+    rw [hk'] at hkn
+    cases hkn
+    unfold nestedSetup at hs
+    cases hb : nestedBindings ctx s n with
+    | err _ => rw [hb] at hs; cases hs
+    | ok conns =>
+      cases hv : nestedValuation ctx ρ st.mem mapping with
+      | err _ => rw [hb] at hs; simp only [Res.ok_bind] at hs; rw [hv] at hs; cases hs
+      | ok ρ'' =>
+        rw [hb] at hs
+        simp only [Res.ok_bind] at hs
+        rw [hv] at hs
+        simp only [Res.ok_bind, hct, List.map_nil, bindCodeInputs_data hcode, List.append_nil] at hs
+        simp only [Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at hs
+        obtain ⟨rfl, rfl, rfl, rfl⟩ := hs
+        cases hx with
+        | run hR _ =>
+          cases hR with
+          | start hR =>
+            obtain ⟨δ, hm, hl⟩ := RegionAt.steps hst hR _ _ rfl
+            rw [nestedFinish_data' hout] at hr
+            simp only [Res.ok_inj] at hr
+            subst hr
+            refine ⟨δ, ?_⟩
+            simp only [St.step, hm, hl, Log.empty_seq, Log.dropNames_nil']
+            rfl
 
 /-- A normal sequential run of simple nodes and map scopes steps the state
 by a delta. -/
 theorem SeqExec.steps {ρ : Valuation} :
     ∀ {ids : List NodeId} {st st₂ : St} {tr : List (NodeId × Log)},
-      (∀ id ∈ ids, ∀ n, s.node? id = some n → n.IsFlat) →
+      (∀ id ∈ ids, ∀ n, s.node? id = some n → n.FlatIn s) →
       SeqExec ctx ρ s ids st (.ok (st₂, tr)) → ∃ δ, st₂ = st.step ctx.I.wcr δ
   | [], st, _, _, _, hx => by cases hx; exact ⟨Log.empty, (St.step_empty _ _).symm⟩
   | id :: _, st, _, _, hk, hx => by
@@ -1021,7 +1189,7 @@ theorem SeqExec.steps {ρ : Valuation} :
 /-- A normal run of a scope body or component whose direct nodes are simple
 nodes and map scopes steps the state by a delta. -/
 theorem OrderedExec.steps {ρ : Valuation} {all direct : List NodeId} {st st' : St}
-    (hk : ∀ id ∈ direct, ∀ n, s.node? id = some n → n.IsFlat)
+    (hk : ∀ id ∈ direct, ∀ n, s.node? id = some n → n.FlatIn s)
     (hx : OrderedExec ctx ρ s all direct st (.ok st')) : ∃ δ, st' = st.step ctx.I.wcr δ := by
   suffices H : ∀ r, OrderedExec ctx ρ s all direct st r → r = .ok st' → ∃ δ, st' = st.step ctx.I.wcr δ from
     H _ hx rfl
@@ -1041,7 +1209,7 @@ component whose direct nodes are simple nodes and map scopes, the local view
 is the initial memory with the log applied, and the code-edge values are
 unchanged. -/
 theorem OrderedExec.coh' {ρ : Valuation} {all direct : List NodeId} {st st' : St}
-    (hk : ∀ id ∈ direct, ∀ n, s.node? id = some n → n.IsFlat)
+    (hk : ∀ id ∈ direct, ∀ n, s.node? id = some n → n.FlatIn s)
     (hx : OrderedExec ctx ρ s all direct { st with log := Log.empty } (.ok st')) :
     st'.mem = st'.log.apply ctx.I.wcr st.mem ∧ st'.vals = st.vals := by
   obtain ⟨δ, rfl⟩ := OrderedExec.steps h hk hx
@@ -1056,6 +1224,6 @@ are unchanged. -/
 theorem OrderedExec.coh {ctx : Ctx} {s : State} (h : SeqPureP ctx s) {ρ : Valuation} {all direct : List NodeId}
     {st st' : St} (hx : OrderedExec ctx ρ s all direct { st with log := Log.empty } (.ok st')) :
     st'.mem = st'.log.apply ctx.I.wcr st.mem ∧ st'.vals = st.vals :=
-  OrderedExec.coh' h.toSeqPlain (fun _ _ n hn => h.kinds n (List.mem_of_find?_eq_some hn)) hx
+  OrderedExec.coh' h.toSeqPlain (fun _ _ n hn => .inl (h.kinds n (List.mem_of_find?_eq_some hn))) hx
 
 end Dace

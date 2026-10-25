@@ -431,7 +431,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
 
 /-- The nodes of a segment run by themselves: simple nodes and map scopes. -/
 theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs : List SNode}
-    (hc : SegCorr ctx tc s o cs) : ∀ id ∈ o, ∀ n, s.node? id = some n → n.IsFlat := by
+    (hc : SegCorr ctx tc s o cs) : ∀ id ∈ o, ∀ n, s.node? id = some n → n.FlatIn s := by
   induction hc with
   | nil => intro id hid; cases hid
   | copies hn hk _ _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
@@ -440,6 +440,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
       cases hn'
+      refine .inl ?_
       first
         | exact .inr ⟨_, hk⟩
         | exact .inl (DNode.isSimple_of_copyTarget' hk)
