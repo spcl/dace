@@ -12,10 +12,6 @@
 #include "nan.h"
 #include "types.h"
 
-#ifdef __CUDACC__
-    #include <thrust/complex.h>
-#endif
-
 // dace::math: A namespace that contains typeless math functions
 
 // Math functions that are Python/sympy built-ins and must reside outside
@@ -378,6 +374,11 @@ template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_flo
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
 }
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_floor<T>((T)numerator, (T)denominator);
+}
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator, const std::complex<T>& denominator) {
     std::complex<T> quotient = numerator / denominator;
@@ -693,7 +694,7 @@ namespace dace
             return (T)std::expm1(a);
         }
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b)
         {
@@ -987,7 +988,7 @@ namespace dace
             return std::exp(a);
         }
 
-        #ifdef __CUDACC__
+        #if defined(__CUDACC__) || defined(__HIPCC__)
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> exp(const thrust::complex<T>& a)
         {
@@ -1001,7 +1002,7 @@ namespace dace
             return std::conj(a);
         }
 
-        #ifdef __CUDACC__
+        #if defined(__CUDACC__) || defined(__HIPCC__)
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a)
         {
