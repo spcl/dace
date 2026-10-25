@@ -120,10 +120,10 @@ example : Refines ident ident := by
 def corpusDir : IO System.FilePath :=
   return (← IO.getEnv "DACE_FORMAL_CORPUS").getD "tests/corpus"
 
-/-- Expected interfaces: non-transient scalars (`axpy.a`) are inputs only,
-transients (`two_states.tmp`) are not observable. -/
+/-- Expected interfaces: non-transient scalars (`axpy.a`) are observable like
+any other non-transient container, transients (`two_states.tmp`) are not. -/
 def expectedInterfaces : List (String × List Name) :=
-  [("axpy", ["x", "y"]), ("two_states", ["A", "B", "C"]), ("matmul", ["A", "B", "C"])]
+  [("axpy", ["a", "x", "y"]), ("two_states", ["A", "B", "C"]), ("matmul", ["A", "B", "C"])]
 
 def main : IO Unit := do
   let dir ← corpusDir

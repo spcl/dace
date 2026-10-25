@@ -570,8 +570,8 @@ def _warn_wcr_read_in_parallel_scope(state: "dace.sdfg.SDFGState", scope: dict) 
     warning:
 
     * An access node ``n`` is considered only if at least one of its in-edges carries a memlet with a WCR.
-    * ``n`` must lie inside a parallel scope: the innermost enclosing scope that is either a ``MapEntry`` whose
-      schedule is not ``Sequential`` or a ``ConsumeEntry``.
+    * ``n`` must lie inside a parallel scope: the innermost enclosing ``MapEntry`` or ``ConsumeEntry``. Every map is a
+      parallel scope regardless of its schedule; a ``Sequential`` schedule is only one legal execution order.
     * No warning is emitted if the data of ``n`` is private to an iteration of that scope, i.e., it is a transient with
       ``Scope`` lifetime whose every access node in the SDFG is in this state and inside that scope.
     * A warning is emitted if a non-empty out-edge of ``n`` (followed through nested scope entries via its memlet tree)
@@ -584,9 +584,7 @@ def _warn_wcr_read_in_parallel_scope(state: "dace.sdfg.SDFGState", scope: dict) 
     from dace.sdfg import nodes as nd  # Avoid import loops
 
     def is_parallel(entry: nd.EntryNode) -> bool:
-        if isinstance(entry, nd.ConsumeEntry):
-            return True
-        return isinstance(entry, nd.MapEntry) and entry.map.schedule != dtypes.ScheduleType.Sequential
+        return isinstance(entry, (nd.MapEntry, nd.ConsumeEntry))
 
     def is_inside(node: nd.Node, entry: nd.EntryNode) -> bool:
         parent = scope.get(node)

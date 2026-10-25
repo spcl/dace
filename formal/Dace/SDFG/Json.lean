@@ -232,7 +232,6 @@ partial def dataDesc (name : Name) (j : Json) : P (List (Name × DataDesc)) := d
     { dtype := (field? a "dtype").map dtype |>.getD (.opaque "void")
       shape, strides, offset, totalSize, startOffset
       transient := boolField a "transient"
-      storage := (strField? a "storage").getD "Default"
       lifetime := lt
       mayAlias := boolField a "may_alias"
       allowConflicts := boolField a "allow_conflicts" }
@@ -299,7 +298,7 @@ def mapOf (label : String) (a : Json) : P MapNode := do
   let rng ← range (← field a "range")
   let collapse ← (natField? a "collapse").map (·.getD 1)
   pure { label := (strField? a "label").getD label, params, range := rng,
-         schedule := (strField? a "schedule").getD "Default", unroll := boolField a "unroll", collapse }
+         unroll := boolField a "unroll", collapse }
 
 /-- A `Consume` from its attributes (`nodes.Consume` / `ConsumeEntry`). -/
 def consumeOf (label : String) (a : Json) : P ConsumeNode := do
@@ -309,8 +308,7 @@ def consumeOf (label : String) (a : Json) : P ConsumeNode := do
     | some c => some <$> codeExpr c
     | none => pure none
   let chunksize ← (natField? a "chunksize").map (·.getD 1)
-  pure { label := (strField? a "label").getD label, peIndex, numPes, condition, chunksize,
-         schedule := (strField? a "schedule").getD "Default" }
+  pure { label := (strField? a "label").getD label, peIndex, numPes, condition, chunksize }
 
 /-- A `LibraryNode` from its JSON object (`classpath` at the top level). -/
 def libNodeOf (j : Json) (label : String) : P LibNode := do

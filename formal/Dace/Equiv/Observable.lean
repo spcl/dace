@@ -18,11 +18,9 @@ equivalence is concerned (`Decisions.md#D63`, `#D64`):
   are plain containers addressed by their own names, as `dace-interp` lays
   them out with `Mem.write (Loc.elem name offset)`);
 * `interfaceOf`: the observable containers of a descriptor repository
-  (`Decisions.md#D63`): non-transient arrays, streams, structures and
-  container arrays, and every `__return*` container; non-transient scalars
-  are passed by value and are not observable (except `GPU_Global` scalars,
-  which DaCe passes by pointer); views and references are aliases, observed
-  through the containers they alias;
+  (`Decisions.md#D63`): every non-transient container that is not a view or
+  reference, and every `__return*` container; views and references are
+  aliases, observed through the containers they alias;
 * `obsEq`: two final memories agree on every location (cells and queues)
   of the observable containers.
 -/
@@ -35,18 +33,15 @@ namespace Dace
 
 /-- Is container `n` with descriptor `d` observable after the program ends
 (`Decisions.md#D63`)?  Return values (`__return`, `__return_<i>`) always are;
-otherwise non-transient containers passed by pointer: arrays, streams,
-structures and container arrays, and scalars only with `GPU_Global` storage
-(`dace/data/core.py`, `Scalar.as_arg` passes the value itself otherwise).
+otherwise every non-transient container is, whatever its kind or storage.
 Views and references are aliases (`Decisions.md#D11`) and not observed by
 name. -/
 def DataDesc.isObservable (n : Name) (d : DataDesc) : Bool :=
   n.startsWith "__return" ||
     (!d.transient &&
       match d.kind with
-      | .scalar => d.storage == "GPU_Global"
       | .view _ | .reference _ => false
-      | .array | .stream _ | .structure _ _ | .containerArray _ => true)
+      | .scalar | .array | .stream _ | .structure _ _ | .containerArray _ => true)
 
 /-- The observable containers of a descriptor repository, in repository
 order. -/
@@ -66,16 +61,6 @@ theorem mem_interfaceOf {arrays : List (Name × DataDesc)} {n : Name} :
   constructor
   · rintro ⟨⟨n', d⟩, ⟨h, ho⟩, rfl⟩; exact ⟨d, h, ho⟩
   · rintro ⟨d, h, ho⟩; exact ⟨(n, d), ⟨h, ho⟩, rfl⟩
-
-/-- Non-transient scalars in host memory are not observable. -/
-theorem not_mem_interfaceOf_scalar {arrays : List (Name × DataDesc)} {n : Name}
-    (hr : n.startsWith "__return" = false)
-    (hd : ∀ d, (n, d) ∈ arrays → d.kind = .scalar ∧ d.storage ≠ "GPU_Global") :
-    n ∉ interfaceOf arrays := by
-  rw [mem_interfaceOf]
-  rintro ⟨d, h, ho⟩
-  obtain ⟨hk, hs⟩ := hd d h
-  simp [DataDesc.isObservable, hr, hk, hs] at ho
 
 /-! ## Programs -/
 

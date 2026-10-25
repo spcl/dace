@@ -11,9 +11,9 @@ scopes are given by entry/exit node pairs (not by nesting), control flow is
 a hierarchy of regions.  Derived notions (scope tree, memlet paths, memlet
 trees) are computed in `Dace.SDFG.Scope`.
 
-Omitted on purpose: debug info, GUIDs, instrumentation, location/schedule
-hints that do not affect the semantics (`schedule` is kept as a string for
-the record only, `Decisions.md#D3`).
+Omitted on purpose: debug info, GUIDs, instrumentation, and storage
+locations and schedules, which do not affect the semantics
+(`Decisions.md#D3`, `#D63`).
 -/
 
 namespace Dace
@@ -26,7 +26,6 @@ structure MapNode where
   label : String := ""
   params : List Sym
   range : Range
-  schedule : String := "Default"
   unroll : Bool := false
   collapse : Nat := 1
   deriving DecidableEq, Repr, Inhabited
@@ -39,7 +38,6 @@ structure ConsumeNode where
   numPes : Expr := 1
   condition : Option Expr := none
   chunksize : Nat := 1
-  schedule : String := "Default"
   deriving DecidableEq, Repr, Inhabited
 
 /-- Properties of the `Reduce` library node, which gets a direct semantics. -/

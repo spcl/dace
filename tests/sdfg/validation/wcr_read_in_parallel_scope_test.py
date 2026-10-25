@@ -60,9 +60,11 @@ def test_wcr_read_in_parallel_map_warns():
         sdfg.validate()
 
 
-def test_wcr_read_in_sequential_map_does_not_warn():
+def test_wcr_read_in_sequential_map_warns():
+    """A map's schedule does not change its semantics: a ``Sequential`` map is still a parallel scope."""
     sdfg = _wcr_then_read_sdfg("wcr_read_sequential", schedule=dace.ScheduleType.Sequential)
-    _validate_without_race_warning(sdfg)
+    with pytest.warns(UserWarning, match=_RACE_MESSAGE):
+        sdfg.validate()
 
 
 def test_wcr_read_of_private_transient_does_not_warn():
@@ -90,6 +92,6 @@ def test_wcr_read_after_map_does_not_warn():
 
 if __name__ == "__main__":
     test_wcr_read_in_parallel_map_warns()
-    test_wcr_read_in_sequential_map_does_not_warn()
+    test_wcr_read_in_sequential_map_warns()
     test_wcr_read_of_private_transient_does_not_warn()
     test_wcr_read_after_map_does_not_warn()

@@ -52,7 +52,6 @@ structure DataDesc where
   totalSize : Expr := 0
   startOffset : Expr := 0
   transient : Bool := false
-  storage : String := "Default"
   lifetime : Lifetime := .scope
   mayAlias : Bool := false
   allowConflicts : Bool := false
@@ -105,11 +104,11 @@ def array (dtype : Dtype) (shape : List Expr) (transient : Bool := false) : Data
 
 /-- Descriptor of the chunk a consume scope pops from a stream of element type
 `dtype` (`Decisions.md#D38`), as codegen declares it (`cpu.py:2273-2291`): a
-scalar for `chunksize = 1`, else an array `[chunksize]`; transient, `Register`
-storage, `Scope` lifetime, unit stride and zero start offset. -/
+scalar for `chunksize = 1`, else an array `[chunksize]`; transient, `Scope`
+lifetime, unit stride and zero start offset. -/
 def consumeChunk (dtype : Dtype) (chunksize : Nat) : DataDesc :=
   let d := if chunksize = 1 then scalar dtype true else array dtype [Expr.ofInt chunksize] true
-  { d with storage := "Register", lifetime := .scope }
+  { d with lifetime := .scope }
 
 /-- Linear element offset of an index vector under the descriptor's strides
 and start offset (`cpp_offset_expr` without the per-dimension `offset`, which
@@ -123,7 +122,7 @@ def linearOffset (I : ExprInterp) (ρ : Valuation) (d : DataDesc) (idx : Idx) : 
 
 /-- Structural equivalence as used for nested-SDFG connectors
 (`Data.is_equivalent`): same kind, dtype, shape and strides; `offset`,
-`transient`, storage and lifetime are ignored (`Decisions.md#D15`). -/
+`transient` and lifetime are ignored (`Decisions.md#D15`). -/
 def isEquivalent (a b : DataDesc) : Bool :=
   a.kind = b.kind && a.dtype = b.dtype && a.shape = b.shape && a.effStrides = b.effStrides
 
