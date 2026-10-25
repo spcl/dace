@@ -95,6 +95,9 @@ def test_block_reduction_short():
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU, validate_all=True)
+    # Only the reduced dimension is tiled
+    params = {p for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) for p in n.map.params}
+    assert "tile_i" in params and "tile_j" not in params, params
     code: str = sdfg.generate_code()[0].code
     assert "reduce(" in code and code.count("atomic") == 1
     _runtest2d(sdfg, 257, 2)

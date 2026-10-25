@@ -2,6 +2,7 @@
 """Automatic optimization routines for SDFGs."""
 
 from collections.abc import Callable
+from typing import Any
 
 import sympy
 
@@ -297,7 +298,13 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             continue
 
         # MapTiling -> AccumulateTransient / AccumulateStream
-        outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size,)), map_entry=mapentry)
+        # Tile only the write-conflicted (reduced) dimensions; the others keep tiles of size one.
+        conflicts: set[str] = set()
+        for wcr_edge, me in edges_to_consider:
+            if me is mapentry:
+                conflicts |= set(cpp.write_conflicted_map_params(mapentry, wcr_edge))
+        tile_sizes = [tile_size if p in conflicts else 1 for p in mapentry.map.params]
+        outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=tile_sizes), map_entry=mapentry)
 
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
