@@ -700,7 +700,9 @@ def Ctx.allocate (ctx : Ctx) (ts : List Name) (m : Mem) : Mem :=
     split <;> rfl
 
 /-- Set-up of a nested invocation: connector bindings, inner context,
-valuation, the per-call transients allocated, scalar code inputs copied.
+valuation, the per-call transients allocated (fresh containers: uninitialized
+cells and empty queues, like map-private transients), scalar code inputs
+copied.
 Returns the memory names whose log entries stay inside the call: the
 connectors on code edges and the per-call transients. -/
 def nestedSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (inner : SDFG) (mapping : List (Sym × Expr))
@@ -708,7 +710,7 @@ def nestedSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (inner : SD
   let conns ← nestedBindings ctx s n
   let ctx' := ctx.enter inner n.id conns
   let ρ' ← nestedValuation ctx ρ st.mem mapping
-  let st := { st with mem := ctx'.allocate inner.callTransients st.mem }
+  let st := { st with mem := st.mem.allocAll (inner.callTransients.map ctx'.cname) }
   let (st, codes) ← bindCodeInputs ctx' ρ' s n st
   pure (ctx', ρ', st, codes ++ inner.callTransients.map ctx'.cname)
 

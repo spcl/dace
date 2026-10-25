@@ -78,7 +78,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
     have hp : bindViews ctx cst.ρ s (s.topLevelOf c) base = .ok base := bindViews_eq cst.ρ h _ _
     -- the component run from the allocated memory simulates the one from the state's memory
     have hab : St.Sim 1 (fun _ => True) abase base :=
-      ⟨Corr.allocate_left_one ctx (ctx.stateTransients s) hsc.noStreams, (Log.ren_one _).symm, rfl, Log.AliasP.true _⟩
+      ⟨Corr.allocate_left_one ctx (ctx.stateTransients s) hsc.noStreams, (Log.ren_one _).symm, rfl, Log.NamesP.true _⟩
     have hstate : ∀ {rc : Res St}, OrderedExec ctx cst.ρ s c (s.topLevelOf c) base rc →
         (∀ e, rc = .err e → ∃ e', StateExec ctx cst s (.err e') ∧ (e'.isUB = true ∨ e' = e)) ∧
         (∀ st'', rc = .ok st'' → (∃ e', e'.isUB = true ∧ StateExec ctx cst s (.err e')) ∨ StateExec ctx cst s

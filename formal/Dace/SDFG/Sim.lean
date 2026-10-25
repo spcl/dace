@@ -624,6 +624,17 @@ end Log
 satisfying `P`. -/
 def Log.AliasP (P : Name → Prop) (g : Log) : Prop := ∀ x ∈ g.aliasSets, P x.1 → P x.2.base
 
+/-- Every memory name in the log satisfies `P`. -/
+structure Log.NamesP (P : Name → Prop) (g : Log) : Prop where
+  reads : ∀ l ∈ g.reads, P l.name
+  writes : ∀ x ∈ g.writes, P x.1.name
+  wcrs : ∀ x ∈ g.wcrs, P x.1.name
+  aliasSets : ∀ x ∈ g.aliasSets, P x.1 ∧ P x.2.base
+  queues : ∀ x ∈ g.queues, P x.1.name
+
+theorem Log.NamesP.aliasP {P : Name → Prop} {g : Log} (h : Log.NamesP P g) : Log.AliasP P g :=
+  fun x hx _ => (h.aliasSets x hx).2
+
 namespace Merge
 
 variable {π : Equiv.Perm Name} {P : Name → Prop} {w : WcrSem}
@@ -678,7 +689,7 @@ end Merge
 /-- **Merging renamed logs onto a simulating memory**: both merges fail, or
 both succeed with simulating results. -/
 theorem merge_sim {π : Equiv.Perm Name} {P : Name → Prop} {w : WcrSem} (hu : ∀ op v, w op .undef v = .undef)
-    {m₂ m₁ : Mem} (h : Mem.Sim π P m₂ m₁) (gs : List Log) (hg : ∀ g ∈ gs, Log.AliasP P g) :
+    {m₂ m₁ : Mem} (h : Mem.Sim π P m₂ m₁) (gs : List Log) (hg : ∀ g ∈ gs, Log.NamesP P g) :
     (∃ e₂ e₁, merge w m₂ (gs.map (Log.ren π)) = .error e₂ ∧ merge w m₁ gs = .error e₁) ∨
       ∃ a₂ a₁, merge w m₂ (gs.map (Log.ren π)) = .ok a₂ ∧ merge w m₁ gs = .ok a₁ ∧ Mem.Sim π P a₂ a₁ := by
   unfold merge
@@ -691,7 +702,7 @@ theorem merge_sim {π : Equiv.Perm Name} {P : Name → Prop} {w : WcrSem} (hu : 
     intro x hx
     simp only [Log.unionAll, List.mem_flatMap] at hx
     obtain ⟨g, hgm, hx⟩ := hx
-    exact hg g hgm x hx
+    exact (hg g hgm).aliasP x hx
   · refine .inl ?_
     have herr : ∀ (gs : List Log), ∃ e, (match Merge.findConflict gs with
         | some (g, h) => Except.error (Merge.witness g h)
@@ -885,42 +896,84 @@ end Ctx
 
 /-! ## Simulating states -/
 
-theorem Log.AliasP.seq {P : Name → Prop} {a b : Log} (ha : Log.AliasP P a) (hb : Log.AliasP P b) :
-    Log.AliasP P (a.seq b) := by
-  intro x hx
-  simp only [Log.seq, List.mem_append] at hx
-  rcases hx with hx | hx
-  · exact ha x hx
-  · exact hb x hx
+theorem Log.NamesP.seq {P : Name → Prop} {a b : Log} (ha : Log.NamesP P a) (hb : Log.NamesP P b) :
+    Log.NamesP P (a.seq b) := by
+  refine ⟨fun x hx => ?_, fun x hx => ?_, fun x hx => ?_, fun x hx => ?_, fun x hx => ?_⟩ <;>
+    simp only [Log.seq, List.mem_append, List.mem_filter] at hx
+  · rcases hx with hx | hx
+    exacts [ha.reads x hx, hb.reads x hx.1]
+  · rcases hx with hx | hx
+    exacts [ha.writes x hx.1, hb.writes x hx]
+  · rcases hx with hx | hx
+    exacts [ha.wcrs x hx.1, hb.wcrs x hx]
+  · rcases hx with hx | hx
+    exacts [ha.aliasSets x hx, hb.aliasSets x hx]
+  · rcases hx with hx | hx
+    exacts [ha.queues x hx, hb.queues x hx]
 
-theorem Log.AliasP.empty (P : Name → Prop) : Log.AliasP P Log.empty := fun _ hx => by cases hx
+theorem Log.NamesP.empty (P : Name → Prop) : Log.NamesP P Log.empty :=
+  ⟨fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim⟩
 
-theorem Log.AliasP.of_aliasSets_nil {P : Name → Prop} {g : Log} (h : g.aliasSets = []) : Log.AliasP P g := by
-  intro x hx; rw [h] at hx; cases hx
+theorem Log.NamesP.read {P : Name → Prop} {l : Loc} (h : P l.name) : Log.NamesP P { reads := [l] } :=
+  ⟨fun x hx => (List.mem_singleton.1 hx) ▸ h, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim⟩
 
-theorem Log.AliasP.dropNames {P : Name → Prop} {g : Log} (h : Log.AliasP P g) (ns : List Name) :
-    Log.AliasP P (g.dropNames ns) := fun x hx => h x (List.mem_filter.1 hx).1
+theorem Log.NamesP.write {P : Name → Prop} {l : Loc} (v : Val) (h : P l.name) : Log.NamesP P { writes := [(l, v)] } :=
+  ⟨fun _ hx => (List.not_mem_nil hx).elim, fun x hx => (List.mem_singleton.1 hx) ▸ h,
+    fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim⟩
 
-theorem Log.AliasP.unionAll {P : Name → Prop} {gs : List Log} (h : ∀ g ∈ gs, Log.AliasP P g) :
-    Log.AliasP P (Log.unionAll gs) := by
-  intro x hx
-  simp only [Log.unionAll, List.mem_flatMap] at hx
-  obtain ⟨g, hg, hx⟩ := hx
-  exact h g hg x hx
+theorem Log.NamesP.wcr {P : Name → Prop} {l : Loc} (op : WcrOp) (v : Val) (h : P l.name) :
+    Log.NamesP P { wcrs := [(l, op, v)] } :=
+  ⟨fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun x hx => (List.mem_singleton.1 hx) ▸ h, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim⟩
+
+theorem Log.NamesP.queue {P : Name → Prop} {l : Loc} (e : QueueEffect) (h : P l.name) :
+    Log.NamesP P { queues := [(l, e)] } :=
+  ⟨fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun x hx => (List.mem_singleton.1 hx) ▸ h⟩
+
+theorem Log.NamesP.alias {P : Name → Prop} {n : Name} {b : AliasBinding} (hn : P n) (hb : P b.base) :
+    Log.NamesP P { aliasSets := [(n, b)] } :=
+  ⟨fun _ hx => (List.not_mem_nil hx).elim, fun _ hx => (List.not_mem_nil hx).elim,
+    fun _ hx => (List.not_mem_nil hx).elim, fun x hx => (List.mem_singleton.1 hx) ▸ ⟨hn, hb⟩,
+    fun _ hx => (List.not_mem_nil hx).elim⟩
+
+theorem Log.NamesP.dropNames {P : Name → Prop} {g : Log} (h : Log.NamesP P g) (ns : List Name) :
+    Log.NamesP P (g.dropNames ns) :=
+  ⟨fun x hx => h.reads x (List.mem_filter.1 hx).1, fun x hx => h.writes x (List.mem_filter.1 hx).1,
+    fun x hx => h.wcrs x (List.mem_filter.1 hx).1, fun x hx => h.aliasSets x (List.mem_filter.1 hx).1,
+    fun x hx => h.queues x (List.mem_filter.1 hx).1⟩
+
+theorem Log.NamesP.stripQueue {P : Name → Prop} {g : Log} (h : Log.NamesP P g) (l : Loc) :
+    Log.NamesP P (stripQueue g l) :=
+  ⟨h.reads, h.writes, h.wcrs, h.aliasSets, fun x hx => h.queues x (List.mem_filter.1 hx).1⟩
+
+theorem Log.NamesP.unionAll {P : Name → Prop} {gs : List Log} (h : ∀ g ∈ gs, Log.NamesP P g) :
+    Log.NamesP P (Log.unionAll gs) := by
+  refine ⟨fun x hx => ?_, fun x hx => ?_, fun x hx => ?_, fun x hx => ?_, fun x hx => ?_⟩ <;>
+    simp only [Log.unionAll, List.mem_flatMap] at hx <;> obtain ⟨g, hg, hx⟩ := hx
+  exacts [(h g hg).reads x hx, (h g hg).writes x hx, (h g hg).wcrs x hx, (h g hg).aliasSets x hx,
+    (h g hg).queues x hx]
 
 /-- A dataflow state simulating another. -/
 structure St.Sim (π : Equiv.Perm Name) (P : Name → Prop) (a₂ a₁ : St) : Prop where
   mem : Mem.Sim π P a₂.mem a₁.mem
   log : a₂.log = a₁.log.ren π
   vals : a₂.vals = a₁.vals
-  aliasP : Log.AliasP P a₁.log
+  logP : Log.NamesP P a₁.log
 
 /-- A control-flow state simulating another. -/
 structure CSt.Sim (π : Equiv.Perm Name) (P : Name → Prop) (c₂ c₁ : CSt) : Prop where
   ρ : c₂.ρ = c₁.ρ
   mem : Mem.Sim π P c₂.mem c₁.mem
   log : c₂.log = c₁.log.ren π
-  aliasP : Log.AliasP P c₁.log
+  logP : Log.NamesP P c₁.log
 
 /-- A result with a state: the same value, simulating states. -/
 def St.SimR {α : Type} (π : Equiv.Perm Name) (P : Name → Prop) (x₂ x₁ : α × St) : Prop :=
@@ -930,33 +983,30 @@ namespace St.Sim
 
 variable {π : Equiv.Perm Name} {P : Name → Prop} {st₂ st₁ : St}
 
-theorem logged (h : St.Sim π P st₂ st₁) (g : Log) (hg : Log.AliasP P g) :
+theorem logged (h : St.Sim π P st₂ st₁) (g : Log) (hg : Log.NamesP P g) :
     St.Sim π P (st₂.logged (g.ren π)) (st₁.logged g) :=
-  ⟨h.mem, by simp only [St.logged, h.log, Log.ren_seq], h.vals, h.aliasP.seq hg⟩
+  ⟨h.mem, by simp only [St.logged, h.log, Log.ren_seq], h.vals, h.logP.seq hg⟩
 
 theorem withMem (h : St.Sim π P st₂ st₁) {m₂ m₁ : Mem} (hm : Mem.Sim π P m₂ m₁) :
-    St.Sim π P { st₂ with mem := m₂ } { st₁ with mem := m₁ } := ⟨hm, h.log, h.vals, h.aliasP⟩
+    St.Sim π P { st₂ with mem := m₂ } { st₁ with mem := m₁ } := ⟨hm, h.log, h.vals, h.logP⟩
 
 theorem forNode (h : St.Sim π P st₂ st₁) : St.Sim π P st₂.forNode st₁.forNode :=
-  ⟨h.mem, rfl, h.vals, Log.AliasP.empty P⟩
+  ⟨h.mem, rfl, h.vals, Log.NamesP.empty P⟩
 
 theorem afterNode {a₂ a₁ : St} (h : St.Sim π P st₂ st₁) (ha : St.Sim π P a₂ a₁) :
     St.Sim π P (st₂.afterNode a₂) (st₁.afterNode a₁) :=
-  ⟨ha.mem, by simp only [St.afterNode, h.log, ha.log, Log.ren_seq], ha.vals, h.aliasP.seq ha.aliasP⟩
+  ⟨ha.mem, by simp only [St.afterNode, h.log, ha.log, Log.ren_seq], ha.vals, h.logP.seq ha.logP⟩
 
 theorem setVal (h : St.Sim π P st₂ st₁) (key : NodeId × Conn) (v : Val) :
-    St.Sim π P (st₂.setVal key v) (st₁.setVal key v) := ⟨h.mem, h.log, by simp [St.setVal, h.vals], h.aliasP⟩
+    St.Sim π P (st₂.setVal key v) (st₁.setVal key v) := ⟨h.mem, h.log, by simp [St.setVal, h.vals], h.logP⟩
 
 theorem val? (h : St.Sim π P st₂ st₁) (key : NodeId × Conn) : st₂.val? key = st₁.val? key := by
   simp [St.val?, h.vals]
 
-theorem bindAlias (h : St.Sim π P st₂ st₁) (n : Name) (b : AliasBinding) (hb : P n → P b.base) :
-    St.Sim π P (st₂.bindAlias (π n) (b.ren π)) (st₁.bindAlias n b) := by
-  refine ⟨h.mem.setAlias n b hb, by simp only [St.bindAlias, h.log, Log.ren_seq]; rfl, h.vals, ?_⟩
-  refine h.aliasP.seq fun x hx => ?_
-  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
-  subst hx
-  exact hb
+theorem bindAlias (h : St.Sim π P st₂ st₁) (n : Name) (b : AliasBinding) (hn : P n) (hb : P b.base) :
+    St.Sim π P (st₂.bindAlias (π n) (b.ren π)) (st₁.bindAlias n b) :=
+  ⟨h.mem.setAlias n b (fun _ => hb), by simp only [St.bindAlias, h.log, Log.ren_seq]; rfl, h.vals,
+    h.logP.seq (Log.NamesP.alias hn hb)⟩
 
 end St.Sim
 
@@ -981,7 +1031,7 @@ theorem read_sim {n : Name} (hg : Ctx.Good₀ π P ctx₂ ctx₁ n) (idx : Idx) 
       split
       · exact ResSim.err _
       · refine ResSim.ok ⟨rfl, ?_⟩
-        have := h.logged { reads := [st₁.mem.resolve l] } (Log.AliasP.of_aliasSets_nil rfl)
+        have := h.logged { reads := [st₁.mem.resolve l] } (Log.NamesP.read (h.mem.resolveP hP))
         simpa [Log.ren, h.mem.resolve hP] using this
 
 theorem readMany_sim {n : Name} (hg : Ctx.Good₀ π P ctx₂ ctx₁ n) (pts : List Idx) (oob : Bool) :
@@ -1009,7 +1059,7 @@ theorem write_sim {n : Name} (hg : Ctx.Good₀ π P ctx₂ ctx₁ n) (idx : Idx)
   | ok l =>
     have hP := Ctx.locP hc h.mem ρ hg hl
     simp only [Res.map, Res.ok_bind, Res.pure_eq]
-    refine ResSim.ok ⟨h.mem.write hP v, ?_, h.vals, h.aliasP.seq (Log.AliasP.of_aliasSets_nil rfl)⟩
+    refine ResSim.ok ⟨h.mem.write hP v, ?_, h.vals, h.logP.seq (Log.NamesP.write v (h.mem.resolveP hP))⟩
     simp only [h.log, Log.ren_seq, h.mem.resolve hP]
     rfl
 
@@ -1023,7 +1073,7 @@ theorem wcr_sim (hu : ∀ op v, ctx₁.I.wcr op .undef v = .undef) {n : Name} (h
   | ok l =>
     have hP := Ctx.locP hc h.mem ρ hg hl
     simp only [Res.map, Res.ok_bind, Res.pure_eq, hc.I]
-    refine ResSim.ok ⟨?_, ?_, h.vals, h.aliasP.seq (Log.AliasP.of_aliasSets_nil rfl)⟩
+    refine ResSim.ok ⟨?_, ?_, h.vals, h.logP.seq (Log.NamesP.wcr op v (h.mem.resolveP hP))⟩
     · simp only [Mem.write, h.mem.resolve hP]
       refine h.mem.updCell _ _ _ fun _ => ?_
       rcases h.mem.read hP with h₁ | h₁ <;> rw [h₁]
@@ -1061,7 +1111,7 @@ theorem push_sim {n : Name} (hg : Ctx.Good₀ π P ctx₂ ctx₁ n) (idx : Idx) 
     simp only [Res.map, Res.ok_bind, Res.pure_eq]
     split
     · exact ResSim.ok h
-    · refine ResSim.ok ⟨Mem.Sim.pushMany hP vs h.mem, ?_, h.vals, h.aliasP.seq (Log.AliasP.of_aliasSets_nil rfl)⟩
+    · refine ResSim.ok ⟨Mem.Sim.pushMany hP vs h.mem, ?_, h.vals, h.logP.seq (Log.NamesP.queue _ (h.mem.resolveP hP))⟩
       simp only [h.log, Log.ren_seq, h.mem.resolve hP]
       rfl
 
@@ -1078,7 +1128,7 @@ theorem popN_sim {n : Name} (hg : Ctx.Good₀ π P ctx₂ ctx₁ n) (idx : Idx) 
     · exact ResSim.ok ⟨rfl, h⟩
     · split
       · exact ResSim.ub rfl _
-      · refine ResSim.ok ⟨rfl, ⟨h.mem.updQueue _ _, ?_, h.vals, h.aliasP.seq (Log.AliasP.of_aliasSets_nil rfl)⟩⟩
+      · refine ResSim.ok ⟨rfl, ⟨h.mem.updQueue _ _, ?_, h.vals, h.logP.seq (Log.NamesP.queue _ (h.mem.resolveP hP))⟩⟩
         simp only [h.log, Log.ren_seq]
         rfl
 
@@ -1765,8 +1815,8 @@ theorem aliasTo_sim {st₂ st₁ : St} (h : St.Sim π P st₂ st₁) {d base : N
   | err e => exact ResSim.err e
   | ok l =>
     simp only [Res.map, Res.ok_bind, Res.pure_eq, hd.cname]
-    exact ResSim.ok (h.bindAlias (ctx₁.cname d) { base := l.name, offset := l.offset }
-      fun _ => Ctx.addrP hc h.mem ρ hb.good₀ ha)
+    exact ResSim.ok (h.bindAlias (ctx₁.cname d) { base := l.name, offset := l.offset } hd.memP
+      (Ctx.addrP hc h.mem ρ hb.good₀ ha))
 
 theorem bindView_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {v : DNode} (hv : v ∈ s.nodes) {d : Name}
     (hk : v.kind = .access d) {st₂ st₁ : St} (h : St.Sim π P st₂ st₁) :
@@ -1967,19 +2017,19 @@ theorem mapSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNode} 
 
 omit hc in
 theorem scopeFinish_sim {ctx₂ ctx₁ : Ctx} (hI : ctx₂.I = ctx₁.I) (hw : ∀ op v, ctx₁.I.wcr op .undef v = .undef)
-    {pre₂ pre₁ : St} (h : St.Sim π P pre₂ pre₁) (logs : List Log) (hl : ∀ g ∈ logs, Log.AliasP P g) :
+    {pre₂ pre₁ : St} (h : St.Sim π P pre₂ pre₁) (logs : List Log) (hl : ∀ g ∈ logs, Log.NamesP P g) :
     ResSim (St.Sim π P) (scopeFinish ctx₂ pre₂ (logs.map (Log.ren π))) (scopeFinish ctx₁ pre₁ logs) := by
   unfold scopeFinish
   rw [hI]
   rcases merge_sim hw h.mem logs hl with ⟨e₂, e₁, h₂, h₁⟩ | ⟨a₂, a₁, h₂, h₁, ha⟩
   · rw [h₂, h₁]; exact ResSim.ub rfl _
   · rw [h₂, h₁]
-    refine ResSim.ok ⟨ha, ?_, h.vals, h.aliasP.seq (Log.AliasP.unionAll hl)⟩
+    refine ResSim.ok ⟨ha, ?_, h.vals, h.logP.seq (Log.NamesP.unionAll hl)⟩
     simp only [h.log, Log.ren_seq, Log.ren_unionAll]
 
 omit hc in
 theorem stateFinish_sim {ctx₂ ctx₁ : Ctx} (hI : ctx₂.I = ctx₁.I) (hw : ∀ op v, ctx₁.I.wcr op .undef v = .undef)
-    {c₂ c₁ : CSt} (h : CSt.Sim π P c₂ c₁) (logs : List Log) (hl : ∀ g ∈ logs, Log.AliasP P g) :
+    {c₂ c₁ : CSt} (h : CSt.Sim π P c₂ c₁) (logs : List Log) (hl : ∀ g ∈ logs, Log.NamesP P g) :
     ResSim (fun x₂ x₁ => x₂.1 = x₁.1 ∧ CSt.Sim π P x₂.2 x₁.2) (stateFinish ctx₂ c₂ (logs.map (Log.ren π)))
       (stateFinish ctx₁ c₁ logs) := by
   unfold stateFinish
@@ -1987,7 +2037,7 @@ theorem stateFinish_sim {ctx₂ ctx₁ : Ctx} (hI : ctx₂.I = ctx₁.I) (hw : �
   rcases merge_sim hw h.mem logs hl with ⟨e₂, e₁, h₂, h₁⟩ | ⟨a₂, a₁, h₂, h₁, ha⟩
   · rw [h₂, h₁]; exact ResSim.ub rfl _
   · rw [h₂, h₁]
-    refine ResSim.ok ⟨rfl, h.ρ, ha, ?_, h.aliasP.seq (Log.AliasP.unionAll hl)⟩
+    refine ResSim.ok ⟨rfl, h.ρ, ha, ?_, h.logP.seq (Log.NamesP.unionAll hl)⟩
     simp only [h.log, Log.ren_seq, Log.ren_unionAll]
 
 end Leaf2
@@ -2246,7 +2296,7 @@ theorem Log.dropNames_congr {g : Log} {ns₂ ns₁ : List Name} (hn : ∀ x, x �
 theorem iterStart_sim {π : Equiv.Perm Name} {P : Name → Prop} {pre₂ pre₁ : St} (h : St.Sim π P pre₂ pre₁)
     {priv₂ priv₁ : List Name} (hp : ∀ x, x ∈ priv₂ ↔ x ∈ priv₁.map π) :
     St.Sim π P (iterStart priv₂ pre₂) (iterStart priv₁ pre₁) :=
-  ⟨h.mem.allocAll_congr hp, rfl, h.vals, Log.AliasP.empty P⟩
+  ⟨h.mem.allocAll_congr hp, rfl, h.vals, Log.NamesP.empty P⟩
 
 theorem allocate_sim {π : Equiv.Perm Name} {P : Name → Prop} {ctx₂ ctx₁ : Ctx} {m₂ m₁ : Mem}
     (hm : Mem.Sim π P m₂ m₁) {ts₂ ts₁ : List Name} (hts : ∀ x, x ∈ ts₂ ↔ x ∈ ts₁)
@@ -2376,7 +2426,7 @@ theorem taskStart_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (entry : No
     (h : St.Sim π P pre₂ pre₁) (q : List Val) :
     St.Sim π P (taskStart ctx₂ s entry c (l.ren π) priv₂ pre₂ q) (taskStart ctx₁ s entry c l priv₁ pre₁ q) := by
   unfold taskStart chunkMemName
-  refine ⟨?_, rfl, h.vals, Log.AliasP.empty P⟩
+  refine ⟨?_, rfl, h.vals, Log.NamesP.empty P⟩
   have hq := (h.mem.allocAll_congr hp).setQueue l (q.drop c.chunksize)
   cases hd : s.consumedStream? entry with
   | none => exact hq
@@ -2401,8 +2451,8 @@ theorem taskPushed_ren {st₂ st₁ : St} (h : St.Sim π P st₂ st₁) {priv₂
 
 omit hc in
 theorem consumeFinish_sim {ctx₂ ctx₁ : Ctx} (hI : ctx₂.I = ctx₁.I) (hw : ∀ op v, ctx₁.I.wcr op .undef v = .undef)
-    {pre₂ pre₁ : St} (h : St.Sim π P pre₂ pre₁) (l : Loc) (logs : List Log) (hl : ∀ g ∈ logs, Log.AliasP P g)
-    (rest pushed : List Val) :
+    {pre₂ pre₁ : St} (h : St.Sim π P pre₂ pre₁) (l : Loc) (hlP : P l.name) (logs : List Log)
+    (hl : ∀ g ∈ logs, Log.NamesP P g) (rest pushed : List Val) :
     ResSim (St.Sim π P) (consumeFinish ctx₂ pre₂ (l.ren π) (logs.map (Log.ren π)) rest pushed)
       (consumeFinish ctx₁ pre₁ l logs rest pushed) := by
   unfold consumeFinish
@@ -2411,7 +2461,7 @@ theorem consumeFinish_sim {ctx₂ ctx₁ : Ctx} (hI : ctx₂.I = ctx₁.I) (hw :
   · rw [h₂, h₁]; exact ResSim.ub rfl _
   · rw [h₂, h₁]
     refine ResSim.ok ⟨ha.setQueue l _, ?_, h.vals,
-      (h.aliasP.seq (Log.AliasP.unionAll hl)).seq (Log.AliasP.of_aliasSets_nil rfl)⟩
+      (h.logP.seq (Log.NamesP.unionAll hl)).seq (Log.NamesP.queue _ hlP)⟩
     simp only [h.log, Log.ren_seq, Log.ren_unionAll]
     rfl
 
@@ -2615,10 +2665,10 @@ theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
       (nestedBindings_P hS n hb)
     refine ResSim.bindEq (nestedValuation_sim hc ρ hS hn hk h.mem) fun ρ' => ?_
     have hs : St.Sim π P
-        { st₂ with mem := (ctx₂.enter inner n.id (renConns π conns)).allocate inner.callTransients st₂.mem }
-        { st₁ with mem := (ctx₁.enter inner n.id conns).allocate inner.callTransients st₁.mem } :=
-      h.withMem (allocate_sim h.mem (fun _ => Iff.rfl) fun t _ =>
-        ⟨by simp only [Ctx.isStream, (hall t).desc], (hall t).cname⟩)
+        { st₂ with mem := st₂.mem.allocAll (inner.callTransients.map (ctx₂.enter inner n.id (renConns π conns)).cname) }
+        { st₁ with mem := st₁.mem.allocAll (inner.callTransients.map (ctx₁.enter inner n.id conns).cname) } :=
+      h.withMem (h.mem.allocAll_congr fun x => by
+        rw [List.map_map, List.map_congr_left fun t _ => (hall t).cname]; rfl)
     refine ResSim.bind (bindCodeInputs_sim hcI hall ρ' s n hs) fun x y hxy => ?_
     obtain ⟨a₂, c₂⟩ := x
     obtain ⟨a₁, c₁⟩ := y
@@ -2637,11 +2687,11 @@ theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
 omit hc in
 theorem nestedFinish_sim {c₂ c₁ : Ctx} (hcI : CtxSim π P c₂ c₁) (hall : ∀ y, Ctx.Strong π P c₂ c₁ y)
     (ρ' : Valuation) (s : State) (n : DNode) (dropped : List Name) {pre₂ pre₁ : St} (h : St.Sim π P pre₂ pre₁)
-    {m₂ m₁ : Mem} (hm : Mem.Sim π P m₂ m₁) (g : Log) (hg : Log.AliasP P g) :
+    {m₂ m₁ : Mem} (hm : Mem.Sim π P m₂ m₁) (g : Log) (hg : Log.NamesP P g) :
     ResSim (St.Sim π P) (nestedFinish c₂ ρ' s n (dropped.map π) pre₂ m₂ (g.ren π))
       (nestedFinish c₁ ρ' s n dropped pre₁ m₁ g) := by
   unfold nestedFinish
-  refine ResSim.foldlM (fun e a b hab => ?_) _ ⟨hm, ?_, h.vals, h.aliasP.seq (hg.dropNames _)⟩
+  refine ResSim.foldlM (fun e a b hab => ?_) _ ⟨hm, ?_, h.vals, h.logP.seq (hg.dropNames _)⟩
   · split
     · split
       · rw [Ctx.loc_sim hcI hm ρ' (hall _).good₀]
@@ -2682,7 +2732,7 @@ theorem applyAssigns_sim {c₂ c₁ : CSt} (h : CSt.Sim π P c₂ c₁) (as : Li
   refine ResSim.bindEq (ResSim.mapM_mem as fun xe hxe => ?_) fun vs => ?_
   · exact ResSim.bindEq (Ctx.evalR_sim hc h.mem c₁.ρ xe.2 fun x hx => ha x (List.mem_flatMap.2 ⟨xe, hxe, hx⟩))
       fun v => ResSim.ok rfl
-  · exact ResSim.ok ⟨rfl, h.mem, h.log, h.aliasP⟩
+  · exact ResSim.ok ⟨rfl, h.mem, h.log, h.logP⟩
 
 theorem applyAssign?_sim {c₂ c₁ : CSt} (h : CSt.Sim π P c₂ c₁) (a : Option (Sym × Expr))
     (ha : ∀ x ∈ (a.map fun (_, e) => e.names).getD [], Ctx.Good₀ π P ctx₂ ctx₁ x) :
@@ -2846,7 +2896,7 @@ def CtlSim (π : Equiv.Perm Name) (P : Name → Prop) (x₂ x₁ : Ctl × CSt) :
 /-- Logs of parallel executions: renamed, aliases of names satisfying `P`
 binding bases satisfying `P`. -/
 def LogsSim (π : Equiv.Perm Name) (P : Name → Prop) (l₂ l₁ : List Log) : Prop :=
-  l₂ = l₁.map (Log.ren π) ∧ ∀ g ∈ l₁, Log.AliasP P g
+  l₂ = l₁.map (Log.ren π) ∧ ∀ g ∈ l₁, Log.NamesP P g
 
 /-- Consume tasks: renamed logs, the same queues. -/
 def TasksSim (π : Equiv.Perm Name) (P : Name → Prop) (x₂ x₁ : List Log × List Val × List Val) : Prop :=
@@ -2854,7 +2904,7 @@ def TasksSim (π : Equiv.Perm Name) (P : Name → Prop) (x₂ x₁ : List Log ×
 
 /-- An SDFG invocation: the same valuation, simulating memory, renamed log. -/
 def InvSim (π : Equiv.Perm Name) (P : Name → Prop) (x₂ x₁ : Valuation × Mem × Log) : Prop :=
-  x₂.1 = x₁.1 ∧ Mem.Sim π P x₂.2.1 x₁.2.1 ∧ x₂.2.2 = x₁.2.2.ren π ∧ Log.AliasP P x₁.2.2
+  x₂.1 = x₁.1 ∧ Mem.Sim π P x₂.2.1 x₁.2.1 ∧ x₂.2.2 = x₁.2.2.ren π ∧ Log.NamesP P x₁.2.2
 
 theorem nestedSetup_I {ctx ctx' : Ctx} {ρ ρ' : Valuation} {s : State} {n : DNode} {inner : SDFG}
     {mapping : List (Sym × Expr)} {st st' : St} {dropped : List Name}
@@ -2871,7 +2921,7 @@ theorem nestedSetup_I {ctx ctx' : Ctx} {ρ ρ' : Valuation} {s : State} {n : DNo
       rw [hv] at h
       simp only [Res.ok_bind] at h
       cases hc : bindCodeInputs (ctx.enter inner n.id conns) ρ₀ s n
-          { st with mem := (ctx.enter inner n.id conns).allocate inner.callTransients st.mem } with
+          { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) } with
       | err e => rw [hc] at h; cases h
       | ok x =>
         rw [hc] at h
@@ -2976,7 +3026,7 @@ theorem NodeExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw 
         obtain ⟨rfl, rfl⟩ := hq
         subst hl'
         exact ⟨_, .consumeScope hk h₂ (by rw [ha.mem.queues _ hlP]; exact ht₂),
-          consumeFinish_sim hc.I hw ha _ _ hlP' _ _⟩
+          consumeFinish_sim hc.I hw ha _ hlP _ hlP' _ _⟩
   | .nestedSetupErr hk he, st₂, h => by
     obtain ⟨e', h₂, hu⟩ := ResSim.err_inv (he ▸ nestedSetup_sim hc ρ hS hn hk h)
     exact ⟨_, .nestedSetupErr hk h₂, ResSim.of_err hu⟩
@@ -3096,7 +3146,7 @@ theorem IterExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw 
           rfl
         · intro g hg
           rcases List.mem_cons.1 hg with rfl | hg
-          · exact ha.aliasP.dropNames _
+          · exact ha.logP.dropNames _
           · exact hlP g hg
 
 theorem ConsumeTasks.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw : ∀ op v, ctx₁.I.wcr op .undef v = .undef)
@@ -3144,7 +3194,7 @@ theorem ConsumeTasks.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) 
           · simp only [List.map_cons, taskLog_ren ha hp]
           · intro g hg
             rcases List.mem_cons.1 hg with rfl | hg
-            · exact (ha.aliasP.dropNames _)
+            · exact (ha.logP.dropNames _).stripQueue _
             · exact hlP g hg
           · simp only [taskPushed_ren ha hp]
 
@@ -3155,18 +3205,18 @@ theorem CompsExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw
       ∃ r₂, CompsExec ctx₂ ρ s m₂ comps r₂ ∧ ResSim (LogsSim π P) r₂ r₁
   | .nil, m₂, h => ⟨_, .nil, ResSim.ok ⟨rfl, fun _ h => by cases h⟩⟩
   | .headErr hcp, m₂, h => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.AliasP.empty P⟩
+    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.NamesP.empty P⟩
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     exact ⟨_, .headErr hc₂, ResSim.of_err hu⟩
   | .tailErr hcp hrest, m₂, h => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.AliasP.empty P⟩
+    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.NamesP.empty P⟩
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, ha⟩
     · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
     · obtain ⟨r₃, hrest₂, hr₃⟩ := CompsExec.sim hc hw hS hrest _ h
       obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
       exact ⟨_, .tailErr hc₂ hrest₂, ResSim.of_err hu⟩
   | .cons hcp hrest, m₂, h => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.AliasP.empty P⟩
+    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.NamesP.empty P⟩
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, ha⟩
     · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
     · obtain ⟨r₃, hrest₂, hr₃⟩ := CompsExec.sim hc hw hS hrest _ h
@@ -3176,7 +3226,7 @@ theorem CompsExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw
         · rw [hl, ha.log]; rfl
         · intro g hg
           rcases List.mem_cons.1 hg with rfl | hg
-          · exact ha.aliasP
+          · exact ha.logP
           · exact hlP g hg
 
 theorem StateExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw : ∀ op v, ctx₁.I.wcr op .undef v = .undef)
@@ -3437,12 +3487,12 @@ theorem SDFGExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw 
       ∃ r₂, SDFGExec ctx₂ ρ m₂ g r₂ ∧ ResSim (InvSim π P) r₂ r₁
   | .err hx, m₂, h => by
     obtain ⟨r₂, hx₂, hr⟩ := RegionExec.sim hc hw hg hx { ρ := g.withConstants ρ, mem := m₂ }
-      ⟨rfl, h, rfl, Log.AliasP.empty P⟩
+      ⟨rfl, h, rfl, Log.NamesP.empty P⟩
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     exact ⟨_, .err hx₂, ResSim.of_err hu⟩
   | .escape hx hcl, m₂, h => by
     obtain ⟨r₂, hx₂, hr⟩ := RegionExec.sim hc hw hg hx { ρ := g.withConstants ρ, mem := m₂ }
-      ⟨rfl, h, rfl, Log.AliasP.empty P⟩
+      ⟨rfl, h, rfl, Log.NamesP.empty P⟩
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨⟨ctl₂, d₂⟩, rfl, hctl, hd⟩
     · exact ⟨_, .err hx₂, ResSim.ub hu _⟩
     · simp only at hctl hd
@@ -3450,12 +3500,12 @@ theorem SDFGExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw 
       exact ⟨_, .escape hx₂ hcl, ResSim.err _⟩
   | .run hx hcl, m₂, h => by
     obtain ⟨r₂, hx₂, hr⟩ := RegionExec.sim hc hw hg hx { ρ := g.withConstants ρ, mem := m₂ }
-      ⟨rfl, h, rfl, Log.AliasP.empty P⟩
+      ⟨rfl, h, rfl, Log.NamesP.empty P⟩
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨⟨ctl₂, d₂⟩, rfl, hctl, hd⟩
     · exact ⟨_, .err hx₂, ResSim.ub hu _⟩
     · simp only at hctl hd
       subst hctl
-      exact ⟨_, .run hx₂ hcl, ResSim.ok ⟨hd.ρ, hd.mem, hd.log, hd.aliasP⟩⟩
+      exact ⟨_, .run hx₂ hcl, ResSim.ok ⟨hd.ρ, hd.mem, hd.log, hd.logP⟩⟩
 
 end
 
@@ -3472,7 +3522,8 @@ theorem Ctx.Strong.refl (ctx : Ctx) (n : Name) : Ctx.Strong 1 (fun _ => True) ct
 theorem SNames.refl (ctx : Ctx) (s : State) : SNames 1 (fun _ => True) ctx ctx s :=
   ⟨fun x _ => Ctx.Strong.refl ctx x, fun x _ => (Ctx.Strong.refl ctx x).good₀, fun _ _ => ⟨rfl, trivial⟩⟩
 
-theorem Log.AliasP.true (g : Log) : Log.AliasP (fun _ => True) g := fun _ _ _ => trivial
+theorem Log.NamesP.true (g : Log) : Log.NamesP (fun _ => True) g :=
+  ⟨fun _ _ => trivial, fun _ _ => trivial, fun _ _ => trivial, fun _ _ => ⟨trivial, trivial⟩, fun _ _ => trivial⟩
 
 /-- Allocating transients that are no streams on the simulating side alone
 keeps the simulation (their queues are untouched). -/
