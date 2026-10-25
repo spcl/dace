@@ -17,6 +17,7 @@ import traceback
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
+import sympy
 import torch
 from torch._dynamo.exc import BackendCompilerFailed
 from torch._guards import TracingContext
@@ -79,7 +80,9 @@ class CapturedProgram:
     def compile(self, name: str = "captured") -> Callable[..., list[Any]]:
         """
         Compiles the graph and returns a function with the signature of the captured callable that returns the flat
-        list of graph outputs. No guards are checked: the caller must respect :attr:`guards`.
+        list of graph outputs. Every call checks the shape :attr:`assumptions` against the argument sizes and raises
+        ``ValueError`` when one does not hold (the graph was specialized to sizes it is not called with); the other
+        :attr:`guards` (dtypes, devices, module state) are not checked and must be respected by the caller.
         """
         result = self.import_graph(name)
         select_implementations(result.sdfg)
@@ -87,8 +90,15 @@ class CapturedProgram:
         compiled = CompiledGraph(csdfg, result.inputs, result.outputs, communicators=result.communicators)
 
         def call(*args, **kwargs) -> list[Any]:
+            values = self.bind(*args, **kwargs)
+            violated = self.violated_assumptions(values)
+            if violated:
+                raise ValueError(
+                    f"The captured graph does not apply to these arguments: it assumes "
+                    + "; ".join(_assumption_text(a) for a in violated)
+                )
             with torch.no_grad():
-                return compiled(*self.bind(*args, **kwargs))
+                return compiled(*values)
 
         return call
 
@@ -130,6 +140,40 @@ class CapturedProgram:
                 value = torch.as_tensor(value, dtype=example.dtype)  # Python scalars traced as 0-d tensors
             values.append(value)
         return values
+
+    def symbol_values(self, values: list[Any]) -> dict[str, int]:
+        """
+        The values of the DaCe symbols for one call, read from the bound graph inputs ``values`` (see :meth:`bind`).
+        Requires the graph to be imported (:meth:`import_graph`), which decides where each symbol comes from.
+        """
+        if self.import_result is None:
+            raise RuntimeError("import the graph (import_graph/compile) before evaluating its symbols")
+        return {spec.name: int(values[spec.position]) for spec in self.import_result.inputs if spec.kind == "sym"}
+
+    def violated_assumptions(self, values: list[Any]) -> list[ShapeAssumption]:
+        """
+        The shape :attr:`assumptions` that do not hold for the bound graph inputs ``values`` (see :meth:`bind`): the
+        graph was traced for sizes with a property (e.g., a chunk count, or a loop range that became a Python list)
+        that these sizes lack, so running it on them is undefined. Assumptions that cannot be decided from the symbol
+        values (untranslatable relations, symbols without a graph input) are not reported.
+        """
+        symvals = self.symbol_values(values)
+        violated = []
+        for assumption in self.assumptions:
+            relation = assumption.relation
+            if not isinstance(relation, sympy.Basic):
+                continue
+            substitution = {sym: symvals[str(sym)] for sym in relation.free_symbols if str(sym) in symvals}
+            if relation.subs(substitution) == sympy.false:
+                violated.append(assumption)
+        return violated
+
+
+def _assumption_text(assumption: ShapeAssumption) -> str:
+    text = str(assumption.relation)
+    if assumption.origin:
+        text += f" (introduced by {assumption.origin})"
+    return text
 
 
 class _CaptureComplete(Exception):

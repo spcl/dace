@@ -138,6 +138,28 @@ def test_capture_numpy_global_source():
             torch.testing.assert_close(out, _function_with_numpy_global(x))
 
 
+def _function_with_even_rows(x):
+    # Reshaping to (n // 2, 2, ...) is only valid for even n: Dynamo records the guard instead of a dynamic check
+    return x.view(x.shape[0] // 2, 2, x.shape[1]).sum(1)
+
+
+@pytest.mark.torch
+def test_capture_compile_checks_assumptions():
+    """Calling the compiled graph with sizes that violate a recorded shape assumption raises instead of running."""
+    program = capture(_function_with_even_rows, torch.randn(6, 4), dynamic_shapes={"x": {0: "n"}})
+    assert program.assumptions, "Dynamo should have recorded the evenness of n"
+    run = program.compile("capture_checks_assumptions")
+    with torch.no_grad():
+        x = torch.randn(8, 4)
+        (out,) = run(x)
+        torch.testing.assert_close(out, _function_with_even_rows(x))
+        assert not program.violated_assumptions(program.bind(x))
+        odd = torch.randn(7, 4)
+        assert program.violated_assumptions(program.bind(odd))
+        with pytest.raises(ValueError, match="assumes"):
+            run(odd)
+
+
 if __name__ == "__main__":
     test_capture_module_input_sources()
     test_capture_global_source()
