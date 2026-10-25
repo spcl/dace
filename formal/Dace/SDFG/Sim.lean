@@ -1684,7 +1684,7 @@ theorem State.isViewDefWith_congr {s : State} {f₂ f₁ : Name → Bool} (hf : 
     | some n =>
       cases hk : n.kind with
       | access d =>
-        simp only [Option.filter_some, hk, hf d (State.accessData_names h hk).1]
+        simp only [Option.filter_some, hk, hf d (State.accessData_names h hk)]
       | _ => simp only [Option.filter_some, hk]
   unfold State.isViewDefWith
   simp only [key]
@@ -1720,7 +1720,7 @@ theorem refSetTarget? {e : DEdge} : Dace.refSetTarget? ctx₂ s e = Dace.refSetT
       unfold DNode.accessData?
       split
       · rename_i d hk
-        have := (State.accessData_names h hk).1
+        have := (State.accessData_names h hk)
         have hr : ctx₂.isReference d = ctx₁.isReference d := by
           simp only [Ctx.isReference, (hS.data d this).desc]
         simp only [Option.filter_some, hr]
@@ -1744,7 +1744,7 @@ theorem refSetTarget?_names {ctx : Ctx} {s : State} {e : DEdge} {d : Name} (h : 
       · rename_i d' hk
         simp only [Option.filter_some] at h
         split at h
-        · cases h; exact (State.accessData_names hn hk).1
+        · cases h; exact (State.accessData_names hn hk)
         · cases h
       · cases h
   · cases h
@@ -1847,12 +1847,12 @@ theorem bindView_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {v : DNode} 
         · obtain ⟨n, hn, hd'⟩ := Option.bind_eq_some_iff.1 hbase
           unfold DNode.accessData? at hd'
           split at hd'
-          · rename_i b hkb; cases hd'; exact hS.data _ (State.accessData_names hn hkb).1
+          · rename_i b hkb; cases hd'; exact hS.data _ (State.accessData_names hn hkb)
           · cases hd'
         · obtain ⟨n, hn, hd'⟩ := Option.bind_eq_some_iff.1 hbase
           unfold DNode.accessData? at hd'
           split at hd'
-          · rename_i b hkb; cases hd'; exact hS.data _ (State.accessData_names hn hkb).1
+          · rename_i b hkb; cases hd'; exact hS.data _ (State.accessData_names hn hkb)
           · cases hd'
       refine aliasTo_sim hc ρ h hd hb _ fun x hx => hS.expr x ?_
       split at hx
@@ -1868,7 +1868,7 @@ theorem bindViews_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (ids : List
   · rename_i n hn
     split
     · rename_i d hk
-      have hd := hS.data d (State.accessData_names hn hk).1
+      have hd := hS.data d (State.accessData_names hn hk)
       rw [show ctx₂.isView d = ctx₁.isView d by simp only [Ctx.isView, hd.desc]]
       exact ResSim.ite (c := ctx₁.isView d) (fun _ => bindView_sim hc ρ hS (State.node?_mem hn) hk hab)
         (fun _ => ResSim.ok hab)

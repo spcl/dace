@@ -270,3 +270,11 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.privateTransients_mem
 #print axioms Dace.enter_sim
 #print axioms Dace.Region.Names.ofAll
+#print axioms Dace.Region.namesOk?_sound
+#print axioms Dace.Corr.innerCheck_sound
+#print axioms Dace.Corr.nestedChild_sound
+#print axioms Dace.Corr.keepEq?_sound
+#print axioms Dace.Corr.outerNames?_sound
+#print axioms Dace.Corr.RegionAt.normal_of_states
+#print axioms Dace.seqPlain?_sound
+#print axioms Dace.OrderedExec.coh'

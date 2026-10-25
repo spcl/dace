@@ -107,6 +107,21 @@ def seqPureP? (ctx : Ctx) (s : State) : Bool :=
       | .memlet _ => (s.dstEndpoint e).isData
       | .dep => true))
 
+/-- Decision procedure for `SeqPlain` (`seqPlain?_sound`). -/
+def seqPlain? (ctx : Ctx) (s : State) : Bool :=
+  ctx.g.arrays.all (fun (_, d) => !d.isStream && !d.isReference && !d.isView && ctx.rangePure d.fullRange) &&
+  s.edges.all (fun e => match e.data with
+    | .memlet m => m.srcSubset.all ctx.subsetPure && m.dstSubset.all ctx.subsetPure
+    | .dep => true) &&
+  s.nodes.all (fun n =>
+    (match n.kind with
+      | .mapEntry mp => ctx.rangePure mp.range
+      | .library l => (l.reduce.map fun p => p.identity.all ctx.exprPure).getD true
+      | _ => true) &&
+    (!n.isCode || (s.outEdges n.id).all fun e => match e.data with
+      | .memlet _ => (s.dstEndpoint e).isData
+      | .dep => true))
+
 /-- Decision procedure for `SeqPure` (`seqPure?_sound`). -/
 def seqPure? (ctx : Ctx) (s : State) : Bool :=
   ctx.g.arrays.all (fun (_, d) => !d.isStream && !d.isReference && !d.isView && ctx.rangePure d.fullRange) &&
@@ -122,6 +137,39 @@ def seqPure? (ctx : Ctx) (s : State) : Bool :=
     (!n.isCode || (s.outEdges n.id).all fun e => match e.data with
       | .memlet _ => (s.dstEndpoint e).isData
       | .dep => true))
+
+theorem seqPlain?_sound {ctx : Ctx} {s : State} (h : seqPlain? ctx s = true) : SeqPlain ctx s := by
+  simp only [seqPlain?, Bool.and_eq_true, List.all_eq_true] at h
+  obtain ⟨⟨harr, hedges⟩, hnodes⟩ := h
+  have hdesc : ∀ n d, ctx.desc? n = some d → ∃ x ∈ ctx.g.arrays, x.2 = d := by
+    intro n d hd
+    simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hd
+    obtain ⟨x, hx, rfl⟩ := hd
+    exact ⟨x, List.mem_of_find?_eq_some hx, rfl⟩
+  have harr' : ∀ n d, ctx.desc? n = some d →
+      d.isStream = false ∧ d.isReference = false ∧ d.isView = false ∧ ctx.rangePure d.fullRange = true := by
+    intro n d hd
+    obtain ⟨x, hx, rfl⟩ := hdesc n d hd
+    have := harr x hx
+    simp only [Bool.not_eq_eq_eq_not, Bool.not_true] at this
+    exact ⟨this.1.1.1, this.1.1.2, this.1.2, this.2⟩
+  refine ⟨fun n d hd => ⟨(harr' n d hd).1, (harr' n d hd).2.1, (harr' n d hd).2.2.1⟩,
+    fun n d hd => (harr' n d hd).2.2.2, fun e he m hm => ?_, fun n hn mp hk => ?_,
+    fun n hn l props hk hr => ?_, fun n hn hc e he m hm => ?_⟩
+  · have := hedges e he
+    simp only [hm, Bool.and_eq_true] at this
+    exact this
+  · have := (hnodes n hn).1
+    simp only [hk] at this
+    exact this
+  · have := (hnodes n hn).1
+    simp only [hk, hr, Option.map_some, Option.getD_some] at this
+    exact this
+  · have := (hnodes n hn).2
+    simp only [hc, Bool.not_true, Bool.false_or, List.all_eq_true] at this
+    have := this e he
+    simp only [hm] at this
+    exact this
 
 theorem seqPureP?_sound {ctx : Ctx} {s : State} (h : seqPureP? ctx s = true) : SeqPureP ctx s := by
   simp only [seqPureP?, Bool.and_eq_true, List.all_eq_true] at h

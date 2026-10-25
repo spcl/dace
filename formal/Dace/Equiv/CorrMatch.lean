@@ -355,6 +355,11 @@ def InnerNames (ctx : Ctx) (tc : TCtx) (inner : SDFG) (node : NodeId) (conns : L
   ∀ I : Interp, Region.Names 1 (fun _ => True) ({ ctx with I }.enter inner node conns) ((tc.withI I).innerCtx inner)
     inner.top
 
+/-- Access or exit nodes without copies into them (the exit of a map whose
+body is a nested SDFG): they run as no-ops. -/
+def IdleNodes (ctx : Ctx) (s : State) (xs : List NodeId) : Prop :=
+  ∀ x ∈ xs, ∃ xn, s.node? x = some xn ∧ DNode.isCopyTarget xn = true ∧ s.CopyShape ctx xn ∧ s.copiesInto ctx xn = []
+
 /-- The `DynScopeCopyNode`s of the dynamic inputs `keys`, in order. -/
 def DynNodes (keys : List InKey) (ds : List SNode) : Prop :=
   List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ m.inKey k.conn = k) keys ds
@@ -402,8 +407,9 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
       (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
+      {xs : List NodeId}
       (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
-      (hdir : full.filter (s.directChildren (some n.id)).contains = [nid])
+      (hdir : full.filter (s.directChildren (some n.id)).contains = nid :: xs) (hxs : IdleNodes ctx s xs)
       (hnd : s.node? nid = some nd) (hkn : nd.kind = .nested inner mapping ni)
       (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
       (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
@@ -420,7 +426,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
   induction hc with
   | nil => intro id hid; cases hid
   | copies hn hk _ _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
-  | map hn hk _ _ _ _ _ _ _ _ _ ih | nestedMap hn hk _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ ih =>
+  | map hn hk _ _ _ _ _ _ _ _ _ ih | nestedMap hn hk _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ ih =>
     intro id hid n' hn'
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
@@ -930,6 +936,22 @@ theorem DNode.isSimple_of_copyTarget {n : DNode} (hk : DNode.isCopyTarget n = tr
   unfold DNode.isSimple
   split at hk <;> simp_all
 
+omit h he in
+/-- Idle nodes run as no-ops. -/
+theorem idle_run {ρ : Valuation} : ∀ {xs : List NodeId}, IdleNodes ctx s xs → ∀ st : St,
+    SeqExec ctx ρ s xs st (.ok (st, xs.map fun x => (x, Log.empty)))
+  | [], _, _ => .nil
+  | x :: xs, hxs, st => by
+    obtain ⟨xn, hxn, hk, hsh, hcp⟩ := hxs x List.mem_cons_self
+    have hx : NodeExec ctx ρ s xn st.forNode (.ok st.forNode) := by
+      have := NodeExec.simple (ctx := ctx) (ρ := ρ) (s := s) (st := st.forNode) (DNode.isSimple_of_copyTarget hk)
+      rwa [execSimple_copyTarget hk, execCopiesInto_eq ρ hsh, hcp] at this
+    have hst : st.afterNode st.forNode = st := by
+      cases st; simp [St.afterNode, St.forNode, Log.seq_empty]
+    have hr : SeqExec ctx ρ s xs (st.afterNode st.forNode) (.ok (st, xs.map fun x => (x, Log.empty))) := by
+      rw [hst]; exact idle_run (fun y hy => hxs y (List.mem_cons_of_mem _ hy)) st
+    exact SeqExec.cons hxn hx hr
+
 include h he in
 /-- **One iteration of a map whose body is a nested SDFG**: the tree runs
 the inlined inner region from the iteration's start; the SDFG calls the inner
@@ -939,8 +961,9 @@ the per-call transients, is the tree's iteration log. -/
 theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} {mp : MapNode} {full : List NodeId}
     {body : List SNode} {nid : NodeId} {nd : DNode} {inner : SDFG} {mapping : List (Sym × Expr)} {ni : Bool}
     {conns : List (Name × Name)}
+    {xs : List NodeId}
     (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
-    (hdir : full.filter (s.directChildren (some n.id)).contains = [nid])
+    (hdir : full.filter (s.directChildren (some n.id)).contains = nid :: xs) (hxs : IdleNodes ctx s xs)
     (hnd : s.node? nid = some nd) (hkn : nd.kind = .nested inner mapping ni)
     (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
     (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
@@ -975,9 +998,10 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     intro y hx
     have hs : SeqExec ctx (pre.ρ.bindIdx mp.params i) s (full.filter (s.directChildren (some n.id)).contains)
         (iterStart (ctx.privateTransients s n.id) st₁)
-        (.ok ((iterStart (ctx.privateTransients s n.id) st₁).afterNode y, [(nid, y.log)])) := by
-      rw [hdir]; exact .cons hnd hx .nil
-    cases hf : s.hbFree [(nid, y.log)] with
+        (.ok ((iterStart (ctx.privateTransients s n.id) st₁).afterNode y,
+          (nid, y.log) :: xs.map fun x => (x, Log.empty))) := by
+      rw [hdir]; exact .cons hnd hx (idle_run hxs _)
+    cases hf : s.hbFree ((nid, y.log) :: xs.map fun x => (x, Log.empty)) with
     | false => exact .inl ⟨_, rfl, .hbRace hto hp hs hf⟩
     | true => exact .inr (.run hto hp hs hf)
   have hset := nestedSetup_eq (ρ := pre.ρ.bindIdx mp.params i) (inner := inner) (mapping := mapping)
@@ -1219,8 +1243,8 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     intro full' gb rest cst r st hx hrel
     exact map_node he hcons hn hk hkeys hok hds
       (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) hm hv hi) ih hx hrel
-  | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns hn hk hkeys hok hds hto hdir hnd hkn hb
-      hmap hcode hout hpriv hnames hinner _ ih =>
+  | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns hn hk hkeys hok hds xs hto hdir hxs hnd hkn
+      hb hmap hcode hout hpriv hnames hinner _ ih =>
     intro full' gb rest cst r st hx hrel
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
     have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) inner.top := by
@@ -1233,7 +1257,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       rw [htc] at this
       exact this
     exact map_node he hcons hn hk hkeys hok hds
-      (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hnd hkn hb hmap
+      (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hxs hnd hkn hb hmap
         hcode hout hpriv hnames' hinner' hm i hbd) hi) ih hx hrel
 
 end Matched

@@ -71,7 +71,7 @@ theorem Range.mem_names_of_mentions {r : Range} {t : Name} (h : r.mentions t = t
 /-- Names whose memory name a node takes. -/
 def DNode.dataNames (n : DNode) : List Name :=
   match n.kind with
-  | .access d => [d, consumeChunkName d]
+  | .access d => [d]
   | _ => []
 
 /-- Names a node evaluates in expressions, and tasklet code identifiers. -/
@@ -86,7 +86,7 @@ def DNode.exprNames (n : DNode) : List Name :=
 
 def DEdge.dataNames (e : DEdge) : List Name :=
   match e.data with
-  | .memlet m => [m.data, consumeChunkName m.data]
+  | .memlet m => [m.data]
   | .dep => []
 
 def DEdge.exprNames (e : DEdge) : List Name :=
@@ -94,7 +94,15 @@ def DEdge.exprNames (e : DEdge) : List Name :=
   | .memlet m => m.exprNames
   | .dep => []
 
-def State.dataNames (s : State) : List Name := s.nodes.flatMap DNode.dataNames ++ s.edges.flatMap DEdge.dataNames
+/-- The chunk containers of the consume scopes of a state (`consumeChunkName`
+of the stream on an `IN_stream` edge, `State.consumedStream?`). -/
+def State.chunkNames (s : State) : List Name :=
+  s.edges.filterMap fun e =>
+    if e.dstConn = some "IN_stream" then ((s.node? (s.pathStart e).src).bind DNode.accessData?).map consumeChunkName
+    else none
+
+def State.dataNames (s : State) : List Name :=
+  s.nodes.flatMap DNode.dataNames ++ s.edges.flatMap DEdge.dataNames ++ s.chunkNames
 
 def State.exprNames (s : State) : List Name := s.nodes.flatMap DNode.exprNames ++ s.edges.flatMap DEdge.exprNames
 
@@ -131,11 +139,11 @@ theorem DNode.mentions_names {n : DNode} {t : Name} (h : n.mentions t = true) :
 
 theorem State.mem_dataNames_node {s : State} {n : DNode} (hn : n ∈ s.nodes) {t : Name} (ht : t ∈ n.dataNames) :
     t ∈ s.dataNames :=
-  List.mem_append_left _ (List.mem_flatMap.2 ⟨n, hn, ht⟩)
+  List.mem_append_left _ (List.mem_append_left _ (List.mem_flatMap.2 ⟨n, hn, ht⟩))
 
 theorem State.mem_dataNames_edge {s : State} {e : DEdge} (he : e ∈ s.edges) {t : Name} (ht : t ∈ e.dataNames) :
     t ∈ s.dataNames :=
-  List.mem_append_right _ (List.mem_flatMap.2 ⟨e, he, ht⟩)
+  List.mem_append_left _ (List.mem_append_right _ (List.mem_flatMap.2 ⟨e, he, ht⟩))
 
 theorem State.mem_exprNames_node {s : State} {n : DNode} (hn : n ∈ s.nodes) {t : Name} (ht : t ∈ n.exprNames) :
     t ∈ s.exprNames :=
@@ -164,22 +172,29 @@ theorem mem_inEdges {id : NodeId} {e : DEdge} (h : e ∈ s.inEdges id) : e ∈ s
 theorem mem_outEdges {id : NodeId} {e : DEdge} (h : e ∈ s.outEdges id) : e ∈ s.edges := (List.mem_filter.1 h).1
 
 theorem accessData_names {id : NodeId} {n : DNode} {d : Name} (h : s.node? id = some n)
-    (hk : n.kind = .access d) : d ∈ s.dataNames ∧ consumeChunkName d ∈ s.dataNames := by
+    (hk : n.kind = .access d) : d ∈ s.dataNames := by
   have hn := node?_mem h
-  refine ⟨mem_dataNames_node hn ?_, mem_dataNames_node hn ?_⟩ <;> simp [DNode.dataNames, hk]
+  exact mem_dataNames_node hn (by simp [DNode.dataNames, hk])
 
 theorem consumedStream?_names {entry : NodeId} {d : Name} (h : s.consumedStream? entry = some d) :
     d ∈ s.dataNames ∧ consumeChunkName d ∈ s.dataNames := by
   unfold consumedStream? at h
   split at h
-  · rename_i e _
-    obtain ⟨n, hn, hd⟩ := Option.bind_eq_some_iff.1 h
-    unfold DNode.accessData? at hd
-    split at hd
-    · rename_i d' hk
-      cases hd
-      exact accessData_names hn hk
-    · cases hd
+  · rename_i e he
+    have hmem : e ∈ s.edges := mem_inEdges (List.mem_of_find?_eq_some he)
+    have hc : e.dstConn = some "IN_stream" := by simpa using List.find?_some he
+    refine ⟨?_, ?_⟩
+    · obtain ⟨n, hn, hd⟩ := Option.bind_eq_some_iff.1 h
+      unfold DNode.accessData? at hd
+      split at hd
+      · rename_i d' hk
+        cases hd
+        exact accessData_names hn hk
+      · cases hd
+    · simp only [State.dataNames, List.mem_append]
+      right
+      simp only [State.chunkNames, List.mem_filterMap]
+      exact ⟨e, hmem, by simp [hc, h]⟩
   · cases h
 
 theorem srcEndpoint_names {e : DEdge} {d : Name} {sub : Option Subset} (h : s.srcEndpoint e = .data d sub) :
@@ -198,7 +213,7 @@ theorem srcEndpoint_names {e : DEdge} {d : Name} {sub : Option Subset} (h : s.sr
       split at h
       · rename_i d' hk
         cases h
-        exact ⟨(accessData_names hn hk).1, .inr rfl⟩
+        exact ⟨accessData_names hn hk, .inr rfl⟩
       all_goals cases h
 
 theorem dstEndpoint_names {e : DEdge} {d : Name} {sub : Option Subset} (h : s.dstEndpoint e = .data d sub) :
@@ -213,7 +228,7 @@ theorem dstEndpoint_names {e : DEdge} {d : Name} {sub : Option Subset} (h : s.ds
     | access d' =>
       rw [hk] at h
       cases h
-      exact ⟨(accessData_names hn hk).1, rfl⟩
+      exact ⟨accessData_names hn hk, rfl⟩
     | mapExit | consumeExit =>
       rw [hk] at h
       simp only at h
@@ -226,7 +241,7 @@ theorem dstEndpoint_names {e : DEdge} {d : Name} {sub : Option Subset} (h : s.ds
         | access d' =>
           rw [hk'] at h
           cases h
-          exact ⟨(accessData_names hrn hk').1, rfl⟩
+          exact ⟨accessData_names hrn hk', rfl⟩
         | _ => rw [hk'] at h; cases h
     | _ => rw [hk] at h; cases h
 

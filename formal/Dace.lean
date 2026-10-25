@@ -57,6 +57,7 @@ import Dace.Equiv.CorrMatch
 import Dace.Equiv.EvalCongr
 import Dace.Equiv.Corr
 import Dace.Equiv.CorrCtl
+import Dace.Equiv.NamesCheck
 import Dace.Equiv.CorrCheck
 
 /-!
