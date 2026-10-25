@@ -31,11 +31,16 @@ representations:
   the hypotheses on the corpus.
   SDFG / schedule-tree pairs (`Equiv/Corr*`, `lake exe dace-equiv stree
   <sdfg.json> <stree.json>`): the checker `Corr.corr?` is proven sound
-  (`Corr.corr?_exec`: every run of the tree is a run of the SDFG or the SDFG
-  may be undefined; `Corr.corr?_refines`: `Refines t g` for a supported SDFG).
+  (`Corr.corr?_exec`: every run of the tree matches a run of the SDFG, with
+  observationally equal final memory, or the SDFG may be undefined;
+  `Corr.corr?_refines`: `Refines t g` for a supported SDFG).
   Structured control flow (`Equiv/CorrCtl`): chains of blocks joined by
   unconditional edges whose assignments become `AssignNode`s, loop regions,
-  conditional blocks (`if`/`elif`/`else`), break, continue and return;
+  conditional blocks (`if`/`elif`/`else`), break, continue and return.
+  Nested SDFGs (`SegCorr.nestedMap`): a map scope whose body is one nested
+  SDFG matches the tree's inlined inner region; the per-call transients are
+  related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation
+  theorem `SDFGExec.sim` over a name permutation, `Corr.flatCtx`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
