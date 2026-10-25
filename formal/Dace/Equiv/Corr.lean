@@ -53,12 +53,13 @@ variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.c
 
 include he hcons hw in
 /-- **Matching of a state**: the tree runs the segment, the SDFG the state;
-undefined behavior, the same error, or the same control-flow state. -/
+undefined behavior, an error when the tree fails, or the same control-flow
+state. -/
 theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc s cs) {full : List SNode} {gb : Bool}
     {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)}
     (hx : STree.ListExec tc full gb {} (cs ++ rest) cst r) :
     (∃ e, e.isUB = true ∧ StateExec ctx cst s (.err e)) ∨
-    (∃ e, r = .err e ∧ StateExec ctx cst s (.err e)) ∨
+    (∃ e e', r = .err e ∧ StateExec ctx cst s (.err e')) ∨
     ∃ cst', STree.ListExec tc full gb {} rest cst' r ∧ StateExec ctx cst s (.ok (.normal, cst')) := by
   have h := hsc.pure
   rcases hsc.comps with ⟨hc, rfl⟩ | ⟨c, o, ofull, hc, hseg, hto, hdir⟩
@@ -102,7 +103,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
             simp only [stateFinish, hlog]
             rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
           rwa [hf] at this
-    rcases SegCorr.matched h he hcons hw hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
+    rcases SegCorr.matched h he hcons hw hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, e₀, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
       cases r₀ with
@@ -124,7 +125,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
         obtain ⟨e'', hx', hu'⟩ := (hstate (.seqErr hto hp hs₀)).1 _ rfl
         rcases hu' with hu' | rfl
         · exact .inl ⟨_, hu', hx'⟩
-        · exact .inr (.inl ⟨_, hr, hx'⟩)
+        · exact .inr (.inl ⟨_, _, hr, hx'⟩)
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
       cases r₀ with

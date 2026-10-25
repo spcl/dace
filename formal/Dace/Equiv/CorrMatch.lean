@@ -16,8 +16,9 @@ of the scope's direct children in a topological order of the scope.
 **Matching** (`SegCorr.matched`; a simulation relation in the sense of
 refinement proofs, see the terminology note in `Dace.Equiv.Frag`): every run of the tree list (followed by any
 `rest`) is matched by the sequential SDFG run of `o` from a state with the
-same memory and log: the SDFG run is undefined behavior, or fails with the
-same error, or ends normally in a state with the same memory and log while
+same memory and log: the SDFG run is undefined behavior, or fails when the
+tree fails (with an error of its own: error messages name containers, which a
+nested SDFG may rename), or ends normally in a state with the same memory and log while
 the tree continues with `rest`.  The proof is by induction on `SegCorr`;
 leaves are equal leaf functions (`execCode_eq`, …) up to the log prefix
 (`*_shift`), a map's iterations are matched one by one, and an iteration
@@ -194,10 +195,10 @@ theorem _root_.Dace.TCtx.innerCtx_eraseL (tc : TCtx) (inner : SDFG) : (tc.innerC
 theorem _root_.Dace.TCtx.innerCtx_I (tc : TCtx) (inner : SDFG) : (tc.innerCtx inner).I = tc.ctx.I := rfl
 
 /-- The tree outcome `r` of a scope body is matched by the SDFG outcomes `X`:
-`X` may be undefined, or has the same error, or the body ends normally in
+`X` may be undefined, or has an error when `r` has one, or the body ends normally in
 the same state. -/
 def NestedOut (X : Res (Ctl × CSt) → Prop) (r : Res (TCtl × CSt)) : Prop :=
-  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e, r = .err e ∧ X (.err e)) ∨
+  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e e', r = .err e ∧ X (.err e')) ∨
     ∃ c, r = .ok (.normal, c) ∧ X (.ok (.normal, c))
 
 /-- A symbol mapping that passes symbols on unchanged, into an SDFG without
@@ -442,7 +443,7 @@ tree run ending in `r` after the image of `o`, continuing with `rest`. -/
 def SeqOut (ctx : Ctx) (s : State) (o : List NodeId) (ρ : Valuation) (st : St) (tc : TCtx) (full : List SNode)
     (gb : Bool) (rest : List SNode) (r : Res (TCtl × CSt)) : Prop :=
   (∃ e, e.isUB = true ∧ SeqExec ctx ρ s o st (.err e)) ∨
-  (∃ e, r = .err e ∧ SeqExec ctx ρ s o st (.err e)) ∨
+  (∃ e e', r = .err e ∧ SeqExec ctx ρ s o st (.err e')) ∨
   ∃ cst' st' tr, STree.ListExec tc full gb {} rest cst' r ∧ SeqExec ctx ρ s o st (.ok (st', tr)) ∧
     cst'.ρ = ρ ∧ StRel st' cst'
 
@@ -712,15 +713,15 @@ theorem SeqOut.cons {ctx : Ctx} {s : State} {id : NodeId} {n : DNode} {o : List 
     {tc : TCtx} {full : List SNode} {gb : Bool} {rest : List SNode} {r : Res (TCtl × CSt)}
     (hn : s.node? id = some n)
     (h : (∃ e, e.isUB = true ∧ NodeExec ctx ρ s n st.forNode (.err e)) ∨
-      (∃ e, r = .err e ∧ NodeExec ctx ρ s n st.forNode (.err e)) ∨
+      (∃ e e', r = .err e ∧ NodeExec ctx ρ s n st.forNode (.err e')) ∨
       ∃ y, NodeExec ctx ρ s n st.forNode (.ok y) ∧ SeqOut ctx s o ρ (st.afterNode y) tc full gb rest r) :
     SeqOut ctx s (id :: o) ρ st tc full gb rest r := by
-  rcases h with ⟨e, hu, hx⟩ | ⟨e, hr, hx⟩ | ⟨y, hx, ht⟩
+  rcases h with ⟨e, hu, hx⟩ | ⟨e, e', hr, hx⟩ | ⟨y, hx, ht⟩
   · exact .inl ⟨e, hu, .headErr hn hx⟩
-  · exact .inr (.inl ⟨e, hr, .headErr hn hx⟩)
-  · rcases ht with ⟨e, hu, ht⟩ | ⟨e, hr, ht⟩ | ⟨cst', st', tr, hl, ht, hρ, hrel⟩
+  · exact .inr (.inl ⟨e, e', hr, .headErr hn hx⟩)
+  · rcases ht with ⟨e, hu, ht⟩ | ⟨e, e', hr, ht⟩ | ⟨cst', st', tr, hl, ht, hρ, hrel⟩
     · exact .inl ⟨e, hu, .tailErr hn hx ht⟩
-    · exact .inr (.inl ⟨e, hr, .tailErr hn hx ht⟩)
+    · exact .inr (.inl ⟨e, e', hr, .tailErr hn hx ht⟩)
     · exact .inr (.inr ⟨cst', st', _, hl, .cons hn hx ht, hρ, hrel⟩)
 
 theorem StRel.forNode_shift {st : St} {cst : CSt} (h : StRel st cst) : cst.st = st.forNode.shift cst.log := by
@@ -814,7 +815,7 @@ theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o :
     rcases leaf_inv hstep hx with ⟨e', hR, rfl⟩ | ⟨cst₁, hR, -⟩
     · simp only [Res.map, CSt.lift, Res.err.injEq] at hR
       subst hR
-      exact .inr (.inl ⟨_, rfl, hy ▸ NodeExec.simple hsimp⟩)
+      exact .inr (.inl ⟨_, _, rfl, hy ▸ NodeExec.simple hsimp⟩)
     · cases hR
   | ok y =>
     rw [hy] at hstep
@@ -837,15 +838,15 @@ theorem iter_matched_of {n : DNode} {mp : MapNode} {body : List SNode} {privS pr
       STree.ListExec tc body false {} body (iterStartT privT pre (pre.ρ.bindIdx mp.params i)) res →
       (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
         (s.directChildren (some n.id)) (iterStart privS st₁) (.err e)) ∨
-      (∃ e, res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
-        (s.directChildren (some n.id)) (iterStart privS st₁) (.err e)) ∨
+      (∃ e e', res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (iterStart privS st₁) (.err e')) ∨
       ∃ st', OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
         (iterStart privS st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧
           st'.log.dropNames privS = cst'.log.dropNames privT) :
     ∀ {pts : List Idx} {rT : Res (List Log)},
       STree.IterExec tc mp.params body privT pre pts rT →
       (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.err e)) ∨
-      (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.err e)) ∨
+      (∃ e e', rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.err e')) ∨
       ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params privS st₁ pts (.ok logs) := by
   intro pts
   induction pts with
@@ -857,23 +858,23 @@ theorem iter_matched_of {n : DNode} {mp : MapNode} {body : List SNode} {privS pr
     intro rT hi
     cases hi with
     | headErr hb hlog =>
-      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', rfl, hx⟩ | ⟨st', hx, cst', rfl, -⟩
+      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, -⟩
       · exact .inl ⟨e', hu, .headErr hx⟩
-      · cases hlog; exact .inr (.inl ⟨_, rfl, .headErr hx⟩)
+      · cases hlog; exact .inr (.inl ⟨_, _, rfl, .headErr hx⟩)
       · cases hlog
     | tailErr hb hlog hr =>
-      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg⟩
+      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg⟩
       · exact .inl ⟨e', hu, .headErr hx⟩
       · cases hlog
-      · rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl', -⟩
+      · rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨logs, hl', -⟩
         · exact .inl ⟨e', hu, .tailErr hx hy⟩
-        · exact .inr (.inl ⟨e', he', .tailErr hx hy⟩)
+        · exact .inr (.inl ⟨e', e'', he', .tailErr hx hy⟩)
         · cases hl'
     | cons hb hlog hr =>
-      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg⟩
+      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg⟩
       · exact .inl ⟨e', hu, .headErr hx⟩
       · cases hlog
-      · rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs', hl', hy⟩
+      · rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨logs', hl', hy⟩
         · exact .inl ⟨e', hu, .tailErr hx hy⟩
         · cases he'
         · cases hl'
@@ -896,7 +897,7 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
     ∀ {pts : List Idx} {rT : Res (List Log)},
       STree.IterExec tc mp.params body (tc.privateTransients body) pre pts rT →
       (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
-      (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
+      (∃ e e', rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e')) ∨
       ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs) := by
   have hrel : ∀ i, StRel (iterStart (ctx.privateTransients s n.id) st₁) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) :=
     fun i => ⟨by simp only [iterStart, iterStartT, hm, hpriv], rfl, hv⟩
@@ -906,11 +907,11 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
   refine iter_matched_of (n := n) (fun i {res} hb => ?_) hi
   have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res := by
     rw [List.append_nil]; exact hb
-  rcases ihb hb' (hrel i) with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, -, hst⟩
+  rcases ihb hb' (hrel i) with ⟨e, hu, hs⟩ | ⟨e, e', hr, hs⟩ | ⟨cst', st', tr, hl, hs, -, hst⟩
   · rw [← hdir] at hs
     exact .inl ⟨e, hu, .seqErr hto (hp _) hs⟩
   · rw [← hdir] at hs
-    exact .inr (.inl ⟨e, hr, .seqErr hto (hp _) hs⟩)
+    exact .inr (.inl ⟨e, e', hr, .seqErr hto (hp _) hs⟩)
   · rw [← hdir] at hs
     have hres := STree.ListExec_nil (by rfl) hl
     cases hf : s.hbFree tr with
@@ -977,8 +978,8 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     (hbd : STree.ListExec tc body false {} body (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res) :
     (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
         (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
-      (∃ e, res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
-        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
+      (∃ e e', res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e')) ∨
       ∃ st', OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
         (iterStart (ctx.privateTransients s n.id) st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧
           st'.log.dropNames (ctx.privateTransients s n.id) = cst'.log.dropNames (tc.privateTransients body) := by
@@ -1028,7 +1029,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
       (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem Log.empty =
       iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i) := by
     simp only [hmap.consts]; rfl
-  rcases hinner _ _ hbd with ⟨e, hu, hR⟩ | ⟨e, rfl, hR⟩ | ⟨c, rfl, hR⟩
+  rcases hinner _ _ hbd with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨c, rfl, hR⟩
   · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.err e) :=
       .err (by rw [hcst]; exact .start hR)
@@ -1044,7 +1045,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     obtain ⟨e', rfl, hu'⟩ := ResSim.err_inv hr
     rcases hu' with hu' | rfl
     · exact .inl ⟨e', hu', herr e' (.nestedInnerErr hkn hset hx₂)⟩
-    · exact .inr (.inl ⟨e', rfl, herr e' (.nestedInnerErr hkn hset hx₂)⟩)
+    · exact .inr (.inl ⟨e₀, e', rfl, herr e' (.nestedInnerErr hkn hset hx₂)⟩)
   · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.ok (c.ρ, c.mem, c.log)) :=
       .run (by rw [hcst]; exact .start hR) rfl
@@ -1071,7 +1072,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
       ∀ {pts : List Idx} {rT : Res (List Log)},
         STree.IterExec tc mp.params body (tc.privateTransients body) pre pts rT →
         (∃ e, e.isUB = true ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
-        (∃ e, rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e)) ∨
+        (∃ e e', rT = .err e ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.err e')) ∨
         ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs))
     (ih : ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St},
       STree.ListExec tc full gb {} (cs ++ rest) cst r → StRel st cst → SeqOut ctx s o cst.ρ st tc full gb rest r)
@@ -1090,7 +1091,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
       | ok _ => rw [hd₀] at hd; cases hd
       | err e' =>
         rw [hd₀] at hd; cases hd
-        exact .inr (.inl ⟨_, rfl, .mapSetupErr hk (by rw [mapSetup_dyn hkeys hok, hd₀]; rfl)⟩)
+        exact .inr (.inl ⟨_, _, rfl, .mapSetupErr hk (by rw [mapSetup_dyn hkeys hok, hd₀]; rfl)⟩)
     · rw [hshift, dynReadAcc_shift] at hd
       cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
       | err _ => rw [hd₀] at hd; cases hd
@@ -1113,7 +1114,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
           | ok _ => rw [hp] at hs; cases hs
           | err e' =>
             rw [hp] at hs hset; cases hs
-            exact .inr (.inl ⟨_, rfl, .mapSetupErr hk hset⟩)
+            exact .inr (.inl ⟨_, _, rfl, .mapSetupErr hk hset⟩)
         · rw [hsetT] at hs
           cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
           | err _ => rw [hp] at hs; cases hs
@@ -1122,9 +1123,9 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
             simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
             obtain ⟨rfl, rfl⟩ := hs
             rcases hiter (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
-                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', hy⟩ | ⟨logs, hl, -⟩
+                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨logs, hl, -⟩
             · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
-            · cases he'; exact .inr (.inl ⟨_, rfl, .mapIterErr hk hset hy⟩)
+            · cases he'; exact .inr (.inl ⟨_, _, rfl, .mapIterErr hk hset hy⟩)
             · cases hl
         · rw [hsetT] at hs
           cases hp : ctx.rangePoints (Valuation.setAll cst.ρ syms₀) y.mem mp.range with
@@ -1134,7 +1135,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
             simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at hs hset
             obtain ⟨rfl, rfl⟩ := hs
             rcases hiter (pre := { cst.withSt (y.shift cst.log) with ρ := Valuation.setAll cst.ρ syms₀ }) (st₁ := y)
-                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', he', -⟩ | ⟨logs', hl, hy⟩
+                rfl hyv hi with ⟨e', hu, hy⟩ | ⟨e', e'', he', -⟩ | ⟨logs', hl, hy⟩
             · exact .inl ⟨e', hu, .mapIterErr hk hset hy⟩
             · cases he'
             · cases hl
@@ -1149,7 +1150,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
               | err e' =>
                 rw [hy'] at hfin
                 rcases hfin with ⟨e'', hf, rfl⟩ | ⟨cst', hf, -⟩
-                · cases hf; exact .inr (.inl ⟨_, rfl, hy' ▸ NodeExec.mapScope hk hset hy⟩)
+                · cases hf; exact .inr (.inl ⟨_, _, rfl, hy' ▸ NodeExec.mapScope hk hset hy⟩)
                 · cases hf
               | ok y₂ =>
                 rw [hy'] at hfin
@@ -1198,7 +1199,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       | err e' =>
         rw [hy] at hf
         cases hf
-        exact .inr (.inl ⟨_, rfl, (hfold st.forNode).trans hy ▸ NodeExec.simple hsimp⟩)
+        exact .inr (.inl ⟨_, _, rfl, (hfold st.forNode).trans hy ▸ NodeExec.simple hsimp⟩)
     · rw [hshift] at hf
       cases hy : (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) st.forNode with
       | err e' => rw [hy] at hf; cases hf

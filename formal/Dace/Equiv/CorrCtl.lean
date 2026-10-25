@@ -279,41 +279,41 @@ namespace Corr
 open STree
 
 /-- The tree outcome `r` is matched by the SDFG outcomes `X`: `X` may be
-undefined, or has the same error, or the same control-flow state with the
+undefined, or has an error when the tree fails, or the same control-flow state with the
 corresponding signal. -/
 def Out (X : Res (Ctl × CSt) → Prop) (r : Res (TCtl × CSt)) : Prop :=
-  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e, r = .err e ∧ X (.err e)) ∨
+  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e e', r = .err e ∧ X (.err e')) ∨
     ∃ ctl c, r = .ok (ctl.toT, c) ∧ X (.ok (ctl, c))
 
 theorem Out.mono {X Y : Res (Ctl × CSt) → Prop} (hXY : ∀ r, X r → Y r) {r : Res (TCtl × CSt)} :
     Out X r → Out Y r
   | .inl ⟨e, hu, h⟩ => .inl ⟨e, hu, hXY _ h⟩
-  | .inr (.inl ⟨e, hr, h⟩) => .inr (.inl ⟨e, hr, hXY _ h⟩)
+  | .inr (.inl ⟨e, e', hr, h⟩) => .inr (.inl ⟨e, e', hr, hXY _ h⟩)
   | .inr (.inr ⟨ctl, c, hr, h⟩) => .inr (.inr ⟨ctl, c, hr, hXY _ h⟩)
 
 /-- The same for the outcome of one tree node (with its sibling context,
 whose pending inputs are empty). -/
 def NOut (X : Res (Ctl × CSt) → Prop) (res : Res NodeOut) : Prop :=
-  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e, res = .err e ∧ X (.err e)) ∨
+  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e e', res = .err e ∧ X (.err e')) ∨
     ∃ sc ctl c, sc.pending = {} ∧ res = .ok (sc, ctl.toT, c) ∧ X (.ok (ctl, c))
 
 theorem Out.scopeOut {X : Res (Ctl × CSt) → Prop} {r : Res (TCtl × CSt)} (h : Out X r) : NOut X (scopeOut r) := by
-  rcases h with ⟨e, hu, h⟩ | ⟨e, rfl, h⟩ | ⟨ctl, c, rfl, h⟩
+  rcases h with ⟨e, hu, h⟩ | ⟨e, e', rfl, h⟩ | ⟨ctl, c, rfl, h⟩
   · exact .inl ⟨e, hu, h⟩
-  · exact .inr (.inl ⟨e, rfl, h⟩)
+  · exact .inr (.inl ⟨e, e', rfl, h⟩)
   · exact .inr (.inr ⟨{}, ctl, c, rfl, rfl, h⟩)
 
 /-- The outcome of a block whose tree segment is followed by `rest`: as
 `Out`, except that a normal end continues with `P` (the run of `rest`). -/
 def BOut (X : Res (Ctl × CSt) → Prop) (P : CSt → Prop) (r : Res (TCtl × CSt)) : Prop :=
-  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e, r = .err e ∧ X (.err e)) ∨
+  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e e', r = .err e ∧ X (.err e')) ∨
     (∃ ctl c, ctl ≠ .normal ∧ r = .ok (ctl.toT, c) ∧ X (.ok (ctl, c))) ∨
     ∃ c, P c ∧ X (.ok (.normal, c))
 
 theorem BOut.mono {X Y : Res (Ctl × CSt) → Prop} (hXY : ∀ r, X r → Y r) {P : CSt → Prop}
     {r : Res (TCtl × CSt)} : BOut X P r → BOut Y P r
   | .inl ⟨e, hu, h⟩ => .inl ⟨e, hu, hXY _ h⟩
-  | .inr (.inl ⟨e, hr, h⟩) => .inr (.inl ⟨e, hr, hXY _ h⟩)
+  | .inr (.inl ⟨e, e', hr, h⟩) => .inr (.inl ⟨e, e', hr, hXY _ h⟩)
   | .inr (.inr (.inl ⟨ctl, c, hn, hr, h⟩)) => .inr (.inr (.inl ⟨ctl, c, hn, hr, hXY _ h⟩))
   | .inr (.inr (.inr ⟨c, hp, h⟩)) => .inr (.inr (.inr ⟨c, hp, hXY _ h⟩))
 
@@ -403,10 +403,10 @@ theorem node_list {tc : TCtx} {full : List SNode} {gb : Bool} {sc₀ : SibCtx} {
     (hn : ∀ res, STree.NodeExec tc sc₀ n cst res → NOut X res) (hx : STree.ListExec tc full gb sc₀ (n :: rest) cst r) :
     BOut X (fun c => STree.ListExec tc full gb {} rest c r) r := by
   obtain ⟨res, hres, hk⟩ := list_cases hx
-  rcases hn res hres with ⟨e, hu, hX⟩ | ⟨e, rfl, hX⟩ | ⟨sc, ctl, c, hsc, rfl, hX⟩
+  rcases hn res hres with ⟨e, hu, hX⟩ | ⟨e, e', rfl, hX⟩ | ⟨sc, ctl, c, hsc, rfl, hX⟩
   · exact .inl ⟨e, hu, hX⟩
   · rcases hk with ⟨e', he', rfl⟩ | ⟨_, _, he', _⟩ | ⟨_, _, _, he', _⟩ | ⟨_, _, _, he'⟩ <;> cases he'
-    exact .inr (.inl ⟨e, rfl, hX⟩)
+    exact .inr (.inl ⟨e, e', rfl, hX⟩)
   · rcases hk with ⟨_, he', _⟩ | ⟨sc', c', he', hr⟩ | ⟨sc', ctl', c', he', hj, rfl⟩ | ⟨_, l, _, he'⟩
     · cases he'
     · simp only [Res.ok.injEq, Prod.mk.injEq] at he'
@@ -556,7 +556,7 @@ mutual
 
 theorem LoopExecT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
     STree.LoopExec tc lm body cst r → Out (LoopExec ctx cst l) r
-  | .initErr hi => .inr (.inl ⟨_, rfl, .initErr (by rw [← hm.init, ← applyAssign?_tc he]; exact hi)⟩)
+  | .initErr hi => .inr (.inl ⟨_, _, rfl, .initErr (by rw [← hm.init, ← applyAssign?_tc he]; exact hi)⟩)
   | .guardFirst hi hv hg => (LoopGuardT.matched hg).mono fun _ h =>
       .guardFirst (by rw [← hm.init, ← applyAssign?_tc he]; exact hi) (hm.inverted ▸ hv) h
   | .bodyFirst hi hv hb => (LoopIterT.matched hb).mono fun _ h =>
@@ -564,7 +564,7 @@ theorem LoopExecT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
 
 theorem LoopGuardT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
     STree.LoopGuard tc lm body cst r → Out (LoopGuard ctx cst l) r
-  | .condErr hc => .inr (.inl ⟨_, rfl, .condErr (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc)⟩)
+  | .condErr hc => .inr (.inl ⟨_, _, rfl, .condErr (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc)⟩)
   | .exit hc => .inr (.inr ⟨.normal, _, rfl, .exit (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc)⟩)
   | .enter hc hb => (LoopIterT.matched hb).mono fun _ h =>
       .enter (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc) h
@@ -572,12 +572,12 @@ theorem LoopGuardT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
 theorem LoopIterT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
     STree.LoopIter tc lm body cst r → Out (LoopIter ctx cst l) r
   | .bodyErr hb => by
-    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨ctl, c, hr, _⟩
+    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, e', hr, h⟩ | ⟨ctl, c, hr, _⟩
     · exact .inl ⟨e, hu, .bodyErr h⟩
-    · cases hr; exact .inr (.inl ⟨_, rfl, .bodyErr h⟩)
+    · cases hr; exact .inr (.inl ⟨_, _, rfl, .bodyErr h⟩)
     · cases hr
   | .ret hb => by
-    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, hr, _⟩ | ⟨ctl, c, hr, h⟩
+    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, e', hr, _⟩ | ⟨ctl, c, hr, h⟩
     · exact .inl ⟨e, hu, .bodyErr h⟩
     · cases hr
     · simp only [Res.ok.injEq, Prod.mk.injEq] at hr
@@ -585,7 +585,7 @@ theorem LoopIterT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
       cases Ctl.toT_inj (a := .ret) hc
       exact .inr (.inr ⟨.ret, _, rfl, .ret h⟩)
   | .brk hb => by
-    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, hr, _⟩ | ⟨ctl, c, hr, h⟩
+    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, e', hr, _⟩ | ⟨ctl, c, hr, h⟩
     · exact .inl ⟨e, hu, .bodyErr h⟩
     · cases hr
     · simp only [Res.ok.injEq, Prod.mk.injEq] at hr
@@ -593,13 +593,13 @@ theorem LoopIterT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
       cases Ctl.toT_inj (a := .brk) hc
       exact .inr (.inr ⟨.normal, _, rfl, .brk h⟩)
   | .gotoOut hb => by
-    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, hr, _⟩ | ⟨ctl, c, hr, h⟩
+    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, e', hr, _⟩ | ⟨ctl, c, hr, h⟩
     · exact .inl ⟨e, hu, .bodyErr h⟩
     · cases hr
     · simp only [Res.ok.injEq, Prod.mk.injEq] at hr
       exact absurd hr.1.symm (Ctl.toT_ne_goto _ _)
   | .tail hb hc ht => by
-    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, hr, _⟩ | ⟨ctl, c, hr, h⟩
+    rcases hbody _ _ hb with ⟨e, hu, h⟩ | ⟨e, e', hr, _⟩ | ⟨ctl, c, hr, h⟩
     · exact .inl ⟨e, hu, .bodyErr h⟩
     · cases hr
     · simp only [Res.ok.injEq, Prod.mk.injEq] at hr
@@ -609,15 +609,15 @@ theorem LoopIterT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
 
 theorem LoopTailT.matched {cst : CSt} {r : Res (TCtl × CSt)} :
     STree.LoopTail tc lm body cst r → Out (LoopTail ctx cst l) r
-  | .updateErr hv hu => .inr (.inl ⟨_, rfl, .updateErr (by rw [← hm.ubc]; exact hv)
+  | .updateErr hv hu => .inr (.inl ⟨_, _, rfl, .updateErr (by rw [← hm.ubc]; exact hv)
       (by rw [← hm.update, ← applyAssign?_tc he]; exact hu)⟩)
   | .updateGuard hv hu hg => (LoopGuardT.matched hg).mono fun _ h =>
       .updateGuard (by rw [← hm.ubc]; exact hv) (by rw [← hm.update, ← applyAssign?_tc he]; exact hu) h
-  | .condFirstErr hv hc => .inr (.inl ⟨_, rfl, .condFirstErr (by rw [← hm.ubc]; exact hv)
+  | .condFirstErr hv hc => .inr (.inl ⟨_, _, rfl, .condFirstErr (by rw [← hm.ubc]; exact hv)
       (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc)⟩)
   | .condFirstExit hv hc => .inr (.inr ⟨.normal, _, rfl, .condFirstExit (by rw [← hm.ubc]; exact hv)
       (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc)⟩)
-  | .condFirstUpdateErr hv hc hu => .inr (.inl ⟨_, rfl, .condFirstUpdateErr
+  | .condFirstUpdateErr hv hc hu => .inr (.inl ⟨_, _, rfl, .condFirstUpdateErr
       (by rw [← hm.ubc]; exact hv) (by rw [← hm.cond, ← evalBoolR_tc he]; exact hc)
       (by rw [← hm.update, ← applyAssign?_tc he]; exact hu)⟩)
   | .condFirstNext hv hc hu hb => (LoopIterT.matched hb).mono fun _ h =>
@@ -801,9 +801,9 @@ theorem HeadOk.of_append {l rest : List SNode} (h : HeadOk (l ++ rest)) : HeadOk
 /-- A block outcome followed by the empty list is a list outcome. -/
 theorem BOut.toOut {X : Res (Ctl × CSt) → Prop} {tc : TCtx} {full : List SNode} {gb : Bool} {r : Res (TCtl × CSt)}
     (h : BOut X (fun c => STree.ListExec tc full gb {} [] c r) r) : Out X r := by
-  rcases h with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨ctl, c, -, hr, h⟩ | ⟨c, hl, h⟩
+  rcases h with ⟨e, hu, h⟩ | ⟨e, e', hr, h⟩ | ⟨ctl, c, -, hr, h⟩ | ⟨c, hl, h⟩
   · exact .inl ⟨e, hu, h⟩
-  · exact .inr (.inl ⟨e, hr, h⟩)
+  · exact .inr (.inl ⟨e, e', hr, h⟩)
   · exact .inr (.inr ⟨ctl, c, hr, h⟩)
   · rw [STree.ListExec_nil rfl hl]
     exact .inr (.inr ⟨.normal, c, rfl, h⟩)
@@ -848,7 +848,7 @@ theorem chain_step {full : List SNode} {gb : Bool} {sc : SibCtx} {n : SNode} {c 
   rcases hinv res hres with ⟨e, hc, rfl⟩ | ⟨hc, rfl⟩ | ⟨r', hc, hb, rfl⟩
   · rw [evalBoolR_tc he] at hc
     rcases hk with ⟨e', he', rfl⟩ | ⟨_, _, he', _⟩ | ⟨_, _, _, he', _⟩ | ⟨_, _, _, he'⟩ <;> cases he'
-    exact .inr (.inl ⟨e, rfl, .condErr hc⟩)
+    exact .inr (.inl ⟨e, _, rfl, .condErr hc⟩)
   · rw [evalBoolR_tc he] at hc
     rcases hk with ⟨_, he', _⟩ | ⟨sc', c', he', hr⟩ | ⟨_, ctl, _, he', hj, _⟩ | ⟨_, _, _, he'⟩
     · cases he'
@@ -861,10 +861,10 @@ theorem chain_step {full : List SNode} {gb : Bool} {sc : SibCtx} {n : SNode} {c 
     · simp only [Res.ok.injEq, Prod.mk.injEq] at he'
       cases he'.2.1
   · rw [evalBoolR_tc he] at hc
-    rcases hbody r' hb with ⟨e, hu, h⟩ | ⟨e, rfl, h⟩ | ⟨ctl, c', rfl, h⟩
+    rcases hbody r' hb with ⟨e, hu, h⟩ | ⟨e, e', rfl, h⟩ | ⟨ctl, c', rfl, h⟩
     · exact .inl ⟨e, hu, .taken hc (.start h)⟩
     · rcases hk with ⟨e', he', rfl⟩ | ⟨_, _, he', _⟩ | ⟨_, _, _, he', _⟩ | ⟨_, _, _, he'⟩ <;> cases he'
-      exact .inr (.inl ⟨e, rfl, .taken hc (.start h)⟩)
+      exact .inr (.inl ⟨e, _, rfl, .taken hc (.start h)⟩)
     · rcases hk with ⟨_, he', _⟩ | ⟨sc', c'', he', hr⟩ | ⟨_, ctl', _, he', hj, rfl⟩ | ⟨_, _, _, he'⟩
       · cases he'
       · simp only [chainOut, Res.map, Res.ok.injEq, Prod.mk.injEq] at he'
@@ -890,18 +890,18 @@ theorem RegCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} :
       {r : Res (TCtl × CSt)}, HeadOk rest → STree.ListExec tc full gb {} (cs ++ rest) cst r →
       BOut (RegionAt ctx rg cst bid) (fun c => STree.ListExec tc full gb {} rest c r) r
   | .last hb hc hout, full, gb, rest, cst, r, hh, hx => by
-    rcases BlockCorr.matched hc hh hx with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨ctl, c, hn, hr, h⟩ | ⟨c, hl, h⟩
+    rcases BlockCorr.matched hc hh hx with ⟨e, hu, h⟩ | ⟨e, e', hr, h⟩ | ⟨ctl, c, hn, hr, h⟩ | ⟨c, hl, h⟩
     · exact .inl ⟨e, hu, .blockErr hb h⟩
-    · exact .inr (.inl ⟨e, hr, .blockErr hb h⟩)
+    · exact .inr (.inl ⟨e, _, hr, .blockErr hb h⟩)
     · exact .inr (.inr (.inl ⟨ctl, c, hn, hr, .exit hb h hn⟩))
     · exact .inr (.inr (.inr ⟨c, hl, .stop hb h (trueEdges_nil hout)⟩))
   | .step hb hc hout hu hp ha hs hh h, full, gb, rest, cst, r, hhr, hx => by
     have hn : (_ : List (Sym × Expr)).map Prod.fst |>.Nodup := ((hp.map Prod.fst).nodup_iff).1 hs.nodup
     rw [List.append_assoc] at hx
     rcases BlockCorr.matched hc (hh.append hhr) hx with
-      ⟨e, hu', h₁⟩ | ⟨e, hr, h₁⟩ | ⟨ctl, c, hn', hr, h₁⟩ | ⟨c, hl, h₁⟩
+      ⟨e, hu', h₁⟩ | ⟨e, e', hr, h₁⟩ | ⟨ctl, c, hn', hr, h₁⟩ | ⟨c, hl, h₁⟩
     · exact .inl ⟨e, hu', .blockErr hb h₁⟩
-    · exact .inr (.inl ⟨e, hr, .blockErr hb h₁⟩)
+    · exact .inr (.inl ⟨e, _, hr, .blockErr hb h₁⟩)
     · exact .inr (.inr (.inl ⟨ctl, c, hn', hr, .exit hb h₁ hn'⟩))
     · rw [List.append_assoc] at hl
       rcases assigns_run he ha hl with ⟨e, -, ha'⟩ | ⟨c₂, ha', hl'⟩
@@ -917,9 +917,9 @@ theorem BlockCorr.matched {b : Block} {cs : List SNode} :
       {r : Res (TCtl × CSt)}, HeadOk rest → STree.ListExec tc full gb {} (cs ++ rest) cst r →
       BOut (BlockExec ctx cst b) (fun c => STree.ListExec tc full gb {} rest c r) r
   | .state hs, full, gb, rest, cst, r, _, hx => by
-    rcases hs.matched he hcons hw hx with ⟨e, hu, h⟩ | ⟨e, hr, h⟩ | ⟨c, hl, h⟩
+    rcases hs.matched he hcons hw hx with ⟨e, hu, h⟩ | ⟨e, e', hr, h⟩ | ⟨c, hl, h⟩
     · exact .inl ⟨e, hu, .state h⟩
-    · exact .inr (.inl ⟨e, hr, .state h⟩)
+    · exact .inr (.inl ⟨e, _, hr, .state h⟩)
     · exact .inr (.inr (.inr ⟨c, hl, .state h⟩))
   | .loop (l := l) (body := body) hn hm hb, full, gb, rest, cst, r, hh, hx => by
     have hbody : ∀ c r', STree.ListExec tc body false {} body c r' → Out (RegionExec ctx c l.body) r' :=
@@ -1051,12 +1051,19 @@ theorem ProgCorrWith.unflat (hc : ProgCorrWith I g t π) (hw : ∀ op v, I.wcr o
     · exact .inl ⟨e, hu, _, hx₂, rfl⟩
     · exact .inr (.inr ⟨_, rfl, x₂.2.1, ⟨_, hx₂, rfl⟩, obsEq_of_sim hc.iface hm⟩)
 
+/-- A matched error is in particular some error. -/
+theorem relax_err {α : Type} {A C : Prop} {r : Res α} {X : ErrReason → Prop}
+    (h : A ∨ (∃ e, r = .err e ∧ X e) ∨ C) : A ∨ (∃ e e', r = .err e ∧ X e') ∨ C :=
+  h.imp_right (Or.imp_left fun ⟨e, hr, hx⟩ => ⟨e, e, hr, hx⟩)
+
 /-- **Programs**: every outcome of the tree is an outcome of the SDFG (an
-error the same, a memory observationally equal), or the SDFG may end in
-undefined behavior. -/
+error an error, possibly another one: error messages name containers, which
+nested SDFGs may rename; a memory observationally equal), or the SDFG may
+end in undefined behavior. -/
+
 theorem ProgCorrWith.exec (hc : ProgCorrWith I g t π) (hw : ∀ op v, I.wcr op .undef v = .undef)
     (hna : ∀ n, m₀.aliases n = none) {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
-    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ (∃ e, r = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨
+    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ (∃ e e', r = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e')) ∨
       ∃ m, r = .ok m ∧ ∃ m', SDFG.Exec I g ρ₀ m₀ (.ok m') ∧ obsEq g.interface m m' := by
   obtain ⟨res, hx, rfl⟩ := ht
   have he : (TCtx.ofTree I t).ctx.eraseL = (flatCtx I g t π).eraseL := by
@@ -1065,20 +1072,20 @@ theorem ProgCorrWith.exec (hc : ProgCorrWith I g t π) (hw : ∀ op v, I.wcr op 
     simp [rootStart, hc.consts, hc.start, SDFG.startMem]
   rw [hstart] at hx
   rcases (hc.reg.matched he rfl hw HeadOk.nil (ListExec.append_nil hx)).toOut with
-    ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩
+    ⟨e, hu, hy⟩ | ⟨e, e', rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩
   · rcases hc.unflat hw hna (.err (.start hy)) with h | ⟨e', he', h⟩ | ⟨m, hm, -⟩
     · exact .inl h
     · cases he'; exact .inl ⟨_, hu, h⟩
     · cases hm
-  · rcases hc.unflat hw hna (.err (.start hy)) with h | h | ⟨m, hm, -⟩
+  · rcases hc.unflat hw hna (.err (.start hy)) with h | ⟨e₁, he₁, h⟩ | ⟨m, hm, -⟩
     · exact .inl h
-    · exact .inr (.inl h)
+    · exact .inr (.inl ⟨e, e₁, rfl, h⟩)
     · cases hm
   · cases ctl with
-    | normal => exact hc.unflat hw hna (.run (.start hy) rfl)
-    | ret => exact hc.unflat hw hna (.run (.start hy) rfl)
-    | brk => exact hc.unflat hw hna (.escape (.start hy) rfl)
-    | cont => exact hc.unflat hw hna (.escape (.start hy) rfl)
+    | normal => exact relax_err (hc.unflat hw hna (.run (.start hy) rfl))
+    | ret => exact relax_err (hc.unflat hw hna (.run (.start hy) rfl))
+    | brk => exact relax_err (hc.unflat hw hna (.escape (.start hy) rfl))
+    | cont => exact relax_err (hc.unflat hw hna (.escape (.start hy) rfl))
 
 end Exec
 
@@ -1090,11 +1097,11 @@ theorem ProgCorr.refines {g : SDFG} {t : STree} (hc : ∀ I, ProgCorr I g t) (hs
   · exact .inl hmu
   · refine .inr fun r hr => ?_
     obtain ⟨π, hcπ⟩ := hc I
-    rcases hcπ.exec hpre.1.undef_absorb hpre.2.2 hr with ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨m, rfl, m', hy, ho⟩
+    rcases hcπ.exec hpre.1.undef_absorb hpre.2.2 hr with ⟨e, hu, hy⟩ | ⟨e, e', rfl, hy⟩ | ⟨m, rfl, m', hy, ho⟩
     · exact absurd ⟨e, hu, hy⟩ hmu
     · rcases hs I ρ₀ m₀ hpre with h | h
       · exact absurd h hmu
-      · exact absurd hy (h e)
+      · exact absurd hy (h e')
     · exact ⟨m, rfl, m', hy, ho⟩
 
 end Corr

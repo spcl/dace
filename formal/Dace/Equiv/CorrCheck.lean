@@ -1102,7 +1102,7 @@ theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) :
 outcome of the SDFG, or the SDFG may end in undefined behavior. -/
 theorem corr?_exec {g : SDFG} {t : STree} (h : corr? g t = true) {I : Interp} (hl : I.Lawful) {ρ₀ : Valuation}
     {m₀ : Mem} (hna : ∀ n, m₀.aliases n = none) {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
-    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ (∃ e, r = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨
+    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ (∃ e e', r = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e')) ∨
       ∃ m, r = .ok m ∧ ∃ m', SDFG.Exec I g ρ₀ m₀ (.ok m') ∧ obsEq g.interface m m' :=
   let ⟨_, hc⟩ := corr?_sound h I
   hc.exec hl.undef_absorb hna ht
