@@ -42,8 +42,8 @@ theorem unionAll_single (g : Log) : Log.unionAll [g] = g := by
 /-- Allocating transients that are no streams makes the memory less
 initialized (`Decisions.md#D68`). -/
 theorem allocate_left_one (ctx : Ctx) (ts : List Name) (hs : ∀ t ∈ ts, ctx.isStream t = false) {m : Mem} :
-    Mem.Sim 1 (fun _ => True) (ctx.allocate ts m) m :=
-  allocate_left ctx (Mem.Sim.refl m) ts hs
+    Mem.Sim 1 (fun _ => True) (fun _ => True) (ctx.allocate ts m) m :=
+  allocate_left ctx (Mem.Sim.refl m) ts hs fun _ _ => trivial
 
 section State
 
@@ -77,7 +77,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
     have hst₀ : st₀ = { base with log := cst.log } := rfl
     have hp : bindViews ctx cst.ρ s (s.topLevelOf c) base = .ok base := bindViews_eq cst.ρ h _ _
     -- the component run from the allocated memory simulates the one from the state's memory
-    have hab : St.Sim 1 (fun _ => True) abase base :=
+    have hab : St.Sim 1 (fun _ => True) (fun _ => True) abase base :=
       ⟨Corr.allocate_left_one ctx (ctx.stateTransients s) hsc.noStreams, (Log.ren_one _).symm, rfl, Log.NamesP.true _⟩
     have hstate : ∀ {rc : Res St}, OrderedExec ctx cst.ρ s c (s.topLevelOf c) base rc →
         (∀ e, rc = .err e → ∃ e', StateExec ctx cst s (.err e') ∧ (e'.isUB = true ∨ e' = e)) ∧
