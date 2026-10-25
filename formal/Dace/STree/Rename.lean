@@ -20,7 +20,11 @@ containers, may differ.
   names must not occur in them (`ExprFixed`), which also keeps symbols and
   containers apart (a bare name may be a symbol, `Decisions.md#D33`).
 * `Res.get?`: an outcome without its error.  The leaf functions renamed
-  agree on `get?` (`*_ren` lemmas).
+  agree on `get?` (`Ctx.Ren.*`, `TCtx.Ren.*`, `TCtx.Ren.stepLeaf`).
+* `STree.NodeExec.ren`, `STree.ListExec.ren`, …: a run of a tree list is
+  matched by a run of the renamed list, with the same final state, for the
+  nodes `SNode.renOk` accepts (decidable: no consume scopes, expressions over
+  fixed names, map scopes with agreeing private transients).
 -/
 
 set_option autoImplicit false
@@ -676,11 +680,35 @@ end Ctx.Ren
 
 /-! ## Tree leaves -/
 
+/-- The names read by the expressions of a loop's metadata. -/
+def LoopMeta.exprNames (l : LoopMeta) : List Name :=
+  l.cond.expr.names ++ ((l.init.map (·.rhs.names)).getD []) ++ ((l.update.map (·.rhs.names)).getD [])
+
+theorem LoopMeta.fixed_cond {σ : Equiv.Perm Name} {l : LoopMeta} (h : NamesFixed σ l.exprNames) :
+    NamesFixed σ l.cond.expr.names := fun x hx => h x (by simp [LoopMeta.exprNames, hx])
+
+theorem LoopMeta.fixed_init {σ : Equiv.Perm Name} {l : LoopMeta} (h : NamesFixed σ l.exprNames) :
+    ∀ a ∈ l.initAssign, NamesFixed σ a.2.names := fun a ha x hx => h x (by
+  cases hi : l.init with
+  | none => simp [LoopMeta.initAssign, hi] at ha
+  | some i =>
+    simp only [LoopMeta.initAssign, hi, Option.map_some, Option.mem_def, Option.some.injEq] at ha
+    subst ha
+    simp [LoopMeta.exprNames, hi, hx])
+
+theorem LoopMeta.fixed_update {σ : Equiv.Perm Name} {l : LoopMeta} (h : NamesFixed σ l.exprNames) :
+    ∀ a ∈ l.updateAssign, NamesFixed σ a.2.names := fun a ha x hx => h x (by
+  cases hu : l.update with
+  | none => simp [LoopMeta.updateAssign, hu] at ha
+  | some u =>
+    simp only [LoopMeta.updateAssign, hu, Option.map_some, Option.mem_def, Option.some.injEq] at ha
+    subst ha
+    simp [LoopMeta.exprNames, hu, hx])
+
 /-- The names read by the expressions of a node itself (not its children). -/
 def SNode.exprNames : SNode → List Name
   | .assign _ v => v.expr.names
-  | .loopScope l _ | .forScope l _ | .whileScope l _ | .doWhileScope l _ =>
-    l.cond.expr.names ++ ((l.init.map (·.rhs.names)).getD []) ++ ((l.update.map (·.rhs.names)).getD [])
+  | .loopScope l _ | .forScope l _ | .whileScope l _ | .doWhileScope l _ => l.exprNames
   | .ifScope c _ | .stateIfScope c _ | .elifScope c _ => c.expr.names
   | .mapScope mp _ => mp.range.names
   | .consumeScope c _ => c.numPes.names ++ (c.condition.map Expr.names).getD []
@@ -932,5 +960,370 @@ theorem stepLeaf (sc : SibCtx) (n : SNode) (hn : NamesFixed σ n.exprNames) (cst
   | _ => rfl
 
 end TCtx.Ren
+
+/-! ## The fragment -/
+
+/-- Are all names of the list fixed by `σ`? -/
+def fixedB (σ : Equiv.Perm Name) (xs : List Name) : Bool := xs.all fun x => σ x == x
+
+theorem fixedB_iff {σ : Equiv.Perm Name} {xs : List Name} : fixedB σ xs = true ↔ NamesFixed σ xs := by
+  simp [fixedB, NamesFixed]
+
+mutual
+
+/-- The nodes the renaming theorem covers: no consume scopes, expressions
+reading only names fixed by `σ`, and map scopes whose private transients
+agree between the renamed and the original context. -/
+def SNode.renOk (σ : Equiv.Perm Name) (tc' tc : TCtx) : SNode → Bool
+  | .namedRegion _ cs => SNodes.renOk σ tc' tc cs
+  | .gblock cs => SNodes.renOk σ tc' tc cs
+  | .loopScope l cs => fixedB σ l.exprNames && SNodes.renOk σ tc' tc cs
+  | .forScope l cs => fixedB σ l.exprNames && SNodes.renOk σ tc' tc cs
+  | .whileScope l cs => fixedB σ l.exprNames && SNodes.renOk σ tc' tc cs
+  | .doWhileScope l cs => fixedB σ l.exprNames && SNodes.renOk σ tc' tc cs
+  | .ifScope c cs => fixedB σ c.expr.names && SNodes.renOk σ tc' tc cs
+  | .stateIfScope c cs => fixedB σ c.expr.names && SNodes.renOk σ tc' tc cs
+  | .elifScope c cs => fixedB σ c.expr.names && SNodes.renOk σ tc' tc cs
+  | .elseScope cs => SNodes.renOk σ tc' tc cs
+  | .mapScope mp cs =>
+    fixedB σ mp.range.names && (tc'.privateTransients (SNodes.ren σ cs) == tc.privateTransients cs) &&
+      SNodes.renOk σ tc' tc cs
+  | .consumeScope _ _ => false
+  | .stateLabel _ => true
+  | .goto _ => true
+  | .breakNode => true
+  | .continueNode => true
+  | .assign _ v => fixedB σ v.expr.names
+  | n@(.taskletNode ..) | n@(.libraryCall ..) | n@(.copyNode ..) | n@(.dynScopeCopy ..) | n@(.viewNode ..)
+  | n@(.refSetNode ..) => fixedB σ n.exprNames
+
+def SNodes.renOk (σ : Equiv.Perm Name) (tc' tc : TCtx) : List SNode → Bool
+  | [] => true
+  | c :: cs => SNode.renOk σ tc' tc c && SNodes.renOk σ tc' tc cs
+
+end
+
+section Fragment
+
+variable {σ : Equiv.Perm Name} {tc' tc : TCtx}
+
+theorem SNode.renOk_fixed {n : SNode} (h : SNode.renOk σ tc' tc n = true) : NamesFixed σ n.exprNames := by
+  cases n <;> simp_all [SNode.renOk, SNode.exprNames, fixedB_iff, NamesFixed]
+
+theorem SNodes.renOk_cons {c : SNode} {cs : List SNode} :
+    SNodes.renOk σ tc' tc (c :: cs) = true ↔ SNode.renOk σ tc' tc c = true ∧ SNodes.renOk σ tc' tc cs = true := by
+  simp [SNodes.renOk]
+
+theorem SNodes.renOk_afterLabel {l : String} :
+    ∀ {xs ys : List SNode}, afterLabel l xs = some ys → SNodes.renOk σ tc' tc xs = true → SNodes.renOk σ tc' tc ys = true
+  | [], _, h, _ => by cases h
+  | x :: xs, ys, h, hok => by
+    rw [SNodes.renOk_cons] at hok
+    cases x with
+    | stateLabel name =>
+      simp only [afterLabel] at h
+      split at h
+      · cases h; exact hok.2
+      · exact SNodes.renOk_afterLabel h hok.2
+    | _ => simp only [afterLabel] at h; exact SNodes.renOk_afterLabel h hok.2
+
+theorem SNodes.renOk_resumeAt {gb : Bool} {full rest suffix : List SNode} {l : String}
+    (h : resumeAt gb full rest l = some suffix) (hf : SNodes.renOk σ tc' tc full = true)
+    (hr : SNodes.renOk σ tc' tc rest = true) : SNodes.renOk σ tc' tc suffix = true := by
+  unfold resumeAt at h
+  split at h
+  · cases h; exact SNodes.renOk_afterLabel (by assumption) hr
+  · split at h
+    · exact SNodes.renOk_afterLabel h hf
+    · cases h
+
+end Fragment
+
+/-! ## Renaming and tree structure -/
+
+section Structure
+
+variable (σ : Equiv.Perm Name)
+
+theorem SNode.ren_consumesPending (n : SNode) : (n.ren σ).consumesPending = n.consumesPending := by
+  cases n <;> rfl
+
+theorem SNode.ren_isDynScopeCopy (n : SNode) : (n.ren σ).isDynScopeCopy = n.isDynScopeCopy := by
+  cases n <;> rfl
+
+theorem SNode.ren_loop? (n : SNode) : (n.ren σ).loop? = n.loop?.map fun p => (p.1, SNodes.ren σ p.2) := by
+  cases n <;> rfl
+
+@[simp] theorem SibCtx.ren_pending_isEmpty (sc : SibCtx) : (sc.ren σ).pending.isEmpty = sc.pending.isEmpty := by
+  simp [SibCtx.ren, Pending.ren, Pending.isEmpty]
+
+@[simp] theorem SibCtx.ren_chain (sc : SibCtx) : (sc.ren σ).chain = sc.chain := rfl
+
+theorem afterLabel_ren (l : String) :
+    ∀ xs : List SNode, afterLabel l (SNodes.ren σ xs) = (afterLabel l xs).map (SNodes.ren σ)
+  | [] => rfl
+  | x :: xs => by
+    cases x <;> simp only [SNodes.ren, SNode.ren, afterLabel, afterLabel_ren l xs] <;> split <;> rfl
+
+theorem resumeAt_ren (gb : Bool) (full rest : List SNode) (l : String) :
+    resumeAt gb (SNodes.ren σ full) (SNodes.ren σ rest) l = (resumeAt gb full rest l).map (SNodes.ren σ) := by
+  unfold resumeAt
+  rw [afterLabel_ren, afterLabel_ren]
+  cases afterLabel l rest with
+  | some _ => rfl
+  | none => cases gb <;> rfl
+
+theorem scopeOut_get? {r₂ r₁ : Res (TCtl × CSt)} (h : r₂.get? = r₁.get?) :
+    (scopeOut r₂).get? = (scopeOut r₁).get?.map (NodeOut.ren σ) := by
+  simp only [scopeOut, Res.get?_map, h, Option.map_map]; rfl
+
+theorem chainOut_get? {r₂ r₁ : Res (TCtl × CSt)} (h : r₂.get? = r₁.get?) :
+    (chainOut r₂).get? = (chainOut r₁).get?.map (NodeOut.ren σ) := by
+  simp only [chainOut, Res.get?_map, h, Option.map_map]; rfl
+
+theorem dataflowOut_get? (r : Res CSt) : (dataflowOut r).get? = (dataflowOut r).get?.map (NodeOut.ren σ) := by
+  cases r <;> rfl
+
+theorem iterLog_get? (priv : List Name) {r₂ r₁ : Res (TCtl × CSt)} (h : r₂.get? = r₁.get?) :
+    (iterLog priv r₂).get? = (iterLog priv r₁).get? := by
+  cases r₂ <;> cases r₁ <;> simp only [Res.get?, Option.some.injEq, reduceCtorEq] at h
+  · subst h; rfl
+  · rfl
+
+end Structure
+
+/-! ## The renaming theorem -/
+
+theorem Res.exists_err_of_get? {α : Type} {r : Res α} (hr : r.get? = none) : ∃ e, r = .err e :=
+  Res.get?_eq_none.1 hr
+
+namespace STree
+
+section Rel
+
+variable {σ : Equiv.Perm Name} {tc' tc : TCtx} (h : TCtx.Ren σ tc' tc)
+include h
+
+mutual
+
+/-- **Renaming a tree run**: a run of a node is matched by a run of the
+renamed node in a context agreeing through `σ`, with the same result up to
+the error and the renamed sibling context. -/
+theorem NodeExec.ren {sc : SibCtx} {n : SNode} {cst : CSt} {r : Res NodeOut} :
+    STree.NodeExec tc sc n cst r → SNode.renOk σ tc' tc n = true →
+      ∃ r', STree.NodeExec tc' (sc.ren σ) (n.ren σ) cst r' ∧ r'.get? = r.get?.map (NodeOut.ren σ)
+  | .pendingErr hn hp, _ =>
+    ⟨_, .pendingErr (by rw [SNode.ren_consumesPending]; exact hn) (by simpa using hp), rfl⟩
+  | .leaf hp hs, hok => by
+    have hl := h.stepLeaf sc n (SNode.renOk_fixed hok) cst
+    rw [hs, Option.map_some] at hl
+    obtain ⟨r', hr', heq⟩ := Option.map_eq_some_iff.1 hl
+    exact ⟨r', .leaf (by simpa [SNode.ren_isDynScopeCopy] using hp) hr', heq⟩
+  | .namedRegion hp hl, hok => by
+    obtain ⟨r', hl', hr⟩ := ListExec.ren hl hok hok
+    exact ⟨_, .namedRegion (by simpa using hp) hl', scopeOut_get? σ hr⟩
+  | .gblock hp hl, hok => by
+    obtain ⟨r', hl', hr⟩ := ListExec.ren hl hok hok
+    exact ⟨_, .gblock (by simpa using hp) hl', scopeOut_get? σ hr⟩
+  | .ifCondErr hp hc, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    exact ⟨_, .ifCondErr (by simpa using hp) (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact hc), rfl⟩
+  | .ifSkip hp hc, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    exact ⟨_, .ifSkip (by simpa using hp) (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact hc), rfl⟩
+  | .ifTaken hp hc hl, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    obtain ⟨r', hl', hr⟩ := ListExec.ren hl hok.2 hok.2
+    exact ⟨_, .ifTaken (by simpa using hp) (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact hc) hl', chainOut_get? σ hr⟩
+  | .stateIfCondErr hp hc, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    exact ⟨_, .stateIfCondErr (by simpa using hp) (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact hc), rfl⟩
+  | .stateIfSkip hp hc, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    exact ⟨_, .stateIfSkip (by simpa using hp) (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact hc), rfl⟩
+  | .stateIfTaken hp hc hl, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    obtain ⟨r', hl', hr⟩ := ListExec.ren hl hok.2 hok.2
+    exact ⟨_, .stateIfTaken (by simpa using hp) (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact hc) hl',
+      scopeOut_get? σ hr⟩
+  | .elifNoChain hp hc, _ => ⟨_, .elifNoChain (by simpa using hp) hc, rfl⟩
+  | .elifAfterTaken hp hc, _ => ⟨_, .elifAfterTaken (by simpa using hp) hc, rfl⟩
+  | .elifCondErr hp hc he, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    exact ⟨_, .elifCondErr (by simpa using hp) hc (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact he), rfl⟩
+  | .elifSkip hp hc he, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    exact ⟨_, .elifSkip (by simpa using hp) hc (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact he), rfl⟩
+  | .elifTaken hp hc he hl, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff] at hok
+    obtain ⟨r', hl', hr⟩ := ListExec.ren hl hok.2 hok.2
+    exact ⟨_, .elifTaken (by simpa using hp) hc (by rw [h.ctx.evalBoolR _ _ _ hok.1]; exact he) hl',
+      chainOut_get? σ hr⟩
+  | .elseNoChain hp hc, _ => ⟨_, .elseNoChain (by simpa using hp) hc, rfl⟩
+  | .elseAfterTaken hp hc, _ => ⟨_, .elseAfterTaken (by simpa using hp) hc, rfl⟩
+  | .elseTaken hp hc hl, hok => by
+    obtain ⟨r', hl', hr⟩ := ListExec.ren hl hok hok
+    exact ⟨_, .elseTaken (by simpa using hp) hc hl', scopeOut_get? σ hr⟩
+  | @STree.NodeExec.loop _ _ n l cs _ _ hp hl hL, hok => by
+    have hok' : fixedB σ l.exprNames = true ∧ SNodes.renOk σ tc' tc cs = true := by
+      cases n <;> simp only [SNode.loop?, reduceCtorEq, Option.some.injEq, Prod.mk.injEq] at hl <;>
+        (obtain ⟨rfl, rfl⟩ := hl; simpa [SNode.renOk] using hok)
+    obtain ⟨r', hL', hr⟩ := LoopExec.ren hL (fixedB_iff.1 hok'.1) hok'.2
+    exact ⟨_, .loop (by simpa using hp) (by rw [SNode.ren_loop?, hl]; rfl) hL', scopeOut_get? σ hr⟩
+  | .mapSetupErr hs, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff, beq_iff_eq] at hok
+    exact ⟨_, .mapSetupErr (by rw [h.mapSetupT _ _ hok.1.1]; exact hs), rfl⟩
+  | .mapIterErr hs hi, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff, beq_iff_eq] at hok
+    obtain ⟨r', hi', hr⟩ := IterExec.ren hi hok.2
+    obtain ⟨e', rfl⟩ := Res.exists_err_of_get? (by rw [hr]; rfl)
+    exact ⟨_, .mapIterErr (by rw [h.mapSetupT _ _ hok.1.1]; exact hs) (by rw [hok.1.2]; exact hi'), rfl⟩
+  | .mapScope hs hi, hok => by
+    simp only [SNode.renOk, Bool.and_eq_true, fixedB_iff, beq_iff_eq] at hok
+    obtain ⟨r', hi', hr⟩ := IterExec.ren hi hok.2
+    rw [Res.get?_ok, Res.get?_eq_some] at hr
+    subst hr
+    refine ⟨_, .mapScope (by rw [h.mapSetupT _ _ hok.1.1]; exact hs) (by rw [hok.1.2]; exact hi'), ?_⟩
+    rw [h.scopeFinishT]
+    exact dataflowOut_get? σ _
+  | .consumeSetupErr _, hok => by simp [SNode.renOk] at hok
+  | .consumeTasksErr _ _, hok => by simp [SNode.renOk] at hok
+  | .consumeScope _ _, hok => by simp [SNode.renOk] at hok
+
+theorem ListExec.ren {full : List SNode} {gb : Bool} {sc : SibCtx} {cs : List SNode} {cst : CSt}
+    {r : Res (TCtl × CSt)} :
+    STree.ListExec tc full gb sc cs cst r → SNodes.renOk σ tc' tc full = true → SNodes.renOk σ tc' tc cs = true →
+      ∃ r', STree.ListExec tc' (SNodes.ren σ full) gb (sc.ren σ) (SNodes.ren σ cs) cst r' ∧ r'.get? = r.get?
+  | .nil hp, _, _ => ⟨_, .nil (by simpa using hp), rfl⟩
+  | .nilPending hp, _, _ => ⟨_, .nilPending (by simpa using hp), rfl⟩
+  | .headErr hn, _, hcs => by
+    obtain ⟨r', hn', hr⟩ := NodeExec.ren hn (SNodes.renOk_cons.1 hcs).1
+    obtain ⟨e', rfl⟩ := Res.exists_err_of_get? (by rw [hr]; rfl)
+    exact ⟨_, .headErr hn', rfl⟩
+  | .step hn hl, hf, hcs => by
+    obtain ⟨r', hn', hr⟩ := NodeExec.ren hn (SNodes.renOk_cons.1 hcs).1
+    rw [Res.get?_ok, Option.map_some, Res.get?_eq_some] at hr
+    subst hr
+    obtain ⟨r'', hl', hr'⟩ := ListExec.ren hl hf (SNodes.renOk_cons.1 hcs).2
+    exact ⟨_, .step hn' hl', hr'⟩
+  | .jump hn hc, _, hcs => by
+    obtain ⟨r', hn', hr⟩ := NodeExec.ren hn (SNodes.renOk_cons.1 hcs).1
+    rw [Res.get?_ok, Option.map_some, Res.get?_eq_some] at hr
+    subst hr
+    exact ⟨_, .jump hn' hc, rfl⟩
+  | .gotoResume hn hl hr, hf, hcs => by
+    obtain ⟨r', hn', hr'⟩ := NodeExec.ren hn (SNodes.renOk_cons.1 hcs).1
+    rw [Res.get?_ok, Option.map_some, Res.get?_eq_some] at hr'
+    subst hr'
+    have hsuf := SNodes.renOk_resumeAt hl hf (SNodes.renOk_cons.1 hcs).2
+    obtain ⟨r'', hl', hr''⟩ := ListExec.ren hr hf hsuf
+    exact ⟨_, .gotoResume hn' (by rw [resumeAt_ren, hl]; rfl) hl', hr''⟩
+  | .gotoEscape hn hl, _, hcs => by
+    obtain ⟨r', hn', hr'⟩ := NodeExec.ren hn (SNodes.renOk_cons.1 hcs).1
+    rw [Res.get?_ok, Option.map_some, Res.get?_eq_some] at hr'
+    subst hr'
+    exact ⟨_, .gotoEscape hn' (by rw [resumeAt_ren, hl]; rfl), rfl⟩
+
+theorem IterExec.ren {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt} {pts : List Idx}
+    {r : Res (List Log)} :
+    STree.IterExec tc params body priv pre pts r → SNodes.renOk σ tc' tc body = true →
+      ∃ r', STree.IterExec tc' params (SNodes.ren σ body) priv pre pts r' ∧ r'.get? = r.get?
+  | .nil, _ => ⟨_, .nil, rfl⟩
+  | .headErr hb he, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    have := iterLog_get? priv hr
+    rw [he] at this
+    obtain ⟨e', he'⟩ := Res.exists_err_of_get? this
+    exact ⟨_, .headErr hb' he', rfl⟩
+  | .tailErr hb hl hi, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    have := iterLog_get? priv hr
+    rw [hl, Res.get?_ok, Res.get?_eq_some] at this
+    obtain ⟨r'', hi', hr''⟩ := IterExec.ren hi hok
+    obtain ⟨e', rfl⟩ := Res.exists_err_of_get? (by rw [hr'']; rfl)
+    exact ⟨_, .tailErr hb' this hi', rfl⟩
+  | .cons hb hl hi, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    have := iterLog_get? priv hr
+    rw [hl, Res.get?_ok, Res.get?_eq_some] at this
+    obtain ⟨r'', hi', hr''⟩ := IterExec.ren hi hok
+    rw [Res.get?_ok, Res.get?_eq_some] at hr''
+    subst hr''
+    exact ⟨_, .cons hb' this hi', rfl⟩
+
+theorem LoopExec.ren {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} :
+    STree.LoopExec tc l body cst r → NamesFixed σ l.exprNames → SNodes.renOk σ tc' tc body = true →
+      ∃ r', STree.LoopExec tc' l (SNodes.ren σ body) cst r' ∧ r'.get? = r.get?
+  | .initErr hi, hl, _ => ⟨_, .initErr (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_init hl)]; exact hi), rfl⟩
+  | .guardFirst hi hv hg, hl, hok => by
+    obtain ⟨r', hg', hr⟩ := LoopGuard.ren hg hl hok
+    exact ⟨_, .guardFirst (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_init hl)]; exact hi) hv hg', hr⟩
+  | .bodyFirst hi hv hb, hl, hok => by
+    obtain ⟨r', hb', hr⟩ := LoopIter.ren hb hl hok
+    exact ⟨_, .bodyFirst (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_init hl)]; exact hi) hv hb', hr⟩
+
+theorem LoopGuard.ren {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} :
+    STree.LoopGuard tc l body cst r → NamesFixed σ l.exprNames → SNodes.renOk σ tc' tc body = true →
+      ∃ r', STree.LoopGuard tc' l (SNodes.ren σ body) cst r' ∧ r'.get? = r.get?
+  | .condErr hc, hl, _ => ⟨_, .condErr (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc), rfl⟩
+  | .exit hc, hl, _ => ⟨_, .exit (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc), rfl⟩
+  | .enter hc hb, hl, hok => by
+    obtain ⟨r', hb', hr⟩ := LoopIter.ren hb hl hok
+    exact ⟨_, .enter (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc) hb', hr⟩
+
+theorem LoopIter.ren {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} :
+    STree.LoopIter tc l body cst r → NamesFixed σ l.exprNames → SNodes.renOk σ tc' tc body = true →
+      ∃ r', STree.LoopIter tc' l (SNodes.ren σ body) cst r' ∧ r'.get? = r.get?
+  | .bodyErr hb, _, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    obtain ⟨e', rfl⟩ := Res.exists_err_of_get? (by rw [hr]; rfl)
+    exact ⟨_, .bodyErr hb', rfl⟩
+  | .ret hb, _, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    rw [Res.get?_ok, Res.get?_eq_some] at hr
+    subst hr
+    exact ⟨_, .ret hb', rfl⟩
+  | .brk hb, _, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    rw [Res.get?_ok, Res.get?_eq_some] at hr
+    subst hr
+    exact ⟨_, .brk hb', rfl⟩
+  | .gotoOut hb, _, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    rw [Res.get?_ok, Res.get?_eq_some] at hr
+    subst hr
+    exact ⟨_, .gotoOut hb', rfl⟩
+  | .tail hb hc ht, hl, hok => by
+    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
+    rw [Res.get?_ok, Res.get?_eq_some] at hr
+    subst hr
+    obtain ⟨r'', ht', hr''⟩ := LoopTail.ren ht hl hok
+    exact ⟨_, .tail hb' hc ht', hr''⟩
+
+theorem LoopTail.ren {l : LoopMeta} {body : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} :
+    STree.LoopTail tc l body cst r → NamesFixed σ l.exprNames → SNodes.renOk σ tc' tc body = true →
+      ∃ r', STree.LoopTail tc' l (SNodes.ren σ body) cst r' ∧ r'.get? = r.get?
+  | .updateErr hv hu, hl, _ =>
+    ⟨_, .updateErr hv (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_update hl)]; exact hu), rfl⟩
+  | .updateGuard hv hu hg, hl, hok => by
+    obtain ⟨r', hg', hr⟩ := LoopGuard.ren hg hl hok
+    exact ⟨_, .updateGuard hv (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_update hl)]; exact hu) hg', hr⟩
+  | .condFirstErr hv hc, hl, _ =>
+    ⟨_, .condFirstErr hv (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc), rfl⟩
+  | .condFirstExit hv hc, hl, _ =>
+    ⟨_, .condFirstExit hv (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc), rfl⟩
+  | .condFirstUpdateErr hv hc hu, hl, _ =>
+    ⟨_, .condFirstUpdateErr hv (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc)
+      (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_update hl)]; exact hu), rfl⟩
+  | .condFirstNext hv hc hu hb, hl, hok => by
+    obtain ⟨r', hb', hr⟩ := LoopIter.ren hb hl hok
+    exact ⟨_, .condFirstNext hv (by rw [h.ctx.evalBoolR _ _ _ (LoopMeta.fixed_cond hl)]; exact hc)
+      (by rw [h.ctx.applyAssign? _ _ (LoopMeta.fixed_update hl)]; exact hu) hb', hr⟩
+
+end
+
+end Rel
+
+end STree
 
 end Dace

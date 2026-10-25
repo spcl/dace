@@ -278,3 +278,6 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Corr.RegionAt.normal_of_states
 #print axioms Dace.seqPlain?_sound
 #print axioms Dace.OrderedExec.coh'
+
+#print axioms Dace.STree.NodeExec.ren
+#print axioms Dace.STree.ListExec.ren
