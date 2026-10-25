@@ -94,7 +94,7 @@ def test_block_reduction_short():
             output[j] += A[i, j]
 
     sdfg = sum.to_sdfg()
-    aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
+    aopt.auto_optimize(sdfg, dace.DeviceType.CPU, validate_all=True)
     code: str = sdfg.generate_code()[0].code
     assert "reduce(" in code and code.count("atomic") == 1
     _runtest2d(sdfg, 257, 2)

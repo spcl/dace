@@ -61,37 +61,20 @@ class SeparableMemlet(MemletPattern):
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
 
-        overapprox_range = subsets.Range(
-            [
-                (
-                    rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                    re.approx if isinstance(re, symbolic.SymExpr) else re,
-                    rs.approx if isinstance(rs, symbolic.SymExpr) else rs,
-                )
-                for rb, re, rs in node_range
-            ]
-        )
+        exact_range = subsets.Range([(_exact(rb), _exact(re), _exact(rs)) for rb, re, rs in node_range])
 
         for dim in range(data_dims):
             dexprs = []
             for expr in expressions:
                 expr_dim = expr[dim]
-                if isinstance(expr_dim, symbolic.SymExpr):
-                    dexprs.append(expr_dim.approx)
-                elif isinstance(expr_dim, tuple):
-                    dexprs.append(
-                        (
-                            expr_dim[0].approx if isinstance(expr_dim[0], symbolic.SymExpr) else expr_dim[0],
-                            expr_dim[1].approx if isinstance(expr_dim[1], symbolic.SymExpr) else expr_dim[1],
-                            expr_dim[2].approx if isinstance(expr_dim[2], symbolic.SymExpr) else expr_dim[2],
-                        )
-                    )
+                if isinstance(expr_dim, tuple):
+                    dexprs.append((_exact(expr_dim[0]), _exact(expr_dim[1]), _exact(expr_dim[2])))
                 else:
-                    dexprs.append(expr_dim)
+                    dexprs.append(_exact(expr_dim))
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, overapprox_range, orig_edges, dim, data_dims):
+                if smpattern.can_be_applied(dexprs, variable_context, exact_range, orig_edges, dim, data_dims):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
@@ -100,36 +83,18 @@ class SeparableMemlet(MemletPattern):
     def propagate(self, array, expressions, node_range):
         result = [(None, None, None)] * len(self.patterns_per_dim)
 
-        overapprox_range = subsets.Range(
-            [
-                (
-                    rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                    re.approx if isinstance(re, symbolic.SymExpr) else re,
-                    rs.approx if isinstance(rs, symbolic.SymExpr) else rs,
-                )
-                for rb, re, rs in node_range
-            ]
-        )
+        exact_range = subsets.Range([(_exact(rb), _exact(re), _exact(rs)) for rb, re, rs in node_range])
 
         for i, smpattern in enumerate(self.patterns_per_dim):
             dexprs = []
             for expr in expressions:
                 expr_i = expr[i]
-                if isinstance(expr_i, symbolic.SymExpr):
-                    dexprs.append(expr_i.approx)
-                elif isinstance(expr_i, tuple):
-                    dexprs.append(
-                        (
-                            expr_i[0].approx if isinstance(expr_i[0], symbolic.SymExpr) else expr_i[0],
-                            expr_i[1].approx if isinstance(expr_i[1], symbolic.SymExpr) else expr_i[1],
-                            expr_i[2].approx if isinstance(expr_i[2], symbolic.SymExpr) else expr_i[2],
-                            expr.tile_sizes[i],
-                        )
-                    )
+                if isinstance(expr_i, tuple):
+                    dexprs.append((_exact(expr_i[0]), _exact(expr_i[1]), _exact(expr_i[2]), expr.tile_sizes[i]))
                 else:
-                    dexprs.append(expr_i)
+                    dexprs.append(_exact(expr_i))
 
-            result[i] = smpattern.propagate(array, dexprs, overapprox_range)
+            result[i] = smpattern.propagate(array, dexprs, exact_range)
 
         # TODO(later): Not necessarily Range (general integer sets)
         return subsets.Range(result)
@@ -2019,6 +1984,10 @@ def propagate_subset(
     new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
+    # The subset is propagated through the exact part of ``SymExpr`` range bounds, but ``Range.size`` counts the
+    # iterations of their over-approximation: the volume is then only an upper bound ("up to").
+    if isinstance(rng, subsets.Range) and any(_is_approximate(e) for dim in rng.ranges for e in dim):
+        new_memlet.dynamic = True
     if symbolic.issymbolic(new_memlet.volume) and not set(map(str, new_memlet.volume.free_symbols)).issubset(
         map(str, defined_variables)
     ):
@@ -2060,18 +2029,35 @@ def _with_param_symbols(subset: subsets.Subset, params: list[symbolic.symbol]) -
 def _freesyms(expr) -> set:
     """
     Helper function that either returns free symbols for sympy expressions
-    or an empty set if constant.
+    (both parts of a ``SymExpr``) or an empty set if constant.
     """
+    if isinstance(expr, symbolic.SymExpr):
+        return _freesyms(expr.expr) | _freesyms(expr.approx)
     if isinstance(expr, sympy.Basic):
         return expr.free_symbols
     return set()
 
 
-def _plain(expr):
-    """Return the (approximate) sympy expression for a range bound that may be a ``SymExpr``."""
+def _exact(expr: sympy.Basic | symbolic.SymExpr | int) -> sympy.Basic | int:
+    """
+    Return the exact part of a ``SymExpr`` (any other expression is returned as-is).
+
+    Subsets propagate through the exact part: the over-approximation of a ``SymExpr`` may exceed the accessed
+    (and allocated) elements, e.g. the full tile ``i + T - 1`` of a clipped tile end ``Min(N - 1, i + T - 1)``.
+    """
     if isinstance(expr, symbolic.SymExpr):
-        expr = expr.approx
-    return symbolic.pystr_to_symbolic(expr)
+        return expr.expr
+    return expr
+
+
+def _is_approximate(expr: sympy.Basic | symbolic.SymExpr | int) -> bool:
+    """Return True if ``expr`` is a ``SymExpr`` whose over-approximation differs from its exact part."""
+    return isinstance(expr, symbolic.SymExpr) and expr.expr != expr.approx
+
+
+def _plain(expr):
+    """Return the exact sympy expression for a range bound that may be a ``SymExpr``."""
+    return symbolic.pystr_to_symbolic(_exact(expr))
 
 
 def _clipped_tile_end(re_expr, params: list, rng: subsets.Subset):
