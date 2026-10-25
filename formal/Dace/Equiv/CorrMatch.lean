@@ -1,6 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Equiv.CorrLeaf
 import Dace.SDFG.Footprint
+import Dace.SDFG.Sim
 
 /-!
 # SDFG and schedule tree: matching of a dataflow segment (M5a)
@@ -182,6 +183,178 @@ def DNode.isCopyTarget (n : DNode) : Bool :=
   | .access _ | .mapExit => true
   | _ => false
 
+/-! ## Nested SDFGs inside map scopes -/
+
+/-- The SDFG context in which the tree's flattened copy of the top region of
+a nested SDFG `inner` runs: the tree's descriptors and memory names. -/
+def _root_.Dace.TCtx.innerCtx (tc : TCtx) (inner : SDFG) : Ctx := { tc.ctx with g := { tc.ctx.g with top := inner.top } }
+
+theorem _root_.Dace.TCtx.innerCtx_eraseL (tc : TCtx) (inner : SDFG) : (tc.innerCtx inner).eraseL = tc.ctx.eraseL := rfl
+
+theorem _root_.Dace.TCtx.innerCtx_I (tc : TCtx) (inner : SDFG) : (tc.innerCtx inner).I = tc.ctx.I := rfl
+
+/-- The tree outcome `r` of a scope body is matched by the SDFG outcomes `X`:
+`X` may be undefined, or has the same error, or the body ends normally in
+the same state. -/
+def NestedOut (X : Res (Ctl × CSt) → Prop) (r : Res (TCtl × CSt)) : Prop :=
+  (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e, r = .err e ∧ X (.err e)) ∨
+    ∃ c, r = .ok (.normal, c) ∧ X (.ok (.normal, c))
+
+/-- A symbol mapping that passes symbols on unchanged, into an SDFG without
+constants. -/
+structure NestedMapOk (ctx : Ctx) (inner : SDFG) (mapping : List (Sym × Expr)) : Prop where
+  ident : ∀ p ∈ mapping, p.2 = .sym p.1 ∧ ctx.isScalarName p.1 = false
+  consts : ∀ ρ, inner.withConstants ρ = ρ
+
+theorem Mem.allocAll_append (m : Mem) (a b : List Name) : (m.allocAll a).allocAll b = m.allocAll (a ++ b) := by
+  simp [Mem.allocAll, List.foldl_append]
+
+theorem Log.dropNames_dropNames (g : Log) (a b : List Name) : (g.dropNames a).dropNames b = g.dropNames (a ++ b) := by
+  simp only [Log.dropNames, List.filter_filter, List.contains_append, Bool.not_or]
+  congr 1 <;> (apply List.filter_congr; intro x _; rw [Bool.and_comm])
+
+theorem nestedValuation_mapM {ctx : Ctx} {ρ : Valuation} {m : Mem} :
+    ∀ (mapping : List (Sym × Expr)), (∀ p ∈ mapping, p.2 = .sym p.1 ∧ ctx.isScalarName p.1 = false) →
+      (∃ vs, (mapping.mapM fun (x, e) => do
+          let v ← ctx.evalR ρ m e
+          pure (x, v)) = .ok vs ∧ ∀ p ∈ vs, ρ p.1 = some p.2) ∨
+      ∃ e, (mapping.mapM fun (x, e) => do
+          let v ← ctx.evalR ρ m e
+          pure (x, v)) = .err e ∧ e.isUB = true
+  | [], _ => .inl ⟨[], rfl, fun _ h => by cases h⟩
+  | (x, e) :: rest, h => by
+    obtain ⟨he, hs⟩ := h (x, e) List.mem_cons_self
+    simp only at he hs
+    subst he
+    have hev : ctx.evalR ρ m (.sym x) = Res.ofOption (ρ x) (.undefinedExpr (.sym x)) := by
+      simp only [Ctx.evalR, Ctx.eval, Expr.eval, Ctx.val_of_not_scalar ctx ρ m hs]
+    rw [List.mapM_cons]
+    cases hx : ρ x with
+    | none =>
+      refine .inr ⟨.undefinedExpr (.sym x), ?_, rfl⟩
+      simp only [hev, hx, Res.ofOption]
+      rfl
+    | some v =>
+      rcases nestedValuation_mapM rest (fun p hp => h p (List.mem_cons_of_mem _ hp)) with ⟨vs, hvs, hall⟩ | ⟨e', he', hu⟩
+      · refine .inl ⟨(x, v) :: vs, ?_, ?_⟩
+        · simp only [hev, hx, Res.ofOption]
+          show Res.bind (Res.ok (x, v)) _ = _
+          simp only [Res.bind]
+          rw [hvs]; rfl
+        · intro p hp
+          rcases List.mem_cons.1 hp with rfl | hp
+          · exact hx
+          · exact hall p hp
+      · refine .inr ⟨e', ?_, hu⟩
+        simp only [hev, hx, Res.ofOption]
+        show Res.bind (Res.ok (x, v)) _ = _
+        simp only [Res.bind]
+        rw [he']; rfl
+
+/-- An identity symbol mapping leaves the valuation unchanged, unless a
+symbol is unbound (undefined behavior). -/
+theorem nestedValuation_id {ctx : Ctx} {inner : SDFG} {mapping : List (Sym × Expr)} (hm : NestedMapOk ctx inner mapping)
+    (ρ : Valuation) (m : Mem) :
+    nestedValuation ctx ρ m mapping = .ok ρ ∨ ∃ e, nestedValuation ctx ρ m mapping = .err e ∧ e.isUB = true := by
+  unfold nestedValuation
+  rcases nestedValuation_mapM (ρ := ρ) (m := m) mapping hm.ident with ⟨vs, hvs, hall⟩ | ⟨e, he, hu⟩
+  · refine .inl ?_
+    rw [hvs]
+    show Res.ok (Valuation.setAll ρ vs) = Res.ok ρ
+    congr 1
+    funext y
+    unfold Valuation.setAll
+    cases hf : vs.find? (·.1 = y) with
+    | none => rfl
+    | some p =>
+      obtain ⟨x, v⟩ := p
+      have hmem := List.mem_of_find?_eq_some hf
+      have hxy : x = y := by simpa using List.find?_some hf
+      subst hxy
+      exact (hall _ hmem).symm
+  · exact .inr ⟨e, by rw [he]; rfl, hu⟩
+
+/-- Without connectors on code edges, no scalar is copied in. -/
+theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {st : St}
+    (h : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) :
+    bindCodeInputs ctx' ρ' s n st = .ok (st, []) := by
+  unfold bindCodeInputs
+  generalize nestedConns n = cs at h ⊢
+  generalize (st, ([] : List Name)) = acc
+  induction cs generalizing acc with
+  | nil => rfl
+  | cons c cs ih =>
+    rw [List.foldlM_cons]
+    obtain ⟨a, b⟩ := acc
+    have hd := h c List.mem_cons_self
+    cases hE : nestedEndpoint s n c with
+    | data d sub =>
+      simp only
+      exact ih (fun c' hc' => h c' (List.mem_cons_of_mem _ hc')) (a, b)
+    | code k => rw [hE] at hd; cases hd
+    | invalid => rw [hE] at hd; cases hd
+
+/-- Without code consumers of the outputs, a nested call ends with the inner
+memory and the inner log without the dropped names. -/
+theorem nestedFinish_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
+    {m₂ : Mem} {g₂ : Log} (h : ∀ e ∈ s.outEdges n.id, (s.dstEndpoint e).isData = true) :
+    nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
+      .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
+  unfold nestedFinish
+  generalize ({ mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = acc
+  generalize s.outEdges n.id = es at h ⊢
+  induction es generalizing acc with
+  | nil => rfl
+  | cons e es ih =>
+    rw [List.foldlM_cons]
+    have hd := h e List.mem_cons_self
+    have ih' := fun acc => ih acc (fun e' he' => h e' (List.mem_cons_of_mem _ he'))
+    cases hdat : e.data with
+    | dep => simp only; exact ih' acc
+    | memlet mm =>
+      cases hc : e.srcConn with
+      | none => simp only; exact ih' acc
+      | some c =>
+        cases hE : s.dstEndpoint e with
+        | data d sub => simp only; exact ih' acc
+        | code k => rw [hE] at hd; cases hd
+        | invalid => simp only; exact ih' acc
+
+/-- Set-up of a nested call with data connectors only. -/
+theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inner : SDFG}
+    {mapping : List (Sym × Expr)} {st : St} {conns : List (Name × Name)} (hb : nestedBindings ctx s n = .ok conns)
+    (hcode : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) :
+    nestedSetup ctx ρ s n inner mapping st = (nestedValuation ctx ρ st.mem mapping).bind fun ρ' =>
+      .ok (ctx.enter inner n.id conns, ρ',
+        { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) },
+        inner.callTransients.map (ctx.enter inner n.id conns).cname) := by
+  unfold nestedSetup
+  rw [hb]
+  simp only [Res.ok_bind]
+  cases hv : nestedValuation ctx ρ st.mem mapping with
+  | err e => rfl
+  | ok ρ' =>
+    simp only [Res.ok_bind]
+    rw [bindCodeInputs_data hcode]
+    simp only [Res.ok_bind, List.nil_append]
+    rfl
+
+/-- The tree context with another interpretation. -/
+def _root_.Dace.TCtx.withI (tc : TCtx) (I : Interp) : TCtx := { tc with ctx := { tc.ctx with I } }
+
+/-- The tree list `body` matches the top region of `inner`, for every
+interpretation (the checker proves this under one and transports it). -/
+def InnerCorr (tc : TCtx) (inner : SDFG) (body : List SNode) : Prop :=
+  ∀ I : Interp, (∀ op v, I.wcr op .undef v = .undef) → ∀ (cst : CSt) (r : Res (TCtl × CSt)),
+    STree.ListExec (tc.withI I) body false {} body cst r →
+    NestedOut (RegionAt ((tc.withI I).innerCtx inner) inner.top cst inner.top.start) r
+
+/-- The context of a nested call and the tree's context agree on the names
+of the inner SDFG's top region, for every interpretation. -/
+def InnerNames (ctx : Ctx) (tc : TCtx) (inner : SDFG) (node : NodeId) (conns : List (Name × Name)) : Prop :=
+  ∀ I : Interp, Region.Names 1 (fun _ => True) ({ ctx with I }.enter inner node conns) ((tc.withI I).innerCtx inner)
+    inner.top
+
 /-- The `DynScopeCopyNode`s of the dynamic inputs `keys`, in order. -/
 def DynNodes (keys : List InKey) (ds : List SNode) : Prop :=
   List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ m.inKey k.conn = k) keys ds
@@ -221,6 +394,25 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
       (hb : SegCorr ctx tc s oM body) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
+  /-- A map scope whose body is one nested SDFG: the tree inlines the inner
+  top region (`InnerCorr`); the per-call transients of the inner SDFG are
+  private to the tree's iteration (`Decisions.md#D68`). -/
+  | nestedMap {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {full : List NodeId}
+      {body : List SNode} {keys : List InKey} {ds : List SNode} {nid : NodeId} {nd : DNode} {inner : SDFG}
+      {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)}
+      (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
+      (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
+      (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
+      (hdir : full.filter (s.directChildren (some n.id)).contains = [nid])
+      (hnd : s.node? nid = some nd) (hkn : nd.kind = .nested inner mapping ni)
+      (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
+      (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
+      (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
+      (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
+        x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
+      (hnames : InnerNames ctx tc inner nd.id conns) (hinner : InnerCorr tc inner body)
+      (h : SegCorr ctx tc s o cs) :
+      SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
 
 /-- The nodes of a segment run by themselves: simple nodes and map scopes. -/
 theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs : List SNode}
@@ -228,7 +420,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
   induction hc with
   | nil => intro id hid; cases hid
   | copies hn hk _ _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
-  | map hn hk _ _ _ _ _ _ _ _ _ ih =>
+  | map hn hk _ _ _ _ _ _ _ _ _ ih | nestedMap hn hk _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ ih =>
     intro id hid n' hn'
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
@@ -738,6 +930,113 @@ theorem DNode.isSimple_of_copyTarget {n : DNode} (hk : DNode.isCopyTarget n = tr
   unfold DNode.isSimple
   split at hk <;> simp_all
 
+include h he in
+/-- **One iteration of a map whose body is a nested SDFG**: the tree runs
+the inlined inner region from the iteration's start; the SDFG calls the inner
+SDFG from a memory that differs only by its per-call allocation, which the
+simulation (`SDFGExec.sim`, `π = 1`) shows harmless; the call's log, without
+the per-call transients, is the tree's iteration log. -/
+theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} {mp : MapNode} {full : List NodeId}
+    {body : List SNode} {nid : NodeId} {nd : DNode} {inner : SDFG} {mapping : List (Sym × Expr)} {ni : Bool}
+    {conns : List (Name × Name)}
+    (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
+    (hdir : full.filter (s.directChildren (some n.id)).contains = [nid])
+    (hnd : s.node? nid = some nd) (hkn : nd.kind = .nested inner mapping ni)
+    (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
+    (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
+    (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
+    (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
+      x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
+    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) inner.top)
+    (hinner : ∀ (cst : CSt) (r : Res (TCtl × CSt)), STree.ListExec tc body false {} body cst r →
+      NestedOut (RegionAt (tc.innerCtx inner) inner.top cst inner.top.start) r)
+    {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem) (i : Idx) {res : Res (TCtl × CSt)}
+    (hbd : STree.ListExec tc body false {} body (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res) :
+    (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
+      (∃ e, res = .err e ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
+      ∃ st', OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
+        (iterStart (ctx.privateTransients s n.id) st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧
+          st'.log.dropNames (ctx.privateTransients s n.id) = cst'.log.dropNames (tc.privateTransients body) := by
+  have hp : bindViews ctx (pre.ρ.bindIdx mp.params i) s (s.directChildren (some n.id))
+      (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
+    bindViews_eq _ h _ _
+  have herr : ∀ e, NodeExec ctx (pre.ρ.bindIdx mp.params i) s nd (iterStart (ctx.privateTransients s n.id) st₁).forNode
+      (.err e) → OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
+        (iterStart (ctx.privateTransients s n.id) st₁) (.err e) := by
+    intro e hx
+    exact .seqErr hto hp (by rw [hdir]; exact .headErr hnd hx)
+  have hokk : ∀ y, NodeExec ctx (pre.ρ.bindIdx mp.params i) s nd (iterStart (ctx.privateTransients s n.id) st₁).forNode
+      (.ok y) → (∃ e, e.isUB = true ∧ OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) (.err e)) ∨
+      OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
+        (iterStart (ctx.privateTransients s n.id) st₁) (.ok ((iterStart (ctx.privateTransients s n.id) st₁).afterNode y)) := by
+    intro y hx
+    have hs : SeqExec ctx (pre.ρ.bindIdx mp.params i) s (full.filter (s.directChildren (some n.id)).contains)
+        (iterStart (ctx.privateTransients s n.id) st₁)
+        (.ok ((iterStart (ctx.privateTransients s n.id) st₁).afterNode y, [(nid, y.log)])) := by
+      rw [hdir]; exact .cons hnd hx .nil
+    cases hf : s.hbFree [(nid, y.log)] with
+    | false => exact .inl ⟨_, rfl, .hbRace hto hp hs hf⟩
+    | true => exact .inr (.run hto hp hs hf)
+  have hset := nestedSetup_eq (ρ := pre.ρ.bindIdx mp.params i) (inner := inner) (mapping := mapping)
+    (st := (iterStart (ctx.privateTransients s n.id) st₁).forNode) hb hcode
+  rcases nestedValuation_id hmap (pre.ρ.bindIdx mp.params i) (iterStart (ctx.privateTransients s n.id) st₁).forNode.mem with
+    hval | ⟨e, hval, hu⟩
+  rotate_left
+  · rw [hval] at hset
+    exact .inl ⟨e, hu, herr e (.nestedSetupErr hkn hset)⟩
+  rw [hval] at hset
+  simp only [Res.bind] at hset
+  have hmem : Mem.Sim 1 (fun _ => True) (fun _ => True)
+      ((iterStart (ctx.privateTransients s n.id) st₁).forNode.mem.allocAll
+        (inner.callTransients.map (ctx.enter inner nd.id conns).cname))
+      (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem := by
+    simp only [St.forNode, iterStart, iterStartT, hm, Mem.allocAll_append]
+    refine (Mem.Sim.refl pre.mem).allocAll_congr fun x => ?_
+    simp only [Equiv.Perm.coe_one, List.map_id_fun, id_eq]
+    exact (hpriv x).symm
+  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) := ⟨(I_eq he).symm, rfl⟩
+  have hw' : ∀ op v, (tc.innerCtx inner).I.wcr op .undef v = .undef := by
+    rw [TCtx.innerCtx_I, I_eq he]; exact hw
+  have hcst : CSt.mk (inner.withConstants (pre.ρ.bindIdx mp.params i))
+      (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem Log.empty =
+      iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i) := by
+    simp only [hmap.consts]; rfl
+  rcases hinner _ _ hbd with ⟨e, hu, hR⟩ | ⟨e, rfl, hR⟩ | ⟨c, rfl, hR⟩
+  · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
+        (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.err e) :=
+      .err (by rw [hcst]; exact .start hR)
+    obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
+    obtain ⟨e', rfl, hu'⟩ := ResSim.err_inv hr
+    refine .inl ⟨e', ?_, herr e' (.nestedInnerErr hkn hset hx₂)⟩
+    rcases hu' with hu' | rfl
+    exacts [hu', hu]
+  · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
+        (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.err e) :=
+      .err (by rw [hcst]; exact .start hR)
+    obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
+    obtain ⟨e', rfl, hu'⟩ := ResSim.err_inv hr
+    rcases hu' with hu' | rfl
+    · exact .inl ⟨e', hu', herr e' (.nestedInnerErr hkn hset hx₂)⟩
+    · exact .inr (.inl ⟨e', rfl, herr e' (.nestedInnerErr hkn hset hx₂)⟩)
+  · have hx : SDFGExec (tc.innerCtx inner) (pre.ρ.bindIdx mp.params i)
+        (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.ok (c.ρ, c.mem, c.log)) :=
+      .run (by rw [hcst]; exact .start hR) rfl
+    obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
+    rcases ResSim.ok_cases hr with ⟨e', rfl, hu'⟩ | ⟨⟨ρ₂, m₂, g₂⟩, rfl, -, -, hg₂, -⟩
+    · exact .inl ⟨e', hu', herr e' (.nestedInnerErr hkn hset hx₂)⟩
+    · have hnode := NodeExec.nested hkn hset hx₂
+      rw [nestedFinish_data hout] at hnode
+      rcases hokk _ hnode with ⟨e', hu', hy⟩ | hy
+      · exact .inl ⟨e', hu', hy⟩
+      · refine .inr (.inr ⟨_, hy, c, rfl, ?_⟩)
+        simp only at hg₂
+        rw [Log.ren_one] at hg₂
+        simp only [St.afterNode, iterStart, St.forNode, hg₂, Log.empty_seq, Log.dropNames_dropNames]
+        exact Log.dropNames_congr fun x => by rw [hpriv x, List.mem_append, List.mem_append, or_comm]
+
 include he hcons in
 /-- **A map scope node**, given its iterations (`hiter`) and the rest of the
 segment (`ih`). -/
@@ -845,7 +1144,8 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
 
 include h he hcons in
 /-- **Matching of a dataflow segment** (see the module documentation). -/
-theorem SegCorr.matched {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc s o cs) :
+theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : List NodeId} {cs : List SNode}
+    (hc : SegCorr ctx tc s o cs) :
     ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St},
       STree.ListExec tc full gb {} (cs ++ rest) cst r → StRel st cst → SeqOut ctx s o cst.ρ st tc full gb rest r := by
   induction hc with
@@ -919,6 +1219,22 @@ theorem SegCorr.matched {o : List NodeId} {cs : List SNode} (hc : SegCorr ctx tc
     intro full' gb rest cst r st hx hrel
     exact map_node he hcons hn hk hkeys hok hds
       (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) hm hv hi) ih hx hrel
+  | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns hn hk hkeys hok hds hto hdir hnd hkn hb
+      hmap hcode hout hpriv hnames hinner _ ih =>
+    intro full' gb rest cst r st hx hrel
+    have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
+    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) (tc.innerCtx inner) inner.top := by
+      have := hnames ctx.I
+      rw [htc] at this
+      exact this
+    have hinner' : ∀ (cst : CSt) (r : Res (TCtl × CSt)), STree.ListExec tc body false {} body cst r →
+        NestedOut (RegionAt (tc.innerCtx inner) inner.top cst inner.top.start) r := by
+      have := hinner ctx.I hw
+      rw [htc] at this
+      exact this
+    exact map_node he hcons hn hk hkeys hok hds
+      (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hnd hkn hb hmap
+        hcode hout hpriv hnames' hinner' hm i hbd) hi) ih hx hrel
 
 end Matched
 

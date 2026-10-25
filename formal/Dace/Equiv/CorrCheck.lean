@@ -690,6 +690,8 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I�
   | tasklet hn hk hsh hki hko hd hdT _ ih => exact .tasklet hn hk hsh hki hko hd hdT ih
   | library hn hk hl hsh hki hko hd hdT _ ih => exact .library hn hk hl hsh hki hko hd hdT ih
   | map hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih => exact .map hn hk hkeys hok hds hto hdir hpriv ihb ih
+  | nestedMap hn hk hkeys hok hds hto hdir hnd hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
+    exact .nestedMap hn hk hkeys hok hds hto hdir hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hpriv hnames hinner ih
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s cs) :
     StateCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s cs := by

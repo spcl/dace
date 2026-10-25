@@ -102,7 +102,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
             simp only [stateFinish, hlog]
             rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
           rwa [hf] at this
-    rcases SegCorr.matched h he hcons hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
+    rcases SegCorr.matched h he hcons hw hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
     · rw [hst₀] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
       cases r₀ with
