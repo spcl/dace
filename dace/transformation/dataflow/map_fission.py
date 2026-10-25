@@ -662,6 +662,10 @@ class MapFission(transformation.SingleStateTransformation):
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
             for edge in graph.in_edges(map_entry):
+                if edge.data.is_empty():
+                    # an ordering edge carries no data: it now orders the nested SDFG that replaces the map
+                    graph.add_nedge(edge.src, nsdfg_node, dcpy(edge.data))
+                    continue
                 if not edge.dst_conn or not edge.dst_conn.startswith("IN_"):
                     continue
 
@@ -675,6 +679,9 @@ class MapFission(transformation.SingleStateTransformation):
                     graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
 
             for edge in graph.out_edges(map_exit):
+                if edge.data.is_empty():
+                    graph.add_nedge(nsdfg_node, edge.dst, dcpy(edge.data))
+                    continue
                 # Modify edge coming out of nested SDFG to include entire array
                 desc = sdfg.arrays[edge.data.data]
                 edge.data.subset = subsets.Range.from_array(desc)
