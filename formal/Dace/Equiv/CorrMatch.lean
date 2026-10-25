@@ -23,7 +23,7 @@ leaves are equal leaf functions (`execCode_eq`, …) up to the log prefix
 whose SDFG trace has a happens-before race is undefined behavior
 (`OrderedExec.hbRace`).
 
-The fragment is `SeqPureP` (`Dace.SDFG.Frame`): its leaf lemmas give that
+The fragment is `SeqPlain` (`Dace.SDFG.Frame`): its leaf lemmas give that
 SDFG nodes keep the (empty) code-edge values.
 -/
 
@@ -186,6 +186,11 @@ def DNode.isCopyTarget (n : DNode) : Bool :=
 def DynNodes (keys : List InKey) (ds : List SNode) : Prop :=
   List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ m.inKey k.conn = k) keys ds
 
+theorem DNode.isSimple_of_copyTarget' {n : DNode} (hk : DNode.isCopyTarget n = true) : n.isSimple = true := by
+  unfold DNode.isCopyTarget at hk
+  unfold DNode.isSimple
+  split at hk <;> simp_all
+
 /-- The tree list `cs` is the image of the SDFG nodes `o` of state `s`. -/
 inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNode → Prop where
   | nil : SegCorr ctx tc s [] []
@@ -216,6 +221,23 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
       (hb : SegCorr ctx tc s oM body) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
+
+/-- The nodes of a segment run by themselves: simple nodes and map scopes. -/
+theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs : List SNode}
+    (hc : SegCorr ctx tc s o cs) : ∀ id ∈ o, ∀ n, s.node? id = some n → n.IsFlat := by
+  induction hc with
+  | nil => intro id hid; cases hid
+  | copies hn hk _ _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
+  | map hn hk _ _ _ _ _ _ _ _ _ ih =>
+    intro id hid n' hn'
+    rcases List.mem_cons.1 hid with rfl | hid
+    · rw [hn] at hn'
+      cases hn'
+      first
+        | exact .inr ⟨_, hk⟩
+        | exact .inl (DNode.isSimple_of_copyTarget' hk)
+        | (left; simp [DNode.isSimple, hk])
+    · exact ih id hid n' hn'
 
 /-- The outcomes of the sequential SDFG run of `o` from `st` that match a
 tree run ending in `r` after the image of `o`, continuing with `rest`. -/
@@ -523,7 +545,7 @@ theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).s
 
 section Matched
 
-variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPureP ctx s) (he : tc.ctx.eraseL = ctx.eraseL)
+variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPlain ctx s) (he : tc.ctx.eraseL = ctx.eraseL)
   (hcons : tc.consumed = none)
 
 omit hcons in

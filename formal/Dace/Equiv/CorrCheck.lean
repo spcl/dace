@@ -679,8 +679,8 @@ variable {g : SDFG} {t : STree} {s : State} (I₁ I₂ : Interp)
 theorem CopyShape.withI {n : DNode} (h : s.CopyShape (sctx I₁ g) n) : s.CopyShape (sctx I₂ g) n :=
   ⟨h.noRef, h.dst⟩
 
-theorem SeqPureP.withI (h : SeqPureP (sctx I₁ g) s) : SeqPureP (sctx I₂ g) s :=
-  ⟨⟨h.plain, h.shapes, h.memlets, h.ranges, h.reduces, h.codeOut⟩, h.kinds⟩
+theorem SeqPlain.withI (h : SeqPlain (sctx I₁ g) s) : SeqPlain (sctx I₂ g) s :=
+  ⟨h.plain, h.shapes, h.memlets, h.ranges, h.reduces, h.codeOut⟩
 
 theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s o cs) :
     SegCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s o cs := by
@@ -693,7 +693,7 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I�
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s cs) :
     StateCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s cs := by
-  refine ⟨SeqPureP.withI I₁ I₂ h.pure, h.noStreams, ?_⟩
+  refine ⟨SeqPlain.withI I₁ I₂ h.pure, h.noStreams, ?_⟩
   rcases h.comps with h₁ | ⟨c, o, full, hc, hseg, hto, hdir⟩
   · exact .inl h₁
   · exact .inr ⟨c, o, full, hc, SegCorr.withI I₁ I₂ hseg, hto, hdir⟩

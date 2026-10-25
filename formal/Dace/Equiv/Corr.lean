@@ -7,7 +7,8 @@ import Dace.Equiv.Equiv
 # SDFG and schedule tree: states (M5a)
 
 * **States** (`StateCorr`, `StateCorr.matched`): a state of the fragment
-  `SeqPureP` (`SeqPure` with private transients allowed) with at most one
+  `SeqPlain` (`SeqPure` with private transients allowed, any node kind inside
+  map scopes) with at most one
   weakly connected component whose tree segment
   is the image of the component's top-level nodes in a topological order of
   the component (`SegCorr`).  The SDFG runs the component from the state's
@@ -28,7 +29,7 @@ namespace Corr
 
 /-- The tree segment `cs` corresponds to state `s`. -/
 structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop where
-  pure : SeqPureP ctx s
+  pure : SeqPlain ctx s
   /-- The transients the state allocates are no streams (a fresh stream is
   empty, which the tree, allocating less, does not reproduce). -/
   noStreams : ∀ t ∈ ctx.stateTransients s, ctx.isStream t = false
@@ -141,7 +142,14 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
           · exact .inl ⟨_, rfl, hx'⟩
         | true =>
           have hrun : OrderedExec ctx cst.ρ s c (s.topLevelOf c) base (.ok st'') := .run hto hp hs₀ hf
-          have hcoh := (OrderedExec.coh h (st := base) hrun).1
+          have hflat : ∀ id ∈ s.topLevelOf c, ∀ n, s.node? id = some n → n.IsFlat := by
+            intro id hid n hn
+            have hc' : id ∈ c := (List.mem_filter.1 hid).1
+            have hfull : id ∈ ofull := by
+              simp only [State.isTopologicalOrder, Bool.and_eq_true, List.all_eq_true] at hto
+              simpa using hto.1.1.2 id hc'
+            exact hseg.flat id (hdir ▸ List.mem_filter.2 ⟨hfull, by simpa using hid⟩) n hn
+          have hcoh := (OrderedExec.coh' h hflat (st := base) hrun).1
           rcases (hstate hrun).2 _ rfl with ⟨e, hu, hx'⟩ | this
           · exact .inl ⟨e, hu, hx'⟩
           refine .inr (.inr ⟨cst', hl, ?_⟩)
