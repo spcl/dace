@@ -120,7 +120,7 @@ The input/expected JSON format (the Lean reader is written against it):
 }
 ```
 
-`containers` holds every non-transient array plus any `__return*`. DaCe `Scalar`
+`containers` holds every non-transient container (return values included). DaCe `Scalar`
 descriptors use `shape: []` with a one-element `data`; dtype strings are NumPy
 names. `symbols` is the SDFG's free symbols plus explicit symbol args.
 `expected.json` has the same shape but only `program`/`sdfg`/`containers` (and

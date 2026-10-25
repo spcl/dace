@@ -296,9 +296,7 @@ def taskletOf (label : String) (a : Json) (inC outC : Conns) : P Tasklet := do
 def mapOf (label : String) (a : Json) : P MapNode := do
   let params ← (← field a "params").getArr? >>= fun ps => ps.toList.mapM str
   let rng ← range (← field a "range")
-  let collapse ← (natField? a "collapse").map (·.getD 1)
-  pure { label := (strField? a "label").getD label, params, range := rng,
-         unroll := boolField a "unroll", collapse }
+  pure { label := (strField? a "label").getD label, params, range := rng }
 
 /-- A `Consume` from its attributes (`nodes.Consume` / `ConsumeEntry`). -/
 def consumeOf (label : String) (a : Json) : P ConsumeNode := do
