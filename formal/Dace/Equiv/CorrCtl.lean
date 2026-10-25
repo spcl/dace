@@ -974,35 +974,113 @@ end Matched
 /-- The contexts in which an SDFG and a schedule tree run. -/
 def sctx (I : Interp) (g : SDFG) : Ctx := { I, g }
 
-/-- The tree's root list corresponds to the SDFG's top region. -/
-structure ProgCorr (I : Interp) (g : SDFG) (t : STree) : Prop where
-  arrays : t.containers = g.arrays
+/-- The SDFG `g` as the tree `t` sees it (`Decisions.md#D34`, `#D68`): the
+tree's descriptor repository, and per-call memory names of nested SDFGs
+renamed by `π⁻¹` to the tree's names for them (`Ctx.scope`). -/
+def flatCtx (I : Interp) (g : SDFG) (t : STree) (π : Equiv.Perm Name) : Ctx :=
+  { I, g := { g with arrays := t.containers }, scope := π.symm }
+
+/-- The tree's root list corresponds to the SDFG's top region, run in the
+flattened context `flatCtx I g t π`, which renaming by `π` relates to the
+SDFG's own context. -/
+structure ProgCorrWith (I : Interp) (g : SDFG) (t : STree) (π : Equiv.Perm Name) : Prop where
   consts : t.toSDFG.withConstants = g.withConstants
   /-- Both programs start from the same memory (`Decisions.md#D68`). -/
   start : t.keepAtStart = g.keepAtStart
-  reg : RegCorr (sctx I g) (TCtx.ofTree I t) g.top g.top.start t.children
+  reg : RegCorr (flatCtx I g t π) (TCtx.ofTree I t) g.top g.top.start t.children
+  /-- The renaming fixes every name the SDFG's own states mention. -/
+  names : Region.Names π (fun _ => True) (sctx I g) (flatCtx I g t π) g.top
+  /-- Renamed names are uninitialized at the start. -/
+  fresh : ∀ x, π x ≠ x → g.keepAtStart x = false
+  /-- The renaming fixes the observable containers. -/
+  iface : ∀ x ∈ g.interface, π x = x
 
-/-- **Programs**: every outcome of the tree is an outcome of the SDFG, or the
-SDFG may end in undefined behavior. -/
-theorem ProgCorr.exec {I : Interp} {g : SDFG} {t : STree} (hc : ProgCorr I g t)
-    (hw : ∀ op v, I.wcr op .undef v = .undef) {ρ₀ : Valuation} {m₀ : Mem}
-    {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
-    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r := by
+/-- The tree's root list corresponds to the SDFG's top region. -/
+def ProgCorr (I : Interp) (g : SDFG) (t : STree) : Prop := ∃ π, ProgCorrWith I g t π
+
+/-- Renaming fresh names of a start memory without aliases is an exact
+simulation. -/
+theorem startMem_sim {g : SDFG} {π : Equiv.Perm Name} (hf : ∀ x, π x ≠ x → g.keepAtStart x = false) {m₀ : Mem}
+    (hna : ∀ n, m₀.aliases n = none) :
+    Mem.Sim π (fun _ => True) (fun _ => False) (g.startMem m₀) (g.startMem m₀) := by
+  have hkeep : ∀ l : Loc, π l.name ≠ l.name → g.keepAtStart l.name = false ∧ g.keepAtStart (π l.name) = false :=
+    fun l hx => ⟨hf _ hx, hf _ fun h => hx (π.injective h)⟩
+  have hfix : ∀ l : Loc, π l.name = l.name → l.ren π = l := by
+    intro l h; cases l; simp only [Loc.ren, Loc.mk.injEq, and_true]; exact h
+  refine ⟨fun n _ => ?_, fun n b _ hb => ?_, fun l _ => .inr ?_, fun l _ => ?_⟩
+  · simp [SDFG.startMem, Mem.restrict, hna]
+  · simp [SDFG.startMem, Mem.restrict, hna] at hb
+  · by_cases hx : π l.name = l.name
+    · rw [hfix l hx]
+    · simp only [SDFG.startMem, Mem.restrict, Loc.ren_name, (hkeep l hx).1, (hkeep l hx).2]; rfl
+  · by_cases hx : π l.name = l.name
+    · rw [hfix l hx]
+    · simp only [SDFG.startMem, Mem.restrict, Loc.ren_name, (hkeep l hx).1, (hkeep l hx).2]; rfl
+
+/-- An exact renaming fixing the interface is observationally equal there. -/
+theorem obsEq_of_sim {iface : List Name} {π : Equiv.Perm Name} (hfix : ∀ x ∈ iface, π x = x) {m₂ m₁ : Mem}
+    (h : Mem.Sim π (fun _ => True) (fun _ => False) m₂ m₁) : obsEq iface m₁ m₂ := by
+  intro l hl
+  have hl' : l.ren π = l := by
+    cases l; simp only [Loc.ren, Loc.mk.injEq, and_true]; exact hfix _ hl
+  rcases h.cells l trivial with ⟨hF, -⟩ | hc
+  · exact hF.elim
+  · exact ⟨by rw [← hc, hl'], by rw [← h.queues l trivial, hl']⟩
+
+section Exec
+
+variable {I : Interp} {g : SDFG} {t : STree} {π : Equiv.Perm Name} {ρ₀ : Valuation} {m₀ : Mem}
+
+/-- A run of the flattened SDFG is a run of the SDFG up to the renaming. -/
+theorem ProgCorrWith.unflat (hc : ProgCorrWith I g t π) (hw : ∀ op v, I.wcr op .undef v = .undef)
+    (hna : ∀ n, m₀.aliases n = none) {r₁ : Res (Valuation × Mem × Log)}
+    (hx : SDFGExec (flatCtx I g t π) ρ₀ (g.startMem m₀) g r₁) :
+    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨
+      (∃ e, r₁.map (fun x => x.2.1) = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨
+      ∃ m, r₁.map (fun x => x.2.1) = .ok m ∧ ∃ m', SDFG.Exec I g ρ₀ m₀ (.ok m') ∧ obsEq g.interface m m' := by
+  have hcs : CtxSim π (fun _ => True) (sctx I g) (flatCtx I g t π) := ⟨rfl, rfl⟩
+  obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hcs hw hc.names hx _ (startMem_sim hc.fresh hna)
+  cases r₁ with
+  | err e =>
+    obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
+    rcases hu with hu | rfl
+    · exact .inl ⟨e', hu, _, hx₂, rfl⟩
+    · exact .inr (.inl ⟨e', rfl, _, hx₂, rfl⟩)
+  | ok x₁ =>
+    rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨x₂, rfl, -, hm, -, -⟩
+    · exact .inl ⟨e, hu, _, hx₂, rfl⟩
+    · exact .inr (.inr ⟨_, rfl, x₂.2.1, ⟨_, hx₂, rfl⟩, obsEq_of_sim hc.iface hm⟩)
+
+/-- **Programs**: every outcome of the tree is an outcome of the SDFG (an
+error the same, a memory observationally equal), or the SDFG may end in
+undefined behavior. -/
+theorem ProgCorrWith.exec (hc : ProgCorrWith I g t π) (hw : ∀ op v, I.wcr op .undef v = .undef)
+    (hna : ∀ n, m₀.aliases n = none) {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
+    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ (∃ e, r = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨
+      ∃ m, r = .ok m ∧ ∃ m', SDFG.Exec I g ρ₀ m₀ (.ok m') ∧ obsEq g.interface m m' := by
   obtain ⟨res, hx, rfl⟩ := ht
-  have he : (TCtx.ofTree I t).ctx.eraseL = (sctx I g).eraseL := by
-    simp [Ctx.eraseL, TCtx.ofTree, STree.toSDFG, sctx, hc.arrays]
+  have he : (TCtx.ofTree I t).ctx.eraseL = (flatCtx I g t π).eraseL := by
+    simp [Ctx.eraseL, TCtx.ofTree, STree.toSDFG, flatCtx]
   have hstart : rootStart t ρ₀ m₀ = { ρ := g.withConstants ρ₀, mem := g.startMem m₀ } := by
     simp [rootStart, hc.consts, hc.start, SDFG.startMem]
   rw [hstart] at hx
   rcases (hc.reg.matched he rfl hw HeadOk.nil (ListExec.append_nil hx)).toOut with
     ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨ctl, c, rfl, hy⟩
-  · exact .inl ⟨e, hu, _, .err (.start hy), rfl⟩
-  · exact .inr ⟨_, .err (.start hy), rfl⟩
+  · rcases hc.unflat hw hna (.err (.start hy)) with h | ⟨e', he', h⟩ | ⟨m, hm, -⟩
+    · exact .inl h
+    · cases he'; exact .inl ⟨_, hu, h⟩
+    · cases hm
+  · rcases hc.unflat hw hna (.err (.start hy)) with h | h | ⟨m, hm, -⟩
+    · exact .inl h
+    · exact .inr (.inl h)
+    · cases hm
   · cases ctl with
-    | normal => exact .inr ⟨_, .run (.start hy) rfl, rfl⟩
-    | ret => exact .inr ⟨_, .run (.start hy) rfl, rfl⟩
-    | brk => exact .inr ⟨_, .escape (.start hy) rfl, rfl⟩
-    | cont => exact .inr ⟨_, .escape (.start hy) rfl, rfl⟩
+    | normal => exact hc.unflat hw hna (.run (.start hy) rfl)
+    | ret => exact hc.unflat hw hna (.run (.start hy) rfl)
+    | brk => exact hc.unflat hw hna (.escape (.start hy) rfl)
+    | cont => exact hc.unflat hw hna (.escape (.start hy) rfl)
+
+end Exec
 
 /-- **Refinement**: if the SDFG is supported, the tree refines it. -/
 theorem ProgCorr.refines {g : SDFG} {t : STree} (hc : ∀ I, ProgCorr I g t) (hs : Supported g.prog) :
@@ -1011,14 +1089,13 @@ theorem ProgCorr.refines {g : SDFG} {t : STree} (hc : ∀ I, ProgCorr I g t) (hs
   by_cases hmu : mayUB g.prog I ρ₀ m₀
   · exact .inl hmu
   · refine .inr fun r hr => ?_
-    rcases (hc I).exec hpre.1.undef_absorb hr with ⟨e, hu, hy⟩ | hy
+    obtain ⟨π, hcπ⟩ := hc I
+    rcases hcπ.exec hpre.1.undef_absorb hpre.2.2 hr with ⟨e, hu, hy⟩ | ⟨e, rfl, hy⟩ | ⟨m, rfl, m', hy, ho⟩
     · exact absurd ⟨e, hu, hy⟩ hmu
-    · cases r with
-      | ok m => exact ⟨m, rfl, m, hy, obsEq.refl _ _⟩
-      | err e =>
-        rcases hs I ρ₀ m₀ hpre with h | h
-        · exact absurd h hmu
-        · exact absurd hy (h e)
+    · rcases hs I ρ₀ m₀ hpre with h | h
+      · exact absurd h hmu
+      · exact absurd hy (h e)
+    · exact ⟨m, rfl, m', hy, ho⟩
 
 end Corr
 

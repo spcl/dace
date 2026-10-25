@@ -657,7 +657,7 @@ def corrCheck (g : SDFG) (t : STree) : Except String Unit :=
   else if !(SDFG.externalNames "" g).all (fun n => g.arrays.any fun (a, d) => a == n && d.definedAtStart) then
     .error "External transients of nested SDFGs are not compared yet"
   else if t.constants.isEmpty && g.constants.isEmpty then
-    match regCheck (checkCtx g) (TCtx.ofTree Interp.uninterpreted t) (3 * Region.size g.top + 3) g.top g.top.start
+    match regCheck (flatCtx Interp.uninterpreted g t 1) (TCtx.ofTree Interp.uninterpreted t) (3 * Region.size g.top + 3) g.top g.top.start
         t.children with
     | .ok [] => .ok ()
     | .ok _ => .error "tree nodes after the end of the program"
@@ -674,44 +674,44 @@ def corr? (g : SDFG) (t : STree) : Bool :=
 
 section WithI
 
-variable {g : SDFG} {t : STree} {s : State} (I₁ I₂ : Interp)
+variable {ctx : Ctx} {tc : TCtx} {s : State} (I₂ : Interp)
 
-theorem CopyShape.withI {n : DNode} (h : s.CopyShape (sctx I₁ g) n) : s.CopyShape (sctx I₂ g) n :=
+theorem CopyShape.withI {n : DNode} (h : s.CopyShape ctx n) : s.CopyShape { ctx with I := I₂ } n :=
   ⟨h.noRef, h.dst⟩
 
-theorem SeqPlain.withI (h : SeqPlain (sctx I₁ g) s) : SeqPlain (sctx I₂ g) s :=
+theorem SeqPlain.withI (h : SeqPlain ctx s) : SeqPlain { ctx with I := I₂ } s :=
   ⟨h.plain, h.shapes, h.memlets, h.ranges, h.reduces, h.codeOut⟩
 
-theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s o cs) :
-    SegCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s o cs := by
+theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s o cs) :
+    SegCorr { ctx with I := I₂ } (tc.withI I₂) s o cs := by
   induction h with
   | nil => exact .nil
-  | copies hn hk hsh hks _ ih => exact .copies hn hk (CopyShape.withI I₁ I₂ hsh) hks ih
+  | copies hn hk hsh hks _ ih => exact .copies hn hk (CopyShape.withI I₂ hsh) hks ih
   | tasklet hn hk hsh hki hko hd hdT _ ih => exact .tasklet hn hk hsh hki hko hd hdT ih
   | library hn hk hl hsh hki hko hd hdT _ ih => exact .library hn hk hl hsh hki hko hd hdT ih
   | map hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih => exact .map hn hk hkeys hok hds hto hdir hpriv ihb ih
   | nestedMap hn hk hkeys hok hds hto hdir hnd hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
     exact .nestedMap hn hk hkeys hok hds hto hdir hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hpriv hnames hinner ih
 
-theorem StateCorr.withI {cs : List SNode} (h : StateCorr (sctx I₁ g) (TCtx.ofTree I₁ t) s cs) :
-    StateCorr (sctx I₂ g) (TCtx.ofTree I₂ t) s cs := by
-  refine ⟨SeqPlain.withI I₁ I₂ h.pure, h.noStreams, ?_⟩
+theorem StateCorr.withI {cs : List SNode} (h : StateCorr ctx tc s cs) :
+    StateCorr { ctx with I := I₂ } (tc.withI I₂) s cs := by
+  refine ⟨SeqPlain.withI I₂ h.pure, h.noStreams, ?_⟩
   rcases h.comps with h₁ | ⟨c, o, full, hc, hseg, hto, hdir⟩
   · exact .inl h₁
-  · exact .inr ⟨c, o, full, hc, SegCorr.withI I₁ I₂ hseg, hto, hdir⟩
+  · exact .inr ⟨c, o, full, hc, SegCorr.withI I₂ hseg, hto, hdir⟩
 
 mutual
 
 theorem RegCorr.withI {rg : Region} {bid : BlockId} {cs : List SNode} :
-    RegCorr (sctx I₁ g) (TCtx.ofTree I₁ t) rg bid cs → RegCorr (sctx I₂ g) (TCtx.ofTree I₂ t) rg bid cs
+    RegCorr ctx tc rg bid cs → RegCorr { ctx with I := I₂ } (tc.withI I₂) rg bid cs
   | .last hb hc he => .last hb (BlockCorr.withI hc) he
   | .step hb hc he hu hp ha hs hh h =>
-    .step hb (BlockCorr.withI hc) he hu hp ha (SeqAssigns.of_g (c₁ := sctx I₁ g) (c₂ := sctx I₂ g) rfl hs) hh
+    .step hb (BlockCorr.withI hc) he hu hp ha (SeqAssigns.of_g (c₁ := ctx) (c₂ := { ctx with I := I₂ }) rfl hs) hh
       (RegCorr.withI h)
 
 theorem BlockCorr.withI {b : Block} {cs : List SNode} :
-    BlockCorr (sctx I₁ g) (TCtx.ofTree I₁ t) b cs → BlockCorr (sctx I₂ g) (TCtx.ofTree I₂ t) b cs
-  | .state h => .state (StateCorr.withI I₁ I₂ h)
+    BlockCorr ctx tc b cs → BlockCorr { ctx with I := I₂ } (tc.withI I₂) b cs
+  | .state h => .state (StateCorr.withI I₂ h)
   | .loop hn hm hb => .loop hn hm (RegCorr.withI hb)
   | .cond hc hb ht => .cond hc (RegCorr.withI hb) (ElifCorr.withI ht)
   | .brk => .brk
@@ -721,7 +721,7 @@ theorem BlockCorr.withI {b : Block} {cs : List SNode} :
   | .named h => .named (RegCorr.withI h)
 
 theorem ElifCorr.withI {brs : List (Option Expr × Region)} {cs : List SNode} :
-    ElifCorr (sctx I₁ g) (TCtx.ofTree I₁ t) brs cs → ElifCorr (sctx I₂ g) (TCtx.ofTree I₂ t) brs cs
+    ElifCorr ctx tc brs cs → ElifCorr { ctx with I := I₂ } (tc.withI I₂) brs cs
   | .nil => .nil
   | .elif hc hb ht => .elif hc (RegCorr.withI hb) (ElifCorr.withI ht)
   | .els hb => .els (RegCorr.withI hb)
@@ -759,7 +759,7 @@ theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I :
       · rename_i hc
         simp only [Bool.and_eq_true, List.isEmpty_iff] at hc
         have ha' : t.containers = g.arrays := by simpa using ha
-        refine ⟨ha', ?_, keepAtStart_eq ha' (by simpa using hex), ?_⟩
+        refine ⟨1, ?_, keepAtStart_eq ha' (by simpa using hex), ?_, ?_, fun x hx => absurd rfl hx, fun _ _ => rfl⟩
         · funext ρ x
           simp [SDFG.withConstants, STree.toSDFG, hc.1, hc.2]
         · split at h
@@ -767,9 +767,16 @@ theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I :
             obtain ⟨pre, hpre, hc⟩ := regCheck_sound _ _ _ _ _ hr
             rw [List.append_nil] at hpre
             subst hpre
-            exact RegCorr.withI Interp.uninterpreted I hc
+            exact RegCorr.withI I hc
           · cases h
           · cases h
+        · have hd : ∀ x, (sctx I g).desc? x = (flatCtx I g t 1).desc? x := fun x => by
+            show g.array? x = ({ g with arrays := t.containers } : SDFG).array? x
+            rw [ha']
+            rfl
+          have hall : ∀ x, Ctx.Strong 1 (fun _ => True) (sctx I g) (flatCtx I g t 1) x := fun x =>
+            ⟨hd x, rfl, trivial, fun _ _ y _ => ⟨hd y, fun _ => ⟨rfl, trivial⟩⟩⟩
+          exact Region.Names.ofAll hall (fun _ => ⟨by simp [sctx, flatCtx], trivial⟩) _
       · cases h
 
 theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) : ProgCorr I g t := by
@@ -782,9 +789,11 @@ theorem corr?_sound {g : SDFG} {t : STree} (h : corr? g t = true) (I : Interp) :
 /-- **Certified pairs (M5a)**: every outcome of the schedule tree is an
 outcome of the SDFG, or the SDFG may end in undefined behavior. -/
 theorem corr?_exec {g : SDFG} {t : STree} (h : corr? g t = true) {I : Interp} (hl : I.Lawful) {ρ₀ : Valuation}
-    {m₀ : Mem} {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
-    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ SDFG.Exec I g ρ₀ m₀ r :=
-  (corr?_sound h I).exec hl.undef_absorb ht
+    {m₀ : Mem} (hna : ∀ n, m₀.aliases n = none) {r : Res Mem} (ht : STree.Exec I t ρ₀ m₀ r) :
+    (∃ e, e.isUB = true ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨ (∃ e, r = .err e ∧ SDFG.Exec I g ρ₀ m₀ (.err e)) ∨
+      ∃ m, r = .ok m ∧ ∃ m', SDFG.Exec I g ρ₀ m₀ (.ok m') ∧ obsEq g.interface m m' :=
+  let ⟨_, hc⟩ := corr?_sound h I
+  hc.exec hl.undef_absorb hna ht
 
 /-- **Certified pairs (M5a)**: the schedule tree refines a supported SDFG. -/
 theorem corr?_refines {g : SDFG} {t : STree} (h : corr? g t = true) (hs : Supported g.prog) :
