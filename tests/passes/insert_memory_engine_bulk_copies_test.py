@@ -393,6 +393,109 @@ def test_insert_rejects_non_bound_clamp():
     _assert_libnode_implementation(sdfg, none=True)
 
 
+def _set_strides(sdfg, name, strides):
+    desc = sdfg.arrays[name]
+    desc.strides = list(strides)
+    desc.total_size = sum((s - 1) * st for s, st in zip(desc.shape, strides)) + 1
+
+
+@pytest.mark.parametrize("shape,subset", [
+    ([8, 16], "0:8, 0:16"),
+    ([4, 8, 16], "0:4, 0:8, 0:16"),
+    ([2, 4, 8, 16], "0:2, 0:4, 0:8, 0:16"),
+    ([2, 2, 4, 4, 16], "0:2, 0:2, 0:4, 0:4, 0:16"),
+],
+                         ids=["rank2", "rank3", "rank4", "rank5"])
+@_DIRECTIONS
+def test_insert_accepts_ranks_up_to_five(load, shape, subset):
+    sdfg = _build_kernel_copy(f"insert_rank{len(shape)}", load, shape, shape, subset, subset, dace.float32)
+    assert _insert(sdfg) == 1
+
+
+def test_insert_rejects_rank_six():
+    shape, subset = [2, 2, 2, 2, 2, 16], "0:2, 0:2, 0:2, 0:2, 0:2, 0:16"
+    sdfg = _build_kernel_copy("insert_rank6", True, shape, shape, subset, subset, dace.float32)
+    assert _insert(sdfg) is None
+
+
+@pytest.mark.parametrize("extent,accepted", [(256, True), (257, False)])
+def test_insert_box_dimension_limit(extent, accepted):
+    """A box dimension is at most 256 elements."""
+    sdfg = _build_kernel_copy("insert_box_limit", True, [extent, 64], [extent, 64], f"0:{extent}, 0:64",
+                              f"0:{extent}, 0:64", dace.int8)
+    assert _insert(sdfg) == (1 if accepted else None)
+
+
+@pytest.mark.parametrize("width,accepted", [(16, True), (24, False), (8, False), (1, False)])
+def test_insert_contiguous_box_is_16_byte_multiple(width, accepted):
+    """The contiguous box extent must span a multiple of 16 bytes (1-byte elements here)."""
+    sdfg = _build_kernel_copy("insert_box_bytes", True, [8, 64], [8, width], f"0:8, 0:{width}", f"0:8, 0:{width}",
+                              dace.int8)
+    assert _insert(sdfg) == (1 if accepted else None)
+
+
+@pytest.mark.parametrize("dtype,accepted", [(dace.float64, True), (dace.float16, True), (dace.bfloat16, True),
+                                            (dace.bool_, True), (dace.uint16, True), (dace.complex64, False),
+                                            (dace.complex128, False)])
+def test_insert_supported_data_types(dtype, accepted):
+    sdfg = _build_kernel_copy("insert_dtype", True, [16, 64], [16, 64], "0:16, 0:64", "0:16, 0:64", dtype)
+    assert _insert(sdfg) == (1 if accepted else None)
+
+
+def test_insert_rejects_strided_copy():
+    sdfg = _build_kernel_copy("insert_step", True, [64, 64], [32, 32], "0:64:2, 0:32", "0:32, 0:32")
+    assert _insert(sdfg) is None
+
+
+@pytest.mark.parametrize("start,accepted", [(16, True), (32, True), (1, False), (8, False)])
+def test_insert_shared_offset_alignment(start, accepted):
+    """A static offset into the shared container must be 128 byte aligned (16 float64 elements)."""
+    sdfg = _build_kernel_copy("insert_shared_offset", True, [100], [128], "0:32", f"{start}:{start + 32}")
+    assert _insert(sdfg) == (1 if accepted else None)
+
+
+@_DIRECTIONS
+def test_insert_accepts_fortran_order(load):
+    """Column-major global and shared arrays are described with the contiguous dimension first."""
+    sdfg = _build_kernel_copy("insert_fortran", load, [64, 64], [32, 32], "0:32, 32:64", "0:32, 0:32")
+    _set_strides(sdfg, "A", [1, 64])
+    _set_strides(sdfg, "S", [1, 32])
+    assert _insert(sdfg) == 1
+
+
+def test_insert_rejects_mixed_orders():
+    """A transposing copy between a row-major and a column-major side is not a box."""
+    sdfg = _build_kernel_copy("insert_mixed_order", True, [64, 64], [32, 32], "0:32, 32:64", "0:32, 0:32")
+    _set_strides(sdfg, "S", [1, 32])
+    assert _insert(sdfg) is None
+
+
+def test_insert_rejects_noncontiguous_strides():
+    sdfg = _build_kernel_copy("insert_padded", True, [64, 64], [32, 32], "0:32, 0:32", "0:32, 0:32")
+    _set_strides(sdfg, "A", [128, 2])
+    assert _insert(sdfg) is None
+
+
+def test_insert_rejects_mismatching_data_types():
+    sdfg = _build_kernel_copy("insert_mismatch", True, [64, 64], [32, 32], "0:32, 0:32", "0:32, 0:32")
+    sdfg.arrays["S"].dtype = dace.float32
+    assert _insert(sdfg) is None
+
+
+def test_insert_is_idempotent():
+    """Re-applying the pass finds nothing left to change."""
+    sdfg = _build_kernel_copy("insert_idempotent", True, [64, 64], [32, 32], "32:64, 0:32", "0:32, 0:32")
+    assert _insert(sdfg) == 1
+    assert _insert(sdfg) is None
+    _assert_libnode_implementation(sdfg)
+
+
+def test_insert_rejects_nonzero_start_offset():
+    sdfg = _build_kernel_copy("insert_start_offset", True, [64, 64], [32, 32], "0:32, 0:32", "0:32, 0:32")
+    sdfg.arrays["A"].start_offset = 16
+    assert _insert(sdfg) is None
+
+
 def _tma_kernel_without_implementation(kernel, dtype=dace.float64):
     """A memory engine kernel of ``copy_node_test`` whose copy leaves the implementation to be selected."""
     builder, expected, is_load = _TMA_KERNELS[kernel]
@@ -525,8 +628,11 @@ def _init_gemm(NI, NJ, NK, backend):
 
 
 @pytest.mark.gpu
-def test_polybench_gemm():
-    """``InsertMemoryEngineBulkCopiesPipeline`` preserves gemm output versus the untransformed reference."""
+@pytest.mark.parametrize("sizes", [(32, 64, 96), (40, 48, 80), (33, 16, 48), (100, 112, 16)],
+                         ids=lambda s: "x".join(map(str, s)))
+def test_polybench_gemm(sizes):
+    """``InsertMemoryEngineBulkCopiesPipeline`` preserves gemm output versus the untransformed reference,
+    also where the sizes leave partial tiles (symbolic sizes, clamped memlets)."""
     cp = pytest.importorskip("cupy")
     if int(cp.cuda.Device().compute_capability) < 90:
         pytest.skip(
