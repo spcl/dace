@@ -1459,17 +1459,11 @@ class SDFG(ControlFlowRegion):
         declared = self._symbol_repo.params.types
         extents = sorted(
             {
-                base.name
+                name
                 for desc in self._arrays.values()
-                for dim in getattr(desc, "shape", ())
-                if symbolic.issymbolic(dim)
-                for coefficient, base in [dim.as_coeff_Mul()]
-                # An undefined symbol is a placeholder with no facts
-                if coefficient.is_positive
-                and isinstance(base, symbolic.symbol)
-                and not isinstance(base, symbolic.UndefinedSymbol)
-                and base.name in declared
-                and base.name not in assigned
+                if isinstance(desc, dt.Data)
+                for name in desc.scaled_symbols()
+                if name in declared and name not in assigned
             }
         )
         if not extents:
