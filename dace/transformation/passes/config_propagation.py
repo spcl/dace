@@ -127,7 +127,9 @@ class ConfigPropagation(ppl.Pass):
         # An argument the variant no longer touches stays connected: every non-transient needs a connector
         inputs = dict.fromkeys(sorted((args & reads) | (args - reads - writes)))
         outputs = dict.fromkeys(sorted(args & writes))
-        symbols = sorted(str(s) for s in variant.free_symbols)
+        # Only what the variant uses: a symbol baked away may still be declared there
+        used = {str(s) for s in variant.used_symbols(all_symbols=True)}
+        symbols = sorted(str(s) for s in variant.free_symbols if str(s) in used)
         node = state.add_nested_sdfg(
             None,
             inputs,
