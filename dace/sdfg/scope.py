@@ -288,7 +288,8 @@ def device_map_block_size(state: "dace.sdfg.SDFGState", entry: nd.MapEntry) -> t
     if entry.map.gpu_block_size is not None:
         return tuple(list(entry.map.gpu_block_size) + [1] * (3 - len(entry.map.gpu_block_size)))
     sizes = [
-        list(child.map.range.size()) + [1] * (3 - len(child.map.range))
+        # The innermost map dimension is the block's x dimension
+        child.map.range.size()[::-1] + [1] * (3 - len(child.map.range))
         for child in state.scope_children()[entry]
         if isinstance(child, nd.MapEntry) and child.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
     ]

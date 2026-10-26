@@ -393,6 +393,29 @@ def test_self_copy_through_transient():
     assert np.allclose(p, pp)
 
 
+def test_second_array_removal_names_copy_destination():
+    """Removing ``tmp`` from ``a[2:4, 1:4] -> tmp -> b`` leaves a direct copy that names ``b``."""
+    sdfg = dace.SDFG("redarr_second_direct_copy")
+    sdfg.add_array("a", [5, 5], dace.float64)
+    sdfg.add_transient("tmp", [2, 3], dace.float64)
+    sdfg.add_array("b", [2, 3], dace.float64)
+    state = sdfg.add_state()
+    tmp = state.add_access("tmp")
+    state.add_nedge(state.add_read("a"), tmp, dace.Memlet("a[2:4, 1:4] -> tmp[0:2, 0:3]"))
+    state.add_nedge(tmp, state.add_write("b"), dace.Memlet("b[0:2, 0:3]"))
+
+    assert sdfg.apply_transformations(RedundantSecondArray) == 1
+    (e,) = state.edges()
+    assert e.data.data == "b"
+    assert str(e.data.src_subset) == "2:4, 1:4"
+    sdfg.validate()
+
+    a = np.random.rand(5, 5)
+    b = np.zeros((2, 3))
+    sdfg(a=a, b=b)
+    assert np.array_equal(b, a[2:4, 1:4])
+
+
 def test_reverse_copy_nested_symbolic():
     """A symbolic self-copy inlined into a concrete program, where ``R - 1`` and ``R - 2`` become constants."""
     R = dace.symbol("R", dace.int64)

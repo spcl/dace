@@ -12,7 +12,6 @@ from dace import data, dtypes, subsets, symbolic
 from dace import memlet as mm
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.propagation import align_memlet
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
 
@@ -1219,7 +1218,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             graph.remove_edge(e2)
             e2.data.wcr = wcr
             e2.data.wcr_nonatomic = wcr_nonatomic
-            graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+            new_edge = graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+            if isinstance(e2.dst, nodes.AccessNode):
+                # A direct copy names its destination
+                sdutil.normalize_copy_memlet(graph, new_edge)
 
             # 2-d. Fix strides in nested SDFGs
             if in_desc.strides != out_desc.strides:
@@ -1642,7 +1644,10 @@ class RedundantReadSlice(pm.SingleStateTransformation):
             graph.remove_edge(e2)
             e2.data.wcr = wcr
             e2.data.wcr_nonatomic = wcr_nonatomic
-            graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+            new_edge = graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+            if isinstance(e2.dst, nodes.AccessNode):
+                # A direct copy names its destination
+                sdutil.normalize_copy_memlet(graph, new_edge)
 
         # Finally, remove out_array node
         graph.remove_node(out_array)
@@ -1960,11 +1965,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
             state.remove_edge(edge)
             if is_src:
                 new_edge = state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
-                if isinstance(view_edge.src, nodes.EntryNode) and edge.data.data != viewed.data:
-                    # A copy out of a view read in a scope now stages the viewed data in, which names its source
-                    new_edge.data = align_memlet(state, new_edge, dst=False)
             else:
-                state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+                new_edge = state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+            # A copy through the removed view now runs between the containers and names its owner
+            sdutil.normalize_copy_memlet(state, new_edge)
 
         # Remove view node
         state.remove_node(self.view)
