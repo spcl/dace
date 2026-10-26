@@ -6,9 +6,8 @@ import pytest
 
 import dace
 from dace.sdfg import nodes as dace_nodes
-from dace.sdfg.utils import canonicalize_memlet_trees
+from dace.sdfg.utils import canonicalize_memlet_trees, normalize_copy_memlets
 from dace.sdfg.validation import InvalidSDFGEdgeError
-from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 from .transformations import utility
 
@@ -149,7 +148,7 @@ def test_multi_use_value_input():
     ref, res = utility.make_sdfg_args(sdfg)
     reference = copy.deepcopy(sdfg)
     reference.name += "_reference"
-    NormalizeCopyMemlets().apply_pass(reference, {})
+    normalize_copy_memlets(reference)
     utility.compile_and_run_sdfg(reference, **ref)
 
     ret = canonicalize_memlet_trees(sdfg)
@@ -248,7 +247,7 @@ def test_multi_use_value_output():
     ref, res = utility.make_sdfg_args(sdfg)
     reference = copy.deepcopy(sdfg)
     reference.name += "_reference"
-    NormalizeCopyMemlets().apply_pass(reference, {})
+    normalize_copy_memlets(reference)
     utility.compile_and_run_sdfg(reference, **ref)
 
     ret = canonicalize_memlet_trees(sdfg)

@@ -5,9 +5,8 @@ import pytest
 import dace
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
-from dace.sdfg.utils import consolidate_edges
+from dace.sdfg.utils import consolidate_edges, normalize_copy_memlets
 from dace.sdfg.validation import InvalidSDFGEdgeError
-from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 from .transformations import utility
 
@@ -141,10 +140,10 @@ def _make_sdfg_multi_usage_input(
         mx.add_scope_connectors(output_data)
 
     if use_non_standard_memlet and use_inner_access_node:
-        # A memlet crossing the map must name the container outside it; the pass renames it
+        # A memlet crossing the map must name the container outside it; normalizing renames it
         with pytest.raises(InvalidSDFGEdgeError, match="must name"):
             sdfg.validate()
-        NormalizeCopyMemlets().apply_pass(sdfg, {})
+        normalize_copy_memlets(sdfg)
     sdfg.validate()
 
     return sdfg, state, multi_use_value, me
@@ -299,10 +298,10 @@ def _make_multi_use_value_output(
         mx.add_scope_connectors(f"output_{i}")
 
     if use_non_standard_memlet and use_inner_access_node:
-        # A memlet crossing the map must name the container outside it; the pass renames it
+        # A memlet crossing the map must name the container outside it; normalizing renames it
         with pytest.raises(InvalidSDFGEdgeError, match="must name"):
             sdfg.validate()
-        NormalizeCopyMemlets().apply_pass(sdfg, {})
+        normalize_copy_memlets(sdfg)
     sdfg.validate()
 
     return sdfg, state, multi_output

@@ -531,7 +531,7 @@ def validate_memlet_src_and_dst_subsets(
         return
     if memlet.data != owner:
         raise InvalidSDFGEdgeError(
-            f'Copy memlet "{memlet}" must name "{owner}" (apply NormalizeCopyMemlets)',
+            f'Copy memlet "{memlet}" must name "{owner}" (apply dace.sdfg.utils.normalize_copy_memlets)',
             state.parent_graph,
             state_id,
             eid,

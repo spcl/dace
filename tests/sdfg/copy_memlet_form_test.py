@@ -8,9 +8,9 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.sdfg.utils import normalize_copy_memlets
 from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, implicit_copies
-from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 N = 1024
 TILE = 256
@@ -74,7 +74,7 @@ def test_scope_alias_moves_no_data_on_gpu():
 
 
 def test_direct_copy_must_name_its_destination():
-    """``A -> B`` named by ``A`` is refused; NormalizeCopyMemlets names ``B`` and swaps the subsets."""
+    """``A -> B`` named by ``A`` is refused; ``normalize_copy_memlets`` names ``B`` and swaps the subsets."""
     sdfg = dace.SDFG("copy_form_direct")
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("B", [4], dace.float64)
@@ -84,7 +84,7 @@ def test_direct_copy_must_name_its_destination():
     )
     with pytest.raises(InvalidSDFGEdgeError, match='must name "B"'):
         sdfg.validate()
-    assert NormalizeCopyMemlets().apply_pass(sdfg, {}) == 1
+    assert normalize_copy_memlets(sdfg) == 1
     sdfg.validate()
     assert (edge.data.data, str(edge.data.subset), str(edge.data.other_subset)) == ("B", "0:4", "2:6")
 
@@ -104,7 +104,7 @@ def test_stage_in_copy_must_name_the_outer_container():
     state.add_memlet_path(loc, mx, state.add_write("C"), memlet=dace.Memlet(data="C", subset=f"i:i+{TILE}"))
     with pytest.raises(InvalidSDFGEdgeError, match='must name "A"'):
         sdfg.validate()
-    assert NormalizeCopyMemlets().apply_pass(sdfg, {}) == 2  # the edge into the map and the edge out of it
+    assert normalize_copy_memlets(sdfg) == 2  # the edge into the map and the edge out of it
     sdfg.validate()
     inner = state.in_edges(loc)[0]
     assert (inner.data.data, str(inner.data.subset), str(inner.data.other_subset)) == (
@@ -129,7 +129,7 @@ def test_stage_out_copy_must_name_the_outer_container():
     )
     with pytest.raises(InvalidSDFGEdgeError, match='must name "C"'):
         sdfg.validate()
-    assert NormalizeCopyMemlets().apply_pass(sdfg, {}) == 2  # the edge into the map exit and the edge out of it
+    assert normalize_copy_memlets(sdfg) == 2  # the edge into the map exit and the edge out of it
     sdfg.validate()
     inner = state.out_edges(loc)[0]
     assert (inner.data.data, str(inner.data.subset), str(inner.data.other_subset)) == (
@@ -147,7 +147,7 @@ def test_same_container_copy_subset_must_be_the_owner_side():
     edge = state.add_nedge(state.add_read("A"), state.add_write("A"), dace.Memlet("A[0:4] -> [4:8]"))
     with pytest.raises(InvalidSDFGEdgeError, match='"subset" must be the region of the "A" end'):
         sdfg.validate()
-    assert NormalizeCopyMemlets().apply_pass(sdfg, {}) == 1
+    assert normalize_copy_memlets(sdfg) == 1
     sdfg.validate()
     assert (str(edge.data.subset), str(edge.data.other_subset)) == ("4:8", "0:4")
     assert (str(edge.data.get_src_subset(edge, state)), str(edge.data.get_dst_subset(edge, state))) == ("0:4", "4:8")

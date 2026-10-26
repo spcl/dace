@@ -12,7 +12,7 @@ from typing import Any, Optional
 import networkx as nx
 
 import dace.sdfg.nodes
-from dace import config, dtypes
+from dace import config, dtypes, symbolic
 from dace import data as dt
 from dace import memlet as mm
 from dace import subsets as sbs
@@ -779,6 +779,31 @@ def canonicalize_memlet_trees(
     return total_modified_memlets
 
 
+def derive_missing_copy_subset(known: sbs.Range, desc: dt.Data) -> sbs.Range:
+    """The absent side of a copy memlet: all of ``desc`` unless the volumes provably differ, else ``known``.
+
+    :param known: The subset of the side the memlet gives.
+    :param desc: The descriptor of the side whose subset is absent.
+    """
+    full = sbs.Range.from_array(desc)
+    # Equalize first: two instances of the same symbol name make equal() answer None on identical counts
+    known_count, full_count = symbolic.equalize_symbols(known.num_elements(), full.num_elements())
+    if symbolic.equal(known_count, full_count) is not False:
+        return full
+    return known
+
+
+def normalize_copy_memlets(sdfg: SDFG) -> int:
+    """Makes every copy memlet of ``sdfg`` and its nested SDFGs name the container ``copy_memlet_owner`` asks
+    for: the one outside the scope its path crosses, or the destination of a direct copy.
+
+    :return: The number of memlets rewritten.
+    """
+    return sum(
+        normalize_copy_memlet(state, edge) for edge, state in sdfg.all_edges_recursive() if isinstance(state, SDFGState)
+    )
+
+
 def normalize_copy_memlets_in_state(state: SDFGState) -> int:
     """Normalizes every copy memlet of ``state``; for transformations that reroute memlet paths.
 
@@ -795,7 +820,6 @@ def normalize_copy_memlet(state: SDFGState, edge) -> int:
     :return: The number of memlets rewritten.
     """
     from dace.sdfg.validation import copy_memlet_owner  # Avoid import loop
-    from dace.transformation.passes.insert_explicit_copies import _derive_matching_dst_subset
 
     if edge.data.is_empty():
         return 0
@@ -817,10 +841,10 @@ def normalize_copy_memlet(state: SDFGState, edge) -> int:
         src_subset = memlet.get_src_subset(inner, state)
         dst_subset = memlet.get_dst_subset(inner, state)
         if stage_in:
-            own = src_subset or _derive_matching_dst_subset(dst_subset, state.sdfg.arrays[src.data])
+            own = src_subset or derive_missing_copy_subset(dst_subset, state.sdfg.arrays[src.data])
             other = dst_subset
         else:
-            own = dst_subset or _derive_matching_dst_subset(src_subset, state.sdfg.arrays[dst.data])
+            own = dst_subset or derive_missing_copy_subset(src_subset, state.sdfg.arrays[dst.data])
             other = src_subset
         memlet.data = owner
         memlet.subset = copy.deepcopy(own)

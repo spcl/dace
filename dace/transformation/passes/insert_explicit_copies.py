@@ -15,22 +15,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 
-def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
-    """Derive the absent side of a copy memlet: the full array when volumes are not
-    provably unequal, else ``src_subset``.
-
-    :param src_subset: the known (source) side of the copy.
-    :param dst_desc: descriptor whose subset is being derived.
-    :returns: the destination :class:`~dace.subsets.Range`.
-    """
-    dst_range = subsets.Range.from_array(dst_desc)
-    # Equalize first: two instances of the same symbol name make equal() answer None on identical counts.
-    src_count, dst_count = symbolic.equalize_symbols(src_subset.num_elements(), dst_range.num_elements())
-    if symbolic.equal(src_count, dst_count) is not False:
-        return dst_range
-    return src_subset
-
-
 def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> list:
     """The edges into ``target`` other than ``edge`` that write a region of ``name`` that may overlap ``subset``.
 
@@ -66,9 +50,9 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
 
 
 def drop_scope_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
-    """Remove ``inner``, a stage-in access node that only renames the container across the map entry.
+    """Remove ``inner``, a stage-in access node that only renames the container across the scope entry.
 
-    The staging ``edge`` must be its sole producer; its consumers then read the map connector directly.
+    The staging ``edge`` must be its sole producer; its consumers then read the scope connector directly.
     A consumer that is itself an access node would become a new staging copy, so that shape is left to
     the lift.
 
@@ -87,7 +71,7 @@ def drop_scope_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
 
 
 def drop_scope_exit_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
-    """Remove ``inner``, a stage-out access node that only renames the container across the map exit.
+    """Remove ``inner``, a stage-out access node that only renames the container across the scope exit.
 
     The mirror of :func:`drop_scope_alias`: the staging ``edge`` into the exit must be the sole consumer of
     ``inner`` and carry its single, non-empty producer on to the exit. A producer that is itself an access node
@@ -123,8 +107,8 @@ def order_against_competing_writes(
     which value survives. A competing write not downstream of the source was never ordered with the copy and
     stays unordered. An edge is only added where the pair is not already ordered, so no cycle appears.
 
-    ``source`` is the node the copy reads (the map entry when staging in), ``written`` the node it writes through
-    (the map exit when staging out); the libnode is already wired between them.
+    ``source`` is the node the copy reads (the scope entry when staging in), ``written`` the node it writes through
+    (the scope exit when staging out); the libnode is already wired between them.
     """
     out_edge = next(state.out_edges_by_connector(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME))
     competing = competing_writes(state, written, out_edge, name, subset)
@@ -189,7 +173,7 @@ class InsertExplicitCopies(ppl.Pass):
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 count += self._replace_direct_copies(state)
-                count += self._replace_map_staging_copies(state)
+                count += self._replace_scope_staging_copies(state)
         return count if count > 0 else None
 
     def _replace_direct_copies(self, state: SDFGState) -> int:
@@ -249,9 +233,9 @@ class InsertExplicitCopies(ppl.Pass):
 
             # Derive any side the memlet omitted from the array shape (same-volume, different-shape).
             if src_subset is None:
-                src_subset = _derive_matching_dst_subset(dst_subset, src_desc)
+                src_subset = sdutils.derive_missing_copy_subset(dst_subset, src_desc)
             if dst_subset is None:
-                dst_subset = _derive_matching_dst_subset(src_subset, dst_desc)
+                dst_subset = sdutils.derive_missing_copy_subset(src_subset, dst_desc)
 
             # A copy of zero elements moves nothing; only the order it imposed remains.
             if symbolic.equal(src_subset.num_elements(), 0, is_length=False) is True:
@@ -284,7 +268,7 @@ class InsertExplicitCopies(ppl.Pass):
 
         return count
 
-    def _replace_map_staging_copies(self, state: SDFGState) -> int:
+    def _replace_scope_staging_copies(self, state: SDFGState) -> int:
         """Lift stage-in / stage-out copies through scope entries / exits to ``CopyLibraryNode``.
 
         The libnode sits inside the scope; chained entries / exits are followed via
@@ -363,7 +347,7 @@ class InsertExplicitCopies(ppl.Pass):
         if identity:
             inner_subset = copy.deepcopy(outer_subset)
         elif inner_subset is None or outer_memlet.other_subset is None:
-            inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
+            inner_subset = sdutils.derive_missing_copy_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)

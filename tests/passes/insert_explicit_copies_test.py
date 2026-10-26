@@ -15,8 +15,8 @@ from dace import nodes
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
+from dace.sdfg.utils import normalize_copy_memlets
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 # The polybench programs import their ``polybench`` harness as a top-level module, which only
 # resolves when run as scripts (own directory on sys.path); importing them as a package needs it too.
@@ -181,7 +181,7 @@ def test_insert_other_subset_data_convention(sdfg_name, memlet):
     """Both memlet conventions, normalized, yield ``_in=A[2:10]``, ``_out=B[0:8]`` with no ``other_subset``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, st, _, _ = _build_copy_sdfg(sdfg_name, [("A", [20], cpu), ("B", [20], cpu)], memlet)
-    NormalizeCopyMemlets().apply_pass(sdfg, {})
+    normalize_copy_memlets(sdfg)
 
     InsertExplicitCopies().apply_pass(sdfg, {})
     _assert_no_other_subset(sdfg)

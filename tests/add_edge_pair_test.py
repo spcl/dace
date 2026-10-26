@@ -3,8 +3,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.utils import normalize_copy_memlets
 from dace.sdfg.validation import InvalidSDFGEdgeError
-from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 
 def test():
@@ -57,10 +57,10 @@ def test_src_dst_memlet(data_is_dst):
     state.add_memlet_path(a, mx, w, memlet=dace.Memlet("B[0:3, i]"))
 
     if data_is_dst:
-        # A stage-in memlet must name the container outside the map; the pass renames it
+        # A stage-in memlet must name the container outside the map; normalizing renames it
         with pytest.raises(InvalidSDFGEdgeError, match="must name"):
             sdfg.validate()
-        NormalizeCopyMemlets().apply_pass(sdfg, {})
+        normalize_copy_memlets(sdfg)
     sdfg.validate()
 
     a = np.random.rand(20, 20)

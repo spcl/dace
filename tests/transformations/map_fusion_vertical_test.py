@@ -13,9 +13,9 @@ from dace import data as dace_data
 from dace import symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.utils import normalize_copy_memlets
 from dace.sdfg.validation import InvalidSDFGEdgeError, copy_memlet_owner
 from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
-from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 
 def count_nodes(
@@ -1406,10 +1406,10 @@ def _impl_fusion_intermediate_different_access(modified_shape: bool, traditional
         external_edges=True,
     )
     if not traditional_memlet_direction:
-        # A stage-out memlet must name the container outside the map; the pass renames it
+        # A stage-out memlet must name the container outside the map; normalizing renames it
         with pytest.raises(InvalidSDFGEdgeError, match="must name"):
             sdfg.validate()
-        NormalizeCopyMemlets().apply_pass(sdfg, {})
+        normalize_copy_memlets(sdfg)
     sdfg.validate()
 
     apply_fusion(sdfg, removed_maps=1, final_maps=1)
