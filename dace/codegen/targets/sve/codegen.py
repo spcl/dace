@@ -38,9 +38,6 @@ class SVECodeGen(TargetCodeGenerator):
 
         function_stream.write("#include <arm_sve.h>\n")
 
-        # TODO: Find this automatically at compile time
-        function_stream.write(f"#define {util.REGISTER_BYTE_SIZE} 64\n")
-
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
         self.has_generated_header = False
 
@@ -210,9 +207,9 @@ class SVECodeGen(TargetCodeGenerator):
                 # Copy from array
                 if util.is_pointer(dst_type):
                     ##################
-                    # Pointer reference
+                    # Pointer reference; a tasklet only reads through its input, so the pointer is const
                     code.write(
-                        f"{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.cpu_codegen)};"
+                        f"const {dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.cpu_codegen)};"
                     )
                 elif util.is_vector(dst_type):
                     ##################

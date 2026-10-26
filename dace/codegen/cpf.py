@@ -39,6 +39,7 @@ import contextlib
 import copy
 import dataclasses
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -68,9 +69,10 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import Annotate
 from dace.transformation.passes.canonicalize.finalize import blas_addresses, explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
-#: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
-#: nothing else: ``CPU_Pinned`` is host memory but is allocated through the CUDA API, and the
-#: accelerator storages (GPU, SVE, Snitch) each need a compiler CPF does not invoke. An allowlist
+#: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory, plain locals and Arm SVE
+#: registers (``arm_sve.h`` is a system header of every aarch64 compiler), and nothing else:
+#: ``CPU_Pinned`` is host memory but is allocated through the CUDA API, and the accelerator storages
+#: (GPU, Snitch) each need a compiler CPF does not invoke. An allowlist
 #: rather than a list of the refused ones because ``StorageType`` is extensible -- a storage
 #: registered by a backend CPF has never heard of must refuse, not slip through.
 HOST_STORAGE = frozenset(
@@ -79,18 +81,21 @@ HOST_STORAGE = frozenset(
         dtypes.StorageType.Register,
         dtypes.StorageType.CPU_Heap,
         dtypes.StorageType.CPU_ThreadLocal,
+        dtypes.StorageType.SVE_Register,
     }
 )
 
 #: The schedules CPF can render, likewise an allowlist. ``CPU_Multicore`` is the OpenMP loop that
-#: makes the rendering parallel in the first place; the rest are the sequential and unspecified
-#: forms. Anything else (GPU device/thread-block, FPGA, SVE) needs another compiler.
+#: makes the rendering parallel in the first place; ``SVE_Map`` is the predicated Arm SVE loop
+#: (:class:`~dace.transformation.dataflow.sve.vectorization.SVEVectorization`); the rest are the
+#: sequential and unspecified forms. Anything else (GPU device/thread-block, FPGA) needs another compiler.
 HOST_SCHEDULES = frozenset(
     {
         dtypes.ScheduleType.Default,
         dtypes.ScheduleType.Sequential,
         dtypes.ScheduleType.CPU_Multicore,
         dtypes.ScheduleType.CPU_Persistent,
+        dtypes.ScheduleType.SVE_Map,
     }
 )
 
@@ -1414,6 +1419,31 @@ CUDA_BUILD_FLAGS: tuple[str, ...] = ("-std=c++20", "--expt-relaxed-constexpr")
 COMPILE_CHECK_FLAGS: tuple[str, ...] = ("-fsyntax-only", "-fopenmp")
 
 
+#: What makes a compiler accept the Arm SVE intrinsics an ``SVE_Map`` renders to.
+SVE_CHECK_FLAGS: tuple[str, ...] = ("-march=armv8.2-a+sve",)
+
+#: The aarch64 cross compilers that check an SVE unit on a host of another architecture, per dialect.
+SVE_CROSS_COMPILERS: dict[cpf_lowering.Dialect, tuple[str, ...]] = {
+    cpf_lowering.Dialect.STANDALONE: ("aarch64-linux-gnu-g++",),
+    cpf_lowering.Dialect.STANDALONE_C: ("aarch64-linux-gnu-gcc",),
+}
+
+
+def uses_sve(sdfg: SDFG) -> bool:
+    """Whether ``sdfg`` (nested SDFGs included) has an Arm SVE map, so its unit needs an SVE compiler."""
+    return any(
+        isinstance(node, nodes.MapEntry) and node.schedule == dtypes.ScheduleType.SVE_Map
+        for node, _ in sdfg.all_nodes_recursive()
+    )
+
+
+def sve_check_compiler(dialect: cpf_lowering.Dialect) -> str | None:
+    """The compiler that checks an SVE unit: the host's own on aarch64, else an aarch64 cross compiler."""
+    if platform.machine() in ("aarch64", "arm64"):
+        return compile_check_compiler(dialect)
+    return next(filter(None, map(shutil.which, SVE_CROSS_COMPILERS.get(dialect, ()))), None)
+
+
 def compile_check_compiler(dialect: cpf_lowering.Dialect) -> str | None:
     """The compiler the gate builds ``dialect``'s output with, or ``None`` if none is installed.
 
@@ -1443,7 +1473,9 @@ def vendor_include_flags(environments: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(flags))
 
 
-def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect, extra_flags: Sequence[str] = ()) -> None:
+def compile_check(
+    code: str, name: str, dialect: cpf_lowering.Dialect, extra_flags: Sequence[str] = (), sve: bool = False
+) -> None:
     """Assert the rendered unit is one a bare host compiler accepts, or raise with its first error.
 
     :func:`verify` answers "does this text name anything CPF may not name", which is a different
@@ -1458,6 +1490,7 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect, extra_fla
     :param name: the SDFG's name, for the message.
     :param dialect: which standalone dialect rendered it, choosing the compiler and the standard.
     :param extra_flags: further compiler flags, the include paths of the vendor libraries it calls.
+    :param sve: the unit has Arm SVE loops; it is checked by an SVE compiler (:func:`sve_check_compiler`).
     :raises RuntimeError: if the unit does not compile, or if its compiler is not installed --
                           "could not be checked" must not read the same as "was checked".
     """
@@ -1465,7 +1498,10 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect, extra_fla
     if toolchain is None:
         return
     standard, suffix, variable, fallbacks = toolchain
-    compiler = compile_check_compiler(dialect)
+    compiler = sve_check_compiler(dialect) if sve else compile_check_compiler(dialect)
+    if sve:
+        fallbacks = SVE_CROSS_COMPILERS.get(dialect, ())
+        extra_flags = (*SVE_CHECK_FLAGS, *extra_flags)
     if compiler is None:
         raise RuntimeError(
             f"CPF cannot check that {name} compiles: no {suffix[1:]} compiler found (tried "
@@ -1676,7 +1712,13 @@ def render_unit(
     for unit in filter(None, (code, device_code)):
         verify(unit, sdfg.name, dialect)
         if check_compiles:
-            compile_check(unit, sdfg.name, dialect, vendor_include_flags(set(frame.environments) | device_environments))
+            compile_check(
+                unit,
+                sdfg.name,
+                dialect,
+                vendor_include_flags(set(frame.environments) | device_environments),
+                sve=uses_sve(prepared),
+            )
     arguments = tuple(signature.order) if signature is not None else tuple(entry_arglist)
     return Rendering(
         code,
