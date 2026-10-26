@@ -13,6 +13,7 @@ from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syr2k, Syrk
 IMPLEMENTATIONS = [
     "pure",
     pytest.param("OpenBLAS", marks=pytest.mark.lapack),
+    pytest.param("MKL", marks=pytest.mark.mkl),
     pytest.param("gpu", marks=pytest.mark.gpu),
 ]
 rng = np.random.default_rng(42)
