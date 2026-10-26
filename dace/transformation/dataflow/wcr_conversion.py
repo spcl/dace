@@ -4,13 +4,16 @@
 import ast
 import copy
 import re
+from collections.abc import Sequence
 
 import sympy
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.python import astutils
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import propagate_memlets_state
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import transformation
@@ -288,6 +291,52 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     # (checked at match): ``a - b1 - b2 == a - (b1 + b2)`` is order-independent.
     _RMW_BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
 
+    @staticmethod
+    def python_updates(tasklet: nodes.Tasklet, inconns: Sequence[str]) -> list[tuple[str, str, ast.expr]]:
+        """Every ``(op, inconn, other)`` the Python tasklet reads as ``out = inconn <op> other``, with ``op`` a binary
+        or boolean operator, or as ``out = max(inconn, other)`` / ``min``, in either operand order."""
+        if len(tasklet.code.code) != 1 or not isinstance(tasklet.code.code[0], ast.Assign):
+            return []
+        assign: ast.Assign = tasklet.code.code[0]
+        if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+            return []
+        rhs = assign.value
+        if isinstance(rhs, ast.BinOp) and type(rhs.op) in AugAssignToWCR._PYOP_MAP:
+            op, operands = AugAssignToWCR._PYOP_MAP[type(rhs.op)], (rhs.left, rhs.right)
+        elif isinstance(rhs, ast.BoolOp) and type(rhs.op) in AugAssignToWCR._PYBOOLOP_MAP and len(rhs.values) == 2:
+            op, operands = AugAssignToWCR._PYBOOLOP_MAP[type(rhs.op)], tuple(rhs.values)
+        elif (
+            isinstance(rhs, ast.Call)
+            and isinstance(rhs.func, ast.Name)
+            and rhs.func.id in AugAssignToWCR._FUNCTIONS
+            and len(rhs.args) == 2
+            and not rhs.keywords
+        ):
+            op, operands = rhs.func.id, tuple(rhs.args)
+        else:
+            return []
+        return [
+            (op, mine.id, other)
+            for mine, other in (operands, operands[::-1])
+            if isinstance(mine, ast.Name) and mine.id in inconns
+        ]
+
+    @staticmethod
+    def python_update(
+        tasklet: nodes.Tasklet, inedges: Sequence[MultiConnectorEdge], outedge: MultiConnectorEdge
+    ) -> tuple[str, MultiConnectorEdge, ast.expr] | None:
+        """``(op, inedge, other)`` of the update ``out = in <op> other``, where ``in`` reads the element ``out``
+        writes; ``None`` if the Python tasklet is no such update."""
+        target = tasklet.code.code[0].targets[0].id if tasklet.code.code else None
+        if target != outedge.src_conn:
+            return None
+        by_conn = {edge.dst_conn: edge for edge in inedges}
+        for op, inconn, other in AugAssignToWCR.python_updates(tasklet, list(by_conn)):
+            # The accumulator reads the element written: ``A[i,j] = A[i,k] * A[k,j]`` is no update of ``A[i,j]``
+            if reads_written_element(by_conn[inconn], outedge):
+                return op, by_conn[inconn], other
+        return None
+
     @classmethod
     def expressions(cls):
         return [
@@ -368,48 +417,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         if tasklet.language is dtypes.Language.Python:
-            # Match a single assignment with a binary operation as RHS
-            if len(tasklet.code.code) > 1:
-                return False
-            if not isinstance(tasklet.code.code[0], ast.Assign):
-                return False
-            ast_node: ast.Assign = tasklet.code.code[0]
-            if len(ast_node.targets) > 1:
-                return False
-            if not isinstance(ast_node.targets[0], ast.Name):
-                return False
-            lhs: ast.Name = ast_node.targets[0]
-            if lhs.id != outconn:
-                return False
-            rhs = ast_node.value
-            # Accept binary op (``acc = acc + x``) or commutative reduction call
-            # (``acc = max(acc, x)`` / min). Frontend emits min/max as 2-arg Call not BinOp;
-            # restricting to BinOp left them undetected → unparallelizable by LoopToMap.
-            if isinstance(rhs, ast.BinOp) and isinstance(rhs.op, tuple(AugAssignToWCR._PYOP_MAP.keys())):
-                operands = (rhs.left, rhs.right)
-            elif (
-                isinstance(rhs, ast.Call)
-                and isinstance(rhs.func, ast.Name)
-                and rhs.func.id in AugAssignToWCR._FUNCTIONS
-                and len(rhs.args) == 2
-            ):
-                operands = tuple(rhs.args)
-            elif isinstance(rhs, ast.BoolOp) and type(rhs.op) in AugAssignToWCR._PYBOOLOP_MAP and len(rhs.values) == 2:
-                # Fortran's ``.OR.`` / ``.AND.`` accumulations (``levelmask = levelmask .OR. levmask``)
-                operands = tuple(rhs.values)
-            else:
-                return False
-            inconns = tuple(edge.dst_conn for edge in inedges)
-            for n in operands:
-                if isinstance(n, ast.Name) and n.id in inconns:
-                    # Operand is the accumulator ONLY if it reads the SAME element written.
-                    # Shared array NAME but DIFFERENT element (polybench ``lu``:
-                    # ``A[i,j] = A[i,k]*A[k,j]``, A[i,k] vs A[i,j]) is a cross-element read, not
-                    # RMW; treating it as acc would use the DELTA operator (``*``) not the real
-                    # accumulation (``+``), corrupting the result. CPP branch enforces this too.
-                    acc_edge = inedges[inconns.index(n.id)]
-                    if reads_written_element(acc_edge, outedge):
-                        return True
+            return AugAssignToWCR.python_update(tasklet, inedges, outedge) is not None
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
@@ -477,55 +485,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
-            # Match a single assignment whose RHS is a binary op or a min/max call.
             ast_node: ast.Assign = tasklet.code.code[0]
-            lhs: ast.Name = ast_node.targets[0]
-            rhs = ast_node.value
-            inconns = [edge.dst_conn for edge in inedges]
-            if isinstance(rhs, ast.BoolOp):
-                op = AugAssignToWCR._PYBOOLOP_MAP[type(rhs.op)]
-                acc_arg = next(
-                    a
-                    for a in rhs.values
-                    if isinstance(a, ast.Name)
-                    and a.id in inconns
-                    and reads_written_element(inedges[inconns.index(a.id)], outedge)
-                )
-                inedge = inedges[inconns.index(acc_arg.id)]
-                new_rhs = rhs.values[1] if rhs.values[0] is acc_arg else rhs.values[0]
-            elif isinstance(rhs, ast.Call):
-                # min/max reduction. Accumulator = operand whose read slice matches the written
-                # slice (robust to arg order); WCR combines the OTHER (delta) operand into it.
-                op = rhs.func.id
-                acc_arg = next(
-                    a
-                    for a in rhs.args
-                    if isinstance(a, ast.Name)
-                    and a.id in inconns
-                    and reads_written_element(inedges[inconns.index(a.id)], outedge)
-                )
-                inedge = inedges[inconns.index(acc_arg.id)]
-                new_rhs = rhs.args[1] if rhs.args[0] is acc_arg else rhs.args[0]
-            else:
-                op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-
-                # The accumulator is the operand reading the written slice: in ``B[j] = B[j-1] + B[j]`` both
-                # operands read B, and taking the left one would drop ``B[j-1]`` from the sum.
-                def reads_written_slice(operand) -> bool:
-                    return (
-                        isinstance(operand, ast.Name)
-                        and operand.id in inconns
-                        and reads_written_element(inedges[inconns.index(operand.id)], outedge)
-                    )
-
-                if reads_written_slice(rhs.left):
-                    inedge = inedges[inconns.index(rhs.left.id)]
-                    new_rhs = rhs.right
-                else:
-                    inedge = inedges[inconns.index(rhs.right.id)]
-                    new_rhs = rhs.left
-
-            new_node = ast.copy_location(ast.Assign(targets=[lhs], value=new_rhs), ast_node)
+            op, inedge, new_rhs = required(AugAssignToWCR.python_update(tasklet, inedges, outedge))
+            new_node = ast.copy_location(ast.Assign(targets=ast_node.targets, value=new_rhs), ast_node)
             tasklet.code.code = [new_node]
 
         elif tasklet.language is dtypes.Language.CPP:

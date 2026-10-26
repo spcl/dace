@@ -5,6 +5,8 @@ import re
 from collections.abc import Set as AbstractSet
 from typing import Any
 
+import numpy as np
+
 import dace
 from dace import config, cpf_lowering, data, dtypes, symbolic, tile_functions
 from dace.cli import progress
@@ -64,6 +66,28 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     if callable(func):
         return func(sdfg)
     return func
+
+
+def constant_as_stored(desc: data.Array, value: Any) -> np.ndarray:
+    """The elements of constant ``value`` in the order ``desc`` lays them out in memory.
+
+    ``value`` holds the elements by index, and the code reads element ``i`` at ``sum(i * strides)``: a Fortran-ordered
+    constant written in index order reads its transpose. A value that is not of the descriptor's shape, or a
+    descriptor with symbolic strides, is written in index order.
+    """
+    value = np.asarray(value)
+    try:
+        shape = tuple(int(extent) for extent in desc.shape)
+        strides = tuple(int(stride) for stride in desc.strides)
+        size = int(desc.total_size)
+    except TypeError:
+        return value
+    if value.shape != shape or not value.size:
+        return value
+    offsets = sum(index * stride for index, stride in zip(np.indices(shape), strides))
+    stored = np.zeros(max(size, int(offsets.max()) + 1), dtype=value.dtype)
+    stored[offsets] = value
+    return stored
 
 
 class DaCeCodeGenerator:
@@ -218,10 +242,11 @@ class DaCeCodeGenerator:
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
+                stored = constant_as_stored(csttype, cstval)
+                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"
                 # sym2cpp, not str: a numpy bool prints as Python 'True', and complex as '(1+2j)'.
                 # .flat keeps the numpy scalar, so sym2cpp still sees the element's own width.
-                const_str += ", ".join(sym2cpp(cstval.flat[i]) for i in range(cstval.size))
+                const_str += ", ".join(sym2cpp(stored.flat[i]) for i in range(stored.size))
                 const_str += "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:

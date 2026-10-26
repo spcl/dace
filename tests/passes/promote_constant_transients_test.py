@@ -894,3 +894,62 @@ if __name__ == "__main__":
     test_promoting_a_held_fill_removes_both_ends_of_its_scope()
     test_data_bound_to_a_reference_is_not_promoted()
     test_a_literal_named_like_a_libc_function_stays_a_local()
+
+
+def fortran_ordered_table() -> dace.SDFG:
+    """``A[i, j] = 10 * i + j`` element by element into a column-major transient, then copied out."""
+    sdfg = dace.SDFG("fortran_ordered_table")
+    sdfg.add_transient("A", [2, 3], dace.float64, strides=(1, 2))
+    sdfg.add_array("B", [2, 3], dace.float64)
+    fill = sdfg.add_state("fill")
+    table = fill.add_write("A")
+    for i in range(2):
+        for j in range(3):
+            write = fill.add_tasklet(f"set_{i}_{j}", {}, {"out"}, f"out = {10 * i + j}.0")
+            fill.add_edge(write, "out", table, None, dace.Memlet(f"A[{i}, {j}]"))
+    use = sdfg.add_state_after(fill, "use")
+    use.add_mapped_tasklet(
+        "copy",
+        {"i": "0:2", "j": "0:3"},
+        {"a": dace.Memlet("A[i, j]")},
+        "b = a",
+        {"b": dace.Memlet("B[i, j]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_a_promoted_column_major_table_is_emitted_in_its_memory_order():
+    """The constant is read at ``i + 2 * j``; written in index order, every read returned its transpose."""
+    sdfg = fortran_ordered_table()
+    code = next(c.clean_code for c in sdfg.generate_code() if c.language == "cpp")
+    assert "constexpr double A[6] = {0.0, 10.0, 1.0, 11.0, 2.0, 12.0};" in code
+
+    out = np.zeros((2, 3))
+    fortran_ordered_table()(B=out)
+    assert np.array_equal(out, [[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]])
+
+
+def negative_zero_copied_out() -> dace.SDFG:
+    """``a = -0.0`` into a transient scalar, then copied out."""
+    sdfg = dace.SDFG("negative_zero_copied_out")
+    sdfg.add_scalar("a", dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+    fill = sdfg.add_state("fill")
+    write = fill.add_tasklet("set", {}, {"out"}, "out = -0.0")
+    fill.add_edge(write, "out", fill.add_write("a"), None, dace.Memlet("a[0]"))
+    use = sdfg.add_state_after(fill, "use")
+    copy = use.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
+    use.add_edge(use.add_read("a"), None, copy, "inp", dace.Memlet("a[0]"))
+    use.add_edge(copy, "out", use.add_write("B"), None, dace.Memlet("B[0]"))
+    return sdfg
+
+
+def test_a_promoted_negative_zero_keeps_its_sign():
+    """SymPy has no negative zero, so the promoted constant came out as ``0.0`` (Fortran ``out = -0.0_8``)."""
+    code = next(c.clean_code for c in negative_zero_copied_out().generate_code() if c.language == "cpp")
+    assert "constexpr double a = -0.0;" in code
+
+    out = np.ones(1)
+    negative_zero_copied_out()(B=out)
+    assert out[0] == 0.0 and np.signbit(out[0])

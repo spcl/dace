@@ -86,11 +86,13 @@ def sym2cpp(
         dialect = cpf_lowering.active_dialect()
     if isinstance(s, list):
         return [sym2cpp(d, arrayexprs, dialect, fp_ctype) for d in s]
-    # Two literal kinds symstr cannot carry: a bool round-trips as Python 'True' (or as the
-    # integer 1, which loses the type), and a complex loses its width -- a complex64 constant
-    # would be emitted as dace::complex128.
+    # Three literal kinds symstr cannot carry: a bool round-trips as Python 'True' (or as the
+    # integer 1, which loses the type), a complex loses its width -- a complex64 constant
+    # would be emitted as dace::complex128 -- and SymPy has no negative zero.
     if isinstance(s, (bool, np.bool_)):
         return "true" if s else "false"
+    if isinstance(s, (float, np.floating)) and s == 0 and np.signbit(s):
+        return "-0.0"
     if isinstance(s, (complex, np.complexfloating)):
         ctype = str(dtypes.dtype_to_typeclass(type(s)))
         if dialect is cpf_lowering.Dialect.STANDALONE_C:
