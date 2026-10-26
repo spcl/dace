@@ -1353,6 +1353,18 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
+    def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> tuple[DefinedType, str]:
+        """Defined type and C type of ``ptr``. A View, or an array sized by a non-free symbol, is allocated in a scope
+        that may have ended, so its declaration is asked first."""
+        dependent_shape = (
+            isinstance(desc, data.Array)
+            and not isinstance(desc, data.View)
+            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
+        )
+        if (dependent_shape or isinstance(desc, data.View)) and self._dispatcher.declared_arrays.has(ptr):
+            return self._dispatcher.declared_arrays.get(ptr)
+        return self._dispatcher.defined_vars.get(ptr, is_global=is_global)
+
     def memlet_definition(
         self,
         sdfg: SDFG,
@@ -1383,23 +1395,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         ptr = codegen.ptr(memlet.data, desc, sdfg)
-        types = None
-        # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (
-            isinstance(desc, data.Array)
-            and not isinstance(desc, data.View)
-            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
-        )
-        try:
-            # NOTE: It is hard to get access to the view-edge here, so always
-            # check the declared-arrays dictionary for Views.
-            if dependent_shape or isinstance(desc, data.View):
-                types = self._dispatcher.declared_arrays.get(ptr)
-        except KeyError:
-            pass
-        if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
-        var_type, ctypedef = types
+        var_type, ctypedef = self.defined_type(sdfg, ptr, desc, is_global=True)
 
         result = ""
         expr = (
@@ -1640,6 +1636,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
+    #: ``generate_node`` dispatches on the exact class name; an AI-generated tasklet is generated as a tasklet
+    _generate_AITasklet = _generate_Tasklet
+
     def unparse_tasklet(
         self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth, toplevel_schedule
     ):
@@ -1676,7 +1675,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     dtypes.AllocationLifetime.Persistent,
                     dtypes.AllocationLifetime.External,
                 )
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                defined_type, _ = self.defined_type(sdfg, ptrname, desc, is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f"{cdtype.ctype} {edge.src_conn} = {base_ptr};", cfg, state_id, src_node)
             else:
@@ -1710,7 +1709,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f"{atype} {restrict} {aname}" for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         arguments += [
             f"{node.sdfg.symbols[aname].as_arg(aname)}"
             for aname in sorted(node.symbol_mapping.keys())
@@ -1723,7 +1722,7 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ["__state"]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         args = ", ".join(
             prepend
             + [argval for _, _, argval in memlet_references]
