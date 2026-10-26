@@ -1479,9 +1479,10 @@ class SDFG(ControlFlowRegion):
 
     def bound_names(self) -> tuple[frozenset[str], frozenset[str]]:
         """The names this SDFG's scopes bind (see ``scope_bound_names``) and those its interstate edges assign, for
-        picking names that clash with neither. Cached until a node, block or edge is added to or removed from the
-        SDFG; a name bound by editing an existing map or edge in place is seen after the next such change. Facts and
-        validation walk the graph instead, as a stale name there would be unsound."""
+        picking names that clash with neither. Cached: an added scope entry or assigning interstate edge extends the
+        cache, an added region or state holding a scope entry, or any removal, drops it. A name bound by editing an
+        existing map or edge in place is seen after the next drop. Facts and validation walk the graph instead, as a
+        stale name there would be unsound."""
         if self._bound_names is None:
             self._bound_names = (frozenset(scope_bound_names(self)), frozenset(interstate_bound_names(self)))
         return self._bound_names
