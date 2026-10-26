@@ -1980,20 +1980,31 @@ class OffloadToAccelerator(ppl.Pass):
         traverse_IR(IR, _insert_copy_names_in_node)
 
     def _correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode):
+        # A container every access to which sits inside one kernel is thread-private, as a block-wide reduce's
+        # operands must be. One device code uses beyond that -- two kernels, or a kernel and the host -- is a buffer
+        # handed from launch to launch (dace-fortran's loop-local ``Register`` arrays in an ICON block body), so it
+        # lives where the analysis puts it, whatever storage it was given.
+        touched_by: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
+        for state in sdfg.states():
+            scopes = state.scope_dict()
+            for node in state.data_nodes():
+                kernel = enclosing_kernel(scopes, node)
+                while kernel is not None and enclosing_kernel(scopes, kernel) is not None:
+                    kernel = enclosing_kernel(scopes, kernel)
+                touched_by.setdefault(node.data, OrderedSet()).add(kernel)
+        one_kernel = OrderedSet(name for name, by in touched_by.items() if len(by) == 1 and None not in by)
+        on_device: OrderedSet[str] = OrderedSet()
+        traverse_IR(IR, lambda node: on_device.update(node.gpu_set))
         # A register or shared-memory transient keeps the scope-local storage it was given
         seen_transients: OrderedSet[str] = OrderedSet(
-            name for name, desc in sdfg.arrays.items() if desc.storage in SCOPE_LOCAL_STORAGE
+            name
+            for name, desc in sdfg.arrays.items()
+            if desc.storage in SCOPE_LOCAL_STORAGE and (name in one_kernel or name not in on_device)
         )
-        # A ``Default`` transient that lives only inside kernels is thread-private, as a block-wide reduce's operands
-        # must be: ``Register``, what a kernel scope resolves ``Default`` to, not one ``GPU_Global`` buffer
-        kernel_local: dict[str, bool] = {}
-        for state in sdfg.states():
-            for node in state.data_nodes():
-                inside = is_devicelevel_gpu(sdfg, state, node)
-                kernel_local[node.data] = kernel_local.get(node.data, True) and inside
-        for name, inside in kernel_local.items():
+        # ``Register`` is what a kernel scope resolves ``Default`` to
+        for name in one_kernel:
             desc = sdfg.arrays[name]
-            if inside and desc.transient and desc.storage == dtypes.StorageType.Default:
+            if desc.transient and desc.storage == dtypes.StorageType.Default:
                 desc.storage = dtypes.StorageType.Register
                 seen_transients.add(name)
 
