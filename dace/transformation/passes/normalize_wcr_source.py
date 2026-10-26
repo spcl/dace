@@ -392,22 +392,18 @@ class NormalizeWCRSource(ppl.Pass):
         bound = [oe for oe in parent_state.out_edges(parent) if oe.src_conn == name]
         if not bound:
             return False
-        # A call inside a map runs once per iteration: an accumulation there folds into one shared caller array
-        if parent_state.entry_node(parent) is not None and any(
-            e.data.wcr is not None for oe in bound for e in parent_state.memlet_tree(oe)
-        ):
-            return False
+        # A call inside a map runs once per iteration: when it accumulates into a part of the caller array no map
+        # parameter selects, every iteration folds into the same slots, which a per-call seed would erase
+        params: set[str] = set()
+        scope = parent_state.entry_node(parent)
+        while scope is not None:
+            params |= set(scope.map.params)
+            scope = parent_state.entry_node(scope)
         for oe in bound:
             cdesc = parent_sdfg.arrays.get(oe.data.data)
             if cdesc is None or not cdesc.transient:
                 return False
-            # The caller array is fresh only if this call is its one writer: anything else gave it a value
-            sink = parent_state.memlet_path(oe)[-1].dst
-            if any(
-                n.data == oe.data.data and n is not sink and st.in_degree(n) > 0
-                for st in parent_sdfg.states()
-                for n in st.data_nodes()
-            ):
+            if oe.data.wcr is not None and params and not {str(s) for s in oe.data.subset.free_symbols} & params:
                 return False
         return True
 
