@@ -3317,6 +3317,7 @@ class SDFG(ControlFlowRegion):
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
         """
+
         states = list(self.states())
         while len(states) > 0:
             state = states.pop()

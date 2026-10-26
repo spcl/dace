@@ -747,6 +747,7 @@ if __name__ == "__main__":
     # test_scope_multisize()
     test_multisize()
     test_a_view_does_not_reallocate_the_array_it_views()
+    test_dominator_tree_matches_the_transitive_closure()
     test_container_read_only_from_tasklet_code()
     test_view_first_read_by_an_interstate_edge()
     test_dominator_tree_matches_the_transitive_closure()
