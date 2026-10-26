@@ -38,7 +38,14 @@ representations:
   unconditional edges whose assignments become `AssignNode`s, a single
   conditional out-edge (an `IfScope` holding the edge's assignments and the
   rest of the chain, `RegCorr.condStep`), loop regions, conditional blocks
-  (`if`/`elif`/`else`), break, continue and return.
+  (`if`/`elif`/`else`), break, continue and return.  A region with branching
+  edges is a `GBlock` (`RegCorr.gblock`): each block's position after its
+  label holds its segment and one item per out-edge (a `stateif` with the
+  edge's assignments and a goto, or an inline goto for an unconditional
+  edge); several true edges and failing conditions are undefined behavior,
+  so the tree's first-true order is matched.  Every goto must jump forward
+  (`GPos`, well-founded by construction); loops built from backward gotos are
+  not certified yet.
   Nested SDFGs (`SegCorr.nestedMap`): a map scope whose body is one nested
   SDFG matches the tree's inlined inner region; the per-call transients are
   related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation

@@ -459,6 +459,33 @@ theorem if_inv {tc : TCtx} {pc : PyExpr} {body : List SNode} {cst : CSt} {res : 
   | ifTaken _ hc hb => cases hn; exact .inr (.inr ⟨_, hc, hb, rfl⟩)
   | _ => cases hn
 
+theorem stateIf_inv {tc : TCtx} {pc : PyExpr} {body : List SNode} {cst : CSt} {res : Res NodeOut}
+    (h : STree.NodeExec tc {} (.stateIfScope pc body) cst res) :
+    (∃ e, tc.ctx.evalBoolR cst.ρ cst.mem pc.expr = .err e ∧ res = .err e) ∨
+    (tc.ctx.evalBoolR cst.ρ cst.mem pc.expr = .ok false ∧ res = .ok ({}, .normal, cst)) ∨
+    ∃ r', tc.ctx.evalBoolR cst.ρ cst.mem pc.expr = .ok true ∧ STree.ListExec tc body false {} body cst r' ∧
+      res = scopeOut r' := by
+  generalize hn : SNode.stateIfScope pc body = n at h
+  cases h with
+  | pendingErr _ hp => simp [Pending.isEmpty] at hp
+  | leaf _ h' => subst hn; simp [stepLeaf] at h'
+  | loop _ hl _ => subst hn; simp [SNode.loop?] at hl
+  | stateIfCondErr _ hc => cases hn; exact .inl ⟨_, hc, rfl⟩
+  | stateIfSkip _ hc => cases hn; exact .inr (.inl ⟨hc, rfl⟩)
+  | stateIfTaken _ hc hb => cases hn; exact .inr (.inr ⟨_, hc, hb, rfl⟩)
+  | _ => cases hn
+
+theorem gblock_inv {tc : TCtx} {cs : List SNode} {cst : CSt} {res : Res NodeOut}
+    (h : STree.NodeExec tc {} (.gblock cs) cst res) :
+    ∃ r', STree.ListExec tc cs true {} cs cst r' ∧ res = scopeOut r' := by
+  generalize hn : SNode.gblock cs = n at h
+  cases h with
+  | pendingErr _ hp => simp [Pending.isEmpty] at hp
+  | leaf _ h' => subst hn; simp [stepLeaf] at h'
+  | loop _ hl _ => subst hn; simp [SNode.loop?] at hl
+  | gblock _ hb => cases hn; exact ⟨_, hb, rfl⟩
+  | _ => cases hn
+
 theorem elif_inv {tc : TCtx} {pc : PyExpr} {body : List SNode} {cst : CSt} {res : Res NodeOut}
     (h : STree.NodeExec tc { chain := some false } (.elifScope pc body) cst res) :
     (∃ e, tc.ctx.evalBoolR cst.ρ cst.mem pc.expr = .err e ∧ res = .err e) ∨
@@ -666,6 +693,103 @@ theorem trueEdges_single {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} {
   | err e' => simp [trueEdges, he, List.filterMapM, List.filterMapM.loop, h]
   | ok b => cases b <;> simp [trueEdges, he, List.filterMapM, List.filterMapM.loop, h]
 
+/-- Does a condition evaluate to true? -/
+def resTrue : Res Bool → Bool
+  | .ok true => true
+  | _ => false
+
+theorem trueEdges_loop {ctx : Ctx} {cst : CSt} :
+    ∀ (es : List IEdge) (bs T : List IEdge),
+      List.filterMapM.loop (m := Res) (fun e => do
+          let b ← ctx.evalBoolR cst.ρ cst.mem e.cond
+          pure (if b then some e else none)) es bs = .ok T →
+      (∀ e ∈ es, ∃ v, ctx.evalBoolR cst.ρ cst.mem e.cond = .ok v) ∧
+        T = bs.reverse ++ es.filter fun e => resTrue (ctx.evalBoolR cst.ρ cst.mem e.cond)
+  | [], bs, T, h => by
+    simp only [List.filterMapM.loop] at h
+    cases h
+    simp
+  | e :: es, bs, T, h => by
+    simp only [List.filterMapM.loop] at h
+    cases hv : ctx.evalBoolR cst.ρ cst.mem e.cond with
+    | err err => rw [hv] at h; cases h
+    | ok v =>
+      rw [hv] at h
+      cases v with
+      | false =>
+        obtain ⟨h₁, h₂⟩ := trueEdges_loop es bs T h
+        refine ⟨fun e' he' => ?_, ?_⟩
+        · rcases List.mem_cons.1 he' with rfl | he'
+          · exact ⟨_, hv⟩
+          · exact h₁ e' he'
+        · rw [h₂, List.filter_cons, hv]; rfl
+      | true =>
+        obtain ⟨h₁, h₂⟩ := trueEdges_loop es (e :: bs) T h
+        refine ⟨fun e' he' => ?_, ?_⟩
+        · rcases List.mem_cons.1 he' with rfl | he'
+          · exact ⟨_, hv⟩
+          · exact h₁ e' he'
+        · rw [h₂, List.filter_cons, hv]; simp [resTrue]
+
+/-- The true out-edges of a block are those whose condition holds; every
+condition is defined. -/
+theorem trueEdges_ok {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} {T : List IEdge}
+    (h : trueEdges ctx rg cst bid = .ok T) :
+    ∀ e ∈ rg.outEdges bid, ctx.evalBoolR cst.ρ cst.mem e.cond = .ok (decide (e ∈ T)) := by
+  obtain ⟨h₁, h₂⟩ := trueEdges_loop _ [] T h
+  intro e he
+  obtain ⟨v, hv⟩ := h₁ e he
+  rw [hv]
+  congr 1
+  subst h₂
+  cases v with
+  | true => simp [List.mem_filter, he, hv, resTrue]
+  | false =>
+    symm
+    simp only [List.reverse_nil, List.nil_append, decide_eq_false_iff_not, List.mem_filter, not_and]
+    intro _ h'; rw [hv] at h'; cases h'
+
+/-- A failing condition is undefined behavior. -/
+theorem trueEdges_loop_err {ctx : Ctx} {cst : CSt} {e : ErrReason} :
+    ∀ (es : List IEdge) (bs : List IEdge),
+      List.filterMapM.loop (m := Res) (fun e => do
+          let b ← ctx.evalBoolR cst.ρ cst.mem e.cond
+          pure (if b then some e else none)) es bs = .err e → e.isUB = true
+  | [], bs, h => by simp only [List.filterMapM.loop] at h; cases h
+  | x :: xs, bs, h => by
+    simp only [List.filterMapM.loop] at h
+    cases hv : ctx.evalBoolR cst.ρ cst.mem x.cond with
+    | err err =>
+      rw [hv] at h
+      cases h
+      unfold Ctx.evalBoolR at hv
+      cases hb : ctx.evalBool cst.ρ cst.mem x.cond with
+      | none => rw [hb] at hv; cases hv; rfl
+      | some b => rw [hb] at hv; cases hv
+    | ok v => rw [hv] at h; cases v <;> exact trueEdges_loop_err xs _ h
+
+/-- A failing condition is undefined behavior. -/
+theorem trueEdges_err_isUB {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} {e : ErrReason}
+    (h : trueEdges ctx rg cst bid = .err e) : e.isUB = true :=
+  trueEdges_loop_err _ [] h
+
+theorem IEdge.evalBoolR_uncond {ctx : Ctx} {cst : CSt} {e : IEdge} (hu : e.isUnconditional = true) :
+    ctx.evalBoolR cst.ρ cst.mem e.cond = .ok true := by
+  simp only [IEdge.isUnconditional, Bool.or_eq_true, decide_eq_true_eq] at hu
+  rcases hu with hu | hu <;> rw [hu]
+  · exact evalBoolR_true ctx _ _
+  · exact evalBoolR_int_one ctx _ _
+
+/-- The out-edges in `sdfg_to_tree`'s order for general blocks: conditional
+first, then unconditional. -/
+def _root_.Dace.Region.orderedOut (rg : Region) (bid : BlockId) : List IEdge :=
+  (rg.outEdges bid).filter (!·.isUnconditional) ++ (rg.outEdges bid).filter (·.isUnconditional)
+
+theorem _root_.Dace.Region.mem_orderedOut {rg : Region} {bid : BlockId} {e : IEdge} :
+    e ∈ rg.orderedOut bid ↔ e ∈ rg.outEdges bid := by
+  simp only [Region.orderedOut, List.mem_append, List.mem_filter]
+  cases e.isUnconditional <;> simp
+
 /-- The tree's `AssignNode`s of an edge's assignments, in order. -/
 def AssignsCorr (as : List (Sym × Expr)) (ns : List SNode) : Prop :=
   List.Forall₂ (fun a n => ∃ pe : PyExpr, n = .assign a.1 pe ∧ pe.expr = a.2) as ns
@@ -722,6 +846,11 @@ end Assigns
 
 /-! ## The correspondence -/
 
+/-- The end of a general block is reached from `rest`: the end of the list,
+its end label, or a goto to an end label at the end of the list. -/
+def GEnd (rest : List SNode) : Prop :=
+  rest = [] ∨ (∃ l, rest = [.stateLabel l]) ∨ ∃ l tl, rest = .goto (some l) :: tl ∧ afterLabel l tl = some []
+
 mutual
 
 /-- The tree list `cs` corresponds to the region `rg` run from block `bid`:
@@ -746,6 +875,42 @@ inductive RegCorr (ctx : Ctx) (tc : TCtx) : Region → BlockId → List SNode �
       (hpc : pc.expr = e.cond) (hp : as.Perm e.assigns) (ha : AssignsCorr as ns) (hs : SeqAssigns ctx as)
       (h : RegCorr ctx tc rg e.dst rest) :
       RegCorr ctx tc rg bid (cs ++ [.ifScope pc (ns ++ rest)])
+  /-- A region with branching edges (`sdfg_to_tree`: a block with several
+  out-edges): a `GBlock` whose list starts with the label of the start block
+  (`GPos`). -/
+  | gblock {rg : Region} {L : String} {p : List SNode} (h : GPos ctx tc rg (.stateLabel L :: p) rg.start p) :
+      RegCorr ctx tc rg rg.start [.gblock (.stateLabel L :: p)]
+
+/-- The suffix `p` of the general block `full` after the label of block
+`bid`: the block's segment, then its out-edges (`GItems`, conditional ones
+first), then, when no out-edge is unconditional, the end of the block
+(`GEnd`).  Every goto jumps forward (`GItems`), which makes the relation
+well-founded. -/
+inductive GPos (ctx : Ctx) (tc : TCtx) : Region → List SNode → BlockId → List SNode → Prop where
+  | mk {rg : Region} {full : List SNode} {bid : BlockId} {b : Block} {cs items rest : List SNode}
+      (hb : rg.block? bid = some b) (hc : BlockCorr ctx tc b cs) (hh : HeadOk (items ++ rest))
+      (hi : GItems ctx tc rg full (rg.orderedOut bid) items rest)
+      (hend : (rg.outEdges bid).all (fun e => !e.isUnconditional) = true → GEnd rest) :
+      GPos ctx tc rg full bid (cs ++ (items ++ rest))
+
+/-- The tree items of out-edges `es` followed by `rest`: a `stateif`
+holding the assignments and a goto per conditional edge, the assignments
+and a goto inline per unconditional edge; each goto resumes (forward) at the
+position of its target block. -/
+inductive GItems (ctx : Ctx) (tc : TCtx) : Region → List SNode → List IEdge → List SNode → List SNode → Prop where
+  | nil {rg : Region} {full rest : List SNode} : GItems ctx tc rg full [] [] rest
+  | cond {rg : Region} {full : List SNode} {e : IEdge} {es : List IEdge} {pc : PyExpr} {as : List (Sym × Expr)}
+      {ns : List SNode} {L : String} {items rest p : List SNode}
+      (hu : e.isUnconditional = false) (hpc : pc.expr = e.cond) (hp : as.Perm e.assigns) (ha : AssignsCorr as ns)
+      (hs : SeqAssigns ctx as) (hl : afterLabel L (items ++ rest) = some p) (hpos : GPos ctx tc rg full e.dst p)
+      (h : GItems ctx tc rg full es items rest) :
+      GItems ctx tc rg full (e :: es) (.stateIfScope pc (ns ++ [.goto (some L)]) :: items) rest
+  | uncond {rg : Region} {full : List SNode} {e : IEdge} {es : List IEdge} {as : List (Sym × Expr)}
+      {ns : List SNode} {L : String} {items rest p : List SNode}
+      (hu : e.isUnconditional = true) (hp : as.Perm e.assigns) (ha : AssignsCorr as ns)
+      (hs : SeqAssigns ctx as) (hl : afterLabel L (items ++ rest) = some p) (hpos : GPos ctx tc rg full e.dst p)
+      (h : GItems ctx tc rg full es items rest) :
+      GItems ctx tc rg full (e :: es) (ns ++ .goto (some L) :: items) rest
 
 /-- The tree segment of one block. -/
 inductive BlockCorr (ctx : Ctx) (tc : TCtx) : Block → List SNode → Prop where
@@ -845,6 +1010,57 @@ theorem namedRegion_inv {tc : TCtx} {label : String} {body : List SNode} {cst : 
   | loop _ hl _ => subst hn; simp [SNode.loop?] at hl
   | namedRegion _ hb => cases hn; exact ⟨_, hb, rfl⟩
   | _ => cases hn
+
+/-- A lone goto escapes a list without labels. -/
+theorem goto_run {tc : TCtx} {full : List SNode} {L : String} {c : CSt} {rb : Res (TCtl × CSt)}
+    (h : STree.ListExec tc full false {} [.goto (some L)] c rb) : rb = .ok (.goto L, c) := by
+  cases h with
+  | headErr hn => cases leafStep_inv rfl hn
+  | step hn _ => cases leafStep_inv rfl hn
+  | jump hn hc => cases leafStep_inv rfl hn; cases hc
+  | gotoResume hn hl _ =>
+    cases leafStep_inv rfl hn
+    simp [resumeAt, afterLabel] at hl
+  | gotoEscape hn _ => cases leafStep_inv rfl hn; rfl
+
+/-- Reaching the end of a general block ends it normally. -/
+theorem GEnd.run {tc : TCtx} {full rest : List SNode} {c : CSt} {r : Res (TCtl × CSt)} (h : GEnd rest)
+    (hx : STree.ListExec tc full true {} rest c r) : r = .ok (.normal, c) := by
+  rcases h with rfl | ⟨l, rfl⟩ | ⟨l, tl, rfl, hl⟩
+  · exact STree.ListExec_nil rfl hx
+  · cases hx with
+    | headErr hn => cases leafStep_inv rfl hn
+    | step hn hr => cases leafStep_inv rfl hn; exact STree.ListExec_nil rfl hr
+    | jump hn hc => cases leafStep_inv rfl hn; cases hc
+    | gotoResume hn _ _ => cases leafStep_inv rfl hn
+    | gotoEscape hn _ => cases leafStep_inv rfl hn
+  · cases hx with
+    | headErr hn => cases leafStep_inv rfl hn
+    | step hn _ => cases leafStep_inv rfl hn
+    | jump hn hc => cases leafStep_inv rfl hn; cases hc
+    | gotoResume hn hres hr =>
+      cases leafStep_inv rfl hn
+      rw [STree.resumeAt_of_afterLabel hl] at hres
+      cases hres
+      exact STree.ListExec_nil rfl hr
+    | gotoEscape hn hres =>
+      cases leafStep_inv rfl hn
+      rw [STree.resumeAt_of_afterLabel hl] at hres
+      cases hres
+
+theorem List.eq_single_of_length_le_one {α : Type} {T : List α} {x : α} (hl : T.length ≤ 1) (hx : x ∈ T) : T = [x] := by
+  rcases T with _ | ⟨y, _ | ⟨z, T⟩⟩
+  · cases hx
+  · rw [List.mem_singleton.1 hx]
+  · simp at hl
+
+theorem trueEdges_sub {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} {T : List IEdge}
+    (h : trueEdges ctx rg cst bid = .ok T) : ∀ e ∈ T, e ∈ rg.outEdges bid := by
+  obtain ⟨-, h₂⟩ := trueEdges_loop _ [] T h
+  intro e he
+  rw [h₂] at he
+  simp only [List.reverse_nil, List.nil_append, List.mem_filter] at he
+  exact he.1
 
 section Matched
 
@@ -962,6 +1178,18 @@ theorem RegCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} :
           exact ((RegCorr.matched h HeadOk.nil (ListExec.append_nil hl')).toOut.mono
             fun _ h' => .step hb h₁ hte ha'' h').chainOut
 
+  | .gblock (p := p) h, full, gb, rest, cst, r, hh, hx => by
+    refine node_list hh (fun res hres => ?_) hx
+    obtain ⟨r', hb', rfl⟩ := gblock_inv hres
+    cases hb' with
+    | headErr hn => cases leafStep_inv rfl hn
+    | step hn hr =>
+      cases leafStep_inv rfl hn
+      exact (GPos.matched h hr).scopeOut
+    | jump hn hc => cases leafStep_inv rfl hn; cases hc
+    | gotoResume hn _ _ => cases leafStep_inv rfl hn
+    | gotoEscape hn _ => cases leafStep_inv rfl hn
+
 theorem BlockCorr.matched {b : Block} {cs : List SNode} :
     BlockCorr ctx tc b cs → ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt}
       {r : Res (TCtl × CSt)}, HeadOk rest → STree.ListExec tc full gb {} (cs ++ rest) cst r →
@@ -1014,6 +1242,150 @@ theorem ElifCorr.matched {brs : List (Option Expr × Region)} {cs : List SNode} 
     refine node_list hh (fun res hres => ?_) hx
     obtain ⟨r', hb', rfl⟩ := else_inv hres
     exact ((RegCorr.matched hb HeadOk.nil (ListExec.append_nil hb')).toOut.mono fun _ h => .els (.start h)).scopeOut
+
+/-- A run of a general block from the position of block `bid` matches a run
+of the region from `bid`. -/
+theorem GPos.matched {rg : Region} {full : List SNode} {bid : BlockId} {p : List SNode} :
+    GPos ctx tc rg full bid p → ∀ {cst : CSt} {r : Res (TCtl × CSt)},
+      STree.ListExec tc full true {} p cst r → Out (RegionAt ctx rg cst bid) r
+  | .mk hb hc hh hi hend, cst, r, hx => by
+    rcases BlockCorr.matched hc hh hx with ⟨e, hu, h₁⟩ | ⟨e, e', hr, h₁⟩ | ⟨ctl, c, hn, hr, h₁⟩ | ⟨c, hl, h₁⟩
+    · exact .inl ⟨e, hu, .blockErr hb h₁⟩
+    · exact .inr (.inl ⟨e, _, hr, .blockErr hb h₁⟩)
+    · exact .inr (.inr ⟨ctl, c, hr, .exit hb h₁ hn⟩)
+    · cases hte : trueEdges ctx rg c bid with
+      | err e => exact .inl ⟨e, trueEdges_err_isUB hte, .edgesErr hb h₁ hte⟩
+      | ok T =>
+        rcases T with _ | ⟨e₁, _ | ⟨e₂, es⟩⟩
+        rotate_left 2
+        · exact .inl ⟨_, rfl, .ambiguous hb h₁ hte⟩
+        all_goals
+          have hT := trueEdges_ok hte
+          have hsub := trueEdges_sub hte
+          rcases GItems.matched hi (by simp) (fun e he => Region.mem_orderedOut.2 (hsub e he))
+              (fun e he => hT e (Region.mem_orderedOut.1 he)) hl with ⟨hT0, hrest⟩ | ⟨e, hTe, hstep⟩
+          · cases hT0
+            all_goals
+              have hall : (rg.outEdges bid).all (fun e => !e.isUnconditional) = true := by
+                refine List.all_eq_true.2 fun e he => ?_
+                cases hu : e.isUnconditional
+                · rfl
+                · have := hT e he
+                  rw [IEdge.evalBoolR_uncond hu] at this
+                  simp at this
+              rw [(hend hall).run hrest]
+              exact .inr (.inr ⟨.normal, c, rfl, .stop hb h₁ hte⟩)
+          · cases hTe
+            all_goals
+              rcases hstep with ⟨err, hu, ha⟩ | ⟨c₂, ha, hout⟩
+              · exact .inl ⟨err, hu, .assignErr hb h₁ hte ha⟩
+              · exact hout.mono fun _ h => .step hb h₁ hte ha h
+
+/-- The out-edge items of a block after its segment: with the true edges
+`T` (at most one), either none is taken and the run continues with `rest`,
+or the edge of `T` is, and the run matches the region from its target. -/
+theorem GItems.matched {rg : Region} {full : List SNode} {es : List IEdge} {items rest : List SNode} :
+    GItems ctx tc rg full es items rest → ∀ {c : CSt} {r : Res (TCtl × CSt)} {T : List IEdge}, T.length ≤ 1 →
+      (∀ e ∈ T, e ∈ es) → (∀ e ∈ es, ctx.evalBoolR c.ρ c.mem e.cond = .ok (decide (e ∈ T))) →
+      STree.ListExec tc full true {} (items ++ rest) c r →
+      (T = [] ∧ STree.ListExec tc full true {} rest c r) ∨
+      ∃ e, T = [e] ∧ ((∃ err, err.isUB = true ∧ applyAssigns ctx c e.assigns = .err err) ∨
+        ∃ c₂, applyAssigns ctx c e.assigns = .ok c₂ ∧ Out (RegionAt ctx rg c₂ e.dst) r)
+  | .nil, c, r, T, _, hsub, _, hx => .inl ⟨List.eq_nil_iff_forall_not_mem.2 fun e he => by simpa using hsub e he, hx⟩
+  | .cond (e := e) (es := es') (ns := ns) (L := L) hu hpc hp ha hs hl hpos h, c, r, T, hlen, hsub, hT, hx => by
+    have hn : (_ : List (Sym × Expr)).map Prod.fst |>.Nodup := ((hp.map Prod.fst).nodup_iff).1 hs.nodup
+    have hv := hT e List.mem_cons_self
+    have hrest : ∀ (h' : e ∉ T), ∀ x ∈ T, x ∈ es' := fun h' x hx' => by
+      rcases List.mem_cons.1 (hsub x hx') with rfl | hx''
+      · exact absurd hx' h'
+      · exact hx''
+    -- the body of a taken `stateif`: the assignments, then the goto
+    have hbody : ∀ {rb : Res (TCtl × CSt)}, STree.ListExec tc (ns ++ [.goto (some L)]) false {} (ns ++ [.goto (some L)]) c rb →
+        (∃ err, rb = .err err ∧ ∃ err', err'.isUB = true ∧ applyAssigns ctx c e.assigns = .err err') ∨
+        ∃ c₂, rb = .ok (.goto L, c₂) ∧ applyAssigns ctx c e.assigns = .ok c₂ := by
+      intro rb hb'
+      rcases assigns_run he ha hb' with ⟨err, rfl, ha'⟩ | ⟨c₂, ha', hl'⟩
+      · rw [assigns_seq ctx _ _ hs] at ha'
+        obtain ⟨err', hu', ha''⟩ := (applyAssigns_perm hp hn).2 _ ha'
+        exact .inl ⟨err, rfl, err', hu', ha''⟩
+      · rw [assigns_seq ctx _ _ hs] at ha'
+        exact .inr ⟨c₂, goto_run hl', (applyAssigns_perm hp hn).1 _ ha'⟩
+    rw [List.cons_append] at hx
+    cases hx with
+    | headErr hnode =>
+      rcases stateIf_inv hnode with ⟨e', hc', -⟩ | ⟨-, hres⟩ | ⟨rb, hc', hb', hres⟩
+      · rw [evalBoolR_tc he, hpc, hv] at hc'; cases hc'
+      · cases hres
+      · rw [evalBoolR_tc he, hpc, hv] at hc'
+        have heT : e ∈ T := by simpa using hc'
+        rcases hbody hb' with ⟨err, rfl, err', hu', ha'⟩ | ⟨c₂, rfl, -⟩
+        · exact .inr ⟨e, List.eq_single_of_length_le_one hlen heT, .inl ⟨err', hu', ha'⟩⟩
+        · cases hres
+    | step hnode hr =>
+      rcases stateIf_inv hnode with ⟨e', hc', hres⟩ | ⟨hc', hres⟩ | ⟨rb, hc', hb', hres⟩
+      · cases hres
+      · rw [evalBoolR_tc he, hpc, hv] at hc'
+        have heT : e ∉ T := by simpa using hc'
+        simp only [Res.ok.injEq, Prod.mk.injEq] at hres
+        obtain ⟨rfl, -, rfl⟩ := hres
+        exact GItems.matched h hlen (hrest heT) (fun x hx' => hT x (List.mem_cons_of_mem _ hx')) hr
+      · rcases hbody hb' with ⟨err, rfl, -⟩ | ⟨c₂, rfl, -⟩ <;> cases hres
+    | jump hnode hc =>
+      rcases stateIf_inv hnode with ⟨e', hc', hres⟩ | ⟨hc', hres⟩ | ⟨rb, hc', hb', hres⟩
+      · cases hres
+      · simp only [Res.ok.injEq, Prod.mk.injEq] at hres; rw [hres.2.1] at hc; cases hc
+      · rcases hbody hb' with ⟨err, rfl, -⟩ | ⟨c₂, rfl, -⟩
+        · cases hres
+        · simp only [scopeOut, Res.map_ok, Res.ok.injEq, Prod.mk.injEq] at hres; rw [hres.2.1] at hc; cases hc
+    | gotoResume hnode hres' hr =>
+      rcases stateIf_inv hnode with ⟨e', hc', hres⟩ | ⟨hc', hres⟩ | ⟨rb, hc', hb', hres⟩
+      · cases hres
+      · simp at hres
+      · rw [evalBoolR_tc he, hpc, hv] at hc'
+        have heT : e ∈ T := by simpa using hc'
+        rcases hbody hb' with ⟨err, rfl, -⟩ | ⟨c₂, rfl, ha'⟩
+        · cases hres
+        · simp only [scopeOut, Res.map_ok, Res.ok.injEq, Prod.mk.injEq, TCtl.goto.injEq] at hres
+          obtain ⟨-, rfl, rfl⟩ := hres
+          rw [STree.resumeAt_of_afterLabel hl] at hres'
+          cases hres'
+          exact .inr ⟨e, List.eq_single_of_length_le_one hlen heT, .inr ⟨_, ha', GPos.matched hpos hr⟩⟩
+    | gotoEscape hnode hres' =>
+      rcases stateIf_inv hnode with ⟨e', hc', hres⟩ | ⟨hc', hres⟩ | ⟨rb, hc', hb', hres⟩
+      · cases hres
+      · simp at hres
+      · rcases hbody hb' with ⟨err, rfl, -⟩ | ⟨c₂, rfl, -⟩
+        · cases hres
+        · simp only [scopeOut, Res.map_ok, Res.ok.injEq, Prod.mk.injEq, TCtl.goto.injEq] at hres
+          obtain ⟨-, rfl, rfl⟩ := hres
+          rw [STree.resumeAt_of_afterLabel hl] at hres'
+          cases hres'
+  | .uncond (e := e) (L := L) hu hp ha hs hl hpos h, c, r, T, hlen, hsub, hT, hx => by
+    have hn : (_ : List (Sym × Expr)).map Prod.fst |>.Nodup := ((hp.map Prod.fst).nodup_iff).1 hs.nodup
+    have hv := hT e List.mem_cons_self
+    rw [IEdge.evalBoolR_uncond hu] at hv
+    have heT : e ∈ T := by simpa using hv
+    have hT1 := List.eq_single_of_length_le_one hlen heT
+    rw [List.append_assoc, List.cons_append] at hx
+    rcases assigns_run he ha hx with ⟨err, rfl, ha'⟩ | ⟨c₂, ha', hx'⟩
+    · rw [assigns_seq ctx _ _ hs] at ha'
+      obtain ⟨err', hu', ha''⟩ := (applyAssigns_perm hp hn).2 _ ha'
+      exact .inr ⟨e, hT1, .inl ⟨err', hu', ha''⟩⟩
+    · rw [assigns_seq ctx _ _ hs] at ha'
+      have ha'' := (applyAssigns_perm hp hn).1 _ ha'
+      cases hx' with
+      | headErr hnode => cases leafStep_inv rfl hnode
+      | step hnode _ => cases leafStep_inv rfl hnode
+      | jump hnode hc => cases leafStep_inv rfl hnode; cases hc
+      | gotoResume hnode hres hr =>
+        cases leafStep_inv rfl hnode
+        rw [STree.resumeAt_of_afterLabel hl] at hres
+        cases hres
+        exact .inr ⟨e, hT1, .inr ⟨_, ha'', GPos.matched hpos hr⟩⟩
+      | gotoEscape hnode hres =>
+        cases leafStep_inv rfl hnode
+        rw [STree.resumeAt_of_afterLabel hl] at hres
+        cases hres
 
 end
 

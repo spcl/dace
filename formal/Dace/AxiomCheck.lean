@@ -289,4 +289,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.STree.ListExec.unlabel
 -- Coherence of any region; regions without escaping break/continue.
 #print axioms Dace.RegionAt.steps
+-- General blocks (forward gotos).
+#print axioms Dace.Corr.GPos.matched
+#print axioms Dace.Corr.gposCheck_sound
 #print axioms Dace.Corr.RegionAt.noEscape

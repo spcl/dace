@@ -656,6 +656,27 @@ def Branches.size : List (Option Expr × Region) → Nat
 
 end
 
+/-- Decision procedure for `GEnd`. -/
+def gEnd? (rest : List SNode) : Bool :=
+  match rest with
+  | [] => true
+  | [.stateLabel _] => true
+  | .goto (some l) :: tl => match afterLabel l tl with
+    | some [] => true
+    | _ => false
+  | _ => false
+
+theorem gEnd?_sound {rest : List SNode} (h : gEnd? rest = true) : GEnd rest := by
+  unfold gEnd? at h
+  split at h
+  · exact .inl rfl
+  · exact .inr (.inl ⟨_, rfl⟩)
+  · rename_i l tl
+    split at h
+    · rename_i hl; exact .inr (.inr ⟨l, tl, rfl, hl⟩)
+    · cases h
+  · cases h
+
 section Check
 
 variable (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool)
@@ -667,6 +688,14 @@ the rest of the list. -/
 def regCheck : Nat → Region → BlockId → List SNode → Except String (List SNode)
   | 0, _, _, _ => .error "control flow too deep or cyclic"
   | f + 1, rg, bid, cs =>
+    match cs with
+    | .gblock (.stateLabel L :: p) :: rest =>
+      if bid = rg.start then
+        match gposCheck f rg (.stateLabel L :: p) rg.start p with
+        | .ok () => .ok rest
+        | .error m => .error m
+      else .error s!"general block at block {bid}, not at the start of the region"
+    | _ =>
     match rg.block? bid with
     | none => .error s!"block {bid} out of range"
     | some b =>
@@ -757,7 +786,7 @@ def blockCheck : Nat → Block → List SNode → Except String (List SNode)
             | .error m => .error m
           else .error s!"named region '{label}': the label differs"
         | _ => .error s!"named region '{label}': no named region scope in the tree"
-      | .unstructured => .error "unstructured regions (GBlocks) are not supported yet"
+      | .unstructured => regCheck f rg rg.start cs
 
 /-- Check the `elif`/`else` branches of a conditional block. -/
 def elifCheck : Nat → List (Option Expr × Region) → List SNode → Except String (List SNode)
@@ -787,6 +816,61 @@ def elifCheck : Nat → List (Option Expr × Region) → List SNode → Except S
         | _ => .error "conditional block: no else scope in the tree"
       | _ => .error "conditional block: else is not the last branch"
 
+/-- Check the position `p` of block `bid` in the general block `full`
+(`GPos`). -/
+def gposCheck : Nat → Region → List SNode → BlockId → List SNode → Except String Unit
+  | 0, _, _, _, _ => .error "general block too deep (or a backward goto)"
+  | f + 1, rg, full, bid, p =>
+    match rg.block? bid with
+    | none => .error s!"block {bid} out of range"
+    | some b =>
+      match blockCheck f b p with
+      | .error m => .error m
+      | .ok rest₁ =>
+        if headOk? rest₁ = true then
+          match itemsCheck f rg full (rg.orderedOut bid) rest₁ with
+          | .ok rest =>
+            if (rg.outEdges bid).all (fun e => !e.isUnconditional) = true → gEnd? rest = true then .ok ()
+            else .error s!"general block: block {bid} does not end the block when no edge is taken"
+          | .error m => .error m
+        else .error s!"general block: block {bid} is followed by elif/else"
+
+/-- Check the out-edge items of a general block (`GItems`); the rest of the
+list. -/
+def itemsCheck : Nat → Region → List SNode → List IEdge → List SNode → Except String (List SNode)
+  | 0, _, _, _, _ => .error "general block too deep"
+  | _ + 1, _, _, [], cs => .ok cs
+  | f + 1, rg, full, e :: es, cs =>
+    if e.isUnconditional = true then
+      match takeAssignNodes e.assigns.length cs with
+      | some (as, .goto (some L) :: tl) =>
+        if as.isPerm e.assigns = true ∧ seqAssigns? ctx as = true then
+          match afterLabel L tl with
+          | some p =>
+            match gposCheck f rg full e.dst p with
+            | .ok () => itemsCheck f rg full es tl
+            | .error m => .error m
+          | none => .error s!"general block: goto '{L}' does not jump forward"
+        else .error "general block: edge assignments differ or cannot run one by one"
+      | _ => .error "general block: no goto for an unconditional edge"
+    else
+      match cs with
+      | .stateIfScope pc body :: tl =>
+        if pc.expr = e.cond then
+          match takeAssignNodes e.assigns.length body with
+          | some (as, [.goto (some L)]) =>
+            if as.isPerm e.assigns = true ∧ seqAssigns? ctx as = true then
+              match afterLabel L tl with
+              | some p =>
+                match gposCheck f rg full e.dst p with
+                | .ok () => itemsCheck f rg full es tl
+                | .error m => .error m
+              | none => .error s!"general block: goto '{L}' does not jump forward"
+            else .error "general block: edge assignments differ or cannot run one by one"
+          | _ => .error "general block: a stateif body is not assignments and a goto"
+        else .error "general block: a stateif condition differs"
+      | _ => .error "general block: no stateif for a conditional edge"
+
 end
 
 end Check
@@ -805,58 +889,69 @@ theorem regCheck_sound : ∀ (f : Nat) (rg : Region) (bid : BlockId) (cs rest : 
   | f + 1, rg, bid, cs, rest, h => by
     unfold regCheck at h
     split at h
-    · cases h
-    · rename_i b hb
+    · rename_i L p rest'
       split at h
-      · cases h
-      · rename_i restB hbc
-        obtain ⟨pre, rfl, hpre⟩ := blockCheck_sound f b cs restB hbc
+      · rename_i hbid
         split at h
-        · rename_i hout
+        · rename_i hg
           cases h
-          exact ⟨pre, rfl, .last hb hpre hout⟩
-        · rename_i e hout
+          subst hbid
+          exact ⟨[.gblock (.stateLabel L :: p)], rfl, .gblock (gposCheck_sound f _ _ _ _ hg)⟩
+        · cases h
+      · cases h
+    · split at h
+      · cases h
+      · rename_i b hb
+        split at h
+        · cases h
+        · rename_i restB hbc
+          obtain ⟨pre, rfl, hpre⟩ := blockCheck_sound f b cs restB hbc
           split at h
-          · rename_i hc
-            obtain ⟨hu, hh⟩ := hc
+          · rename_i hout
+            cases h
+            exact ⟨pre, rfl, .last hb hpre hout⟩
+          · rename_i e hout
             split at h
-            · rename_i as rest' ht
+            · rename_i hc
+              obtain ⟨hu, hh⟩ := hc
               split at h
-              · rename_i hc'
-                obtain ⟨hp, hs⟩ := hc'
-                obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
-                obtain ⟨pre₂, rfl, hpre₂⟩ := regCheck_sound f rg e.dst rest' rest h
-                refine ⟨pre ++ (ns ++ pre₂), by simp only [List.append_assoc], ?_⟩
-                exact .step hb hpre hout hu (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs)
-                  (HeadOk.of_append (l := ns ++ pre₂) (rest := rest) (by
-                    have := headOk?_sound hh; simpa only [List.append_assoc] using this)) hpre₂
-              · cases h
-            · cases h
-          · split at h
-            · rename_i pc body rest' _
-              split at h
-              · rename_i hpc
+              · rename_i as rest' ht
                 split at h
-                · rename_i as body' ht
+                · rename_i hc'
+                  obtain ⟨hp, hs⟩ := hc'
+                  obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+                  obtain ⟨pre₂, rfl, hpre₂⟩ := regCheck_sound f rg e.dst rest' rest h
+                  refine ⟨pre ++ (ns ++ pre₂), by simp only [List.append_assoc], ?_⟩
+                  exact .step hb hpre hout hu (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs)
+                    (HeadOk.of_append (l := ns ++ pre₂) (rest := rest) (by
+                      have := headOk?_sound hh; simpa only [List.append_assoc] using this)) hpre₂
+                · cases h
+              · cases h
+            · split at h
+              · rename_i pc body rest' _
+                split at h
+                · rename_i hpc
                   split at h
-                  · rename_i hc'
-                    obtain ⟨hp, hs⟩ := hc'
-                    obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+                  · rename_i as body' ht
                     split at h
-                    · rename_i hr
-                      cases h
-                      obtain ⟨pre₂, hpre₂, hc₂⟩ := regCheck_sound f rg e.dst _ _ hr
-                      rw [List.append_nil] at hpre₂
-                      subst hpre₂
-                      refine ⟨pre ++ [.ifScope pc (ns ++ body')], by simp only [List.append_assoc, List.singleton_append], ?_⟩
-                      exact .condStep hb hpre hout hpc (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) hc₂
-                    · cases h
+                    · rename_i hc'
+                      obtain ⟨hp, hs⟩ := hc'
+                      obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+                      split at h
+                      · rename_i hr
+                        cases h
+                        obtain ⟨pre₂, hpre₂, hc₂⟩ := regCheck_sound f rg e.dst _ _ hr
+                        rw [List.append_nil] at hpre₂
+                        subst hpre₂
+                        refine ⟨pre ++ [.ifScope _ (ns ++ body')], by rw [List.append_assoc, List.singleton_append], ?_⟩
+                        exact .condStep hb hpre hout hpc (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) hc₂
+                      · cases h
+                      · cases h
                     · cases h
                   · cases h
                 · cases h
               · cases h
-            · cases h
-        · cases h
+          · cases h
 
 theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
     blockCheck ctx tc nest f b cs = .ok rest → ∃ pre, cs = pre ++ rest ∧ BlockCorr ctx tc b pre
@@ -931,7 +1026,8 @@ theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
             · cases h
           · cases h
         · cases h
-      · cases h
+      · obtain ⟨pre, hpre, hc⟩ := regCheck_sound f _ _ _ _ h
+        exact ⟨pre, hpre, .flat hc⟩
 
 theorem elifCheck_sound : ∀ (f : Nat) (brs : List (Option Expr × Region)) (cs rest : List SNode),
     elifCheck ctx tc nest f brs cs = .ok rest → ∃ pre, cs = pre ++ rest ∧ ElifCorr ctx tc brs pre
@@ -966,6 +1062,84 @@ theorem elifCheck_sound : ∀ (f : Nat) (brs : List (Option Expr × Region)) (cs
             subst hpreB
             exact ⟨_, rfl, .els hcB⟩
           · cases h
+          · cases h
+        · cases h
+      · cases h
+
+theorem gposCheck_sound : ∀ (f : Nat) (rg : Region) (full : List SNode) (bid : BlockId) (p : List SNode),
+    gposCheck ctx tc nest f rg full bid p = .ok () → GPos ctx tc rg full bid p
+  | 0, _, _, _, _, h => by simp [gposCheck] at h
+  | f + 1, rg, full, bid, p, h => by
+    unfold gposCheck at h
+    split at h
+    · cases h
+    · rename_i b hb
+      split at h
+      · cases h
+      · rename_i rest₁ hbc
+        obtain ⟨pre, rfl, hpre⟩ := blockCheck_sound f b p rest₁ hbc
+        split at h
+        · rename_i hh
+          split at h
+          · rename_i rest hi
+            obtain ⟨items, rfl, hitems⟩ := itemsCheck_sound f rg full _ _ _ hi
+            split at h
+            · rename_i hend
+              exact .mk hb hpre (headOk?_sound hh) hitems fun hall => gEnd?_sound (hend hall)
+            · cases h
+          · cases h
+        · cases h
+
+theorem itemsCheck_sound : ∀ (f : Nat) (rg : Region) (full : List SNode) (es : List IEdge) (cs rest : List SNode),
+    itemsCheck ctx tc nest f rg full es cs = .ok rest → ∃ items, cs = items ++ rest ∧ GItems ctx tc rg full es items rest
+  | 0, _, _, _, _, _, h => by simp [itemsCheck] at h
+  | _ + 1, _, _, [], cs, rest, h => by
+    simp only [itemsCheck] at h
+    cases h
+    exact ⟨[], rfl, .nil⟩
+  | f + 1, rg, full, e :: es, cs, rest, h => by
+    unfold itemsCheck at h
+    split at h
+    · rename_i hu
+      split at h
+      · rename_i as L tl ht
+        split at h
+        · rename_i hc
+          obtain ⟨hp, hs⟩ := hc
+          split at h
+          · rename_i p hl
+            split at h
+            · rename_i hg
+              obtain ⟨items, rfl, hitems⟩ := itemsCheck_sound f rg full es tl rest h
+              obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+              exact ⟨ns ++ .goto (some L) :: items, by simp,
+                .uncond hu (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) hl (gposCheck_sound f _ _ _ _ hg) hitems⟩
+            · cases h
+          · cases h
+        · cases h
+      · cases h
+    · rename_i hu
+      split at h
+      · rename_i pc body tl
+        split at h
+        · rename_i hpc
+          split at h
+          · rename_i as L ht
+            split at h
+            · rename_i hc
+              obtain ⟨hp, hs⟩ := hc
+              split at h
+              · rename_i p hl
+                split at h
+                · rename_i hg
+                  obtain ⟨items, rfl, hitems⟩ := itemsCheck_sound f rg full es tl rest h
+                  obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+                  exact ⟨.stateIfScope pc (ns ++ [.goto (some L)]) :: items, rfl,
+                    .cond (by simpa using hu) hpc (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) hl
+                      (gposCheck_sound f _ _ _ _ hg) hitems⟩
+                · cases h
+              · cases h
+            · cases h
           · cases h
         · cases h
       · cases h
@@ -1019,6 +1193,7 @@ theorem RegCorr.withI {rg : Region} {bid : BlockId} {cs : List SNode} :
   | .condStep hb hc he hpc hp ha hs h =>
     .condStep hb (BlockCorr.withI hc) he hpc hp ha (SeqAssigns.of_g (c₁ := ctx) (c₂ := { ctx with I := I₂ }) rfl hs)
       (RegCorr.withI h)
+  | .gblock h => .gblock (GPos.withI h)
 
 theorem BlockCorr.withI {b : Block} {cs : List SNode} :
     BlockCorr ctx tc b cs → BlockCorr { ctx with I := I₂ } (tc.withI I₂) b cs
@@ -1030,6 +1205,20 @@ theorem BlockCorr.withI {b : Block} {cs : List SNode} :
   | .ret => .ret
   | .flat h => .flat (RegCorr.withI h)
   | .named h => .named (RegCorr.withI h)
+
+theorem GPos.withI {rg : Region} {full : List SNode} {bid : BlockId} {p : List SNode} :
+    GPos ctx tc rg full bid p → GPos { ctx with I := I₂ } (tc.withI I₂) rg full bid p
+  | .mk hb hc hh hi hend => .mk hb (BlockCorr.withI hc) hh (GItems.withI hi) hend
+
+theorem GItems.withI {rg : Region} {full : List SNode} {es : List IEdge} {items rest : List SNode} :
+    GItems ctx tc rg full es items rest → GItems { ctx with I := I₂ } (tc.withI I₂) rg full es items rest
+  | .nil => .nil
+  | .cond hu hpc hp ha hs hl hpos h =>
+    .cond hu hpc hp ha (SeqAssigns.of_g (c₁ := ctx) (c₂ := { ctx with I := I₂ }) rfl hs) hl (GPos.withI hpos)
+      (GItems.withI h)
+  | .uncond hu hp ha hs hl hpos h =>
+    .uncond hu hp ha (SeqAssigns.of_g (c₁ := ctx) (c₂ := { ctx with I := I₂ }) rfl hs) hl (GPos.withI hpos)
+      (GItems.withI h)
 
 theorem ElifCorr.withI {brs : List (Option Expr × Region)} {cs : List SNode} :
     ElifCorr ctx tc brs cs → ElifCorr { ctx with I := I₂ } (tc.withI I₂) brs cs
