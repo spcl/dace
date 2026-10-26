@@ -65,6 +65,7 @@ class Scal(nodes.LibraryNode):
         self.a = a
 
     def validate(self, sdfg, state):
+        blas_helpers.require_one_dtype(self, state, sdfg, "_x", "_res")
         x, res = operand(self, state, sdfg, "_x").shape, operand(self, state, sdfg, "_res").shape
         if len(x) != 1 or x != res:
             raise ValueError(f"{self.label}: _x and _res must be vectors of one length")

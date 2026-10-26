@@ -96,6 +96,7 @@ class Symv(nodes.LibraryNode):
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):
+        blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_x", "_yin", "_yout")
         a, x, yin, yout = (operand(self, state, sdfg, c).shape for c in ("_A", "_x", "_yin", "_yout"))
         if len(a) != 2 or a[0] != a[1]:
             raise ValueError(f"{self.label}: _A must be a square matrix")

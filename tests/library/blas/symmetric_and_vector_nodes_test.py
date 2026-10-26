@@ -12,6 +12,7 @@ from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syrk
 IMPLEMENTATIONS = [
     "pure",
     pytest.param("OpenBLAS", marks=pytest.mark.lapack),
+    pytest.param("MKL", marks=pytest.mark.mkl),
     # The vendor library of this build's GPU backend, resolved only when a GPU test runs.
     pytest.param("gpu", marks=pytest.mark.gpu),
 ]
@@ -257,6 +258,26 @@ def test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementat
         sdfg.expand_library_nodes()
 
 
+def test_operands_of_different_types_are_rejected():
+    """One BLAS routine reads every operand, so a ``float32`` matrix next to ``float64`` vectors is an error."""
+    a = symmetric_from(matrix((4, 4), "C"), upper=False).astype(np.float32)
+    x, y = rng.random(4), np.zeros(4)
+    node = Symv("symv")
+    sdfg = build(
+        "symv_mixed", node, "pure", {"_A": ("A", a), "_x": ("x", x), "_yin": ("y", y)}, {"_yout": ("z", y.copy())}
+    )
+    with pytest.raises(ValueError, match="one element type"):
+        node.validate(sdfg, sdfg.start_state)
+
+
+def test_syrk_rejects_a_vector_operand():
+    a, c = rng.random(4), np.zeros((4, 4))
+    node = Syrk("syrk")
+    sdfg = build("syrk_vector", node, "pure", {"_A": ("A", a), "_Cin": ("C", c)}, {"_Cout": ("D", c.copy())})
+    with pytest.raises(ValueError, match="_A must be a matrix"):
+        node.validate(sdfg, sdfg.start_state)
+
+
 if __name__ == "__main__":
     for implementation in ("pure", "OpenBLAS"):
         test_scal(implementation)
@@ -272,3 +293,5 @@ if __name__ == "__main__":
             test_vendor_expansion_calls_the_library(implementation, name)
     for implementation in GPU_IMPLEMENTATIONS:
         test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation)
+    test_operands_of_different_types_are_rejected()
+    test_syrk_rejects_a_vector_operand()

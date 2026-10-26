@@ -216,6 +216,13 @@ def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG",
     return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
 
 
+def require_one_dtype(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", *connectors: str) -> None:
+    """Raise unless the data on every one of ``connectors`` has one element type: one BLAS routine reads them all."""
+    types = {connector: operand(node, state, sdfg, connector).desc.dtype for connector in connectors}
+    if len(set(types.values())) > 1:
+        raise ValueError(f"{node.label}: every operand needs one element type, got {types}")
+
+
 class MatrixLayout(NamedTuple):
     """How BLAS reads matrices: all in row-major or all in column-major order, each with its leading dimension."""
 
