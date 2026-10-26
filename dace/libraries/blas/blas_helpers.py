@@ -405,7 +405,9 @@ def in_place_call(
     inputs = [c for c in node.in_connectors if c != source]
     # The call reads ``target`` too, so the copy into it is not dead
     reads = {f"_{c}": c for c in inputs} | {f"_{target}_before": target}
-    tasklet = call_state.add_tasklet(node.label, set(reads), {f"_{target}"}, code, language=dtypes.Language.CPP)
+    tasklet = call_state.add_tasklet(
+        node.label, dict.fromkeys(reads), {f"_{target}"}, code, language=dtypes.Language.CPP
+    )
     for connector, name in reads.items():
         call_state.add_edge(
             call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])

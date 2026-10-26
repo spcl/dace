@@ -47,7 +47,9 @@ class NotSupportedError(Exception):
         super().__init__(message)
 
 
-REGISTER_BYTE_SIZE = "__SVE_REGISTER_BYTES"
+#: Bytes of the widest SVE register the architecture allows (2048 bits): a buffer this size holds any implementation's
+#: register, so no vector length is assumed and no macro is needed.
+REGISTER_BYTE_SIZE = 256
 
 
 def instr(name: str, type: dace.typeclass = None, suffix: bool = True, pred_mode: str = None) -> str:

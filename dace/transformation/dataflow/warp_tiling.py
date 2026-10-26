@@ -195,7 +195,9 @@ class WarpTiling(xf.SingleStateTransformation):
                                 + block_allreduce_code(name, ctype, self.warp_size, "__a", functor, total)
                                 + f"\n__out = {functor}(__acc, {total});"
                             )
-                        wrt = nstate.add_tasklet("lanereduce", {"__a", "__acc"}, {"__out"}, code, dtypes.Language.CPP)
+                        wrt = nstate.add_tasklet(
+                            "lanereduce", {"__a": None, "__acc": None}, {"__out"}, code, dtypes.Language.CPP
+                        )
                         nstate.add_edge(newnode, None, wrt, "__a", Memlet(name))
                         acc_memlet = copy.deepcopy(out_edge.data)
                         acc_memlet.wcr = None

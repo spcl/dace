@@ -142,8 +142,8 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
 
             nested_sdfg_node = state.add_nested_sdfg(
                 nested_sdfg,
-                {f"_{in_edge.dst_conn}", f"{buffer_name}_inner"},
-                {f"_{out_edge.src_conn}", f"{buffer_name}_inner"},
+                {f"_{in_edge.dst_conn}": None, f"{buffer_name}_inner": None},
+                {f"_{out_edge.src_conn}": None, f"{buffer_name}_inner": None},
             )
             buffer_read = state.add_read(buffer_name)
             buffer_write = state.add_write(buffer_name)

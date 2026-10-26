@@ -2005,9 +2005,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     extra_map_symbols=map_symbols,
                 )
 
-            internal_node = state.add_nested_sdfg(
-                sdfg, set(inputs.keys()), set(outputs.keys()), debuginfo=self.current_lineinfo
-            )
+            internal_node = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
             self._add_nested_symbols(internal_node)
 
             # If consume scope, inject stream inputs to the internal SDFG

@@ -210,7 +210,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # It is very important to remember that elif's rely on the previous elif's (they are sequential)
         # i.e. the first subcase that hits wins and all following ones lose
 
-        self.fill("// Case " + astutils.unparse(t.test))
+        # the comment ends its line, so the brace enter() writes is code, not part of the comment
+        self.fill("// Case " + astutils.unparse(t.test) + "\n")
         self.enter()
 
         # Generate the case body, which will use the test predicate in the ops

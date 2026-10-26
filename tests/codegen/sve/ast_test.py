@@ -189,3 +189,26 @@ if __name__ == "__main__":
     test_assign_new_variable()
     test_math_functions()
     test_fused_operations()
+
+
+def test_an_if_keeps_every_brace_outside_its_comments():
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                if a > 0.5:
+                    b = a
+                elif a > 0.25:
+                    b = 2 * a
+                else:
+                    b = 0.0
+
+    code = get_code(program)
+
+    lines = code.splitlines()
+    assert not [line for line in lines if "//" in line and "{" in line.split("//", 1)[1]]
+    braces = "".join(line.split("//", 1)[0] for line in lines)
+    assert braces.count("{") == braces.count("}")

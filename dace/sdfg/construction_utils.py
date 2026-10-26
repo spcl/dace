@@ -594,7 +594,7 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     out_conn = f"_out_{out_name}"
     tasklet = state.add_tasklet(
         name=f"assign_{out_name}",
-        inputs=set(reads.values()),
+        inputs=dict.fromkeys(reads.values()),
         outputs={out_conn},
         code=f"{out_conn} = {ast.unparse(body)}",
     )
