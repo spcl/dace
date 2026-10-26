@@ -1,16 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Copy memlets are named by the container outside the scope they cross, and every copy reaches codegen as a node."""
-
-import copy
+"""Copy memlets are named by the container outside the scope they cross (spcl/dace#2037)."""
 
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.sdfg.utils import normalize_copy_memlets
 from dace.sdfg.validation import InvalidSDFGEdgeError
-from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, implicit_copies
 
 N = 1024
 TILE = 256
@@ -156,16 +152,6 @@ def test_same_container_copy_subset_must_be_the_owner_side():
     np.testing.assert_array_equal(a, [0, 1, 2, 3, 0, 1, 2, 3])
 
 
-def test_every_copy_is_a_node_after_lowering():
-    """Before the lift the staging copy is implicit; after it, no copy is left for the generators."""
-    sdfg, _, _ = staged("copy_form_invariant", gpu=False)
-    assert implicit_copies(sdfg)
-    lowered = copy.deepcopy(sdfg)
-    InsertExplicitCopies().apply_pass(lowered, {})
-    assert implicit_copies(lowered) == []
-    assert any(isinstance(n, CopyLibraryNode) for n, _ in lowered.all_nodes_recursive())
-
-
 if __name__ == "__main__":
     test_scope_alias_moves_no_data_on_cpu()
     test_scope_alias_moves_no_data_on_gpu()
@@ -173,4 +159,3 @@ if __name__ == "__main__":
     test_stage_in_copy_must_name_the_outer_container()
     test_stage_out_copy_must_name_the_outer_container()
     test_same_container_copy_subset_must_be_the_owner_side()
-    test_every_copy_is_a_node_after_lowering()

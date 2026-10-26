@@ -2195,5 +2195,43 @@ def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet()
     assert select_copy_implementation(libnode, sdfg.start_state) == "MemcpyCUDA1D"
 
 
+@pytest.mark.parametrize(
+    "subset, transfer", [("0:64", "__builtin_sdma_start_oned"), ("0:64:2", "__builtin_sdma_start_twod")]
+)
+def test_snitch_tcdm_copy_uses_the_cluster_dma(subset, transfer):
+    """A copy into Snitch TCDM is one DMA transfer and a wait for the engine (contiguous: 1-D, strided: 2-D)."""
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.CPU_Heap, subset=subset, name="A"),
+        _ArraySpec(shape=[64 if subset == "0:64" else 32], storage=dace.dtypes.StorageType.Snitch_TCDM, transient=True),
+        name="snitch_dma",
+    )
+    assert select_copy_implementation(node, sdfg.start_state) == "MemcpySnitchDMA"
+    sdfg.expand_library_nodes()
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
+    assert len(codes) == 1 and transfer in codes[0] and "__builtin_sdma_wait_for_idle();" in codes[0], codes
+
+
+@pytest.mark.parametrize("rows", ["4", "R"])
+def test_shared_memory_collective_2d_is_one_block_copy(rows):
+    """A 2-D Global -> Shared collective is one block-wide ``GlobalToShared3D`` (``Dynamic`` for a symbolic
+    extent), never the per-thread ``CopyND`` it replaced."""
+    sdfg, node, _ = _libnode_in_tblock_scope(
+        dace.dtypes.StorageType.GPU_Global,
+        dace.dtypes.StorageType.GPU_Shared,
+        f"0:{rows}, 0:8",
+        f"0:{rows}, 0:8",
+        src_shape=[16, 16],
+        dst_shape=[4, 8],
+        thread_block=False,
+    )
+    if rows == "R":
+        sdfg.add_symbol("R", dace.int64)
+    node.implementation = "SharedMemoryCollective"
+    sdfg.expand_library_nodes()
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
+    helper = "GlobalToShared3DDynamic<double, 16, 1, 1, " if rows == "R" else "GlobalToShared3D<double, 16, 1, 1, "
+    assert len(codes) == 1 and helper in codes[0] and "CopyND" not in codes[0], codes
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
