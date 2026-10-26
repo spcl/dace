@@ -1270,6 +1270,8 @@ def isolate_nested_sdfg(
     # the post state, an output would lose its producer and the split would be refused. Only an output every producer
     # of which is in the pre state moves: the pre state keeps just the edges among its own nodes, so another writer's
     # edge into it would be dropped.
+    # Nor an output written by accumulation: it stays where the isolated node's own accumulations reach it (moved,
+    # the backward pass of a model lost two of its three gradient contributions).
     for node in list(pre_nodes):
         if not isinstance(node, nodes.AccessNode):
             pre_nodes.update(
@@ -1278,6 +1280,7 @@ def isolate_nested_sdfg(
                 if isinstance(oedge.dst, nodes.AccessNode)
                 and oedge.dst not in middle_nodes
                 and all(iedge.src in pre_nodes for iedge in state.in_edges(oedge.dst))
+                and all(iedge.data.wcr is None for iedge in state.in_edges(oedge.dst))
             )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
