@@ -18,7 +18,11 @@ from dace.libraries.fft.nodes import FFT, IFFT
 
 M, N = dace.symbol("M"), dace.symbol("N")
 
-CPU_IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
+CPU_IMPLEMENTATIONS = [
+    "pure",
+    pytest.param("FFTW3", marks=pytest.mark.fftw),
+    pytest.param("MKL", marks=pytest.mark.mkl),
+]
 
 
 def gpu_implementation() -> str:
