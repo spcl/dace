@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 import dace.sdfg.utils as sdutil
 from dace.codegen.control_flow import LoopRegion
@@ -175,9 +177,32 @@ def test_interstate_read():
     assert len(s1.nodes()) == 0
 
 
+def test_copy_out_of_the_scalar_keeps_the_value():
+    """A copy from the baked scalar into another container still writes the value into that container."""
+    sdfg = dace.SDFG("copy_out_of_specialized_scalar")
+    sdfg.add_scalar("flag", dace.int32)
+    sdfg.add_scalar("staged", dace.int32, transient=True)
+    sdfg.add_array("out", [1], dace.int32)
+    state = sdfg.add_state()
+    staged = state.add_access("staged")
+    state.add_nedge(state.add_read("flag"), staged, dace.Memlet("flag[0]"))
+    read = state.add_tasklet("read", {"__in"}, {"__out"}, "__out = __in + 1")
+    state.add_edge(staged, None, read, "__in", dace.Memlet("staged[0]"))
+    state.add_edge(read, "__out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    sdutil.specialize_scalars(sdfg, {"flag": 7})
+    sdfg.validate()
+    assert "staged" in {n.data for n in state.data_nodes()}
+
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(out=out, flag=np.int32(0))
+    assert out[0] == 8
+
+
 if __name__ == "__main__":
     test_specialize_with_dynamic_input()
     test_use_in_if_block()
     test_interstate_assignment()
     test_interstate_read()
     test_use_in_for_cfg()
+    test_copy_out_of_the_scalar_keeps_the_value()
