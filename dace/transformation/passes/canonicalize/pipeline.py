@@ -159,7 +159,6 @@ from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScat
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.scalar_fission import PrivatizeArrays, PrivatizeScalars
@@ -1079,7 +1078,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         s += _inline_single_state(label)
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
-    s += [(label, NormalizeWCRSource()), (label, RelaxIntegerPowers())]
+    s += [(label, NormalizeWCRSource())]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
     s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
     s += [
