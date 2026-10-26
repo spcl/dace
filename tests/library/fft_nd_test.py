@@ -102,6 +102,37 @@ def test_pure_fftn_inplace():
     np.testing.assert_allclose(buf, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.parametrize("in_loop", [False, True])
+def test_pure_factor_symbol_only_in_the_factor(in_loop):
+    """A symbol that only the normalization factor names -- an SDFG symbol, or the iterator of the loop around the
+    node -- still reaches the expansion: the scaling tasklet is C++, whose symbols nothing infers from its code."""
+    from dace.sdfg.state import LoopRegion
+
+    shape = (6, 5)
+    sdfg = dace.SDFG(f"factor_symbol_fftn_{int(in_loop)}")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("x", shape, dace.complex128)
+    sdfg.add_array("y", shape, dace.complex128)
+    if in_loop:
+        loop = LoopRegion("passes", "it < 3", "it", "it = 2", "it = it + 1")
+        sdfg.add_node(loop, is_start_block=True)
+        state = loop.add_state("fft", is_start_block=True)
+    else:
+        state = sdfg.add_state()
+    node = FFT("fft")
+    node.factor = "1/(K*it)" if in_loop else "1/K"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet.from_array("y", sdfg.arrays["y"]))
+    sdfg.expand_library_nodes()
+
+    rng = np.random.default_rng(11)
+    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
+    y = np.zeros_like(x)
+    sdfg(x=x, y=y, K=4)
+    np.testing.assert_allclose(y, np.fft.fftn(x) / (4 * (2 if in_loop else 1)), rtol=1e-10, atol=1e-10)
+
+
 # Symbolic dimensions -- the shape is only known at call time.
 def test_pure_fftn_symbolic():
     M, N = dace.symbol("M"), dace.symbol("N")

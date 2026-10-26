@@ -86,7 +86,20 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
     from dace.libraries.fft.algorithms import dft  # Lazy import functions
 
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
-    return dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
+    sdfg = dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
+    # The factor scales a C++ tasklet, whose code no symbol inference reads: declare what it names, typed as where
+    # the node sits -- a symbol in scope there, or the scalar container the factor reads
+    names = sorted(str(s) for s in symbolic.pystr_to_symbolic(node.factor).free_symbols)
+    if any(name not in sdfg.symbols for name in names):
+        defined = parent_state.symbols_defined_at(node)
+        for name in names:
+            if name in sdfg.symbols:
+                continue
+            if name in defined:
+                sdfg.add_symbol(name, defined[name])
+            elif isinstance(parent_sdfg.arrays.get(name), data.Scalar):
+                sdfg.add_symbol(name, parent_sdfg.arrays[name].dtype)
+    return sdfg
 
 
 @library.register_expansion(FFT, "pure")
