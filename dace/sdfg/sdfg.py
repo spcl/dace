@@ -1623,6 +1623,7 @@ class SDFG(ControlFlowRegion):
         used_before_assignment: set | None = None,
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
+        partially_defined: set | None = None,
     ) -> tuple[set[str], set[str], set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
@@ -1649,6 +1650,7 @@ class SDFG(ControlFlowRegion):
             free_syms=free_syms,
             used_before_assignment=used_before_assignment,
             with_contents=with_contents,
+            partially_defined=partially_defined,
         )
         # A used array needs its stride/shape/offset symbols in the free set; a merely-declared one
         # must not leak its shape symbol into the signature (issue #2382). ``read_and_write_sets``

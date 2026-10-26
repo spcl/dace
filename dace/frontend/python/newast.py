@@ -5194,7 +5194,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.symbols:
             return name
 
-        if name in __builtins__:
+        if name in __builtins__ or name in replacements.operators.MODULO_CALLS:
             return name
 
         if name not in self.scope_vars:
@@ -5636,6 +5636,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
+            # A call returns its single result in a list
+            if isinstance(scalar, list) and len(scalar) == 1:
+                scalar = scalar[0]
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 if isinstance(self.sdfg.arrays[scalar], data.Scalar):
                     return self.promote_scalar_to_symbol(scalar, key=node_str)

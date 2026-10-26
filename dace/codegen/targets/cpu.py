@@ -1356,10 +1356,8 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> tuple[DefinedType, str]:
-        """The defined type and C type of the container ``ptr`` names. An array sized by a symbol that is not free
-        is declared at SDFG scope but allocated where its size is known -- in a state that dominates its
-        accesses, whose scope ends before the accesses' states are generated -- so its declaration holds the
-        type. A View is looked up the same way: its view edge is not at hand here."""
+        """Defined type and C type of ``ptr``. A View, or an array sized by a non-free symbol, is allocated in a scope
+        that may have ended, so its declaration is asked first."""
         dependent_shape = (
             isinstance(desc, data.Array)
             and not isinstance(desc, data.View)

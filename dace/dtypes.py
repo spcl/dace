@@ -100,14 +100,32 @@ class ScheduleType(ExtensibleAttributeEnum):
     Snitch = auto()
     Snitch_Multicore = auto()
 
+    # No code generation yet
+    GPU_Chiplet = auto()  #: AMD XCD
+    GPU_ThreadBlockCluster = auto()
+    GPU_Warp = auto()
 
-# A subset of GPU schedule types
-GPU_SCHEDULES = [
+
+GPU_KERNEL_SCHEDULES = [
     ScheduleType.GPU_Device,
-    ScheduleType.GPU_ThreadBlock,
-    ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
 ]
+
+# Coarsest first
+GPU_THREAD_SCHEDULES = [
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES_WITHOUT_CODEGEN = [
+    ScheduleType.GPU_Chiplet,
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
 
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
@@ -206,8 +224,11 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
+    ScheduleType.GPU_Chiplet: StorageType.GPU_Global,
+    ScheduleType.GPU_ThreadBlockCluster: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
+    ScheduleType.GPU_Warp: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
 }
@@ -224,6 +245,9 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Chiplet: ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlockCluster: ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
@@ -1611,12 +1635,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
     if storage == StorageType.Register:
         return True
 
-    if schedule in [
-        ScheduleType.GPU_Device,
-        ScheduleType.GPU_Persistent,
-        ScheduleType.GPU_ThreadBlock,
-        ScheduleType.GPU_ThreadBlock_Dynamic,
-    ]:
+    if schedule in GPU_SCHEDULES:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
@@ -1660,11 +1679,10 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
-        return schedule in [
-            ScheduleType.GPU_Device,
+        return schedule in GPU_KERNEL_SCHEDULES + [
+            ScheduleType.GPU_ThreadBlockCluster,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent,
         ]
 
     # The rest (Registers) can be allocated everywhere
