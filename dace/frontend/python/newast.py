@@ -17,7 +17,7 @@ import numpy
 import sympy
 
 import dace
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, utils
 from dace import sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
@@ -2740,7 +2740,7 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_region.sdfg._labels = {s.label for s in loop_region.sdfg.all_control_flow_blocks()}
             for block in test_region_copy.all_control_flow_blocks():
                 block.sdfg = loop_region.sdfg
-                block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
+                block.label = utils.find_new_name(block.label, loop_region.sdfg._labels)
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
