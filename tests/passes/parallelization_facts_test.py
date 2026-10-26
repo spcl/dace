@@ -9,8 +9,10 @@ import pytest
 import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion
+from dace.symbolic_facts import DataFact, DataFactKind
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import smt_dependence
+from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.parallelization.facts import SolverFacts
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
@@ -46,6 +48,13 @@ def store_through_rewritten_index(perm: dace.int64[M], out: dace.float64[M]):
         row = perm[r]
         out[row] = 1.0
         perm[r] = 0
+
+
+@dace.program
+def read_ahead_through_index(a: dace.float64[2 * N], idx: dace.int64[N]):
+    for i in range(N):
+        k = idx[i]
+        a[i] = a[i + 1 + k] * 0.5
 
 
 def only_loop(sdfg: dace.SDFG) -> LoopRegion:
@@ -118,6 +127,26 @@ def test_a_fact_about_an_index_array_the_loop_rewrites_is_not_assumed():
     assert not probe.solver_facts.used
 
 
+@pytest.mark.parametrize("declared", [False, True])
+def test_break_anti_dependence_snapshots_a_read_ahead_only_under_a_nonnegative_index(declared):
+    sdfg = read_ahead_through_index.to_sdfg(simplify=True)
+    if declared:
+        sdfg.add_data_assumption("idx", DataFact(DataFactKind.NONNEGATIVE))
+    renamed = BreakAntiDependence().apply_pass(sdfg, {})
+    assert (renamed == 1) is declared, "a[i + 1 + idx[i]] reads ahead only when idx >= 0"
+    if not declared:
+        return
+    n = 16
+    rng = np.random.default_rng(0)
+    idx = rng.integers(0, n - 1, n).astype(np.int64)
+    a = rng.random(2 * n)
+    ref = a.copy()
+    for i in range(n):
+        ref[i] = ref[i + 1 + idx[i]] * 0.5
+    sdfg(a=a, idx=idx, N=n)
+    assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
     for program in (strided_store, quadratic_store):
         test_a_store_injective_only_for_a_positive_coefficient_lifts_under_that_fact(program)
@@ -125,3 +154,5 @@ if __name__ == "__main__":
     test_a_declared_permutation_makes_loop_to_map_prove_a_store_through_a_bound_index()
     test_a_store_through_an_undeclared_index_stays_sequential()
     test_a_fact_about_an_index_array_the_loop_rewrites_is_not_assumed()
+    for declared in (False, True):
+        test_break_anti_dependence_snapshots_a_read_ahead_only_under_a_nonnegative_index(declared)
