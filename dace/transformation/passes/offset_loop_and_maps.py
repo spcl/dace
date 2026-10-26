@@ -378,19 +378,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
         :returns: Number of rewrites made (unit copies split + loops/maps offset + loop expressions simplified),
                   or ``None`` if nothing matched.
         """
-        # Cross-array unit copies are split into ``_out = _in`` assign tasklets first --
-        # the documented contract of ``InsertAssignTaskletsForUnitCopies``, matching the
-        # canonicalize pipeline's ordering. (``create_new_memlet`` now substitutes
-        # ``other_subset`` as well, so this is a shape choice, no longer a workaround.)
-        from dace.transformation.passes.insert_unit_copy_assign_tasklets import (
-            InsertAssignTaskletsForUnitCopies,
-        )
-
-        unit_copies = InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, pipeline_results or {})
-
         # Do it for LoopRegions and Maps
         rewrites = self._apply(sdfg)
-        rewrites += unit_copies or 0
 
         # Simplify <= loop conditions to use < if set
         if self.convert_leq_to_lt:

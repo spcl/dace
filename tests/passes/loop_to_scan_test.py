@@ -10,7 +10,6 @@ import pytest
 import dace
 from dace.libraries.standard.nodes.scan import Scan, ScanOp, in_connector, init_connector, out_connector
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
@@ -40,6 +39,27 @@ def _scan_ops(sdfg):
     """Which ops the lifted Scan nodes carry -- an AFFINE lift and a SUM lift are not the same
     result, and several refusal tests here turn on exactly that difference."""
     return [n.op for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+
+
+def name_the_destination(sdfg: dace.SDFG) -> int:
+    """Rewrite every two-sided ``AccessNode -> AccessNode`` copy into the form whose ``data`` names its destination
+    (``subset`` the destination's side, ``other_subset`` the source's), as a folded unit-copy tasklet leaves it.
+
+    :returns: The number of copies rewritten.
+    """
+    rewritten = 0
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for edge in state.edges():
+                memlet = edge.data
+                if not (isinstance(edge.src, dace.nodes.AccessNode) and isinstance(edge.dst, dace.nodes.AccessNode)):
+                    continue
+                if memlet.other_subset is None or memlet.data != edge.src.data or edge.src.data == edge.dst.data:
+                    continue
+                memlet.data, memlet.subset, memlet.other_subset = edge.dst.data, memlet.other_subset, memlet.subset
+                memlet._is_data_src = False
+                rewritten += 1
+    return rewritten
 
 
 def test_inclusive_sum_1d():
@@ -2352,11 +2372,8 @@ def test_scan_survives_two_sided_carry_copy_memlet():
             out[i] = out[i - 1] + delta[i]
 
     sdfg = carry.to_sdfg(simplify=True)
-    # Materialize every unit copy as an explicit tasklet; ``LiftPreprocess`` folds them back
-    # into the two-sided memlet form this test pins.
-    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
-
     LiftPreprocess().apply_pass(sdfg, {})
+    assert name_the_destination(sdfg), "the fixture must hold the destination-named copy this test pins"
     assert LoopToScan().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert _num_scan_nodes(sdfg) == 1
@@ -2466,8 +2483,8 @@ def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
     # that flattened the wrapper would empty this test out just as quietly as the pass did.
     assert _loops_inside_nested_sdfgs(sdfg), "fixture no longer nests the carry loop -- the ownership bug cannot be hit"
 
-    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
     LiftPreprocess().apply_pass(sdfg, {})
+    assert name_the_destination(sdfg), "the fixture must hold the destination-named copy this test pins"
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
 
@@ -2522,8 +2539,8 @@ def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
             a[i] = a[i] + a[i - 1] * b[i] + a[i - 2] * c[i]
 
     sdfg = second_order.to_sdfg(simplify=True)
-    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
     LiftPreprocess().apply_pass(sdfg, {})
+    assert name_the_destination(sdfg), "the fixture must hold the destination-named copy this test pins"
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert _num_scan_nodes(sdfg) == 0, "a two-step recurrence is not a scan, whichever side the memlet names"

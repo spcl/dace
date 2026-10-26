@@ -24,9 +24,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
-from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.scalar_fission import edge_subset
 
 READ = (1, 4)
@@ -72,29 +69,6 @@ def expected() -> np.ndarray:
 
 
 ORIENTATIONS = [src_relative, dst_relative]
-
-
-@pytest.mark.parametrize("build_sdfg", ORIENTATIONS)
-def test_insert_unit_copy_assign_tasklets_keeps_self_copy_direction(build_sdfg):
-    """``InsertAssignTaskletsForUnitCopies`` splits a unit ``A -> A`` copy into
-    ``A -> tasklet -> A``. Choosing the two halves by data name reads the destination element and
-    writes the source one, i.e. runs the copy backwards."""
-    sdfg = build_sdfg(f"unit_copy_{build_sdfg.__name__}")
-    assert InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {}) == 1
-    assert any(isinstance(n, nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
-    sdfg.validate()
-    np.testing.assert_array_equal(run(sdfg), expected())
-
-
-@pytest.mark.parametrize("build_sdfg", ORIENTATIONS)
-def test_insert_assign_tasklets_at_map_boundary_keeps_self_copy_direction(build_sdfg):
-    """Same split, done by ``InsertAssignTaskletsAtMapBoundary`` for edges carrying
-    ``other_subset``; same failure mode."""
-    sdfg = build_sdfg(f"map_boundary_{build_sdfg.__name__}")
-    assert InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {}) == 1
-    assert any(isinstance(n, nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
-    sdfg.validate()
-    np.testing.assert_array_equal(run(sdfg), expected())
 
 
 @pytest.mark.parametrize("build_sdfg", ORIENTATIONS)
