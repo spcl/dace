@@ -703,8 +703,11 @@ def unique_iterators() -> ppl.Pass:
     return UniqueLoopIterators()
 
 
-def privatization_units() -> list[ppl.Pass]:
-    """False-dependence renaming: per-scope versions of a container wherever a dominating write allows it."""
+def clean_anti_dependency_units() -> list[ppl.Pass]:
+    """CleanAntiDependency (WAR, WAW) by renaming: per-scope versions of a container wherever a dominating write
+    allows it, per-iteration copies of a constant slot or scratch buffer a loop rewrites before reading. The
+    read-ahead WAR a snapshot breaks is the other half, ``BreakAntiDependence`` in :func:`derive_parallelism`: its
+    offset proof reads guard symbols that only SymbolSSA and propagation there settle."""
     return [
         PrivatizeScalars(),
         PrivatizeArrays(),
@@ -749,7 +752,7 @@ def statement_round() -> list[ppl.Pass]:
     units += [HoistInductionVariableUpdates(), InductionVariableSubstitution()]
     units += [PropagateIndexSubsets(), RemoveUnusedSymbols(), PropagateAndPrune()]
     units += [ForwardStoreToLoad(), SplitStatements()]
-    units += [PhaseFixpoint("rename_false_dependences", privatization_units, 1)]
+    units += [PhaseFixpoint("clean_anti_dependency", clean_anti_dependency_units, 1)]
     units += [LoopInvariantCodeMotion()]
     units += [RevertNonReductionWCR(), NormalizeWCR()]
     units += dead_dataflow_units()
