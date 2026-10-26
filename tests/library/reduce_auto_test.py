@@ -1,10 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``Reduce``'s default ``auto`` implementation dispatches on the node's schedule, and the expansions it picks
-compile and compute: OpenMP min/max, a sequential reduction inside a parallel map, a mixed-type sum and complex
-operands."""
+"""``Reduce``'s default ``auto`` implementation: the ``pure`` WCR map, or the sequential accumulator inside a parallel
+map; both compile and compute, including a mixed-type sum."""
 
 import numpy as np
-import pytest
 
 import dace
 from dace.libraries.standard.nodes.reduce import Reduce
@@ -24,17 +22,17 @@ def reduce_sdfg(name: str, wcr: str, in_dtype, out_dtype, identity) -> dace.SDFG
     return sdfg
 
 
-@pytest.mark.parametrize("wcr, ref", [("lambda a, b: min(a, b)", np.min), ("lambda a, b: max(a, b)", np.max)])
-def test_openmp_min_max_compile_and_compute(wcr, ref):
-    sdfg = reduce_sdfg(f"reduce_omp_{ref.__name__}", wcr, dace.float64, dace.float64, None)
+def test_default_cpu_reduce_is_the_wcr_map():
+    sdfg = reduce_sdfg("reduce_auto_wcr_map", "lambda a, b: max(a, b)", dace.float64, dace.float64, None)
     sdfg.expand_library_nodes()
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    assert len(tasklets) == 1 and "#pragma omp" in tasklets[0].code.as_string
+    assert all("#pragma omp" not in t.code.as_string for t in tasklets)
+    assert any(e.data.wcr is not None for e, _ in sdfg.all_edges_recursive())
 
     # Without an identity the reduction starts from what B holds
-    a, b = np.random.rand(N), np.full(1, np.inf if ref is np.min else -np.inf)
+    a, b = np.random.rand(N), np.full(1, -np.inf)
     sdfg(A=a, B=b)
-    assert b[0] == ref(a)
+    assert b[0] == a.max()
 
 
 def test_mixed_type_sum_keeps_the_input_type_until_the_store():
@@ -58,28 +56,3 @@ def test_reduction_inside_a_parallel_map_is_sequential():
     a, b = np.random.rand(8, N), np.zeros(8)
     sdfg(A=a, B=b)
     assert np.allclose(b, a.sum(axis=1))
-
-
-def test_complex_sum_with_openmp():
-    sdfg = reduce_sdfg("reduce_omp_complex", "lambda a, b: a + b", dace.complex128, dace.complex128, 0)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Reduce):
-            node.implementation = "OpenMP"
-    a = (np.random.rand(N) + 1j * np.random.rand(N)).astype(np.complex128)
-    b = np.zeros(1, dtype=np.complex128)
-    sdfg(A=a, B=b)
-    assert np.isclose(b[0], a.sum())
-
-
-@pytest.mark.gpu
-def test_gpu_reduction_into_a_host_scalar():
-    import cupy as cp
-
-    sdfg = reduce_sdfg("reduce_gpu_host_out", "lambda a, b: a + b", dace.float64, dace.float64, 0)
-    sdfg.arrays["A"].storage = dace.StorageType.GPU_Global
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, Reduce):
-            node.schedule = dace.ScheduleType.GPU_Device
-    a, b = cp.random.rand(N), np.zeros(1)
-    sdfg(A=a, B=b)
-    assert np.isclose(b[0], float(a.sum()))

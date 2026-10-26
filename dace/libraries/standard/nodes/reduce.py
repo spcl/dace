@@ -292,54 +292,18 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         return nsdfg
 
 
-def stage_gpu_reduction_output(node: "Reduce", state: SDFGState, sdfg: SDFG):
-    """Route a GPU reduction into a host destination through a one-element device transient: the device expansions
-    write through a device pointer, and the edge out of the transient lowers to the device-to-host copy."""
-    outedge = state.out_edges(node)[0]
-    desc = sdfg.arrays[outedge.data.data]
-    if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-        return
-
-    name, _ = sdfg.add_array(
-        f"{node.label}_gpu_out",
-        [1],
-        desc.dtype,
-        storage=dtypes.StorageType.GPU_Global,
-        transient=True,
-        find_new_name=True,
-    )
-    staged = state.add_access(name)
-    state.add_edge(node, outedge.src_conn, staged, None, dace.Memlet(f"{name}[0:1]"))
-    state.add_edge(staged, None, outedge.dst, outedge.dst_conn, dcpy(outedge.data))
-    state.remove_edge(outedge)
-
-
 @dace.library.expansion
 class ExpandReduceAuto(pm.ExpandTransformation):
-    """Expands by the node's schedule: ``Sequential`` (inside a parallel map, with an identity) to the sequential
-    accumulator, whose order does not depend on the thread count; a GPU schedule to ``GPUAuto``; anything else to
-    OpenMP, a ``reduction()`` clause instead of per-element atomics."""
+    """``Sequential`` with an identity (a reduction inside a parallel map) expands to the sequential accumulator,
+    whose order does not depend on the thread count; anything else to the ``pure`` map with a WCR output."""
 
     environments = []
 
-    @classmethod
-    def expansion(cls, node: "Reduce", state: SDFGState, sdfg: SDFG):
-        cls.environments = []
+    @staticmethod
+    def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
         if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:
             return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
-        if node.schedule in dtypes.GPU_SCHEDULES:
-            stage_gpu_reduction_output(node, state, sdfg)
-            expanded = ExpandReduceGPUAuto.expansion(node, state, sdfg)
-            # The GPU expansion picks its own environments when it delegates to CUB
-            cls.environments = list(ExpandReduceGPUAuto.environments)
-            return expanded
-        return ExpandReduceOpenMP.expansion(node, state, sdfg)
-
-
-#: Connector names of the OpenMP reduce tasklet. Not ``_in``/``_out``: this tasklet lands in the parent state, where
-#: a connector named like an array (``AllNode``/``AnyNode`` declare ``_out``) fails validation.
-_IN = "_reduce_in"
-_OUT = "_reduce_out"
+        return ExpandReducePure.expansion(node, state, sdfg)
 
 
 @dace.library.expansion
@@ -351,9 +315,8 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
     environments = []
 
     _REDUCTION_TYPE_TO_OPENMP = {
-        # OpenMP spells the clause lower-case; the body calls the runtime's Min/Max, bare min/max do not resolve
-        dtypes.ReductionType.Max: ("max", "{o} = Max({o}, {i});"),
-        dtypes.ReductionType.Min: ("min", "{o} = Min({o}, {i});"),
+        dtypes.ReductionType.Max: ("max", "{o} = max({o}, {i});"),
+        dtypes.ReductionType.Min: ("min", "{o} = min({o}, {i});"),
         dtypes.ReductionType.Sum: ("+", "{o} += {i};"),
         dtypes.ReductionType.Product: ("*", "{o} *= {i};"),
         dtypes.ReductionType.Bitwise_And: ("&", "{o} &= {i};"),
@@ -415,7 +378,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         else:
             out_offset.append("0")
 
-        outexpr = f"{_OUT}[{' + '.join(out_offset)}]"
+        outexpr = "_out[{}]".format(" + ".join(out_offset))
 
         # Write identity value first
         if node.identity is not None:
@@ -443,7 +406,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         in_offset = " + ".join(in_offset)
 
         # Reduction expression
-        code += expr.format(i=f"{_IN}[{in_offset}]", o=outexpr)
+        code += expr.format(i=f"_in[{in_offset}]", o=outexpr)
         code += "\n"
 
         # Closing braces
@@ -454,17 +417,17 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         # Make tasklet
         tnode = dace.nodes.Tasklet(
             "reduce",
-            {_IN: dace.pointer(input_data.dtype)},
-            {_OUT: dace.pointer(output_data.dtype)},
+            {"_in": dace.pointer(input_data.dtype)},
+            {"_out": dace.pointer(output_data.dtype)},
             code,
             language=dace.Language.CPP,
         )
 
         # Rename outer connectors and add to node
-        inedge._dst_conn = _IN
-        outedge._src_conn = _OUT
-        node.add_in_connector(_IN)
-        node.add_out_connector(_OUT)
+        inedge._dst_conn = "_in"
+        outedge._src_conn = "_out"
+        node.add_in_connector("_in")
+        node.add_out_connector("_out")
 
         return tnode
 
