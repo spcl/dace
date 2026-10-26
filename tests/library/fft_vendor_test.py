@@ -5,6 +5,8 @@
 staging copy, the cached plan and the ``norm`` scale.
 """
 
+import shutil
+import subprocess
 import warnings
 
 import numpy as np
@@ -383,6 +385,28 @@ def test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension():
 
 
 @pytest.mark.fftw
+def test_each_program_keeps_its_own_fftw_plan_cache():
+    """Two programs in one process may bind FFTW's symbols to different libraries (FFTW3, or MKL's FFTW3 interface
+    once an MKL program loaded it). A plan cache reached through a process-wide symbol hands the plans of one to the
+    other, so each program's cache has internal linkage."""
+    readelf = shutil.which("readelf")
+    if readelf is None:
+        pytest.skip("needs readelf")
+
+    @dace.program
+    def transform_one_axis(x: dace.complex128[16]):
+        return np.fft.fft(x)
+
+    compiled = compile_with(transform_one_axis, "FFTW3").compile()
+    symbols = subprocess.run(
+        [readelf, "-sW", "--dyn-syms", compiled.filename], capture_output=True, text=True, check=True
+    ).stdout
+    assert not [line for line in symbols.splitlines() if "UNIQUE" in line and "5Plans" in line]
+    x = rng_complex((16,))
+    np.testing.assert_allclose(compiled(x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.fftw
 @pytest.mark.parametrize(
     "shape,axes", [((3, 4, 5, 2), (1, 2, 3)), ((4, 5, 6), (0, 2)), ((4, 5, 6), (-1, -3)), ((3, 4, 5, 2), (0, 1, 2, 3))]
 )
@@ -559,6 +583,7 @@ if __name__ == "__main__":
     test_gpu_fftn_over_every_axis((32, 48))
     test_gpu_fftn_over_every_axis((8, 12, 16))
     test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension()
+    test_each_program_keeps_its_own_fftw_plan_cache()
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((3, 4, 5, 2), (1, 2, 3), np.complex128, dace.complex128)
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((3, 4, 5, 2), (1, 2, 3), np.complex64, dace.complex64)
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((4, 5, 6), (0, 2), np.complex128, dace.complex128)
