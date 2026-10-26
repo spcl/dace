@@ -522,7 +522,6 @@ class WavefrontSkew(ppl.Pass):
                 assert st.node is not None and isinstance(st.block, SDFGState)
                 st.node.map.range = dace.subsets.Range([(as_expr(lo), as_expr(hi), 1)])
                 st.node.map.schedule = dace.ScheduleType.Sequential
-                propagate_memlets_state(sdfg, st.block)
 
         if self.target == "gpu":
             self.skew_tile_interior(plan, sdfg, i_loop, i_lo, j_lo)
