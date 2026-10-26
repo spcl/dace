@@ -303,7 +303,7 @@ class LoopToStreamCompaction(ppl.Pass):
 
         # Expensive last: model the cursor by an injective affine index and let LoopToMap rule on
         # every dependence this pass does NOT prove itself.
-        if not self.affine_cursor_probe(loop, sdfg, cursor_name, step, levels):
+        if not self.affine_cursor_probe(loop, cursor_name, step, levels):
             return None
 
         return CompactionMatch(
@@ -641,7 +641,7 @@ class LoopToStreamCompaction(ppl.Pass):
         return all(sum(1 for var in carried if str(var) == str(outer)) == 1 for outer in loop_vars)
 
     def affine_cursor_probe(
-        self, loop: LoopRegion, sdfg: SDFG, cursor: str, step: symbolic.SymbolicType, levels: tuple[NestLevel, ...]
+        self, loop: LoopRegion, cursor: str, step: symbolic.SymbolicType, levels: tuple[NestLevel, ...]
     ) -> bool:
         """Ask ``LoopToMap`` about the residual body with the cursor modelled as an injective affine index.
 
@@ -655,34 +655,9 @@ class LoopToStreamCompaction(ppl.Pass):
         """
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
-        probe_sdfg = copy.deepcopy(sdfg)
-        probe_loop = self.locate_corresponding(probe_sdfg, loop)
-        if probe_loop is None:
-            return False
         outer = levels[0]
-        model = symbolic.symstr(step * (symbolic.pystr_to_symbolic(outer.loop.loop_variable) - outer.start))
-        for edge in probe_loop.all_interstate_edges(recursive=False):
-            if cursor in edge.data.assignments:
-                del edge.data.assignments[cursor]
-        # Substitute, do not rebind: LoopToMap reads subsets, not interstate symbol definitions.
-        probe_loop.replace_dict({cursor: model})
-        return ParallelizeLoops().accepts(probe_loop)
-
-    def locate_corresponding(self, target: SDFG, loop: LoopRegion) -> LoopRegion | None:
-        """Re-find a loop across a deepcopy -- object identity does not survive it.
-
-        Labels are unique per region but not across nested SDFGs, so the iterator and the body
-        size have to agree too; an ambiguous lookup would probe the wrong loop.
-        """
-        found: list[LoopRegion] = [
-            region
-            for region in target.all_control_flow_regions()
-            if isinstance(region, LoopRegion)
-            and region.label == loop.label
-            and region.loop_variable == loop.loop_variable
-            and region.number_of_nodes() == loop.number_of_nodes()
-        ]
-        return found[0] if len(found) == 1 else None
+        model = step * (symbolic.pystr_to_symbolic(outer.loop.loop_variable) - outer.start)
+        return ParallelizeLoops().accepts(loop, closed_forms={cursor: model})
 
     # match helpers
 

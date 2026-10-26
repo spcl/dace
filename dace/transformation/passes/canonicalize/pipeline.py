@@ -33,7 +33,6 @@ from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy 
     AssignmentAndCopyKernelToMemsetAndMemcpy,
 )
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     AssumeSymbolConstraints,
@@ -703,14 +702,13 @@ def unique_iterators() -> ppl.Pass:
 
 def clean_anti_dependency_units() -> list[ppl.Pass]:
     """CleanAntiDependency (WAR, WAW) by renaming: per-scope versions of a container wherever a dominating write
-    allows it, per-iteration copies of a constant slot or scratch buffer a loop rewrites before reading. The
-    read-ahead WAR a snapshot breaks is the other half, ``BreakAntiDependence`` in :func:`derive_parallelism`: its
+    allows it, per-iteration copies of a constant slot a loop rewrites before reading. A scratch buffer's copies are
+    made by the lift (``ParallelizeLoops.expand_buffers``), for the loops refused on it. The read-ahead WAR a snapshot breaks is the other half, ``BreakAntiDependence`` in :func:`derive_parallelism`: its
     offset proof reads guard symbols that only SymbolSSA and propagation there settle."""
     return [
         PrivatizeScalars(),
         PrivatizeArrays(),
         PromoteConstantIndexAccess(),
-        BufferExpansion(),
     ]
 
 
@@ -727,11 +725,14 @@ def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
     :param hold_sibling_chains: Leave a sibling-loop chain with a refused sibling whole, for ``WavefrontSkew``.
     """
     parallelize = ParallelizeLoopsHoldingSiblingChains if hold_sibling_chains else ParallelizeLoops
+    lift = parallelize(propagate=False)
+    # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
+    lift.expand_buffers = True
     return [
         PropagateMemlets(),
         # A scalar argument promoted to a symbol since ingestion is under the contract too (its step orients a map)
         SetSymbolNonnegativeAssumptions(),
-        parallelize(propagate=False),
+        lift,
         PatternApplyOnceEverywhere([PruneConnectors()]),
     ]
 

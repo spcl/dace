@@ -500,6 +500,25 @@ def _smt_classify_read_write_pair(
         return None
 
 
+def in_closed_form(subset: subsets.Subset | None, closed_forms: dict[str, Any] | None) -> subsets.Subset | None:
+    """``subset`` with the symbols of ``closed_forms`` replaced by their closed forms (a copy when any occurs)."""
+    if subset is None or not closed_forms or not closed_forms.keys() & {str(s) for s in subset.free_symbols}:
+        return subset
+    subset = copy.deepcopy(subset)
+    subset.replace({symbolic.symbol(name): form for name, form in closed_forms.items()})
+    return subset
+
+
+def memlet_in_closed_form(m: memlet.Memlet, closed_forms: dict[str, Any] | None) -> memlet.Memlet:
+    """``m`` with its subsets :func:`in_closed_form` (a copy when either changes)."""
+    subset, other = in_closed_form(m.subset, closed_forms), in_closed_form(m.other_subset, closed_forms)
+    if subset is m.subset and other is m.other_subset:
+        return m
+    m = copy.copy(m)
+    m.subset, m.other_subset = subset, other
+    return m
+
+
 def write_refusal(
     sdfg: SDFG,
     state: SDFGState,
@@ -514,14 +533,16 @@ def write_refusal(
     permissive: bool,
     ctx: Optional["LiftContext"],
     facts: Any = None,
+    closed_forms: dict[str, Any] | None = None,
 ) -> str | None:
-    """Why :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or ``None``."""
+    """Why :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or ``None``; ``closed_forms``
+    as :attr:`LoopToMap.closed_forms`."""
     if e.data.dynamic and e.data.wcr is None:
         # Dynamic write (no WCR) is safe across iterations if its dst subset
         # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
         # each iteration writes a disjoint slab, so a lane firing or not can't
         # race another iteration's write.
-        dst_subset = e.data.get_dst_subset(e, state)
+        dst_subset = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
         ranges = None if ctx is None else ctx.invariants.check_range
         if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
             return f"dynamic write to {dn.data} is not indexed by the iteration variable - dst_subset={dst_subset}"
@@ -529,7 +550,7 @@ def write_refusal(
     # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
     # iteration variable (which must be used).
     if e.data.wcr is None:
-        dst_subset = e.data.get_dst_subset(e, state)
+        dst_subset = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
         ranges = None if ctx is None else ctx.invariants.check_range
         ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)
         # NestedSDFG body propagates a whole-array external write hiding an
@@ -1500,11 +1521,13 @@ def symbols_assigned_before_use(
     ctx: Optional["LiftContext"] = None,
     blocks: list[ControlFlowBlock] | None = None,
     refusal: list[str] | None = None,
+    closed: frozenset[str] = frozenset(),
 ) -> set[str] | None:
     """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it.
 
     :param blocks: the body in topological order, if the caller has it.
     :param refusal: receives why the loop carries a symbol, when it does.
+    :param closed: symbols every iteration reads as a closed form of the iteration: neither read nor assigned.
     """
     symbols_that_may_be_used: set[str] = {itervar}
     used_before_assignment: set[str] = set()
@@ -1522,12 +1545,14 @@ def symbols_assigned_before_use(
                 block_reads = own_reads(block, ctx)
             except Exception:
                 block_reads = set()
-            used_before_assignment |= block_reads - symbols_that_may_be_used
+            used_before_assignment |= block_reads - symbols_that_may_be_used - closed
             continue
         for e in block.parent_graph.out_edges(block):
-            used_before_assignment |= edge_read_symbols(e.data, ctx) - symbols_that_may_be_used
+            used_before_assignment |= edge_read_symbols(e.data, ctx) - symbols_that_may_be_used - closed
             assigned_symbols = set()
             for k, v in e.data.assignments.items():
+                if k in closed:
+                    continue
                 try:
                     fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
                 except AttributeError:
@@ -1546,7 +1571,7 @@ def symbols_assigned_before_use(
                         f"{assigned_symbols & used_before_assignment} read before being assigned"
                     )
                 return None
-            symbols_that_may_be_used |= e.data.assignments.keys()
+            symbols_that_may_be_used |= e.data.assignments.keys() - closed
     return symbols_that_may_be_used
 
 
@@ -1600,6 +1625,9 @@ class LoopToMap(xf.MultiStateTransformation):
     #: Containers the caller makes iteration-private before lifting (a per-iteration slot or scalar each); the
     #: dependence analysis leaves them out, as it does a loop-local transient.
     assume_private: frozenset = frozenset()
+    #: Symbols the caller rewrites into a closed form of the iteration, ``{name: expression}``: every check reads them
+    #: through it and ignores their assignments in the body.
+    closed_forms: dict[str, Any] | None = None
     #: What z3 may assume in this probe's dependence queries, set by ``can_be_applied``.
     solver_facts: SolverFacts | None = None
     #: Why the last probe refused, or ``None`` after an accept.
@@ -1673,8 +1701,10 @@ class LoopToMap(xf.MultiStateTransformation):
             return refuse(f"loop bounds are not integer types - result_type={t}")
 
         facts = self.probe_resolver().facts_at(self.loop)
+        closed_forms = self.closed_forms
+        closed = frozenset(closed_forms or ())
         # Fixed for the whole loop, so computed once and shared with every dependence test below.
-        varying = loop_varying_symbols(self.loop)
+        varying = loop_varying_symbols(self.loop) - closed
         self.solver_facts = SolverFacts(self.loop, facts, varying)
         # A loop known parallel since it was marked is mapped whatever its scale: the CPU specialization sequentializes
         # a small map, a loop it never sees.
@@ -1712,7 +1742,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 pass
         body_assigned_syms: set[str] = set()
         for e in self.loop.all_interstate_edges():
-            body_assigned_syms.update(e.data.assignments.keys())
+            body_assigned_syms.update(e.data.assignments.keys() - closed)
         if range_syms & body_assigned_syms:
             return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
@@ -1744,7 +1774,8 @@ class LoopToMap(xf.MultiStateTransformation):
         # a stencil's probes -- has nothing to check, so skip the sort and leave
         # ``symbols_that_may_be_used`` at its initial ``{itervar}`` (identical to what the loop below
         # would produce with no assignments).
-        facts = None if ctx is None else loop_facts_of(ctx.loop_facts, self.loop)
+        # The per-loop cache holds verdicts on the loop as written, not on its closed form.
+        facts = None if ctx is None or closed else loop_facts_of(ctx.loop_facts, self.loop)
         # Every accept above is behind us, so a refusal re-derived from the current graph is the verdict.
         # A sweep re-probes the loops enclosing each lift; they stay refused on the same write or read,
         # and this re-checks that one site instead of re-running the whole analysis (CloudSC: 8 loops,
@@ -1761,7 +1792,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if in_order_loop_blocks is UNCOMPUTED or facts is None:
             in_order_loop_blocks = None
             if any(
-                e.data.assignments
+                e.data.assignments.keys() - closed
                 for block in self.loop.all_control_flow_blocks()
                 for e in block.parent_graph.out_edges(block)
             ):
@@ -1774,7 +1805,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if in_order_loop_blocks is not None:
             refusal: list[str] = []
             symbols_that_may_be_used = symbols_assigned_before_use(
-                self.loop, itervar, ctx, in_order_loop_blocks, refusal
+                self.loop, itervar, ctx, in_order_loop_blocks, refusal, closed
             )
             if symbols_that_may_be_used is None:
                 return refuse(refusal[0])
@@ -1884,13 +1915,14 @@ class LoopToMap(xf.MultiStateTransformation):
                             self.waives(dn.data, permissive),
                             ctx,
                             self.solver_facts,
+                            closed_forms,
                         )
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
                             return refuse(reason, dn.data)
 
-                        write_memlets[dn.data].append(e.data)
+                        write_memlets[dn.data].append(memlet_in_closed_form(e.data, closed_forms))
 
         # Carried-read check: for every array also written, each in-loop READ subset must be
         # loop-invariant (no itersym) or match the writes' ``a*i+b``. A read at a DIFFERENT iter
@@ -1905,7 +1937,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 for e in state.out_edges(dn):
                     if e.data is None:
                         continue
-                    src_subset = e.data.get_src_subset(e, state)
+                    src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
                     if src_subset is None:
                         continue
                     # Loop-invariant read (no itersym) -- safe, same input every iteration.
@@ -1976,7 +2008,7 @@ class LoopToMap(xf.MultiStateTransformation):
                             continue
 
                         # Container read AND written: match only if the locations can't race.
-                        src_subset = e.data.get_src_subset(e, state)
+                        src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
                         if not self.test_read_memlet(
                             sdfg,
                             state,
@@ -1987,7 +2019,7 @@ class LoopToMap(xf.MultiStateTransformation):
                             end,
                             step,
                             write_memlets,
-                            e.data,
+                            memlet_in_closed_form(e.data, closed_forms),
                             src_subset,
                             varying,
                         ):
@@ -2002,7 +2034,7 @@ class LoopToMap(xf.MultiStateTransformation):
         isread_set: set[memlet.Memlet] = set()
         for e in self.loop.all_interstate_edges():
             isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
-        for mmlt in isread_set:
+        for mmlt in [memlet_in_closed_form(m, closed_forms) for m in isread_set]:
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(
                     sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt, mmlt.subset, varying
@@ -2220,7 +2252,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Always use the source data container for the memlet test
         if state is not None and edge is not None:
-            mmlt = align_memlet(state, edge, dst=False)
+            mmlt = memlet_in_closed_form(align_memlet(state, edge, dst=False), self.closed_forms)
             data = mmlt.data
 
         # The read propagated over the whole loop, for the last-resort overlap test only: most candidates are decided

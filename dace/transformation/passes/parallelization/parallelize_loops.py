@@ -29,6 +29,41 @@ from dace.transformation.interstate.loop_to_map import (
 )
 from dace.transformation.passes.analysis import array_facts, loop_analysis
 
+
+class ProbeSession:
+    """What the loop probes of one analysis share while the graph stands: one symbol resolver and, per SDFG, the
+    lift invariants and context (:class:`LiftContext`). Valid until the graph changes: a pass that changes an SDFG
+    calls :meth:`forget` on it before probing it again."""
+
+    def __init__(self) -> None:
+        self.resolver = SymbolResolver()
+        self.invariants: dict[SDFG, LiftInvariants] = {}
+        self.contexts: dict[SDFG, LiftContext] = {}
+        self.loop_facts: dict[LoopRegion, LoopFacts] = {}
+
+    def bind(self, xform: LoopToMap, sdfg: SDFG) -> LoopToMap:
+        """``xform`` set up to probe the loops of ``sdfg`` with what this session holds."""
+        inv = self.invariants.get(sdfg)
+        if inv is None:
+            inv = self.invariants[sdfg] = build_lift_invariants(sdfg)
+        ctx = self.contexts.get(sdfg)
+        if ctx is None:
+            ctx = self.contexts[sdfg] = build_lift_context(sdfg, inv, self.loop_facts)
+        xform.lift_context = ctx
+        xform.symbol_resolver = self.resolver
+        return xform
+
+    def forget(self, sdfg: SDFG) -> None:
+        """Drop what this session derived for ``sdfg`` and the SDFGs nested in it, after a change to ``sdfg``."""
+        within = set(sdfg.all_sdfgs_recursive())
+        for nested in within:
+            self.invariants.pop(nested, None)
+            self.contexts.pop(nested, None)
+        for loop in [loop for loop in self.loop_facts if loop.sdfg in within]:
+            del self.loop_facts[loop]
+        self.resolver.forget_within(sdfg)
+
+
 #: The refusal :meth:`ParallelizeLoops.probe` can lift with array facts.
 NOT_UNIQUE = "is not uniquely indexed by the iteration variable"
 
@@ -223,6 +258,12 @@ class ParallelizeLoops(ppl.Pass):
     permissive = properties.Property(
         dtype=bool, default=False, desc="Probe loops in permissive mode, skipping the conservative refusals."
     )
+    expand_buffers = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Lift a refused loop whose refusal an expansion of its scratch buffers by one iteration-indexed "
+        "dimension removes (BufferExpansion), expanding them",
+    )
     propagate = properties.Property(
         dtype=bool,
         default=True,
@@ -323,13 +364,26 @@ class ParallelizeLoops(ppl.Pass):
         xform.setup_match(sd, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         xform._pipeline_results = pipeline_results
         facts: list[array_facts.ArrayFact] = []
+        expanded: list[str] | None = None
         if not proven and not self.probe(xform, loop, facts):
-            return False
+            expanded = self.rescuing_buffers(xform, loop, facts)
+            if expanded is None:
+                return False
         # A known-parallel loop is mapped as it is: no sibling chain holds it, and its scale is the CPU specialization's
         # to settle.
         known_parallel = loop_analysis.is_known_parallel(loop)
         if not proven and not known_parallel and self.holds_back(xform, loop):
             return False
+        if expanded:
+            # avoid an import cycle
+            from dace.transformation.passes.buffer_expansion import expand_iteration_private
+
+            expand_iteration_private(sd, loop, expanded)
+            # The expansion rewrote the loop's subsets and the buffers' shapes: what was derived from them is stale.
+            if xform.lift_context is not None:
+                xform.lift_context.loop_facts.pop(loop, None)
+            if xform.symbol_resolver is not None:
+                xform.symbol_resolver.forget_within(sd)
         # A proof of independence replaces the dependence test, not the scale rule: a SMALL loop stays sequential.
         if proven and not known_parallel and xform.keep_small_loops_sequential and spans_small_symbols(loop):
             return False
@@ -371,6 +425,26 @@ class ParallelizeLoops(ppl.Pass):
                 propagate_memlets_state(sd, state, resolver)
         return True
 
+    def rescuing_buffers(
+        self, xform: LoopToMap, loop: LoopRegion, facts: list[array_facts.ArrayFact]
+    ) -> list[str] | None:
+        """After :meth:`probe` refused ``loop``: the buffers whose expansion (:func:`rescuing_buffers`) makes the probe
+        accept it, when :attr:`expand_buffers` is set; ``None`` otherwise. Changes nothing."""
+        if not self.expand_buffers:
+            return None
+        # avoid an import cycle
+        from dace.transformation.passes import buffer_expansion
+
+        buffers = buffer_expansion.rescuing_buffers(loop.sdfg, loop, xform.last_refusal_container)
+        if buffers is None:
+            return None
+        assumed = xform.assume_private
+        xform.assume_private = assumed | frozenset(buffers)
+        try:
+            return buffers if self.probe(xform, loop, facts) else None
+        finally:
+            xform.assume_private = assumed
+
     def probe(self, xform: LoopToMap, loop: LoopRegion, facts: list[array_facts.ArrayFact]) -> bool:
         """``LoopToMap``'s probe of the matched ``loop``, retried with each container it refuses on for non-unique
         stores that the array facts prove conflict-free (:func:`array_facts.conflict_free_under_facts`) vouched
@@ -402,7 +476,12 @@ class ParallelizeLoops(ppl.Pass):
             xform.contract_arrays = vouched
 
     def accepts(
-        self, loop: LoopRegion, xform: LoopToMap | None = None, assume_private: frozenset[str] = frozenset()
+        self,
+        loop: LoopRegion,
+        xform: LoopToMap | None = None,
+        assume_private: frozenset[str] = frozenset(),
+        closed_forms: dict[str, symbolic.SymbolicType] | None = None,
+        session: ProbeSession | None = None,
     ) -> bool:
         """Whether a sweep would lift ``loop`` as the graph stands: :meth:`probe` with its array-facts retry, then
         :meth:`holds_back`. Changes nothing; the one entry for a pass asking whether a loop parallelizes.
@@ -411,17 +490,22 @@ class ParallelizeLoops(ppl.Pass):
                       reads the refusal (``last_refusal_reason``, ``last_refusal_container``) afterwards.
         :param assume_private: containers the caller would make iteration-private before the lift
                                (:attr:`LoopToMap.assume_private`); the verdict is the one for the rewritten loop.
+        :param closed_forms: symbols the caller would rewrite into closed forms of the iteration
+                             (:attr:`LoopToMap.closed_forms`); the verdict is the one for the rewritten loop.
+        :param session: the analysis the caller's probes share (:class:`ProbeSession`), bound to ``xform``.
         """
         xform = LoopToMap() if xform is None else xform
+        if session is not None:
+            session.bind(xform, loop.sdfg)
         xform.setup_match(loop.sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
-        assumed = xform.assume_private
-        xform.assume_private = assume_private
+        assumed, closed = xform.assume_private, xform.closed_forms
+        xform.assume_private, xform.closed_forms = assume_private, closed_forms
         try:
             if not self.probe(xform, loop, []):
                 return False
             return loop_analysis.is_known_parallel(loop) or not self.holds_back(xform, loop)
         finally:
-            xform.assume_private = assumed
+            xform.assume_private, xform.closed_forms = assumed, closed
 
     def holds_back(self, xform: LoopToMap, loop: LoopRegion) -> bool:
         """Whether to keep ``loop`` a loop although its probe accepted it; asked only after that probe, which refuses

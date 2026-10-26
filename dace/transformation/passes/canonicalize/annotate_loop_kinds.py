@@ -145,8 +145,9 @@ def tile_label(bi: int, bj: int) -> str:
     return f"[{bi}x{bj}]"
 
 
-def refusal_reason(loop: LoopRegion) -> str | None:
-    """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it refused without a reason.
+def refusal_reason(loop: LoopRegion, session: Any = None) -> str | None:
+    """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it refused without a reason;
+    ``session`` the :class:`ProbeSession` the caller's probes share.
 
     Asked with ``pinned_sequential`` set aside. The pin is a schedule decision an earlier pass made,
     and "loop is pinned sequential" is not an answer to the dependence question a reader is asking --
@@ -162,7 +163,7 @@ def refusal_reason(loop: LoopRegion) -> str | None:
     pinned = loop.pinned_sequential
     loop.pinned_sequential = False
     try:
-        applicable = ParallelizeLoops().accepts(loop, probe)
+        applicable = ParallelizeLoops().accepts(loop, probe, session=session)
     except Exception as error:  # pylint: disable=broad-exception-caught
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
         # reads a hint, so a probe with no answer leaves the loop unsure and says so.
@@ -631,9 +632,9 @@ def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: 
     return f"{kind} on {site_text(named)} (witness: {where})"
 
 
-def loop_hint(loop: LoopRegion) -> str:
-    """The hint text naming what kind of loop ``loop`` is."""
-    reason = refusal_reason(loop)
+def loop_hint(loop: LoopRegion, session: Any = None) -> str:
+    """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`."""
+    reason = refusal_reason(loop, session)
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
     if not reason:
@@ -752,8 +753,12 @@ class AnnotateLoopKinds(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
+        from dace.transformation.passes.parallelization.parallelize_loops import ProbeSession
+
         labelled = 0
         traps = entry_traps(sdfg)
+        # Labelling changes only the hints, which no probe reads
+        session = ProbeSession()
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, (nodes.MapEntry, LoopRegion)):
                 continue
@@ -762,7 +767,7 @@ class AnnotateLoopKinds(ppl.Pass):
                 continue
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
-            kind = parallel_hint(parent_graph, node, traps) if isinstance(node, nodes.MapEntry) else loop_hint(node)
+            kind = parallel_hint(parent_graph, node, traps) if isinstance(node, nodes.MapEntry) else loop_hint(node, session)
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
         return labelled or None

@@ -531,6 +531,27 @@ def test_expands_a_buffer_the_probe_accepts_as_private_and_the_loop_then_maps():
     assert np.allclose(out, 2.0 * a.sum(axis=1))
 
 
+def test_parallelize_loops_lifts_a_loop_refused_on_its_scratch_buffer_by_expanding_it():
+    """``ParallelizeLoops.expand_buffers`` expands the buffer a loop is refused on and lifts the loop; without it
+    the loop stays."""
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+    plain, _ = _ordering_read_sdfg("pl_without_expansion", carried_acc=False)
+    ParallelizeLoops().apply_pass(plain, {})
+    assert _num_loops(plain) == 1
+    sdfg, _ = _ordering_read_sdfg("pl_expands_buffers", carried_acc=False)
+    lift = ParallelizeLoops()
+    lift.expand_buffers = True
+    lift.apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0 and [str(d) for d in sdfg.arrays["buf"].shape] == ["N", "M"]
+    n, m = 6, 5
+    a = np.random.default_rng(7).random((n, m))
+    out = np.zeros(n)
+    sdfg(a=a, out=out, acc=np.zeros(1), N=n, M=m)
+    assert np.allclose(out, 2.0 * a.sum(axis=1))
+
+
 def test_a_buffer_whose_loop_the_assumption_does_not_unblock_is_left_alone():
     """With ``buf`` assumed private the loop still refuses on the carried ``acc``: nothing is expanded and the SDFG
     is unchanged."""

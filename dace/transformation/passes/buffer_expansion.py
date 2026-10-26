@@ -116,6 +116,24 @@ def iteration_private_buffers(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> t
     return (buffers, ix[0]) if buffers else None
 
 
+def rescuing_buffers(sdfg: SDFG, loop: LoopRegion, refused_on: str | None) -> list[str] | None:
+    """The buffers :class:`BufferExpansion` expands to lift ``LoopToMap``'s refusal of ``loop`` on ``refused_on``:
+    every privatizable buffer of ``loop`` when ``refused_on`` is one of them, else ``None``. Reads the graph only."""
+    desc = sdfg.arrays.get(refused_on) if refused_on is not None else None
+    if (
+        not isinstance(desc, data.Array)
+        or isinstance(desc, data.View)
+        or not desc.transient
+        or desc.lifetime not in _REINDEXABLE_LIFETIMES
+    ):
+        return None
+    expander = BufferExpansion()
+    if expander._loop_index(loop) is None:
+        return None
+    buffers = expander._privatizable_buffers(sdfg, loop)
+    return buffers if refused_on in buffers else None
+
+
 def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, names: list[str]) -> None:
     """Give each of ``names``, which :func:`iteration_private_buffers` admitted, one slot per iteration of ``loop``:
     ``x`` -> ``x[i]``."""
@@ -205,9 +223,11 @@ class BufferExpansion(ppl.Pass):
         order: str | None = None  # ambient storage order: built lazily, only when actually expanding
 
         kept: dict[str, list[str]] = {}
-        # Every probe asks the graph as it stands, so they share one ``LiftContext`` (block order, access index,
-        # per-block free symbols) the way ``ParallelizeLoops`` shares it, until an expansion drops it.
-        lift_context: list[Any] = []
+        # avoid an import cycle
+        from dace.transformation.passes.parallelization.parallelize_loops import ProbeSession
+
+        # Every probe asks the graph as it stands, so they share one session until an expansion changes it.
+        session = ProbeSession()
         for loop in loops:
             ix = self._loop_index(loop)
             if ix is None:
@@ -215,14 +235,14 @@ class BufferExpansion(ppl.Pass):
             loop_states = set(loop.states())
             if not self._has_candidate_buffer(loop_states, write_index, accesses):
                 continue  # no privatizable-buffer candidate -> never expanded, so skip the probe
-            accepted, refused_on = self._loop_verdict(sdfg, loop, lift_context)
+            accepted, refused_on = self._loop_verdict(sdfg, loop, session)
             if accepted:
                 continue  # already parallelizable -> expanding would only grow the SDFG
             buffers = self._privatizable_buffers(sdfg, loop, accesses, loop_states)
             # Only a refusal on a buffer can be lifted by expanding it; any other survives the expansion unchanged.
             if refused_on not in buffers:
                 continue
-            if not self._loop_verdict(sdfg, loop, lift_context, frozenset(buffers))[0]:
+            if not self._loop_verdict(sdfg, loop, session, frozenset(buffers))[0]:
                 continue
             if order is None:
                 order = self._ambient_order(sdfg)
@@ -230,7 +250,7 @@ class BufferExpansion(ppl.Pass):
             touching = self._edges_by_name(loop)
             for arr in buffers:
                 self._expand(sdfg, loop, arr, index, size, order, touching.get(arr, ()))
-            lift_context.clear()
+            session.forget(sdfg)
             kept[loop.label] = list(buffers)
         return kept
 
@@ -282,34 +302,29 @@ class BufferExpansion(ppl.Pass):
         return False
 
     @staticmethod
-    def _loop_mappable(sdfg: SDFG, loop: LoopRegion, lift_context: list[Any] | None = None) -> bool:
+    def _loop_mappable(sdfg: SDFG, loop: LoopRegion, session: Any = None) -> bool:
         """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced)."""
-        return BufferExpansion._loop_verdict(sdfg, loop, lift_context)[0]
+        return BufferExpansion._loop_verdict(sdfg, loop, session)[0]
 
     @staticmethod
     def _loop_verdict(
         sdfg: SDFG,
         loop: LoopRegion,
-        lift_context: list[Any] | None = None,
+        session: Any = None,
         assume_private: frozenset[str] = frozenset(),
     ) -> tuple[bool, str | None]:
         """Whether ``LoopToMap`` would parallelize ``loop`` with ``assume_private`` made iteration-private, and on a
         refusal the container it refused on (``None`` for any other refusal).
 
-        :param lift_context: Holder of the ``LiftContext`` of ``sdfg`` as it stands: empty to build it here, which
-                             the caller clears after any change to ``sdfg``. ``None`` probes without one.
+        :param session: the :class:`ProbeSession` the caller's probes share, ``None`` to probe without one.
         """
         # avoid an import cycle
-        from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context
+        from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         with contextlib.redirect_stdout(io.StringIO()):
             xform = LoopToMap()
-            if lift_context is not None:
-                if not lift_context:
-                    lift_context.append(build_lift_context(sdfg))
-                xform.lift_context = lift_context[0]
-            accepted = ParallelizeLoops().accepts(loop, xform, assume_private)
+            accepted = ParallelizeLoops().accepts(loop, xform, assume_private, session=session)
         return accepted, None if accepted else xform.last_refusal_container
 
     @staticmethod

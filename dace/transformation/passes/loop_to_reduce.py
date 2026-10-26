@@ -318,9 +318,11 @@ class PinCarriedTopLevelLoops(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """:returns: The number of loops newly pinned, or ``None`` if none was."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops, ProbeSession
 
         pinned = 0
+        # A pin is read only by the pinned loop's own probe
+        session = ProbeSession()
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion) or not node.loop_variable:
                 continue
@@ -328,7 +330,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
                 continue
             owner = _owner_sdfg(node)
             probe = LoopToMap()
-            applicable = ParallelizeLoops().accepts(node, probe)
+            applicable = ParallelizeLoops().accepts(node, probe, session=session)
             if not applicable and loop_to_map_refusal_is_carried(probe.last_refusal_reason):
                 node.pinned_sequential = True
                 pinned += 1
