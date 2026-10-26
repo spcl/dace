@@ -60,19 +60,13 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   return exponent;
 }
 
-// Fortran ``SCALE(x, n)`` — return ``x * 2^n``.  Matches C's
-// ``std::ldexp`` exactly.  Templated so the same name covers
-// f32 / f64 operands without the frontend having to specialise.
+// Fortran SCALE(x, n): x * 2^n.
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
     return std::ldexp(x, n);
 }
 
-// Fortran ``EXPONENT(x)`` — return the integer exponent ``e`` such
-// that ``x = mantissa * 2^e`` with ``0.5 <= |mantissa| < 1``.
-// Equivalent to ``std::frexp``'s second result; ``ilogb(x) + 1`` for
-// finite ``x``.  Provide as ``ilogb`` so the bridge's runtime-call
-// recognition can map ``_FortranAExponent*`` to a single short name.
+// Fortran EXPONENT(x): e with x = m * 2^e and 0.5 <= |m| < 1 (frexp's exponent).
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
     int e = 0;
@@ -461,15 +455,7 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& d
     return py_mod(numerator, denominator);
 }
 
-// ``logical_left_shift(x, n)`` / ``logical_right_shift(x, n)`` — Fortran
-// ``ISHFT`` building blocks.  flang lowers ``ISHFT`` to ``arith.shli`` for a
-// left shift and ``arith.shrui`` for a right shift, where the right shift is
-// *logical* (zero-fill), unlike C++ ``>>`` on a signed integer, which
-// sign-extends.  Both shift the operand as an unsigned bit pattern so a
-// negative operand zero-fills on the right shift and neither relies on the
-// signed-shift behaviour C++ leaves implementation-defined.  (Fortran's
-// arithmetic right shift maps directly to ``arith.shrsi`` -> ``>>`` and
-// needs no helper.)  Templated so one call covers every integer kind.
+// Fortran ISHFT: shifts on the unsigned bit pattern, so the right shift zero-fills (C++ >> sign-extends).
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const T& n) {
     return (T)(((typename std::make_unsigned<T>::type)x) << n);
@@ -718,13 +704,7 @@ namespace dace
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
 
-        // Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real
-        // / imaginary part of a complex value.  ``cppunparse`` maps the
-        // tasklet-body spellings ``re(_in)`` / ``im(_in)`` here so a complex
-        // connector's component is read directly.  Generic over
-        // ``std::complex`` / ``thrust::complex`` (both expose ``.real()`` /
-        // ``.imag()``); the trailing ``decltype`` constrains it to complex
-        // types.
+        // Real and imaginary part of a std::complex or thrust::complex (tasklet re(z) / im(z)).
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real())
         {

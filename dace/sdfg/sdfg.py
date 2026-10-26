@@ -151,9 +151,7 @@ def _nested_arrays_from_json(obj, context=None):
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
-# ``frontend_metadata`` carries values dace never interprets, so both directions
-# are a plain deep copy -- enough to keep the stored dict and the emitted JSON
-# from aliasing each other.
+# Opaque to dace: a deep copy each way keeps the stored dict and the JSON from aliasing
 def _frontend_metadata_to_json(meta):
     return copy.deepcopy(meta) if meta else {}
 
@@ -686,16 +684,15 @@ class SDFG(ControlFlowRegion):
         dtype=bool, default=False, category="(Debug)", desc="Whether the SDFG contains explicit control flow constructs"
     )
 
-    # Opaque, JSON-safe payload a frontend attaches to describe how this SDFG maps back to its
-    # source program (dace-fortran keeps its frozen Fortran signature here).  dace never reads
-    # it; it exists so such a description survives save/load instead of living on an ad-hoc
-    # Python attribute that a serialization round-trip silently drops.
+    # A frontend's description of how the SDFG maps back to its source. dace-fortran stores the frozen signature here:
+    # the Fortran interface captured at build time, from which it emits the bind(c) bindings after any transformation.
+    # dace never reads it; as a property it survives save/load.
     frontend_metadata = Property(
         dtype=dict,
         default={},
         to_json=_frontend_metadata_to_json,
         from_json=_frontend_metadata_from_json,
-        desc="Frontend-owned, JSON-serializable metadata; opaque to dace",
+        desc="Frontend-owned, JSON-serializable metadata, e.g. the signature bindings are generated from; opaque to dace",
     )
 
     build_folder = Property(

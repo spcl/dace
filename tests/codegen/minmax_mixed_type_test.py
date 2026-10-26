@@ -17,9 +17,8 @@ from dace import subsets, symbolic
 from dace.codegen.exceptions import CompilationError
 from dace.sdfg import SDFG, InterstateEdge
 
-# Substring of the static_assert message emitted by the C++ templates; used to
-# confirm the compile error came from our guard and not some unrelated failure.
-_MIXED_TYPE_ERROR_FRAGMENT = "mixing floating-point and integer arguments"
+# The static_assert messages, so a compile error is known to come from the guard
+_MIXED_TYPE_ERROR = "{}: integer and floating-point arguments mixed"
 
 
 def _build_minmax_interstate_sdfg(rhs: str) -> SDFG:
@@ -52,7 +51,7 @@ def test_min_mixed_int_double_is_compile_error():
     out = np.zeros(1, dtype=np.float64)
     with pytest.raises(CompilationError) as excinfo:
         sdfg(out=out)
-    assert _MIXED_TYPE_ERROR_FRAGMENT in str(excinfo.value)
+    assert _MIXED_TYPE_ERROR.format("Min") in str(excinfo.value)
 
 
 def test_max_mixed_int_double_is_compile_error():
@@ -61,7 +60,7 @@ def test_max_mixed_int_double_is_compile_error():
     out = np.zeros(1, dtype=np.float64)
     with pytest.raises(CompilationError) as excinfo:
         sdfg(out=out)
-    assert _MIXED_TYPE_ERROR_FRAGMENT in str(excinfo.value)
+    assert _MIXED_TYPE_ERROR.format("Max") in str(excinfo.value)
 
 
 def test_min_all_double_compiles_and_runs():

@@ -65,10 +65,11 @@ def test_config_propagation_prunes_every_config_branch(tmp_path):
     root = ConfigPropagation(DOMAINS, str(out)).apply_pass(sdfg, {})
 
     dispatch = [b for b in root.nodes() if isinstance(b, ConditionalBlock)]
-    assert len(dispatch) == 1 and len(dispatch[0].branches) == len(MAPS)
-    files = sorted(p.name for p in out.iterdir())
-    assert files == sorted(f"velocity_tendencies_lvn_only_{l}_istep_{s}.sdfgz" for l, s in MAPS)
-    for name in files:
+    # One branch per variant, then the generic fallback for values outside the domains
+    assert len(dispatch) == 1 and len(dispatch[0].branches) == len(MAPS) + 1
+    variants = sorted(f"velocity_tendencies_lvn_only_{l}_istep_{s}.sdfgz" for l, s in MAPS)
+    assert sorted(p.name for p in out.iterdir()) == sorted(variants + ["velocity_tendencies_generic.sdfgz"])
+    for name in variants:
         variant = dace.SDFG.from_file(str(out / name))
         conditions = branch_conditions(variant)
         assert not [c for c in conditions if any(n in c for n in CONFIG_NAMES)], name

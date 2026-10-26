@@ -1814,10 +1814,6 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
     :raises DistributedCompilationError: On the ranks that succeeded, if another rank failed. A rank that failed
                                          raises its own error.
     :note: This method can be used only if the module mpi4py is installed.
-    :note: If rank 0's compilation raises, the error is broadcast and re-raised
-           on *every* rank, so a build failure fails the whole job fast instead
-           of deadlocking the other ranks at the build-folder broadcast below
-           (rank 0 would never reach the broadcast, leaving the rest blocked).
     :note: Only rank 0 builds, so a rank holding the SDFG is pinned to rank 0's folder.
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
