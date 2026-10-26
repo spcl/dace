@@ -473,6 +473,10 @@ def nest_state_subgraph(
         new_edge.data = name
         edges_to_rename.append(nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge))
     for edge, name in output_names.items():
+        # Written from an access node of the connector itself (a map body's last write feeding the exit): that
+        # node already writes the connector, so a ``name -> name`` copy into a second node would be redundant.
+        if isinstance(edge.src, nodes.AccessNode) and edge.src.data == name:
+            continue
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
