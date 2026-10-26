@@ -14,7 +14,7 @@ NNZ = dace.symbol("NNZ")
 
 
 def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDFG:
-    sdfg = dace.SDFG(name=f"CSRMV_{implementation}_{alpha:g}_{beta:g}_{dtype.to_string()}")
+    sdfg = dace.SDFG(name="CSRMV")
     sdfg.add_array("A_val", shape=(NNZ,), dtype=dtype, transient=False)
     sdfg.add_array("A_row", shape=(N + 1,), dtype=dace.int32, transient=False)
     sdfg.add_array("A_col", shape=(NNZ,), dtype=dace.int32, transient=False)
