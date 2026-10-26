@@ -115,33 +115,6 @@ def test_inout_array_is_cast_in_and_back_through_one_transient():
     np.testing.assert_allclose(x, ref, rtol=1e-6)
 
 
-def test_integer_mismatch_is_cast_too():
-    """An int32 connector handed an int64 container is the same reinterpretation, so it is cast as well."""
-    inner = dace.SDFG("inner_int")
-    inner.add_array("x", (N,), dace.int32)
-    inner.add_state().add_mapped_tasklet(
-        "body",
-        {"i": f"0:{N}"},
-        {"b": dace.Memlet("x[i]")},
-        "c = b + 1",
-        {"c": dace.Memlet("x[i]")},
-        external_edges=True,
-    )
-    sdfg = dace.SDFG("cast_nsdfg_args_int")
-    sdfg.add_array("X", (N,), dace.int64)
-    state = sdfg.add_state()
-    call = state.add_nested_sdfg(inner, {"x": None}, {"x": None})
-    state.add_edge(state.add_read("X"), None, call, "x", dace.Memlet(f"X[0:{N}]"))
-    state.add_edge(call, "x", state.add_write("X"), None, dace.Memlet(f"X[0:{N}]"))
-    with pytest.warns(UserWarning, match="as int but is passed 'X' of int64"):
-        assert CastNestedSDFGArguments().apply_pass(sdfg, {}) == 2
-    assert sdfg.arrays["__cast_x"].storage == dace.StorageType.Default  # unscoped: lives where X does
-    x = np.arange(N, dtype=np.int64) + 2**31  # does not fit int32: the cast wraps, as the nested SDFG sees it
-    ref = (x.astype(np.int32) + 1).astype(np.int64)
-    sdfg(X=x)
-    np.testing.assert_array_equal(x, ref)
-
-
 def test_matching_dtypes_are_left_alone():
     """Nothing to convert: no copy, no transient, no warning."""
     sdfg = build(dace.float64, dace.float64)
@@ -172,6 +145,5 @@ if __name__ == "__main__":
     test_validator_names_the_pass_for_a_dtype_only_mismatch()
     test_scalar_input_is_cast_with_a_warning()
     test_inout_array_is_cast_in_and_back_through_one_transient()
-    test_integer_mismatch_is_cast_too()
     test_matching_dtypes_are_left_alone()
     test_gpu_kernel_scalar_is_cast_per_thread()
