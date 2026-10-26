@@ -55,7 +55,7 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
     ha = state.add_read("hA")
     hb = state.add_write("hB")
     state.add_nedge(ha, a, dace.Memlet("A"))
-    state.add_nedge(b, hb, dace.Memlet("B"))
+    state.add_nedge(b, hb, dace.Memlet("hB"))
 
     # Add thread-block maps and edges as necessary
     if tbsize_1 is not None:

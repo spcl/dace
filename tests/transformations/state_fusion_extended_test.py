@@ -346,10 +346,10 @@ def test_peeled_iterations_then_remainder_map_keep_ordering():
         acc_out = state.add_access(acc_name)
         aw = state.add_access("A")
         plus1 = state.add_tasklet(f"plus1_{dst_idx}", {"_in"}, {"_out"}, "_out = _in + 1.0")
-        state.add_edge(ar, None, acc_in, None, Memlet(f"A[{dst_idx}] -> [0]"))
+        state.add_edge(ar, None, acc_in, None, Memlet(f"A[{dst_idx}] -> {acc_name}[0]"))
         state.add_edge(acc_in, None, plus1, "_in", Memlet(f"{acc_name}[0]"))
         state.add_edge(plus1, "_out", acc_out, None, Memlet(f"{acc_name}[0]"))
-        state.add_edge(acc_out, None, aw, None, Memlet(f"{acc_name}[0] -> [{dst_idx}]"))
+        state.add_edge(acc_out, None, aw, None, Memlet(f"{acc_name}[0] -> A[{dst_idx}]"))
 
     add_peel(s_peel0, f"{N_SYM - 1}", "acc0")  # A[N-1] += 1
     add_peel(s_peel1, f"{N_SYM - 2}", "acc1")  # A[N-2] += 1
@@ -1252,7 +1252,7 @@ def test_a_container_written_only_inside_a_scope_keeps_its_reader_after_it():
     first.add_edge(inside, None, consume, "x", Memlet("t[0]"))
     first.add_memlet_path(consume, exit_node, first.add_write("B"), src_conn="o", memlet=Memlet("B[0]"))
     second = sdfg.add_state_after(first, "copy_out")
-    second.add_nedge(second.add_read("t"), second.add_write("out"), Memlet("t[0]"))
+    second.add_nedge(second.add_read("t"), second.add_write("out"), Memlet("t[0] -> out[0]"))
     sdfg.validate()
 
     sdfg.apply_transformations_repeated(StateFusionExtended)
@@ -1332,7 +1332,7 @@ def test_extended_fusion_compares_a_copy_at_its_destination():
     sdfg.add_array("A", [10], dtypes.float64)
     sdfg.add_array("B", [5], dtypes.float64)
     s1 = sdfg.add_state("s1", is_start_block=True)
-    s1.add_nedge(s1.add_read("A"), s1.add_write("B"), Memlet("A[5:10]"))
+    s1.add_nedge(s1.add_read("A"), s1.add_write("B"), Memlet("A[5:10] -> B[0:5]"))
     s2 = sdfg.add_state_after(s1, "s2")
     s2.add_mapped_tasklet("w", {"i": "0:5"}, {}, "b = 1.0", {"b": Memlet("B[i]")}, external_edges=True)
     sdfg.validate()

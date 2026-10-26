@@ -1121,15 +1121,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         if isinstance(scope_node, nodes.EntryNode):
             # copy the memlet since we already used it in the memlet path above
-            if memlet.data == name:
+            if memlet.data == name and memlet.other_subset is None:
                 to_connect[name] = (access_node, copy.deepcopy(memlet))
             else:
-                # Copy memlets refer to their source container, describe the written subset instead
-                if memlet.other_subset is not None:
-                    subset = copy.deepcopy(memlet.other_subset)
-                else:
+                # A copy also describes its other end, describe only the written subset of ``name``
+                subset = memlet.dst_subset if memlet.data == name else memlet.other_subset
+                if subset is None:
                     subset = subsets.Range.from_array(self._ctx.root.containers[name])
-                to_connect[name] = (access_node, Memlet(data=name, subset=subset))
+                to_connect[name] = (access_node, Memlet(data=name, subset=copy.deepcopy(subset)))
             return
 
         if isinstance(scope_node, SDFG):
@@ -1232,15 +1231,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         source, source_conn = self._read_source(node.memlet.data, sdfg)
         memlet = node.memlet
         target_desc = self._ctx.root.containers.get(node.target)
-        if isinstance(target_desc, data.Stream) and memlet.data != node.target:
-            # Code generation pushes into streams only if the copy is described on the stream
-            memlet = Memlet(
-                data=node.target,
-                subset=copy.deepcopy(memlet.other_subset)
-                if memlet.other_subset is not None
-                else subsets.Range.from_array(target_desc),
-                other_subset=copy.deepcopy(memlet.subset),
+        # A copy names its destination unless it stages data in through a scope entry; code generation also pushes
+        # into streams only if the copy is described on the stream
+        names_source = memlet.data != node.target or (
+            memlet.other_subset is not None and memlet.dst_subset is not memlet.subset
+        )
+        if names_source and (source_conn is None or isinstance(target_desc, data.Stream)):
+            target_subset = (
+                memlet.other_subset if memlet.other_subset is not None else subsets.Range.from_array(target_desc)
             )
+            memlet = copy.deepcopy(memlet)
+            memlet.data, memlet.subset, memlet.other_subset = node.target, copy.deepcopy(target_subset), memlet.subset
+            memlet._is_data_src = False
         self._connect_output(source, source_conn, node.target, memlet, sdfg)
 
     def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:

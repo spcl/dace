@@ -109,9 +109,8 @@ def _get_sdfg_with_memlet_tree():
         "OUT_a1",
         s,
         None,
-        # According to my understanding the error is here, that the data of this
-        #  Memlet refers to `s` instead of `a` as the outer data does.
-        dace.Memlet("s[0] -> [__i, 0]"),
+        # A stage-in memlet names the outer container
+        dace.Memlet("a[__i, 0] -> [0]"),
     )
 
     state.add_edge(

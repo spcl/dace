@@ -482,10 +482,12 @@ def nest_state_subgraph(
         new_edge.data = name
         edges_to_rename.append(nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge))
 
-    # Rename memlet paths inside nested SDFG to the nested data names
+    # Rename memlet paths inside nested SDFG to the nested data names; a copy then names its own end again
     for new_edge in edges_to_rename:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
+        for edge in nstate.memlet_tree(new_edge):
+            utils.normalize_copy_memlet(nstate, edge)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(

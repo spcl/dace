@@ -152,13 +152,13 @@ def test_persistent_gpu_copy_regression():
 
     a_trans = nstate.add_access("transient_heap")
     nstate.add_edge(nstate.add_read("ninput"), None, a_trans, None, nsdfg.make_array_memlet("transient_heap"))
-    nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None, nsdfg.make_array_memlet("transient_heap"))
+    nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None, nsdfg.make_array_memlet("noutput"))
 
     a_gpu = state.add_read("input_gpu")
     nsdfg_node = state.add_nested_sdfg(nsdfg, {"ninput"}, {"noutput"})
     wR = state.add_write("__return")
 
-    state.add_edge(state.add_read("input"), None, a_gpu, None, sdfg.make_array_memlet("input"))
+    state.add_edge(state.add_read("input"), None, a_gpu, None, sdfg.make_array_memlet("input_gpu"))
     state.add_edge(a_gpu, None, nsdfg_node, "ninput", sdfg.make_array_memlet("input_gpu"))
     state.add_edge(nsdfg_node, "noutput", wR, None, sdfg.make_array_memlet("__return"))
     result = sdfg(input=np.ones((2, 2), dtype=np.float64))
@@ -315,11 +315,11 @@ def test_alloc_multistate():
 
     ar = s1.add_read("A")
     tw = s1.add_write("tmp")
-    s1.add_nedge(ar, tw, dace.Memlet("A[0:i+1]"))
+    s1.add_nedge(ar, tw, dace.Memlet("A[0:i+1] -> tmp[0:i+1]"))
 
     tr = s2.add_read("tmp")
     bw = s2.add_write("B")
-    s2.add_nedge(tr, bw, dace.Memlet("tmp"))
+    s2.add_nedge(tr, bw, dace.Memlet("tmp[0:i+1] -> B[0:i+1]"))
 
     A = np.random.rand(20)
     B = np.random.rand(20)
@@ -682,7 +682,7 @@ def test_view_first_read_by_an_interstate_edge():
     sdfg.add_array("buf", [8], dace.float64, transient=True)
     sdfg.add_view("v", [8], dace.float64)
     first = sdfg.add_state("first", is_start_block=True)
-    first.add_nedge(first.add_read("A"), first.add_write("buf"), dace.Memlet("A[0:8]"))
+    first.add_nedge(first.add_read("A"), first.add_write("buf"), dace.Memlet("A[0:8] -> buf[0:8]"))
     second = sdfg.add_state("second")
     sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "v[0]"}))
     view = second.add_access("v")

@@ -23,8 +23,8 @@ def _heap_transient_sdfg(name: str) -> dace.SDFG:
     sdfg.add_transient("tmp", [2], dace.float64, storage=dace.StorageType.CPU_Heap)
     state = sdfg.add_state()
     tmp = state.add_access("tmp")
-    state.add_edge(state.add_read("A"), None, tmp, None, dace.Memlet("A[0:2]"))
-    state.add_edge(tmp, None, state.add_write("B"), None, dace.Memlet("tmp[0:2]"))
+    state.add_edge(state.add_read("A"), None, tmp, None, dace.Memlet("A[0:2] -> tmp[0:2]"))
+    state.add_edge(tmp, None, state.add_write("B"), None, dace.Memlet("tmp[0:2] -> B[0:2]"))
     return sdfg
 
 

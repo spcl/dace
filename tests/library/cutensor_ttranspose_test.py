@@ -42,7 +42,7 @@ def _build_transpose_sdfg(
     tnode.implementation = implementation
     state.add_node(tnode)
 
-    state.add_edge(a_host_r, None, a_gpu, None, dace.Memlet.from_array("A_host", sdfg.arrays["A_host"]))
+    state.add_edge(a_host_r, None, a_gpu, None, dace.Memlet.from_array("A_gpu", sdfg.arrays["A_gpu"]))
     state.add_edge(a_gpu, None, tnode, "_inp_tensor", dace.Memlet.from_array("A_gpu", sdfg.arrays["A_gpu"]))
     state.add_edge(tnode, "_out_tensor", b_gpu, None, dace.Memlet.from_array("B_gpu", sdfg.arrays["B_gpu"]))
     state.add_edge(b_gpu, None, b_host_w, None, dace.Memlet.from_array("B_host", sdfg.arrays["B_host"]))

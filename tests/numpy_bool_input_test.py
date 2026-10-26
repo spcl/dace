@@ -11,7 +11,7 @@ def test_numpy_bool_input():
 
     r = state.add_read("in_bool")
     w = state.add_write("__return")
-    state.add_edge(r, None, w, None, sdfg.make_array_memlet("in_bool"))
+    state.add_edge(r, None, w, None, sdfg.make_array_memlet("__return"))
 
     # test python bool
     result = sdfg(in_bool=True)

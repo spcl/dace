@@ -392,8 +392,8 @@ def test_other_subset_of_scalarized_side_collapses():
     st = sdfg.add_state("s")
     sdfg.add_array("big", [4, 4], dace.float64)
     sdfg.add_array("scratch", [1, 1], dace.float64, transient=True)
-    rb, ws = st.add_access("big"), st.add_access("scratch")
-    st.add_nedge(rb, ws, dace.Memlet(data="big", subset="1, 1", other_subset="0, 0"))
+    rs, wb = st.add_access("scratch"), st.add_access("big")
+    st.add_nedge(rs, wb, dace.Memlet(data="big", subset="1, 1", other_subset="0, 0"))
     sdfg.validate()
     rewritten = ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
     assert "scratch" in rewritten
@@ -403,8 +403,8 @@ def test_other_subset_of_scalarized_side_collapses():
 
 
 def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
-    """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge names the
-    TRANSIENT, so the destination index lives in ``other_subset``."""
+    """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge out of the
+    transient names ``A``, so the transient's index lives in ``other_subset``."""
     sdfg = dace.SDFG("len1_other_subset_survives")
     st = sdfg.add_state("s")
     sdfg.add_array("A", [2], dace.int32)
@@ -422,7 +422,7 @@ def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
     tmp = st.add_access("tmp")
     st.add_edge(me, "OUT_B", tmp, None, dace.Memlet("B[i]"))
     wa = st.add_access("A")
-    st.add_edge(tmp, None, wa, None, dace.Memlet("tmp[0] -> [((i+1)%2)]"))
+    st.add_edge(tmp, None, wa, None, dace.Memlet("tmp[0] -> A[((i+1)%2)]"))
     st.add_edge(wa, None, mx, "IN_A", dace.Memlet("A[0:2]"))
     st.add_edge(mx, "OUT_A", st.add_access("A"), None, dace.Memlet("A[0:2]"))
     sdfg.validate()
@@ -440,8 +440,8 @@ def test_other_subset_of_untouched_side_survives(inverse):
     else:
         ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
     st = next(iter(sdfg.states()))
-    copy = next(e for e in st.edges() if e.data.data == "tmp" and e.data.other_subset is not None)
-    assert str(copy.data.other_subset) != "0"
+    copy = next(e for e in st.edges() if isinstance(e.src, dace.nodes.AccessNode) and e.src.data == "tmp")
+    assert str(copy.data.get_dst_subset(copy, st)) != "0"
     sdfg.validate()
 
     a = np.zeros(2, np.int32)

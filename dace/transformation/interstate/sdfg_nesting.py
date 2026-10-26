@@ -787,6 +787,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
 
+        # Inlined into a scope, a direct copy may now stage data in, which names its source
+        if nsdfg_scope_entry is not None:
+            sdutil.normalize_copy_memlets_in_state(state)
+
         sdfg._cfg_list = sdfg.reset_cfg_list()
 
     def _modify_access_to_access(

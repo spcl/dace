@@ -237,13 +237,13 @@ def find_dims_to_pop2(
 
 
 def pop_dims(subset, dims):
-    popped = []
     ranges = copy.deepcopy(subset.ranges)
     tsizes = copy.deepcopy(subset.tile_sizes)
-    for i in dims:
-        r = ranges.pop(i)
-        t = tsizes.pop(i)
-        popped.append((r, t))
+    popped = [(ranges[i], tsizes[i]) for i in dims]
+    # Pop from the back so that the indices of the dimensions still to pop stay valid
+    for i in sorted(dims, reverse=True):
+        del ranges[i]
+        del tsizes[i]
     new_subset = subsets.Range(ranges)
     new_subset.tile_sizes = tsizes
     return new_subset, popped
@@ -633,6 +633,7 @@ class RedundantArray(pm.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
@@ -1081,6 +1082,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph: SDFGState, sdfg: SDFG):
         in_array = self.in_array
         out_array = self.out_array
@@ -1470,9 +1472,10 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
             for i in asqdims_mirror:
                 e.data.subset.ranges[i] = aedge.data.subset.ranges[i]
 
-        # Redirect original edge to point to data
+        # Redirect original edge to point to data; the view connector goes with the removed view
         state.remove_edge(vedge)
-        state.add_edge(vedge.src, vedge.src_conn, out_array, vedge.dst_conn, vedge.data)
+        dst_conn = None if vedge.dst_conn == "views" else vedge.dst_conn
+        state.add_edge(vedge.src, vedge.src_conn, out_array, dst_conn, vedge.data)
 
         # Remove node and descriptor
         state.remove_node(in_array)
@@ -1595,6 +1598,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
@@ -1749,6 +1753,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
@@ -1967,9 +1972,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
             # Remove edge directly adjacent to view and reconnect
             state.remove_edge(edge)
             if is_src:
-                state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+                new_edge = state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
             else:
-                state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+                new_edge = state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+            # Without the view in between, the path may now be a copy, which names the container outside the scope
+            for e in state.memlet_tree(new_edge):
+                sdutil.normalize_copy_memlet(state, e)
 
         # Remove view node
         state.remove_node(self.view)

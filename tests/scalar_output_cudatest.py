@@ -76,7 +76,7 @@ def test_scalar_output_ptr_access():
 
     write_unsqueezed = state.add_write("__return")
     state.add_edge(tasklet, "outp", access_scal, None, sdfg.make_array_memlet("scal"))
-    state.add_edge(access_scal, None, write_unsqueezed, None, sdfg.make_array_memlet("scal"))
+    state.add_edge(access_scal, None, write_unsqueezed, None, sdfg.make_array_memlet("__return"))
 
     ret = sdfg()
     assert np.allclose(ret, 5)

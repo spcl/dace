@@ -92,9 +92,9 @@ def test_preprocess():
     b = state.add_read("gpu_inp")
     c = state.add_read("gpu_out")
     d = state.add_read("out")
-    state.add_nedge(a, b, dace.Memlet("inp"))
-    state.add_nedge(b, c, dace.Memlet("gpu_inp"))
-    state.add_nedge(c, d, dace.Memlet("gpu_out"))
+    state.add_nedge(a, b, dace.Memlet("gpu_inp"))
+    state.add_nedge(b, c, dace.Memlet("gpu_out"))
+    state.add_nedge(c, d, dace.Memlet("out"))
 
     # Create arrays with matching layout
     inp = dace.data.make_array_from_descriptor(desc_inp, np.random.rand(20, 21, 22))

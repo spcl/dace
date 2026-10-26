@@ -407,7 +407,7 @@ class Memlet:
         if src_data is None and dst_data is None:
             raise SyntaxError("At least one data name needs to be given")
 
-        if src_data is not None:  # Prefer src[subset] -> [other_subset]
+        if dst_data is None:  # src[subset] -> [other_subset]; with both names a copy names its destination
             self.data = src_data
             self.subset = src_subset
             self.other_subset = dst_subset
@@ -420,12 +420,14 @@ class Memlet:
 
     def try_initialize(
         self, sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", edge: "dace.sdfg.graph.MultiConnectorEdge"
-    ):
+    ) -> bool:
         """
         Tries to initialize the internal fields of the memlet (e.g., src/dst
         subset) once it is added to an SDFG as an edge.
+
+        :return: True if both ends of the memlet path are access nodes of the memlet's container.
         """
-        from dace.sdfg.nodes import AccessNode  # Avoid import loops
+        from dace.sdfg.nodes import AccessNode, EntryNode  # Avoid import loops
 
         self._sdfg = sdfg
         self._state = state
@@ -436,7 +438,7 @@ class Memlet:
             path = state.memlet_path(edge)
         except (ValueError, StopIteration):
             # Cannot initialize yet
-            return
+            return False
 
         is_data_src = False
         is_data_dst = False
@@ -447,23 +449,26 @@ class Memlet:
             if path[-1].dst.data == self._data:
                 is_data_dst = True
         if is_data_src and is_data_dst:
-            # In case both point to the same array,
-            # prefer existing setting or is_data_src=True
+            # Both ends name the array: a copy memlet is named by the container outside the scope it crosses, the
+            # source when it enters one (see ``copy_memlet_owner``), unless a ``src -> dst`` expression said otherwise
             if self._is_data_src is None:
-                self._is_data_src = True
+                self._is_data_src = isinstance(path[0].dst, EntryNode)
         else:
             self._is_data_src = is_data_src
 
         # If subset is None, fill in with entire array
         if self.data is not None and self.subset is None:
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
+        return is_data_src and is_data_dst
 
     def get_src_subset(self, edge: "dace.sdfg.graph.MultiConnectorEdge", state: "dace.sdfg.SDFGState"):
-        self.try_initialize(state.parent, state, edge)
+        if self.try_initialize(state.parent, state, edge) and self.other_subset is None:
+            return self.subset  # Same container, no other subset: an identity, both ends are ``subset``
         return self.src_subset
 
     def get_dst_subset(self, edge: "dace.sdfg.graph.MultiConnectorEdge", state: "dace.sdfg.SDFGState"):
-        self.try_initialize(state.parent, state, edge)
+        if self.try_initialize(state.parent, state, edge) and self.other_subset is None:
+            return self.subset  # Same container, no other subset: an identity, both ends are ``subset``
         return self.dst_subset
 
     @staticmethod

@@ -24,7 +24,7 @@ def _make_sdfg_with_zero_sized_an_to_an_memlet() -> tuple[dace.SDFG, dace.SDFGSt
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet("A[2:17, 2:2] -> [2:18, 3:3]"),
+        dace.Memlet("A[2:17, 2:2] -> B[2:18, 3:3]"),
     )
 
     return sdfg, state
@@ -71,13 +71,13 @@ def test_an_to_an_memlet_with_negative_size():
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet("A[2:17, 13:2] -> [2:18, 14:3]"),
+        dace.Memlet("A[2:17, 13:2] -> B[2:18, 14:3]"),
     )
 
     with pytest.raises(
         expected_exception=dace.sdfg.InvalidSDFGEdgeError,
         match=re.escape(
-            "`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]"
+            "`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [16, -11]"
         ),
     ):
         sdfg.validate()

@@ -29,7 +29,7 @@ def _gen_sdfg() -> dace.SDFG:
     anA = state.add_access(nameA)
     anB = state.add_access(nameB)
     state.add_edge(tasklet1, None, anA, None, dace.Memlet())
-    state.add_edge(anA, None, anB, None, dace.Memlet.from_array(dataname=nameA, datadesc=sdfg.arrays[nameA]))
+    state.add_edge(anA, None, anB, None, dace.Memlet.from_array(dataname=nameB, datadesc=sdfg.arrays[nameB]))
     state.add_edge(anB, None, tasklet2, None, dace.Memlet())
 
     return sdfg

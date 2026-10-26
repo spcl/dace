@@ -15,7 +15,7 @@ def test_multicopy():
     a = state.add_read("A")
     b = state.add_write("B")
     c = state.add_write("C")
-    state.add_nedge(a, b, dace.Memlet("A[0]"))
+    state.add_nedge(a, b, dace.Memlet("A[0] -> B[0]"))
     state.add_nedge(a, c, dace.Memlet("C[0]"))
 
     # Check generated code. The regression under test is DUPLICATED copy code, so what matters is

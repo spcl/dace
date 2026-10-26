@@ -630,76 +630,8 @@ class SnitchCodeGen(TargetCodeGenerator):
             #     [src_node, dst_node],
             # )
             # return
-        else:  # Copy array-to-array
-            dbg("  copy array-to-array")
-            src_nodedesc = src_node.desc(sdfg)
-            dst_nodedesc = dst_node.desc(sdfg)
-            if write:
-                vconn = dst_node.data
-            ctype = dst_nodedesc.dtype.ctype
-            state_dfg = cfg.state(state_id)
-
-            #############################################
-            # Corner cases ignored
-            #############################################
-
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
-                self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node
-            )
-            dbg(
-                f'  copy_shape = "{copy_shape}", src_strides = "{src_strides}", dst_strides = "{dst_strides}", src_expr = "{src_expr}", dst_expr = "{dst_expr}"'
-            )
-
-            # 2D transfer?
-            if len(copy_shape) == 2:
-                xfer = """__builtin_sdma_start_twod(
-                        (uint64_t)({src}), (uint64_t)({dst}),
-                        {size}, {sstride}, {dstride}, {nrep}, {cfg});""".format(
-                    src=src_expr,
-                    dst=dst_expr,
-                    size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[1])})",
-                    sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
-                    dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
-                    nrep=cpp.sym2cpp(copy_shape[0]),
-                    cfg="0",
-                )
-            # 1D transfer?
-            elif len(copy_shape) == 1:
-                # if only a single element, perform a load
-                if isinstance(copy_shape[0], int) and copy_shape[0] == 1:
-                    # if None:
-                    xfer = f"""*({dst_expr}) = *({src_expr});"""
-                    callsite_stream.write(xfer, cfg, state_id, [src_node, dst_node])
-                    return
-                elif src_strides[0] == 1 and dst_strides[0] == 1:
-                    xfer = """__builtin_sdma_start_oned(
-                                (uint64_t)({src}), (uint64_t)({dst}),
-                                {size}, {cfg});""".format(
-                        src=src_expr,
-                        dst=dst_expr,
-                        size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
-                        cfg="0",
-                    )
-                else:
-                    xfer = """__builtin_sdma_start_twod(
-                                (uint64_t)({src}), (uint64_t)({dst}),
-                                {size}, {sstride}, {dstride}, {nrep}, {cfg});""".format(
-                        src=src_expr,
-                        dst=dst_expr,
-                        size=f"sizeof({src_nodedesc.dtype.ctype})",
-                        sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
-                        dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
-                        nrep=cpp.sym2cpp(copy_shape[0]),
-                        cfg="0",
-                    )
-
-            else:
-                raise NotImplementedError("Unsupported dimnesions")
-
-            # emit transfer
-            callsite_stream.write(xfer, cfg, state_id, [src_node, dst_node])
-            # emit wait for idle
-            callsite_stream.write("__builtin_sdma_wait_for_idle();", cfg, state_id, [src_node, dst_node])
+        else:  # Array-to-array copies are CopyLibraryNodes (``MemcpySnitchDMA``) by now
+            raise NotImplementedError(f"Snitch copy {edge.data} reached codegen; it should be a copy node")
 
     # A scope dispatcher will trigger a method called generate_scope whenever
     # an SDFG has a scope with that schedule

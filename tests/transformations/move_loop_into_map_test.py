@@ -344,7 +344,7 @@ def test_more_than_a_map_4():
         input_nodes=dict(out=oread, B=bread),
         output_nodes=dict(tmp=twrite),
     )
-    body.add_nedge(aread, oread, dace.Memlet("A[Mod(_, 3), 0:3] -> [Mod(_ + 1, 3), 0:3]", aarr))
+    body.add_nedge(aread, oread, dace.Memlet("A[Mod(_, 3), 0:3] -> out[Mod(_ + 1, 3), 0:3]"))
     body.add_nedge(twrite, owrite, dace.Memlet.from_array("out", oarr))
     sdfg.add_loop(None, body, None, "_", "0", "_ < 10", "_ + 1")
 

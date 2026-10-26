@@ -5052,10 +5052,9 @@ class ProgramVisitor(ExtNodeVisitor):
             dst_rng = dst_rng or subsets.Range.from_array(self.sdfg.arrays[dst_name])
             if isinstance(self.sdfg.arrays[dst_name], data.Stream):
                 mem = Memlet.simple(dst_name, dst_rng, num_accesses=dst_expr.accesses, wcr_str=dst_expr.wcr)
-                mem.other_subset = src_rng
             else:
-                mem = Memlet.simple(src_name, src_rng, num_accesses=src_expr.accesses, wcr_str=dst_expr.wcr)
-                mem.other_subset = dst_rng
+                mem = Memlet.simple(dst_name, dst_rng, num_accesses=src_expr.accesses, wcr_str=dst_expr.wcr)
+            mem.other_subset = src_rng
             state.add_nedge(rnode, wnode, mem)
             return
 
@@ -5497,9 +5496,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 rnode,
                 wnode,
                 Memlet(
-                    data=array,
-                    subset=str(expr.subset),
-                    other_subset=str(other_subset),
+                    data=tmp,
+                    subset=str(other_subset),
+                    other_subset=str(expr.subset),
                     volume=expr.accesses,
                     wcr=expr.wcr,
                 ),
@@ -5706,13 +5705,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 tmp, other_subset.size(), arrobj.dtype, arrobj.storage, find_new_name=True
             )
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
-            # ``Memlet.simple`` keeps the subset by reference, but ``rng`` may be a
-            # cached Range shared by sibling slice reads, so give this edge its own copy.
+            # ``Memlet.simple`` keeps the subsets by reference, but ``rng`` may be a
+            # cached Range shared by sibling slice reads, so give this edge its own copies.
             self.current_state.add_nedge(
                 rnode,
                 wnode,
                 Memlet.simple(
-                    array, copy.deepcopy(rng), num_accesses=rng.num_elements(), other_subset_str=other_subset
+                    tmp,
+                    copy.deepcopy(other_subset),
+                    num_accesses=rng.num_elements(),
+                    other_subset_str=copy.deepcopy(rng),
                 ),
             )
         return tmp, other_subset

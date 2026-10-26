@@ -56,7 +56,7 @@ def _make_2d_gpu_copy_sdfg(
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet("A[1:6, 2:8] -> [2:7, 3:9]"),
+        dace.Memlet("A[1:6, 2:8] -> B[2:7, 3:9]"),
     )
     sdfg.validate()
 
@@ -131,7 +131,7 @@ def _make_1d_gpu_copy(
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet(f"A[{src_subset}] -> [{dst_subset}]"),
+        dace.Memlet(f"A[{src_subset}] -> B[{dst_subset}]"),
     )
     sdfg.validate()
     return sdfg
@@ -207,7 +207,7 @@ def _make_pseudo_1d_copy_sdfg(
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet(f"A[{cpy_subset}] -> [{cpy_subset}]"),
+        dace.Memlet(f"A[{cpy_subset}] -> B[{cpy_subset}]"),
     )
     sdfg.validate()
 
@@ -356,7 +356,7 @@ def test_gpu_1d_copy():
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet("A[2:13] -> [1:12]"),
+        dace.Memlet("A[2:13] -> B[1:12]"),
     )
     sdfg.validate()
 
@@ -422,7 +422,7 @@ def test_gpu_strided_2D_copy():
     state.add_nedge(
         state.add_access("A"),
         state.add_access("B"),
-        dace.Memlet(f"A[0:{I}, 0:{J}, {k}] -> [0:{I}, 0:{J}]"),
+        dace.Memlet(f"A[0:{I}, 0:{J}, {k}] -> B[0:{I}, 0:{J}]"),
     )
     sdfg.validate()
 

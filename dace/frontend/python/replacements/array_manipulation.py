@@ -880,7 +880,9 @@ def _split_core(
         subset = subsets.Range.from_array(desc)
         subset[axis] = (offset, offset + shape[axis] - 1, 1)
         offset += shape[axis]
-        state.add_nedge(r, w, Memlet(data=ary, subset=subset))
+        state.add_nedge(
+            r, w, Memlet(data=name, subset=subsets.Range.from_array(sdfg.arrays[name]), other_subset=subset)
+        )
         result.append(name)
 
     # Add final section
@@ -897,7 +899,7 @@ def _split_core(
     w = state.add_write(name)
     subset = subsets.Range.from_array(desc)
     subset[axis] = (offset, offset + shape[axis] - 1, 1)
-    state.add_nedge(r, w, Memlet(data=ary, subset=subset))
+    state.add_nedge(r, w, Memlet(data=name, subset=subsets.Range.from_array(sdfg.arrays[name]), other_subset=subset))
     result.append(name)
 
     # Always return a list of results, even if the size is 1

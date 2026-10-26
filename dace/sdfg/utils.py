@@ -3,6 +3,7 @@
 
 import collections
 import copy
+import functools
 import time
 import warnings
 from collections.abc import Callable, Generator, Sequence
@@ -776,6 +777,83 @@ def canonicalize_memlet_trees(
             break
 
     return total_modified_memlets
+
+
+def normalize_copy_memlets_in_state(state: SDFGState) -> int:
+    """Normalizes every copy memlet of ``state``; for transformations that reroute memlet paths.
+
+    :return: The number of memlets rewritten.
+    """
+    return sum(normalize_copy_memlet(state, edge) for edge in state.edges())
+
+
+def normalize_copy_memlet(state: SDFGState, edge) -> int:
+    """Makes the copy memlets on the path of ``edge`` name the container ``copy_memlet_owner`` asks for.
+
+    The edge touching the inner access node keeps both ends; the scope-crossing edges get it propagated outward.
+
+    :return: The number of memlets rewritten.
+    """
+    from dace.sdfg.validation import copy_memlet_owner  # Avoid import loop
+    from dace.transformation.passes.insert_explicit_copies import _derive_matching_dst_subset
+
+    if edge.data.is_empty():
+        return 0
+    path = state.memlet_path(edge)
+    owner = copy_memlet_owner(state.sdfg, path)
+    if owner is None:
+        return 0
+    stage_in = isinstance(path[0].dst, nd.EntryNode)
+    inner = path[-1] if stage_in else path[0]
+    memlet = inner.data
+    # With the same container at both ends, the name alone cannot tell which end ``subset`` belongs to
+    owned = memlet.get_src_subset(inner, state) if stage_in else memlet.get_dst_subset(inner, state)
+    inner_ok = memlet.data == owner and owned is memlet.subset
+    if inner_ok and all(e.data.data == owner for e in path):
+        return 0
+    count = 0
+    if not inner_ok:
+        src, dst = path[0].src, path[-1].dst
+        src_subset = memlet.get_src_subset(inner, state)
+        dst_subset = memlet.get_dst_subset(inner, state)
+        if stage_in:
+            own = src_subset or _derive_matching_dst_subset(dst_subset, state.sdfg.arrays[src.data])
+            other = dst_subset
+        else:
+            own = dst_subset or _derive_matching_dst_subset(src_subset, state.sdfg.arrays[dst.data])
+            other = src_subset
+        memlet.data = owner
+        memlet.subset = copy.deepcopy(own)
+        memlet.other_subset = copy.deepcopy(other)
+        memlet._is_data_src = stage_in
+        count += 1
+    previous = inner
+    for outer in path[-2::-1] if stage_in else path[1:]:
+        if outer.data.data != owner:
+            scope = outer.dst if stage_in else state.entry_node(outer.src)
+            propagated = propagation.propagate_memlet(state, previous.data, scope, False)
+            outer.data.data = owner
+            outer.data.subset = propagated.subset
+            outer.data.other_subset = None
+            outer.data.volume = propagated.volume
+            outer.data.dynamic = propagated.dynamic
+            outer.data._is_data_src = stage_in
+            count += 1
+        previous = outer
+    return count
+
+
+def normalizes_copy_memlets(apply: Callable) -> Callable:
+    """Decorates a single-state transformation's ``apply`` that reroutes memlet paths, so that every copy memlet of
+    the state names the container ``copy_memlet_owner`` asks for afterwards."""
+
+    @functools.wraps(apply)
+    def wrapped(self, graph: SDFGState, sdfg: SDFG):
+        result = apply(self, graph, sdfg)
+        normalize_copy_memlets_in_state(graph)
+        return result
+
+    return wrapped
 
 
 def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.ExitNode) -> int:

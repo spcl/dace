@@ -38,7 +38,9 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
     if not isview:
         read_a = body1_state.add_read("A")
         write_tmp1 = body1_state.add_write("tmp1")
-        body1_state.add_nedge(read_a, write_tmp1, dace.Memlet(f"A[2:{N}-2, 2:{N}-2, i:{N}]"))
+        body1_state.add_nedge(
+            read_a, write_tmp1, dace.Memlet(f"A[2:{N}-2, 2:{N}-2, i:{N}] -> tmp1[0:{N}-4, 0:{N}-4, 0:{N}-i]")
+        )
 
     if isview:
         read_a = body2_state.add_read("A")

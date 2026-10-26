@@ -61,9 +61,9 @@ def _make_sdfg() -> tuple[
         a,
         b,
         dace.Memlet(
-            data=a.data,
-            subset="0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), 0:max(0, __out_KDim_range_0, __out_KDim_range_1) - max(0, __out_KDim_range_0)",
-            other_subset="0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), -__out_KDim_range_0 + max(0, __out_KDim_range_0):max(0, __out_KDim_range_0, __out_KDim_range_1) - __out_KDim_range_0",
+            data=b.data,
+            subset="0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), -__out_KDim_range_0 + max(0, __out_KDim_range_0):max(0, __out_KDim_range_0, __out_KDim_range_1) - __out_KDim_range_0",
+            other_subset="0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), 0:max(0, __out_KDim_range_0, __out_KDim_range_1) - max(0, __out_KDim_range_0)",
         ),
     )
 

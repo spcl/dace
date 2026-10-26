@@ -43,7 +43,7 @@ def test_pointer_output_into_transient_allocated_in_a_dominating_state():
     _writer(else_body, "write_two", 2.0)
     read = sdfg.add_state("read")
     sdfg.add_edge(branches, read, dace.InterstateEdge())
-    read.add_nedge(read.add_read("T"), read.add_write("out"), dace.Memlet("T[0:4]"))
+    read.add_nedge(read.add_read("T"), read.add_write("out"), dace.Memlet("T[0:4] -> out[0:4]"))
 
     out = np.zeros(4)
     sdfg(c=np.int32(1), out=out)

@@ -475,20 +475,22 @@ class PureBatchNormalization(ONNXForward):
             # Keep your "write-back" edges as-is
             new_state = sdfg.add_state_after(sdfg.nodes()[0])
             rm_name = out_edge_with_name(node, state, "running_mean").data.data
+            mean_name = in_edge_with_name(node, state, "input_mean").data.data
             new_state.add_edge(
                 new_state.add_read(rm_name),
                 None,
-                new_state.add_read(in_edge_with_name(node, state, "input_mean").data.data),
+                new_state.add_read(mean_name),
                 None,
-                sdfg.make_array_memlet(rm_name),
+                sdfg.make_array_memlet(mean_name),
             )
             rv_name = out_edge_with_name(node, state, "running_var").data.data
+            var_name = in_edge_with_name(node, state, "input_var").data.data
             new_state.add_edge(
                 new_state.add_read(rv_name),
                 None,
-                new_state.add_read(in_edge_with_name(node, state, "input_var").data.data),
+                new_state.add_read(var_name),
                 None,
-                sdfg.make_array_memlet(rv_name),
+                sdfg.make_array_memlet(var_name),
             )
         else:
             # EVAL: use provided running statistics; DO NOT recompute mean/var

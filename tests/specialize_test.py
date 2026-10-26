@@ -30,7 +30,7 @@ def test_constant_specialization():
     Atrans = state.add_access("At")
     B = state.add_access("B")
 
-    state.add_edge(A, None, Atrans, None, Memlet.simple(A, fullrange))
+    state.add_edge(A, None, Atrans, None, Memlet.simple(Atrans, "0:N-2,0:M", other_subset_str=fullrange))
     _, me, mx = state.add_mapped_tasklet(
         "compute",
         dict(i=irange, j=jrange),

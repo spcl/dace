@@ -60,7 +60,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         binout1 = state.add_access("_b")
         binout2 = state.in_edges(me)[0].src
         binout3 = state.out_edges(mx)[0].dst
-        state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
+        state.add_nedge(ain, binout1, Memlet.from_array(*bout_arr))
 
     info = state.add_write("_info")
 

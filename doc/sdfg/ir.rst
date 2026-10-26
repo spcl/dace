@@ -434,8 +434,15 @@ a read and a write). Several fields describe the data being moved:
     For other cases (for example, access node to access node), the other subset can be used to offset the
     sub-region of the container *not* named in ``data``.
 
-      * For example, the copy :pycode:`B[1:21, 0:3] = A[i:i+20, j-1:j+2]` can be represented by
-        :pycode:`dace.Memlet(data='A', subset='i:i+20, j-1:j+2', other_subset='1:21, 0:3')`.
+      * A copy memlet (access node to access node, possibly through scopes) names the container outside the scope its
+        path crosses: the destination of a direct copy ``A -> B`` or of a copy out of a scope
+        (``loc -> MapExit -> C``), and the source of a copy into a scope (``A -> MapEntry -> loc``). ``subset`` is the
+        region of that container and ``other_subset`` the region of the other end. If both ends are the same container
+        and ``other_subset`` is not set, no data moves. Validation enforces this form, and
+        :class:`~dace.transformation.passes.normalize_copy_memlets.NormalizeCopyMemlets` rewrites memlets into it.
+      * For example, the copy :pycode:`B[1:21, 0:3] = A[i:i+20, j-1:j+2]` is represented by
+        :pycode:`dace.Memlet(data='B', subset='1:21, 0:3', other_subset='i:i+20, j-1:j+2')`, or by
+        :pycode:`dace.Memlet('A[i:i+20, j-1:j+2] -> B[1:21, 0:3]')`.
         *For performance reasons, always prefer constructing range subsets from* :class:`~dace.subsets.Range` *over a string.*
       * The alias properties ``src_subset`` and ``dst_subset`` specify the source and destination subsets, regardless of the
         value of ``data``.

@@ -23,8 +23,8 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
     """Block-collective Shared <-> Shared/Global copy.
 
     A static 1-D transfer uses ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``; other shapes
-    fall back to ``dace::CopyND<...>::Copy(...)`` with optional ``__syncthreads()`` barriers
-    (enabled by the node's ``sync`` property, default True).
+    up to three collapsed dimensions use ``dace::GlobalToShared3D`` (``...Dynamic`` when symbolic), with
+    ``__syncthreads()`` barriers controlled by the node's ``sync`` property (default True).
 
     Caller must place this outside any enclosing ``GPU_ThreadBlock`` map -- this expansion *is*
     the thread-block-level operation. Shared <-> Register goes through ``MappedTasklet`` instead

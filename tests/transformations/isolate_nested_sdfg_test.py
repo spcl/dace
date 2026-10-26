@@ -313,8 +313,8 @@ def _make_multi_path_nested_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_node
         output_nodes={T3},
     )
 
-    state.add_nedge(T3, T4, dace.Memlet("T3[0:10] -> [0:10]"))
-    state.add_nedge(T2, T4, dace.Memlet("T2[0:10] -> [10:20]"))
+    state.add_nedge(T3, T4, dace.Memlet("T3[0:10] -> T4[0:10]"))
+    state.add_nedge(T2, T4, dace.Memlet("T2[0:10] -> T4[10:20]"))
     state.add_mapped_tasklet(
         "comp_post2",
         map_ranges={"__i": "0:20"},

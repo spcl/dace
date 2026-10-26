@@ -59,7 +59,7 @@ def _get_sdfg_with_symbol_use_in_if():
     s1 = cfg.add_state(label="s1")
     aA = s1.add_access("A")
     aB = s1.add_access("B")
-    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("B", B))
 
     return sdfg
 
@@ -95,7 +95,7 @@ def _get_sdfg_with_symbol_use_in_for_cfg():
     s1 = loop.add_state(label="s1")
     aA = s1.add_access("A")
     aB = s1.add_access("B")
-    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("B", B))
 
     return sdfg
 

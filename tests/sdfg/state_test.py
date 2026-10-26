@@ -89,7 +89,7 @@ def test_read_and_write_set_filter():
     state.add_nedge(
         B,
         C,
-        dace.Memlet("B[0] -> [0, 0]"),
+        dace.Memlet("B[0] -> C[0, 0]"),
     )
     sdfg.validate()
 
@@ -127,7 +127,7 @@ def test_read_and_write_set_selection():
     state.add_nedge(
         A,
         B,
-        dace.Memlet("A[0, 0]"),
+        dace.Memlet("A[0, 0] -> B[0]"),
     )
     sdfg.validate()
 

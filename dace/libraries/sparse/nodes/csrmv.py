@@ -492,10 +492,10 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
             tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
 
             nstate.add_node(tasklet)
-            nstate.add_nedge(ar, gar, dace.Memlet.from_array("_a_rows", arows))
-            nstate.add_nedge(ac, gac, dace.Memlet.from_array("_a_cols", acols))
-            nstate.add_nedge(av, gav, dace.Memlet.from_array("_a_vals", avals))
-            nstate.add_nedge(b, gb, dace.Memlet.from_array("_b", bdesc))
+            nstate.add_nedge(ar, gar, dace.Memlet.from_array("_a_rows_gpu", arows))
+            nstate.add_nedge(ac, gac, dace.Memlet.from_array("_a_cols_gpu", acols))
+            nstate.add_nedge(av, gav, dace.Memlet.from_array("_a_vals_gpu", avals))
+            nstate.add_nedge(b, gb, dace.Memlet.from_array("_b_gpu", bdesc))
 
             nstate.add_edge(gar, None, tasklet, "_conn_a_rows", dace.Memlet.from_array("_a_rows_gpu", arows))
             nstate.add_edge(gac, None, tasklet, "_conn_a_cols", dace.Memlet.from_array("_a_cols_gpu", acols))
@@ -508,7 +508,7 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
                 cin_desc = dc(nsdfg.arrays["_c"])
                 nsdfg.add_datadesc("_cin", cin_desc)
                 gcin = nstate.add_access("_c_gpu")
-                nstate.add_nedge(nstate.add_read("_cin"), gcin, dace.Memlet.from_array("_cin", cin_desc))
+                nstate.add_nedge(nstate.add_read("_cin"), gcin, dace.Memlet.from_array("_c_gpu", cin_desc))
                 nstate.add_edge(gcin, None, tasklet, "_conn_cin", dace.Memlet.from_array("_c_gpu", cdesc))
 
             return nsdfg

@@ -957,6 +957,11 @@ class CPUCodeGen(TargetCodeGenerator):
             #############################################
 
             state_dfg: SDFGState = cfg.nodes()[state_id]
+            # Every plain copy is a CopyLibraryNode by now (``InsertExplicitCopies``); only accumulates get here
+            from dace.transformation.passes.insert_explicit_copies import is_implicit_copy  # Avoid import loop
+
+            if is_implicit_copy(state_dfg, edge):
+                raise cgx.CodegenError(f"Copy {edge.data} reached codegen; it should be a copy node")
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node

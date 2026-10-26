@@ -32,7 +32,7 @@ def copy_with_strides(src_numeric, dst_numeric, copy_numeric=True):
 
     r = state.add_read("A")
     w = state.add_write("B")
-    state.add_nedge(r, w, dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_nedge(r, w, dace.Memlet.from_array("B", sdfg.arrays["B"]))
 
     A = np.random.rand(2, 4, 3, 5, 2)
     B = np.random.rand(2, 3, 4, 5)

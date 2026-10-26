@@ -364,7 +364,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             dst_array = nodes.AccessNode(cloned_arrays[nname], debuginfo=desc.debuginfo)
             copyin_state.add_node(src_array)
             copyin_state.add_node(dst_array)
-            copyin_state.add_nedge(src_array, dst_array, memlet.Memlet.from_array(src_array.data, src_array.desc(sdfg)))
+            copyin_state.add_nedge(src_array, dst_array, memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
 
         #######################################################
         # Step 3: Create copy-out state

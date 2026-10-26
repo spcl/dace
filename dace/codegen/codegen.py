@@ -223,21 +223,27 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
 
     # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
-    # at and the copy is free to move ahead of a write it must follow.
-    if config.Config.get_bool("compiler", "cpu", "explicit_copy"):
-        from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+    # at and the copy is free to move ahead of a write it must follow. Expansions may add copies of
+    # their own, so lower and expand until none is left: the generators emit no copy of their own.
+    from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, implicit_copies
 
+    while True:
         InsertExplicitCopies().apply_pass(sdfg, {})
+        leftover = implicit_copies(sdfg)
+        if leftover:
+            raise exc.CodegenError(f"Copies left implicit after lowering them to copy nodes: {leftover}")
         # The nodes just inserted carry no inferred connector types, and the expansion below reads
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
-    # Recursively expand library nodes that have not yet been expanded
-    sdfg.expand_library_nodes()
+        # Recursively expand library nodes that have not yet been expanded
+        sdfg.expand_library_nodes()
 
-    # After expansion, run another pass of connector/type inference
-    infer_types.infer_connector_types(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # After expansion, run another pass of connector/type inference
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        if not implicit_copies(sdfg):
+            break
 
     # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
     # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.

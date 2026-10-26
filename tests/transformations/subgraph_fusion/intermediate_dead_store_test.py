@@ -56,7 +56,7 @@ def _vadv_dcol_sdfg(copy_back: bool) -> dace.SDFG:
         output_nodes={"dcol_scaled": scaled},
     )
     if copy_back:
-        state.add_edge(scaled, None, state.add_access("dcol"), None, dace.Memlet("dcol_scaled[0:N] -> [0:N, k]"))
+        state.add_edge(scaled, None, state.add_access("dcol"), None, dace.Memlet("dcol_scaled[0:N] -> dcol[0:N, k]"))
 
     reader = sdfg.add_state_after(state, "consume")
     reader.add_mapped_tasklet(

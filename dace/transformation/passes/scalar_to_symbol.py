@@ -816,7 +816,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
                     memlet: mm.Memlet = in_edge.data
-                    if memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar):
+                    if memlet.src_subset and not isinstance(sdfg.arrays[input.data], dt.Scalar):
                         new_isedge.data.assignments[node.data] = f"{input.data}[{memlet.src_subset}]"
                     else:
                         new_isedge.data.assignments[node.data] = input.data

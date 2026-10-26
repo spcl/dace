@@ -20,8 +20,8 @@ A = state.add_read("A")
 tmp = state.add_access("tmp")
 B = state.add_write("B")
 
-state.add_nedge(A, tmp, dace.Memlet.simple("A", "0:N"))
-state.add_nedge(tmp, B, dace.Memlet.simple("tmp", "0:N"))
+state.add_nedge(A, tmp, dace.Memlet.simple("tmp", "0:N"))
+state.add_nedge(tmp, B, dace.Memlet.simple("B", "0:N"))
 
 
 def test():

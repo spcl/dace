@@ -48,7 +48,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         ain = state.add_read("_aout")
         ainout = state.add_access("_aout")
         aout = state.add_write("_aout")
-        state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
+        state.add_nedge(a, ain, Memlet.from_array(*a_arr))
 
     ipiv = state.add_access("_pivots")
     info1 = state.add_write("_info")
@@ -106,7 +106,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         ain = state.add_read("_ainout")
         ainout = state.add_access("_ainout")
         # aout = state.add_write('_aout')
-        state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
+        state.add_nedge(a, ain, Memlet.from_array(*a_arr))
         bin_name = "_aout"
         bout = state.add_access("_aout")
 

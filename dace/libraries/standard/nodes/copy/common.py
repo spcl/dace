@@ -387,10 +387,8 @@ def _build_shmem_collective_copy_code(
 
     A static 1-D transfer inside a kernel uses DaCe's block-collective runtime helpers
     (``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``), which split the elements across the
-    thread block -- the same call plain copy-edge codegen emits. Everything else falls back to a
-    ``dace::CopyND<...>::Copy(...)`` plus ``__syncthreads()``: the most-specific static template
-    (``CopyNDDynamic`` for symbolic shapes), refined by ``ConstDst``/``ConstSrc``/``Dynamic`` on
-    whichever stride set is constexpr, with the rest passed as runtime args.
+    thread block. Everything else, up to three collapsed dimensions, is ``dace::GlobalToShared3D``
+    (``...Dynamic`` for symbolic extents or destination strides), which moves either direction.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node`` (supplies the enclosing thread-block size).
@@ -424,42 +422,28 @@ def _build_shmem_collective_copy_code(
             f"({in_conn}, {sym2cpp(src_strides[0])}, {out_conn}, {sym2cpp(dst_strides[0])});"
         )
 
-    shape_strs = [sym2cpp(s) for s in copy_shape]
-    src_stride_strs = [sym2cpp(s) for s in src_strides]
-    dst_stride_strs = [sym2cpp(s) for s in dst_strides]
-
-    dims_static = not any(symbolic.issymbolic(s) for s in copy_shape)
-    src_static = not any(symbolic.issymbolic(s) for s in src_strides)
-    dst_static = not any(symbolic.issymbolic(s) for s in dst_strides)
-
-    ctype = inp.dtype.ctype
-    if dims_static:
-        copy_tmpl = f"dace::CopyND<{ctype}, 1, false, {', '.join(shape_strs)}>"
+    # Every other block-collective helper is a view of the 3-D one, which copies in either direction: the
+    # collapsed region, padded to three dimensions, is moved by the whole block.
+    if block_dims is None or ndims > 3:
+        raise ValueError(
+            f"SharedMemoryCollective needs a kernel-level copy of at most 3 collapsed dimensions; got "
+            f"{ndims} ({copy_shape}) {'outside a kernel' if block_dims is None else ''}"
+        )
+    pad = [1] * (3 - ndims)
+    shape = [sym2cpp(s) for s in pad + list(copy_shape)]
+    src = [sym2cpp(s) for s in pad + list(src_strides)]
+    dst = [sym2cpp(s) for s in pad + list(dst_strides)]
+    bdims = ", ".join(sym2cpp(b) for b in block_dims)
+    is_async = "false" if node.sync else "true"
+    if any(symbolic.issymbolic(s) for s in list(copy_shape) + list(dst_strides)):
+        call = (
+            f"dace::GlobalToShared3DDynamic<{inp.dtype.ctype}, {bdims}, {is_async}>"
+            f"({in_conn}, {', '.join(src)}, {out_conn}, {', '.join(dst)}, {', '.join(shape)});"
+        )
     else:
-        copy_tmpl = f"dace::CopyNDDynamic<{ctype}, 1, false, {ndims}>"
-
-    # Prefer ConstDst, else ConstSrc, else Dynamic; the rest go as runtime args, per-dim order.
-    if dst_static:
-        shape_tmpl = f"template ConstDst<{', '.join(dst_stride_strs)}>"
-    elif src_static:
-        shape_tmpl = f"template ConstSrc<{', '.join(src_stride_strs)}>"
-    else:
-        shape_tmpl = "Dynamic"
-
-    stride_args = []
-    for d in range(ndims):
-        if not dims_static:
-            stride_args.append(shape_strs[d])
-        if not src_static or dst_static:
-            stride_args.append(src_stride_strs[d])
-        if not dst_static:
-            stride_args.append(dst_stride_strs[d])
-
-    all_args = [in_conn, out_conn] + stride_args
-    # Synchronize if moving to/from shared memory collectively, and the sync flag is set (default on)
-    sync_barrier = (
-        "__syncthreads();\n"
-        if node.sync and (inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared)
-        else ""
-    )
-    return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"
+        call = (
+            f"dace::GlobalToShared3D<{inp.dtype.ctype}, {bdims}, {', '.join(shape)}, {', '.join(dst)}, {is_async}>"
+            f"({in_conn}, {', '.join(src)}, {out_conn});"
+        )
+    # The trailing barrier is the helper's own; the leading one keeps earlier readers of the region ahead of it
+    return f"__syncthreads();\n{call}" if node.sync else call

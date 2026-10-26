@@ -602,10 +602,18 @@ class MapFission(transformation.SingleStateTransformation):
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     outside_border_edges.add(e)
                                     # Propagate only the subset of `node.data`; the other side of a copy is kept
-                                    other_subset = e.data.other_subset
-                                    e.data.other_subset = None
-                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
-                                    e.data.other_subset = other_subset
+                                    if e.data.data == node.data:
+                                        other_subset = e.data.other_subset
+                                        e.data.other_subset = None
+                                        e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                        e.data.other_subset = other_subset
+                                    elif e.data.other_subset is not None:
+                                        e.data.other_subset = propagate_subset(
+                                            [mm.Memlet(data=node.data, subset=e.data.other_subset)],
+                                            desc,
+                                            outer_map.params,
+                                            outer_map.range,
+                                        ).subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset. The memlets of an integrated nested SDFG were not offset, and still
@@ -628,15 +636,30 @@ class MapFission(transformation.SingleStateTransformation):
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                             if e in outside_border_edges:
                                 map_ranges = full_map_ranges
-                                # The external subset may still name the out-of-scope map parameters
+                                # The external subset may still name the out-of-scope map parameters; a copy that
+                                # names the border transient keeps the external side in ``other_subset``
+                                names_node = e.data.data == node.data
+                                outer_subset = e.data.other_subset if names_node else e.data.subset
+                                path = state.memlet_path(e)
+                                outer_node = path[0].src if path[-1].dst is node else path[-1].dst
+                                outer_name = e.data.data
+                                if names_node:
+                                    outer_name = outer_node.data if isinstance(outer_node, nodes.AccessNode) else None
                                 if (
-                                    e.data.data != node.data
-                                    and e.data.subset is not None
-                                    and set(outer_map.params) & set(map(str, e.data.subset.free_symbols))
+                                    outer_subset is not None
+                                    and outer_name is not None
+                                    and set(outer_map.params) & set(map(str, outer_subset.free_symbols))
                                 ):
-                                    e.data.subset = propagate_subset(
-                                        [e.data], parent.arrays[e.data.data], outer_map.params, outer_map.range
+                                    outer_subset = propagate_subset(
+                                        [mm.Memlet(data=outer_name, subset=outer_subset)],
+                                        parent.arrays[outer_name],
+                                        outer_map.params,
+                                        outer_map.range,
                                     ).subset
+                                    if names_node:
+                                        e.data.other_subset = outer_subset
+                                    else:
+                                        e.data.subset = outer_subset
                             else:
                                 map_ranges = [(idx, idx, 1) for idx in squeezed_idx]
                             if e.data.data == node.data:

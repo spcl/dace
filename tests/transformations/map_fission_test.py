@@ -1078,9 +1078,9 @@ def test_mapfission_keeps_connector_offset():
     inner.add_array("A", [4], dace.float64, offset=[-1])
     inner.add_array("B", [4], dace.float64, offset=[-1])
     first = inner.add_state()
-    first.add_nedge(first.add_read("A"), first.add_write("B"), dace.Memlet("A[i + 1]"))
+    first.add_nedge(first.add_read("A"), first.add_write("B"), dace.Memlet("A[i + 1] -> B[i + 1]"))
     second = inner.add_state_after(first)
-    second.add_nedge(second.add_read("A"), second.add_write("B"), dace.Memlet("A[i + 1]"))
+    second.add_nedge(second.add_read("A"), second.add_write("B"), dace.Memlet("B[i + 1]"))
 
     sdfg = dace.SDFG("mapfission_connector_offset")
     sdfg.add_array("A", [4], dace.float64)

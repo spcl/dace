@@ -76,7 +76,9 @@ def _make_sdfg():
     result_out = s_init.add_write("result")
     frontier_out = s_init.add_write("frontier1")
 
-    s_init.add_memlet_path(root_in, frontier_out, memlet=dace.Memlet.simple(root_in.data, "0", other_subset_str="0"))
+    s_init.add_memlet_path(
+        root_in, frontier_out, memlet=dace.Memlet.simple(frontier_out.data, "0", other_subset_str="0")
+    )
 
     tasklet = s_init.add_tasklet(
         "set_count1",

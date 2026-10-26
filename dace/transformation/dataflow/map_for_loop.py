@@ -107,6 +107,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
         nstate.remove_nodes_from([e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
+        # Without the map, a copy that staged data in is a direct copy, which names its destination
+        sdutil.normalize_copy_memlets_in_state(nstate)
 
         # create object field for external nsdfg access
         self.nsdfg = nsdfg

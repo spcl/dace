@@ -56,15 +56,15 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layo
         y_host = init_state.add_read("y")
         x_device = init_state.add_write("x" + suffix)
         y_device = init_state.add_write("y" + suffix)
-        init_state.add_memlet_path(x_host, x_device, memlet=Memlet.simple(x_host, "0:m, 0:k"))
-        init_state.add_memlet_path(y_host, y_device, memlet=Memlet.simple(y_host, "0:k, 0:n"))
+        init_state.add_memlet_path(x_host, x_device, memlet=Memlet.simple(x_device, "0:m, 0:k"))
+        init_state.add_memlet_path(y_host, y_device, memlet=Memlet.simple(y_device, "0:k, 0:n"))
 
         finalize_state = sdfg.add_state("copy_to_host")
         sdfg.add_edge(state, finalize_state, dace.InterstateEdge())
 
         result_device = finalize_state.add_write("result" + suffix)
         result_host = finalize_state.add_read("result")
-        finalize_state.add_memlet_path(result_device, result_host, memlet=Memlet.simple(result_device, "0:m, 0:n"))
+        finalize_state.add_memlet_path(result_device, result_host, memlet=Memlet.simple(result_host, "0:m, 0:n"))
 
     return sdfg
 

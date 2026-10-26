@@ -439,8 +439,8 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 tasklet.remove_in_connector("_conn_c")
 
             nstate.add_node(tasklet)
-            nstate.add_nedge(a, ga, dace.Memlet.from_array("_a", adesc))
-            nstate.add_nedge(b, gb, dace.Memlet.from_array("_b", bdesc))
+            nstate.add_nedge(a, ga, dace.Memlet.from_array("_a_gpu", adesc))
+            nstate.add_nedge(b, gb, dace.Memlet.from_array("_b_gpu", bdesc))
 
             nstate.add_edge(ga, None, tasklet, "_conn_a", dace.Memlet.from_array("_a_gpu", adesc))
             nstate.add_edge(gb, None, tasklet, "_conn_b", dace.Memlet.from_array("_b_gpu", bdesc))
@@ -451,7 +451,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 rc = nstate.add_read("_c")
                 rgc = nstate.add_access("_c_gpu")
                 tasklet.add_in_connector("_conn_cin")
-                nstate.add_nedge(rc, rgc, dace.Memlet("_c"))
+                nstate.add_nedge(rc, rgc, dace.Memlet("_c_gpu"))
                 nstate.add_edge(rgc, None, tasklet, "_conn_cin", dace.Memlet("_c_gpu"))
 
             return nsdfg

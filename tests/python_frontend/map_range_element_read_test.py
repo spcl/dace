@@ -70,8 +70,8 @@ def test_range_reads_variables():
         for node in state.data_nodes():
             if any(memlet.data == node.data for memlet in inputs.values()):
                 for edge in state.in_edges(node):
-                    assert edge.data.data == "indptr", edge.data
-                    copied.add(str(edge.data.subset))
+                    assert edge.src.data == "indptr", edge.data
+                    copied.add(str(edge.data.get_src_subset(edge, state)))
     assert copied == {"i", "i + 1"}, copied
 
     indptr = np.array([0, 3, 3, 7], dtype=np.int32)

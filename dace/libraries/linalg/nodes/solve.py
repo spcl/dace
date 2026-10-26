@@ -73,8 +73,8 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
         state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
         state.add_edge(transpose_out, "_out", bout, None, Memlet.from_array(*bout_arr))
     else:
-        state.add_nedge(ain, ainout1, Memlet.from_array(*ain_arr))
-        state.add_nedge(bin, binout1, Memlet.from_array(*bin_arr))
+        state.add_nedge(ain, ainout1, Memlet.from_array(*ainout_arr))
+        state.add_nedge(bin, binout1, Memlet.from_array(*binout_arr))
         state.add_nedge(binout2, bout, Memlet.from_array(*bout_arr))
 
     ipiv = state.add_access("_pivots")

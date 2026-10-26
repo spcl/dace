@@ -370,7 +370,7 @@ def _ndarray_argmax(
     if out:
         r = state.add_read(newarr)
         w = state.add_write(out)
-        state.add_nedge(r, w, Memlet.from_array(newarr, sdfg.arrays[newarr]))
+        state.add_nedge(r, w, Memlet.from_array(out, sdfg.arrays[out]))
         newarr = out
     return newarr
 
@@ -385,6 +385,6 @@ def _ndarray_argmin(
     if out:
         r = state.add_read(newarr)
         w = state.add_write(out)
-        state.add_nedge(r, w, Memlet.from_array(newarr, sdfg.arrays[newarr]))
+        state.add_nedge(r, w, Memlet.from_array(out, sdfg.arrays[out]))
         newarr = out
     return newarr

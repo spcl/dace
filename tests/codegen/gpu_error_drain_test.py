@@ -105,8 +105,8 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
     sdfg.add_transient("t", [16], dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.arrays["t"].pool = True
     state = sdfg.add_state()
-    state.add_nedge(state.add_read("A"), state.add_write("t"), dace.Memlet("A[0:16]"))
-    state.add_nedge(state.add_read("t"), state.add_write("A"), dace.Memlet("t[0:16]"))
+    state.add_nedge(state.add_read("A"), state.add_write("t"), dace.Memlet("A[0:16] -> t[0:16]"))
+    state.add_nedge(state.add_read("t"), state.add_write("A"), dace.Memlet("t[0:16] -> A[0:16]"))
 
     cu, _ = _sources(sdfg)
     if "MemPool_t" not in cu:

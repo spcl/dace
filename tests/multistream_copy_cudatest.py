@@ -29,12 +29,12 @@ def test_multistream_copy():
     c1 = state.add_access("gC")
     c2 = state.add_write("C")
 
-    state.add_nedge(a1, a2, dace.Memlet.from_array("A", A))
-    state.add_nedge(b1, b2, dace.Memlet.from_array("B", B))
+    state.add_nedge(a1, a2, dace.Memlet.from_array("gA", sdfg.arrays["gA"]))
+    state.add_nedge(b1, b2, dace.Memlet.from_array("gB", sdfg.arrays["gB"]))
     state.add_nedge(c1, c2, dace.Memlet.from_array("C", C))
 
-    state.add_nedge(a2, c1, dace.Memlet.simple("gA", "0"))
-    state.add_nedge(b2, c1, dace.Memlet.simple("gB", "1", other_subset_str="1"))
+    state.add_nedge(a2, c1, dace.Memlet("gA[0] -> gC[0]"))
+    state.add_nedge(b2, c1, dace.Memlet("gB[1] -> gC[1]"))
 
     # Validate correctness of initial SDFG
     sdfg.validate()
@@ -68,14 +68,14 @@ def test_copy_sync():
     a = nstate.add_access("cpu_scal")
     nt = nstate.add_tasklet("addone", {"inp"}, {"out"}, "out = inp + 1")
     w = nstate.add_write("output")
-    nstate.add_nedge(r, a, dace.Memlet("gpu_scal"))
+    nstate.add_nedge(r, a, dace.Memlet("cpu_scal"))
     nstate.add_edge(a, None, nt, "inp", dace.Memlet("cpu_scal"))
     nstate.add_edge(nt, "out", w, None, dace.Memlet("output"))
 
     state = sdfg.add_state()
     r = state.add_read("scal_outer")
     w = state.add_write("gpu_scal_outer")
-    state.add_nedge(r, w, dace.Memlet("scal_outer"))
+    state.add_nedge(r, w, dace.Memlet("gpu_scal_outer"))
 
     state = sdfg.add_state_after(state)
     ro = state.add_read("gpu_scal_outer")

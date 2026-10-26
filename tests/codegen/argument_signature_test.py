@@ -53,8 +53,6 @@ def make_sdfg() -> dace.SDFG:
 
     # Instead of going from the MapEntry to the Tasklet we will go through
     #  an temporary AccessNode that is only used inside the map scope.
-    #  Thus there is no direct reference to `A` inside the map scope, that would
-    #  need `second_stride_A`.
     sdfg.add_scalar("tmp_in", transient=True, dtype=dace.float64)
     tmp_in = state.add_access("tmp_in")
     for e in state.edges():
@@ -66,11 +64,8 @@ def make_sdfg() -> dace.SDFG:
         iedge.src_conn,
         tmp_in,
         None,
-        # The important thing is that the Memlet, that connects the MapEntry with the
-        #  AccessNode, does not refers to the memory outside (its source) but to the transient
-        #  inside (its destination)
-        dace.Memlet(data="tmp_in", subset="0", other_subset="__i1"),  # This does not work!
-        # dace.Memlet(data="A", subset="__i1", other_subset="0"),   # This would work!
+        # A stage-in memlet names the container outside the scope, its source
+        dace.Memlet(data="A", subset="__i1", other_subset="0"),
     )
     state.add_edge(
         tmp_in,
@@ -85,9 +80,7 @@ def make_sdfg() -> dace.SDFG:
     #  The output of the Tasklet is stored inside a temporary scalar.
     #  From that scalar we then go to `C`, here the Memlet on the inside is still
     #  referring to `C`, thus it is referenced directly.
-    #  We also add a second output that goes to `D` , but the inner Memlet does
-    #  not refer to `D` but to the temporary. Thus there is no direct mention of
-    #  `D` inside the map scope.
+    #  We also add a second output from the temporary that goes to `D`.
     sdfg.add_scalar("tmp_out", transient=True, dtype=dace.float64)
     tmp_out = state.add_access("tmp_out")
     for e in state.edges():
@@ -111,14 +104,13 @@ def make_sdfg() -> dace.SDFG:
         dace.Memlet(data="C", subset="__i0, __i1"),
     )
 
-    # Now we create a new output that uses `tmp_out` but goes into `D`.
-    #  The memlet on the inside will not use `D` but `tmp_out`.
+    # Now we create a new output that uses `tmp_out` but goes into `D`, named by `D` as a stage-out memlet.
     state.add_edge(
         tmp_out,
         None,
         oedge.dst,
         "IN_D",
-        dace.Memlet(data=tmp_out.data, subset="0", other_subset="__i1, __i0"),
+        dace.Memlet(data="D", subset="__i1, __i0", other_subset="0"),
     )
     state.add_edge(
         oedge.dst,

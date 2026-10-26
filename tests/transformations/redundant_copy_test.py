@@ -61,7 +61,7 @@ def test_reshaping_with_redundant_arrays():
             None,
             a_an,
             None,
-            dace.Memlet.from_array("input", input_desc),
+            dace.Memlet.from_array("a", a_desc),
         )
         state.add_edge(
             a_an,
@@ -69,9 +69,9 @@ def test_reshaping_with_redundant_arrays():
             b_an,
             None,
             dace.Memlet.simple(
-                "a",
-                subset_str="0:6, 0:6, 0:6",
-                other_subset_str="0:36, 0, 0:6",
+                "b",
+                subset_str="0:36, 0, 0:6",
+                other_subset_str="0:6, 0:6, 0:6",
             ),
         )
         state.add_edge(
@@ -79,7 +79,7 @@ def test_reshaping_with_redundant_arrays():
             None,
             output_an,
             None,
-            dace.Memlet.from_array("b", b_desc),
+            dace.Memlet.from_array("output", output_desc),
         )
         sdfg.validate()
         assert state.number_of_nodes() == 4
@@ -151,8 +151,8 @@ def test_out():
     trans = Transpose("transpose", dtype=dace.float32)
     D = state.add_access("D")
 
-    state.add_edge(A, None, B, None, sdfg.make_array_memlet("A"))
-    state.add_edge(B, None, C, None, sdfg.make_array_memlet("B"))
+    state.add_edge(A, None, B, None, sdfg.make_array_memlet("B"))
+    state.add_edge(B, None, C, None, sdfg.make_array_memlet("C"))
     state.add_edge(C, None, trans, "_inp", sdfg.make_array_memlet("C"))
     state.add_edge(trans, "_out", D, None, sdfg.make_array_memlet("D"))
 
@@ -180,8 +180,8 @@ def test_out_success():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5"))
-    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("B", "0:3, 0:3", other_subset_str="0, 0:3, 2:5"))
+    state.add_nedge(B, C, dace.Memlet.simple("C", "1, 2, 0:3, 4", other_subset_str="0:3, 2"))
 
     sdfg.add_scalar("D", dace.float32, transient=True)
     sdfg.add_array("E", [3, 3, 3], dace.float32)
@@ -235,8 +235,8 @@ def test_out_failure_subset_mismatch():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5"))
-    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("B", "0:3, 0:3", other_subset_str="0, 0:3, 2:5"))
+    state.add_nedge(B, C, dace.Memlet.simple("C", "1, 2, 0:3, 4", other_subset_str="0:3, 2"))
 
     sdfg.validate()
     sdfg.simplify()
@@ -256,8 +256,8 @@ def test_out_failure_no_overlap():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5", other_subset_str="5:8, 5:8"))
-    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("B", "5:8, 5:8", other_subset_str="0, 0:3, 2:5"))
+    state.add_nedge(B, C, dace.Memlet.simple("C", "1, 2, 0:3, 4", other_subset_str="0:3, 2"))
 
     sdfg.validate()
     sdfg.simplify()
@@ -277,8 +277,8 @@ def test_out_failure_partial_overlap():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5", other_subset_str="5:8, 5:8"))
-    state.add_nedge(B, C, dace.Memlet.simple("B", "4:7, 6", other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("B", "5:8, 5:8", other_subset_str="0, 0:3, 2:5"))
+    state.add_nedge(B, C, dace.Memlet.simple("C", "1, 2, 0:3, 4", other_subset_str="4:7, 6"))
 
     sdfg.validate()
     sdfg.simplify()
@@ -303,8 +303,8 @@ def test_in():
 
     state.add_edge(A, None, trans, "_inp", sdfg.make_array_memlet("A"))
     state.add_edge(trans, "_out", B, None, sdfg.make_array_memlet("B"))
-    state.add_edge(B, None, C, None, sdfg.make_array_memlet("B"))
-    state.add_edge(C, None, D, None, sdfg.make_array_memlet("C"))
+    state.add_edge(B, None, C, None, sdfg.make_array_memlet("C"))
+    state.add_edge(C, None, D, None, sdfg.make_array_memlet("D"))
 
     sdfg.simplify()
     sdfg.apply_transformations_repeated(RedundantArrayCopyingIn)
@@ -379,7 +379,7 @@ def test_self_copy_through_transient():
     tmp = state.add_access("tmp")
     w = state.add_write("p")
     state.add_nedge(r, tmp, dace.Memlet("[0:4, 2] -> tmp[0:4]"))
-    state.add_nedge(tmp, w, dace.Memlet("tmp[0:4] -> [0:4, 3]"))
+    state.add_nedge(tmp, w, dace.Memlet("tmp[0:4] -> p[0:4, 3]"))
 
     assert sdfg.apply_transformations(RedundantArray) == 1
     (e,) = state.edges()
@@ -546,9 +546,9 @@ def _make_reshaping_not_zero_started_input_sdfg(
         None,
         b,
         None,
-        dace.Memlet("a[5:10, 0, 1, 3:13] -> [0:5, 0, 0:10]")
+        dace.Memlet("a[5:10, 0, 1, 3:13] -> b[0:5, 0, 0:10]")
         if a_has_larger_rank_than_b
-        else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"),
+        else dace.Memlet("a[5:10, 3:13] -> b[0:5, 0, 0:10]"),
     )
 
     _, me, _ = state.add_mapped_tasklet(

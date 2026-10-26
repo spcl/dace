@@ -178,7 +178,7 @@ def test_vector_reduction_gpu():
     hr = state.add_read("A")
     hw = state.add_write("B")
     state.add_nedge(hr, r, dace.Memlet("gA"))
-    state.add_nedge(w, hw, dace.Memlet("gB"))
+    state.add_nedge(w, hw, dace.Memlet("B"))
 
     assert "_atomic" in sdfg.generate_code()[1].clean_code
 

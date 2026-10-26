@@ -756,7 +756,7 @@ def test_reversed_order():
     state.add_edge(t, "out", w, None, dace.Memlet("b"))
     state.add_edge(r, None, t, "inp", dace.Memlet("a"))
 
-    initstate.add_nedge(initstate.add_read("inputs"), initstate.add_write("a"), dace.Memlet("inputs"))
+    initstate.add_nedge(initstate.add_read("inputs"), initstate.add_write("a"), dace.Memlet("a"))
     finistate.add_nedge(finistate.add_read("b"), finistate.add_write("output"), dace.Memlet("output"))
 
     sdfg.validate()
@@ -819,7 +819,7 @@ def _cast_tasklet_sdfg(code: str, input_dtype: dace.typeclass) -> dace.SDFG:
     state.add_edge(state.add_read("inp"), None, t, "inp", dace.Memlet("inp"))
     state.add_edge(t, "out", state.add_write("res"), None, dace.Memlet("res"))
     state = sdfg.add_state_after(state)
-    state.add_nedge(state.add_read("A"), state.add_write("B"), dace.Memlet("A[res]"))
+    state.add_nedge(state.add_read("A"), state.add_write("B"), dace.Memlet("A[res] -> B[0]"))
     return sdfg
 
 
@@ -870,7 +870,11 @@ def test_promote_widened_loop_index():
             b[i] = c[i - idx]
 
     sdfg = widened_index.to_sdfg(simplify=True)
-    c_subsets = [e.data.subset for e, _ in sdfg.all_edges_recursive() if getattr(e.data, "data", None) == "c"]
+    c_subsets = [
+        e.data.get_src_subset(e, graph)
+        for e, graph in sdfg.all_edges_recursive()
+        if isinstance(graph, dace.SDFGState) and isinstance(e.src, dace.nodes.AccessNode) and e.src.data == "c"
+    ]
     assert c_subsets and all("i" in {str(s) for s in subset.free_symbols} for subset in c_subsets)
 
     b = np.random.rand(32) * 10

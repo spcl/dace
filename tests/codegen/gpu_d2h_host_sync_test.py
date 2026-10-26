@@ -35,7 +35,7 @@ def scalar_through_host(scalar_storage: dtypes.StorageType) -> dace.SDFG:
     a = state.add_access("A")
     s = state.add_access("s")
     b = state.add_access("B")
-    state.add_edge(a, None, s, None, dace.Memlet("A[0]"))
+    state.add_edge(a, None, s, None, dace.Memlet("A[0] -> s[0]"))
 
     entry, exit_ = state.add_map("kern", {"i": "0:20"}, schedule=dtypes.ScheduleType.GPU_Device)
     tasklet = state.add_tasklet("scale", {"inp", "sc"}, {"out"}, "out = inp * sc")
@@ -66,7 +66,7 @@ def device_to_device() -> dace.SDFG:
     a = state.add_access("A")
     c = state.add_access("C")
     b = state.add_access("B")
-    state.add_edge(a, None, c, None, dace.Memlet("A[0:20]"))
+    state.add_edge(a, None, c, None, dace.Memlet("A[0:20] -> C[0:20]"))
 
     entry, exit_ = state.add_map("kern", {"i": "0:20"}, schedule=dtypes.ScheduleType.GPU_Device)
     tasklet = state.add_tasklet("scale", {"inp"}, {"out"}, "out = inp * 2")

@@ -40,8 +40,8 @@ def persistent_gpu_transient() -> dace.SDFG:
     a = state.add_access("A")
     t = state.add_access("T")
     b = state.add_access("B")
-    state.add_nedge(a, t, dace.Memlet("A[0:20]"))
-    state.add_nedge(t, b, dace.Memlet("T[0:20]"))
+    state.add_nedge(a, t, dace.Memlet("A[0:20] -> T[0:20]"))
+    state.add_nedge(t, b, dace.Memlet("T[0:20] -> B[0:20]"))
     sdfg.validate()
     return sdfg
 

@@ -20,28 +20,44 @@ def test(device: str):
     arrays.append(state.add_access("A_" + str(len(arrays))))
     sdfg.add_array("A_" + str(len(arrays)), [5, 7], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
-    state.add_edge(arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-2], "5:10, N-7:N"))
+    state.add_edge(
+        arrays[-2],
+        None,
+        arrays[-1],
+        None,
+        dace.memlet.Memlet.simple(arrays[-1], "0:5, 0:7", other_subset_str="5:10, N-7:N"),
+    )
 
     # Copy 2: 1d subset of a 4d array to a 1d array
     sdfg.add_array("A_" + str(len(arrays)), [N, N, N, N], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
     sdfg.add_array("A_" + str(len(arrays)), [N - 1], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
-    state.add_edge(arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-2], "4,1,1:N,2"))
+    state.add_edge(
+        arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-1], "0:N-1", other_subset_str="4,1,1:N,2")
+    )
 
     # Copy 3: 5d array to 5d array
     sdfg.add_array("A_" + str(len(arrays)), [2, 3, 4, 5, 6], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
     sdfg.add_array("A_" + str(len(arrays)), [2, 3, 4, 5, 6], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
-    state.add_edge(arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-2], "0:2,0:3,0:4,0:5,0:6"))
+    state.add_edge(
+        arrays[-2],
+        None,
+        arrays[-1],
+        None,
+        dace.memlet.Memlet.simple(arrays[-1], "0:2,0:3,0:4,0:5,0:6", other_subset_str="0:2,0:3,0:4,0:5,0:6"),
+    )
 
     # Copy 4: contiguous 1d subset of a 4d array to a 1d array
     sdfg.add_array("A_" + str(len(arrays)), [N, N, N, N], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
     sdfg.add_array("A_" + str(len(arrays)), [N - 1], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
-    state.add_edge(arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-2], "4,1,2,1:N"))
+    state.add_edge(
+        arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-1], "0:N-1", other_subset_str="4,1,2,1:N")
+    )
 
     # Copy 5: 1d array to a 1d subset of a 4d array
     sdfg.add_array("A_" + str(len(arrays)), [N - 2], dace.float32)
@@ -63,7 +79,11 @@ def test(device: str):
     sdfg.add_array("A_" + str(len(arrays)), [N - 5, N - 4, 3, N - 2], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
     state.add_edge(
-        arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-2], "5:N,2:N-2,N-10:N-7,1:N-1")
+        arrays[-2],
+        None,
+        arrays[-1],
+        None,
+        dace.memlet.Memlet.simple(arrays[-1], "0:N-5,0:N-4,0:3,0:N-2", other_subset_str="5:N,2:N-2,N-10:N-7,1:N-1"),
     )
 
     # Copy 8: 4d array with a stride to a 1d array
@@ -71,7 +91,13 @@ def test(device: str):
     arrays.append(state.add_access("A_" + str(len(arrays))))
     sdfg.add_array("A_" + str(len(arrays)), [N / 2 - 1], dace.float32)
     arrays.append(state.add_access("A_" + str(len(arrays))))
-    state.add_edge(arrays[-2], None, arrays[-1], None, dace.memlet.Memlet.simple(arrays[-2], "4,1,2,1:N-1:2"))
+    state.add_edge(
+        arrays[-2],
+        None,
+        arrays[-1],
+        None,
+        dace.memlet.Memlet.simple(arrays[-1], "0:N/2-1", other_subset_str="4,1,2,1:N-1:2"),
+    )
 
     # Copy 9: 2d array to a 3d array with an offset
     sdfg.add_array("A_" + str(len(arrays)), [40, 40], dace.float32)
@@ -83,7 +109,7 @@ def test(device: str):
         None,
         arrays[-1],
         None,
-        dace.memlet.Memlet.simple(arrays[-2], "20:40, 10:30", other_subset_str="2, 10:30, 20:40"),
+        dace.memlet.Memlet.simple(arrays[-1], "2, 10:30, 20:40", other_subset_str="20:40, 10:30"),
     )
 
     # Copy 10: Copying from 2d array to another 2d array a 1d slice
@@ -97,7 +123,7 @@ def test(device: str):
         None,
         arrays[-1],
         None,
-        dace.memlet.Memlet.simple(arrays[-2], "20, 10:30", other_subset_str="10:30, 10"),
+        dace.memlet.Memlet.simple(arrays[-1], "10:30, 10", other_subset_str="20, 10:30"),
     )
 
     # Copy 11: Copying from 2d array to another 2d array a 1d slice
@@ -111,7 +137,7 @@ def test(device: str):
         None,
         arrays[-1],
         None,
-        dace.memlet.Memlet.simple(arrays[-2], "10:30, 20", other_subset_str="10, 10:30"),
+        dace.memlet.Memlet.simple(arrays[-1], "10, 10:30", other_subset_str="10:30, 20"),
     )
 
     # Copy 12: (from resnet)
@@ -127,7 +153,7 @@ def test(device: str):
         None,
         arrays[-1],
         None,
-        dace.memlet.Memlet.simple(arrays[-2], "0:5, 0:6, 0:7 , 0:8", other_subset_str="0:5, 1:7, 1:8, 0:8"),
+        dace.memlet.Memlet.simple(arrays[-1], "0:5, 1:7, 1:8, 0:8", other_subset_str="0:5, 0:6, 0:7 , 0:8"),
     )
 
     array_data = [

@@ -18,7 +18,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     path), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy``),
     ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
     (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
-    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
+    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``, else ``dace::GlobalToShared3D`` +
     optional ``__syncthreads()`` barriers controlled by ``sync``), ``CastOnDevice`` (host/device
     copy that changes dtype: memcpy through a pooled device buffer, the GPU casts).
 

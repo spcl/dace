@@ -127,6 +127,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph: SDFGState, sdfg: SDFG):
         intermediate_access_node = self.array
         first_map_exit = self.first_map_exit

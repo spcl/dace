@@ -1,8 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
+
+import pytest
+
 import dace
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import canonicalize_memlet_trees
+from dace.sdfg.validation import InvalidSDFGEdgeError
+from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 from .transformations import utility
 
@@ -127,7 +133,9 @@ def _make_sdfg_multi_usage_input() -> tuple[dace.SDFG, dace.SDFGState]:
         state.add_edge(mx, f"OUT_{output_data}", oac, None, dace.Memlet(f"{output_data}[0:10, 0:30]"))
         mx.add_scope_connectors(output_data)
 
-    sdfg.validate()
+    # Every other memlet names the inner container, which the copy-memlet rule refuses
+    with pytest.raises(InvalidSDFGEdgeError, match="must name"):
+        sdfg.validate()
 
     return sdfg, state
 
@@ -139,7 +147,10 @@ def test_multi_use_value_input():
     assert initial_non_standard_memlets > 0
 
     ref, res = utility.make_sdfg_args(sdfg)
-    utility.compile_and_run_sdfg(sdfg, **ref)
+    reference = copy.deepcopy(sdfg)
+    reference.name += "_reference"
+    NormalizeCopyMemlets().apply_pass(reference, {})
+    utility.compile_and_run_sdfg(reference, **ref)
 
     ret = canonicalize_memlet_trees(sdfg)
     sdfg.validate()
@@ -221,7 +232,9 @@ def _make_multi_use_value_output() -> tuple[dace.SDFG, dace.SDFGState]:
             ),
         )
         mx.add_scope_connectors(f"output_{i}")
-    sdfg.validate()
+    # Every other memlet names the inner container, which the copy-memlet rule refuses
+    with pytest.raises(InvalidSDFGEdgeError, match="must name"):
+        sdfg.validate()
 
     return sdfg, state
 
@@ -233,7 +246,10 @@ def test_multi_use_value_output():
     assert initial_non_standard_memlets > 0
 
     ref, res = utility.make_sdfg_args(sdfg)
-    utility.compile_and_run_sdfg(sdfg, **ref)
+    reference = copy.deepcopy(sdfg)
+    reference.name += "_reference"
+    NormalizeCopyMemlets().apply_pass(reference, {})
+    utility.compile_and_run_sdfg(reference, **ref)
 
     ret = canonicalize_memlet_trees(sdfg)
     sdfg.validate()

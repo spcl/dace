@@ -1133,25 +1133,21 @@ def test_direct_assignment_rejects_cross_boundary():
 
 
 def test_shared_memory_copy_global_to_shared_is_collective():
-    """Global -> Shared collective copy emits a CPP tasklet with __syncthreads() and no GPU_ThreadBlock map."""
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, name="G_in"),
-        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, name="S_out"),
-        implementation="SharedMemoryCollective",
-        name="shmcpy_collective",
-        libnode_name="shmcpy",
+    """Global -> Shared collective copy is one block-collective ``GlobalToShared1D`` (it synchronizes itself), with no GPU_ThreadBlock map."""
+    sdfg, node, _ = _libnode_in_tblock_scope(
+        dace.dtypes.StorageType.GPU_Global,
+        dace.dtypes.StorageType.GPU_Shared,
+        "0:64",
+        "0:64",
+        src_shape=[64],
+        dst_shape=[64],
+        thread_block=False,
     )
+    node.implementation = "SharedMemoryCollective"
     sdfg.expand_library_nodes()
 
-    found_syncthreads = False
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.sdfg.nodes.Tasklet):
-            if n.language == dace.Language.CPP and "__syncthreads" in n.code.as_string:
-                found_syncthreads = True
-                break
-    assert found_syncthreads, (
-        "SharedMemoryCopy (Global->Shared) should generate a CPP tasklet containing __syncthreads()."
-    )
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
+    assert any("dace::GlobalToShared1D<double, " in code and ", 64, 1, false>" in code for code in codes), codes
 
     # No GPU_ThreadBlock map: the collective tasklet is itself the block-level op.
     for n, _ in sdfg.all_nodes_recursive():
@@ -1161,9 +1157,11 @@ def test_shared_memory_copy_global_to_shared_is_collective():
             )
 
 
-def _libnode_in_tblock_scope(src_storage, dst_storage, src_subset, dst_subset, src_shape=None, dst_shape=None):
-    """Build an SDFG with a ``CopyLibraryNode`` nested inside a ``GPU_ThreadBlock``
-    map; returns ``(sdfg, libnode, state)`` for scope-aware dispatcher tests."""
+def _libnode_in_tblock_scope(
+    src_storage, dst_storage, src_subset, dst_subset, src_shape=None, dst_shape=None, thread_block=True
+):
+    """Build an SDFG with a ``CopyLibraryNode`` nested inside a ``GPU_ThreadBlock`` map (or directly in a
+    16-thread kernel when ``thread_block`` is False); returns ``(sdfg, libnode, state)``."""
     src_shape = src_shape or [16]
     dst_shape = dst_shape or [16]
     sdfg = dace.SDFG(f"in_tblock_{src_storage.name}_{dst_storage.name}")
@@ -1177,19 +1175,22 @@ def _libnode_in_tblock_scope(src_storage, dst_storage, src_subset, dst_subset, s
     src_acc = state.add_access("src")
     dst_acc = state.add_access("dst")
     ome, omx = state.add_map("device_map", {"bi": "0:1"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
-    ime, imx = state.add_map("tblock_map", {"ti": "0:16"}, schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
+    ome.map.gpu_block_size = [16, 1, 1]
+    inner = []
+    if thread_block:
+        inner = list(state.add_map("tblock_map", {"ti": "0:16"}, schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock))
     libnode = CopyLibraryNode(name="cp")
     state.add_memlet_path(
         src_acc,
         ome,
-        ime,
+        *inner[:1],
         libnode,
         dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
         memlet=dace.memlet.Memlet(f"src[{src_subset}]"),
     )
     state.add_memlet_path(
         libnode,
-        imx,
+        *inner[1:],
         omx,
         dst_acc,
         src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
@@ -1278,11 +1279,14 @@ def test_auto_dispatch_global_shared_inside_tblock_single_element_routes_to_task
 
 def test_shared_memory_collective_single_element_emits_syncthreads():
     """Single-element collective Global -> Shared must emit ``__syncthreads()`` (the barrier is volume-independent)."""
-    sdfg, _ = _make_copy_sdfg(
-        _ArraySpec(shape=[64], storage=dace.dtypes.StorageType.GPU_Global, transient=True, subset="5", name="G_in"),
-        _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.GPU_Shared, transient=True, subset="3", name="S_out"),
-        name="auto_global_shm_single_e2e",
-        libnode_name="cp_global_shm_single_e2e",
+    sdfg, _, _ = _libnode_in_tblock_scope(
+        dace.dtypes.StorageType.GPU_Global,
+        dace.dtypes.StorageType.GPU_Shared,
+        "5",
+        "3",
+        src_shape=[64],
+        dst_shape=[8],
+        thread_block=False,
     )
     sdfg.expand_library_nodes()
     assert any(
@@ -1938,8 +1942,8 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     sdfg.add_scalar("gs", dace.float32, dace.dtypes.StorageType.GPU_Global, transient=True)
     sdfg.add_array("out", [1], dace.float32, dace.dtypes.StorageType.GPU_Global, transient=True)
     state = sdfg.add_state("s0")
-    state.add_nedge(state.add_read("s"), state.add_write("gs"), dace.Memlet("s"))
-    state.add_nedge(state.add_read("gs"), state.add_write("out"), dace.Memlet("gs"))
+    state.add_nedge(state.add_read("s"), state.add_write("gs"), dace.Memlet("gs"))
+    state.add_nedge(state.add_read("gs"), state.add_write("out"), dace.Memlet("out"))
     code = _generated_code(sdfg)
     assert "MemcpyAsync(_cpy_out, _cpy_in" in code
     assert "_cpy_in = &s;" in code, code
@@ -1971,8 +1975,8 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     sdfg.add_array("gA", [64], dace.float64, dace.dtypes.StorageType.GPU_Global, transient=True)
     sdfg.add_array("B", [64], dace.float64, dace.dtypes.StorageType.GPU_Global, transient=True)
     state = sdfg.add_state("s0")
-    state.add_nedge(state.add_read("A"), state.add_write("gA"), dace.Memlet("A[0:64]"))
-    state.add_nedge(state.add_read("gA"), state.add_write("B"), dace.Memlet("gA[0:64]"))
+    state.add_nedge(state.add_read("A"), state.add_write("gA"), dace.Memlet("gA[0:64]"))
+    state.add_nedge(state.add_read("gA"), state.add_write("B"), dace.Memlet("B[0:64]"))
     with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
         code = _generated_code(sdfg)
     stream_decl = code.find("__dace_current_stream = ")

@@ -127,7 +127,7 @@ def _make_state_fission_with_access_nodes_sdfg() -> tuple[
 
     state.add_edge(a, None, tlet, "__in", dace.Memlet("a[0]"))
     state.add_edge(tlet, "__out", b, None, dace.Memlet("b[0]"))
-    state.add_nedge(b, c, dace.Memlet("b[0] -> [0]"))
+    state.add_nedge(b, c, dace.Memlet("b[0] -> c[0]"))
 
     sdfg.validate()
 
@@ -178,11 +178,11 @@ def _make_state_fission_with_map_sdfg() -> tuple[
     me.add_scope_connectors("a")
 
     state.add_edge(tlet, "__out", t, None, dace.Memlet("t[0]"))
-    state.add_edge(t, None, mx, "IN_b", dace.Memlet("t[0] -> [__i, __j]"))
+    state.add_edge(t, None, mx, "IN_b", dace.Memlet("t[0] -> b[__i, __j]"))
     state.add_edge(mx, "OUT_b", b, None, dace.Memlet("b[0:20, 0:10]"))
     mx.add_scope_connectors("b")
 
-    state.add_nedge(b, c, dace.Memlet("b[1:11, 3] -> [0:10]"))
+    state.add_nedge(b, c, dace.Memlet("b[1:11, 3] -> c[0:10]"))
 
     sdfg.validate()
 
@@ -305,7 +305,7 @@ def _make_state_fission_multiple_writes_sdfg() -> tuple[
 
     state.add_edge(tlet3, "__out", b, None, dace.Memlet("b[2]"))
 
-    state.add_nedge(b, c, dace.Memlet("b[0:3] -> [0:3]"))
+    state.add_nedge(b, c, dace.Memlet("b[0:3] -> c[0:3]"))
 
     sdfg.validate()
 
@@ -350,7 +350,7 @@ def _make_state_fission_with_view_sdfg() -> tuple[
     )
 
     state.add_edge(v, "views", b, None, dace.Memlet("v[0:10] -> [0:10, 1]"))
-    state.add_nedge(b, c, dace.Memlet("b[0:10, 0:2] -> [0:10, 0:2]"))
+    state.add_nedge(b, c, dace.Memlet("b[0:10, 0:2] -> c[0:10, 0:2]"))
 
     sdfg.validate()
 
@@ -448,7 +448,7 @@ def _make_state_fission_tower_of_viewes() -> tuple[
     state.add_edge(v1, "views", v2, None, dace.Memlet("v1[0:4] -> [2, 0:4]"))
     state.add_edge(v2, "views", v3, None, dace.Memlet("v2[0:4, 0:4] -> [3, 0:4, 0:4]"))
     state.add_edge(v3, "views", a, None, dace.Memlet("v3[0:4, 0:4, 0:4] -> [0:4, 0:4, 0:4]"))
-    state.add_nedge(a, b, dace.Memlet("a[0:4, 0:4, 0:4] -> [0:4, 0:4, 0:4]"))
+    state.add_nedge(a, b, dace.Memlet("a[0:4, 0:4, 0:4] -> b[0:4, 0:4, 0:4]"))
 
     sdfg.validate()
 

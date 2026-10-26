@@ -513,7 +513,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 if is_read:
                     a = copyin.add_read(arr_name)
                     s = copyin.add_write(scal_name)
-                    copyin.add_nedge(a, s, Memlet(data=arr_name, subset="0"))
+                    copyin.add_nedge(a, s, Memlet(data=scal_name, subset="0", other_subset="0"))
                 if is_written:
                     s = copyout.add_read(scal_name)
                     a = copyout.add_write(arr_name)
@@ -665,7 +665,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 if is_written:
                     a = copyout.add_read(arr_name)
                     s = copyout.add_write(scal_name)
-                    copyout.add_nedge(a, s, Memlet(data=arr_name, subset="0"))
+                    copyout.add_nedge(a, s, Memlet(data=scal_name, subset="0", other_subset="0"))
 
         if self.recursive:
             for state in sdfg.states():

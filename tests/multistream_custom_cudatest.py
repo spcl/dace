@@ -84,7 +84,7 @@ state.add_edge(tasklet2, "c", gC, None, dp.Memlet.simple("gC", "0:N, 0:N"))
 # short for "no-connector edge", i.e., `add_edge(u, None, v, None, memlet)`.
 state.add_nedge(A, gA, dp.Memlet.simple("gA", "0:N, 0:N"))
 state.add_nedge(B, gB, dp.Memlet.simple("gB", "0:N, 0:N"))
-state.add_nedge(gC, C, dp.Memlet.simple("gC", "0:N, 0:N"))
+state.add_nedge(gC, C, dp.Memlet.simple("C", "0:N, 0:N"))
 
 # Add CUBLAS initialization and teardown code
 # Global code (top of file, can be used for includes and global variables)

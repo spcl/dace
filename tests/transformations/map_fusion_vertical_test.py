@@ -13,7 +13,9 @@ from dace import data as dace_data
 from dace import symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.validation import InvalidSDFGEdgeError, copy_memlet_owner
 from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
+from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 
 def count_nodes(
@@ -37,17 +39,6 @@ def count_nodes(
     if return_nodes:
         return found_nodes
     return len(found_nodes)
-
-
-def safe_view(sdfg: SDFG):
-    """Calls `sdfg.view()` but if it fails does nothing.
-
-    Mostly needed for the CI, for whatever reason.
-    """
-    try:
-        sdfg.view()
-    except Exception:
-        pass
 
 
 def unique_name(name: str) -> str:
@@ -134,42 +125,33 @@ def apply_fusion(
     If `strict_dataflow` is set to `True`, the default, then the function will perform
     the fusion in strict dataflow mode.
     """
-    org_sdfg = copy.deepcopy(sdfg)
     num_maps_before = None if unspecific else count_nodes(sdfg, nodes.MapEntry)
 
-    try:
-        with dace.config.temporary_config():
-            dace.Config.set("optimizer", "match_exception", value=True)
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
 
-            if where is not None:
-                assert apply_once
-                options = {"strict_dataflow": strict_dataflow}
-                if allow_intermediates_with_symbolic_size is not None:
-                    options = options | {
-                        "allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size
-                    }
-                MapFusionVertical.apply_to(
-                    sdfg=sdfg,
-                    options=options | map_fusion_opt,
-                    expr_index=0,
-                    verify=True,
-                    **where,
-                )
-                sdfg.validate()
+        if where is not None:
+            assert apply_once
+            options = {"strict_dataflow": strict_dataflow}
+            if allow_intermediates_with_symbolic_size is not None:
+                options = options | {"allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size}
+            MapFusionVertical.apply_to(
+                sdfg=sdfg,
+                options=options | map_fusion_opt,
+                expr_index=0,
+                verify=True,
+                **where,
+            )
+            sdfg.validate()
 
-            else:
-                map_fusion = MapFusionVertical(
-                    strict_dataflow=strict_dataflow,
-                    allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
-                    **map_fusion_opt,
-                )
-                apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
-                apply_function(map_fusion, validate=True, validate_all=True)
-
-    except:
-        safe_view(org_sdfg)
-        safe_view(sdfg)
-        raise
+        else:
+            map_fusion = MapFusionVertical(
+                strict_dataflow=strict_dataflow,
+                allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
+                **map_fusion_opt,
+            )
+            apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
+            apply_function(map_fusion, validate=True, validate_all=True)
 
     if unspecific:
         return sdfg
@@ -179,19 +161,13 @@ def apply_fusion(
     if removed_maps is not None:
         has_processed = True
         rm = num_maps_before - num_maps_after
-        if not (rm == removed_maps):
-            safe_view(sdfg)
         assert rm == removed_maps, f"Expected to remove {removed_maps} but removed {rm}"
     if final_maps is not None:
         has_processed = True
-        if not (final_maps == num_maps_after):
-            safe_view(sdfg)
         assert final_maps == num_maps_after, (
             f"Expected that only {final_maps} maps remain, but there are sill {num_maps_after}."
         )
     if not has_processed:
-        if not (num_maps_after < num_maps_before):
-            safe_view(sdfg)
         assert num_maps_after < num_maps_before, f"Maps after: {num_maps_after}; Maps before: {num_maps_before}"
     return sdfg
 
@@ -1144,7 +1120,7 @@ def test_fusion_dataflow_intermediate_downstream():
     state2.add_nedge(
         state2.add_access("T"),
         state2.add_access("output_2"),
-        sdfg.make_array_memlet("T"),
+        sdfg.make_array_memlet("output_2"),
     )
     sdfg.validate()
 
@@ -1228,7 +1204,7 @@ def test_fusion_non_strict_dataflow_implicit_dependency():
         None,
         state2.add_access("C"),
         None,
-        dace.Memlet("T2[0:10] -> [0:10]"),
+        dace.Memlet("T2[0:10] -> C[0:10]"),
     )
     sdfg.validate()
 
@@ -1429,6 +1405,11 @@ def _impl_fusion_intermediate_different_access(modified_shape: bool, traditional
         output_nodes={B},
         external_edges=True,
     )
+    if not traditional_memlet_direction:
+        # A stage-out memlet must name the container outside the map; the pass renames it
+        with pytest.raises(InvalidSDFGEdgeError, match="must name"):
+            sdfg.validate()
+        NormalizeCopyMemlets().apply_pass(sdfg, {})
     sdfg.validate()
 
     apply_fusion(sdfg, removed_maps=1, final_maps=1)
@@ -1834,7 +1815,7 @@ def test_fusion_intrinsic_memlet_direction():
         None,
         me1_inner,
         tsklt1_oedge.dst_conn,
-        dace.Memlet("t1[0] -> [__i1, __i2, __i3]"),
+        dace.Memlet("t1[0] -> T[__i1, __i2, __i3]"),
     )
     state.remove_edge(tsklt1_oedge)
     tsklt1_oedge = None
@@ -1847,7 +1828,7 @@ def test_fusion_intrinsic_memlet_direction():
         tsklt2_iedge.src_conn,
         t2,
         None,
-        dace.Memlet("t2[0] -> [__i1, __i2, __i3]"),
+        dace.Memlet("T[__i1, __i2, __i3] -> [0]"),
     )
     state.add_edge(
         t2,
@@ -1869,10 +1850,13 @@ def test_fusion_intrinsic_memlet_direction():
         # There should be no edge, that references `T`.
         assert edge.data.data != "T"
 
-        # If an edge is connected to `t2` or `t1` then its data should refer to it.
-        #  no other Memlet shall refer to them.
+        # A memlet refers to `t1` or `t2` if it connects them to a code node, or copies through them
+        #  as the container outside the scope.
+        path = state.memlet_path(edge)
+        owner = copy_memlet_owner(sdfg, path)
         for t in [t1, t2]:
-            if edge.src is t or edge.dst is t:
+            ends = (path[0].src, path[-1].dst)
+            if (owner is None and t in ends) or owner == t.data:
                 assert edge.data.data == t.data
             else:
                 assert edge.data.data != t.data
@@ -2021,7 +2005,7 @@ def _make_multi_producer_intermediate() -> tuple[dace.SDFG, dace.SDFGState]:
     state2.add_nedge(
         state2.add_access("t"),
         state2.add_access("o2"),
-        dace.Memlet("t[0:20, 0:20] -> [0:20, 0:20]"),
+        dace.Memlet("t[0:20, 0:20] -> o2[0:20, 0:20]"),
     )
     sdfg.validate()
 
@@ -3384,7 +3368,7 @@ def test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in
     sdfg.add_array("x", [n], dace.float64, transient=True)
     state = sdfg.add_state()
     x0, x1 = state.add_access("x"), state.add_access("x")
-    state.add_nedge(state.add_read("X"), x0, dace.Memlet(f"X[0:{n}]"))
+    state.add_nedge(state.add_read("X"), x0, dace.Memlet(f"X[0:{n}] -> x[0:{n}]"))
     me0, mx0 = state.add_map("m0", {"i": f"0:{n}"}, schedule=dace.ScheduleType.Sequential)
     n0 = state.add_nested_sdfg(inc_all, {"x"}, {"x"}, symbol_mapping={})
     state.add_memlet_path(x0, me0, n0, dst_conn="x", memlet=dace.Memlet(f"x[0:{n}]"))
@@ -3394,7 +3378,7 @@ def test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in
     state.add_memlet_path(x1, me1, n1, dst_conn="x", memlet=dace.Memlet(f"x[0:{n}]"))
     state.add_memlet_path(n1, mx1, state.add_write("Y"), src_conn="Y", memlet=dace.Memlet(f"Y[0:{n}]"))
     after = sdfg.add_state_after(state)
-    after.add_nedge(after.add_read("x"), after.add_write("X"), dace.Memlet(f"x[0:{n}]"))
+    after.add_nedge(after.add_read("x"), after.add_write("X"), dace.Memlet(f"x[0:{n}] -> X[0:{n}]"))
     sdfg.validate()
 
     assert sdfg.apply_transformations_repeated(MapFusionVertical) == 0

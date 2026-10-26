@@ -52,9 +52,9 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
                                 a2,
                                 None,
                                 dace.Memlet(
-                                    data=in_arr_name,
-                                    subset=in_edge.data.subset,
-                                    other_subset=dace.subsets.Range(copy_shape),
+                                    data=shared_mem_name,
+                                    subset=dace.subsets.Range(copy_shape),
+                                    other_subset=in_edge.data.subset,
                                     wcr=None,
                                 ),
                             )

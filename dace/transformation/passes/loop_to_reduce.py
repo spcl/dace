@@ -344,14 +344,12 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
                 return None
             if desc.transient and len(state.in_edges(src)) == 1 and len(state.out_edges(src)) == 1:
                 pred = state.in_edges(src)[0]
-                if (
-                    not isinstance(pred.src, nodes.AccessNode)
-                    or pred.data is None
-                    or pred.data.subset is None
-                    or _one_elem(e.data.subset) != _one_elem(pred.data.subset)
-                ):
+                if not isinstance(pred.src, nodes.AccessNode) or pred.data is None:
                     return None
-                resolved.append((pred.src.data, _copy.deepcopy(pred.data.subset)))
+                pred_subset = pred.data.get_src_subset(pred, state)
+                if pred_subset is None or _one_elem(e.data.subset) != _one_elem(pred_subset):
+                    return None
+                resolved.append((pred.src.data, _copy.deepcopy(pred_subset)))
             else:
                 resolved.append((src.data, e.data.subset))
 

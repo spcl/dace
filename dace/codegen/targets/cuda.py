@@ -13,6 +13,7 @@ import dace
 from dace import Memlet, dtypes, registry, subsets, symbolic
 from dace import data as dt
 from dace.codegen import common, compiler_family, cppunparse
+from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.dispatcher import DefinedType
@@ -1230,6 +1231,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             dtypes.StorageType.CPU_Pinned,
         ]
         gpu_storage_types = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
+
+        # Every plain copy is a CopyLibraryNode by now (``InsertExplicitCopies``); only accumulates, streams and
+        # structures get here
+        from dace.transformation.passes.insert_explicit_copies import is_implicit_copy  # Avoid import loop
+
+        if isinstance(src_node, nodes.AccessNode) and is_implicit_copy(state_dfg, edge):
+            raise cgx.CodegenError(f"Copy {memlet} reached codegen; it should be a copy node")
 
         copy_shape = memlet.subset.bounding_box_size()
         copy_shape = [symbolic.overapproximate(s) for s in copy_shape]

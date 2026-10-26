@@ -488,6 +488,69 @@ def _is_out_of_bounds_index(index, offset, size) -> bool:
     return ((index + offset) >= size) == True
 
 
+def copy_memlet_owner(sdfg: "dace.sdfg.SDFG", path: list["gr.MultiConnectorEdge[Memlet]"]) -> str | None:
+    """The container a copy memlet on ``path`` must name, or None if ``path`` is not a copy.
+
+    A copy memlet is named by the container outside the scope its path crosses: the source when the path
+    enters scopes (stage-in), the destination when it leaves them (stage-out) or crosses none (direct).
+    ``subset`` belongs to that container, ``other_subset`` to the other end.
+    """
+    from dace import data as dt  # Avoid import loop
+    from dace.sdfg import nodes as nd
+
+    src, dst = path[0].src, path[-1].dst
+    if not (isinstance(src, nd.AccessNode) and isinstance(dst, nd.AccessNode)):
+        return None
+    not_copied = (dt.View, dt.Reference, dt.Stream, dt.Structure)
+    if isinstance(sdfg.arrays[src.data], not_copied) or isinstance(sdfg.arrays[dst.data], not_copied):
+        return None
+    return src.data if isinstance(path[0].dst, nd.EntryNode) else dst.data
+
+
+def validate_memlet_src_and_dst_subsets(
+    sdfg: "dace.sdfg.SDFG",
+    state: "dace.sdfg.SDFGState",
+    state_id: int,
+    eid: int,
+    edge: "gr.MultiConnectorEdge[Memlet]",
+    path: list["gr.MultiConnectorEdge[Memlet]"],
+) -> None:
+    """Raises if a copy memlet does not name the container ``copy_memlet_owner`` asks for.
+
+    ``A -> B`` names ``B``; ``A -> MapEntry -> loc`` names ``A``; ``loc -> MapExit -> C`` names ``C``;
+    ``A -> MapEntry -> A`` names ``A`` and moves no data. ``subset`` belongs to the named container and
+    ``other_subset`` to the other end.
+    """
+    from dace.sdfg import nodes as nd  # Avoid import loop
+
+    memlet = edge.data
+    if memlet.is_empty():
+        return
+    owner = copy_memlet_owner(sdfg, path)
+    if owner is None:
+        return
+    if memlet.data != owner:
+        raise InvalidSDFGEdgeError(
+            f'Copy memlet "{memlet}" must name "{owner}" (apply NormalizeCopyMemlets)',
+            state.parent_graph,
+            state_id,
+            eid,
+        )
+    # Same container at both ends: the name alone cannot tell which end ``subset`` belongs to
+    owned = (
+        memlet.get_src_subset(edge, state)
+        if isinstance(path[0].dst, nd.EntryNode)
+        else memlet.get_dst_subset(edge, state)
+    )
+    if owned is not memlet.subset:
+        raise InvalidSDFGEdgeError(
+            f'Copy memlet "{memlet}": "subset" must be the region of the "{owner}" end outside the scope',
+            state.parent_graph,
+            state_id,
+            eid,
+        )
+
+
 def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.MultiConnectorEdge[Memlet]"]):
     """
     Helper function that determines if a memlet is going to dereference a scalar value.
@@ -965,6 +1028,9 @@ def validate_state(
                 state_id,
                 eid,
             )
+
+        if name is not None:
+            validate_memlet_src_and_dst_subsets(sdfg, state, state_id, eid, e, path)
 
         # Check accessibility of scalar memlet data in tasklets and dynamic map ranges
         if (

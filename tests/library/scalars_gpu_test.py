@@ -42,7 +42,7 @@ def test_gpu(input_array, output_array, expand_first):
     else:
         transient_outp = state.add_access("transient_output_arr")
         state.add_edge(addnode, "_b", transient_outp, None, sdfg.make_array_memlet("transient_output_arr"))
-        state.add_edge(transient_outp, None, outp, None, sdfg.make_array_memlet("transient_output_arr"))
+        state.add_edge(transient_outp, None, outp, None, sdfg.make_array_memlet("output_arr"))
 
     sdfg.apply_gpu_transformations()
 

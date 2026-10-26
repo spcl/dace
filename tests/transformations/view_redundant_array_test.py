@@ -236,9 +236,9 @@ def test_transient_removal_uneven_flow_through_map():
     st1.add_edge(c, "out", mX, "IN_out", dace.Memlet(f"{T0.data}[i, j]"))
     st1.add_edge(mX, "OUT_out", T0, None, g.make_array_memlet(T0.data))
     # Forward only the boundary to the T1 transient.
-    st1.add_edge(T0, None, T1b, None, dace.Memlet(f"{T0.data}[0:N, N-1] -> [0:N, N-1]"))
+    st1.add_edge(T0, None, T1b, None, dace.Memlet(f"{T0.data}[0:N, N-1] -> {T1b.data}[0:N, N-1]"))
     # Forward the full transient.
-    st1.add_edge(T1b, None, Y, None, dace.Memlet(f"{T1b.data}[0:N, 0:N] -> [0:N, 0:N]"))
+    st1.add_edge(T1b, None, Y, None, dace.Memlet(f"{T1b.data}[0:N, 0:N] -> {Y.data}[0:N, 0:N]"))
 
     assert g.apply_transformations_repeated(RedundantArray) == 0
 

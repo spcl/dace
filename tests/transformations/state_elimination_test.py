@@ -43,7 +43,7 @@ def test_state_assign_elimination():
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
-    state3.add_nedge(state3.add_read("A"), state3.add_write("B"), dace.Memlet.simple("A", "k"))
+    state3.add_nedge(state3.add_read("A"), state3.add_write("B"), dace.Memlet("A[k] -> B[k]"))
 
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k="k + 1")))

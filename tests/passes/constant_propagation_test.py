@@ -274,7 +274,7 @@ def test_allocation_static():
     b.add_edge(t, "out", w, None, dace.Memlet("tmp"))
 
     # Third state outputs value
-    c.add_nedge(c.add_read("tmp"), c.add_write("output"), dace.Memlet("tmp[0]"))
+    c.add_nedge(c.add_read("tmp"), c.add_write("output"), dace.Memlet("tmp[0] -> output[0]"))
 
     # Do not perform scalar-to-symbol promotion
     ConstantPropagation().apply_pass(sdfg, {})
@@ -321,7 +321,7 @@ def test_allocation_varying(parametric):
     c.add_edge(t3, "out", w, None, dace.Memlet("tmp2[1]"))
 
     # Third state outputs value
-    c.add_nedge(w, c.add_write("output"), dace.Memlet("tmp2[1]"))
+    c.add_nedge(w, c.add_write("output"), dace.Memlet("tmp2[1] -> output[0]"))
 
     # Do not perform scalar-to-symbol promotion
     ConstantPropagation().apply_pass(sdfg, {})

@@ -209,19 +209,24 @@ def map_op_in(
     return map_misses
 
 
-def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack: AccessStack, C) -> int:
+def _edge_miss(
+    edge, clt: CacheLineTracker, array_names, mapping, symbols, stack: AccessStack, C, data=None, subset=None
+) -> int:
     """
     Account a single memlet access against the cache.
 
+    :param data: Container to account; defaults to the memlet's container.
+    :param subset: Region of ``data`` to account; defaults to the memlet's subset.
     :return: 1 if accessing the edge's data is a cache miss (or a first-ever touch), else 0. Edges
              whose data is not a tracked global-memory array contribute nothing.
     """
-    data = edge.data.data
+    data = edge.data.data if data is None else data
+    subset = edge.data.subset if subset is None else subset
     if data not in clt.array_info and not (data in array_names and array_names[data] in clt.array_info):
         return 0
     line_id = clt.cache_line_id(
         data if data not in array_names else array_names[data],
-        [x[0].subs(mapping) for x in edge.data.subset.ranges],
+        [x[0].subs(mapping) for x in subset.ranges],
         mapping,
     )
     line_id = int(line_id.subs(symbols).subs(mapping))
@@ -278,7 +283,8 @@ def scope_misses(
             # _edge_miss models a single cache line touch, which says nothing about a bulk copy.
             for e in state.out_edges(node):
                 if isinstance(e.dst, nd.AccessNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
-                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
+                    src_subset = e.data.get_src_subset(e, state)
+                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C, node.data, src_subset)
             # Copies between the scope boundary and a local buffer have no tasklet, but still touch the outer container
             for e in state.in_edges(node):
                 if isinstance(e.src, nd.EntryNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:

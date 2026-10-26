@@ -756,7 +756,7 @@ class BackwardPassGenerator:
             # Create a new memlet that copies what memlet is writing to to the tmp
             new_memlet_subset = memlet.subset if memlet.data == forward_node.data else memlet.other_subset
             original_to_tmp_memlet = dace.Memlet(
-                data=backward_node.data,
+                data=self.array_grad_name(forward_node.data) + "_tmp",
                 subset=copy.deepcopy(new_memlet_subset),
                 other_subset=copy.deepcopy(new_memlet_subset),
             )

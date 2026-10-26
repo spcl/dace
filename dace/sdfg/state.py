@@ -2423,7 +2423,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Innermost edge memlet
         cur_memlet = memlet
 
-        cur_memlet._is_data_src = isinstance(src_node, nd.AccessNode) and src_node.data == cur_memlet.data
+        # Both ends of a same-container copy match ``data``: its direction is explicit or follows the scope it crosses
+        if not (isinstance(dst_node, nd.AccessNode) and dst_node.data == cur_memlet.data):
+            cur_memlet._is_data_src = isinstance(src_node, nd.AccessNode) and src_node.data == cur_memlet.data
 
         # Verify that connectors exist
         if (

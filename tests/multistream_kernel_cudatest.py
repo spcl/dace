@@ -21,16 +21,16 @@ state = sdfg.add_state("s0")
 a = state.add_read("A")
 ga1 = state.add_access("gA1")
 ga2 = state.add_access("gA2")
-state.add_nedge(a, ga1, dace.Memlet.simple("A", "0:2"))
+state.add_nedge(a, ga1, dace.Memlet.simple("gA1", "0:2"))
 
 b = state.add_read("B")
 gb1 = state.add_access("gB1")
 gb2 = state.add_access("gB2")
-state.add_nedge(b, gb1, dace.Memlet.simple("B", "0:2"))
+state.add_nedge(b, gb1, dace.Memlet.simple("gB1", "0:2"))
 
 gc = state.add_access("gC")
 c = state.add_write("C")
-state.add_nedge(gc, c, dace.Memlet.simple("gC", "0:2"))
+state.add_nedge(gc, c, dace.Memlet.simple("C", "0:2"))
 
 t1, me1, mx1 = state.add_mapped_tasklet(
     "addone",

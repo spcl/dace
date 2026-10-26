@@ -1964,7 +1964,7 @@ def implement_ufunc_accumulate(
     init_state = nested_sdfg.add_state(label="init")
     r = init_state.add_read(inpconn)
     w = init_state.add_write(outconn)
-    init_state.add_nedge(r, w, Memlet("{a}[{i}] -> [{oi}]".format(a=inpconn, i="0", oi="0")))
+    init_state.add_nedge(r, w, Memlet(f"[0] -> {outconn}[0]"))
 
     body_state = nested_sdfg.add_state(label="body")
     r1 = body_state.add_read(inpconn)

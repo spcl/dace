@@ -311,7 +311,7 @@ def test_need_for_tasklet():
     _, _, _ = sdfg.add_loop_state_machine(None, body, None, "i", "0", "i < 10", "i + 1", None)
     anode = body.add_access(aname)
     bnode = body.add_access(bname)
-    body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset="i", other_subset="9 - i"))
+    body.add_nedge(anode, bnode, dace.Memlet(data=bname, subset="9 - i", other_subset="i"))
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
@@ -333,7 +333,7 @@ def test_need_for_transient():
     _, _, _ = sdfg.add_loop_state_machine(None, body, None, "i", "0", "i < 10", "i + 1", None)
     anode = body.add_access(aname)
     bnode = body.add_access(bname)
-    body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset="0:10, i", other_subset="0:10, 9 - i"))
+    body.add_nedge(anode, bnode, dace.Memlet(data=bname, subset="0:10, 9 - i", other_subset="0:10, i"))
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)

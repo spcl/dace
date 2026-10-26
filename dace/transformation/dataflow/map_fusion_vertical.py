@@ -9,6 +9,7 @@ from ordered_set import OrderedSet
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
+from dace.sdfg import utils as sdutil
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
@@ -301,6 +302,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(
         self,
         graph: dace.SDFGState | dace.SDFG,

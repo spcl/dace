@@ -92,7 +92,7 @@ def test_pure_with_a_register_vector():
     sdfg.add_array("xr", [3], dace.float64, transient=True, storage=dace.StorageType.Register)
     state = sdfg.add_state()
     xr = state.add_access("xr")
-    state.add_nedge(state.add_read("x"), xr, Memlet("x[0:3]"))
+    state.add_nedge(state.add_read("x"), xr, Memlet("x[0:3] -> xr[0:3]"))
     node = blas.Gemv("gemv")
     node.implementation = "pure"
     state.add_node(node)

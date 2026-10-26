@@ -138,7 +138,7 @@ def test_non_lin_delin_1():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[0:10, 0:10] -> [0:10, 0:10]"),
+        dace.Memlet("a[0:10, 0:10] -> b[0:10, 0:10]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 
@@ -148,7 +148,7 @@ def test_non_lin_delin_2():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[0:10, 0:10] -> [50:60, 40:50]"),
+        dace.Memlet("a[0:10, 0:10] -> b[50:60, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 
@@ -158,7 +158,7 @@ def test_non_lin_delin_3():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[1:11, 20:30] -> [50:60, 40:50]"),
+        dace.Memlet("a[1:11, 20:30] -> b[50:60, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 
@@ -168,7 +168,7 @@ def test_non_lin_delin_4():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 40:50]"),
+        dace.Memlet("a[1:11, 2, 20:30] -> b[50:60, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 
@@ -178,7 +178,7 @@ def test_non_lin_delin_5():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 4, 40:50]"),
+        dace.Memlet("a[1:11, 2, 20:30] -> b[50:60, 4, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 
@@ -188,7 +188,7 @@ def test_non_lin_delin_6():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[1:11, 20:30] -> [50:60, 4, 40:50]"),
+        dace.Memlet("a[1:11, 20:30] -> b[50:60, 4, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 
@@ -208,7 +208,7 @@ def test_non_lin_delin_8():
     e = state.add_nedge(
         a,
         b,
-        dace.Memlet("a[5:15, 6:16]"),
+        dace.Memlet("a[5:15, 6:16] -> b[0:10, 0:10]"),
     )
     _perform_non_lin_delin_test(sdfg, e)
 

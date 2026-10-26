@@ -25,11 +25,11 @@ def test():
     F = s0.add_access("F")
 
     # Reading A at [1, 0:8:8:2, 3]
-    s0.add_nedge(A, B, dace.Memlet.simple(A, "1, 0:10:8:2, 3"))
+    s0.add_nedge(A, B, dace.Memlet.simple(B, "0:4", other_subset_str="1, 0:10:8:2, 3"))
     s0.add_nedge(B, C, dace.Memlet.simple(C, "1, 0:10:8:2, 3"))
 
     # Emulate a blocked tiled matrix multiplication pattern
-    s0.add_nedge(D, E, dace.Memlet.simple(D, "8:76:64:4,4:72:64:4"))
+    s0.add_nedge(D, E, dace.Memlet.simple(E, "0:8, 0:8", other_subset_str="8:76:64:4,4:72:64:4"))
     s0.add_nedge(E, F, dace.Memlet.simple(F, "8:76:64:4,4:72:64:4"))
 
     A = np.random.rand(2, 16, 4).astype(np.float32)

@@ -155,6 +155,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         else:
             return str(self.map_entry)
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph: SDFGState, sdfg):
         # Avoid import loops
         from dace.transformation.passes.array_elimination import ArrayElimination

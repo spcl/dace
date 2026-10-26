@@ -38,7 +38,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         transpose_in.implementation = "cuBLAS"
         transpose_out = linalg.Transpose("transpose_out", dtype=dtype)
         transpose_out.implementation = "cuBLAS"
-        state.add_nedge(xhi, xi, Memlet.from_array(*xhost_arr))
+        state.add_nedge(xhi, xi, Memlet.from_array(*x_arr))
         state.add_nedge(xo, xho, Memlet.from_array(*xhost_arr))
         state.add_memlet_path(xi, transpose_in, dst_conn="_inp", memlet=Memlet.from_array(*x_arr))
         state.add_memlet_path(transpose_in, xin, src_conn="_out", memlet=Memlet.from_array(*xt_arr))

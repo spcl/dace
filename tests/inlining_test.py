@@ -138,8 +138,8 @@ def _make_chain_reduction_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     state.add_edge(state.add_access("I1"), None, nsdfg_node_1, "B", dace.Memlet("I1[0:10]"))
     state.add_edge(nsdfg_node_1, "C", T5, None, dace.Memlet("T5[0:10]"))
 
-    state.add_nedge(T4, T2, dace.Memlet("T4[0:10] -> [0:10]"))
-    state.add_nedge(T5, T2, dace.Memlet("T5[0:10] -> [10:20]"))
+    state.add_nedge(T4, T2, dace.Memlet("T4[0:10] -> T2[0:10]"))
+    state.add_nedge(T5, T2, dace.Memlet("T5[0:10] -> T2[10:20]"))
 
     inner_sdfg_2 = _make_nested_sdfg("second_adding")
     nsdfg_node_2 = state.add_nested_sdfg(
@@ -154,9 +154,9 @@ def _make_chain_reduction_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.
 
     state.add_edge(nsdfg_node_2, "C", T1, None, dace.Memlet("T1[0:10]"))
 
-    state.add_nedge(T1, T3, dace.Memlet("T1[0:10] -> [0:10]"))
-    state.add_nedge(T2, T3, dace.Memlet("T2[0:20] -> [10:30]"))
-    state.add_nedge(T3, state.add_access("O"), dace.Memlet("T3[0:30] -> [0:30]"))
+    state.add_nedge(T1, T3, dace.Memlet("T1[0:10] -> T3[0:10]"))
+    state.add_nedge(T2, T3, dace.Memlet("T2[0:20] -> T3[10:30]"))
+    state.add_nedge(T3, state.add_access("O"), dace.Memlet("T3[0:30] -> O[0:30]"))
     outer_sdfg.validate()
 
     return outer_sdfg, state, nsdfg_node_1, nsdfg_node_2
@@ -614,7 +614,7 @@ def test_regression_inline_subset():
         None,
         nstate.add_write("output"),
         None,
-        dace.Memlet("input[32:64, 0:32] -> [0:32, 0:32]"),
+        dace.Memlet("input[32:64, 0:32] -> output[0:32, 0:32]"),
     )
 
     @dace.program
@@ -732,11 +732,11 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         inner_astate.add_nedge(
             inner_astate.add_access("t"),
             inner_astate.add_access("b"),
-            dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"),
+            dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> b[1:{inner_symbol_name}]"),
         )
     else:
         inner_state.add_nedge(
-            t, inner_state.add_access("b"), dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]")
+            t, inner_state.add_access("b"), dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> b[1:{inner_symbol_name}]")
         )
 
     # Creating the outer SDFG.
@@ -832,7 +832,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outer_state.add_nedge(
         T,
         B,
-        dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True),
+        dace.Memlet(f"T[0:{shape_of_T[0]}] -> B[0:20]", allow_oob=True),
     )
 
     outer_sdfg.validate()
@@ -904,7 +904,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         inner_astate.add_nedge(
             inner_astate.add_access("t"),
             inner_astate.add_access("b"),
-            dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"),
+            dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> b[1:{inner_symbol_name}]"),
         )
 
     else:
@@ -912,7 +912,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         #  show up in the signature of the inner SDFG. If we would describe the copy in terms of
         #  `outer_symbol` then that symbol would show up.
         inner_state.add_nedge(
-            t, inner_state.add_access("b"), dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]")
+            t, inner_state.add_access("b"), dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> b[1:{inner_symbol_name}]")
         )
 
     # Creating the outer SDFG.
@@ -981,7 +981,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     outer_state.add_nedge(
         T,
         B,
-        dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True),
+        dace.Memlet(f"T[0:{shape_of_T[0]}] -> B[0:20]", allow_oob=True),
     )
 
     # Integration folds `inner_symbol -> outer_symbol` into the inner SDFG
@@ -1366,7 +1366,7 @@ def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.Condi
             branch_state.add_nedge(
                 branch_state.add_access(src),
                 branch_state.add_access("C"),
-                dace.Memlet(data=src, subset=f"0:{size}", other_subset=f"0:{size}"),
+                dace.Memlet(data="C", subset=f"0:{size}", other_subset=f"0:{size}"),
             )
 
     return if_region
@@ -1754,7 +1754,7 @@ def _constant_mapped_two_level_sdfg() -> tuple[dace.SDFG, dace_nodes.NestedSDFG]
     middle.add_transient("t", [M, K], dace.float64)
     state = middle.add_state()
     t = state.add_access("t")
-    state.add_nedge(state.add_read("x"), t, middle.make_array_memlet("x"))
+    state.add_nedge(state.add_read("x"), t, middle.make_array_memlet("t"))
     inner_node = state.add_nested_sdfg(inner, {"a"}, {"b"})
     state.add_edge(t, None, inner_node, "a", middle.make_array_memlet("t"))
     state.add_edge(inner_node, "b", state.add_write("y"), None, middle.make_array_memlet("y"))

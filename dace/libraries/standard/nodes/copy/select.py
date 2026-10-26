@@ -43,8 +43,11 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
             return "CastOnDevice"
         return "Tasklet" if single_elt else "MappedTasklet"
 
+    # The Snitch cluster moves its scratchpad (TCDM) through its own DMA engine.
+    if dtypes.StorageType.Snitch_TCDM in (inp.storage, out.storage):
+        return "Tasklet" if single_elt else "MemcpySnitchDMA"
+
     # GPU_Shared: SharedMemoryCollective, unless thread-level (Register endpoint or in a map).
-    # TODO: replace dace::CopyND with a vectorized 128-bit collective load.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         thread_level = (
             inp.storage == dtypes.StorageType.Register

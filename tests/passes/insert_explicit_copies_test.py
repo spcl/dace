@@ -16,6 +16,7 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+from dace.transformation.passes.normalize_copy_memlets import NormalizeCopyMemlets
 
 # The polybench programs import their ``polybench`` harness as a top-level module, which only
 # resolves when run as scripts (own directory on sys.path); importing them as a package needs it too.
@@ -129,7 +130,9 @@ def test_insert_cpu_to_cpu_1d():
     """CPU_Heap -> CPU_Heap 1D copy."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, _, _, _ = _build_copy_sdfg(
-        "insert_cpu_cpu_1d", [("A", [100], cpu), ("B", [100], cpu)], Memlet("A[10:60]", other_subset="20:70")
+        "insert_cpu_cpu_1d",
+        [("A", [100], cpu), ("B", [100], cpu)],
+        Memlet(data="B", subset="20:70", other_subset="10:60"),
     )
 
     assert _count_direct_copy_edges(sdfg) == 1
@@ -152,7 +155,7 @@ def test_insert_cpu_to_cpu_2d_slice():
     sdfg, _, _, _ = _build_copy_sdfg(
         "insert_cpu_2d",
         [("A", [10, 20], cpu), ("B", [10, 20], cpu)],
-        Memlet(data="A", subset="2:8, 5:15", other_subset="0:6, 0:10"),
+        Memlet(data="B", subset="0:6, 0:10", other_subset="2:8, 5:15"),
     )
 
     InsertExplicitCopies().apply_pass(sdfg, {})
@@ -175,9 +178,10 @@ def test_insert_cpu_to_cpu_2d_slice():
     ids=["data_is_dst", "data_is_src"],
 )
 def test_insert_other_subset_data_convention(sdfg_name, memlet):
-    """Both memlet conventions yield the same copy ``_in=A[2:10]``, ``_out=B[0:8]`` with no ``other_subset``."""
+    """Both memlet conventions, normalized, yield ``_in=A[2:10]``, ``_out=B[0:8]`` with no ``other_subset``."""
     cpu = dace.StorageType.CPU_Heap
     sdfg, st, _, _ = _build_copy_sdfg(sdfg_name, [("A", [20], cpu), ("B", [20], cpu)], memlet)
+    NormalizeCopyMemlets().apply_pass(sdfg, {})
 
     InsertExplicitCopies().apply_pass(sdfg, {})
     _assert_no_other_subset(sdfg)
@@ -203,7 +207,7 @@ def test_insert_other_subset_data_convention(sdfg_name, memlet):
 def test_insert_cpu_to_cpu_full_array():
     """Full array copy."""
     cpu = dace.StorageType.CPU_Heap
-    sdfg, _, _, _ = _build_copy_sdfg("insert_full", [("A", [64], cpu), ("B", [64], cpu)], Memlet("A[0:64]"))
+    sdfg, _, _, _ = _build_copy_sdfg("insert_full", [("A", [64], cpu), ("B", [64], cpu)], Memlet("B[0:64]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
     _assert_no_other_subset(sdfg)
@@ -341,7 +345,7 @@ def test_single_element_copies_expand_to_tasklets_no_nested_sdfg():
 def test_insert_validates_after_pass():
     """SDFG passes validation after InsertExplicitCopies."""
     cpu = dace.StorageType.CPU_Heap
-    sdfg, _, _, _ = _build_copy_sdfg("validate_after", [("A", [100], cpu), ("B", [100], cpu)], Memlet("A[0:100]"))
+    sdfg, _, _, _ = _build_copy_sdfg("validate_after", [("A", [100], cpu), ("B", [100], cpu)], Memlet("B[0:100]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
     _assert_no_other_subset(sdfg)
@@ -463,7 +467,11 @@ def _run_reshape_copy_test(prefix, src_shape, dst_shape):
     sdfg, _, _, _ = _build_copy_sdfg(
         f"{prefix}_{len(src_shape)}_to_{len(dst_shape)}",
         [("A", src_shape, cpu), ("B", dst_shape, cpu)],
-        Memlet(data="A", subset=", ".join(f"0:{s}" for s in src_shape)),
+        Memlet(
+            data="B",
+            subset=", ".join(f"0:{s}" for s in dst_shape),
+            other_subset=", ".join(f"0:{s}" for s in src_shape),
+        ),
     )
     InsertExplicitCopies().apply_pass(sdfg, {})
     _check_reshape_copy(sdfg, "B", dst_shape)
@@ -540,7 +548,7 @@ def test_insert_view_rewrite_is_idempotent_under_repeated_apply():
 def test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_name, dst_storage, size):
     """Structural check for cross-storage (CPU<->GPU, GPU<->GPU) transfers."""
     sdfg, _, _, _ = _build_copy_sdfg(
-        sdfg_name, [(src_name, [size], src_storage), (dst_name, [size], dst_storage)], Memlet(f"{src_name}[0:{size}]")
+        sdfg_name, [(src_name, [size], src_storage), (dst_name, [size], dst_storage)], Memlet(f"{dst_name}[0:{size}]")
     )
 
     InsertExplicitCopies().apply_pass(sdfg, {})
@@ -622,7 +630,7 @@ def test_iec_array_to_array_rank_mismatch(name, src_shape, dst_shape, subset, ot
     sdfg, _, _, _ = _build_copy_sdfg(
         f"a2a_{name}",
         [("src", src_shape, default), ("dst", dst_shape, default)],
-        Memlet(data="src", subset=subset, other_subset=other_subset),
+        Memlet(data="dst", subset=other_subset, other_subset=subset),
     )
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
@@ -998,23 +1006,23 @@ def test_polybench_covariance():
     _run_and_compare(covariance, _init_covariance, ["cov"], {"N": 32, "M": 28}, "covariance")
 
 
-def test_iec_skips_dtype_converting_copy():
-    """A direct copy between different dtypes is a cast, not a byte move: the pass must leave it
-    for tasklet lowering rather than insert a ``CopyLibraryNode`` (memcpy), which cannot convert.
-    Regression: the direct-copy path lacked the dtype guard its staging path already has."""
+def test_iec_lowers_dtype_converting_copy():
+    """A direct copy between different dtypes becomes a casting ``CopyLibraryNode`` that converts every value."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("iec_dtype_convert")
     sdfg.add_array("A", [64], dace.float32, cpu)
     sdfg.add_array("B", [64], dace.float64, cpu)
     st = sdfg.add_state("s")
-    a = st.add_access("A")
-    b = st.add_access("B")
-    st.add_edge(a, None, b, None, Memlet("A[0:64]"))
+    st.add_edge(st.add_access("A"), None, st.add_access("B"), None, Memlet("B[0:64]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    assert _count_copy_nodes(sdfg) == 0, "a dtype-converting copy must not be lowered to CopyLibraryNode"
-    assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
+    assert _count_copy_nodes(sdfg) == 1
+    assert _count_direct_copy_edges(sdfg) == 0
+    A = np.linspace(0, 1, 64, dtype=np.float32)
+    B = np.zeros(64, dtype=np.float64)
+    _compile_and_run(sdfg, dict(A=A, B=B))
+    np.testing.assert_array_equal(B, A.astype(np.float64))
 
 
 def test_iec_skips_reference_set_edge():
@@ -1176,9 +1184,9 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     state.add_edge(state.add_read("B"), None, me, "IN_B", Memlet("B[0:2]"))
     state.add_edge(me, "OUT_A", tmp_a, None, Memlet("A[i]"))
     state.add_edge(me, "OUT_B", tmp_b, None, Memlet("B[i]"))
-    state.add_edge(tmp_a, None, a_write, None, Memlet("tmp_A[0] -> [((i+1)%2)]"))
+    state.add_edge(tmp_a, None, a_write, None, Memlet("tmp_A[0] -> A[((i+1)%2)]"))
     state.add_edge(a_write, None, mx, "IN_A", Memlet("A[0:2]"))
-    state.add_edge(tmp_b, None, a_ordered, None, Memlet("tmp_B[0] -> [((i+1)%2)]"))
+    state.add_edge(tmp_b, None, a_ordered, None, Memlet("tmp_B[0] -> A[((i+1)%2)]"))
     state.add_edge(a_ordered, None, tmp_a, None, Memlet())  # the ordering edge
     state.add_edge(a_ordered, None, mx, "IN_A", Memlet("A[0:2]"))
     state.add_edge(mx, "OUT_A", state.add_write("A"), None, Memlet("A[0:2]"))
@@ -1207,7 +1215,7 @@ def competing_direct_copy_sdfg() -> dace.SDFG:
     a = state.add_access("A")
     b = state.add_access("B")
     tasklet = state.add_tasklet("supersede", {"i"}, {"o"}, "o = i + 1.0")
-    state.add_nedge(a, b, Memlet("A[0:4] -> [0:4]"))
+    state.add_nedge(a, b, Memlet("A[0:4] -> B[0:4]"))
     state.add_edge(a, None, tasklet, "i", Memlet("A[0]"))
     state.add_edge(tasklet, "o", b, None, Memlet("B[0]"))
     sdfg.validate()
@@ -1259,7 +1267,7 @@ def concat_where_sdfg(copies: int) -> dace.SDFG:
         tasklet = state.add_tasklet(f"double_{name}", {"a"}, {"o"}, "o = a * 2.0")
         state.add_memlet_path(state.add_read("A"), entry, tasklet, dst_conn="a", memlet=Memlet("A[i]"))
         state.add_memlet_path(tasklet, exit_node, dst, src_conn="o", memlet=Memlet(f"{name}[i]"))
-        state.add_nedge(source, dst, Memlet("S[Max(K, 0):N] -> [Max(K, 0):N]"))
+        state.add_nedge(source, dst, Memlet(f"S[Max(K, 0):N] -> {name}[Max(K, 0):N]"))
     sdfg.validate()
     return sdfg
 
@@ -1380,7 +1388,7 @@ def test_zero_element_copy_is_not_lifted():
     for name in "AB":
         sdfg.add_array(name, [20, 20], dace.float64, transient=True)
     state = sdfg.add_state("main", is_start_block=True)
-    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[2:17, 2:2] -> [2:18, 3:3]"))
+    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[2:17, 2:2] -> B[2:18, 3:3]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
@@ -1396,7 +1404,7 @@ def test_lifted_copy_inherits_the_state_instrumentation():
     sdfg.add_array("B", [4], dace.float64)
     state = sdfg.add_state("main", is_start_block=True)
     state.instrument = dace.InstrumentationType.GPU_TX_MARKERS
-    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[0:4] -> [0:4]"))
+    state.add_nedge(state.add_access("A"), state.add_access("B"), Memlet("A[0:4] -> B[0:4]"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
@@ -1471,7 +1479,7 @@ if __name__ == "__main__":
     test_polybench_fdtd2d()
     test_polybench_correlation()
     test_polybench_covariance()
-    test_iec_skips_dtype_converting_copy()
+    test_iec_lowers_dtype_converting_copy()
     test_iec_skips_reference_set_edge()
     test_iec_skips_reference_set_edge_through_map()
     test_iec_staging_keeps_memlet_named_inner_subset()

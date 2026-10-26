@@ -247,7 +247,7 @@ def _rename_descriptors_for_recomputation_nsdfg(forward_sdfg: SDFG, nsdfg: nodes
         initi_state.add_node(new_node)
 
         # Add memory copy edge
-        initi_state.add_edge(input_node, None, new_node, None, forward_sdfg.make_array_memlet(name))
+        initi_state.add_edge(input_node, None, new_node, None, forward_sdfg.make_array_memlet(new_name))
 
         # Change the output if necessary
         if name in nsdfg.out_connectors:

@@ -70,7 +70,7 @@ def _get_sdfg(condition: str):
     s1 = cfg.add_state(label="s1")
     aA = s1.add_access("A")
     aB = s1.add_access("B")
-    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(aA, None, aB, None, sdfg.make_array_memlet("B"))
 
     return sdfg
 
@@ -114,7 +114,7 @@ def _get_if_else_sdfg(condition: str, body_in_else_branch: bool):
         s2 = cfg_if_true.add_state(label="ts1", is_start_block=True)
     aA = s1.add_access("A")
     aB = s1.add_access("B")
-    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(aA, None, aB, None, sdfg.make_array_memlet("B"))
 
     return sdfg
 
@@ -155,7 +155,7 @@ def _get_nested_sdfg(condition1: str, condition2: str):
     s1 = cfg2.add_state(label="s1", is_start_block=True)
     aA = s1.add_access("A")
     aB = s1.add_access("B")
-    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(aA, None, aB, None, sdfg.make_array_memlet("B"))
 
     return sdfg
 
@@ -198,7 +198,7 @@ def _get_sdfg_with_many_states():
     s1 = cfg2.add_state(label="s1", is_start_block=True)
     aA = s1.add_access("A")
     aB = s1.add_access("B")
-    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(aA, None, aB, None, sdfg.make_array_memlet("B"))
     return sdfg
 
 
@@ -345,7 +345,7 @@ def _get_loop_with_conditional(
         els.add_state(label="e_s", is_start_block=True)
         live = els
     s1 = live.start_block  # the dataflow goes on the branch that survives
-    s1.add_edge(s1.add_access("A"), None, s1.add_access("B"), None, dace.memlet.Memlet.from_array("A", A))
+    s1.add_edge(s1.add_access("A"), None, s1.add_access("B"), None, sdfg.make_array_memlet("B"))
     return sdfg
 
 

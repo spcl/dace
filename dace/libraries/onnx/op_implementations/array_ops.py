@@ -504,7 +504,7 @@ class SplitPure(ONNXForward):
 
             # Perform copy (view)
             nstate.add_nedge(
-                rnode, wnode, dace.Memlet(data="input", subset=rng, other_subset=subsets.Range.from_array(odesc))
+                rnode, wnode, dace.Memlet(data=oname, subset=subsets.Range.from_array(odesc), other_subset=rng)
             )
 
         return nsdfg
