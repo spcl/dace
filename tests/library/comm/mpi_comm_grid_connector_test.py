@@ -54,7 +54,7 @@ class _MockProgramVisitor:
 
 def _expanded_code(node, state, sdfg):
     """Expand a single MPI library node and return (emitted C code, in_connectors)."""
-    expansion = node.implementations[node.default_implementation]
+    expansion = node.implementations["MPI"]  # the comm nodes pick MPI or NCCL by backend; these checks are MPI
     tasklet = expansion.expansion(node, state, sdfg)
     return tasklet.code.as_string, tasklet.in_connectors
 

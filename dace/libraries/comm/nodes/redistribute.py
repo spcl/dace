@@ -2,7 +2,7 @@
 from dace import dtypes, library, properties, subsets, symbolic
 from dace.codegen.targets import cpp
 from dace.libraries.comm import environments
-from dace.libraries.comm.nodes.node import CommNode
+from dace.libraries.comm.nodes.node import CommNode, mpi_communicator
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -24,8 +24,6 @@ class ExpandRedistribute(ExpandTransformation):
         out_subset = subsets.Range.from_indices(out_symbols)
         inp_offset = cpp.cpp_offset_expr(inp_buffer, inp_subset)
         out_offset = cpp.cpp_offset_expr(out_buffer, out_subset)
-        print(inp_offset)
-        print(out_offset)
         inp_repl = ""
         for i, s in enumerate(inp_symbols):
             inp_repl += f"int {s} = __state->{node.redistr}_self_src[__idx * {len(inp_buffer.shape)} + {i}];\n"
@@ -39,9 +37,12 @@ class ExpandRedistribute(ExpandTransformation):
             ]
         )
 
+        # The communicator given to the node (``_comm``, else ``_grid``), not always the world
+        comm = mpi_communicator(node, parent_state)
+
         code = f"""
             int myrank;
-            MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+            MPI_Comm_rank({comm}, &myrank);
             MPI_Request* req = new MPI_Request[__state->{node._redistr}_sends];
             MPI_Status* status = new MPI_Status[__state->{node._redistr}_sends];
             MPI_Status recv_status;
@@ -49,7 +50,7 @@ class ExpandRedistribute(ExpandTransformation):
                 for (auto __idx = 0; __idx < __state->{node._redistr}_sends; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I send to %d\\n", myrank, __state->{node._redistr}_dst_ranks[__idx]);
                     // fflush(stdout);
-                    MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &req[__idx]);
+                    MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, {comm}, &req[__idx]);
                 }}
             }}
             if (__state->{array_b.pgrid}_valid) {{
@@ -65,7 +66,7 @@ class ExpandRedistribute(ExpandTransformation):
                 for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
                     // fflush(stdout);
-                    MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &recv_status);
+                    MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, {comm}, &recv_status);
                 }}
             }}
             if (__state->{array_a.pgrid}_valid) {{
