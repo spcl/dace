@@ -27,13 +27,14 @@ class AccessIndex:
     A rewrite keeps the index exact by calling :meth:`forget` on every state it changed.
     """
 
-    __slots__ = ("sdfg", "by_state", "states_of", "edges_of")
+    __slots__ = ("sdfg", "by_state", "states_of", "edges_of", "mentioned")
 
     def __init__(self, sdfg: SDFG) -> None:
         self.sdfg = sdfg
         self.by_state: dict[SDFGState, dict[str, list[nd.AccessNode]]] = {}
         self.states_of: dict[str, list[SDFGState]] | None = None
         self.edges_of: dict[str, list[ControlFlowBlock]] | None = None
+        self.mentioned: dict[ControlFlowBlock, frozenset[str] | None] = {}
 
     def nodes(self, state: SDFGState, name: str) -> list[nd.AccessNode]:
         """The access nodes of ``name`` in ``state``."""
@@ -72,10 +73,41 @@ class AccessIndex:
         """Whether every access of ``name`` lies in ``states`` and no interstate edge names it."""
         return all(state in states for state in self.states(name)) and not self.edge_sources(name)
 
+    def mentions(self, block: ControlFlowBlock) -> frozenset[str] | None:
+        """The names ``block`` may access at its own level: its access nodes, the free symbols of its interstate
+        edges and of its loop or branch conditions, those of the blocks it holds; ``None`` when it holds a block
+        that may read anything (a break, continue or return)."""
+        if block in self.mentioned:
+            return self.mentioned[block]
+        names: set[str] | None
+        if isinstance(block, SDFGState):
+            self.nodes(block, "")
+            names = set(self.by_state[block])
+        elif isinstance(block, (ConditionalBlock, ControlFlowRegion)):
+            names = set()
+            for code in block.get_meta_codeblocks():
+                if code is not None:
+                    names |= code.get_free_symbols()
+            children = [branch for _, branch in block.branches] if isinstance(block, ConditionalBlock) else block.nodes()
+            if not isinstance(block, ConditionalBlock):
+                for edge in block.edges():
+                    names |= {str(sym) for sym in edge.data.free_symbols}
+            for child in children:
+                inner = self.mentions(child)
+                if inner is None:
+                    names = None
+                    break
+                names |= inner
+        else:
+            names = None
+        self.mentioned[block] = None if names is None else frozenset(names)
+        return self.mentioned[block]
+
     def forget(self, *states: SDFGState) -> None:
         """Drop what the index knows about ``states`` and the whole-SDFG tables, after a rewrite changed them."""
         for state in states:
             self.by_state.pop(state, None)
+        self.mentioned.clear()
         self.states_of = None
         self.edges_of = None
 
@@ -414,11 +446,19 @@ class MustDefinition:
         first, rest = sets[0], sets[1:]
         return {k: v for k, v in first.items() if all(k in other for other in rest)}
 
+    def silent(self, block: ControlFlowBlock) -> bool:
+        """Whether ``block`` neither accesses the container nor holds a block that may read it."""
+        mentioned = self.index.mentions(block)
+        return mentioned is not None and self.accesses.name not in mentioned
+
     def gen(self, block: ControlFlowBlock) -> dict:
         """The writes every path through ``block`` makes, independent of what held on entry."""
         cached = self.gen_cache.get(block)
         if cached is not None:
             return cached
+        if self.silent(block):
+            self.gen_cache[block] = {}
+            return self.gen_cache[block]
         self.gen_cache[block] = {}
         result: dict = {}
         if isinstance(block, SDFGState):
@@ -441,6 +481,8 @@ class MustDefinition:
         return self.accesses.read_by(names)
 
     def block_exposed(self, block: ControlFlowBlock, defined: dict) -> bool:
+        if self.silent(block):
+            return False
         acc = self.accesses
         held = list(defined.values())
         if isinstance(block, SDFGState):
