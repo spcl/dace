@@ -293,6 +293,23 @@ theorem longestPrefix_sound {p : List SNode → Bool} {cs body rest : List SNode
   obtain ⟨k, hk, rfl, rfl⟩ := h
   exact ⟨by simpa using List.find?_some hk, (List.take_append_drop k cs).symm⟩
 
+/-- Decision procedure for `NestedShape`. -/
+def nestedShape? (body : List SNode) : Bool :=
+  body.all SNode.isFlatT ||
+    match exitLabel? body with
+    | some (L, pre) => !SNodes.hasLabel L pre && SNodes.jumpsTo (some L) pre && SNodes.keepsSyms pre
+    | none => false
+
+theorem nestedShape?_sound {body : List SNode} (h : nestedShape? body = true) : NestedShape body := by
+  unfold nestedShape? at h
+  rcases Bool.or_eq_true_iff.1 h with h | h
+  · exact .inl h
+  · split at h
+    · rename_i L pre hl
+      simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+      exact .inr ⟨L, pre, exitLabel?_sound hl, h.1.1, h.1.2, h.2⟩
+    · cases h
+
 /-- Recognize a nested SDFG node outside map scopes (`SegCorr.nested`; `nest`
 checks the inlined inner region): the inlined body at the head of `cs` and
 the rest. -/
@@ -304,10 +321,9 @@ def nestedCall (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List
     | .ok conns =>
       if nestedMapOk? ctx inner mapping = true ∧
           (nestedConns n).all (fun c => (nestedEndpoint s n c).isData) = true ∧
-          s.dataOuts? n = true ∧
-          inner.top.statesOnly = true ∧ inner.callTransients = [] ∧
+          s.dataOuts? n = true ∧ inner.callTransients = [] ∧
           innerNames? ctx (tc.renT (connPerm conns)) inner n.id conns = true
-      then longestPrefix (fun body => body.all SNode.isFlatT && nest (connPerm conns) inner body) cs
+      then longestPrefix (fun body => nestedShape? body && nest (connPerm conns) inner body) cs
       else none
     | .err _ => none
   | _ => none
@@ -324,12 +340,12 @@ theorem nestedCall_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
     · rename_i conns hb
       split at h
       · rename_i hc
-        obtain ⟨hm, hcode, hout, hst, hctr, hnames⟩ := hc
+        obtain ⟨hm, hcode, hout, hctr, hnames⟩ := hc
         obtain ⟨hp, hcs⟩ := longestPrefix_sound h
         simp only [Bool.and_eq_true] at hp
         refine ⟨hcs, fun id o tail hn ht => ?_⟩
-        exact .nested hn hkn hb (nestedMapOk?_sound hm) (List.all_eq_true.1 hcode) (State.dataOuts?_sound hout) hst
-          hctr hp.1 (innerNames?_sound hnames) (hnest _ _ _ hp.2) ht
+        exact .nested hn hkn hb (nestedMapOk?_sound hm) (List.all_eq_true.1 hcode) (State.dataOuts?_sound hout)
+          hctr (nestedShape?_sound hp.1) (innerNames?_sound hnames) (hnest _ _ _ hp.2) ht
       · cases h
     · cases h
   · cases h
@@ -982,8 +998,8 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
     exact .nestedMap hn hk hkeys hok hds hto hdir
       (fun x hx => let ⟨xn, h₁, h₂, h₃, h₄⟩ := hxs x hx; ⟨xn, h₁, h₂, CopyShape.withI I₂ h₃, h₄⟩)
       hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hpriv hnames hinner ih
-  | nested hnd hkn hb hmap hcode hout hst hctr hflat hnames hinner _ ih =>
-    exact .nested hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hst hctr hflat hnames hinner ih
+  | nested hnd hkn hb hmap hcode hout hctr hshape hnames hinner _ ih =>
+    exact .nested hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hctr hshape hnames hinner ih
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr ctx tc s cs) :
     StateCorr { ctx with I := I₂ } (tc.withI I₂) s cs := by
@@ -1174,22 +1190,6 @@ theorem NestedOut.of_get? {X : Res (Ctl × CSt) → Prop} {r' r : Res (TCtl × C
     exact .inr (.inl ⟨e₀, e', rfl, hx⟩)
   · rw [Res.get?_ok, eq_comm, Res.get?_eq_some] at hr
     exact .inr (.inr ⟨ctl, c, hctl, hr, hx⟩)
-
-/-- The inlined body of a nested SDFG that ends in the label its returns
-were rebound to (`_bind_exits_to_label`): the label and the body before it. -/
-def exitLabel? (body : List SNode) : Option (String × List SNode) :=
-  match body.getLast? with
-  | some (.stateLabel L) => some (L, body.dropLast)
-  | _ => none
-
-theorem exitLabel?_sound {body pre : List SNode} {L : String} (h : exitLabel? body = some (L, pre)) :
-    body = pre ++ [.stateLabel L] := by
-  unfold exitLabel? at h
-  split at h
-  · rename_i L' hl
-    cases h
-    exact (List.dropLast_append_getLast? _ hl).symm
-  · cases h
 
 /-- The tree list `regCheck` matches against the top region of `inner`. -/
 def innerRegOk (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNode) : Bool :=

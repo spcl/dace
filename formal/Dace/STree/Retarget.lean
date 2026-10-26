@@ -135,6 +135,22 @@ def SNodes.keepsSyms : List SNode → Bool
 
 end
 
+/-- The inlined body of a nested SDFG that ends in the label its returns
+were rebound to (`_bind_exits_to_label`): the label and the body before it. -/
+def exitLabel? (body : List SNode) : Option (String × List SNode) :=
+  match body.getLast? with
+  | some (.stateLabel L) => some (L, body.dropLast)
+  | _ => none
+
+theorem exitLabel?_sound {body pre : List SNode} {L : String} (h : exitLabel? body = some (L, pre)) :
+    body = pre ++ [.stateLabel L] := by
+  unfold exitLabel? at h
+  split at h
+  · rename_i L' hl
+    cases h
+    exact (List.dropLast_append_getLast? _ hl).symm
+  · cases h
+
 /-! ## Structure -/
 
 section Structure

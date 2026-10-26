@@ -4,6 +4,7 @@ import Dace.SDFG.Footprint
 import Dace.SDFG.Sim
 import Dace.STree.Rename
 import Dace.STree.LogShift
+import Dace.STree.Retarget
 
 /-!
 # SDFG and schedule tree: matching of a dataflow segment (M5a)
@@ -430,6 +431,35 @@ theorem STree.ListExec.split_flat {tc : TCtx} {full : List SNode} {gb : Bool} {r
       obtain ⟨-, h, -⟩ := STree.NodeExec.flatT_ok hb.1 hn
       cases h
 
+/-- The inlined body of a nested SDFG outside map scopes: flat tree nodes, or
+nodes without symbol assignments and loops whose gotos all reach the label
+the inner returns were rebound to, which ends the body. -/
+def NestedShape (body : List SNode) : Prop :=
+  body.all SNode.isFlatT = true ∨
+    ∃ L pre, body = pre ++ [.stateLabel L] ∧ SNodes.hasLabel L pre = false ∧ SNodes.jumpsTo (some L) pre = true ∧
+      SNodes.keepsSyms pre = true
+
+/-- A run of an inlined body followed by `rest`: the body alone fails or
+jumps out the same way, or ends normally with the same valuation and `rest`
+runs from there. -/
+theorem STree.ListExec.split_nested {tc : TCtx} {full : List SNode} {gb : Bool} {rest body : List SNode} {cst : CSt}
+    {r : Res (TCtl × CSt)} (hb : NestedShape body) (hx : STree.ListExec tc full gb {} (body ++ rest) cst r) :
+    (∃ e, r = .err e ∧ ∀ full', STree.ListExec tc full' false {} body cst (.err e)) ∨
+    (∃ ctl c, ctl.isJump = true ∧ r = .ok (ctl, c) ∧ ∀ full', STree.ListExec tc full' false {} body cst (.ok (ctl, c))) ∨
+    ∃ c, (∀ full', STree.ListExec tc full' false {} body cst (.ok (.normal, c))) ∧ c.ρ = cst.ρ ∧
+      STree.ListExec tc full gb {} rest c r := by
+  rcases hb with hf | ⟨L, pre, rfl, hl, hj, hk⟩
+  · rcases STree.ListExec.split_flat hf hx with ⟨e, rfl, h⟩ | ⟨c, h, hρ, hr⟩
+    · exact .inl ⟨e, rfl, h⟩
+    · exact .inr (.inr ⟨c, h, hρ, hr⟩)
+  · rw [List.append_assoc, List.singleton_append] at hx
+    rcases STree.ListExec.split_label L hl hj hx with ⟨e, rfl, h⟩ | ⟨ctl, c, hc, rfl, h⟩ | ⟨c, h, hr⟩
+    · exact .inl ⟨e, rfl, h⟩
+    · exact .inr (.inl ⟨ctl, c, hc, rfl, h⟩)
+    · have hk' : SNodes.keepsSyms (pre ++ [.stateLabel L]) = true := by
+        rw [SNodes.keepsSyms_append, hk]; rfl
+      exact .inr (.inr ⟨c, h, STree.ListExec.keeps_ρ (h _) hk' hk' _ _ rfl, hr⟩)
+
 /-- The tree list `cs` is the image of the SDFG nodes `o` of state `s`. -/
 inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNode → Prop where
   | nil : SegCorr ctx tc s [] []
@@ -482,15 +512,14 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
   /-- A nested SDFG node outside map scopes: the tree inlines the inner top
-  region (a region of states, flat tree nodes) in the sibling list. -/
+  region in the sibling list (`NestedShape`). -/
   | nested {id : NodeId} {nd : DNode} {o : List NodeId} {cs body : List SNode} {inner : SDFG}
       {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} {σ : Equiv.Perm Name}
       (hnd : s.node? id = some nd) (hkn : nd.kind = .nested inner mapping ni)
       (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
       (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
       (hout : s.DataOuts nd)
-      (hst : inner.top.statesOnly = true) (hctr : inner.callTransients = [])
-      (hflat : body.all SNode.isFlatT = true)
+      (hctr : inner.callTransients = []) (hshape : NestedShape body)
       (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (body ++ cs)
@@ -512,7 +541,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
         | exact .inl (DNode.isSimple_of_copyTarget' hk)
         | (left; simp [DNode.isSimple, hk])
     · exact ih id hid n' hn'
-  | nested hn hkn _ _ hcode hout hst hctr _ _ _ _ ih =>
+  | nested hn hkn _ _ hcode hout hctr _ _ _ _ ih =>
     intro id hid n' hn'
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
@@ -1425,7 +1454,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     exact map_node he hcons hn hk hkeys hok hds
       (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hxs hnd hkn hb hmap
         hcode hout hpriv (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' hinner' hm i hbd) hi) ih hx hrel
-  | @nested id nd o cs body inner mapping ni conns σ hn hkn hb hmap hcode hout hst hctr hflat hnames hinner _ ih =>
+  | @nested id nd o cs body inner mapping ni conns σ hn hkn hb hmap hcode hout hctr hshape hnames hinner _ ih =>
     intro full gb rest cst r st hx hrel
     rw [List.append_assoc] at hx
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
@@ -1451,7 +1480,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
         simp only [St.forNode, hrel.1]
       rwa [hst] at h₀
     apply SeqOut.cons hn
-    rcases STree.ListExec.split_flat hflat hx with ⟨e, rfl, hbE⟩ | ⟨cst', hbO, hρ', hrest⟩
+    rcases STree.ListExec.split_nested hshape hx with ⟨e, rfl, hbE⟩ | ⟨ctl, cJ, hj, rfl, hbJ⟩ | ⟨cst', hbO, hρ', hrest⟩
     · obtain ⟨r₀, h₀, hr₀⟩ := hlog (hbE body)
       rcases nested_call he hw hkn hb hmap hcode hout hctr (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' cst.ρ
         st.forNode (hinner' _ _ h₀) with
@@ -1459,6 +1488,15 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       · exact .inl ⟨e', hu, hx'⟩
       · exact .inr (.inl ⟨e, e', rfl, hx'⟩)
       · cases hr₀
+    · -- the body jumps out: only an undefined inner run matches
+      obtain ⟨r₀, h₀, hr₀⟩ := hlog (hbJ body)
+      rcases nested_call he hw hkn hb hmap hcode hout hctr (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' cst.ρ
+        st.forNode (hinner' _ _ h₀) with
+        ⟨e', hu, hx'⟩ | ⟨e₀, e', rfl, -⟩ | ⟨c, rfl, -⟩
+      · exact .inl ⟨e', hu, hx'⟩
+      · cases hr₀
+      · simp only [Res.map_ok, shiftT, Res.ok_inj, Prod.mk.injEq] at hr₀
+        rw [hr₀.1] at hj; cases hj
     · obtain ⟨r₀, h₀, hr₀⟩ := hlog (hbO body)
       rcases nested_call he hw hkn hb hmap hcode hout hctr (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' cst.ρ
         st.forNode (hinner' _ _ h₀) with

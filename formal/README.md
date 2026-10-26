@@ -51,9 +51,11 @@ representations:
   its returns were rebound to are matched as returns (`STree/Retarget.lean`,
   `STree.ListExec.unlabel`, `Corr.innerCheck`).  A nested SDFG outside map scopes
   (`SegCorr.nested`) matches its inlined region in the sibling list when the
-  inner top region holds states only, the call allocates no transients and
-  the inlined tree nodes are dataflow nodes (`SNode.isFlatT`); such a call
-  steps the state by its inner log (`NodeExec.steps`, `DNode.FlatIn`).
+  call allocates no transients and the inlined tree nodes are dataflow nodes
+  (`SNode.isFlatT`) or end in the rebound return label without symbol
+  assignments or loops before it (`NestedShape`, `ListExec.split_label`);
+  such a call steps the state by its inner log (`NodeExec.steps`,
+  `DNode.FlatIn`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
