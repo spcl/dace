@@ -1258,6 +1258,35 @@ def test_wavefront_skew_refuses_a_step_loop_whose_body_also_holds_a_conditional_
     assert np.allclose(got, ref)
 
 
+Kd = dace.symbol("Kd")
+Ld = dace.symbol("Ld")
+
+
+@dace.program
+def wavefront_symbolic_distance(aa: dace.float64[N, 3 * N]):
+    for i in range(1, N):
+        for j in range(N, 2 * N):
+            aa[i, j] = (aa[i, j - 1] + aa[i - 1, j + Kd - Ld]) / 1.9
+
+
+@pytest.mark.parametrize("related", [False, True])
+def test_wavefront_skew_assumes_a_relation_between_symbols(related):
+    """The read of ``aa[i - 1, j + Kd - Ld]`` carries distance ``(1, Ld - Kd)``: skewable only under ``Kd <= Ld``."""
+    sdfg = wavefront_symbolic_distance.to_sdfg(simplify=True)
+    if related:
+        sdfg.add_symbol_relation(symbolic.Relation(symbolic.RelationKind.LE, Kd, Ld))
+    assert (WavefrontSkew().apply_pass(sdfg, {}) == 1) is related
+    if related:
+        n, kd, ld = 8, 1, 3
+        a = np.random.default_rng(0).random((n, 3 * n))
+        ref = a.copy()
+        for i in range(1, n):
+            for j in range(n, 2 * n):
+                ref[i, j] = (ref[i, j - 1] + ref[i - 1, j + kd - ld]) / 1.9
+        sdfg(aa=a, N=n, Kd=kd, Ld=ld)
+        assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
     test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map()
     test_wavefront_skew_value_preserving()
@@ -1302,3 +1331,5 @@ if __name__ == "__main__":
         (ludcmp_factorization, True, "ludcmp"),
     ):
         test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, label)
+    for related in (False, True):
+        test_wavefront_skew_assumes_a_relation_between_symbols(related)

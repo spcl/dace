@@ -17,6 +17,7 @@ import sympy
 from dace import symbolic
 from dace.sdfg.analysis.polyhedral_isl import subs_by_name, to_isl
 from dace.sdfg.narrowing import as_expr, ndrange_exprs, simplified
+from dace.symbolic_facts import RelationKind, relation_names
 from dace.transformation.passes.analysis import canon_stats
 from dace.transformation.passes.parallelization.wavefront import polyhedron as poly
 from dace.transformation.passes.parallelization.wavefront.statements import (
@@ -27,6 +28,10 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
     free_names,
     sequenced,
 )
+
+
+#: The relations a convex constraint states; ``!=`` and divisibility are not convex.
+AFFINE_RELATIONS = (RelationKind.LT, RelationKind.LE, RelationKind.EQ)
 
 
 @canon_stats.timed("isl")
@@ -122,7 +127,7 @@ class Renderer:
         return ", ".join(self.params.values())
 
     def facts_constraints(self) -> list[str]:
-        """Sign facts of every parameter, plus the assumptions under trial."""
+        """Sign facts of every parameter, the affine relations among the parameters, plus the assumptions under trial."""
         out = []
         for name, isl_name in self.params.items():
             sym = as_expr(name)
@@ -130,6 +135,14 @@ class Renderer:
                 out.append(f"{isl_name} >= 1")
             elif provably(symbolic.Predicate.NONNEGATIVE, sym, self.facts):
                 out.append(f"{isl_name} >= 0")
+        known = set(self.params)
+        for relation in self.facts.about(known).relations:
+            if relation.kind not in AFFINE_RELATIONS or not relation_names(relation) <= known:
+                continue
+            gap = relation.rhs - relation.lhs - (1 if relation.kind is RelationKind.LT else 0)
+            r = self.render(gap, {})
+            if r is not None:
+                out.append(f"{r} {'=' if relation.kind is RelationKind.EQ else '>='} 0")
         for a in self.assume:
             r = self.geq(a, {})
             if r is not None:

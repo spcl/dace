@@ -318,7 +318,8 @@ class WavefrontSkew(ppl.Pass):
         if written & control_flow_reads(outer):
             return None
 
-        sdfg_facts = sdfg.facts()
+        # The facts inside ``outer``: the SDFG's, plus the relations its context establishes
+        sdfg_facts = facts
         deps = Dependences(body, sdfg_facts)
         if not deps.complete or not all(deps.snapshot_safe(snap) for snap in body.snapshots):
             return None
