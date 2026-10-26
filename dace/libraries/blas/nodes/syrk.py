@@ -110,9 +110,12 @@ class Syrk(nodes.LibraryNode):
         self.uplo, self.transA, self.alpha, self.beta = uplo, transA, alpha, beta
 
     def validate(self, sdfg, state):
+        blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_Cin", "_Cout")
         a, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_Cin", "_Cout"))
+        if len(a) != 2:
+            raise ValueError(f"{self.label}: _A must be a matrix")
         n = a[1] if self.transA else a[0]
-        if len(a) != 2 or not cin == cout == [n, n]:
+        if not cin == cout == [n, n]:
             raise ValueError(f"{self.label}: _Cin and _Cout must be {n} x {n} matrices")
 
 

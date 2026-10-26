@@ -42,7 +42,7 @@ jobs:
         sudo dpkg-reconfigure man-db
         # Install dependencies
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev libpapi-dev papi-tools
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 

@@ -104,6 +104,7 @@ class Symm(nodes.LibraryNode):
         self.side, self.uplo, self.alpha, self.beta = side, uplo, alpha, beta
 
     def validate(self, sdfg, state):
+        blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_B", "_Cin", "_Cout")
         a, b, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_B", "_Cin", "_Cout"))
         if len(cin) != 2 or not b == cin == cout:
             raise ValueError(f"{self.label}: _B, _Cin and _Cout must be matrices of one shape")
