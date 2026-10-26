@@ -38,6 +38,14 @@ def velocity_source() -> Path:
     return dace_fortran_root() / "tests" / "icon" / "atmosphere" / "velocity_advection_inlined_single_tu.f90"
 
 
+def load_dace_fortran_module(name: str, relative: str):
+    """A dace-fortran test helper by path: this checkout's own ``tests`` package shadows dace-fortran's."""
+    spec = importlib.util.spec_from_file_location(name, dace_fortran_root() / relative)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def branch_conditions(sdfg: dace.SDFG) -> list[str]:
     return [
         cond.as_string
@@ -70,11 +78,8 @@ def test_config_propagation_prunes_every_config_branch(tmp_path):
 @pytest.mark.parametrize("lvn_only, istep", sorted(MAPS))
 def test_cpu_pipeline_matches_gfortran(lvn_only, istep, monkeypatch):
     root = dace_fortran_root()
-    spec = importlib.util.spec_from_file_location(
-        "dace_fortran_e2e", root / "tests" / "icon" / "ocean" / "_ocean_e2e.py"
-    )
-    harness = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(harness)
+    harness = load_dace_fortran_module("dace_fortran_e2e", "tests/icon/ocean/_ocean_e2e.py")
+    mesh = load_dace_fortran_module("dace_fortran_icon_mesh", "tests/icon/atmosphere/_icon_mesh.py")
 
     # The harness child imports dace-fortran's ``tests`` package and this hook by name
     paths = [str(root), str(Path(__file__).resolve().parent), os.environ.get("PYTHONPATH", "")]
@@ -83,15 +88,16 @@ def test_cpu_pipeline_matches_gfortran(lvn_only, istep, monkeypatch):
     monkeypatch.setenv(
         "VT_CONFIG", json.dumps({"lvn_only": lvn_only, "istep": istep, "ldeepatmo": 0, "lextra_diffu": 1})
     )
+    # A random 8 x 8 block patch with locality-biased connectivity, 7 full levels
+    patch = mesh.velocity_patch(refin_extent=harness._REFIN_CTRL_EXTENT)
+    # nflatlev is a DO lower bound, so its BSS 0 would start jk at 0, out of bounds
+    patch["module_seeds"] |= {"nflatlev": 1, "nrdmax": 1, "lextra_diffu": 1}
     result = harness.run_kernel_e2e(
         velocity_source(),
         ENTRY,
         seed=1001,
-        int_fill=1,  # one in-domain block: every connectivity index points at element 1
         scalar_overrides={"lvn_only": lvn_only, "istep": istep, "ldeepatmo": 0},
-        # nflatlev is a DO lower bound, so its BSS 0 would start jk at 0, out of bounds
-        module_seeds={"nproma": 8, "nflatlev": 1, "nrdmax": 1, "lextra_diffu": 1},
-        array_overrides={"p_patch_nlev": 7, "p_patch_nlevp1": 8},
+        **patch,
     )
     assert result["passed"], result["output"][-3500:]
     assert f"VT_PIPELINE maps={MAPS[lvn_only, istep]} loops=0" in result["output"]
