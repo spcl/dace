@@ -174,6 +174,23 @@ required:
                     function over NumPy arrays (``dace.codegen.python``) and loads it without a C++
                     compiler.
 
+            alloy:
+                type: dict
+                title: Alloy
+                description: Alloy as the CPU backend (needs the ``alloy`` package).
+                required:
+                    mode:
+                        type: str
+                        default: "off"
+                        title: Alloy mode
+                        enum: ["off", speculative, profile]
+                        description: >
+                            ``off`` compiles the DaCe way. Otherwise ``SDFG.compile`` hands the SDFG to
+                            ``alloy.dace_backend.compile``, which builds every scope's variants, picks one per
+                            scope (``speculative``: predicted, verified when no input needs a manifest;
+                            ``profile``: verified and timed, needs a manifest) and compiles the program
+                            linking the picks, with the SDFG's own signature.
+
             emit_tree_reductions:
                 type: bool
                 default: false
