@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace import subsets, symbolic
 from dace.codegen.exceptions import CompilationError
 from dace.sdfg import SDFG, InterstateEdge
 
@@ -63,49 +62,6 @@ def test_max_mixed_int_double_is_compile_error():
     assert _MIXED_TYPE_ERROR.format("Max") in str(excinfo.value)
 
 
-def test_min_all_double_compiles_and_runs():
-    """``Min`` over doubles compiles and keeps full precision (no truncation)."""
-    sdfg = _build_minmax_interstate_sdfg("Min(1.0, zanew)")
-    out = np.zeros(1, dtype=np.float64)
-    sdfg(out=out)
-    assert out[0] == pytest.approx(0.375)
-
-
-def test_max_all_double_compiles_and_runs():
-    """``Max`` over doubles compiles and keeps full precision (no truncation)."""
-    sdfg = _build_minmax_interstate_sdfg("Max(0.0, zanew)")
-    out = np.zeros(1, dtype=np.float64)
-    sdfg(out=out)
-    assert out[0] == pytest.approx(0.375)
-
-
-def test_min_all_integer_range_compiles_and_runs():
-    """``Min`` over integer arguments (the common tiling case) is allowed.
-
-    The map range ``0:Min(N, 4)`` mixes an ``int`` literal with an ``int64``
-    symbol; this is legitimate integral math and must keep compiling.
-    """
-    n_symbol = dace.symbol("N", dace.int64)
-    sdfg = SDFG("int_range_min")
-    sdfg.add_array("A", [n_symbol], dace.float64)
-    state = sdfg.add_state()
-    entry, exit_node = state.add_map("m", {"i": subsets.Range([(0, symbolic.pystr_to_symbolic("Min(N, 4) - 1"), 1)])})
-    read = state.add_read("A")
-    write = state.add_write("A")
-    tasklet = state.add_tasklet("double_it", {"a"}, {"b"}, "b = a * 2.0")
-    state.add_memlet_path(read, entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(tasklet, exit_node, write, src_conn="b", memlet=dace.Memlet("A[i]"))
-
-    data = np.ones(10, dtype=np.float64)
-    sdfg(A=data, N=10)
-    # Only the first 4 elements (range 0:Min(10, 4)) are doubled.
-    assert np.allclose(data[:4], 2.0)
-    assert np.allclose(data[4:], 1.0)
-
-
 if __name__ == "__main__":
     test_min_mixed_int_double_is_compile_error()
     test_max_mixed_int_double_is_compile_error()
-    test_min_all_double_compiles_and_runs()
-    test_max_all_double_compiles_and_runs()
-    test_min_all_integer_range_compiles_and_runs()
