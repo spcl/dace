@@ -57,7 +57,9 @@ def test_variants_and_dispatcher(tmp_path):
     for f in files:
         variant = dace.SDFG.from_file(str(tmp_path / f))
         assert config_conditions(variant) == [], f
-        assert not {"lvn_only", "istep"} & {n for n, d in variant.arrays.items() if not d.transient}, f
+        args = {n for n, d in variant.arrays.items() if not d.transient}
+        assert "istep" not in args, f  # a baked scalar argument leaves the signature
+        assert "lvn_only" in args, f  # a length-1 array argument stays: callers pass its buffer
         assert "ldeep" not in variant.free_symbols, f
 
     dispatch = [b for b in root.nodes() if isinstance(b, ConditionalBlock)]
