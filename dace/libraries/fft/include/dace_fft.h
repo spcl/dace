@@ -46,12 +46,18 @@ class PlanCache {
   std::map<std::vector<long long>, Plan> plans_;
 };
 
-// The program's cache of `Plan`s.
+namespace {
+
+// This program's cache of `Plan`s. Internal linkage: a function-template static with external linkage is one object
+// per process, shared by every loaded program, and two programs may bind the same planner symbols to different
+// libraries (FFTW3, or MKL's FFTW3 interface once MKL is loaded), so a plan one made would reach the other.
 template <typename Plan>
 PlanCache<Plan>& Plans(typename PlanCache<Plan>::Destroy destroy) {
   static PlanCache<Plan> cache(destroy);
   return cache;
 }
+
+}  // namespace
 
 }  // namespace fft
 

@@ -18,7 +18,11 @@ from dace.libraries.fft.nodes import FFT, IFFT
 
 M, N = dace.symbol("M"), dace.symbol("N")
 
-CPU_IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
+CPU_IMPLEMENTATIONS = [
+    "pure",
+    pytest.param("FFTW3", marks=pytest.mark.fftw),
+    pytest.param("MKL", marks=pytest.mark.mkl),
+]
 
 
 def gpu_implementation() -> str:
@@ -252,6 +256,39 @@ def test_fftfreq_and_rfftfreq_match_numpy():
     want = (np.fft.fftfreq(7, 0.5), np.fft.fftfreq(8), np.fft.rfftfreq(7, 0.25), np.fft.rfftfreq(8))
     for g, w in zip(got, want):
         np.testing.assert_allclose(g, w, rtol=1e-15, atol=0)
+
+
+@dace.program
+def fft_and_rfft_of_integers(x: dace.int64[8]):
+    return np.fft.fft(x), np.fft.rfft(x)
+
+
+@dace.program
+def fft_of_booleans(x: dace.bool_[8]):
+    return np.fft.fft(x)
+
+
+@dace.program
+def rfft_of_halves(x: dace.float16[8]):
+    return np.fft.rfft(x)
+
+
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
+def test_non_floating_inputs_promote_as_numpy_does(implementation):
+    """numpy computes an integer or boolean input in ``complex128`` and a half-precision one in ``complex64``."""
+    x = np.arange(8, dtype=np.int64) * 3 - 5
+    full, half = run(fft_and_rfft_of_integers, implementation, x=x)
+    assert full.dtype == np.complex128 and half.dtype == np.complex128
+    np.testing.assert_allclose(full, np.fft.fft(x), rtol=1e-12, atol=1e-10)
+    np.testing.assert_allclose(half, np.fft.rfft(x), rtol=1e-12, atol=1e-10)
+    flags = np.arange(8) % 3 == 0
+    got = run(fft_of_booleans, implementation, x=flags)
+    assert got.dtype == np.complex128
+    np.testing.assert_allclose(got, np.fft.fft(flags), rtol=1e-12, atol=1e-12)
+    halves = (np.arange(8) / 4 - 1).astype(np.float16)
+    got = run(rfft_of_halves, implementation, x=halves)
+    assert got.dtype == np.complex64
+    np.testing.assert_allclose(got, np.fft.rfft(halves), rtol=1e-5, atol=1e-5)
 
 
 if __name__ == "__main__":
