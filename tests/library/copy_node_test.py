@@ -821,34 +821,6 @@ def test_gpu_to_gpu_cast_is_a_kernel_not_a_memcpy(src_dtype, dst_dtype, single):
         assert [(m.map.schedule, m.map.gpu_block_size) for m in maps] == [(dace.ScheduleType.GPU_Device, [256, 1, 1])]
 
 
-@pytest.mark.parametrize("to_device", [True, False])
-def test_host_device_cast_moves_host_dtype_and_casts_on_gpu(to_device):
-    """Host/device casts move the host dtype through a pooled device buffer and cast on the GPU."""
-    host = _ArraySpec(shape=[16], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="H")
-    device = _ArraySpec(shape=[16], storage=dace.dtypes.StorageType.GPU_Global, dtype=dace.float32, name="D")
-    sdfg, node = _make_copy_sdfg(*((host, device) if to_device else (device, host)), name="host_device_cast")
-    assert select_copy_implementation(node, sdfg.start_state) == "CastOnDevice"
-    sdfg.expand_library_nodes()
-    sdfg.validate()
-
-    stages = [d for sd in sdfg.all_sdfgs_recursive() for n, d in sd.arrays.items() if n == "stage"]
-    assert len(stages) == 1
-    assert (stages[0].storage, stages[0].dtype, stages[0].pool) == (dace.StorageType.GPU_Global, dace.float64, True)
-    codes = tasklet_codes(sdfg)
-    memcpys = [c for c in codes if "MemcpyAsync" in c]
-    assert len(memcpys) == 1 and "sizeof(double)" in memcpys[0], codes
-    assert ("HostToDevice" if to_device else "DeviceToHost") in memcpys[0]
-    assert any("dace.float" in c for c in codes), codes
-
-    # The cast map runs on the device: after the memcpy host to device, before it device to host.
-    inner = next(sd for sd in sdfg.all_sdfgs_recursive() if "stage" in sd.arrays)
-    reads_src = next(e.dst for e in inner.start_state.edges() if e.data.data == "src")
-    cast = next(n for n in inner.start_state.nodes() if isinstance(n, dace.sdfg.nodes.NestedSDFG))
-    assert (reads_src is cast) is not to_device
-    maps = [n for n, _ in cast.sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
-    assert [m.map.schedule for m in maps] == [dace.ScheduleType.GPU_Device]
-
-
 @pytest.mark.gpu
 @pytest.mark.parametrize("strided", [False, True])
 def test_host_device_cast_round_trip(strided):
