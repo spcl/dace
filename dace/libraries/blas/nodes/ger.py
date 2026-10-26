@@ -71,14 +71,14 @@ class ExpandGerPure(ExpandTransformation):
         return nsdfg_node
 
 
-def ger_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+def ger_call(node, state, sdfg, environment=None) -> SDFG:
     """``_res = _A``, then ``?ger`` (``?geru`` for complex data: ``Ger`` does not conjugate) updates ``_res`` in
-    place, through CBLAS or the GPU library of ``dialect``."""
+    place, through CBLAS or the GPU library of ``environment``."""
     res, x, y = (operand(node, state, sdfg, c) for c in ("_res", "_x", "_y"))
     prefix = blas_helpers.blas_prefix(res.desc.dtype)
-    if dialect is not None and prefix is not None:
+    if environment is not None and prefix is not None:
         layout = gpu_dialect.required_layout(node, res)
-        return ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y)
+        return ger_gpu_call(node, state, sdfg, environment, layout, res, x, y)
     layout = blas_helpers.matrix_layout(res)
     if layout is None or prefix is None:
         return ExpandGerPure.expansion(node, state, sdfg)
@@ -93,17 +93,17 @@ def ger_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = Non
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
 
 
-def ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y) -> SDFG:
+def ger_gpu_call(node, state, sdfg, environment, layout, res, x, y) -> SDFG:
     """The column-major vendor ``?ger``. A row-major ``_res`` is its transpose in column-major order, which is the
     outer product of ``y`` and ``x``: the two vectors and the two dimensions swap."""
-    gpu = gpu_dialect.gpu_call(dialect, res.desc.dtype)
+    gpu = gpu_dialect.gpu_call(res.desc.dtype)
     routine = gpu.routine("geru" if res.desc.dtype.is_complex() else "ger")
     scalars, arg = gpu_dialect.scalar_pointers(gpu, res.desc.dtype, alpha=node.alpha)
     (m, n), (lda,) = res.shape, layout.leading
     first, second = (("__y", y), ("__x", x)) if layout.row_major else (("__x", x), ("__y", y))
     rows, cols = (n, m) if layout.row_major else (m, n)
     call = (
-        f"{routine}({dialect.handle}, {rows}, {cols}, {arg['alpha']}, {gpu.pointer(first[0])}, {first[1].strides[0]}, "
+        f"{routine}({gpu_dialect.HANDLE}, {rows}, {cols}, {arg['alpha']}, {gpu.pointer(first[0])}, {first[1].strides[0]}, "
         f"{gpu.pointer(second[0])}, {second[1].strides[0]}, {gpu.pointer('__res')}, {lda})"
     )
     code = gpu_dialect.call_code(gpu, environment, node, scalars, call)

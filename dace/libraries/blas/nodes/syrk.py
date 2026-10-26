@@ -56,11 +56,11 @@ class ExpandSyrkPure(ExpandTransformation):
         return sdfg
 
 
-def syrk_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
-    """``_Cout = _Cin``, then ``?syrk`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``dialect``."""
+def syrk_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_Cout = _Cin``, then ``?syrk`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``environment``."""
     a, c = operand(node, state, sdfg, "_A"), operand(node, state, sdfg, "_Cout")
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
-    if dialect is not None and prefix is not None:
+    if environment is not None and prefix is not None:
         layout = gpu_dialect.required_layout(node, a, c)
     else:
         layout = blas_helpers.matrix_layout(a, c)
@@ -68,13 +68,13 @@ def syrk_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = No
         return ExpandSyrkPure.expansion(node, state, sdfg)
     lda, ldc = layout.leading
     k = a.shape[0 if node.transA else 1]
-    if dialect is not None:
+    if environment is not None:
         # In column-major order a row-major A reads as A^T and C as C^T: the transposition and the triangle flip
-        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        gpu = gpu_dialect.gpu_call(a.desc.dtype)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
         upper, trans = node.uplo != layout.row_major, node.transA != layout.row_major
         call = (
-            f"{gpu.routine('syrk')}({dialect.handle}, {dialect.fill(upper)}, {dialect.op(trans)}, {c.shape[0]}, {k}, "
+            f"{gpu.routine('syrk')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {gpu_dialect.op(trans)}, {c.shape[0]}, {k}, "
             f"{arg['alpha']}, {gpu.pointer('__A')}, {lda}, {arg['beta']}, {gpu.pointer('__Cout')}, {ldc})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)

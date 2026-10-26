@@ -48,18 +48,18 @@ class ExpandSymvPure(ExpandTransformation):
         return sdfg
 
 
-def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
-    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``dialect``."""
+def symv_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``environment``."""
     a, x, yout = (operand(node, state, sdfg, c) for c in ("_A", "_x", "_yout"))
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
-    if dialect is not None and prefix is not None:
+    if environment is not None and prefix is not None:
         # A row-major symmetric matrix is its own transpose in column-major order, with the other triangle stored
         layout = gpu_dialect.required_layout(node, a)
-        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        gpu = gpu_dialect.gpu_call(a.desc.dtype)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
         upper = node.uplo != layout.row_major
         call = (
-            f"{gpu.routine('symv')}({dialect.handle}, {dialect.fill(upper)}, {x.shape[0]}, {arg['alpha']}, "
+            f"{gpu.routine('symv')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {x.shape[0]}, {arg['alpha']}, "
             f"{gpu.pointer('__A')}, {layout.leading[0]}, {gpu.pointer('__x')}, {x.strides[0]}, {arg['beta']}, "
             f"{gpu.pointer('__yout')}, {yout.strides[0]})"
         )

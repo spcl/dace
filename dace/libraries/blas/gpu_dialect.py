@@ -10,67 +10,45 @@ from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.transformation.transformation import ExpandTransformation
 
-
-class GpuBlasDialect(NamedTuple):
-    """How one vendor GPU BLAS spells the things an expansion emits."""
-
-    #: The handle variable the environment's ``handle_setup_code`` puts in scope.
-    handle: str
-    #: Error-check function wrapping every call.
-    check_error: str
-    #: Pointer-mode setter and its two modes.
-    set_pointer_mode: str
-    pointer_host: str
-    pointer_device: str
-    #: ``('D', 'symm') -> 'cublasDsymm'``.
-    func: Callable[[str, str], str]
-    #: The C type a complex pointer operand is cast to, from the CUDA spelling of
-    #: :func:`~dace.libraries.blas.blas_helpers.cublas_type_metadata`.
-    ctype: Callable[[str], str]
-    #: Enum spellings: ``op`` takes the transposition, ``fill`` the upper triangle, ``side`` the right side.
-    op: Callable[[bool], str]
-    fill: Callable[[bool], str]
-    side: Callable[[bool], str]
+#: The handle variable the environment's ``handle_setup_code`` puts in scope.
+HANDLE = "__dace_cublas_handle"
 
 
-CUBLAS = GpuBlasDialect(
-    handle="__dace_cublas_handle",
-    check_error="dace::blas::CheckCublasError",
-    set_pointer_mode="cublasSetPointerMode",
-    pointer_host="CUBLAS_POINTER_MODE_HOST",
-    pointer_device="CUBLAS_POINTER_MODE_DEVICE",
-    func=lambda letter, routine: f"cublas{letter}{routine}",
-    ctype=lambda cuda_type: cuda_type,
-    op=lambda trans: "CUBLAS_OP_T" if trans else "CUBLAS_OP_N",
-    fill=lambda upper: "CUBLAS_FILL_MODE_UPPER" if upper else "CUBLAS_FILL_MODE_LOWER",
-    side=lambda right: "CUBLAS_SIDE_RIGHT" if right else "CUBLAS_SIDE_LEFT",
-)
+def op(trans: bool) -> str:
+    return "CUBLAS_OP_T" if trans else "CUBLAS_OP_N"
+
+
+def fill(upper: bool) -> str:
+    return "CUBLAS_FILL_MODE_UPPER" if upper else "CUBLAS_FILL_MODE_LOWER"
+
+
+def side(right: bool) -> str:
+    return "CUBLAS_SIDE_RIGHT" if right else "CUBLAS_SIDE_LEFT"
 
 
 class GpuCall(NamedTuple):
-    """The pieces a node's GPU call is written from, for one dialect and data type."""
+    """The pieces a node's GPU call is written from, for one data type."""
 
-    dialect: GpuBlasDialect
     #: The BLAS letter of the data type (``D`` for ``double``).
     letter: str
     #: Cast for a pointer operand, empty for a real type.
     cast: str
 
     def routine(self, name: str) -> str:
-        return self.dialect.func(self.letter, name)
+        return f"cublas{self.letter}{name}"
 
     def pointer(self, connector: str) -> str:
         return f"{self.cast}{connector}"
 
 
-def gpu_call(dialect: GpuBlasDialect, dtype: dtypes.typeclass) -> GpuCall | None:
+def gpu_call(dtype: dtypes.typeclass) -> GpuCall | None:
     """The call pieces for ``dtype``, or None if the vendor library has no routines for it."""
     letter = blas_helpers.blas_prefix(dtype)
     if letter is None:
         return None
     cuda_type = blas_helpers.cublas_type_metadata(dtype)[1]
-    cast = f"({dialect.ctype(cuda_type)}*)" if dtype.is_complex() else ""
-    return GpuCall(dialect, letter, cast)
+    cast = f"({cuda_type}*)" if dtype.is_complex() else ""
+    return GpuCall(letter, cast)
 
 
 def scalar_pointers(call: GpuCall, dtype: dtypes.typeclass, **values) -> tuple[str, dict[str, str]]:
@@ -98,31 +76,31 @@ def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call
     The handle is created in device pointer mode (``dace_cublas.h``), so a call passing a host address would have the
     GPU dereference it.
     """
-    d = call.dialect
+    check = "dace::blas::CheckCublasError"
     return (
         environment.handle_setup_code(node)
-        + f"{d.check_error}({d.set_pointer_mode}({d.handle}, {d.pointer_host}));\n"
+        + f"{check}(cublasSetPointerMode({HANDLE}, CUBLAS_POINTER_MODE_HOST));\n"
         + scalars
-        + f"{d.check_error}({routine_call});\n"
-        + f"{d.check_error}({d.set_pointer_mode}({d.handle}, {d.pointer_device}));\n"
+        + f"{check}({routine_call});\n"
+        + f"{check}(cublasSetPointerMode({HANDLE}, CUBLAS_POINTER_MODE_DEVICE));\n"
     )
 
 
 def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTransformation]]:
     """The OpenBLAS, MKL, cuBLAS and hipBLAS expansions of a node, each validating the node and returning
-    ``call(node, state, sdfg, dialect, environment)``; the CPU libraries get no dialect, as both are CBLAS. hipBLAS is
-    the cuBLAS expansion renamed."""
+    ``call(node, state, sdfg, gpu_environment)``; the CPU libraries get ``None``, as both are CBLAS. hipBLAS is the
+    cuBLAS expansion renamed."""
     backends = {
-        "OpenBLAS": (environments.openblas.OpenBLAS, None),
-        "MKL": (environments.intel_mkl.IntelMKL, None),
-        "cuBLAS": (environments.cublas.cuBLAS, CUBLAS),
+        "OpenBLAS": (environments.openblas.OpenBLAS, False),
+        "MKL": (environments.intel_mkl.IntelMKL, False),
+        "cuBLAS": (environments.cublas.cuBLAS, True),
     }
     expansions = {}
-    for implementation, (environment, dialect) in backends.items():
+    for implementation, (environment, gpu) in backends.items():
 
-        def expansion(node, parent_state, parent_sdfg, *, _dialect=dialect, _environment=environment, **kwargs):
+        def expansion(node, parent_state, parent_sdfg, *, _environment=environment if gpu else None, **kwargs):
             node.validate(parent_sdfg, parent_state)
-            return call(node, parent_state, parent_sdfg, _dialect, _environment if _dialect else None)
+            return call(node, parent_state, parent_sdfg, _environment)
 
         name = f"Expand{node_name}{implementation[0].upper()}{implementation[1:]}"
         attributes = {

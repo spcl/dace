@@ -50,26 +50,26 @@ class ExpandSymmPure(ExpandTransformation):
         return sdfg
 
 
-def symm_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
-    """``_Cout = _Cin``, then ``?symm`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``dialect``."""
+def symm_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_Cout = _Cin``, then ``?symm`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``environment``."""
     a, b, c = (operand(node, state, sdfg, conn) for conn in ("_A", "_B", "_Cout"))
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
-    if dialect is not None and prefix is not None:
+    if environment is not None and prefix is not None:
         layout = gpu_dialect.required_layout(node, a, b, c)
     else:
         layout = blas_helpers.matrix_layout(a, b, c)
     if layout is None or prefix is None:
         return ExpandSymmPure.expansion(node, state, sdfg)
     (m, n), (lda, ldb, ldc) = c.shape, layout.leading
-    if dialect is not None:
+    if environment is not None:
         # Row-major C = A B is column-major C^T = B^T A^T = B^T A: the side and the stored triangle flip, the
         # dimensions swap
-        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        gpu = gpu_dialect.gpu_call(a.desc.dtype)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
         right, upper = node.side != layout.row_major, node.uplo != layout.row_major
         rows, cols = (n, m) if layout.row_major else (m, n)
         call = (
-            f"{gpu.routine('symm')}({dialect.handle}, {dialect.side(right)}, {dialect.fill(upper)}, {rows}, {cols}, "
+            f"{gpu.routine('symm')}({gpu_dialect.HANDLE}, {gpu_dialect.side(right)}, {gpu_dialect.fill(upper)}, {rows}, {cols}, "
             f"{arg['alpha']}, {gpu.pointer('__A')}, {lda}, {gpu.pointer('__B')}, {ldb}, {arg['beta']}, "
             f"{gpu.pointer('__Cout')}, {ldc})"
         )
