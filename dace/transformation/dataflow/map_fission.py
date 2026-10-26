@@ -237,6 +237,7 @@ class MapFission(transformation.SingleStateTransformation):
 
         return True
 
+    @sdutil.normalizes_copy_memlets
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)

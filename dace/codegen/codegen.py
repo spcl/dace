@@ -225,8 +225,11 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
     # at and the copy is free to move ahead of a write it must follow. Expansions may add copies of
     # their own, so lower and expand until none is left: the generators emit no copy of their own.
+    from dace.codegen.targets.cpu import materialize_consume_elements
     from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, implicit_copies
 
+    for nested in sdfg.all_sdfgs_recursive():
+        materialize_consume_elements(nested)
     while True:
         InsertExplicitCopies().apply_pass(sdfg, {})
         leftover = implicit_copies(sdfg)

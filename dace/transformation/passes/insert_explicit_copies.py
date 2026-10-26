@@ -99,7 +99,7 @@ def drop_scope_exit_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bo
     if state.out_degree(inner) != 1 or len(producers) != 1:
         return False
     producer = producers[0]
-    if producer.data.is_empty() or isinstance(producer.src, (nodes.AccessNode, nodes.MapEntry)):
+    if producer.data.is_empty() or isinstance(producer.src, (nodes.AccessNode, nodes.EntryNode)):
         return False
     state.add_edge(producer.src, producer.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(producer.data))
     state.remove_node(inner)
@@ -285,9 +285,9 @@ class InsertExplicitCopies(ppl.Pass):
         return count
 
     def _replace_map_staging_copies(self, state: SDFGState) -> int:
-        """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
+        """Lift stage-in / stage-out copies through scope entries / exits to ``CopyLibraryNode``.
 
-        The libnode sits inside the map scope; chained MapEntries / MapExits are followed via
+        The libnode sits inside the scope; chained entries / exits are followed via
         ``memlet_path``.
 
         :param state: The state to scan (owning SDFG is ``state.sdfg``).
@@ -295,11 +295,11 @@ class InsertExplicitCopies(ppl.Pass):
         """
         count = 0
         for node in state.nodes():
-            if isinstance(node, nodes.MapEntry):
+            if isinstance(node, nodes.EntryNode):
                 for edge in list(state.out_edges(node)):
                     if self._lift_staging_edge(state, edge, stage_in=True):
                         count += 1
-            elif isinstance(node, nodes.MapExit):
+            elif isinstance(node, nodes.ExitNode):
                 for edge in list(state.in_edges(node)):
                     if self._lift_staging_edge(state, edge, stage_in=False):
                         count += 1
@@ -340,6 +340,9 @@ class InsertExplicitCopies(ppl.Pass):
             return False
         outer_desc = sdfg.arrays[outer.data]
         if outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES:
+            return False
+        # A consume scope pops its stream into the element container: a stream read, not a copy
+        if not isinstance(outer_desc, (data.Array, data.Scalar)):
             return False
 
         outer_memlet = edge.data

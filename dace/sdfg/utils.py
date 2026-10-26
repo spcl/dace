@@ -1109,9 +1109,11 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     for e in dfg.out_edges(node):
         sink_node = dfg.memlet_path(e)[-1].dst
 
-        # Append empty path to differentiate between a copy and an array-view
-        if isinstance(sink_node, nd.CodeNode):
+        # Append empty path to differentiate between a copy and an array-view; a consume scope pops the
+        # stream into its element container like code does
+        if isinstance(sink_node, nd.CodeNode) or isinstance(e.dst, nd.ConsumeEntry):
             all_sink_paths.append(None)
+            continue
         # Append path to sink node
         if isinstance(sink_node, nd.AccessNode) and isinstance(sink_node.desc(sdfg), dt.Array):
             sink_paths.append(sink_node)

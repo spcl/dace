@@ -65,6 +65,8 @@ def test_scope_alias_moves_no_data_on_gpu():
     cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
     assert "GlobalToGlobal1D" not in cuda and "copy_A_to_A" not in cuda
     assert cuda.count("GlobalToShared1D") == 1
+    # The collective spans the block the thread-block map launches, not the configured default
+    assert f"GlobalToShared1D<double, {TILE}, 1, 1, {TILE}," in cuda
     a = np.arange(N, dtype=np.float64)
     c = np.zeros(N)
     sdfg(hA=a, hC=c)
@@ -112,6 +114,48 @@ def test_stage_in_copy_must_name_the_outer_container():
     )
 
 
+def test_stage_out_copy_must_name_the_outer_container():
+    """A stage-out path is named by its destination on every edge, not by the local buffer."""
+    sdfg = dace.SDFG("copy_form_stage_out")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("C", [N], dace.float64)
+    sdfg.add_transient("loc", [TILE], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("tiles", {"i": f"0:{N}:{TILE}"})
+    loc = state.add_access("loc")
+    state.add_memlet_path(state.add_read("A"), me, loc, memlet=dace.Memlet(data="A", subset=f"i:i+{TILE}"))
+    state.add_memlet_path(
+        loc, mx, state.add_write("C"), memlet=dace.Memlet(data="loc", subset=f"0:{TILE}", other_subset=f"i:i+{TILE}")
+    )
+    with pytest.raises(InvalidSDFGEdgeError, match='must name "C"'):
+        sdfg.validate()
+    assert NormalizeCopyMemlets().apply_pass(sdfg, {}) == 2  # the edge into the map exit and the edge out of it
+    sdfg.validate()
+    inner = state.out_edges(loc)[0]
+    assert (inner.data.data, str(inner.data.subset), str(inner.data.other_subset)) == (
+        "C",
+        f"i:i + {TILE}",
+        f"0:{TILE}",
+    )
+
+
+def test_same_container_copy_subset_must_be_the_owner_side():
+    """``A[0:4] -> A[4:8]`` written as ``A[0:4] -> [4:8]`` names ``A`` but puts the source region in ``subset``."""
+    sdfg = dace.SDFG("copy_form_same_container")
+    sdfg.add_array("A", [8], dace.float64)
+    state = sdfg.add_state()
+    edge = state.add_nedge(state.add_read("A"), state.add_write("A"), dace.Memlet("A[0:4] -> [4:8]"))
+    with pytest.raises(InvalidSDFGEdgeError, match='"subset" must be the region of the "A" end'):
+        sdfg.validate()
+    assert NormalizeCopyMemlets().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert (str(edge.data.subset), str(edge.data.other_subset)) == ("4:8", "0:4")
+    assert (str(edge.data.get_src_subset(edge, state)), str(edge.data.get_dst_subset(edge, state))) == ("0:4", "4:8")
+    a = np.arange(8, dtype=np.float64)
+    sdfg(A=a)
+    np.testing.assert_array_equal(a, [0, 1, 2, 3, 0, 1, 2, 3])
+
+
 def test_every_copy_is_a_node_after_lowering():
     """Before the lift the staging copy is implicit; after it, no copy is left for the generators."""
     sdfg, _, _ = staged("copy_form_invariant", gpu=False)
@@ -127,4 +171,6 @@ if __name__ == "__main__":
     test_scope_alias_moves_no_data_on_gpu()
     test_direct_copy_must_name_its_destination()
     test_stage_in_copy_must_name_the_outer_container()
+    test_stage_out_copy_must_name_the_outer_container()
+    test_same_container_copy_subset_must_be_the_owner_side()
     test_every_copy_is_a_node_after_lowering()

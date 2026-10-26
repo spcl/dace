@@ -375,6 +375,28 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     )
 
 
+def kernel_block_size(state: dace.SDFGState, node: nodes.Node) -> tuple | None:
+    """The thread-block size the kernel enclosing ``node`` launches with, or None outside a kernel.
+
+    A node directly in the device map runs on the whole block, which the code generator sizes from the map's
+    ``gpu_block_size`` or else the largest sibling thread-block map, not from the configured default.
+    """
+    dims = devicelevel_block_size(state.sdfg, state, node)
+    scope = state.entry_node(node)
+    if dims is None or not isinstance(scope, nodes.MapEntry) or scope.map.schedule != dtypes.ScheduleType.GPU_Device:
+        return dims
+    if scope.map.gpu_block_size is not None:
+        return tuple(list(scope.map.gpu_block_size) + [1] * (3 - len(scope.map.gpu_block_size)))
+    sizes = [
+        list(child.map.range.size()) + [1] * (3 - len(child.map.range))
+        for child in state.scope_children()[scope]
+        if isinstance(child, nodes.MapEntry) and child.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+    ]
+    if not sizes or any(symbolic.issymbolic(d) for size in sizes for d in size):
+        return dims
+    return tuple(max(int(size[i]) for size in sizes) for i in range(3))
+
+
 def _build_shmem_collective_copy_code(
     node: "CopyLibraryNode",
     parent_state: dace.SDFGState,
@@ -404,7 +426,7 @@ def _build_shmem_collective_copy_code(
 
     in_conn = INPUT_CONNECTOR_NAME
     out_conn = OUTPUT_CONNECTOR_NAME
-    block_dims = devicelevel_block_size(parent_state.sdfg, parent_state, node)
+    block_dims = kernel_block_size(parent_state, node)
     if (
         ndims == 1
         and block_dims is not None

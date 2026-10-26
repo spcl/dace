@@ -76,6 +76,61 @@ def _use_aligned_operator_new(desc: data.Data) -> bool:
         return False
 
 
+def consume_element_name(entry: nodes.ConsumeEntry) -> str:
+    """Prefix of the container a consume scope binds its popped element (or chunk) to."""
+    suffix = "element" if entry.consume.chunksize == 1 else "elements"
+    return f"__dace_{entry.consume.label}_{suffix}"
+
+
+def materialize_consume_elements(sdfg: SDFG) -> None:
+    """Give every consume scope an access node of its popped element, ahead of copy lowering.
+
+    The generated consume loop binds the element to a lambda parameter of that name; a consumer that is an
+    access node then reads it through an ordinary copy, which the lowering turns into a copy node.
+    """
+    for state in sdfg.states():
+        for entry in [n for n in state.nodes() if isinstance(n, nodes.ConsumeEntry)]:
+            edge = next(e for e in state.out_edges(entry) if e.src_conn == "OUT_stream")
+            if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data.startswith(consume_element_name(entry)):
+                continue
+            stream = state.memlet_path(next(e for e in state.in_edges(entry) if e.dst_conn == "IN_stream"))[0].src
+            dtype = stream.desc(state.sdfg).dtype
+            if entry.consume.chunksize == 1:
+                name, desc = state.sdfg.add_scalar(
+                    consume_element_name(entry),
+                    dtype,
+                    transient=True,
+                    storage=dtypes.StorageType.Register,
+                    find_new_name=True,
+                )
+            else:
+                name, desc = state.sdfg.add_array(
+                    consume_element_name(entry),
+                    [entry.consume.chunksize],
+                    dtype,
+                    transient=True,
+                    storage=dtypes.StorageType.Register,
+                    find_new_name=True,
+                )
+            element = state.add_access(name)
+            path = state.memlet_path(edge)
+            state.remove_edge(edge)
+            state.add_edge(entry, edge.src_conn, element, None, mmlt.Memlet.from_array(name, desc))
+            if isinstance(edge.dst, nodes.AccessNode):
+                # A copy into the consumer's container, named by it
+                dst_subset = edge.data.get_dst_subset(edge, state) if edge.data.data == edge.dst.data else None
+                copy_memlet = mmlt.Memlet(
+                    data=edge.dst.data,
+                    subset=dst_subset or subsets.Range.from_array(state.sdfg.arrays[edge.dst.data]),
+                    other_subset=subsets.Range.from_array(desc),
+                )
+                state.add_edge(element, None, edge.dst, edge.dst_conn, copy_memlet)
+                continue
+            state.add_edge(element, None, edge.dst, edge.dst_conn, mmlt.Memlet.from_array(name, desc))
+            for e in path[1:]:
+                e.data.data = name
+
+
 @registry.autoregister_params(name="cpu")
 class CPUCodeGen(TargetCodeGenerator):
     """SDFG CPU code generator."""
@@ -781,6 +836,9 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
+        # The consume loop binds the popped element to its lambda parameter (``materialize_consume_elements``)
+        if isinstance(edge.src, nodes.ConsumeEntry) and edge.src_conn == "OUT_stream":
+            return
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             try:
@@ -2217,19 +2275,20 @@ class CPUCodeGen(TargetCodeGenerator):
         input_stream = state_dfg.memlet_path(input_sedge)[0].src
         input_streamdesc = input_stream.desc(sdfg)
 
-        # Take chunks into account
+        # The element container is materialized before lowering (``materialize_consume_elements``)
+        element = output_sedge.dst.data
         if node.consume.chunksize == 1:
             ctype = f"const {input_streamdesc.dtype.ctype}"
-            chunk = "{}& {}".format(ctype, "__dace_" + node.consume.label + "_element")
-            self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_element", DefinedType.Scalar, ctype)
+            chunk = f"{ctype}& {element}"
+            self._dispatcher.defined_vars.add(element, DefinedType.Scalar, ctype)
         else:
             ctype = f"const {input_streamdesc.dtype.ctype} *"
             chunk = "{} {}, size_t {}".format(
                 ctype,
-                "__dace_" + node.consume.label + "_elements",
+                element,
                 "__dace_" + node.consume.label + "_numelems",
             )
-            self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_elements", DefinedType.Pointer, ctype)
+            self._dispatcher.defined_vars.add(element, DefinedType.Pointer, ctype)
             self._dispatcher.defined_vars.add(
                 "__dace_" + node.consume.label + "_numelems", DefinedType.Scalar, "size_t"
             )
@@ -2270,49 +2329,6 @@ class CPUCodeGen(TargetCodeGenerator):
             state_id,
             node,
         )
-
-        # Since consume is an alias node, we create an actual array for the
-        # consumed element and modify the outgoing memlet path ("OUT_stream")
-        # TODO: do this before getting to the codegen (preprocess)
-        if node.consume.chunksize == 1:
-            newname, _ = sdfg.add_scalar(
-                "__dace_" + node.consume.label + "_element",
-                input_streamdesc.dtype,
-                transient=True,
-                storage=dtypes.StorageType.Register,
-                find_new_name=True,
-            )
-            ce_node = nodes.AccessNode(newname)
-        else:
-            newname, _ = sdfg.add_array(
-                "__dace_" + node.consume.label + "_elements",
-                [node.consume.chunksize],
-                input_streamdesc.dtype,
-                transient=True,
-                storage=dtypes.StorageType.Register,
-                find_new_name=True,
-            )
-            ce_node = nodes.AccessNode(newname)
-        state_dfg.add_node(ce_node)
-        out_memlet_path = state_dfg.memlet_path(output_sedge)
-        state_dfg.remove_edge(out_memlet_path[0])
-        state_dfg.add_edge(
-            out_memlet_path[0].src,
-            out_memlet_path[0].src_conn,
-            ce_node,
-            None,
-            mmlt.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
-        )
-        state_dfg.add_edge(
-            ce_node,
-            None,
-            out_memlet_path[0].dst,
-            out_memlet_path[0].dst_conn,
-            mmlt.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
-        )
-        for e in out_memlet_path[1:]:
-            e.data.data = ce_node.data
-        # END of SDFG-rewriting code
 
         result.write(inner_stream.getvalue())
 
