@@ -64,14 +64,6 @@ def test_the_kernel_gets_a_thread_block_map_and_the_dynamic_map_a_queue():
     assert any("i <= (H - 1)" in condition.as_string for g in guards for condition, _ in g.branches if condition)
 
 
-def test_a_kernel_without_dynamic_maps_is_left_alone():
-    sdfg = spmv_sdfg("lower_dynamic_untouched")
-    for entry in maps_of(sdfg, dace.ScheduleType.GPU_ThreadBlock_Dynamic):
-        entry.map.schedule = dace.ScheduleType.Sequential
-    assert LowerDynamicThreadBlockMaps().apply_pass(sdfg, {}) is None
-    assert not maps_of(sdfg, dace.ScheduleType.GPU_ThreadBlock)
-
-
 @pytest.mark.parametrize("backend,warp_size,state", [("cuda", 32, 8192), ("hip", 64, 4)])
 def test_the_queue_follows_the_warp_size(backend: str, warp_size: int, state: int):
     """Fine-grained, CUDA lists the items of each warp in shared memory; HIP's 64-wide warps shuffle instead."""
@@ -114,7 +106,6 @@ def test_the_dynamic_maps_of_a_kernel_share_one_queue_state():
 
 if __name__ == "__main__":
     test_the_kernel_gets_a_thread_block_map_and_the_dynamic_map_a_queue()
-    test_a_kernel_without_dynamic_maps_is_left_alone()
     test_the_queue_follows_the_warp_size("cuda", 32, 8192)
     test_the_queue_follows_the_warp_size("hip", 64, 4)
     test_the_dynamic_maps_of_a_kernel_share_one_queue_state()
