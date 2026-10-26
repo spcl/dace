@@ -4,6 +4,7 @@
 import ctypes.util
 
 import dace.library
+from dace.libraries.fft.environments.plans import FFTPlans
 
 
 @dace.library.environment
@@ -21,7 +22,8 @@ class hipFFT:
     state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: list[str] = []
+    # The plan cache the renamed cuFFT code keeps its plans in
+    dependencies = [FFTPlans]
 
     cmake_includes: list[str] = []
 

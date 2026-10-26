@@ -16,9 +16,8 @@ import dace
 from dace import dtypes
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.fft.environments import fftw3
-from dace.libraries.fft.gpu_dialect import CUFFT
 from dace.libraries.fft.nodes import FFT, IFFT
-from dace.libraries.fft.nodes.fft import GpuFftLayout, Transform, fftw3_call, gpu_fft_call, gpu_fft_layout
+from dace.libraries.fft.nodes.fft import GpuFftLayout, Transform, cufft_call, fftw3_call, gpu_fft_layout
 
 N = dace.symbol("N")
 
@@ -429,38 +428,30 @@ def test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan(shape, axes, dtype, da
 
 def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch, tmp_path):
     """Each precision's threaded planner (``libfftw3_omp``, ``libfftw3f_omp``) links ahead of its base library and
-    threads that precision only; a prefix install also passes its include directory."""
-    (tmp_path / "include").mkdir()
-    (tmp_path / "include" / "fftw3.h").touch()
+    threads that precision only; ``FFTW_ROOT`` also passes its include directory."""
     (tmp_path / "lib").mkdir()
     for lib in ("libfftw3.so", "libfftw3_omp.so", "libfftw3f.so"):
         (tmp_path / "lib" / lib).touch()
     monkeypatch.setenv("FFTW_ROOT", str(tmp_path))
-    fftw3.fftw_install.cache_clear()
-    try:
-        libraries = [p.rsplit("/", 1)[1] for p in fftw3.FFTW3.cmake_libraries()]
-        assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-        assert fftw3.FFTW3.cmake_includes() == [str(tmp_path / "include")]
-        assert fftw3.threaded(double=True)
-        assert not fftw3.threaded(double=False)
-    finally:
-        fftw3.fftw_install.cache_clear()
+    libraries = [p.rsplit("/", 1)[1] for p in fftw3.FFTW3.cmake_libraries()]
+    assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
+    assert fftw3.FFTW3.cmake_includes() == [str(tmp_path / "include")]
+    assert fftw3.threaded(double=True)
+    assert not fftw3.threaded(double=False)
 
 
-def test_a_distro_fftw3_comes_from_the_loader(monkeypatch, tmp_path):
-    """Without a prefix install, a header on the default include path and the loader's libraries are the install."""
-    (tmp_path / "fftw3.h").touch()
+def test_a_distro_fftw3_comes_from_the_loader(monkeypatch):
+    """Without ``FFTW_ROOT`` the loader's libraries are the install and the header is on the default include path."""
     installed = {"fftw3", "fftw3_omp", "fftw3f"}
-    monkeypatch.setattr(fftw3, "search_path_prefixes", lambda: [])
-    monkeypatch.setattr(fftw3, "SYSTEM_INCLUDE_DIRS", (str(tmp_path),))
+    monkeypatch.delenv("FFTW_ROOT", raising=False)
     monkeypatch.setattr(fftw3.ctypes.util, "find_library", lambda lib: f"lib{lib}.so" if lib in installed else None)
-    fftw3.fftw_install.cache_clear()
+    fftw3.installed.cache_clear()
     try:
         assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
         assert fftw3.FFTW3.cmake_includes() == []
         assert fftw3.threaded(double=True) and not fftw3.threaded(double=False)
     finally:
-        fftw3.fftw_install.cache_clear()
+        fftw3.installed.cache_clear()
 
 
 @pytest.mark.parametrize("threaded", [True, False])
@@ -566,9 +557,26 @@ def test_a_unit_factor_adds_no_normalization_pass():
 def test_a_gpu_plan_is_cached_per_stream():
     """A plan's work area serves one transform at a time, so two streams never share a plan."""
     desc = dace.data.Array(dace.complex128, [64], storage=dtypes.StorageType.GPU_Global)
-    code = gpu_fft_call(CUFFT)(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
+    code = cufft_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
     key = next(line for line in code.splitlines() if "__key[" in line and "=" in line)
     assert "__dace_current_stream" in key
+
+
+def test_hipfft_is_the_cufft_code_renamed():
+    """The hipFFT expansion emits hipFFT names only; the inverse direction is HIPFFT_BACKWARD."""
+    sdfg = dace.SDFG("hipfft_rename")
+    sdfg.add_array("x", [64], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("y", [64], dace.complex128, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = IFFT("ifft")
+    node.implementation = "hipFFT"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet("x[0:64]"))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet("y[0:64]"))
+    sdfg.expand_library_nodes(recursive=False)
+    code = "\n".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    assert "hipfftXtExec(" in code and "HIPFFT_BACKWARD" in code
+    assert "cufft" not in code.lower()
 
 
 if __name__ == "__main__":
