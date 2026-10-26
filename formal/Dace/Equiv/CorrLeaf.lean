@@ -65,6 +65,15 @@ def copyKey (target : Name) (m : Memlet) : CopyKey :=
 
 end Memlet
 
+/-- The key of an input memlet in the tree context: inside a consume scope,
+a memlet on the consumed stream reads the chunk container
+(`TCtx.inData`, `Decisions.md#D38`). -/
+def TCtx.inKey (tc : TCtx) (c : Conn) (m : Memlet) : InKey := ⟨c, (tc.inData m).1, (tc.inData m).2, m.allowOob⟩
+
+/-- The key of a copy in the tree context (its source through `TCtx.inData`). -/
+def TCtx.copyKey (tc : TCtx) (target : Name) (m : Memlet) : CopyKey :=
+  ⟨target, (tc.inData m).1, (tc.inData m).2, m.otherSubset, m.wcr, m.allowOob⟩
+
 namespace State
 
 /-- The key of a memlet in-edge of a code node with a container source. -/
@@ -274,26 +283,34 @@ namespace Corr
 
 section Leaf
 
-variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
+variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL)
   (ρ : Valuation) {s : State}
 
 theorem TCtx.inData_none {tc : TCtx} (hcons : tc.consumed = none) (m : Memlet) :
     tc.inData m = (m.data, m.dataSubset) := by
   simp [TCtx.inData, TCtx.isChunk, hcons]
 
-include he hcons
+theorem TCtx.inKey_none {tc : TCtx} (hcons : tc.consumed = none) (c : Conn) (m : Memlet) :
+    tc.inKey c m = m.inKey c := by
+  simp [TCtx.inKey, TCtx.inData_none hcons, Memlet.inKey]
+
+theorem TCtx.copyKey_none {tc : TCtx} (hcons : tc.consumed = none) (t : Name) (m : Memlet) :
+    tc.copyKey t m = m.copyKey t := by
+  simp [TCtx.copyKey, TCtx.inData_none hcons, Memlet.copyKey]
+
+include he
 
 /-- Input binding: the SDFG binds the keys of the memlet in-edges, the tree
 those of its input memlets. -/
 theorem bindInputs_eq {n : DNode} {ins : MemletMap} (hsh : s.CodeShape n)
-    (hk : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2) (st : St) :
+    (hk : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2) (st : St) :
     bindInputs ctx ρ s n st = bindInputsT tc ρ ins st := by
   let g : List (Conn × ConnIn) × St → InKey → Res (List (Conn × ConnIn) × St) := fun (acc, st) k => do
     let (ci, st) ← bindInData ctx ρ k.data k.sub k.oob st
     pure (acc ++ [(k.conn, ci)], st)
   unfold bindInputs bindInputsT
   rw [List.foldlM_filterMap s.inKey? _ g (s.inEdges n.id) ?hs,
-    List.foldlM_map_eq (fun p => Memlet.inKey p.1 p.2) _ g ins.pairs ?ht, ← hk]
+    List.foldlM_map_eq (fun p => tc.inKey p.1 p.2) _ g ins.pairs ?ht, ← hk]
   · rfl
   case hs =>
     intro e he' ⟨acc, st⟩
@@ -319,10 +336,12 @@ theorem bindInputs_eq {n : DNode} {ins : MemletMap} (hsh : s.CodeShape n)
         | _ => simp [hep] at hx
   case ht =>
     intro p _ ⟨acc, st⟩
-    simp only [bindMemletIn, TCtx.inData_none hcons, Memlet.inKey, g]
+    simp only [bindMemletIn, TCtx.inKey, g]
+    rcases hid : tc.inData p.2 with ⟨d, sub⟩
+    simp only
     rw [Ctx.leaf_eq he bindInData (fun _ => rfl)]
 
-omit he hcons in
+omit he in
 /-- The output keys of an SDFG code node on connector `c` are those of the
 tree's output memlets on `c`. -/
 theorem outKeys_on {n : DNode} {outs : MemletMap} (hsh : s.CodeShape n)
@@ -344,7 +363,7 @@ theorem outKeys_on {n : DNode} {outs : MemletMap} (hsh : s.CodeShape n)
     have := hsh.outs e he ⟨m, hd⟩
     cases hep : s.dstEndpoint e <;> simp_all [State.outKey?, State.Endpoint.isData]
 
-omit he hcons in
+omit he in
 /-- A fold over the memlet out-edges of a code node on connector `c` whose
 step depends only on the output key is the fold over the tree's memlets on
 `c`. -/
@@ -363,13 +382,13 @@ theorem outs_fold {n : DNode} {outs : MemletMap} {c : Conn} (hsh : s.CodeShape n
     have := hsh.outs e he ⟨m, hd⟩
     cases hep : s.dstEndpoint e <;> simp_all [State.outKey?, State.Endpoint.isData]
 
-omit he hcons in
+omit he in
 /-- The input keys on connector `c`: the first one is the key of the SDFG's
 in-edge on `c`, and there is at most one. -/
 theorem inKeys_on {n : DNode} {ins : MemletMap} (hsh : s.CodeShape n)
-    (hk : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2) (c : Conn) :
-    ((ins.on c).map (Memlet.inKey c)).head? = (s.inEdgeOn n c).bind s.inKey? ∧ (ins.on c).length ≤ 1 := by
-  have h₁ : (ins.on c).map (Memlet.inKey c) = (s.codeIns n).filter (·.conn = c) := by
+    (hk : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2) (c : Conn) :
+    ((ins.on c).map (tc.inKey c)).head? = (s.inEdgeOn n c).bind s.inKey? ∧ (ins.on c).length ≤ 1 := by
+  have h₁ : (ins.on c).map (tc.inKey c) = (s.codeIns n).filter (·.conn = c) := by
     rw [MemletMap.on_eq, List.map_map, hk, List.filter_map]
     refine List.map_congr_left fun p hp => ?_
     simp only [List.mem_filter, decide_eq_true_eq] at hp
@@ -398,7 +417,7 @@ theorem inKeys_on {n : DNode} {ins : MemletMap} (hsh : s.CodeShape n)
 
 /-- Popping through an input connector. -/
 theorem applyPop_eq {n : DNode} {ins : MemletMap} (hsh : s.CodeShape n)
-    (hk : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2) (st : St) (c : Conn) (k : Nat) :
+    (hk : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2) (st : St) (c : Conn) (k : Nat) :
     applyPop ctx ρ s n st c k = match ins.on c with
       | [] => .err (.malformed s!"pop through unknown connector '{c}'")
       | ms => ms.foldlM (fun st m => let (d, sub) := tc.inData m; popFrom tc.ctx ρ st d sub k) st := by
@@ -435,17 +454,18 @@ theorem applyPop_eq {n : DNode} {ins : MemletMap} (hsh : s.CodeShape n)
       | memlet mm =>
         cases hep : s.srcEndpoint e with
         | data d sub =>
-          simp only [State.inKey?, hd, hep, Option.some.injEq, Memlet.inKey, InKey.mk.injEq] at hh
-          obtain ⟨-, rfl, rfl, -⟩ := hh
-          simp only [hep, List.foldlM_cons, List.foldlM_nil, TCtx.inData_none hcons]
+          simp only [State.inKey?, hd, hep, Option.some.injEq, TCtx.inKey, InKey.mk.injEq] at hh
+          obtain ⟨-, hd1, hd2, -⟩ := hh
+          have hid : tc.inData m = (d, sub) := Prod.ext hd1 hd2
+          simp only [hep, List.foldlM_cons, List.foldlM_nil, hid]
           rw [Ctx.leaf_eq he popFrom (fun _ => rfl)]
-          cases popFrom ctx ρ st m.data m.dataSubset k <;> rfl
+          cases popFrom ctx ρ st d sub k <;> rfl
         | _ => simp [State.inKey?, hd, hep] at hh
 
 /-- Effects of a code node: the SDFG applies them through its edges, the tree
 through its memlets. -/
 theorem applyOut_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
-    (hk : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2)
+    (hk : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
     (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2) (st : St) (out : TaskletOut) :
     applyOut ctx ρ s n st out = applyOutT tc ρ ins outs st out := by
   have hst : ∀ (G : St → OutKey → Res St) (F : St → DEdge → Res St) (Gt : St → Memlet → Res St) (c : Conn),
@@ -458,7 +478,7 @@ theorem applyOut_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
   unfold applyOut applyOutT
   congr 1
   · refine List.foldlM_congr_mem (fun ⟨c, k⟩ _ st => ?_) st
-    exact applyPop_eq he hcons ρ hsh hk st c k
+    exact applyPop_eq he ρ hsh hk st c k
   · funext st
     congr 1
     · refine List.foldlM_congr_mem (fun ⟨c, v⟩ _ st => ?_) st
@@ -509,13 +529,13 @@ theorem applyOut_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
 /-- **Code nodes**: an SDFG tasklet or library node and the tree node with
 the same keys execute the same code. -/
 theorem execCode_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
-    (hk : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2)
+    (hk : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
     (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
     (hdyn : s.hasDynamicWcrOut n = false) (hdynT : outs.hasDynamicWcr = false) (label : String) (st : St)
     (run : (Conn → Option ConnIn) → Option TaskletOut) (err : ErrReason) :
     execCode ctx ρ s n st run err = execCodeT tc ρ label ins outs st run err := by
   unfold execCode execCodeT
-  rw [hdyn, hdynT, bindInputs_eq he hcons ρ hsh hk]
+  rw [hdyn, hdynT, bindInputs_eq he ρ hsh hk]
   simp only [Bool.false_eq_true, ↓reduceIte]
   cases bindInputsT tc ρ ins st with
   | err e => rfl
@@ -523,9 +543,9 @@ theorem execCode_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
     simp only [Res.ok_bind]
     cases run p.1 with
     | none => rfl
-    | some out => exact applyOut_eq he hcons ρ hsh hk hko p.2 out
+    | some out => exact applyOut_eq he ρ hsh hk hko p.2 out
 
-omit he hcons in
+omit he in
 /-- The keyed memlet edges of a code node: dependency edges have no key,
 memlet edges do. -/
 theorem filterMap_memlet {α : Type} {l : List DEdge} {k : DEdge → Option α}
@@ -547,7 +567,7 @@ theorem filterMap_memlet {α : Type} {l : List DEdge} {k : DEdge → Option α}
     | dep => rw [h] at hp; cases hp
     | memlet m => exact hm e he ⟨m, h⟩
 
-omit he hcons in
+omit he in
 theorem filterMap_length_of_isSome {α β : Type} {l : List α} {k : α → Option β} (h : ∀ a ∈ l, (k a).isSome = true) :
     (l.filterMap k).length = l.length := by
   induction l with
@@ -559,7 +579,7 @@ theorem filterMap_length_of_isSome {α β : Type} {l : List α} {k : α → Opti
 /-- **Reduce**: the SDFG's single memlet in- and out-edge and the tree's
 single input and output memlet. -/
 theorem execReduce_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
-    (hk : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2)
+    (hk : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
     (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2) (props : ReduceProps) (st : St) :
     execReduce ctx ρ s n props st = execReduceT tc ρ props ins outs st := by
   have hi := filterMap_memlet (l := s.inEdges n.id) (k := s.inKey?)
@@ -575,7 +595,7 @@ theorem execReduce_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
       have := hsh.outs e he ⟨m, hd⟩
       cases hep : s.dstEndpoint e <;> simp_all [State.outKey?, State.Endpoint.isData])
   have hlI : ins.memlets.length = ((s.inEdges n.id).filter fun e => e.data matches .memlet _).length := by
-    rw [MemletMap.memlets_eq, List.length_map, ← List.length_map (f := fun p => Memlet.inKey p.1 p.2), ← hk,
+    rw [MemletMap.memlets_eq, List.length_map, ← List.length_map (f := fun p => tc.inKey p.1 p.2), ← hk,
       State.codeIns, hi.1, filterMap_length_of_isSome hi.2]
   have hlO : outs.memlets.length = ((s.outEdges n.id).filter fun e => e.data matches .memlet _).length := by
     rw [MemletMap.memlets_eq, List.length_map, ← List.length_map (f := fun p => Memlet.outKey p.1 p.2), ← hko,
@@ -604,9 +624,9 @@ theorem execReduce_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
     obtain ⟨ie, hI⟩ := List.length_eq_one_iff.1 (by rw [hlI]; rfl)
     obtain ⟨oe, hO⟩ := List.length_eq_one_iff.1 (by rw [hlO]; rfl)
     rw [hI, hO]
-    obtain ⟨c, hc⟩ := hsingle ins ie Memlet.inKey hI
+    obtain ⟨c, hc⟩ := hsingle ins ie tc.inKey hI
     obtain ⟨c', hc'⟩ := hsingle outs oe Memlet.outKey hO
-    have hki : s.inKey? ie' = some (Memlet.inKey c ie) := by
+    have hki : s.inKey? ie' = some (tc.inKey c ie) := by
       have := hi.1
       rw [← State.codeIns, hk, hc] at this
       obtain ⟨k, hk'⟩ := Option.isSome_iff_exists.1 (hi.2 ie' (List.mem_singleton_self _))
@@ -624,10 +644,11 @@ theorem execReduce_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
     · rename_i hdi hepi
       split at hko'
       · rename_i om hdo hepo
-        simp only [Option.some.injEq, Memlet.inKey, Memlet.outKey, InKey.mk.injEq, OutKey.mk.injEq] at hki hko'
-        obtain ⟨-, rfl, rfl, hoi⟩ := hki
+        simp only [Option.some.injEq, TCtx.inKey, Memlet.outKey, InKey.mk.injEq, OutKey.mk.injEq] at hki hko'
+        obtain ⟨-, hd1, hd2, hoi⟩ := hki
+        have hid : tc.inData ie = (_, _) := Prod.ext hd1.symm hd2.symm
         obtain ⟨-, rfl, rfl, hw, hoo⟩ := hko'
-        simp only [hepi, hepo, hdo, EdgeData.memlet?, TCtx.inData_none hcons, hw, hoo, hoi]
+        simp only [hepi, hepo, hdo, EdgeData.memlet?, hid, hw, hoo, hoi]
         rw [Ctx.leaf_eq he reduceData (fun _ => rfl)]
       · cases hko'
     · cases hki
@@ -642,7 +663,7 @@ theorem execReduce_eq {n : DNode} {ins outs : MemletMap} (hsh : s.CodeShape n)
         exact absurd ⟨⟨_, h₁⟩, ⟨_, h₂⟩⟩ hno
       · rfl
 
-omit he hcons in
+omit he in
 /-- **Copies**: the copies into an access or exit node, in edge order. -/
 theorem execCopiesInto_eq {n : DNode} (hcs : s.CopyShape ctx n) (st : St) :
     execCopiesInto ctx ρ s n st =
@@ -680,12 +701,14 @@ theorem execCopiesInto_eq {n : DNode} (hcs : s.CopyShape ctx n) (st : St) :
 /-- A tree copy node. -/
 theorem execCopyT_eq (target : Name) (m : Memlet) (st : St) :
     execCopyT tc ρ target m st =
-      copyData ctx ρ st (m.copyKey target).src (m.copyKey target).ssub (m.copyKey target).dst
-        (m.copyKey target).dsub (m.copyKey target).wcr (m.copyKey target).oob := by
-  simp only [execCopyT, TCtx.inData_none hcons, Memlet.copyKey]
+      copyData ctx ρ st (tc.copyKey target m).src (tc.copyKey target m).ssub (tc.copyKey target m).dst
+        (tc.copyKey target m).dsub (tc.copyKey target m).wcr (tc.copyKey target m).oob := by
+  simp only [execCopyT, TCtx.copyKey]
+  rcases hid : tc.inData m with ⟨d, sub⟩
+  simp only
   rw [Ctx.leaf_eq he copyData (fun _ => rfl)]
 
-omit he hcons in
+omit he in
 /-- **Map set-up** without dynamic inputs. -/
 theorem mapSetup_eq {n : DNode} {mp : MapNode} (hdyn : ∀ e ∈ s.inEdges n.id, s.isDynamicInput e = false)
     (st : St) : mapSetup ctx ρ s n mp st = (ctx.rangePoints ρ st.mem mp.range).map fun pts => (ρ, st, pts) := by
@@ -694,7 +717,7 @@ theorem mapSetup_eq {n : DNode} {mp : MapNode} (hdyn : ∀ e ∈ s.inEdges n.id,
   simp only [Res.ok_bind]
   cases ctx.rangePoints ρ st.mem mp.range <;> rfl
 
-omit ρ hcons in
+omit ρ in
 /-- **Map set-up** in the tree, without pending dynamic inputs. -/
 theorem mapSetupT_eq {mp : MapNode} (cst : CSt) :
     mapSetupT tc {} mp cst = (ctx.rangePoints cst.ρ cst.mem mp.range).map fun pts => (cst.ρ, pts) := by

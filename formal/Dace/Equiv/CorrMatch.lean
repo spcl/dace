@@ -354,8 +354,8 @@ def IdleNodes (ctx : Ctx) (s : State) (xs : List NodeId) : Prop :=
   ∀ x ∈ xs, ∃ xn, s.node? x = some xn ∧ DNode.isCopyTarget xn = true ∧ s.CopyShape ctx xn ∧ s.copiesInto ctx xn = []
 
 /-- The `DynScopeCopyNode`s of the dynamic inputs `keys`, in order. -/
-def DynNodes (keys : List InKey) (ds : List SNode) : Prop :=
-  List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ m.inKey k.conn = k) keys ds
+def DynNodes (tc : TCtx) (keys : List InKey) (ds : List SNode) : Prop :=
+  List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ tc.inKey k.conn m = k) keys ds
 
 theorem DNode.isSimple_of_copyTarget' {n : DNode} (hk : DNode.isCopyTarget n = true) : n.isSimple = true := by
   unfold DNode.isCopyTarget at hk
@@ -466,11 +466,11 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
   | nil : SegCorr ctx tc s [] []
   | copies {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {cps : List (Name × Memlet)}
       (hn : s.node? id = some n) (hk : DNode.isCopyTarget n = true) (hsh : s.CopyShape ctx n)
-      (hks : s.copiesInto ctx n = cps.map fun p => p.2.copyKey p.1) (h : SegCorr ctx tc s o cs) :
+      (hks : s.copiesInto ctx n = cps.map fun p => tc.copyKey p.1 p.2) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (cps.map (fun p => SNode.copyNode p.1 p.2) ++ cs)
   | tasklet {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {t : Tasklet} {ins outs : MemletMap}
       (hn : s.node? id = some n) (hk : n.kind = .tasklet t) (hsh : s.CodeShape n)
-      (hki : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2)
+      (hki : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
       (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (.taskletNode t ins outs :: cs)
@@ -478,14 +478,14 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       {props : List (String × String)} {ins outs : MemletMap}
       (hn : s.node? id = some n) (hk : n.kind = .library l) (hl : l'.classpath = l.classpath ∧ l'.reduce = l.reduce)
       (hsh : s.CodeShape n)
-      (hki : s.codeIns n = ins.pairs.map fun p => Memlet.inKey p.1 p.2)
+      (hki : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
       (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (.libraryCall l' props ins outs :: cs)
   | map {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {oM full : List NodeId}
       {body : List SNode} {keys : List InKey} {ds : List SNode}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
-      (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
+      (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes tc keys ds)
       (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
       (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
       (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
@@ -499,7 +499,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       {body : List SNode} {keys : List InKey} {ds : List SNode} {nid : NodeId} {nd : DNode} {inner : SDFG}
       {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} {σ : Equiv.Perm Name}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
-      (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
+      (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes tc keys ds)
       {xs : List NodeId}
       (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
       (hdir : full.filter (s.directChildren (some n.id)).contains = nid :: xs) (hxs : IdleNodes ctx s xs)
@@ -680,7 +680,7 @@ abbrev pendingSc (syms : List (Sym × Val)) : SibCtx := { pending := { syms } }
 valuation into the pending symbols. -/
 theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
     {full : List SNode} {gb : Bool} {rest : List SNode} {r : Res (TCtl × CSt)} :
-    ∀ {keys : List InKey} {ds : List SNode}, DynNodes keys ds → (∀ k ∈ keys, k.conn ≠ "IN_stream") →
+    ∀ {keys : List InKey} {ds : List SNode}, DynNodes tc keys ds → (∀ k ∈ keys, k.conn ≠ "IN_stream") →
       ∀ {acc : List (Sym × Val)} {cst : CSt}, STree.ListExec tc full gb (pendingSc acc) (ds ++ rest) cst r →
       (∃ e, r = .err e ∧ dynReadAcc ctx cst.ρ acc keys cst.st = .err e) ∨
       ∃ syms y, dynReadAcc ctx cst.ρ acc keys cst.st = .ok (syms, y) ∧ y.vals = [] ∧
@@ -701,11 +701,12 @@ theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (
       | leaf _ h' =>
         simp only [stepLeaf, Option.some.injEq] at h'
         rw [← h']
-        simp only [execDynScopeCopy, hk', ↓reduceIte, TCtx.inData_none hcons]
-        rw [Ctx.leaf_eq he readScalarData (fun _ => rfl)]
         rw [← hk]
-        simp only [Memlet.inKey]
-        cases readScalarData ctx cst.ρ m.data m.dataSubset m.allowOob cst.st with
+        simp only [execDynScopeCopy, hk', ↓reduceIte, TCtx.inKey]
+        rcases hid : tc.inData m with ⟨d, sub⟩
+        simp only
+        rw [Ctx.leaf_eq he readScalarData (fun _ => rfl)]
+        cases readScalarData ctx cst.ρ d sub m.allowOob cst.st with
         | err e => rfl
         | ok p =>
           obtain ⟨v?, y⟩ := p
@@ -1029,26 +1030,26 @@ over their keys. -/
 theorem copies_run {full : List SNode} {gb : Bool} :
     ∀ (cps : List (Name × Memlet)) {more : List SNode} {cst : CSt} {r : Res (TCtl × CSt)},
       STree.ListExec tc full gb {} (cps.map (fun p => SNode.copyNode p.1 p.2) ++ more) cst r →
-      (∃ e, r = .err e ∧ (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) cst.st = .err e) ∨
+      (∃ e, r = .err e ∧ (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) cst.st = .err e) ∨
       ∃ cst', STree.ListExec tc full gb {} more cst' r ∧
-        (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) cst.st = .ok cst'.st ∧ cst'.ρ = cst.ρ
+        (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) cst.st = .ok cst'.st ∧ cst'.ρ = cst.ρ
   | [], _, cst, _, hx => .inr ⟨cst, hx, rfl, rfl⟩
   | p :: cps, more, cst, r, hx => by
     simp only [List.map_cons, List.cons_append] at hx
     have hstep : stepLeaf tc {} (.copyNode p.1 p.2) cst =
         some (leafOut (cst.lift (execCopyT tc cst.ρ p.1 p.2 cst.st))) := rfl
-    rw [execCopyT_eq he hcons] at hstep
+    rw [execCopyT_eq he] at hstep
     rcases leaf_inv hstep hx with ⟨e, hR, rfl⟩ | ⟨cst₁, hR, hx₁⟩
     · refine .inl ⟨e, rfl, ?_⟩
       simp only [CSt.lift] at hR
       simp only [List.map_cons, List.foldlM_cons, copyStep]
-      cases hc : copyData ctx cst.ρ cst.st (p.2.copyKey p.1).src (p.2.copyKey p.1).ssub (p.2.copyKey p.1).dst
-          (p.2.copyKey p.1).dsub (p.2.copyKey p.1).wcr (p.2.copyKey p.1).oob with
+      cases hc : copyData ctx cst.ρ cst.st (tc.copyKey p.1 p.2).src (tc.copyKey p.1 p.2).ssub (tc.copyKey p.1 p.2).dst
+          (tc.copyKey p.1 p.2).dsub (tc.copyKey p.1 p.2).wcr (tc.copyKey p.1 p.2).oob with
       | ok y => rw [hc] at hR; cases hR
       | err e' => rw [hc] at hR; cases hR; rfl
     · simp only [CSt.lift] at hR
-      cases hc : copyData ctx cst.ρ cst.st (p.2.copyKey p.1).src (p.2.copyKey p.1).ssub (p.2.copyKey p.1).dst
-          (p.2.copyKey p.1).dsub (p.2.copyKey p.1).wcr (p.2.copyKey p.1).oob with
+      cases hc : copyData ctx cst.ρ cst.st (tc.copyKey p.1 p.2).src (tc.copyKey p.1 p.2).ssub (tc.copyKey p.1 p.2).dst
+          (tc.copyKey p.1 p.2).dsub (tc.copyKey p.1 p.2).wcr (tc.copyKey p.1 p.2).oob with
       | err e' => rw [hc] at hR; cases hR
       | ok y =>
         rw [hc] at hR
@@ -1462,7 +1463,7 @@ include he hcons in
 segment (`ih`). -/
 theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {body : List SNode}
     {keys : List InKey} {ds : List SNode} (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
-    (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes keys ds)
+    (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes tc keys ds)
     (hiter : ∀ {pre : CSt} {st₁ : St}, st₁.mem = pre.mem → st₁.vals = [] →
       ∀ {pts : List Idx} {rT : Res (List Log)},
         STree.IterExec tc mp.params body (tc.privateTransients body) pre pts rT →
@@ -1577,26 +1578,26 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     have hn' := List.mem_of_find?_eq_some hn
     rw [List.append_assoc] at hx
     -- the SDFG node runs the same copies
-    have hfold : ∀ X, execSimple ctx cst.ρ s n X = (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) X := by
+    have hfold : ∀ X, execSimple ctx cst.ρ s n X = (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) X := by
       intro X
       rw [execSimple_copyTarget hk, execCopiesInto_eq cst.ρ hsh, hks]
       rfl
-    have hshift : (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) cst.st =
-        ((cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) st.forNode).map (St.shift cst.log) := by
+    have hshift : (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) cst.st =
+        ((cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) st.forNode).map (St.shift cst.log) := by
       rw [hrel.forNode_shift]
       exact List.foldlM_res_comm _ _ (fun b k => copyData_shift ctx cst.ρ cst.log b _ _ _ _ _ _) _ _
     have hsimp := DNode.isSimple_of_copyTarget hk
     apply SeqOut.cons hn
     rcases copies_run he hcons cps hx with ⟨e, rfl, hf⟩ | ⟨cst', hx', hf, hρ⟩
     · rw [hshift] at hf
-      cases hy : (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) st.forNode with
+      cases hy : (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) st.forNode with
       | ok y => rw [hy] at hf; cases hf
       | err e' =>
         rw [hy] at hf
         cases hf
         exact .inr (.inl ⟨_, _, rfl, (hfold st.forNode).trans hy ▸ NodeExec.simple hsimp⟩)
     · rw [hshift] at hf
-      cases hy : (cps.map fun p => p.2.copyKey p.1).foldlM (copyStep ctx cst.ρ) st.forNode with
+      cases hy : (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) st.forNode with
       | err e' => rw [hy] at hf; cases hf
       | ok y =>
         rw [hy] at hf
@@ -1619,7 +1620,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     have : ∀ X, execCodeT tc cst.ρ t.label ins outs X (tc.ctx.I.tasklet t cst.ρ) (.taskletUndefined t.label) =
         execSimple ctx cst.ρ s n X := by
       intro X
-      rw [← execCode_eq he hcons cst.ρ hsh hki hko hd hdT, I_eq he]
+      rw [← execCode_eq he cst.ρ hsh hki hko hd hdT, I_eq he]
       simp [execSimple, hk]
     simp only [stepLeaf, this]
   | @library id n o cs l l' props ins outs hn hk hl hsh hki hko hd hdT _ ih =>
@@ -1633,11 +1634,11 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       cases hr : l.reduce with
       | some props' =>
         simp only []
-        rw [← execReduce_eq he hcons cst.ρ hsh hki hko props' X]
+        rw [← execReduce_eq he cst.ρ hsh hki hko props' X]
         simp [execSimple, hk, hr]
       | none =>
         simp only []
-        rw [← execCode_eq he hcons cst.ρ hsh hki hko hd hdT, I_eq he]
+        rw [← execCode_eq he cst.ρ hsh hki hko hd hdT, I_eq he]
         simp [execSimple, hk, hr]
     simp only [stepLeaf, this]
   | @map id n o cs mp oM full body keys ds hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih =>

@@ -76,13 +76,13 @@ theorem takeCopies_sound : ∀ {k : Nat} {cs : List SNode} {ps : List (Name × M
 
 /-- The leading `DynScopeCopyNode`s of a tree list, exactly `k` of them:
 their input keys and the rest. -/
-def takeDyn : Nat → List SNode → Option (List InKey × List SNode)
+def takeDyn (tc : TCtx) : Nat → List SNode → Option (List InKey × List SNode)
   | 0, cs => some ([], cs)
-  | k + 1, .dynScopeCopy t m :: cs => (takeDyn k cs).map fun p => (m.inKey t :: p.1, p.2)
+  | k + 1, .dynScopeCopy t m :: cs => (takeDyn tc k cs).map fun p => (tc.inKey t m :: p.1, p.2)
   | _ + 1, _ => none
 
-theorem takeDyn_sound : ∀ {k : Nat} {cs : List SNode} {ks : List InKey} {rest : List SNode},
-    takeDyn k cs = some (ks, rest) → ∃ ds, cs = ds ++ rest ∧ DynNodes ks ds
+theorem takeDyn_sound {tc : TCtx} : ∀ {k : Nat} {cs : List SNode} {ks : List InKey} {rest : List SNode},
+    takeDyn tc k cs = some (ks, rest) → ∃ ds, cs = ds ++ rest ∧ DynNodes tc ks ds
   | 0, cs, ks, rest, h => by
     simp only [takeDyn, Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
@@ -95,7 +95,7 @@ theorem takeDyn_sound : ∀ {k : Nat} {cs : List SNode} {ks : List InKey} {rest 
       simp only [Prod.mk.injEq] at he
       obtain ⟨rfl, rfl⟩ := he
       obtain ⟨ds, rfl, hds⟩ := takeDyn_sound h'
-      have hkc : (m.inKey t).conn = t := rfl
+      have hkc : (tc.inKey t m).conn = t := rfl
       exact ⟨.dynScopeCopy t m :: ds, rfl, .cons ⟨m, by rw [hkc], rfl⟩ hds⟩
     | _ => simp [takeDyn] at h
   | _ + 1, [], _, _, h => by simp [takeDyn] at h
@@ -255,7 +255,7 @@ theorem nestedChild_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SD
     (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
     {n : DNode} {body : List SNode} {full : List NodeId} (h : nestedChild ctx tc nest s n body = some full) :
     ∀ {id : NodeId} {o : List NodeId} {cs : List SNode} {mp : MapNode} {keys : List InKey} {ds : List SNode},
-      s.node? id = some n → n.kind = .mapEntry mp → s.dynKeys? n = some keys → DynOk ctx keys → DynNodes keys ds →
+      s.node? id = some n → n.kind = .mapEntry mp → s.dynKeys? n = some keys → DynOk ctx keys → DynNodes tc keys ds →
       SegCorr ctx tc s o cs → SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs) := by
   intro id o cs mp keys ds hn hk hkeys hok hds ht
   unfold nestedChild at h
@@ -366,20 +366,20 @@ def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) 
   | .access _ | .mapExit =>
     if s.copyShape? ctx n = true then
       match takeCopies (s.copiesInto ctx n).length cs with
-      | some (ps, rest) => if ps.map (fun p => p.2.copyKey p.1) = s.copiesInto ctx n then some ([], rest) else none
+      | some (ps, rest) => if ps.map (fun p => tc.copyKey p.1 p.2) = s.copiesInto ctx n then some ([], rest) else none
       | none => none
     else none
   | .tasklet t =>
     match cs with
     | .taskletNode t' ins outs :: rest =>
-      if t' = t ∧ s.codeShape? n = true ∧ s.codeIns n = ins.pairs.map (fun p => Memlet.inKey p.1 p.2) ∧
+      if t' = t ∧ s.codeShape? n = true ∧ s.codeIns n = ins.pairs.map (fun p => tc.inKey p.1 p.2) ∧
           s.codeOuts n = outs.pairs.map (fun p => Memlet.outKey p.1 p.2) ∧ s.hasDynamicWcrOut n = false ∧
           outs.hasDynamicWcr = false then some ([], rest) else none
     | _ => none
   | .library l =>
     match cs with
     | .libraryCall l' _ ins outs :: rest =>
-      if (l'.classpath = l.classpath ∧ l'.reduce = l.reduce) ∧ s.codeShape? n = true ∧ s.codeIns n = ins.pairs.map (fun p => Memlet.inKey p.1 p.2) ∧
+      if (l'.classpath = l.classpath ∧ l'.reduce = l.reduce) ∧ s.codeShape? n = true ∧ s.codeIns n = ins.pairs.map (fun p => tc.inKey p.1 p.2) ∧
           s.codeOuts n = outs.pairs.map (fun p => Memlet.outKey p.1 p.2) ∧ s.hasDynamicWcrOut n = false ∧
           outs.hasDynamicWcr = false then some ([], rest) else none
     | _ => none
@@ -388,7 +388,7 @@ def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) 
     | none => none
     | some keys =>
       if dynOk? ctx keys = true then
-        match takeDyn keys.length cs with
+        match takeDyn tc keys.length cs with
         | some (dks, cs') =>
           if dks = keys then
             match cs' with
