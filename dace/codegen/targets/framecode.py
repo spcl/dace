@@ -47,7 +47,7 @@ class DaCeCodeGenerator:
             list[tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool, bool]],
         ] = collections.defaultdict(list)
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
-        self.fsyms: dict[int, set[str]] = {}
+        self.fsyms: dict[tuple[int, bool], set[str]] = {}
         self._symbols_and_constants: dict[int, set[str]] = {}
         # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
         self._symbol_resolver = SymbolResolver()
@@ -90,11 +90,14 @@ class DaCeCodeGenerator:
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any):
-        k = id(obj)
+    def free_symbols(self, obj: Any, keep_defined_in_mapping: bool = False):
+        k = (id(obj), keep_defined_in_mapping)
         if k in self.fsyms:
             return self.fsyms[k]
-        if hasattr(obj, "used_symbols"):
+        if keep_defined_in_mapping:
+            # The symbols a nested SDFG's header and call pass; interstate edges do not take the flag
+            result = obj.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        elif hasattr(obj, "used_symbols"):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -588,7 +591,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f"Generating code (SDFG {sdfg.cfg_id})")
+        opbar = progress.OptionalProgressBar(sdfg.num_states(), title=f"Generating code (SDFG {sdfg.cfg_id})")
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -658,6 +661,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
+        code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
@@ -665,9 +669,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             #############################################
             # Look for all states in which a scope-allocated array is used in
             instances: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
+            code_uses: dict[str, list[tuple[SDFGState, nodes.Node]]] = collections.defaultdict(list)
             array_names = (
                 sdfg.arrays.keys()
             )  # set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            # A use with no access node of its own is stood in for by an access node that is in no state; a view's
+            # pointer comes from its viewed edge, so a view is never stood in for
+            standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
@@ -675,15 +683,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
                     instances[node.data].append((state, node))
 
+                # A code node may name a container in its code alone (no connector, memlet or access node)
+                for node in state.nodes():
+                    if not isinstance(node, nodes.CodeNode):
+                        continue
+                    for used in node.free_symbols & standin_names:
+                        instances[used].append((state, nodes.AccessNode(used)))
+                        code_uses[used].append((state, node))
+
                 # Look in the surrounding edges for usage
                 edge_fsyms: set[str] = set()
                 for e in state.parent_graph.all_edges(state):
                     edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
+                for edge_array in edge_fsyms & standin_names:
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
             #############################################
 
             access_instances[sdfg.cfg_id] = instances
+            code_instances[sdfg.cfg_id] = code_uses
 
         # Per-SDFG information for scope-lifetime arrays, computed on first use
         control_flow_symbols: dict[int, set[str]] = {}
@@ -812,7 +829,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 multistate = name in control_flow_symbols[sdfg.cfg_id]
 
-                for state, state_accesses in root_data_accesses[sdfg.cfg_id].get(name, {}).items():
+                # Code nodes naming the container in their code are uses as well
+                state_uses = {
+                    state: list(state_accesses)
+                    for state, state_accesses in root_data_accesses[sdfg.cfg_id].get(name, {}).items()
+                }
+                for state, node in code_instances[sdfg.cfg_id].get(name, []):
+                    state_uses.setdefault(state, []).append(node)
+                for state, state_accesses in state_uses.items():
                     if multistate:
                         break
                     sdict = state.scope_dict()
@@ -1121,7 +1145,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(sdfg.states()):
+        if len(states_generated) != sdfg.num_states():
             raise RuntimeError(
                 f"Not all states were generated in SDFG {sdfg.label}!\n  Generated: {[s.label for s in states_generated]}\n  Missing: {[s.label for s in (set(sdfg.states()) - states_generated)]}"
             )
@@ -1221,7 +1245,7 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     def accesses(block: ControlFlowBlock) -> bool:
         if isinstance(block, SDFGState):
             return block in access_states
-        return any(inner in access_states for inner in block.all_states())
+        return any(inner in access_states for inner in block.states())
 
     def assigns_inside(block: ControlFlowBlock) -> bool:
         return isinstance(block, AbstractControlFlowRegion) and any(

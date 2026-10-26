@@ -3,6 +3,7 @@
 (and through interstate-edge serialization), covering subscripts, operators, infinities,
 NaN, booleans and float precision."""
 
+import numpy
 import sympy
 
 import dace
@@ -183,6 +184,26 @@ def test_float_precision_preserved():
         assert pystr_to_symbolic(huge) not in (sympy.oo, -sympy.oo)
 
 
+def test_integer_valued_float_stays_float():
+    # ``min(x, 1.0)`` must not become a mixed int/double ``Min(x, 1)``
+    assert symstr(1.0) == "1.0"
+    assert symstr(numpy.float64(2.0)) == "2.0"
+    assert symstr(sympy.Min(sympy.Symbol("x"), 1.0), cpp_mode=True) == "(Min(1.0, x))"
+
+
+def test_float_printed_at_round_trip_precision():
+    value = 0.1 + 0.2
+    assert float(symstr(sympy.Float(value))) == value
+    assert float(symstr(sympy.Float(value), cpp_mode=True)) == value
+
+
+def test_symbolic_property_keeps_float_precision():
+    value = 0.1 + 0.2
+    memlet = dace.Memlet("A[0]")
+    memlet.volume = sympy.Float(value)
+    assert float(memlet.volume) == value
+
+
 def test_infinity_roundtrip():
     assert pystr_to_symbolic("inf") == sympy.oo
     assert pystr_to_symbolic("-inf") == -sympy.oo
@@ -351,6 +372,9 @@ if __name__ == "__main__":
     test_scalar_to_symbol_promotion_moves_scalar_out_of_scalars()
     test_contains_sympy_functions_subscript()
     test_float_precision_preserved()
+    test_integer_valued_float_stays_float()
+    test_float_printed_at_round_trip_precision()
+    test_symbolic_property_keeps_float_precision()
     test_infinity_roundtrip()
     test_infinity_cpp_lowering()
     test_nan_roundtrip()
