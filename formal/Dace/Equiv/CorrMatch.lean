@@ -202,10 +202,11 @@ def _root_.Dace.TCtx.renT (tc : TCtx) (σ : Equiv.Perm Name) : TCtx := { tc with
 
 /-- The tree outcome `r` of a scope body is matched by the SDFG outcomes `X`:
 `X` may be undefined, or has an error when `r` has one, or the body ends normally in
-the same state. -/
+the same state, the region ending normally or by a return (which ends the
+call, `SDFGExec.run`). -/
 def NestedOut (X : Res (Ctl × CSt) → Prop) (r : Res (TCtl × CSt)) : Prop :=
   (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e e', r = .err e ∧ X (.err e')) ∨
-    ∃ c, r = .ok (.normal, c) ∧ X (.ok (.normal, c))
+    ∃ ctl c, (ctl = .normal ∨ ctl = .ret) ∧ r = .ok (.normal, c) ∧ X (.ok (ctl, c))
 
 /-- A symbol mapping that passes symbols on unchanged, into an SDFG without
 constants. -/
@@ -304,30 +305,11 @@ theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNod
 /-- Without code consumers of the outputs, a nested call ends with the inner
 memory and the inner log without the dropped names. -/
 theorem nestedFinish_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
-    {m₂ : Mem} {g₂ : Log} (h : ∀ e ∈ s.outEdges n.id, (s.dstEndpoint e).isData = true) :
+    {m₂ : Mem} {g₂ : Log} (h : s.DataOuts n) :
     nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
-      .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
-  unfold nestedFinish
-  generalize ({ mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = acc
-  generalize s.outEdges n.id = es at h ⊢
-  induction es generalizing acc with
-  | nil => rfl
-  | cons e es ih =>
-    rw [List.foldlM_cons]
-    have hd := h e List.mem_cons_self
-    have ih' := fun acc => ih acc (fun e' he' => h e' (List.mem_cons_of_mem _ he'))
-    cases hdat : e.data with
-    | dep => simp only; exact ih' acc
-    | memlet mm =>
-      cases hc : e.srcConn with
-      | none => simp only; exact ih' acc
-      | some c =>
-        cases hE : s.dstEndpoint e with
-        | data d sub => simp only; exact ih' acc
-        | code k => rw [hE] at hd; cases hd
-        | invalid => simp only; exact ih' acc
+      .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } :=
+  nestedFinish_data' h
 
-/-- Set-up of a nested call with data connectors only. -/
 theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inner : SDFG}
     {mapping : List (Sym × Expr)} {st : St} {conns : List (Name × Name)} (hb : nestedBindings ctx s n = .ok conns)
     (hcode : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) :
@@ -493,7 +475,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hnd : s.node? nid = some nd) (hkn : nd.kind = .nested inner mapping ni)
       (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
       (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
-      (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
+      (hout : s.DataOuts nd)
       (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
         x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
       (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
@@ -506,7 +488,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hnd : s.node? id = some nd) (hkn : nd.kind = .nested inner mapping ni)
       (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
       (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
-      (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
+      (hout : s.DataOuts nd)
       (hst : inner.top.statesOnly = true) (hctr : inner.callTransients = [])
       (hflat : body.all SNode.isFlatT = true)
       (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
@@ -535,7 +517,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
       cases hn'
-      exact .inr ⟨_, _, _, hkn, hst, hctr, hcode, hout⟩
+      exact .inr ⟨_, _, _, hkn, hctr, hcode, hout⟩
     · exact ih id hid n' hn'
 
 /-- The outcomes of the sequential SDFG run of `o` from `st` that match a
@@ -1068,7 +1050,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     (hnd : s.node? nid = some nd) (hkn : nd.kind = .nested inner mapping ni)
     (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
     (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
-    (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true)
+    (hout : s.DataOuts nd)
     (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
       x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
     {cT : Ctx} (hcI : cT.I = tc.ctx.I) (hct : cT.g.top = inner.top)
@@ -1131,7 +1113,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
       (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem Log.empty =
       iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i) := by
     simp only [hmap.consts]; rfl
-  rcases hinner _ _ hbd with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨c, rfl, hR⟩
+  rcases hinner _ _ hbd with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨ctl, c, hctl, rfl, hR⟩
   · have hx : SDFGExec cT (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.err e) :=
       .err (by rw [hcst]; exact .start hR)
@@ -1150,7 +1132,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     · exact .inr (.inl ⟨e₀, e', rfl, herr e' (.nestedInnerErr hkn hset hx₂)⟩)
   · have hx : SDFGExec cT (pre.ρ.bindIdx mp.params i)
         (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem inner (.ok (c.ρ, c.mem, c.log)) :=
-      .run (by rw [hcst]; exact .start hR) rfl
+      .run (by rw [hcst]; exact .start hR) (by rcases hctl with rfl | rfl <;> rfl)
     obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
     rcases ResSim.ok_cases hr with ⟨e', rfl, hu'⟩ | ⟨⟨ρ₂, m₂, g₂⟩, rfl, -, -, hg₂, -⟩
     · exact .inl ⟨e', hu', herr e' (.nestedInnerErr hkn hset hx₂)⟩
@@ -1194,7 +1176,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
     {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} (hkn : nd.kind = .nested inner mapping ni)
     (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
     (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
-    (hout : ∀ e ∈ s.outEdges nd.id, (s.dstEndpoint e).isData = true) (hctr : inner.callTransients = [])
+    (hout : s.DataOuts nd) (hctr : inner.callTransients = [])
     {cT : Ctx} (hcI : cT.I = tc.ctx.I) (hct : cT.g.top = inner.top)
     (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) cT inner.top)
     (ρ : Valuation) (st₀ : St) {res : Res (TCtl × CSt)}
@@ -1218,7 +1200,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
     rw [hcI, I_eq he]; exact hw
   have hcst : ({ ρ := inner.withConstants ρ, mem := st₀.mem } : CSt) = { ρ, mem := st₀.mem } := by
     simp only [hmap.consts]
-  rcases hR with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨c, rfl, hR⟩
+  rcases hR with ⟨e, hu, hR⟩ | ⟨e₀, e, rfl, hR⟩ | ⟨ctl, c, hctl, rfl, hR⟩
   · have hx : SDFGExec cT ρ st₀.mem inner (.err e) := .err (by rw [hcst]; exact .start hR)
     obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
     obtain ⟨e', rfl, hu'⟩ := ResSim.err_inv hr
@@ -1231,7 +1213,8 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
     rcases hu' with hu' | rfl
     · exact .inl ⟨e', hu', .nestedInnerErr hkn hset hx₂⟩
     · exact .inr (.inl ⟨e₀, e', rfl, .nestedInnerErr hkn hset hx₂⟩)
-  · have hx : SDFGExec cT ρ st₀.mem inner (.ok (c.ρ, c.mem, c.log)) := .run (by rw [hcst]; exact .start hR) rfl
+  · have hx : SDFGExec cT ρ st₀.mem inner (.ok (c.ρ, c.mem, c.log)) :=
+      .run (by rw [hcst]; exact .start hR) (by rcases hctl with rfl | rfl <;> rfl)
     obtain ⟨r₂, hx₂, hr⟩ := SDFGExec.sim hc hw' hnames hx _ hmem
     rcases ResSim.ok_cases hr with ⟨e', rfl, hu'⟩ | ⟨⟨ρ₂, m₂, g₂⟩, rfl, -, hm₂, hg₂, -⟩
     · exact .inl ⟨e', hu', .nestedInnerErr hkn hset hx₂⟩

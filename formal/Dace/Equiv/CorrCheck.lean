@@ -1,6 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Equiv.CorrCtl
 import Dace.Equiv.NamesCheck
+import Dace.STree.Retarget
 
 /-!
 # The verified SDFG / schedule-tree pair checker (M5a, M5b steps 1–3)
@@ -209,6 +210,18 @@ theorem idle?_sound {ctx : Ctx} {s : State} {xs : List NodeId} (h : idle? ctx s 
     simp only [Bool.and_eq_true, List.isEmpty_iff] at this
     exact ⟨xn, rfl, this.1.1, State.copyShape?_sound this.1.2, this.2⟩
 
+/-- Decision procedure for `State.DataOuts`. -/
+def _root_.Dace.State.dataOuts? (s : State) (n : DNode) : Bool :=
+  (s.outEdges n.id).all fun e => match e.data with
+    | .memlet _ => (s.dstEndpoint e).isData
+    | .dep => true
+
+theorem _root_.Dace.State.dataOuts?_sound {s : State} {n : DNode} (h : s.dataOuts? n = true) : s.DataOuts n := by
+  intro e he ⟨m, hm⟩
+  have := List.all_eq_true.1 h e he
+  rw [hm] at this
+  exact this
+
 /-- Recognize a map scope whose body is one nested SDFG (`SegCorr.nestedMap`;
 `nest` checks the inlined inner region): the order of the scope. -/
 def nestedChild (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) (n : DNode)
@@ -226,7 +239,7 @@ def nestedChild (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → Lis
         | .ok conns =>
             if idle? ctx s xs = true ∧
                 nestedMapOk? ctx inner mapping = true ∧ (nestedConns nd).all (fun c => (nestedEndpoint s nd c).isData) = true ∧
-                (s.outEdges nd.id).all (fun e => (s.dstEndpoint e).isData) = true ∧
+                s.dataOuts? nd = true ∧
                 sameMembers? (tc.privateTransients body)
                   (ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname) = true ∧
                 innerNames? ctx (tc.renT (connPerm conns)) inner nd.id conns = true ∧
@@ -262,7 +275,7 @@ theorem nestedChild_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SD
             obtain ⟨hidle, hm, hcode, hout, hpriv, hnames, hn', hto⟩ := hc
             cases h
             exact .nestedMap hn hk hkeys hok hds hto hdir (idle?_sound hidle) hnd hkn hb (nestedMapOk?_sound hm)
-              (List.all_eq_true.1 hcode) (List.all_eq_true.1 hout) (sameMembers?_sound hpriv)
+              (List.all_eq_true.1 hcode) (State.dataOuts?_sound hout) (sameMembers?_sound hpriv)
               (innerNames?_sound hnames) (hnest _ _ _ hn') ht
           · cases h
         · cases h
@@ -291,7 +304,7 @@ def nestedCall (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List
     | .ok conns =>
       if nestedMapOk? ctx inner mapping = true ∧
           (nestedConns n).all (fun c => (nestedEndpoint s n c).isData) = true ∧
-          (s.outEdges n.id).all (fun e => (s.dstEndpoint e).isData) = true ∧
+          s.dataOuts? n = true ∧
           inner.top.statesOnly = true ∧ inner.callTransients = [] ∧
           innerNames? ctx (tc.renT (connPerm conns)) inner n.id conns = true
       then longestPrefix (fun body => body.all SNode.isFlatT && nest (connPerm conns) inner body) cs
@@ -315,7 +328,7 @@ theorem nestedCall_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
         obtain ⟨hp, hcs⟩ := longestPrefix_sound h
         simp only [Bool.and_eq_true] at hp
         refine ⟨hcs, fun id o tail hn ht => ?_⟩
-        exact .nested hn hkn hb (nestedMapOk?_sound hm) (List.all_eq_true.1 hcode) (List.all_eq_true.1 hout) hst
+        exact .nested hn hkn hb (nestedMapOk?_sound hm) (List.all_eq_true.1 hcode) (State.dataOuts?_sound hout) hst
           hctr hp.1 (innerNames?_sound hnames) (hnest _ _ _ hp.2) ht
       · cases h
     · cases h
@@ -1038,71 +1051,225 @@ theorem StateExec.normal {ctx : Ctx} {cst : CSt} {s : State} {ctl : Ctl} {c : CS
       exact hr.1
     · cases hr
 
-/-- A region of states only ends normally. -/
-theorem RegionAt.normal_of_states {ctx : Ctx} {rg : Region} (hs : rg.statesOnly = true) :
+mutual
+
+/-- Can a `break`/`continue` leave the region (one outside loops)? -/
+def _root_.Dace.Region.escapes : Region → Bool
+  | ⟨_, _, blocks, _, _⟩ => Blocks.escapes blocks
+
+def _root_.Dace.Blocks.escapes : List Block → Bool
+  | [] => false
+  | b :: bs => Block.escapes b || Blocks.escapes bs
+
+def _root_.Dace.Block.escapes : Block → Bool
+  | .breakBlock | .continueBlock => true
+  | .region r => Region.escapes r
+  | .cond _ brs => Branches.escapes brs
+  | _ => false
+
+def _root_.Dace.Branches.escapes : List (Option Expr × Region) → Bool
+  | [] => false
+  | (_, r) :: rest => Region.escapes r || Branches.escapes rest
+
+end
+
+theorem _root_.Dace.Region.escapes_eq (rg : Region) : rg.escapes = Blocks.escapes rg.blocks := by cases rg; rfl
+
+theorem _root_.Dace.Blocks.escapes_mem {b : Block} : ∀ {bs : List Block}, Blocks.escapes bs = false → b ∈ bs → b.escapes = false
+  | [], _, hb => by cases hb
+  | b' :: bs, h, hb => by
+    simp only [Blocks.escapes, Bool.or_eq_false_iff] at h
+    rcases List.mem_cons.1 hb with rfl | hb
+    · exact h.1
+    · exact Blocks.escapes_mem h.2 hb
+
+mutual
+
+/-- A loop ends normally or returns. -/
+theorem LoopExec.ctl {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopExec ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .initErr _, _, _, hr => by cases hr
+  | .guardFirst _ _ hg, ctl, c, hr => LoopGuard.ctl hg ctl c hr
+  | .bodyFirst _ _ hb, ctl, c, hr => LoopIter.ctl hb ctl c hr
+
+theorem LoopGuard.ctl {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopGuard ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .condErr _, _, _, hr => by cases hr
+  | .exit _, _, _, hr => by cases hr; exact .inl rfl
+  | .enter _ hb, ctl, c, hr => LoopIter.ctl hb ctl c hr
+
+theorem LoopIter.ctl {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopIter ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .bodyErr _, _, _, hr => by cases hr
+  | .ret _, _, _, hr => by cases hr; exact .inr rfl
+  | .brk _, _, _, hr => by cases hr; exact .inl rfl
+  | .tail _ _ ht, ctl, c, hr => LoopTail.ctl ht ctl c hr
+
+theorem LoopTail.ctl {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopTail ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .updateErr .., _, _, hr => by cases hr
+  | .updateGuard _ _ hg, ctl, c, hr => LoopGuard.ctl hg ctl c hr
+  | .condFirstErr .., _, _, hr => by cases hr
+  | .condFirstExit .., _, _, hr => by cases hr; exact .inl rfl
+  | .condFirstUpdateErr .., _, _, hr => by cases hr
+  | .condFirstNext _ _ _ hb, ctl, c, hr => LoopIter.ctl hb ctl c hr
+
+end
+
+mutual
+
+/-- A region without escaping `break`/`continue` ends normally or returns. -/
+theorem RegionAt.noEscape {ctx : Ctx} {rg : Region} (hs : rg.escapes = false) :
     ∀ {cst : CSt} {bid : BlockId} {r : Res (Ctl × CSt)}, RegionAt ctx rg cst bid r →
-      ∀ ctl c, r = .ok (ctl, c) → ctl = .normal
-  | _, _, _, .exit (b := b) hb hbx hc, ctl, c, hr => by
-    cases hr
+      ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | _, _, _, .exit (b := b) hb hbx _, ctl, c, hr => by
     have hmem : b ∈ rg.blocks := List.mem_of_getElem? hb
-    have := List.all_eq_true.1 hs b hmem
-    cases b with
-    | state s' =>
-      cases hbx with
-      | state h' => exact absurd (StateExec.normal h') hc
-    | _ => simp at this
-  | _, _, _, .stop .., _, _, hr => by cases hr; rfl
-  | _, _, _, .step _ _ _ _ hn, ctl, c, hr => RegionAt.normal_of_states hs hn ctl c hr
+    rw [Region.escapes_eq] at hs
+    exact BlockExec.noEscape (Blocks.escapes_mem hs hmem) hbx ctl c hr
+  | _, _, _, .stop .., _, _, hr => by cases hr; exact .inl rfl
+  | _, _, _, .step _ _ _ _ hn, ctl, c, hr => RegionAt.noEscape hs hn ctl c hr
   | _, _, _, .missing _, _, _, hr => by cases hr
   | _, _, _, .blockErr .., _, _, hr => by cases hr
   | _, _, _, .edgesErr .., _, _, hr => by cases hr
   | _, _, _, .ambiguous .., _, _, hr => by cases hr
   | _, _, _, .assignErr .., _, _, hr => by cases hr
 
+theorem BlockExec.noEscape {ctx : Ctx} {cst : CSt} {b : Block} (hs : b.escapes = false) {r : Res (Ctl × CSt)} :
+    BlockExec ctx cst b r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .state h, ctl, c, hr => by subst hr; exact .inl (StateExec.normal h)
+  | .region h, ctl, c, hr => RegionExec.noEscape hs h ctl c hr
+  | .loop h, ctl, c, hr => LoopExec.ctl h ctl c hr
+  | .cond h, ctl, c, hr => CondExec.noEscape hs h ctl c hr
+  | .brk, _, _, _ => by simp [Block.escapes] at hs
+  | .cont, _, _, _ => by simp [Block.escapes] at hs
+  | .ret, _, _, hr => by cases hr; exact .inr rfl
+
+theorem RegionExec.noEscape {ctx : Ctx} {cst : CSt} {rg : Region} (hs : rg.escapes = false) {r : Res (Ctl × CSt)} :
+    RegionExec ctx cst rg r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .start h, ctl, c, hr => RegionAt.noEscape hs h ctl c hr
+
+theorem CondExec.noEscape {ctx : Ctx} {cst : CSt} {brs : List (Option Expr × Region)}
+    (hs : Branches.escapes brs = false) {r : Res (Ctl × CSt)} :
+    CondExec ctx cst brs r → ∀ ctl c, r = .ok (ctl, c) → ctl = .normal ∨ ctl = .ret
+  | .nil, _, _, hr => by cases hr; exact .inl rfl
+  | .els (rg := rg) h, ctl, c, hr => by
+    simp only [Branches.escapes, Bool.or_eq_false_iff] at hs
+    exact RegionExec.noEscape hs.1 h ctl c hr
+  | .condErr _, _, _, hr => by cases hr
+  | .taken _ h, ctl, c, hr => by
+    simp only [Branches.escapes, Bool.or_eq_false_iff] at hs
+    exact RegionExec.noEscape hs.1 h ctl c hr
+  | .skipped _ h, ctl, c, hr => by
+    simp only [Branches.escapes, Bool.or_eq_false_iff] at hs
+    exact CondExec.noEscape hs.2 h ctl c hr
+
+end
+
 /-- A tree outcome matched up to the error is matched. -/
 theorem NestedOut.of_get? {X : Res (Ctl × CSt) → Prop} {r' r : Res (TCtl × CSt)} (hr : r'.get? = r.get?)
     (h : NestedOut X r') : NestedOut X r := by
-  rcases h with h | ⟨e, e', rfl, hx⟩ | ⟨c, rfl, hx⟩
+  rcases h with h | ⟨e, e', rfl, hx⟩ | ⟨ctl, c, hctl, rfl, hx⟩
   · exact .inl h
   · obtain ⟨e₀, rfl⟩ := Res.exists_err_of_get? (by rw [← hr]; rfl)
     exact .inr (.inl ⟨e₀, e', rfl, hx⟩)
   · rw [Res.get?_ok, eq_comm, Res.get?_eq_some] at hr
-    exact .inr (.inr ⟨c, hr, hx⟩)
+    exact .inr (.inr ⟨ctl, c, hctl, hr, hx⟩)
 
-/-- Check the inlined top region of a nested SDFG (`InnerCorr`): a chain of
-states without nested SDFGs, matched against the tree body renamed by `σ`
-(`SNode.ren`) in the renamed tree context (`TCtx.renT`); the renaming theorem
-(`STree.ListExec.ren`) carries the tree's runs over. -/
-def innerCheck (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNode) : Bool :=
-  inner.top.statesOnly && descFixed? σ tc.ctx &&
-    SNodes.renOk σ (tc.renT σ).privateTransients tc.privateTransients body &&
-    match regCheck ((tc.renT σ).innerCtx inner) (tc.renT σ) (fun _ _ _ => false) (3 * Region.size inner.top + 3)
-        inner.top inner.top.start (SNodes.ren σ body) with
-    | .ok [] => true
-    | _ => false
+/-- The inlined body of a nested SDFG that ends in the label its returns
+were rebound to (`_bind_exits_to_label`): the label and the body before it. -/
+def exitLabel? (body : List SNode) : Option (String × List SNode) :=
+  match body.getLast? with
+  | some (.stateLabel L) => some (L, body.dropLast)
+  | _ => none
 
-theorem innerCheck_sound {tc : TCtx} {σ : Equiv.Perm Name} {inner : SDFG} {body : List SNode}
-    (hcons : tc.consumed = none) (h : innerCheck tc σ inner body = true) : InnerCorr tc σ inner body := by
-  simp only [innerCheck, Bool.and_eq_true] at h
-  obtain ⟨⟨⟨hs, hd⟩, hok⟩, h⟩ := h
+theorem exitLabel?_sound {body pre : List SNode} {L : String} (h : exitLabel? body = some (L, pre)) :
+    body = pre ++ [.stateLabel L] := by
+  unfold exitLabel? at h
+  split at h
+  · rename_i L' hl
+    cases h
+    exact (List.dropLast_append_getLast? _ hl).symm
+  · cases h
+
+/-- The tree list `regCheck` matches against the top region of `inner`. -/
+def innerRegOk (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNode) : Bool :=
+  match regCheck ((tc.renT σ).innerCtx inner) (tc.renT σ) (fun _ _ _ => false) (3 * Region.size inner.top + 3)
+      inner.top inner.top.start body with
+  | .ok [] => true
+  | _ => false
+
+theorem innerRegOk_sound {tc : TCtx} {σ : Equiv.Perm Name} {inner : SDFG} {body : List SNode}
+    (h : innerRegOk tc σ inner body = true) (I : Interp) :
+    RegCorr (((tc.withI I).renT σ).innerCtx inner) ((tc.withI I).renT σ) inner.top inner.top.start body := by
+  unfold innerRegOk at h
   split at h
   · rename_i hr
     obtain ⟨pre, hpre, hc⟩ := regCheck_sound (fun _ _ _ h => by cases h) _ _ _ _ _ hr
     rw [List.append_nil] at hpre
-    intro I hw cst r hx
-    have hR : TCtx.Ren σ ((tc.withI I).renT σ) (tc.withI I) := ⟨Ctx.ren_ren σ _, descFixed?_sound hd, rfl, hcons⟩
-    obtain ⟨r', hx', hr'⟩ := STree.ListExec.ren hR hx hok hok
-    refine NestedOut.of_get? hr' ?_
-    have hc' : RegCorr (((tc.withI I).renT σ).innerCtx inner) ((tc.withI I).renT σ) inner.top inner.top.start
-        (SNodes.ren σ body) := by rw [hpre]; exact RegCorr.withI I hc
-    rcases (RegCorr.matched (ctx := ((tc.withI I).renT σ).innerCtx inner) (tc := (tc.withI I).renT σ) rfl rfl hw hc'
-        HeadOk.nil (ListExec.append_nil hx')).toOut with ⟨e, hu, h⟩ | ⟨e, e', he, h⟩ | ⟨ctl, c, rfl, h⟩
+    rw [hpre]; exact RegCorr.withI I hc
+  · cases h
+
+/-- Check the inlined top region of a nested SDFG (`InnerCorr`): the tree
+body renamed by `σ` (`SNode.ren`) in the renamed tree context (`TCtx.renT`)
+is matched against the region (the renaming theorem `STree.ListExec.ren`
+carries the tree's runs over).  No `break`/`continue` leaves the region.  A
+body ending in the label its returns were rebound to is matched with those
+gotos turned back into returns (`SNode.retarget`, `STree.ListExec.unlabel`);
+otherwise the body has no gotos. -/
+def innerCheck (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNode) : Bool :=
+  !inner.top.escapes && descFixed? σ tc.ctx &&
+    SNodes.renOk σ (tc.renT σ).privateTransients tc.privateTransients body &&
+    match exitLabel? (SNodes.ren σ body) with
+    | some (L, pre) =>
+      !SNodes.hasLabel L pre && SNodes.jumpsTo (some L) pre && innerRegOk tc σ inner (SNodes.retarget L pre)
+    | none => SNodes.jumpsTo none (SNodes.ren σ body) && innerRegOk tc σ inner (SNodes.ren σ body)
+
+theorem innerCheck_sound {tc : TCtx} {σ : Equiv.Perm Name} {inner : SDFG} {body : List SNode}
+    (hcons : tc.consumed = none) (h : innerCheck tc σ inner body = true) : InnerCorr tc σ inner body := by
+  simp only [innerCheck, Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨⟨⟨hs, hd⟩, hok⟩, h⟩ := h
+  intro I hw cst r hx
+  have hR : TCtx.Ren σ ((tc.withI I).renT σ) (tc.withI I) := ⟨Ctx.ren_ren σ _, descFixed?_sound hd, rfl, hcons⟩
+  obtain ⟨r₁, hx₁, hr₁⟩ := STree.ListExec.ren hR hx hok hok
+  refine NestedOut.of_get? hr₁ ?_
+  have hX : ∀ {r' : Res (TCtl × CSt)} {b : List SNode}, innerRegOk tc σ inner b = true →
+      STree.ListExec ((tc.withI I).renT σ) b false {} b cst r' →
+      Out (RegionAt (((tc.withI I).renT σ).innerCtx inner) inner.top cst inner.top.start) r' := fun hb hxb =>
+    (RegCorr.matched (ctx := ((tc.withI I).renT σ).innerCtx inner) (tc := (tc.withI I).renT σ) rfl rfl hw
+      (innerRegOk_sound hb I) HeadOk.nil (ListExec.append_nil hxb)).toOut
+  split at h
+  · rename_i L pre hlab
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    obtain ⟨⟨hnl, hj⟩, hreg⟩ := h
+    rw [exitLabel?_sound hlab] at hx₁
+    obtain ⟨r₂, hx₂, hrel⟩ := STree.ListExec.unlabel L (full' := SNodes.retarget L pre) hnl hj hx₁
+    rcases hX hreg hx₂ with ⟨e, hu, h⟩ | ⟨e, e', rfl, h⟩ | ⟨ctl, c, rfl, h⟩
+    · exact .inl ⟨e, hu, h⟩
+    · rcases hrel with ⟨e₁, rfl, -⟩ | ⟨c, -, hc⟩ | ⟨_, _, _, _, -, hc⟩
+      · exact .inr (.inl ⟨e₁, e', rfl, h⟩)
+      · rcases hc with hc | hc <;> cases hc
+      · cases hc
+    · have hctl := RegionAt.noEscape hs h ctl c rfl
+      rcases hrel with ⟨e₁, -, he⟩ | ⟨c₁, rfl, hc⟩ | ⟨ctl', c₁, hj', hne, rfl, hc⟩
+      · cases he
+      · rcases hc with hc | hc <;>
+          (simp only [Res.ok.injEq, Prod.mk.injEq] at hc; obtain ⟨-, rfl⟩ := hc;
+           exact .inr (.inr ⟨ctl, c, hctl, rfl, h⟩))
+      · simp only [Res.ok.injEq, Prod.mk.injEq] at hc
+        obtain ⟨hc, rfl⟩ := hc
+        rcases hctl with rfl | rfl
+        · rw [← hc] at hj'; cases hj'
+        · exact absurd hc.symm hne
+  · simp only [Bool.and_eq_true] at h
+    obtain ⟨hj, hreg⟩ := h
+    rcases hX hreg hx₁ with ⟨e, hu, h⟩ | ⟨e, e', he, h⟩ | ⟨ctl, c, rfl, h⟩
     · exact .inl ⟨e, hu, h⟩
     · exact .inr (.inl ⟨e, e', he, h⟩)
-    · have hn := RegionAt.normal_of_states hs h ctl c rfl
-      subst hn
-      exact .inr (.inr ⟨c, rfl, h⟩)
-  · cases h
+    · have hctl := RegionAt.noEscape hs h ctl c rfl
+      have hok' := STree.ListExec.okFor none hx₁ hj hj _ _ rfl
+      rcases hctl with rfl | rfl
+      · exact .inr (.inr ⟨.normal, c, .inl rfl, rfl, h⟩)
+      · cases hok'
 
 /-- The per-call transients of the nested SDFGs of `g`'s states, each with
 its memory name in `g` (`Ctx.enter` at top level): the tree's flattened name

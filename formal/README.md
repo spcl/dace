@@ -45,7 +45,11 @@ representations:
   theorem `SDFGExec.sim` over a name permutation, `Corr.flatCtx`).
   Connectors may name their containers differently from the outer edges:
   the tree body is renamed to the connector names (`STree/Rename.lean`,
-  `STree.ListExec.ren`, `Corr.connPerm`).  A nested SDFG outside map scopes
+  `STree.ListExec.ren`, `Corr.connPerm`).  The inner top region may hold
+  any structured control flow without a `break`/`continue` leaving it
+  (`Region.escapes`); returns end the call, and the tree's gotos to the label
+  its returns were rebound to are matched as returns (`STree/Retarget.lean`,
+  `STree.ListExec.unlabel`, `Corr.innerCheck`).  A nested SDFG outside map scopes
   (`SegCorr.nested`) matches its inlined region in the sibling list when the
   inner top region holds states only, the call allocates no transients and
   the inlined tree nodes are dataflow nodes (`SNode.isFlatT`); such a call

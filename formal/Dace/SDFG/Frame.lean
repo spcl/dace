@@ -975,12 +975,16 @@ def Region.statesOnly (rg : Region) : Bool :=
     | .state _ => true
     | _ => false
 
-/-- A nested SDFG node whose call steps the state by the inner log: the inner
-top region holds states only, the call allocates no transients and passes no
-scalars to or from code nodes. -/
+/-- Every memlet out-edge of `n` ends at a container (not at a code node);
+empty memlets only order. -/
+def State.DataOuts (s : State) (n : DNode) : Prop :=
+  ∀ e ∈ s.outEdges n.id, (∃ m, e.data = .memlet m) → (s.dstEndpoint e).isData = true
+
+/-- A nested SDFG node whose call steps the state by the inner log: the call
+allocates no transients and passes no scalars to or from code nodes. -/
 def DNode.NestedFlat (s : State) (n : DNode) : Prop :=
-  ∃ inner mapping ni, n.kind = .nested inner mapping ni ∧ inner.top.statesOnly = true ∧ inner.callTransients = [] ∧
-    (∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) ∧ (∀ e ∈ s.outEdges n.id, (s.dstEndpoint e).isData = true)
+  ∃ inner mapping ni, n.kind = .nested inner mapping ni ∧ inner.callTransients = [] ∧
+    (∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) ∧ s.DataOuts n
 
 /-- A node whose normal runs step the state by a delta (`NodeExec.steps`). -/
 def DNode.FlatIn (s : State) (n : DNode) : Prop := n.IsFlat ∨ n.NestedFlat s
@@ -1029,35 +1033,96 @@ theorem Region.statesOnly_block {rg : Region} (hs : rg.statesOnly = true) {bid :
   | state st => exact ⟨st, rfl⟩
   | _ => simp at this
 
-/-- A normal run of a region of states steps the state by its log. -/
-theorem RegionAt.steps {ctx : Ctx} {rg : Region} (hs : rg.statesOnly = true) :
+/-- `c` is `cst` stepped by a delta. -/
+def CSt.Steps (ctx : Ctx) (cst c : CSt) : Prop := ∃ δ, c.mem = δ.apply ctx.I.wcr cst.mem ∧ c.log = cst.log.seq δ
+
+theorem CSt.Steps.refl (ctx : Ctx) (cst : CSt) : cst.Steps ctx cst := ⟨Log.empty, rfl, (Log.seq_empty _).symm⟩
+
+theorem CSt.Steps.trans {ctx : Ctx} {a b c : CSt} (h₁ : a.Steps ctx b) (h₂ : b.Steps ctx c) : a.Steps ctx c := by
+  obtain ⟨δ₁, hm₁, hl₁⟩ := h₁
+  obtain ⟨δ₂, hm₂, hl₂⟩ := h₂
+  exact ⟨δ₁.seq δ₂, by rw [hm₂, hm₁, Log.apply_seq], by rw [hl₂, hl₁, Log.seq_assoc]⟩
+
+theorem CSt.Steps.of_mem_log {ctx : Ctx} {a b : CSt} (hm : b.mem = a.mem) (hl : b.log = a.log) : a.Steps ctx b :=
+  ⟨Log.empty, hm, by rw [hl, Log.seq_empty]⟩
+
+theorem applyAssign?_steps {ctx : Ctx} {cst c : CSt} {a : Option (Sym × Expr)} (h : applyAssign? ctx cst a = .ok c) :
+    cst.Steps ctx c := by
+  cases a with
+  | none => cases h; exact CSt.Steps.refl ctx cst
+  | some a => obtain ⟨hm, hl⟩ := applyAssigns_mem_log h; exact CSt.Steps.of_mem_log hm hl
+
+mutual
+
+/-- A run of a region steps the state by its log. -/
+theorem RegionAt.steps {ctx : Ctx} {rg : Region} :
     ∀ {cst : CSt} {bid : BlockId} {r : Res (Ctl × CSt)}, RegionAt ctx rg cst bid r →
-      ∀ ctl c, r = .ok (ctl, c) → ∃ δ, c.mem = δ.apply ctx.I.wcr cst.mem ∧ c.log = cst.log.seq δ
-  | _, _, _, .exit hb hbx _, ctl, c, hr => by
-    cases hr
-    obtain ⟨st, rfl⟩ := Region.statesOnly_block hs hb
-    cases hbx with
-    | state h' => exact StateExec.steps h'
-  | _, _, _, .stop hb hbx _, ctl, c, hr => by
-    cases hr
-    obtain ⟨st, rfl⟩ := Region.statesOnly_block hs hb
-    cases hbx with
-    | state h' => exact StateExec.steps h'
-  | _, _, _, .step hb hbx _ ha hn, ctl, c, hr => by
-    obtain ⟨st, rfl⟩ := Region.statesOnly_block hs hb
-    cases hbx with
-    | state h' =>
-      obtain ⟨δ₁, hm₁, hl₁⟩ := StateExec.steps h'
-      obtain ⟨hm₂, hl₂⟩ := applyAssigns_mem_log ha
-      obtain ⟨δ₂, hm, hl⟩ := RegionAt.steps hs hn ctl c hr
-      refine ⟨δ₁.seq δ₂, ?_, ?_⟩
-      · rw [hm, hm₂, hm₁, Log.apply_seq]
-      · rw [hl, hl₂, hl₁, Log.seq_assoc]
+      ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | _, _, _, .exit _ hbx _, ctl, c, hr => BlockExec.steps hbx ctl c hr
+  | _, _, _, .stop _ hbx _, ctl, c, hr => by cases hr; exact BlockExec.steps hbx _ _ rfl
+  | _, _, _, .step _ hbx _ ha hn, ctl, c, hr => by
+    obtain ⟨hm₂, hl₂⟩ := applyAssigns_mem_log ha
+    exact ((BlockExec.steps hbx _ _ rfl).trans (CSt.Steps.of_mem_log hm₂ hl₂)).trans (RegionAt.steps hn ctl c hr)
   | _, _, _, .missing _, _, _, hr => by cases hr
   | _, _, _, .blockErr .., _, _, hr => by cases hr
   | _, _, _, .edgesErr .., _, _, hr => by cases hr
   | _, _, _, .ambiguous .., _, _, hr => by cases hr
   | _, _, _, .assignErr .., _, _, hr => by cases hr
+
+theorem BlockExec.steps {ctx : Ctx} {cst : CSt} {b : Block} {r : Res (Ctl × CSt)} :
+    BlockExec ctx cst b r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .state h, ctl, c, hr => by
+    subst hr
+    obtain ⟨δ, hm, hl⟩ := StateExec.steps h
+    exact ⟨δ, hm, hl⟩
+  | .region h, ctl, c, hr => RegionExec.steps h ctl c hr
+  | .loop h, ctl, c, hr => LoopExec.steps h ctl c hr
+  | .cond h, ctl, c, hr => CondExec.steps h ctl c hr
+  | .brk, _, _, hr => by cases hr; exact CSt.Steps.refl _ _
+  | .cont, _, _, hr => by cases hr; exact CSt.Steps.refl _ _
+  | .ret, _, _, hr => by cases hr; exact CSt.Steps.refl _ _
+
+theorem RegionExec.steps {ctx : Ctx} {cst : CSt} {rg : Region} {r : Res (Ctl × CSt)} :
+    RegionExec ctx cst rg r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .start h, ctl, c, hr => RegionAt.steps h ctl c hr
+
+theorem LoopExec.steps {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopExec ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .initErr _, _, _, hr => by cases hr
+  | .guardFirst hi _ hg, ctl, c, hr => (applyAssign?_steps hi).trans (LoopGuard.steps hg ctl c hr)
+  | .bodyFirst hi _ hb, ctl, c, hr => (applyAssign?_steps hi).trans (LoopIter.steps hb ctl c hr)
+
+theorem LoopGuard.steps {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopGuard ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .condErr _, _, _, hr => by cases hr
+  | .exit _, _, _, hr => by cases hr; exact CSt.Steps.refl _ _
+  | .enter _ hb, ctl, c, hr => LoopIter.steps hb ctl c hr
+
+theorem LoopIter.steps {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopIter ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .bodyErr _, _, _, hr => by cases hr
+  | .ret hb, ctl, c, hr => RegionExec.steps hb ctl c hr
+  | .brk hb, _, _, hr => by cases hr; exact RegionExec.steps hb _ _ rfl
+  | .tail hb _ ht, ctl, c, hr => (RegionExec.steps hb _ _ rfl).trans (LoopTail.steps ht ctl c hr)
+
+theorem LoopTail.steps {ctx : Ctx} {cst : CSt} {l : LoopRegion} {r : Res (Ctl × CSt)} :
+    LoopTail ctx cst l r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .updateErr .., _, _, hr => by cases hr
+  | .updateGuard _ hu hg, ctl, c, hr => (applyAssign?_steps hu).trans (LoopGuard.steps hg ctl c hr)
+  | .condFirstErr .., _, _, hr => by cases hr
+  | .condFirstExit .., _, _, hr => by cases hr; exact CSt.Steps.refl _ _
+  | .condFirstUpdateErr .., _, _, hr => by cases hr
+  | .condFirstNext _ _ hu hb, ctl, c, hr => (applyAssign?_steps hu).trans (LoopIter.steps hb ctl c hr)
+
+theorem CondExec.steps {ctx : Ctx} {cst : CSt} {brs : List (Option Expr × Region)} {r : Res (Ctl × CSt)} :
+    CondExec ctx cst brs r → ∀ ctl c, r = .ok (ctl, c) → cst.Steps ctx c
+  | .nil, _, _, hr => by cases hr; exact CSt.Steps.refl _ _
+  | .els h, ctl, c, hr => RegionExec.steps h ctl c hr
+  | .condErr _, _, _, hr => by cases hr
+  | .taken _ h, ctl, c, hr => RegionExec.steps h ctl c hr
+  | .skipped _ h, ctl, c, hr => CondExec.steps h ctl c hr
+
+end
 
 theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode}
     (h : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) (st : St) :
@@ -1089,24 +1154,32 @@ theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNod
       have := ih (fun c' hc' => hcs c' (List.mem_cons_of_mem _ hc')) acc (fun c' hc' => hcs c' (List.mem_cons_of_mem _ hc'))
       simpa [he, Bind.bind, Res.bind, Pure.pure] using this
 
+/-- Without code consumers of the outputs, a nested call ends with the inner
+memory and the inner log without the dropped names. -/
 theorem nestedFinish_data' {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
-    {m₂ : Mem} {g₂ : Log} (hout : ∀ e ∈ s.outEdges n.id, (s.dstEndpoint e).isData = true) :
+    {m₂ : Mem} {g₂ : Log} (h : s.DataOuts n) :
     nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
       .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
   unfold nestedFinish
-  generalize (s.outEdges n.id) = es at hout
-  generalize ({ mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = st₀
-  induction es generalizing st₀ with
+  generalize ({ mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = acc
+  unfold State.DataOuts at h
+  generalize s.outEdges n.id = es at h ⊢
+  induction es generalizing acc with
   | nil => rfl
   | cons e es ih =>
-    simp only [List.foldlM_cons]
-    have he := hout e List.mem_cons_self
-    have ih' := ih (fun e' he' => hout e' (List.mem_cons_of_mem _ he'))
-    split
-    · split
-      · rename_i hd; rw [hd] at he; cases he
-      · exact ih' _
-    · exact ih' _
+    rw [List.foldlM_cons]
+    have hd := h e List.mem_cons_self
+    have ih' := fun acc => ih acc (fun e' he' => h e' (List.mem_cons_of_mem _ he'))
+    cases hdat : e.data with
+    | dep => simp only; exact ih' acc
+    | memlet mm =>
+      cases hc : e.srcConn with
+      | none => simp only; exact ih' acc
+      | some c =>
+        cases hE : s.dstEndpoint e with
+        | data d sub => simp only; exact ih' acc
+        | code k => rw [hE] at hd; cases hd ⟨mm, hdat⟩
+        | invalid => simp only; exact ih' acc
 
 theorem Log.dropNames_nil' (g : Log) : g.dropNames [] = g := by
   cases g; simp [Log.dropNames]
@@ -1141,7 +1214,7 @@ theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.no
     · rw [hk'] at hm; cases hm
     · rw [hk'] at hm; cases hm
   | @nested _ ctx' _ ρ' ρ₂ _ _ _ st₁ inner mapping _ aliased m₂ g₂ hk' hs hx =>
-    rcases hk with (hs' | ⟨mp, hm⟩) | ⟨inner', mapping', ni', hkn, hst, hct, hcode, hout⟩
+    rcases hk with (hs' | ⟨mp, hm⟩) | ⟨inner', mapping', ni', hkn, hct, hcode, hout⟩
     · simp [DNode.isSimple, hk'] at hs'
     · rw [hk'] at hm; cases hm
     rw [hk'] at hkn
@@ -1163,7 +1236,7 @@ theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.no
         | run hR _ =>
           cases hR with
           | start hR =>
-            obtain ⟨δ, hm, hl⟩ := RegionAt.steps hst hR _ _ rfl
+            obtain ⟨δ, hm, hl⟩ := RegionAt.steps hR _ _ rfl
             rw [nestedFinish_data' hout] at hr
             simp only [Res.ok_inj] at hr
             subst hr

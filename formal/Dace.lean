@@ -35,6 +35,7 @@ import Dace.STree.Semantics
 import Dace.STree.Interp
 import Dace.STree.Soundness
 import Dace.STree.Rename
+import Dace.STree.Retarget
 import Dace.Equiv.Observable
 import Dace.Equiv.Equiv
 import Dace.Equiv.Frag

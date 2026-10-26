@@ -275,9 +275,18 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Corr.nestedChild_sound
 #print axioms Dace.Corr.keepEq?_sound
 #print axioms Dace.Corr.outerNames?_sound
-#print axioms Dace.Corr.RegionAt.normal_of_states
+#print axioms Dace.Corr.innerCheck_sound
 #print axioms Dace.seqPlain?_sound
 #print axioms Dace.OrderedExec.coh'
 
 #print axioms Dace.STree.NodeExec.ren
 #print axioms Dace.STree.ListExec.ren
+-- Exit gotos of inlined nested SDFGs, runs of jump-free and symbol-free tree lists.
+#print axioms Dace.STree.ListExec.retarget
+#print axioms Dace.STree.ListExec.okFor
+#print axioms Dace.STree.ListExec.keeps_ρ
+#print axioms Dace.STree.ListExec.split_label
+#print axioms Dace.STree.ListExec.unlabel
+-- Coherence of any region; regions without escaping break/continue.
+#print axioms Dace.RegionAt.steps
+#print axioms Dace.Corr.RegionAt.noEscape
