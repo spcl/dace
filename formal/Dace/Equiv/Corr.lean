@@ -111,7 +111,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
             rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
           rwa [hf] at this
     rw [List.append_assoc] at hx
-    rcases views_run he hvs hx with ⟨e, rfl, hf⟩ | ⟨cst₁, hx₁, hf, hρ₁⟩
+    rcases views_run he hcons hvs hx with ⟨e, rfl, hf⟩ | ⟨cst₁, hx₁, hf, hρ₁⟩
     · -- a view binding fails
       rw [hfold] at hf
       cases hb : ks.foldlM (viewStep ctx cst.ρ) base with

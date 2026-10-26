@@ -1451,7 +1451,7 @@ theorem copies_run {full : List SNode} {gb : Bool} :
 omit he in
 /-- The tree runs view nodes one after the other: the fold of `aliasTo` over
 their keys. -/
-theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : Bool} :
+theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none) {full : List SNode} {gb : Bool} :
     ∀ {ks : List ViewKey} {vs : List SNode} {more : List SNode} {cst : CSt} {r : Res (TCtl × CSt)},
       ViewsCorr ctx ks vs → STree.ListExec tc full gb {} (vs ++ more) cst r →
       (∃ e, r = .err e ∧ ks.foldlM (viewStep ctx cst.ρ) cst.st = .err e) ∨
@@ -1463,7 +1463,7 @@ theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : B
     simp only [List.cons_append] at hx
     have hstep : stepLeaf tc {} (.viewNode k.d k.base m sd vd) cst =
         some (leafOut (cst.lift (viewStep ctx cst.ρ cst.st k))) := by
-      simp only [stepLeaf, execViewT, hmd, ↓reduceIte, viewStep]
+      simp only [stepLeaf, execViewT, hmd, ↓reduceIte, viewStep, TCtx.inData_none hcons]
       rw [Ctx.leaf_eq he' (fun c => aliasTo c cst.ρ cst.st k.d k.base m.dataSubset) (fun _ => rfl),
         aliasTo_subCorr hms]
     rcases leaf_inv hstep hx with ⟨e, hR, rfl⟩ | ⟨cst₁, hR, hx₁⟩
@@ -1482,7 +1482,7 @@ theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : B
         subst hR
         have hy : y.vals = [] := (viewStep_vals hc).trans rfl
         have hρ : (cst.withSt y).ρ = cst.ρ := rfl
-        rcases views_run he' hvs hx₁ with ⟨e, hr, hf⟩ | ⟨cst', hx', hf, hρ'⟩
+        rcases views_run he' hcons hvs hx₁ with ⟨e, hr, hf⟩ | ⟨cst', hx', hf, hρ'⟩
         · refine .inl ⟨e, hr, ?_⟩
           simp only [List.foldlM_cons]
           rw [hc, Res.ok_bind, ← CSt.st_withSt cst hy, ← hρ]

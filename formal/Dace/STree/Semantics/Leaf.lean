@@ -94,9 +94,12 @@ def execCopyT (tc : TCtx) (ρ : Valuation) (target : Name) (m : Memlet) (st : St
   copyData tc.ctx ρ st d sub target m.otherSubset m.wcr m.allowOob
 
 /-- A `ViewNode`: alias `target` to the lower corner of the viewed subset of
-`source` (`Decisions.md#D31`, `#D55`). -/
+`source` (`Decisions.md#D31`, `#D55`); a view of the consumed stream inside a
+consume body views the chunk (`TCtx.inData`, `#D50`). -/
 def execViewT (tc : TCtx) (ρ : Valuation) (target source : Name) (m : Memlet) (st : St) : Res St :=
-  if m.data = source then aliasTo tc.ctx ρ st target source m.dataSubset
+  if m.data = source then
+    let (d, sub) := tc.inData m
+    aliasTo tc.ctx ρ st target d sub
   else .err (.malformed s!"memlet of view '{target}' is not on its source '{source}'")
 
 /-- A `RefSetNode` from a data source (`Decisions.md#D32`, `#D55`); a code

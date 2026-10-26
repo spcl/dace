@@ -171,7 +171,8 @@ theorem execViewT_shift (target source : Name) (m : Memlet) (st : St) :
     execViewT tc ρ target source m (st.shift L) = (execViewT tc ρ target source m st).map (St.shift L) := by
   unfold execViewT
   split
-  · exact aliasTo_shift ..
+  · cases tc.inData m with
+    | mk d sub => exact aliasTo_shift ..
   · rfl
 
 theorem execRefSetT_shift (target : Name) (m : Memlet) (src : RefSetSource) (st : St) :

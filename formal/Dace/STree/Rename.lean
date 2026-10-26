@@ -851,9 +851,12 @@ theorem execCopyT (target : Name) (m : Memlet) (hm : NamesFixed σ m.exprNames) 
 
 theorem execViewT (target source : Name) (m : Memlet) (hm : NamesFixed σ m.exprNames) (st : St) :
     (Dace.execViewT tc' ρ (σ target) (σ source) (m.ren σ) st).get? = (Dace.execViewT tc ρ target source m st).get? := by
-  simp only [Dace.execViewT, Memlet.ren_data, EmbeddingLike.apply_eq_iff_eq, Memlet.ren_dataSubset]
+  have hin : tc.inData m = (m.data, m.dataSubset) := by simp [TCtx.inData, TCtx.isChunk, h.cons]
+  simp only [Dace.execViewT, h.inData, hin, Memlet.ren_data, EmbeddingLike.apply_eq_iff_eq, Memlet.ren_dataSubset]
   split
-  · exact h.ctx.aliasTo h.desc ρ st target source (Memlet.fixed_dataSubset hm)
+  · rename_i hs
+    rw [hs]
+    exact h.ctx.aliasTo h.desc ρ st target source (Memlet.fixed_dataSubset hm)
   · rfl
 
 theorem execRefSetT (target : Name) (m : Memlet) (hm : NamesFixed σ m.exprNames) (src : RefSetSource) (st : St) :
