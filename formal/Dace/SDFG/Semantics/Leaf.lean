@@ -709,12 +709,14 @@ def consumeSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (c : Consu
   let np ← ctx.evalIntR ρ' st.mem c.numPes
   pure (ρ', st, l, np)
 
-/-- Quiescence condition of a consume scope before a task, evaluated with
-the current queue content (`stream.h:347,370`; default: non-empty). -/
+/-- Whether a consume scope runs another task, evaluated with the current
+queue content: the scope's condition is a quiescence (stop) condition,
+`while (!quiescence())` (`stream.h` `consume_cond`); without one, while the
+stream is not empty (`stream.h` `consume`). -/
 def consumeCond (ctx : Ctx) (ρ : Valuation) (c : ConsumeNode) (m : Mem) (l : Loc) (q : List Val) : Res Bool :=
   match c.condition with
   | none => .ok (!q.isEmpty)
-  | some e => ctx.evalBoolR ρ (m.setQueue l q) e
+  | some e => (ctx.evalBoolR ρ (m.setQueue l q) e).map (!·)
 
 /-- Memory name of the chunk container of the consume scope `entry`
 (`consumeChunkName` of its stream, `Decisions.md#D38`). -/

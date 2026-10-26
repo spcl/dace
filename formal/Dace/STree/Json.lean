@@ -210,6 +210,38 @@ def declareConsumeChunks (containers : List (Name × DataDesc)) (children : List
     | none => pure acc) []
   pure (containers ++ chunks)
 
+/-- Replace the children of a scope node. -/
+def _root_.Dace.SNode.setChildren : SNode → List SNode → SNode
+  | .namedRegion l _, cs => .namedRegion l cs
+  | .gblock _, cs => .gblock cs
+  | .loopScope l _, cs => .loopScope l cs
+  | .forScope l _, cs => .forScope l cs
+  | .whileScope l _, cs => .whileScope l cs
+  | .doWhileScope l _, cs => .doWhileScope l cs
+  | .ifScope c _, cs => .ifScope c cs
+  | .stateIfScope c _, cs => .stateIfScope c cs
+  | .elifScope c _, cs => .elifScope c cs
+  | .elseScope _, cs => .elseScope cs
+  | .mapScope m _, cs => .mapScope m cs
+  | .consumeScope c _, cs => .consumeScope c cs
+  | n, _ => n
+
+/-- Fill the omitted side of every `CopyNode` memlet as codegen does for the
+direct copy `tree_to_sdfg` makes of it (`InsertExplicitCopies`,
+`Decisions.md#D9`, `#D53`); copies codegen performs itself keep an omitted
+side, which reads as the full range. -/
+partial def fillCopies (containers : List (Name × DataDesc)) (n : SNode) : SNode :=
+  match n with
+  | .copyNode target m =>
+    match containers.find? (·.1 = m.data), containers.find? (·.1 = target) with
+    | some (_, sd), some (_, dd) =>
+      if m.wcr.isNone && sd.liftableCopy dd then .copyNode target (m.fillDirect sd dd) else n
+    | _, _ => n
+  | _ =>
+    match n.children? with
+    | some cs => n.setChildren (cs.map (fillCopies containers))
+    | none => n
+
 /-- The root (`ScheduleTreeRoot`). -/
 def root (j : Json) : P STree := do
   if strField? j "type" ≠ some "ScheduleTreeRoot" then throw "expected a ScheduleTreeRoot"
@@ -250,6 +282,7 @@ def root (j : Json) : P STree := do
     | some _ => throw "children is not a list"
     | none => pure []
   let containers ← declareConsumeChunks containers.flatten children
+  let children := children.map (fillCopies containers)
   pure { name, containers, symbols, constants, argNames, callbackMapping, children }
 
 /-- Parse a schedule tree from JSON text. -/

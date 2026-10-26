@@ -1,6 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Core.Data
 import Dace.Core.Parse
+import Dace.Core.SymArith
 
 /-!
 # Memlets
@@ -144,5 +145,81 @@ def subst (σ : Sym → Option Expr) (m : Memlet) : Memlet :=
            volume := m.volume.subst σ }
 
 end Memlet
+
+/-! ## Omitted sides of copies (`Decisions.md#D9`) -/
+
+/-- The symbolic number of elements of a range with unit steps and tiles,
+`∏ (hi - lo + 1)`, as a polynomial (`Range.num_elements`); `none` when a
+step or tile is not `1` or a bound is no polynomial. -/
+def Range.countPoly? (r : Range) : Option Poly :=
+  r.dims.foldlM (fun acc d => do
+    if d.step.toPoly? = some (Poly.const 1) ∧ d.tile.toPoly? = some (Poly.const 1) then
+      let p ← (d.hi - d.lo + 1).toPoly?
+      pure (Poly.mul acc p)
+    else none) (Poly.const 1)
+
+/-- Do two subsets provably have different numbers of elements (their
+symbolic counts differ by a non-zero constant)? -/
+def Subset.countsDiffer (a b : Subset) : Bool :=
+  match a, b with
+  | .range ra, .range rb =>
+    match ra.countPoly?, rb.countPoly? with
+    | some p, some q =>
+      match (Poly.sub p q).const? with
+      | some c => c != 0
+      | none => false
+    | _, _ => false
+  | _, _ => false
+
+/-- The side a copy memlet omits, as `InsertExplicitCopies` derives it
+(`_derive_matching_dst_subset`): the full range of the container `desc`
+unless the element counts provably differ, then the known side's subset.
+"Provably" is decided on the polynomial normal form of the counts (SymPy may
+prove more, e.g. with symbol assumptions). -/
+def deriveCopySide (known : Subset) (desc : DataDesc) : Subset :=
+  let full : Subset := .range desc.fullRange
+  if known.countsDiffer full then known else full
+
+/-- Containers between which `InsertExplicitCopies` lifts a copy to a copy
+node: arrays or scalars (array views and references included) of the same
+element type. -/
+def DataDesc.liftableCopy (a b : DataDesc) : Bool :=
+  let ok (d : DataDesc) : Bool :=
+    match d.kind with
+    | .array | .scalar | .view .array | .reference .array => true
+    | _ => false
+  ok a && ok b && a.dtype == b.dtype
+
+/-- Fill the omitted side of a copy between two access nodes
+(`InsertExplicitCopies._replace_direct_copies`): from the known side by
+`deriveCopySide`; the `data` side is the full range when absent. -/
+def Memlet.fillDirect (m : Memlet) (srcDesc dstDesc : DataDesc) : Memlet :=
+  let full (d : DataDesc) : Subset := .range d.fullRange
+  match m.srcSubset, m.dstSubset with
+  | some _, some _ => m
+  | some s, none => { m with dstSubset := some (deriveCopySide s dstDesc) }
+  | none, some d => { m with srcSubset := some (deriveCopySide d srcDesc) }
+  | none, none =>
+    if m.isDataSrc then
+      let s := full srcDesc
+      { m with srcSubset := some s, dstSubset := some (deriveCopySide s dstDesc) }
+    else
+      let d := full dstDesc
+      { m with srcSubset := some (deriveCopySide d srcDesc), dstSubset := some d }
+
+/-- Fill the subsets of a map staging copy (`InsertExplicitCopies._lift_staging_edge`):
+the outer side is the memlet's subset on that side, else its `data` subset;
+the inner side is derived from the outer one unless the memlet names both
+sides.  `stageIn`: the copy enters the map (outer = source). -/
+def Memlet.fillStaging (m : Memlet) (stageIn : Bool) (outerDesc innerDesc : DataDesc) : Memlet :=
+  let dataSide := m.dataSubset.getD (.range (if stageIn = m.isDataSrc then outerDesc else innerDesc).fullRange)
+  let outerSide := if stageIn then m.srcSubset else m.dstSubset
+  let innerSide := if stageIn then m.dstSubset else m.srcSubset
+  let outer := outerSide.getD dataSide
+  let inner := match innerSide, m.otherSubset with
+    | some i, some _ => i
+    | _, _ => deriveCopySide outer innerDesc
+  if stageIn then { m with srcSubset := some outer, dstSubset := some inner }
+  else { m with srcSubset := some inner, dstSubset := some outer }
 
 end Dace

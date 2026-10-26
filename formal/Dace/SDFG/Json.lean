@@ -1,6 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Lean.Data.Json
 import Dace.SDFG.Scope
+import Dace.SDFG.Semantics.Basic
 
 /-!
 # Importing `.sdfg` files
@@ -441,23 +442,51 @@ partial def state (arrays : List (Name × DataDesc)) (j : Json) : P State := do
   let edgesJ ← ((field? j "edges").getD (Json.arr #[])).getArr?
   let nodes ← nodesJ.toList.mapM node
   let edges ← edgesJ.toList.mapM edge
-  -- D9: an access→access copy with a missing side gets the full range.
-  let fullOf (id : NodeId) : Option Subset := do
+  -- D9: the omitted side of a copy, as codegen's `InsertExplicitCopies` derives it.
+  let s0 : State := { label, nodes, edges, nosync := boolField (attrs j) "nosync" }
+  let descOf (id : NodeId) : Option DataDesc := do
     let n ← nodes.find? (·.id = id)
     let d ← n.accessData?
-    let desc ← (arrays.find? (·.1 = d)).map (·.2)
-    pure (.range desc.fullRange)
+    (arrays.find? (·.1 = d)).map (·.2)
+  let kindOf (id : NodeId) : Option NodeKind := (nodes.find? (·.id = id)).map (·.kind)
+  let isViewEdgeOf (id : NodeId) (e : DEdge) : Bool :=
+    match nodes.find? (·.id = id), descOf id with
+    | some n, some d => d.isView && ((s0.viewEdge? n).map (·.1) == some e)
+    | _, _ => false
+  let fullOf (id : NodeId) : Option Subset := (descOf id).map fun d => .range d.fullRange
   let edges := edges.map fun e =>
     match e.data with
-    | .memlet m =>
-      let srcIsAccess := (nodes.find? (·.id = e.src)).map DNode.isAccess |>.getD false
-      let dstIsAccess := (nodes.find? (·.id = e.dst)).map DNode.isAccess |>.getD false
-      if srcIsAccess && dstIsAccess then
-        let m := if m.srcSubset.isNone then { m with srcSubset := fullOf e.src } else m
-        let m := if m.dstSubset.isNone then { m with dstSubset := fullOf e.dst } else m
-        { e with data := .memlet m }
-      else e
     | .dep => e
+    | .memlet m =>
+      if m.wcr.isSome || e.dstConn == some "set" then e
+      else
+        match kindOf e.src, kindOf e.dst with
+        | some (.access _), some (.access _) =>
+          match descOf e.src, descOf e.dst with
+          | some sd, some dd =>
+            if sd.liftableCopy dd && !isViewEdgeOf e.src e && !isViewEdgeOf e.dst e then
+              { e with data := .memlet (m.fillDirect sd dd) }
+            else
+              -- copies codegen performs itself (`copy_memory`): an omitted side is the full range
+              let m := if m.srcSubset.isNone then { m with srcSubset := fullOf e.src } else m
+              let m := if m.dstSubset.isNone then { m with dstSubset := fullOf e.dst } else m
+              { e with data := .memlet m }
+          | _, _ => e
+        | some (.access _), some .mapExit =>
+          match descOf e.src, descOf (s0.pathEnd e).dst with
+          | some inner, some outer =>
+            if !inner.isView && inner.liftableCopy outer then
+              { e with data := .memlet (m.fillStaging false outer inner) }
+            else e
+          | _, _ => e
+        | some (.mapEntry _), some (.access _) =>
+          match descOf e.dst, descOf (s0.pathStart e).src with
+          | some inner, some outer =>
+            if !inner.isView && outer.liftableCopy inner then
+              { e with data := .memlet (m.fillStaging true outer inner) }
+            else e
+          | _, _ => e
+        | _, _ => e
   pure { label, nodes, edges, nosync := boolField (attrs j) "nosync" }
 
 partial def iedge (j : Json) : P IEdge := do

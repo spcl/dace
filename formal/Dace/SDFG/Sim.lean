@@ -2443,8 +2443,8 @@ theorem consumeCond_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
   split
   · exact ResSim.ok rfl
   · rename_i e he
-    exact Ctx.evalBoolR_sim hc (hm.setQueue l q) ρ _ fun x hx =>
-      hS.node_expr hn (by simp [DNode.exprNames, hk, he, hx])
+    exact ResSim.map _ _ (Ctx.evalBoolR_sim hc (hm.setQueue l q) ρ _ fun x hx =>
+      hS.node_expr hn (by simp [DNode.exprNames, hk, he, hx])) fun a b h => by rw [h]
 
 omit hc in
 theorem taskStart_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (entry : NodeId) (c : ConsumeNode) (l : Loc)
@@ -2892,7 +2892,8 @@ theorem consumeCond_sim' (hc : CtxSim π P ctx₂ ctx₁) (ρ : Valuation) {c : 
   split
   · exact ResSim.ok rfl
   · rename_i e he
-    exact Ctx.evalBoolR_sim hc (hm.setQueue l q) ρ _ fun x hx => hcond x (by simp [he, hx])
+    exact ResSim.map _ _ (Ctx.evalBoolR_sim hc (hm.setQueue l q) ρ _ fun x hx => hcond x (by simp [he, hx]))
+      fun a b h => by rw [h]
 
 theorem SNames.consume {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNode} (hn : n ∈ s.nodes) {c : ConsumeNode}
     (hk : n.kind = .consumeEntry c) : OptNames π P ctx₂ ctx₁ c.condition := by
