@@ -28,7 +28,8 @@ def liftable(loop: LoopRegion, permissive: bool, like: LoopToMap | None = None) 
         probe.lift_context = like.lift_context
         probe.symbol_resolver = like.symbol_resolver
     probe.setup_match(loop.sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
-    return probe.can_be_applied(loop.parent_graph, 0, loop.sdfg, permissive=permissive)
+    # The dependence probe alone: the sibling hold is what asks.
+    return ParallelizeLoops(permissive=permissive).probe(probe, loop, [])
 
 
 def held_sibling(loop: LoopRegion, permissive: bool, like: LoopToMap | None = None) -> bool:

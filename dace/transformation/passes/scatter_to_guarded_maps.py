@@ -312,6 +312,7 @@ def lifts(
     :param probes: Analysis shared by the probes of an unchanged graph, filled on first use.
     """
     from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
     probe = LoopToMap()
     probe.contract_arrays = contract
@@ -321,8 +322,7 @@ def lifts(
             probes.contexts[key] = build_lift_context(owner)
         probe.lift_context = probes.contexts[key]
         probe.symbol_resolver = probes.resolver
-    probe.setup_match(owner, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
-    return probe.can_be_applied(loop.parent_graph, 0, owner)
+    return ParallelizeLoops().accepts(loop, probe)
 
 
 def needs_contract(root: SDFG, loop: LoopRegion, joint_writes: list, probes: ContractProbes | None = None) -> bool:

@@ -306,14 +306,14 @@ class PromoteConstantIndexAccess(ppl.Pass):
         :returns: ``(accepted, container)``: L2M's strict-mode verdict and, on a refusal, the
                   :attr:`~LoopToMap.last_refusal_container` it names (``None`` for any other refusal).
         """
-        from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
+        # avoid an import cycle
+        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         xform = LoopToMap()
-        xform.loop = loop
-        xform.expr_index = 0
         with contextlib.redirect_stdout(io.StringIO()):
             try:
-                accepted = bool(xform.can_be_applied(loop.parent_graph, 0, sdfg, permissive=False))
+                accepted = ParallelizeLoops().accepts(loop, xform)
             except Exception:
                 return False, None
         return accepted, None if accepted else xform.last_refusal_container

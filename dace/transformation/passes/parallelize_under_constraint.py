@@ -124,8 +124,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # Confirm the only blocker is the constrained condition: LoopToMap
                 # refuses it outright but accepts permissively.
                 probe = LoopToMap()
-                probe.loop = loop
-                if probe.can_be_applied(parent, 0, owner, permissive=False):
+                if ParallelizeLoops().accepts(loop, probe):
                     continue
                 if not probe.can_be_applied(parent, 0, owner, permissive=True):
                     continue

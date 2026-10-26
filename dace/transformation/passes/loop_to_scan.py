@@ -375,10 +375,10 @@ class LoopToScan(ppl.Pass):
     def _inner_loop_parallelizable(inner_loop: LoopRegion, sdfg: SDFG) -> bool:
         """``True`` iff the nested scan's inner loop is a DOALL loop ``LoopToMap``
         would parallelize -- i.e. there is a map to keep instead of lifting."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         try:
-            return LoopToMap.can_be_applied_to(sdfg, loop=inner_loop)
+            return ParallelizeLoops().accepts(inner_loop)
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not a keepable map
             return False
 

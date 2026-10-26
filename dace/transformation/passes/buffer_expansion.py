@@ -235,8 +235,8 @@ class BufferExpansion(ppl.Pass):
         # on every loop). Expansion never moves an access between states nor touches an interstate
         # edge, so the indices -- and the ambient storage order -- stay valid across the expansions
         # applied below.
-        index = AccessIndex(sdfg)
-        write_index = self._write_state_index(sdfg, index)
+        accesses = AccessIndex(sdfg)
+        write_index = self._write_state_index(sdfg, accesses)
         order: str | None = None  # ambient storage order: built lazily, only when actually expanding
 
         kept: dict[str, list[str]] = {}
@@ -249,11 +249,11 @@ class BufferExpansion(ppl.Pass):
             if ix is None:
                 continue
             loop_states = set(loop.states())
-            if not self._has_candidate_buffer(loop_states, write_index, index):
+            if not self._has_candidate_buffer(loop_states, write_index, accesses):
                 continue  # no privatizable-buffer candidate -> never expanded, so skip the probe
             if self._loop_mappable(sdfg, loop, lift_context):
                 continue  # already parallelizable -> expanding would only grow the SDFG
-            buffers = self._privatizable_buffers(sdfg, loop, index, loop_states)
+            buffers = self._privatizable_buffers(sdfg, loop, accesses, loop_states)
             if not buffers:
                 continue
             if order is None:
@@ -329,17 +329,15 @@ class BufferExpansion(ppl.Pass):
         """
         # avoid an import cycle
         from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         with contextlib.redirect_stdout(io.StringIO()):
-            if lift_context is None:
-                return LoopToMap.can_be_applied_to(sdfg, loop=loop)
-            if not lift_context:
-                lift_context.append(build_lift_context(sdfg))
             xform = LoopToMap()
-            xform.lift_context = lift_context[0]
-            # By the loop OBJECT, as ``ParallelizeLoops.lift`` does; ``LoopToMap`` never reads ``cfg_id``.
-            xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
-            return xform.can_be_applied(loop.parent_graph, 0, sdfg)
+            if lift_context is not None:
+                if not lift_context:
+                    lift_context.append(build_lift_context(sdfg))
+                xform.lift_context = lift_context[0]
+            return ParallelizeLoops().accepts(loop, xform)
 
     @staticmethod
     def _loop_index(loop: LoopRegion):

@@ -72,7 +72,6 @@ from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 from dace.symbolic import pystr_to_symbolic, symstr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -322,7 +321,9 @@ class LoopStridePermutation(ppl.Pass):
         matches exactly what the downstream ``parallelize`` stage accepts.
         """
         try:
-            return LoopToMap.can_be_applied_to(sdfg, loop=loop)
+            from dace.transformation.passes.parallelize_loops import ParallelizeLoops  # avoid an import cycle
+
+            return ParallelizeLoops().accepts(loop)
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not provably DOALL
             return False
 

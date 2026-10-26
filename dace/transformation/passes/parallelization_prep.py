@@ -1211,7 +1211,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         The mode travels with the point because the two candidate families want different splits: a
         guard true for ONE iteration wants that iteration carved out (``middle_singleton``), a guard
         true over a RUN wants the two-way split that keeps the run whole."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap, loop_varying_symbols
+        from dace.transformation.interstate.loop_to_map import loop_varying_symbols
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
         # broadcast-conflict split point has no split candidate, so a split can never unblock it --
@@ -1238,7 +1239,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if not candidates or sum(1 for _ in loop.all_control_flow_blocks(recursive=True)) > SPLIT_SEARCH_MAX_BLOCKS:
             return None
         try:
-            if LoopToMap.can_be_applied_to(sdfg, loop=loop):
+            if ParallelizeLoops().accepts(loop):
                 return None
         except Exception:
             pass
@@ -1296,15 +1297,15 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         A verdict only CHOOSES a split. The split itself and ``LoopToMap`` after it re-check everything on the
         transformed graph, so a wrong verdict costs a missed or a pointless split, never a miscompile."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.analysis import loop_analysis
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         try:
             with self._as_segment(loop, init, condition) as clean:
                 if loop_analysis.loop_provably_at_most_one_iteration(loop):
                     return False
                 clean()
-                return bool(LoopToMap.can_be_applied_to(sdfg, loop=loop))
+                return ParallelizeLoops().accepts(loop)
         except Exception:
             return False
 

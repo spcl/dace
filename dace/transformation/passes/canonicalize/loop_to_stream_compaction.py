@@ -653,7 +653,7 @@ class LoopToStreamCompaction(ppl.Pass):
         model affine in one iterator with an integer coefficient is what keeps it CLASSIFIABLE; a
         linearized inner index would carry a symbolic coefficient and refuse every symbolic extent.
         """
-        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         probe_sdfg = copy.deepcopy(sdfg)
         probe_loop = self.locate_corresponding(probe_sdfg, loop)
@@ -666,9 +666,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 del edge.data.assignments[cursor]
         # Substitute, do not rebind: LoopToMap reads subsets, not interstate symbol definitions.
         probe_loop.replace_dict({cursor: model})
-        instance = LoopToMap()
-        instance.loop = probe_loop
-        return bool(instance.can_be_applied(probe_loop.parent_graph, 0, probe_sdfg, permissive=False))
+        return ParallelizeLoops().accepts(probe_loop)
 
     def locate_corresponding(self, target: SDFG, loop: LoopRegion) -> LoopRegion | None:
         """Re-find a loop across a deepcopy -- object identity does not survive it.

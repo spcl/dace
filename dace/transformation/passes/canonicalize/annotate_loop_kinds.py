@@ -156,13 +156,13 @@ def refusal_reason(loop: LoopRegion) -> str | None:
     if not loop.loop_variable:
         return NO_COUNTER
     from dace.transformation.interstate.loop_to_map import LoopToMap
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
     probe = LoopToMap()
-    probe.loop = loop
     pinned = loop.pinned_sequential
     loop.pinned_sequential = False
     try:
-        applicable = probe.can_be_applied(loop.parent_graph, 0, loop.sdfg, permissive=False)
+        applicable = ParallelizeLoops().accepts(loop, probe)
     except Exception as error:  # pylint: disable=broad-exception-caught
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
         # reads a hint, so a probe with no answer leaves the loop unsure and says so.

@@ -397,6 +397,19 @@ class ParallelizeLoops(ppl.Pass):
         finally:
             xform.contract_arrays = vouched
 
+    def accepts(self, loop: LoopRegion, xform: LoopToMap | None = None) -> bool:
+        """Whether a sweep would lift ``loop`` as the graph stands: :meth:`probe` with its array-facts retry, then
+        :meth:`holds_back`. Changes nothing; the one entry for a pass asking whether a loop parallelizes.
+
+        :param xform: the instance to probe with, when the caller supplies the shared analysis (``lift_context``) or
+                      reads the refusal (``last_refusal_reason``, ``last_refusal_container``) afterwards.
+        """
+        xform = LoopToMap() if xform is None else xform
+        xform.setup_match(loop.sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
+        if not self.probe(xform, loop, []):
+            return False
+        return loop_analysis.is_known_parallel(loop) or not self.holds_back(xform, loop)
+
     def holds_back(self, xform: LoopToMap, loop: LoopRegion) -> bool:
         """Whether to keep ``loop`` a loop although its probe accepted it; asked only after that probe, which refuses
         most candidates, so a subclass's own check runs on the few that pass.
