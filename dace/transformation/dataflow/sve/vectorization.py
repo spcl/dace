@@ -171,3 +171,10 @@ class SVEVectorization(transformation.SingleStateTransformation):
         vector_inference.infer_vectors(
             sdfg, state, map_entry, self.vec_len, flags=vector_inference.VectorInferenceFlags.Allow_Stride, apply=True
         )
+
+        # A vector register between two tasklets lives in an SVE register, never in a dace::vec of the symbolic length
+        for node in state.scope_subgraph(map_entry).nodes():
+            if isinstance(node, nodes.AccessNode):
+                desc = node.desc(sdfg)
+                if desc.transient and isinstance(desc, data.Scalar) and isinstance(desc.dtype, dtypes.vector):
+                    desc.storage = dtypes.StorageType.SVE_Register

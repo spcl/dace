@@ -65,6 +65,12 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher.register_copy_dispatcher(
             dtypes.StorageType.SVE_Register, dtypes.StorageType.CPU_Heap, None, self
         )
+        # a vector register a tasklet writes or reads; the tasklet's own code moves the value
+        for src, dst in (
+            (dtypes.StorageType.Register, dtypes.StorageType.SVE_Register),
+            (dtypes.StorageType.SVE_Register, dtypes.StorageType.Register),
+        ):
+            self.dispatcher.register_copy_dispatcher(src, dst, dtypes.ScheduleType.SVE_Map, self)
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher()
 
@@ -84,6 +90,8 @@ class SVECodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
+        if isinstance(src_node, nodes.Tasklet) or isinstance(dst_node, nodes.Tasklet):
+            return  # generate_read and generate_writeback move a register a tasklet touches
 
         # Check whether it is a known reduction that is possible in SVE
         reduction_type = detect_reduction_type(edge.data.wcr)
@@ -418,6 +426,13 @@ class SVECodeGen(TargetCodeGenerator):
         declaration_stream: CodeIOStream,
         allocation_stream: CodeIOStream,
     ) -> None:
+        if nodedesc.storage == dtypes.StorageType.SVE_Register and isinstance(nodedesc.dtype, dtypes.vector):
+            # a vector register between tasklets: declared as the SVE register of its element type
+            ptrname = self.ptr(node.data, nodedesc, sdfg)
+            sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
+            self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
+            declaration_stream.write(f"{sve_type} {ptrname};")
+            return
         if nodedesc.storage == dtypes.StorageType.SVE_Register:
             sve_type = util.TYPE_TO_SVE[nodedesc.dtype]
             self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, sve_type)
@@ -527,10 +542,15 @@ class SVECodeGen(TargetCodeGenerator):
                     if isinstance(edge.dst, dace.nodes.Tasklet):
                         self.generate_out_register(sdfg, state_dfg, edge, callsite_stream, True)
 
+        # The registers this map's scope owns (vector registers between tasklets), declared inside the loop
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
+
         # Dispatch the subgraph generation
         self.dispatcher.dispatch_subgraph(
             sdfg, cfg, scope, state_id, function_stream, callsite_stream, skip_entry_node=True, skip_exit_node=True
         )
+
+        self._frame.deallocate_arrays_in_scope(sdfg, cfg, entry_node, function_stream, callsite_stream)
 
         # Increase the counting variable (according to the number of processed elements)
         size_letter = {1: "b", 2: "h", 4: "w", 8: "d"}[ltype_size]
