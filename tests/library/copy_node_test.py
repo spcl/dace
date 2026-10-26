@@ -774,13 +774,7 @@ def test_copy_cross_storage_validation_rejects_without_flag():
 
 
 def test_copy_across_dtypes_casts_rather_than_memcpying():
-    """A copy that changes dtype is carried as a CAST, not refused and not memcpy'd.
-
-    No memcpy variant can convert, so the selector has to route this to a tasklet form and the
-    tasklet has to spell the conversion. Refusing it instead left the classic CPU generator
-    emitting a CopyND template instantiated on one element type and handed a pointer of the other,
-    which does not compile (npbench adi).
-    """
+    """A dtype-changing copy expands to a tasklet that spells the cast (npbench adi did not compile)."""
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float32, name="A"),
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="B"),
@@ -800,7 +794,7 @@ def test_copy_across_dtypes_casts_rather_than_memcpying():
     assert any("dace.float64(" in c for c in casts), casts
 
 
-def _tasklet_codes(sdfg: dace.SDFG) -> list[str]:
+def tasklet_codes(sdfg: dace.SDFG) -> list[str]:
     """The code of every tasklet in ``sdfg`` and its nested SDFGs."""
     return [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
 
@@ -819,7 +813,7 @@ def test_gpu_to_gpu_cast_is_a_kernel_not_a_memcpy(src_dtype, dst_dtype, single):
     )
     assert select_copy_implementation(node, sdfg.start_state) == ("Tasklet" if single else "MappedTasklet")
     sdfg.expand_library_nodes()
-    codes = _tasklet_codes(sdfg)
+    codes = tasklet_codes(sdfg)
     assert any(f"dace.{dst_dtype.to_string()}(" in c for c in codes), codes
     assert not any("Memcpy" in c for c in codes), codes
     if not single:
@@ -829,10 +823,7 @@ def test_gpu_to_gpu_cast_is_a_kernel_not_a_memcpy(src_dtype, dst_dtype, single):
 
 @pytest.mark.parametrize("to_device", [True, False])
 def test_host_device_cast_moves_host_dtype_and_casts_on_gpu(to_device):
-    """Across the boundary the bytes cross in the host dtype through a pooled device buffer; the GPU casts.
-
-    Host to device the memcpy precedes the cast, device to host it follows it.
-    """
+    """Host/device casts move the host dtype through a pooled device buffer and cast on the GPU."""
     host = _ArraySpec(shape=[16], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="H")
     device = _ArraySpec(shape=[16], storage=dace.dtypes.StorageType.GPU_Global, dtype=dace.float32, name="D")
     sdfg, node = _make_copy_sdfg(*((host, device) if to_device else (device, host)), name="host_device_cast")
@@ -843,7 +834,7 @@ def test_host_device_cast_moves_host_dtype_and_casts_on_gpu(to_device):
     stages = [d for sd in sdfg.all_sdfgs_recursive() for n, d in sd.arrays.items() if n == "stage"]
     assert len(stages) == 1
     assert (stages[0].storage, stages[0].dtype, stages[0].pool) == (dace.StorageType.GPU_Global, dace.float64, True)
-    codes = _tasklet_codes(sdfg)
+    codes = tasklet_codes(sdfg)
     memcpys = [c for c in codes if "MemcpyAsync" in c]
     assert len(memcpys) == 1 and "sizeof(double)" in memcpys[0], codes
     assert ("HostToDevice" if to_device else "DeviceToHost") in memcpys[0]

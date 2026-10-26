@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``CastNestedSDFGArguments``: a nested SDFG handed a container of another dtype gets a converting copy."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -13,8 +15,7 @@ N = 32
 
 
 def build(scalar_dtype: dace.typeclass, array_dtype: dace.typeclass, gpu: bool = False) -> dace.SDFG:
-    """``X[i] = X[i] * S + S`` in a nested SDFG that declares ``s`` and ``x`` as ``scalar_dtype`` / ``array_dtype``,
-    called from a map over a float64 ``S`` and ``X`` (on the device when ``gpu``, as in spcl/dace#2402)."""
+    """``X = X * S + S`` in a nested SDFG typed ``scalar_dtype``/``array_dtype``, called on float64 data."""
     inner = dace.SDFG("inner")
     inner.add_scalar("s", scalar_dtype)
     inner.add_array("x", (N,), array_dtype)
@@ -141,19 +142,19 @@ def test_integer_mismatch_is_cast_too():
     np.testing.assert_array_equal(x, ref)
 
 
-def test_matching_dtypes_are_left_alone(recwarn):
+def test_matching_dtypes_are_left_alone():
     """Nothing to convert: no copy, no transient, no warning."""
     sdfg = build(dace.float64, dace.float64)
     arrays = set(sdfg.arrays)
-    assert CastNestedSDFGArguments().apply_pass(sdfg, {}) is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert CastNestedSDFGArguments().apply_pass(sdfg, {}) is None
     assert casts(sdfg) == [] and set(sdfg.arrays) == arrays
-    assert not [w for w in recwarn if "Nested SDFG" in str(w.message)]
 
 
 @pytest.mark.gpu
 def test_gpu_kernel_scalar_is_cast_per_thread():
-    """spcl/dace#2402: a kernel's float64 scalar argument handed to a float32 nested SDFG is cast in the kernel,
-    into a per-thread register, instead of reinterpreted."""
+    """spcl/dace#2402: a kernel's float64 scalar reaches a float32 nested SDFG through a per-thread register."""
     sdfg = build(dace.float32, dace.float64, gpu=True)
     with pytest.warns(UserWarning, match="'s' as float"):
         assert CastNestedSDFGArguments().apply_pass(sdfg, {}) == 1
@@ -168,4 +169,9 @@ def test_gpu_kernel_scalar_is_cast_per_thread():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_validator_names_the_pass_for_a_dtype_only_mismatch()
+    test_scalar_input_is_cast_with_a_warning()
+    test_inout_array_is_cast_in_and_back_through_one_transient()
+    test_integer_mismatch_is_cast_too()
+    test_matching_dtypes_are_left_alone()
+    test_gpu_kernel_scalar_is_cast_per_thread()

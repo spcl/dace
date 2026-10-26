@@ -43,7 +43,7 @@ class ExpandCastOnDevice(ExpandTransformation):
             state.add_edge(a, None, cpy, INPUT_CONNECTOR_NAME, inner.make_array_memlet(a.data))
             state.add_edge(cpy, OUTPUT_CONNECTOR_NAME, b, None, inner.make_array_memlet(b.data))
 
-        nsdfg = ctx.state.add_nested_sdfg(inner, {"src"}, {"dst"})
+        nsdfg = ctx.state.add_nested_sdfg(inner, {"src": None}, {"dst": None})
         ctx.state.add_edge(
             ctx.state.add_read(ctx.inp_name), None, nsdfg, "src", ctx.sdfg.make_array_memlet(ctx.inp_name)
         )
