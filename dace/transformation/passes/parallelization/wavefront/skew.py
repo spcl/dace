@@ -1,86 +1,44 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Expose wavefront parallelism in 2-D loop nests by loop skewing (ISL-backed).
+"""Expose wavefront parallelism by skewing an outer loop with a chain of statements.
 
-A 2-D nest of the form ::
+The outer loop ``u`` holds a chain of statements (inner loops, one-parameter maps, row copies), each
+with its own iterator ``v`` (:mod:`.statements`). Every statement instance gets the schedule
+``t = a*u + b*(v + s)``, ``s`` a per-statement alignment; ``t`` is sequential and each statement is a
+parallel map at fixed ``t``, the statements in program order. The schedule is legal when every exact
+dependence (:mod:`.dependences`) lands on a later ``t``, or on the same ``t`` with its source
+statement sequenced first.
 
-    for u in range(u_lo, u_hi):
-        for v in range(v_lo, v_hi):
-            arr[f(u), g(v)] = h(arr[..], arr[..], ...)
+Where every dependence is non-negative along ``u`` and ``w = v + s + k*u`` the nest is tiled
+instead: a sequential tile diagonal over a parallel tile-column map over the tile's rows, each row
+running the statements clipped to the tile. On GPU a tile of loop statements also runs its own
+``(1, 1)`` diagonal across a thread block.
 
-carries dependences whose distance vectors are all lexicographically backward,
-so neither loop parallelises on its own -- yet the *anti-diagonal* is parallel.
-The classical unimodular skew ``(u, v) -> (t = a*u + b*v, p = v)`` makes one such
-diagonal the sequential ``t`` axis and leaves ``p`` free, after which the inner
-``p``-loop lifts to a parallel Map.
+A nest whose inner axes are already parallel at fixed ``u``, or whose outer axis is, is left alone, and so is a
+time-step loop: one whose iterator indexes nothing.
 
-This pass generalises the textbook single-tasklet rectangular case (TSVC
-``s2111``) to the full affine family that shows up in practice:
-
-* **Affine, non-identity write index** -- ``table[N-1-u, v]`` (the shape a
-  negative-stride normalisation leaves behind, as in polybench ``nussinov``).
-  The dependence distances are computed in *iteration* space by inverting the
-  write's affine index map, not by subtracting the loop variable. The map need
-  not be axis-separable: rebasing a triangular inner loop to a 0-based origin
-  folds its old begin into the subscripts (``table[N-u-1, N-u+v]``), and any
-  *unimodular* 2x2 integer map inverts exactly (see :class:`WriteMap`).
-* **Imperfect, multi-state bodies** -- guards, several writing states, and a
-  nested reduction loop. Reads are collected from the whole inner-loop body;
-  a read inside an enclosing reduction loop contributes a *parametric* distance
-  bounded by that loop's range.
-* **Triangular domains** -- ``for v in range(N-u, N)``. The skewed loop bounds
-  come from an exact ISL projection of the (triangular) iteration polyhedron,
-  which folds a bound like ``v >= N-u`` into the ``t``-range constraint
-  ``t >= N`` automatically.
-
-Legality is the classical Lamport / Feautrier test: a skew ``tau`` is legal iff
-``tau . delta < 0`` for every dependence ``delta`` over the whole domain. It is
-decided exactly (integer emptiness) by :mod:`~dace.transformation.passes.parallelization.wavefront.polyhedron`.
-Crucially the pass **only** skews a genuine
-wavefront -- a nest where *neither* axis is already a parallel map in the current
-loop order (inner-parallel = ``tau=(1,0)`` legal, outer-parallel =
-:func:`outer_axis_parallel`). A stencil that is already a parallel-map-over-
-sequential-scan (or scan-over-map) keeps its clean structure; the skew never
-clobbers it.
-
-The diagonal is lowered as a skewed **tiling**, not element by element: a
-sequential tile-diagonal loop over a parallel tile-column Map over the two
-sequential intra-tile loops, the innermost of which keeps unit stride. The
-element-granularity diagonal walks memory at stride ``N`` and forks a parallel
-region per diagonal -- 0.17-0.18x the plain sequential nest at ``N = 768`` on 4
-threads, where the tiled form measures 2.04-2.16x. The tile-index domain is the
-same polyhedron under ``u -> Bi*I``, ``v -> Bj*J``, so the very same ISL
-projection produces its bounds. Tiling is only taken where it is provably order-
-preserving (:func:`tiling_legal`); everything else keeps the untiled lowering.
-
-References:
-
-- Lamport, *"The parallel execution of DO loops"* (CACM '74) -- the hyperplane /
-  wavefront method and its legality condition.
-- Wolf & Lam, *"A loop transformation theory ..."* (IEEE TPDS '91).
-- Bondhugula et al., *"A practical automatic polyhedral parallelizer ..."*
-  (PLDI '08) -- Pluto, the affine-schedule generalisation.
+References: Lamport, CACM '74; Wolf & Lam, TPDS '91; Bondhugula et al., PLDI '08.
 """
 
-import copy
 import zlib
+from dataclasses import dataclass
 from typing import Any
 
 import islpy as isl
 import sympy
 
 import dace
-from dace import SDFG, properties, subsets, symbolic
+from dace import SDFG, properties, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
-from dace.sdfg.analysis import cfg
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.narrowing import as_expr, as_typeclass, coeff_of, free_symbols, ndrange_exprs, simplified
+from dace.sdfg.narrowing import as_expr, as_typeclass, ndrange_exprs, simplified
+from dace.sdfg.propagation import propagate_memlets_state
+from dace.sdfg.replace import replace_dict as replace_in_subgraph
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
-from dace.transformation.passes.analysis import canon_stats, loop_analysis
+from dace.transformation.interstate.loop_to_map import control_flow_reads
+from dace.transformation.passes.analysis import canon_stats
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_DIAGONAL,
     WAVEFRONT_FRONT,
@@ -91,1183 +49,91 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     tile_label,
 )
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
-from dace.transformation.passes.canonicalize.fuse_consecutive_loops import commit_guarded_fusion, plan_guarded_fusion
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
 from dace.transformation.passes.parallelization.wavefront import polyhedron as poly
+from dace.transformation.passes.parallelization.wavefront.dependences import Dependences, provably, subset_params
+from dace.transformation.passes.parallelization.wavefront.statements import (
+    Body,
+    Statement,
+    copy_axis,
+    extract_body,
+    free_names,
+    is_time_step_loop,
+    occurrence_index,
+)
 
-#: Prefix for the synthesised skewed iterators.
 SKEW_T_PREFIX = "_skew_t_"
 SKEW_P_PREFIX = "_skew_p_"
 
-#: Default extent of a skewed tile on each axis. 64x64 doubles on the paper shapes
-#: at N=768: measured 2.04-2.16x over the sequential nest on 4 threads, against
-#: 0.17-0.18x for the element-granularity diagonal it replaces. Bigger ``Bj`` is
-#: NOT better -- 256 leaves 3 tile columns at N=768, fewer than the thread count.
+#: Tile extent per axis. CPU: 64x64 doubles measured 2.04-2.16x over the sequential nest at N=768 on 4
+#: threads (the element diagonal: 0.17x). GPU: one launch per tile diagonal; 64 fills a gfx942 wavefront.
 DEFAULT_TILE_SIZE = 64
-
-#: Default skewed-tile extent per axis for the GPU lowering. One launch per TILE anti-diagonal
-#: instead of per element (N = 16746: 523 launches, not 33,491) and unit innermost stride.
-#: The dependence caps parallelism near N whatever the tiling; the kernel is parallelism-starved,
-#: so smaller tiles win on occupancy (standalone, n=22820 fp64: B=32/64/128/256 ->
-#: 43.3/44.5/47.2/51.2 ms). 64, not 32: a 32-wide block wastes half a gfx942 wavefront. Not
-#: bandwidth-bound (~211 of ~3300 GB/s); shared-memory staging measured 0.79x at B=64.
 DEFAULT_GPU_TILE_SIZE = 64
 
-#: Largest inner-axis pre-skew ``w = v + k*u`` tried before giving up on tiling. ``k = 1`` makes every
-#: distance of a nearest-neighbour stencil (Gauss-Seidel: ``(1, -1)`` .. ``(0, 1)``) non-negative.
+#: Largest inner-axis pre-skew ``w = v + k*u`` tried to make the nest tileable.
 MAX_PRESKEW = 2
 
-#: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
-#: PARAMETER names standing for its two tile counts. Handing ISL the counts as opaque
-#: parameters (rather than ``int_ceil(N - 1, B)`` inline) keeps the projected diagonal
-#: bound affine; an inline integer division comes back as an ISL existential that
-#: ``pwaff_bound`` cannot render, and the whole tiling would be refused.
-TILE_I_PROBE = "_skew_ti_probe"
-TILE_J_PROBE = "_skew_tj_probe"
-TILE_NI_PROBE = "_skew_ni_probe"
-TILE_NJ_PROBE = "_skew_nj_probe"
-
-#: Suffix ``BreakAntiDependence`` gives the per-iteration anti-dependence snapshot it
-#: inserts (``arr`` -> ``arr_split_snap``). Recognising it lets the skew absorb
-#: the snapshot back into the live array (see :func:`commit_split_snapshots`).
-SPLIT_SNAP_SUFFIX = "_split_snap"
-
-#: Candidate diagonal skews, in preference order. ``tau = (a, b)``; the skew is
-#: unimodular when ``|a| == 1`` (``p = v``, ``u = a*(t - b*p)``) or ``|b| == 1``
-#: (``p = u``, ``v = b*(t - a*p)``). The shallow 45-degree family comes first:
-#: ``(1, 1)`` sum diagonal (heat-flux / Smith-Waterman / nussinov), ``(1, -1)``
-#: difference diagonal. The steeper diagonals follow -- ``(2, +-1)`` is the
-#: Gauss-Seidel case whose stored deps ``{(0,-1),(-1,0),(-1,-1),(-1,1)}`` need
-#: ``a > b > 0`` (seidel_2d), the ``(1, +-2)`` transposes cover the reflected
-#: nests. ``b = 0`` / ``a = 0`` is not a skew (that is the axis-aligned schedule
-#: tested for refusal).
+#: Diagonal skews ``tau = (a, b)`` in preference order; each is unimodular (``|a| == 1`` or ``|b| == 1``).
 SKEW_CANDIDATES: tuple[tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
 
-#: ``(parameter, lo, hi)`` of every enclosing unit-step map, innermost first.
-MapContext = list[tuple[str, sympy.Expr, sympy.Expr]]
-#: Per-axis ``(lo, hi)`` of one access.
-Extent = list[tuple[sympy.Expr, sympy.Expr]]
-#: A read of the carrier: ``(per-axis (lo, hi), context, guard)``.
-ReadRecord = tuple[Extent, MapContext, list[sympy.Expr]]
+#: Dimension names of the schedule polyhedra, and the probe names ``poly.skew_bounds`` returns bounds in.
+DIM_U, DIM_W = "_wf_u", "_wf_w"
+PROBE_T, PROBE_P = f"{SKEW_T_PREFIX}probe", f"{SKEW_P_PREFIX}probe"
+TILE_I, TILE_J, TILE_NI, TILE_NJ = "_wf_ti", "_wf_tj", "_wf_ni", "_wf_nj"
 
 
 def sym(name: str) -> sympy.Expr:
-    """The pass's own DaCe symbol for ``name`` (never a raw sympy symbol). It carries no
-    assumptions -- the registry does not hand those back -- so it is only ever the ITERATOR
-    spelling, and every expression the pass takes out of the SDFG is re-keyed onto it by
-    :func:`canonical_iterators`."""
     return as_expr(name)
 
 
-def declare_iterators(sdfg: SDFG, *names: str) -> None:
-    """Declare the pass's new iterators to the symbol-dtype authority so that :func:`sym` mints them at int64. They are
-    loop iterators, so the loops bind them and the SDFG must not declare them."""
+def declare_iterators(*names: str) -> None:
+    """Mint the pass's new iterators at int64; loops bind them, so the SDFG does not declare them."""
     for name in names:
         symbolic.declare_symbol_dtype(name, as_typeclass(dace.int64))
 
 
-def canonical_iterators(expr: sympy.Expr, iters: tuple[str, ...]) -> sympy.Expr:
-    """``expr`` with every free symbol NAMED in ``iters`` re-keyed onto :func:`sym`'s object.
-
-    The Python frontend mints a loop iterator with explicit ``nonnegative=None`` /
-    ``positive=None`` assumptions (``frontend/python/newast.py``), so the ``i`` inside a memlet
-    subset is a DIFFERENT sympy symbol from ``sym('i')`` and ``i_subset - sym('i')`` stays an
-    uncancelled ``-i + i``. That residual is never structurally zero and never a number, so
-    every distance looked non-trivial: forward reads degraded to ``'flow'`` (no skew for the
-    5-point Gauss-Seidel), and the loop variables leaked into the emitted runtime guard, where
-    they became program arguments no caller can supply.
-
-    Only the ITERATORS are re-keyed. An offset symbol keeps its object; whether it needs a guard is
-    asked of the SDFG's facts.
-    """
-    e = as_expr(expr)
-    mp: dict[sympy.Basic, sympy.Expr] = {}
-    # sorted: the map is built from a sympy set, whose iteration order is not stable. Every entry is
-    # independent so the result cannot differ, but sorting makes that provable rather than incidental.
-    for s in sorted(free_symbols(e), key=str):
-        name = str(s)
-        if name in iters:
-            mp[s] = sym(name)
-    return e.xreplace(mp) if mp else e
-
-
-class WriteMap:
-    """The carrier write's integer affine index map ``(row, col) = M.(u, v) + c``
-    with ``M = ((m00, m01), (m10, m11))`` stored flat and ``c = (c_row, c_col)``
-    free of ``u, v``.
-
-    ``M`` must be **unimodular** (``|det M| == 1``): only then is the map a
-    bijection of the integer lattice, so :meth:`invert` names the one iteration
-    that wrote a given array cell, exactly and over the integers. The axis-
-    separable shapes ``row = c0 + c1*u, col = d0 + d2*v`` (and the transpose) are
-    the diagonal / anti-diagonal ``M``; the general form is what a triangular
-    inner loop leaves behind once its origin is rebased and the old begin folds
-    into the subscripts (``col = N - u + v``)."""
-
-    def __init__(self, u: str, v: str, m: tuple[int, int, int, int], c: tuple[sympy.Expr, sympy.Expr]) -> None:
-        self.u = u
-        self.v = v
-        self.m = m
-        self.c = c
-        self.det = m[0] * m[3] - m[1] * m[2]
-        if abs(self.det) != 1:
-            raise ValueError(f"write map {m} is not unimodular (det={self.det}); it has no integer inverse")
-
-    def invert(self, row_expr: sympy.Expr, col_expr: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
-        """Iteration coordinates ``(u_r, v_r)`` that write array cell
-        ``(row_expr, col_expr)``. Exact because ``det in {1, -1}``, so the adjugate
-        already IS the inverse up to the factor ``1/det == det``."""
-        m00, m01, m10, m11 = self.m
-        dr = row_expr - self.c[0]
-        dc = col_expr - self.c[1]
-        u_r = self.det * (m11 * dr - m01 * dc)
-        v_r = self.det * (m00 * dc - m10 * dr)
-        return simplified(u_r), simplified(v_r)
-
-
-def split_var(expr: sympy.Expr, name: str) -> tuple[sympy.Expr, sympy.Expr]:
-    """``(coeff, remainder)`` splitting the named symbol out of an affine expr;
-    ``remainder`` no longer contains that symbol. Matches by name."""
-    e = simplified(expr)
-    # sorted: sympy allows two distinct Symbol objects with the SAME name but different assumptions in one
-    # expression, and this returns on the first name match -- which one we split on would otherwise be
-    # hash-order dependent, changing the skew decision.
-    for s in sorted(free_symbols(e), key=lambda s: (s.name, str(s.assumptions0))):
-        if s.name == name:
-            c = coeff_of(e, s)
-            return c, simplified(e - c * s)
-    return as_expr(0), e
-
-
-def integer_value(expr: sympy.Expr) -> int | None:
-    """``expr`` as a Python ``int`` when it is an integer literal, else ``None``."""
-    e = simplified(expr)
-    if e.is_Integer:
-        return int(e)
-    return None
-
-
-def affine_coeffs(expr: sympy.Expr, u: str, v: str) -> tuple[int, int, sympy.Expr] | None:
-    """``(cu, cv, rest)`` for ``expr == cu*u + cv*v + rest`` with INTEGER ``cu, cv``
-    and ``rest`` free of ``u, v``; ``None`` when ``expr`` is not affine in ``(u, v)``
-    over the integers.
-
-    Both gates are load-bearing. A non-integer coefficient (``N*u``, or the ``v``
-    that a product ``u*v`` leaves behind) has no integer lattice inverse, and a
-    ``rest`` that still mentions ``u`` or ``v`` means the leftover is non-linear
-    (``u**2``, ``int_floor(u, 2)``) rather than an offset."""
-    cu, rem = split_var(expr, u)
-    cv, rest = split_var(rem, v)
-    iu, iv = integer_value(cu), integer_value(cv)
-    if iu is None or iv is None:
-        return None
-    rest = simplified(rest)
-    names = dict.fromkeys(s.name for s in free_symbols(rest))
-    if u in names or v in names:
-        return None
-    return iu, iv, rest
-
-
-def parse_write_map(row_expr: sympy.Expr, col_expr: sympy.Expr, u: str, v: str) -> WriteMap | None:
-    """Recognise ``row/col`` as a UNIMODULAR integer affine map of ``(u, v)``.
-    Returns a :class:`WriteMap`, or ``None`` when the subscripts are not integer
-    affine or the map is not unimodular.
-
-    The determinant gate is the legality hinge, not a convenience: the pass turns
-    a read's array cell back into the iteration that wrote it by inverting this
-    map. ``det == 0`` means the map is singular -- a whole line of iterations
-    writes the same cell, so there is no unique writer to name. ``|det| > 1``
-    means the image is a strict sublattice, so the preimage of a read cell is
-    rational and every dependence distance derived from it would be wrong. Only
-    ``|det| == 1`` gives an integer inverse, hence exact distances.
-
-    Nothing downstream is relaxed: the map only widens what can be PARSED. The
-    axis-separable family this used to be limited to is unchanged -- a separable
-    integer map is diagonal or anti-diagonal, and such a matrix has ``|det| == 1``
-    exactly when both non-zero entries are ``+-1``, which is the old
-    ``c1, d2 in {1, -1}`` condition verbatim."""
-    ra = affine_coeffs(row_expr, u, v)
-    rb = affine_coeffs(col_expr, u, v)
-    if ra is None or rb is None:
-        return None
-    m = (ra[0], ra[1], rb[0], rb[1])
-    if abs(m[0] * m[3] - m[1] * m[2]) != 1:
-        return None
-    return WriteMap(u, v, m, (ra[2], rb[2]))
-
-
-def unit_positive_stride(loop: LoopRegion) -> bool:
-    s = loop_analysis.get_loop_stride(loop)
-    try:
-        return s is not None and int(simplified(s)) == 1
-    except (TypeError, ValueError):
-        return False
-
-
-def split_snapshot_window(state: SDFGState) -> subsets.Range | None:
-    """The array window a pure anti-dependence snapshot copy state covers (one
-    ``AccessNode(arr) -> AccessNode(arr_split_snap)`` edge, nothing else), or ``None`` if
-    ``state`` isn't one. The window need not span the whole array -- callers must check
-    containment of each read separately (:func:`snapshot_reads_in_window`) -- but the index
-    mapping must be identity (equal subsets, unit stride) or a redirected read would move.
-    """
-    ns = list(state.nodes())
-    if len(ns) != 2 or not all(isinstance(n, nodes.AccessNode) for n in ns):
-        return None
-    edges = list(state.edges())
-    if len(edges) != 1:
-        return None
-    e = edges[0]
-    if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
-        return None
-    if e.dst.data != f"{e.src.data}{SPLIT_SNAP_SUFFIX}":
-        return None
-    src_desc = state.sdfg.arrays.get(e.src.data)
-    dst_desc = state.sdfg.arrays.get(e.dst.data)
-    if src_desc is None or dst_desc is None or e.data is None:
-        return None
-    if len(src_desc.shape) != len(dst_desc.shape):
-        return None
-    if any(simplified(a - b) != 0 for a, b in zip(src_desc.shape, dst_desc.shape)):
-        return None
-    src_sub = e.data.get_src_subset(e, state)
-    dst_sub = e.data.get_dst_subset(e, state)
-    if not isinstance(src_sub, subsets.Range) or (dst_sub is not None and dst_sub != src_sub):
-        return None
-    if any(simplified(step - 1) != 0 for (start, stop, step) in ndrange_exprs(src_sub)):
-        return None
-    return src_sub
-
-
-def is_split_snapshot_state(state: SDFGState) -> bool:
-    """``state`` is a snapshot copy the wavefront can absorb."""
-    return split_snapshot_window(state) is not None
-
-
-def extract_two_level_nest(outer: LoopRegion) -> LoopRegion | None:
-    """The single inner :class:`LoopRegion` perfectly nested in ``outer`` (its
-    body may itself be imperfect); ``None`` if ``outer`` holds anything else with
-    data alongside the one inner loop. A pure ``arr_split_snap = arr`` snapshot
-    state is tolerated -- :func:`commit_split_snapshots` folds it away before the
-    skew reasons about dependences. Any other block beside the inner loop -- a
-    conditional, a nested region -- is work of the outer iteration that the skew
-    would leave behind in the diagonal loop (``scan_levels_k32``'s reseed), so it
-    refuses too."""
-    blocks = list(outer.nodes())
-    inner = [b for b in blocks if isinstance(b, LoopRegion)]
-    if len(inner) != 1:
-        return None
-    for b in blocks:
-        if b is inner[0]:
-            continue
-        if not isinstance(b, SDFGState):
-            return None
-        if len(list(b.nodes())) > 0 and not is_split_snapshot_state(b):
-            return None
-    return inner[0]
-
-
-def live_reader(state: SDFGState, name: str) -> nodes.AccessNode:
-    """A read-only ``AccessNode(name)`` in ``state`` (``in_degree == 0``), reusing
-    one if present so redirected reads coalesce on the existing input node."""
-    for n in state.data_nodes():
-        if n.data == name and state.in_degree(n) == 0:
-            return n
-    return state.add_access(name)
-
-
-#: A single snapshot read to redirect:
-#: ``(state, snap_node, edge, read_index, live_array, copied_window)``.
-SnapRead = tuple[SDFGState, nodes.AccessNode, MultiConnectorEdge[Memlet], list[sympy.Expr], str, subsets.Range]
-#: A planned absorb: ``(snap_src map, reads to redirect, copy states to drop)``.
-SnapPlan = tuple[dict[str, str], list[SnapRead], list[SDFGState]]
-
-
-def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> SnapPlan | None:
-    """Gather the ``arr_split_snap = arr`` snapshots ``BreakAntiDependence`` left beside
-    ``inner`` and the inner-body reads that would redirect onto the live array,
-    WITHOUT mutating. The plan is only committed (:func:`commit_split_snapshots`)
-    once a legal skew is found, so a refused skew leaves the snapshot -- and the
-    inner-axis parallelism it enables -- untouched.
-
-    Returns ``({}, [], [])`` when there is no snapshot (proceed unchanged); a
-    ``(snap_src, snap_reads, copy_states)`` plan; or ``None`` to refuse the skew.
-    Refuses if a snapshot array is used anywhere other than its copy-state write
-    and the inner-body reads -- an external reader would be left consuming a dead
-    transient once the copy is dropped -- or if any inner read index is not a
-    single point."""
-    copy_states: list[SDFGState] = []
-    snap_src: dict[str, str] = {}  # snapshot array -> live source array
-    snap_win: dict[str, subsets.Range] = {}  # snapshot array -> window the copy covers
-    for b in outer.nodes():
-        if not isinstance(b, SDFGState) or b is inner:
-            continue
-        window = split_snapshot_window(b)
-        if window is None:
-            continue
-        copy_states.append(b)
-        e = list(b.edges())[0]
-        snap_src[e.dst.data] = e.src.data
-        snap_win[e.dst.data] = window
-    if not copy_states:
-        return {}, [], []
-    snap_names = dict.fromkeys(snap_src)
-
-    iters = (outer.loop_variable, inner.loop_variable)
-    inner_states = dict.fromkeys(inner.states())
-    copy_set = dict.fromkeys(copy_states)
-    snap_reads: list[SnapRead] = []
-    for state in sdfg.states():
-        for node in state.data_nodes():
-            if node.data not in snap_names:
-                continue
-            # A snapshot array may ONLY be written in its copy state and read in the
-            # inner body; any other use dangles once the copy is dropped.
-            if state.in_degree(node) > 0 and state not in copy_set:
-                return None
-            if state.out_degree(node) > 0 and state not in inner_states:
-                return None
-            if state in inner_states:
-                for e in state.out_edges(node):
-                    if e.data is None or e.data.is_empty():
-                        return None
-                    read = side_subset(state, e, True)
-                    ridx = None if read is None else point_index(read, iters)
-                    if ridx is None:
-                        return None
-                    snap_reads.append((state, node, e, ridx, snap_src[node.data], snap_win[node.data]))
-    return snap_src, snap_reads, copy_states
-
-
-def snapshot_reads_forward(
-    snap_reads: list[SnapRead], carrier: "Carrier", u: str, v: str, facts: symbolic.Facts
-) -> bool:
-    """Every snapshot read must be a FORWARD (anti) dependence in ITERATION space:
-    the writer of the cell it reads runs strictly later, so its value is the
-    not-yet-overwritten old element the snapshot captured -- which the diagonal
-    schedule preserves. Computed by inverting the carrier's write map (the same
-    machinery :func:`collect_carrier` uses for its dependence distances), so a
-    reflected / negative-stride write map is classified in iteration space, not by
-    a raw array-index offset. Refuses if any snapshot read is a backward (flow)
-    dependence, sits on a non-carrier array, or has an undecidable distance."""
-    if not snap_reads:
-        return True
-    arr, wmap, _ = carrier
-    if wmap is None:
-        return False  # a reduced (one-axis) carrier does not name the writing iteration
-    for state, snap_node, edge, ridx, src_name, window in snap_reads:
-        if src_name != arr or len(ridx) != 2:
-            return False  # snapshot not on the 2-D carrier -> cannot reason
-        u_r, v_r = wmap.invert(ridx[0], ridx[1])
-        du = simplified(u_r - sym(u))
-        dv = simplified(v_r - sym(v))
-        if du == 0 and dv == 0:
-            continue  # reads the very cell being written (old value)
-        if dependence_kind(du, dv, facts) != "anti":
-            return False  # backward (flow) or undecidable -> unsafe to redirect
-    return True
-
-
-def snapshot_reads_in_window(snap_reads: list[SnapRead], u: str, v: str, domain: list[sympy.Expr]) -> bool:
-    """Every redirected read must index a cell the snapshot window actually covers; refuses
-    whatever ISL cannot decide."""
-    dims = [u, v]
-    iters = (u, v)
-    for state, snap_node, edge, ridx, src_name, window in snap_reads:
-        rng = window.ndrange()
-        if len(rng) != len(ridx):
-            return False
-        for idx, (lo, hi, step) in zip(ridx, ndrange_exprs(window)):
-            below = simplified(canonical_iterators(lo, iters) - idx - 1)
-            above = simplified(idx - canonical_iterators(hi, iters) - 1)
-            for outside in (below, above):
-                cons = list(domain) + [outside]
-                try:
-                    if not poly.is_domain_empty(dims, params_of(cons, dims), cons):
-                        return False
-                except ValueError:
-                    return False
-    return True
-
-
-def commit_split_snapshots(snap_reads: list[SnapRead], copy_states: list[SDFGState]) -> None:
-    """Rewire the planned snapshot reads onto the live array and drop the copies.
-    Called only after a legal skew is confirmed. Structural cleanup then removes
-    the emptied copy states and eliminates the dead ``arr_split_snap`` arrays."""
-    for state, snap_node, e, ridx, src_name, window in snap_reads:
-        reader = live_reader(state, src_name)
-        redirected = copy.deepcopy(e.data)
-        redirected.data = src_name
-        state.add_edge(reader, None, e.dst, e.dst_conn, redirected)
-        state.remove_edge(e)
-    for state, snap_node, edge, ridx, src_name, window in snap_reads:
-        if snap_node in state.nodes() and state.degree(snap_node) == 0:
-            state.remove_node(snap_node)
-    for st in copy_states:
-        for n in list(st.nodes()):
-            st.remove_node(n)
-
-
-def point_index(subset: subsets.Subset, iters: tuple[str, ...]) -> list[sympy.Expr] | None:
-    """The per-dimension index of a *point* subset (``start == end`` on every
-    axis); ``None`` if any axis is a range.
-
-    This is the single boundary at which memlet subsets enter the pass, so it is where the
-    iterators named in ``iters`` are re-keyed (:func:`canonical_iterators`) -- everything
-    downstream then works in one symbol spelling."""
-    idx: list[sympy.Expr] = []
-    for start, end, step in ndrange_exprs(subset):
-        if start != end:
-            return None
-        idx.append(canonical_iterators(start, iters))
-    return idx
-
-
-def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> list[tuple[sympy.Expr, sympy.Expr]] | None:
-    """The per-dimension ``(start, end)`` of a subset, keyed on the nest's iterators.
-
-    The range-tolerant form of :func:`point_index`: a whole-row update ``A[i, 1:N-1]`` is a point
-    on the axis that carries the dependence and a fixed span on the one that does not, and only
-    :func:`uniform_axes` can tell which is which -- that needs every access of the array at once,
-    so the decision cannot be made here. ``None`` for a strided axis, whose two endpoints do not
-    describe the elements it touches."""
-    idx: list[tuple[sympy.Expr, sympy.Expr]] = []
-    for start, end, step in ndrange_exprs(subset):
-        if step != 1:
-            return None
-        idx.append((canonical_iterators(start, iters), canonical_iterators(end, iters)))
-    return idx
-
-
-def uniform_axes(extents: list[list[tuple[sympy.Expr, sympy.Expr]]], iters: tuple[str, ...]) -> list[int]:
-    """Axes that every access of one array spans identically and independently of the nest.
-
-    Such an axis carries no dependence: any two iterations that touch a common cell agree on it
-    by construction, so it can be dropped and the distance read off what is left. A row sweep
-    ``A[i, 1:N-1] = f(A[i-1, 1:N-1], A[i, 1:N-1], A[i+1, 1:N-1])`` is the shape this exists for --
-    every access spans the same columns, and the wavefront lives entirely in the row index.
-
-    An axis is kept whenever that does not hold, including when the accesses disagree on it: a
-    range there is a real span of distances, and :func:`reduced_points` is what decides whether it
-    can be enumerated or the nest must be refused.
-    """
-    if not extents:
-        return []
-    width = len(extents[0])
-    if any(len(e) != width for e in extents):
-        return []
-    nest = set(iters)
-    drop: list[int] = []
-    for axis in range(width):
-        spans = [e[axis] for e in extents]
-        first = spans[0]
-        if first[0] == first[1]:
-            continue  # a point on the first access -> not a span every access shares
-        if any(lo != first[0] or hi != first[1] for lo, hi in spans):
-            continue  # the accesses disagree -> a distance can live here
-        if any(nest & {str(x) for x in bound.free_symbols} for bound in first):
-            continue  # a range that moves with the nest carries its own dependence
-        drop.append(axis)
-    return drop
-
-
-#: Widest constant-width range read expanded into its individual points. A stencil reads a
-#: handful of neighbours; anything wider is a sweep whose distances are not a small fixed set.
-MAX_RANGE_READ_WIDTH = 8
-
-
-def reduced_points(extent: list[tuple[sympy.Expr, sympy.Expr]], drop: list[int]) -> list[list[sympy.Expr]] | None:
-    """``extent`` with the wildcard axes removed, as the list of point indices it covers.
-
-    A kept axis that is a range of CONSTANT width is the union of that many point accesses --
-    memlet consolidation turns the three neighbour reads of a row sweep into the single
-    ``A[i-1 : i+2, ...]``, and expanding it back is what recovers the three distances. A
-    symbolic or over-wide range has no such finite reading, so it refuses (``None``) unless
-    ``endpoints_only`` says the caller only needs the extremes.
-
-    A wide range reaching here is a genuine sweep whose distances are not a small fixed set --
-    the reduction WINDOW of a lifted WCR map does not, because :func:`scan_state_accesses` reads
-    that map's in-scope point subsets instead of the widened memlet at its entry.
-    """
-    axes: list[list[sympy.Expr]] = []
-    for axis, (lo, hi) in enumerate(extent):
-        if axis in drop:
-            continue
-        if lo == hi:
-            axes.append([lo])
-            continue
-        width = simplified(hi - lo)
-        if not width.is_number or width < 0 or width > MAX_RANGE_READ_WIDTH:
-            return None
-        axes.append([simplified(lo + k) for k in range(int(width) + 1)])
-    if not axes:
-        return None
-    points: list[list[sympy.Expr]] = [[]]
-    for values in axes:
-        points = [pt + [val] for pt in points for val in values]
-    return points
-
-
-def axis_write_map(write_idxs: list[list[sympy.Expr]], u: str, v: str) -> tuple[sympy.Expr, sympy.Expr] | None:
-    """``(coeff, const)`` for a carrier reduced to ONE axis and written at ``coeff * v + const``,
-    with ``coeff`` in ``{1, -1}`` and ``const`` free of both iterators; ``None`` otherwise.
-
-    Only a write independent of the OUTER iterator is admitted. It is the shape that makes a
-    reduced carrier interesting -- the row sweep writes row ``i`` on every time step -- and it is
-    the one whose reader can still be named: the location does not say which ``u`` wrote it, but
-    within one ``u`` the rows are written in increasing ``v``, so the last write before a read is
-    a lexicographic predecessor (:func:`axis_distance`). A write independent of the INNER
-    iterator instead has its last write at the inner loop's final iteration, a bound rather than
-    a distance, so it gets no uniform delta and is refused here."""
-    found = None
-    for idx in write_idxs:
-        if len(idx) != 1:
-            return None
-        cu, rest = split_var(idx[0], u)
-        if cu != 0:
-            return None
-        cv, const = split_var(rest, v)
-        if cv not in (1, -1):
-            return None
-        if found is None:
-            found = (cv, const)
-        elif found != (cv, const):
-            return None
-    return found
-
-
-def axis_distance(
-    idx: sympy.Expr, coeff: sympy.Expr, const: sympy.Expr, u: str, v: str
-) -> tuple[sympy.Expr, sympy.Expr] | None:
-    """``(du, dv) = writer - current`` for a read of the reduced carrier at ``idx``.
-
-    ``coeff`` is its own inverse, so the writing ``v`` is ``coeff * (idx - const)``. Which ``u``
-    wrote it is not in the location, so it is decided by order: a row BELOW the current one was
-    written earlier in this same sweep (``du = 0``), while the current row and any row above it
-    are written at or after this iteration, so the value being read is the previous sweep's
-    (``du = -1``). ``None`` when the offset's sign is not decidable -- an undecided sign would
-    have to pick one of the two answers, and picking wrong mis-orders the schedule."""
-    v_w = simplified(coeff * (idx - const))
-    d = simplified(v_w - sym(v))
-    if not d.is_number:
-        return None
-    zero, back = as_expr("0"), as_expr("-1")
-    return (zero, d) if d < 0 else (back, d)
-
-
-def read_guard(state: SDFGState, inner: LoopRegion, iters: tuple[str, ...]) -> list[sympy.Expr]:
-    """The branch conditions ``state`` executes under, as constraints ``>= 0`` keyed on the
-    nest's iterator symbols; empty when nothing guards it or the guard has no convex form.
-
-    The walk stops at ``inner`` so only conditions written inside the nest are collected -- one
-    further out can be phrased in symbols an interstate edge reassigns on the way in, and would
-    then constrain the wrong values."""
-    cons = poly.constraints_from_condition(cfg.collect_enclosing_conditions(state, stop=inner))
-    if not cons:
-        return []
-    return [canonical_iterators(c, iters) for c in cons]
-
-
-def loop_bounds(loop: LoopRegion) -> tuple[sympy.Expr, sympy.Expr] | None:
-    lo = loop_analysis.get_init_assignment(loop)
-    hi = loop_analysis.get_loop_end(loop)
-    if lo is None or hi is None:
-        return None
-    return as_expr(lo), as_expr(hi)
-
-
-def spans_small_axis(outer: LoopRegion, *bounds: tuple[sympy.Expr, sympy.Expr]) -> bool:
-    """Whether any of the nest's inclusive ``bounds``, read inside ``outer``, spans ``SMALL`` symbols only."""
-    facts = SymbolResolver().facts_at(outer)
-    return any(symbolic.is_small(hi - lo, facts) for lo, hi in bounds)
-
-
-def nested_loop_context(state: SDFGState, inner: LoopRegion) -> list[tuple[str, sympy.Expr, sympy.Expr]] | None:
-    """The reduction loops strictly between ``state`` and ``inner`` (inclusive of
-    neither), innermost first: ``[(var, lo, hi), ...]``. ``None`` if a non-unit
-    stride loop is on the path (its range does not translate to a clean
-    interval)."""
-    ctx: list[tuple[str, sympy.Expr, sympy.Expr]] = []
-    g = state.parent_graph
-    while g is not None and g is not inner:
-        if isinstance(g, LoopRegion) and g.loop_variable:
-            if not unit_positive_stride(g):
-                return None
-            b = loop_bounds(g)
-            if b is None:
-                return None
-            ctx.append((g.loop_variable, b[0], b[1]))
-        g = g.parent_graph if g is not None else None
-    return ctx
-
-
-class Dependence:
-    """One carried dependence: distance ``(du, dv) = writer_iteration - current``
-    (possibly parametric in the enclosing reduction-loop vars ``nested``, each
-    with an interval), plus its ``kind``.
-
-    ``kind`` is ``'flow'`` when the current iteration reads a value the sweep
-    already produced (the writer is lexicographically *before* the current
-    iteration -- a backward distance), and ``'anti'`` when it reads a value that
-    a *later* iteration overwrites (the writer is lexicographically *after* --
-    a forward distance, as in the in-place Gauss-Seidel reads ``A[i, j+1]`` /
-    ``A[i+1, j]`` of the old value). The two impose opposite-signed legality
-    constraints (see :func:`schedule_legal`): flow needs ``tau . delta < 0``
-    (producer before consumer), anti needs ``tau . delta > 0`` (read before the
-    overwrite). Treating an anti dependence as flow -- the pre-fix behaviour --
-    makes both the backward and forward reads demand contradictory signs, so no
-    skew is ever found for a symmetric stencil.
-
-    ``guard`` holds the branch conditions the READ executes under, as expressions meant
-    ``>= 0`` in the current iteration's coordinates. A guarded read carries a dependence only
-    where its guard holds, so the constraints join the iteration domain in
-    :func:`dep_dims_and_cons`. Only the read's guard is collected, never the write's: assuming
-    the write always happens can add dependences that do not exist but can never drop one."""
-
-    def __init__(
-        self,
-        du: sympy.Expr,
-        dv: sympy.Expr,
-        nested: list[tuple[str, sympy.Expr, sympy.Expr]],
-        kind: str = "flow",
-        guard: list[sympy.Expr] | None = None,
-    ) -> None:
-        self.du = simplified(du)
-        self.dv = simplified(dv)
-        self.nested = nested
-        self.kind = kind
-        self.guard = guard or []
-
-
-#: ``(array, write map, dependences)`` of the one array that carries the nest's dependences; the write map is
-#: ``None`` for the reduced one-axis carrier, whose location names no single writing iteration.
-Carrier = tuple[str, WriteMap | None, list[Dependence]]
-
-
-def dependence_kind(du: sympy.Expr, dv: sympy.Expr, facts: symbolic.Facts) -> str:
-    """Classify a distance ``(du, dv) = writer - current`` as ``'flow'`` or
-    ``'anti'`` by the lexicographic sign of its first non-zero component (a
-    positive first component means the writer runs after the current iteration,
-    so the read sees the soon-to-be-overwritten old value -- an anti dependence).
-
-    A *symbolic* leading component is classified ``'anti'`` when its forward
-    (positive) sign is PROVABLE -- e.g. a read ``arr[i, j + K]`` with ``K`` a
-    declared-positive symbol is a genuine forward anti-dependence. Classifying it
-    as flow (the pre-fix blanket rule) is UNSOUND: the pass then finds the
-    difference-diagonal skew ``tau = (1, -1)`` legal under the (wrong) flow
-    constraint ``-K < 0`` and schedules the overwrite *before* the read, silently
-    miscompiling. A distance whose forward sign is not provable -- an unannotated
-    or a backward symbol (``arr[i, j - K]``) -- stays conservatively ``'flow'``:
-    it is a genuine backward recurrence, or an unannotated offset the optimistic
-    retry pins with a runtime positive-guard, so a flow treatment can only refuse
-    or trap, never mis-order. The sign is proven under ``facts``."""
-    du_s, dv_s = simplified(du), simplified(dv)
-    if du_s.is_number and dv_s.is_number:
-        if du_s > 0 or (du_s == 0 and dv_s > 0):
-            return "anti"
-        return "flow"
-    lead = du_s if du_s != 0 else dv_s  # lexicographically leading (first non-zero) component
-    if provably_positive(lead, facts):
-        return "anti"
-    return "flow"
-
-
-def provably_positive(expr: sympy.Expr, facts: symbolic.Facts) -> bool:
-    """Whether ``expr > 0`` follows from ``facts``."""
-    relation = symbolic.predicate_relation(symbolic.Predicate.POSITIVE, expr)
-    return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
-
-
-def map_scope_context(state: SDFGState, node: nodes.Node) -> list[tuple[str, sympy.Expr, sympy.Expr]] | None:
-    """The map scopes enclosing ``node`` in ``state``, innermost first, as ``[(param, lo, hi), ...]``.
-
-    A reduction lifted to a WCR map is the same shape as the sequential reduction loop it replaced
-    (:func:`nested_loop_context`), one level further in: its parameter reaches the distances and its
-    range bounds them. Reading the widened memlet at the map's entry instead would say the body
-    touches the whole array and refuse every schedule. ``None`` when a range is not a unit-stride
-    interval, which has no such reading.
-    """
-    ctx: list[tuple[str, sympy.Expr, sympy.Expr]] = []
-    # entry_node reads the cached scope map directly; scope_dict shallow-copies it on every call.
-    cur = state.entry_node(node)
-    while cur is not None:
-        if not isinstance(cur, nodes.MapEntry):
-            return None
-        for param, (lo, hi, step) in zip(cur.map.params, cur.map.range):
-            if simplified(step) != 1:
-                return None
-            ctx.append((param, lo, hi))
-        cur = state.entry_node(cur)
-    return ctx
-
-
-def widened_beyond_reading(subset: subsets.Subset) -> bool:
-    """``subset`` has an axis whose width is symbolic or wider than a stencil's neighbourhood.
-
-    That is precisely what :func:`reduced_points` cannot enumerate, and precisely what memlet
-    propagation produces at a map scope boundary when the body's window is symbolic.
-    """
-    for lo, hi, step in ndrange_exprs(subset):
-        if simplified(step) != 1:
-            return True
-        width = simplified(hi - lo)
-        if not width.is_number or width > MAX_RANGE_READ_WIDTH:
-            return True
-    return False
-
-
-def descend_into_map_scopes(state: SDFGState, data_name: str) -> bool:
-    """Whether ``data_name``'s accesses in ``state`` should be read at the map-scope leaves.
-
-    Only when a READ was widened past reading by propagation at a map entry -- the reduction window
-    of a lifted WCR map -- AND no write to the array is widened. All of an array's accesses have to
-    be described at the SAME level: :func:`uniform_axes` drops an axis only when every access spans
-    it identically, so pairing a leaf-level read against a range-level write hides the very axis a
-    row sweep depends on dropping. Asked per ARRAY, not per AccessNode: one state routinely holds
-    several nodes for the same array, and the widened write that pins the level can sit on a
-    different node than the widened read.
-    """
-    descend = False
-    for node in state.data_nodes():
-        if node.data != data_name:
-            continue
-        for e in state.in_edges(node):
-            if e.data is None or e.data.is_empty():
-                continue
-            written = side_subset(state, e, False)
-            if written is not None and widened_beyond_reading(written):
-                return False
-        for e in state.out_edges(node):
-            if e.data is None or e.data.is_empty():
-                continue
-            read = side_subset(state, e, True)
-            if read is not None and widened_beyond_reading(read) and isinstance(e.dst, nodes.MapEntry):
-                descend = True
-    return descend
-
-
-def side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool) -> subsets.Subset | None:
-    """The subset ``edge`` reads from its source (``is_read``) or writes into its destination: a copy names its two
-    containers in ``subset`` and ``other_subset``, so the container's own side is asked of the edge."""
-    return edge.data.get_src_subset(edge, state) if is_read else edge.data.get_dst_subset(edge, state)
-
-
-def in_scope_accesses(
-    state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool
-) -> list[tuple[subsets.Subset, MapContext]] | None:
-    """``[(subset, map_ctx), ...]`` for the innermost edges ``edge`` stands for.
-
-    Normally the edge's own subset, which is what every previously-analysable shape uses: a
-    consolidated neighbourhood read (``A[i-1 : i+2, 1:N-1]``) says more about distances than its
-    per-element leaves do, because the column axis it spans uniformly is exactly what
-    :func:`uniform_axes` drops.
-
-    The exception is a subset propagation has WIDENED past reading -- ``A[0:N, 0:N]`` at the entry
-    of a map reducing over a symbolic window, once the ``k`` reduction is a WCR map instead of a
-    sequential loop. That says the body touches everything and refuses every schedule, while the
-    memlet tree's leaves carry the per-iteration subsets it actually reads (``A[i, _k]``) with
-    :func:`map_scope_context` supplying the ``_k`` range that bounds them.
-    """
-    other = edge.dst if is_read else edge.src
-    subset = side_subset(state, edge, is_read)
-    if subset is None:
-        return None
-    if not isinstance(other, (nodes.MapEntry, nodes.MapExit)) or not widened_beyond_reading(subset):
-        return [(subset, [])]
-
-    out: list[tuple[subsets.Subset, MapContext]] = []
-    for leaf in state.memlet_tree(edge).leaves():
-        endpoint = leaf.dst if is_read else leaf.src
-        if isinstance(endpoint, (nodes.MapEntry, nodes.MapExit)):
-            return None  # a scope that is not a plain map nest -> refuse
-        ctx = map_scope_context(state, endpoint)
-        if ctx is None or leaf.data is None or leaf.data.is_empty():
-            return None
-        leaf_subset = side_subset(state, leaf, is_read)
-        if leaf_subset is None:
-            return None
-        out.append((leaf_subset, ctx))
-    return out or None
-
-
-def scan_state_accesses(
-    state: SDFGState,
-    inner: LoopRegion,
-    sdfg: SDFG,
-    u: str,
-    v: str,
-    v_local: str,
-    snap_src: dict[str, str],
-    sibling_cons: list[sympy.Expr],
-    writes: dict[str, list[Extent]],
-    reads: dict[str, list[ReadRecord]],
-) -> bool:
-    """Record ``state``'s point accesses to 2-D arrays into ``writes`` / ``reads``.
-
-    ``False`` means refuse: a non-point subset, or an enclosing loop whose range is not a clean
-    interval. Each read is stored with the constraints it executes under -- its sibling's slice
-    of the iteration space plus its own branch guards.
-
-    ``v_local`` is the iterator THIS body is written in. Sibling loops are normalized apart, so
-    each carries a private ``_loop_it_N``; every index and guard taken from this body is renamed
-    onto the shared ``v`` here, where the subsets enter, rather than by mutating the graph before
-    the skew is known to be legal."""
-    ctx = None
-    rename = {sym(v_local): sym(v)} if v_local != v else {}
-    guard = sibling_cons + [g.xreplace(rename) for g in read_guard(state, inner, (u, v_local))]
-    iters: tuple[str, ...] = (u, v_local)
-    for node in state.data_nodes():
-        data_name = snap_src.get(node.data, node.data)
-        desc = sdfg.arrays.get(data_name)
-        if desc is None or len(desc.shape) != 2:
-            continue
-        if ctx is None:
-            ctx = nested_loop_context(state, inner)
-            if ctx is None:
-                return False
-            # An enclosing reduction loop's iterator reaches the distances too, so it needs
-            # the same single spelling as ``u`` / ``v``.
-            iters = (u, v, *(nm for (nm, _, _) in ctx))
-        descend = descend_into_map_scopes(state, data_name)
-        for e in state.in_edges(node):
-            if e.data is None or e.data.is_empty():
-                continue
-            accesses = in_scope_accesses(state, e, is_read=False) if descend else [(side_subset(state, e, False), [])]
-            if accesses is None or any(subset is None for subset, _ in accesses):
-                return False
-            for subset, map_ctx in accesses:
-                if map_ctx:
-                    return False  # a write parameterized by a map index names no single writer
-                idx = access_extent(subset, iters)
-                if idx is None:
-                    return False  # strided write -> refuse
-                writes.setdefault(data_name, []).append([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx])
-        for e in state.out_edges(node):
-            if e.data is None or e.data.is_empty():
-                continue
-            accesses = in_scope_accesses(state, e, is_read=True) if descend else [(side_subset(state, e, True), [])]
-            if accesses is None or any(subset is None for subset, _ in accesses):
-                return False
-            for subset, map_ctx in accesses:
-                # A map index reaching the read is one more parametric dimension of the distance,
-                # exactly like an enclosing reduction loop's iterator, so it joins ``iters`` and
-                # travels with the read as part of its context.
-                read_iters = (*iters, *(nm for (nm, _, _) in map_ctx))
-                idx = access_extent(subset, read_iters)
-                if idx is None:
-                    return False  # strided read of a 2-D carrier -> refuse
-                reads.setdefault(data_name, []).append(
-                    ([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx], [*ctx, *map_ctx], guard)
-                )
-    return True
-
-
-def names_read_outside(loops: list[LoopRegion], sdfg: SDFG) -> set[str]:
-    """The symbol names anything of ``sdfg`` outside ``loops`` reads: its other states and interstate edges."""
-    inside_blocks = {block for lp in loops for block in lp.all_control_flow_blocks()}
-    inside_edges = {id(e) for lp in loops for e in lp.all_interstate_edges()}
-    names: set[str] = set()
-    for state in sdfg.states():
-        if state not in inside_blocks:
-            names |= {str(s) for s in state.free_symbols}
-    for edge in sdfg.all_interstate_edges():
-        if id(edge) not in inside_edges:
-            names |= {str(s) for s in edge.data.free_symbols}
-    for region in sdfg.all_control_flow_regions():
-        if region not in inside_blocks and region not in loops:
-            names |= {str(s) for code in region.get_meta_codeblocks() for s in code.get_free_symbols()}
-    return names
-
-
-def collect_carrier(
-    inners: list[tuple[LoopRegion, str, list[sympy.Expr]]],
-    sdfg: SDFG,
-    u: str,
-    v: str,
-    snap_src: dict[str, str] | None = None,
-) -> Carrier | None:
-    """Find the unique carrier array (written *and* self-read with a non-zero
-    distance) across ``inners``' bodies, its write map, and its dependences. ``None``
-    if there is no clean single carrier (refuse).
-
-    ``inners`` is normally the one inner loop, paired with an empty guard. A chain of
-    adjacent-range SIBLING loops is passed as several entries, each paired with the constraints
-    that hold inside it (``plan_guarded_fusion``'s ``guards``): the siblings partition one
-    iteration space, and a read in one of them carries a dependence only over that sibling's
-    slice of it. Analysing them together is what lets a nest whose two halves are written as
-    separate loops -- polybench ``lu`` and ``ludcmp`` -- be seen as the single 2-D space it is.
-
-    ``snap_src`` maps each not-yet-committed ``arr_split_snap`` snapshot array to
-    its live source; a read of a snapshot array is attributed to the live array so
-    the carrier's dependence set is COMPLETE before the snapshot is folded away
-    (the actual redirect is deferred until a legal skew is confirmed). Without it,
-    the snapshotted read would be invisible and the skew decided on a partial
-    dependence set."""
-    snap_src = snap_src or {}
-    # Only 2-D dataflow accesses are modelled below; refuse anything else that can carry a value across iterations.
-    loops = [inner for inner, _, _ in inners]
-    nest = {st for lp in loops for st in lp.states()}
-    written = {n.data for st in nest for n in st.data_nodes() if st.in_degree(n) > 0}
-    others = {w for w in written if len(sdfg.arrays[w].shape) != 2}
-    cf_reads = set().union(*(control_flow_reads(lp) for lp in loops))
-    # A symbol assigned inside the nest is per-iteration state: harmless while the nest alone reads it (its
-    # right-hand side reads no data the nest writes -- ``cf_reads`` -- and the skew rewrites the iterators in it),
-    # a carried value once anything after the nest reads it.
-    assigned = {name for lp in loops for e in lp.all_interstate_edges() for name in e.data.assignments}
-    assigns = bool(assigned & names_read_outside(loops, sdfg))
-    outside = {n.data for st in sdfg.states() if st not in nest for n in st.data_nodes()}
-    if written & cf_reads or assigns or others & outside or any(not sdfg.arrays[w].transient for w in others):
-        return None
-    if any(carried_local_transients(lp, others) for lp in loops):
-        return None
-    writes: dict[str, list[Extent]] = {}
-    reads: dict[str, list[ReadRecord]] = {}
-    for inner, v_local, sibling_guard in inners:
-        sibling_cons = [canonical_iterators(g, (u, v)) for g in sibling_guard]
-        for state in inner.states():
-            if not scan_state_accesses(state, inner, sdfg, u, v, v_local, snap_src, sibling_cons, writes, reads):
-                return None
-
-    carriers: list[Carrier] = []
-    for arr, wextents in writes.items():
-        rextents = reads.get(arr, [])
-        drop = uniform_axes(wextents + [r[0] for r in rextents], (u, v))
-        wsubs: list[list[sympy.Expr]] = []
-        rsubs: list[tuple[list[sympy.Expr], MapContext, list[sympy.Expr]]] = []
-        for extent in wextents:
-            points = reduced_points(extent, drop)
-            if points is None:
-                return None  # a kept axis is a range with no finite reading -> refuse
-            wsubs.extend(points)
-        for extent, ctx, guard in rextents:
-            points = reduced_points(extent, drop)
-            if points is None:
-                return None
-            rsubs.extend((pt, ctx, guard) for pt in points)
-        deps = carrier_dependences(wsubs, rsubs, u, v, sdfg.facts())
-        if deps is None:
-            return None
-        wmap, dep_list = deps
-        if dep_list:
-            carriers.append((arr, wmap, dep_list))
-    if len(carriers) != 1:
-        return None  # zero or several carriers -> refuse
-    return carriers[0]
-
-
-def carrier_dependences(
-    wsubs: list[list[sympy.Expr]],
-    rsubs: list[tuple[list[sympy.Expr], MapContext, list[sympy.Expr]]],
-    u: str,
-    v: str,
-    facts: symbolic.Facts,
-) -> tuple[WriteMap | None, list[Dependence]] | None:
-    """``(write map, dependences)`` for one array, or ``None`` to refuse the whole nest.
-
-    Two carrier shapes, by how many axes survived :func:`uniform_axes`:
-
-    * TWO -- the write is a unimodular 2-D map, so a location names the single iteration that
-      wrote it and every distance is exact.
-    * ONE -- the write is independent of the outer iterator, so a location is written once per
-      outer iteration and names no single writer. The distances come from program order instead
-      (:func:`axis_distance`), and the repeated writes are themselves an output dependence: the
-      previous sweep's write to the same location must stay ordered before this one, which is
-      what stops the outer axis from being handed out in parallel.
-    """
-    if all(len(idx) == 2 for idx in wsubs):
-        wmap = consistent_write_map(wsubs, u, v)
-        if wmap is None:
-            return None  # written by a non-affine or non-unimodular map -> refuse
-        deps: list[Dependence] = []
-        for idx, ctx, guard in rsubs:
-            if len(idx) != 2:
-                return None
-            u_r, v_r = wmap.invert(idx[0], idx[1])
-            du = simplified(u_r - sym(u))
-            dv = simplified(v_r - sym(v))
-            if du == 0 and dv == 0:
-                continue  # in-place self-read, not a dependence
-            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv, facts), guard))
-        return wmap, deps
-
-    amap = axis_write_map(wsubs, u, v)
-    if amap is None:
-        return None
-    coeff, const = amap
-    deps = []
-    for idx, ctx, guard in rsubs:
-        if len(idx) != 1:
-            return None
-        d = axis_distance(idx[0], coeff, const, u, v)
-        if d is None:
-            return None  # undecidable offset sign -> refuse
-        deps.append(Dependence(d[0], d[1], ctx, dependence_kind(d[0], d[1], facts), guard))
-    if deps:
-        # Output dependence: the same location is rewritten every outer iteration, so consecutive
-        # sweeps must not land on one diagonal. Unguarded on purpose -- assuming a write always
-        # happens can only add order, never drop it.
-        deps.append(Dependence(as_expr("-1"), as_expr("0"), [], "flow"))
-    return None, deps
-
-
-def consistent_write_map(write_subs: list[list[sympy.Expr]], u: str, v: str) -> WriteMap | None:
-    """A single :class:`WriteMap` agreeing with *every* write subset, else ``None``."""
-    wmap = None
-    for idx in write_subs:
-        wm = parse_write_map(idx[0], idx[1], u, v)
-        if wm is None:
-            return None
-        if wmap is None:
-            wmap = wm
-        elif (wm.m, wm.c) != (wmap.m, wmap.c):
-            return None
-    return wmap
-
-
-def domain_constraints(
-    u: str, v: str, ub: tuple[sympy.Expr, sympy.Expr], vb: tuple[sympy.Expr, sympy.Expr]
-) -> list[sympy.Expr]:
-    """The 2-D iteration polyhedron as exprs, each ``>= 0``."""
-    U, V = sym(u), sym(v)
-    return [U - ub[0], ub[1] - U, V - vb[0], vb[1] - V]
-
-
-def tau_dot(tau: tuple[int, int], dep: Dependence) -> sympy.Expr:
-    a, b = tau
-    return simplified(a * dep.du + b * dep.dv)
-
-
-def dep_dims_and_cons(
-    dep: Dependence, u: str, v: str, domain: list[sympy.Expr], assume: list[sympy.Expr]
-) -> tuple[list[str], list[sympy.Expr]]:
-    """Dims + full constraint list (domain + this dep's nested ranges + assumptions)."""
-    dims = [u, v] + [nm for (nm, _, _) in dep.nested]
-    cons = list(domain)
-    for nm, lo, hi in dep.nested:
-        S = sym(nm)
-        cons += [S - lo, hi - S]
-    cons += list(dep.guard)
-    cons += list(assume)
-    return dims, cons
-
-
 def params_of(cons: list[sympy.Expr], dims: list[str]) -> list[str]:
-    names: dict[str, None] = {}
-    for c in cons:
-        names.update(dict.fromkeys(s.name for s in free_symbols(simplified(c))))
-    return sorted(n for n in names if n not in dims)
+    return sorted({n for c in cons for n in free_names(c)} - set(dims))
 
 
-def outer_axis_parallel(deps: list[Dependence], u: str, v: str, domain: list[sympy.Expr]) -> bool:
-    """The OUTER ``u`` loop is ALREADY a parallel map in the current loop order:
-    no dependence crosses ``u`` anywhere in the domain (``du == 0``), so a plain
-    ``LoopToMap`` lifts it and the skew must not clobber the nest.
-
-    Strictly stronger than ``schedule_legal((0, 1), ...)``, which only says the
-    ``v`` *axis* carries every dependence. That also holds for a nest whose
-    dependences still cross ``u`` (``du = -1``) -- there ``u`` is parallel only
-    after an INTERCHANGE, and no pass in the pipeline performs one, so refusing on
-    it trades a legal wavefront for a fully sequential nest. Origin-sensitive, and
-    exactly the shape a triangular-inner-loop rebase produces: rebasing shears
-    ``dv`` by ``du`` (``(-1, 0) -> (-1, -1)``), which flips ``tau = (0, 1)`` from
-    illegal to legal without changing a thing about the nest's parallelism."""
-    for dep in deps:
-        dims, cons = dep_dims_and_cons(dep, u, v, domain, [])
-        # Does the domain hold a point with du >= 1, or one with du <= -1?
-        for crossing in (dep.du - 1, simplified(-dep.du - 1)):
-            probe = cons + [crossing]
-            try:
-                if not poly.is_domain_empty(dims, params_of(probe, dims), probe):
-                    return False
-            except ValueError:
-                return False  # non-affine / unmapped -> not provably parallel
-    return True
+def statement_domain(body: Body, st: Statement, shift: int, k: int) -> list[sympy.Expr] | None:
+    """``st``'s domain over ``(DIM_U, DIM_W)``, ``w = v + shift + k*u``, as exact ``>= 0`` terms."""
+    u, w = sym(DIM_U), sym(DIM_W)
+    v = w - shift - k * u
+    subs = {body.u: u, st.var: v}
+    out: list[sympy.Expr] = []
+    for var, bound, upper in ((u, body.u_lo, False), (u, body.u_hi, True), (v, st.lo, False), (v, st.hi, True)):
+        terms = symbolic.convex_bound_terms(poly.subs_by_name(bound, subs), upper)
+        if terms is None:
+            return None
+        out += [simplified(t - var) if upper else simplified(var - t) for t in terms]
+    return out
 
 
-def schedule_legal(
-    tau: tuple[int, int], deps: list[Dependence], u: str, v: str, domain: list[sympy.Expr], assume: list[sympy.Expr]
-) -> bool:
-    """``tau`` is legal iff every dependence is strictly ordered on the sequential
-    ``t`` axis. For a **flow** dependence the producer must precede the consumer
-    (``tau.delta < 0``, i.e. no domain point with ``tau.delta >= 0``); for an
-    **anti** dependence the read must precede the overwrite (``tau.delta > 0``,
-    i.e. no domain point with ``tau.delta <= 0``). ``delta`` is the stored
-    ``(du, dv) = writer - current``."""
-    for dep in deps:
-        dims, cons = dep_dims_and_cons(dep, u, v, domain, assume)
-        # Add the constraint whose satisfiable region is the *illegal* one: for
-        # flow that is ``tau.delta >= 0``, for anti ``tau.delta <= 0`` (rendered
-        # as ``-tau.delta >= 0``). ``tau`` is legal for this dep iff that region
-        # is empty over the domain.
-        td = tau_dot(tau, dep)
-        cons = cons + [td if dep.kind == "flow" else simplified(-td)]
-        try:
-            empty = poly.is_domain_empty(dims, params_of(cons, dims), cons)
-        except ValueError:
-            return False  # non-affine / unmapped -> cannot prove -> illegal
-        if not empty:
-            return False
-    return True
+def bound_str(terms: list[sympy.Expr], subs: dict[str, sympy.Expr], fn: str) -> str:
+    rendered = [symbolic.symstr(poly.subs_by_name(t, subs)) for t in terms]
+    return rendered[0] if len(rendered) == 1 else f"{fn}({', '.join(rendered)})"
 
 
-def tile_signs(d: int) -> tuple[int, ...]:
-    """Tile-index distances a single-axis element distance ``d`` can induce once
-    ``|d|`` is known not to exceed the tile extent: the two iterations either sit
-    in the same tile or straddle exactly one boundary, in the direction of ``d``."""
-    if d == 0:
-        return (0,)
-    return (0, 1) if d > 0 else (-1, 0)
+def combine(parts: list[str], fn: str) -> str:
+    unique = list(dict.fromkeys(parts))
+    return unique[0] if len(unique) == 1 else f"{fn}({', '.join(unique)})"
 
 
-def tiling_legal(deps: list[Dependence], tau: tuple[int, int], bi: int, bj: int) -> bool:
-    """``tau`` still orders every dependence strictly once the nest is tiled ``bi x bj``.
-
-    Two conditions, both necessary.
-
-    1. Every distance component must be a known integer no larger in magnitude than
-       its tile extent. Only then is the tile-index distance of a dependent pair the
-       CLAMPED SIGN of the element distance, i.e. one of :func:`tile_signs`. A
-       parametric distance -- a read under an enclosing reduction loop, as in
-       polybench ``nussinov`` -- carries no such bound and counts as exceeding.
-    2. For every tile-index distance the pair can actually take, ``tau`` must impose
-       the same strict order it was proved to impose element-wise. ``(0, 0)`` is
-       exempt: both iterations land in one tile, which runs its points in the
-       original sequential ``(u, v)`` order.
-
-    Condition 2 does NOT follow from condition 1. The Gauss-Seidel skew
-    ``tau = (2, 1)`` with the flow distance ``(-1, +1)`` is legal element-wise
-    (``tau . delta = -1 < 0``), yet the pair can straddle the ``v`` boundary alone,
-    giving the tile distance ``(0, +1)`` and ``tau . (0, 1) = +1 > 0`` -- the
-    producing tile would run one diagonal AFTER the consuming one, a miscompile.
-    Such a nest keeps the untiled lowering."""
-    a, b = tau
-    for dep in deps:
-        du, dv = integer_value(dep.du), integer_value(dep.dv)
-        if du is None or dv is None:
-            return False
-        if abs(du) > bi or abs(dv) > bj:
-            return False
-        for di in tile_signs(du):
-            for dj in tile_signs(dv):
-                if di == 0 and dj == 0:
-                    continue  # same tile -> original sequential order
-                dot = a * di + b * dj
-                if dot >= 0 if dep.kind == "flow" else dot <= 0:
-                    return False
-    return True
+def skew_bounds(cons: list[sympy.Expr], tau: tuple[int, int], t_range=None) -> poly.SkewBounds | None:
+    try:
+        return poly.skew_bounds((DIM_U, DIM_W), params_of(cons, [DIM_U, DIM_W]), cons, tau, PROBE_T, PROBE_P, t_range)
+    except ValueError:
+        return None
 
 
 @canon_stats.timed("isl")
-def domain_bbox(u: str, v: str, params: list[str], domain: list[sympy.Expr]) -> list[sympy.Expr] | None:
-    """``[u_lo, u_hi, v_lo, v_hi]`` -- the exact integer bounding box of the 2-D
-    iteration domain -- or ``None`` when a side is not a single readable bound.
-
-    The tile grid is anchored at that box corner and stays RECTANGULAR even for a
-    triangular domain: tiles below the diagonal simply run empty, and the clip back
-    to the real bounds lives in the intra-tile loop bounds (``max(j0, i)``). The box
-    is an ISL projection, so a ``u`` value whose ``v`` range is empty is already
-    outside it and costs no tile."""
-    s, nmap = poly.make_set((u, v), params, domain)
+def domain_bbox(cons: list[sympy.Expr]) -> list[sympy.Expr] | None:
+    """``[u_lo, u_hi, w_lo, w_hi]`` of the integer set ``cons``, or ``None`` when a side is not one bound."""
+    try:
+        s, nmap = poly.make_set((DIM_U, DIM_W), params_of(cons, [DIM_U, DIM_W]), cons)
+    except ValueError:
+        return None
     inv = {safe: orig for orig, safe in nmap.items()}
     box: list[sympy.Expr] = []
     for keep in (0, 1):
@@ -1280,725 +146,35 @@ def domain_bbox(u: str, v: str, params: list[str], domain: list[sympy.Expr]) -> 
     return box
 
 
+@dataclass
 class TilePlan:
-    """The skewed TILE-index bounds plus the grid origin and extents
-    :meth:`WavefrontSkew.rewrite_tiled` emits from."""
-
-    def __init__(
-        self,
-        bounds: poly.SkewBounds,
-        u_lo: sympy.Expr,
-        v_lo: sympy.Expr,
-        n_i: sympy.Expr,
-        n_j: sympy.Expr,
-        bi: int,
-        bj: int,
-    ) -> None:
-        self.bounds = bounds
-        self.u_lo = u_lo
-        self.v_lo = v_lo
-        self.n_i = n_i
-        self.n_j = n_j
-        self.bi = bi
-        self.bj = bj
-
-
-def offset_symbols(deps: list[Dependence], dims: list[str]) -> list[sympy.Symbol]:
-    """Distinct parameter symbols appearing in any distance component."""
-    nested_names = dict.fromkeys(nm for d in deps for (nm, lo, hi) in d.nested)
-    syms: dict[str, sympy.Symbol] = {}
-    for dep in deps:
-        for comp in (dep.du, dep.dv):
-            for s in sorted(free_symbols(simplified(comp)), key=lambda s: s.name):
-                if s.name not in dims and s.name not in nested_names:
-                    syms[s.name] = s
-    # sorted by name: the returned order reaches the ISL constraint text. ISL emptiness is order-independent
-    # today, so this is inert -- but it makes that provable rather than incidental.
-    return [syms[k] for k in sorted(syms)]
-
-
-@properties.make_properties
-@xf.explicit_cf_compatible
-class WavefrontSkew(ppl.Pass):
-    """Skew genuine 2-D wavefront nests so the inner loop lifts to a parallel Map.
-
-    Backed by an exact ISL legality + bound projection; refuses anything that is
-    not a genuine wavefront (already-parallel axis, non-affine carrier, several
-    carriers, non-unit strides).
-
-    The lowering is a skewed TILING (:meth:`rewrite_tiled`) wherever
-    :func:`tiling_legal` holds AND the target asks for blocking, and the
-    element-granularity diagonal (:meth:`rewrite`) otherwise. Only ``target='cpu'``
-    asks: blocking is locality tuning for a cache, and a GPU is better served by the
-    diagonal's wider parallelism."""
-
-    CATEGORY: str = "Canonicalization"
-
-    target = properties.Property(
-        dtype=str,
-        default="cpu",
-        choices=["cpu", "gpu"],
-        desc="Target policy: 'cpu' blocks the wavefront into skewed tiles wherever that "
-        "is legal; 'gpu' always takes the element-granularity diagonal.",
-    )
-
-    tile_i = properties.Property(
-        dtype=int,
-        default=DEFAULT_TILE_SIZE,
-        desc="Skewed-tile extent on the outer (u) axis. A dependence reaching further than "
-        "this on that axis falls back to the untiled lowering. CPU only.",
-    )
-    tile_j = properties.Property(
-        dtype=int,
-        default=DEFAULT_TILE_SIZE,
-        desc="Skewed-tile extent on the inner (v) axis; the innermost emitted loop runs one "
-        "tile row of it at unit stride. CPU only.",
-    )
-
-    gpu_tile_i = properties.Property(
-        dtype=int,
-        default=DEFAULT_GPU_TILE_SIZE,
-        desc="Skewed-tile extent on the outer (u) axis for the GPU lowering. Separate "
-        "from tile_i because the two targets are sized against different things: a CPU "
-        "tile is sized to a cache, a GPU tile trades grid width (tiles per diagonal, "
-        "which must cover the CUs) against block width (the intra-tile anti-diagonal, "
-        "which must cover a wavefront).",
-    )
-    gpu_tile_j = properties.Property(
-        dtype=int, default=DEFAULT_GPU_TILE_SIZE, desc="Skewed-tile extent on the inner (v) axis for the GPU lowering."
-    )
-
-    def __init__(self, target: str = "cpu") -> None:
-        super().__init__()
-        self.target = target
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG | ppl.Modifies.Symbols
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Skew every eligible 2-D nest. Returns the count or ``None`` on no match."""
-        with symbolic.serialization_symbol_dtypes({}, inherit=True):
-            return self.skew_all(sdfg)
-
-    def skew_all(self, sdfg: SDFG) -> int | None:
-        skewed = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            for region in list(sd.all_control_flow_regions()):
-                if not (isinstance(region, LoopRegion) and region.loop_variable):
-                    continue
-                parent = region.parent_graph
-                if parent is None or region not in parent.nodes():
-                    continue  # stale snapshot: a prior skew removed this node
-                if self.try_skew(region, sd):
-                    skewed += 1
-        return skewed or None
-
-    def try_skew(self, outer: LoopRegion, sdfg: SDFG) -> bool:
-        if not unit_positive_stride(outer):
-            return False
-        ub = loop_bounds(outer)
-        if ub is None:
-            return False
-        # One inner loop is the common shape. A chain of adjacent-range SIBLING loops -- lu's
-        # ``j < i`` column update followed by its ``j >= i`` row update -- is the SAME 2-D space
-        # spelled as two loops, so it is analysed jointly (each sibling's range becomes a guard on
-        # its own reads) and fused into one guarded loop only once a legal skew is confirmed.
-        inner = extract_two_level_nest(outer)
-        fusion = None
-        vb: tuple[sympy.Expr, sympy.Expr]
-        inners: list[tuple[LoopRegion, str, list[sympy.Expr]]]
-        snap_src: dict[str, str] = {}
-        snap_reads: list[SnapRead] = []
-        copy_states: list[SDFGState] = []
-        if inner is None:
-            fusion = plan_guarded_fusion(outer)
-            if fusion is None:
-                return False
-            inners = [
-                (loop, loop_var, [as_expr(g) for g in guard])
-                for loop, loop_var, guard in zip(fusion.loops, fusion.loop_vars, fusion.guards)
-            ]
-            v, vb = fusion.var, (as_expr(fusion.lo), as_expr(fusion.hi))
-        else:
-            if not unit_positive_stride(inner):
-                return False
-            inner_bounds = loop_bounds(inner)
-            if inner_bounds is None:
-                return False
-            vb = inner_bounds
-            inners = [(inner, inner.loop_variable, [])]
-            v = inner.loop_variable
-        u = outer.loop_variable
-        # The inner bound must not leak the inner var (malformed); the outer var
-        # in the inner bound is fine -- that is the triangular case ISL handles.
-        vsym = sym(v)
-        if vsym in free_symbols(simplified(vb[0])) or vsym in free_symbols(simplified(vb[1])):
-            return False
-        # A front is at most as wide as the shorter axis: over a SMALL axis the parallel map would be a SMALL one.
-        if spans_small_axis(outer, ub, vb):
-            return False
-
-        # Plan (do not yet apply) the absorb of any per-iteration anti-dependence
-        # snapshot BreakAntiDependence left in the outer body -- the imperfect-nest
-        # cause. Refuse now if a snapshot is used outside the nest; the reads are
-        # only redirected onto the live array once a legal skew is confirmed, so a
-        # refusal below leaves the snapshot (and the parallelism it enables) intact.
-        if fusion is None:
-            assert inner is not None  # the fusion plan is only made when there is no two-level nest
-            plan = plan_split_snapshots(outer, inner, sdfg)
-            if plan is None:
-                return False
-            snap_src, snap_reads, copy_states = plan
-
-        # Analyse against the live array (snapshot reads attributed virtually), so
-        # the dependence set is complete without mutating.
-        carrier = collect_carrier(inners, sdfg, u, v, snap_src=snap_src)
-        if carrier is None:
-            return False
-        arr, wmap, deps = carrier
-
-        # Redirecting a snapshot read is only value-preserving when it is a FORWARD
-        # (anti) dependence in iteration space -- the writer runs on a strictly
-        # later diagonal, so the diagonal schedule reproduces the snapshot's old
-        # value. A backward read would change value, so refuse (no mutation).
-        if not snapshot_reads_forward(snap_reads, carrier, u, v, sdfg.facts()):
-            return False
-
-        domain = domain_constraints(u, v, ub, vb)
-        dims = [u, v]
-
-        # Needs the domain, so checked here, still before any mutation.
-        if not snapshot_reads_in_window(snap_reads, u, v, domain):
-            return False
-
-        # Genuine-wavefront guard: refuse if an axis is already a parallel map
-        # IN THE CURRENT LOOP ORDER, so a plain LoopToMap already reaches it.
-        # Inner v parallel (map-in-inner / column-independent stencil) <=> every
-        # dependence is carried by u, which is exactly tau=(1,0) legality.
-        if schedule_legal((1, 0), deps, u, v, domain, []):
-            return False
-        # Outer u parallel (map-of-scans / row-independent stencil) <=> nothing
-        # crosses u. NOT tau=(0,1) legality -- see :func:`outer_axis_parallel`.
-        if outer_axis_parallel(deps, u, v, domain):
-            return False
-
-        # Pick a legal diagonal skew, using symbol positivity if declared.
-        off_syms = offset_symbols(deps, dims)
-        facts = sdfg.facts()
-        assume_annotated = [s - 1 for s in off_syms if provably_positive(s, facts)]
-        tau = None
-        guard_syms: list[sympy.Symbol] = []
-        for cand in SKEW_CANDIDATES:
-            if schedule_legal(cand, deps, u, v, domain, assume_annotated):
-                tau = cand
-                break
-        if tau is None:
-            # Optimistic retry: also assume the unannotated offset symbols are
-            # positive, and plant a runtime guard for them.
-            assume_all = [s - 1 for s in off_syms]
-            for cand in SKEW_CANDIDATES:
-                if schedule_legal(cand, deps, u, v, domain, assume_all):
-                    tau = cand
-                    guard_syms = [s for s in off_syms if not provably_positive(s, facts)]
-                    break
-        if tau is None:
-            return False
-
-        probe_t = f"{SKEW_T_PREFIX}probe"
-        probe_p = f"{SKEW_P_PREFIX}probe"
-        bounds = poly.skew_bounds((u, v), params_of(domain, dims), domain, tau, probe_t, probe_p)
-        if bounds is None:
-            return False
-
-        # Prefer the tiled lowering; decided BEFORE any mutation so a refusal here
-        # only picks the untiled path, never leaves the nest half-rewritten.
-        tiles = self.plan_tiles(deps, u, v, domain, dims, tau)
-        preskew = None if tiles is not None else self.plan_preskewed_tiles(deps, u, v, ub, vb, dims)
-
-        # Legal skew confirmed -- now (and only now) commit the snapshot absorb,
-        # so every earlier refusal left the snapshot intact. Reads are redirected
-        # onto the live array before the rewrite skews the inner body over them.
-        commit_split_snapshots(snap_reads, copy_states)
-
-        if fusion is not None:
-            inner = commit_guarded_fusion(fusion, outer)
-
-        if guard_syms:
-            self.emit_positive_guard(outer, deps, guard_syms)
-
-        assert inner is not None  # a fused nest was committed to ``inner`` above
-        if tiles is not None:
-            self.rewrite_tiled(outer, inner, sdfg, u, ub, vb, tau, tiles)
-        elif preskew is not None:
-            k, skewed_tau, skewed_tiles = preskew
-            skewed_vb = self.preskew_inner(inner, sdfg, u, vb, k)
-            self.rewrite_tiled(outer, inner, sdfg, u, ub, skewed_vb, skewed_tau, skewed_tiles)
-        else:
-            self.rewrite(outer, inner, sdfg, u, v, tau, bounds)
-        return True
-
-    def plan_tiles(
-        self, deps: list[Dependence], u: str, v: str, domain: list[sympy.Expr], dims: list[str], tau: tuple[int, int]
-    ) -> TilePlan | None:
-        """The tile-index skew for a ``tile_i x tile_j`` blocking of this nest, or
-        ``None`` to keep the element-granularity lowering.
-
-        The tile-index domain is the SAME polyhedron under ``u -> bi*I``,
-        ``v -> bj*J``, so ``poly.skew_bounds`` projects it with no changes: it is
-        handed a rectangle over ``(I, J)`` and returns the diagonal ``T`` range plus
-        the parametric tile-column ``P`` range at fixed ``T``."""
-        # Both targets block, for different reasons and at different sizes (see the class
-        # docstring): a CPU tile is cache blocking, a GPU tile is what turns one kernel launch per
-        # element anti-diagonal into one per tile anti-diagonal.
-        if self.target == "cpu":
-            bi, bj = int(self.tile_i), int(self.tile_j)
-        elif self.target == "gpu":
-            bi, bj = int(self.gpu_tile_i), int(self.gpu_tile_j)
-        else:
-            return None
-        if bi < 1 or bj < 1 or not tiling_legal(deps, tau, bi, bj):
-            return None
-        ti, tj = sym(TILE_I_PROBE), sym(TILE_J_PROBE)
-        tdims = [TILE_I_PROBE, TILE_J_PROBE]
-        tile_dims = (TILE_I_PROBE, TILE_J_PROBE)
-        # I in [0, NI - 1], J in [0, NJ - 1] over the OPAQUE counts (see the probe names).
-        tile_domain = [ti, sym(TILE_NI_PROBE) - 1 - ti, tj, sym(TILE_NJ_PROBE) - 1 - tj]
-        try:
-            box = domain_bbox(u, v, params_of(domain, dims), domain)
-            if box is None:
-                return None
-            bounds = poly.skew_bounds(
-                tile_dims,
-                params_of(tile_domain, tdims),
-                tile_domain,
-                tau,
-                f"{SKEW_T_PREFIX}probe",
-                f"{SKEW_P_PREFIX}probe",
-            )
-        except ValueError:
-            return None  # not renderable for ISL -> keep the untiled lowering
-        if bounds is None:
-            return None
-        u_lo, u_hi, v_lo, v_hi = box
-        n_i = symbolic.int_ceil(simplified(u_hi - u_lo + 1), bi)
-        n_j = symbolic.int_ceil(simplified(v_hi - v_lo + 1), bj)
-        return TilePlan(bounds, u_lo, v_lo, n_i, n_j, bi, bj)
-
-    def plan_preskewed_tiles(
-        self,
-        deps: list[Dependence],
-        u: str,
-        v: str,
-        ub: tuple[sympy.Expr, sympy.Expr],
-        vb: tuple[sympy.Expr, sympy.Expr],
-        dims: list[str],
-    ) -> tuple[int, tuple[int, int], TilePlan] | None:
-        """``(k, tau, plan)`` for tiling the nest after the inner-axis pre-skew ``w = v + k*u``, or ``None``.
-
-        Rectangular tiles of the original axes can reverse a dependence that straddles one tile boundary (see
-        :func:`tiling_legal`): Gauss-Seidel's flow distance ``(-1, +1)`` does. Skewing the inner axis first maps a
-        distance ``(du, dv)`` to ``(du, dv + k*du)``; for the smallest ``k`` that gives every distance one sign per
-        component the nest is fully permutable, rectangular tiles of ``(u, w)`` are legal, and each tile still runs its
-        points in the original lexicographic order (a skew by the outer axis preserves it)."""
-        for k in range(1, MAX_PRESKEW + 1):
-            shift = {sym(v): sym(v) - k * sym(u)}
-            skewed = [
-                Dependence(
-                    dep.du,
-                    dep.dv + k * dep.du,
-                    dep.nested,
-                    dep.kind,
-                    [simplified(g.subs(shift)) for g in dep.guard],
-                )
-                for dep in deps
-            ]
-            domain = domain_constraints(u, v, ub, (vb[0] + k * sym(u), vb[1] + k * sym(u)))
-            for tau in SKEW_CANDIDATES:
-                if not schedule_legal(tau, skewed, u, v, domain, []):
-                    continue
-                plan = self.plan_tiles(skewed, u, v, domain, dims, tau)
-                if plan is not None:
-                    return k, tau, plan
-        return None
-
-    def preskew_inner(
-        self, inner: LoopRegion, sdfg: SDFG, u: str, vb: tuple[sympy.Expr, sympy.Expr], k: int
-    ) -> tuple[sympy.Expr, sympy.Expr]:
-        """Rewrite ``inner`` over ``w = v + k*u``: the body reads ``v`` as ``w - k*u`` and the bounds shift by
-        ``k*u``. Returns the new inner bounds."""
-        v = inner.loop_variable
-        w = f"{v}_skew"
-        declare_iterators(sdfg, w)
-        inner.replace_dict({v: symbolic.symstr(sym(w) - k * sym(u))})
-        low, high = simplified(vb[0] + k * sym(u)), simplified(vb[1] + k * sym(u))
-        inner.loop_variable = w
-        inner.init_statement = properties.CodeBlock(f"{w} = ({symbolic.symstr(low)})")
-        inner.loop_condition = properties.CodeBlock(f"{w} <= ({symbolic.symstr(high)})")
-        inner.update_statement = properties.CodeBlock(f"{w} = {w} + 1")
-        return low, high
-
-    def rewrite(
-        self,
-        outer: LoopRegion,
-        inner: LoopRegion,
-        sdfg: SDFG,
-        u: str,
-        v: str,
-        tau: tuple[int, int],
-        bounds: poly.SkewBounds,
-    ) -> None:
-        """Relabel ``outer -> t`` and ``inner -> p`` with the projected bounds, then
-        substitute the original iterators in terms of ``(t, p)`` in the inner body
-        and lift it to a parallel Map. The substitution matches the unimodular
-        family ``skew_bounds`` used: ``p = v`` when ``|a| == 1``, else ``p = u``."""
-        a, b = tau
-        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
-        t_var = f"{SKEW_T_PREFIX}{nid}"
-        p_var = f"{SKEW_P_PREFIX}{nid}"
-        declare_iterators(sdfg, t_var, p_var)
-        subs = {f"{SKEW_T_PREFIX}probe": sym(t_var), f"{SKEW_P_PREFIX}probe": sym(p_var)}
-
-        t_lo = bound_expr(bounds.t_lo_terms, subs, "max")
-        t_hi = bound_expr(bounds.t_hi_terms, subs, "min")
-        p_lo = bound_expr(bounds.p_lo_terms, subs, "max")
-        p_hi = bound_expr(bounds.p_hi_terms, subs, "min")
-
-        outer.loop_variable = t_var
-        outer.init_statement = properties.CodeBlock(f"{t_var} = ({t_lo})")
-        outer.loop_condition = properties.CodeBlock(f"{t_var} <= ({t_hi})")
-        outer.update_statement = properties.CodeBlock(f"{t_var} = {t_var} + 1")
-        # The diagonal ``t`` axis carries every wavefront dependence by
-        # construction (that is why ``p`` is free); pin it so a downstream
-        # LoopToMap / LoopToReduce never races it into a parallel map.
-        outer.pinned_sequential = True
-        # Labelled here because this pass is the only thing that knows the axis is a wavefront
-        # diagonal: after the rewrite it is an ordinary sequential loop over an ordinary map, and
-        # the terminal ``AnnotateLoopKinds`` would say only that LoopToMap refused it.
-        skew = skew_label(a, b, u, v)
-        outer.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew)
-
-        inner.loop_variable = p_var
-        inner.init_statement = properties.CodeBlock(f"{p_var} = ({p_lo})")
-        inner.loop_condition = properties.CodeBlock(f"{p_var} <= ({p_hi})")
-        inner.update_statement = properties.CodeBlock(f"{p_var} = {p_var} + 1")
-
-        # Express the original iterators in (t, p). The parallel axis p is v when
-        # |a| == 1 (u = a*(t - b*p)); it is u when the steep skew forces |b| == 1
-        # (v = b*(t - a*p)). Both keep the (u, v) -> (t, p) map unimodular.
-        if abs(a) == 1:
-            u_expr = symbolic.symstr(a * (sym(t_var) - b * sym(p_var)))
-            inner.replace_dict({u: u_expr, v: p_var})
-        else:
-            v_expr = symbolic.symstr(b * (sym(t_var) - a * sym(p_var)))
-            inner.replace_dict({u: p_var, v: v_expr})
-
-        self._convert_inner_to_map(outer, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew))
-
-    def rewrite_tiled(
-        self,
-        outer: LoopRegion,
-        inner: LoopRegion,
-        sdfg: SDFG,
-        u: str,
-        ub: tuple[sympy.Expr, sympy.Expr],
-        vb: tuple[sympy.Expr, sympy.Expr],
-        tau: tuple[int, int],
-        plan: TilePlan,
-    ) -> None:
-        """Lower the wavefront as a skewed tiling::
-
-            for T in [t_lo .. t_hi]:              # tile diagonal, sequential
-              parallel for P in [p_lo .. p_hi]:   # tile column, a Map
-                for u in [u0 + I*Bi .. min(u_hi, u0 + I*Bi + Bi - 1)]:
-                  for v in [max(v_lo, v0 + J*Bj) .. min(v_hi, v0 + J*Bj + Bj - 1)]:
-                      <original body>
-
-        ``(I, J)`` come back from ``(T, P)`` through the unimodular complement ``skew_bounds`` used;
-        ``u`` / ``v`` keep their names so the body is reused verbatim. The element diagonal measured
-        0.17-0.18x of sequential (N=768, 4 threads), the tiled form 2.04-2.16x. Bit-exact:
-        :func:`tiling_legal` proves every read sees its sequential value.
-        """
-        a, b = tau
-        v = inner.loop_variable
-        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
-        t_var = f"{SKEW_T_PREFIX}{nid}"
-        p_var = f"{SKEW_P_PREFIX}{nid}"
-        declare_iterators(sdfg, t_var, p_var)
-        subs = {
-            f"{SKEW_T_PREFIX}probe": sym(t_var),
-            f"{SKEW_P_PREFIX}probe": sym(p_var),
-            TILE_NI_PROBE: plan.n_i,
-            TILE_NJ_PROBE: plan.n_j,
-        }
-        bounds = plan.bounds
-
-        outer.loop_variable = t_var
-        outer.init_statement = properties.CodeBlock(f"{t_var} = ({bound_expr(bounds.t_lo_terms, subs, 'max')})")
-        outer.loop_condition = properties.CodeBlock(f"{t_var} <= ({bound_expr(bounds.t_hi_terms, subs, 'min')})")
-        outer.update_statement = properties.CodeBlock(f"{t_var} = {t_var} + 1")
-        # The tile diagonal carries every wavefront dependence by construction; pin it
-        # so a downstream LoopToMap / LoopToReduce never races it into a parallel map.
-        outer.pinned_sequential = True
-        skew, tile = skew_label(a, b, u, "j"), tile_label(plan.bi, plan.bj)
-        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew, tile=tile)
-
-        t_sym, p_sym = sym(t_var), sym(p_var)
-        if abs(a) == 1:
-            i_tile, j_tile = a * (t_sym - b * p_sym), p_sym
-        else:
-            i_tile, j_tile = p_sym, b * (t_sym - a * p_sym)
-        i_lo = simplified(plan.u_lo + plan.bi * i_tile)
-        j_lo = simplified(plan.v_lo + plan.bj * j_tile)
-
-        p_loop = LoopRegion(
-            f"{outer.label}_tile_diag",
-            f"{p_var} <= ({bound_expr(bounds.p_hi_terms, subs, 'min')})",
-            p_var,
-            f"{p_var} = ({bound_expr(bounds.p_lo_terms, subs, 'max')})",
-            f"{p_var} = {p_var} + 1",
-        )
-        i_loop = LoopRegion(
-            f"{outer.label}_tile_row",
-            f"{u} <= (min({symbolic.symstr(ub[1])}, {symbolic.symstr(i_lo + plan.bi - 1)}))",
-            u,
-            f"{u} = ({symbolic.symstr(i_lo)})",
-            f"{u} = {u} + 1",
-        )
-        # The intra-tile loops carry the dependences the diagonal spreads apart, so
-        # they stay sequential for the same reason the diagonal does.
-        i_loop.pinned_sequential = True
-        i_loop.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
-
-        # Re-parent: ``inner`` becomes the innermost unit-stride ``v`` loop, wrapped by
-        # the new row loop, wrapped by the tile-column loop that replaces it in ``outer``.
-        in_edges = list(outer.in_edges(inner))
-        out_edges = list(outer.out_edges(inner))
-        was_start = outer.start_block is inner
-        outer.remove_node(inner)
-        i_loop.add_node(inner, is_start_block=True)
-        p_loop.add_node(i_loop, is_start_block=True)
-        outer.add_node(p_loop, is_start_block=was_start, ensure_unique_name=True)
-        for e in in_edges:
-            outer.add_edge(e.src, p_loop, e.data)
-        for e in out_edges:
-            outer.add_edge(p_loop, e.dst, e.data)
-
-        inner.init_statement = properties.CodeBlock(f"{v} = (max({symbolic.symstr(vb[0])}, {symbolic.symstr(j_lo)}))")
-        inner.loop_condition = properties.CodeBlock(
-            f"{v} <= (min({symbolic.symstr(vb[1])}, {symbolic.symstr(j_lo + plan.bj - 1)}))"
-        )
-        inner.update_statement = properties.CodeBlock(f"{v} = {v} + 1")
-        inner.pinned_sequential = True
-        inner.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
-
-        # On a GPU the tile INTERIOR is the thread block, so it is skewed too (see
-        # :meth:`skew_within_tile`). Done before the tile-column lift because both steps run
-        # LoopToMap, and it is far simpler to rewrite loops while they are still loops.
-        if self.target == "gpu":
-            self.skew_within_tile(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, ub, vb)
-
-        self._convert_inner_to_map(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
-
-    def skew_within_tile(
-        self,
-        i_loop: LoopRegion,
-        inner: LoopRegion,
-        sdfg: SDFG,
-        u: str,
-        v: str,
-        tau: tuple[int, int],
-        plan: TilePlan,
-        i_lo: sympy.Expr,
-        j_lo: sympy.Expr,
-        ub: tuple[sympy.Expr, sympy.Expr],
-        vb: tuple[sympy.Expr, sympy.Expr],
-    ) -> None:
-        """Turn a tile's two sequential interior loops into a diagonal over a parallel Map.
-
-        :meth:`rewrite` applied one level down; legality carries over since the tile interior is a
-        subset of the domain ISL checked ``tau`` on. On GPU the tile-column Map is the grid and this
-        Map (tagged ``is_warp_tile``, promoted to ``GPU_ThreadBlock`` by ``PromoteWarpTiles``) lets the
-        block's threads walk the intra-tile anti-diagonal. Partial and triangular clips go to ISL as
-        affine constraints, so no in-body guard is needed. Leaves the interior sequential when the
-        projection is not renderable.
-        """
-        u_sym, v_sym = sym(u), sym(v)
-        # Every ``min``/``max`` in the interior bounds is a CONJUNCTION of affine constraints, which
-        # is the form ISL wants. Each entry is constrained non-negative.
-        interior = [
-            u_sym - i_lo,
-            simplified(ub[1] - u_sym),
-            simplified(i_lo + plan.bi - 1 - u_sym),
-            simplified(v_sym - vb[0]),
-            v_sym - j_lo,
-            simplified(vb[1] - v_sym),
-            simplified(j_lo + plan.bj - 1 - v_sym),
-        ]
-        dims = (u, v)
-        # The diagonal runs over the enclosing RECTANGLE, not the clipped region: its exact extent
-        # is piecewise (interior tile / last row / last column / corner) and renders as no single
-        # loop bound. A superset is free here because the parallel range at each diagonal is read
-        # exactly, so a diagonal past the real edge runs an empty Map. It also makes the count a
-        # compile-time constant, ``bi + bj - 1``.
-        a, b = tau
-        corner = a * i_lo + b * j_lo
-        d_lo = corner + min(a * (plan.bi - 1), 0) + min(b * (plan.bj - 1), 0)
-        d_hi = corner + max(a * (plan.bi - 1), 0) + max(b * (plan.bj - 1), 0)
-        try:
-            bounds = poly.skew_bounds(
-                dims,
-                params_of(interior, list(dims)),
-                interior,
-                tau,
-                f"{SKEW_T_PREFIX}probe",
-                f"{SKEW_P_PREFIX}probe",
-                t_range=(simplified(d_lo), simplified(d_hi)),
-            )
-        except ValueError:
-            return  # not renderable for ISL -> the interior stays sequential
-        if bounds is None:
-            return
-        self.emit_tile_interior(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, bounds, (d_lo, d_hi))
-
-    def emit_tile_interior(
-        self,
-        i_loop: LoopRegion,
-        inner: LoopRegion,
-        sdfg: SDFG,
-        u: str,
-        v: str,
-        tau: tuple[int, int],
-        plan: TilePlan,
-        i_lo: sympy.Expr,
-        j_lo: sympy.Expr,
-        bounds: poly.SkewBounds,
-        d_range: tuple[sympy.Expr, sympy.Expr],
-    ) -> None:
-        """Diagonal over a CONSTANT-width parallel Map, with the real extent as a guard.
-
-        This is :meth:`rewrite` with one difference, and the difference is forced by the hardware.
-        A thread block's width is fixed for the whole launch, but the intra-tile anti-diagonal
-        RAMPS -- one point at the tile's corner, ``min(Bi, Bj)`` across its middle, back to one.
-        Giving the Map the exact projected extent therefore emits a block dimension built from
-        ``_skew_p_0`` and the intra-tile diagonal, both of which exist only INSIDE the kernel:
-
-            dim3(-Max(64*_skew_p_0 + 1, ...) + Min(N - 1, ...) + 1, 1, 1)   // will not compile
-
-        So the Map runs the full tile width, a compile-time constant, and the projected bounds
-        become a predicate on the body. Lanes outside the current anti-diagonal are masked off,
-        which is what a fixed block over a ramping wavefront costs and the only way to pay it.
-        """
-        a, b = tau
-        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
-        d_var = f"{SKEW_T_PREFIX}{nid}"
-        k_var = f"{SKEW_P_PREFIX}{nid}"
-        declare_iterators(sdfg, d_var, k_var)
-        subs = {f"{SKEW_T_PREFIX}probe": sym(d_var), f"{SKEW_P_PREFIX}probe": sym(k_var)}
-        p_lo = bound_expr(bounds.p_lo_terms, subs, "max")
-        p_hi = bound_expr(bounds.p_hi_terms, subs, "min")
-
-        i_loop.loop_variable = d_var
-        i_loop.init_statement = properties.CodeBlock(f"{d_var} = ({symbolic.symstr(d_range[0])})")
-        i_loop.loop_condition = properties.CodeBlock(f"{d_var} <= ({symbolic.symstr(d_range[1])})")
-        i_loop.update_statement = properties.CodeBlock(f"{d_var} = {d_var} + 1")
-        i_loop.pinned_sequential = True
-        # No longer the verbatim interior order: the tile's own anti-diagonal.
-        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(a, b, u, "j"))
-
-        # ``k`` indexes the block's threads: 0 .. width-1, the tile extent on the parallel axis.
-        width = plan.bj if abs(a) == 1 else plan.bi
-        inner.loop_variable = k_var
-        inner.init_statement = properties.CodeBlock(f"{k_var} = 0")
-        inner.loop_condition = properties.CodeBlock(f"{k_var} <= {width - 1}")
-        inner.update_statement = properties.CodeBlock(f"{k_var} = {k_var} + 1")
-
-        # The projected axis is an absolute coordinate; a thread holds it at ``origin + k``.
-        origin = j_lo if abs(a) == 1 else i_lo
-        coord = simplified(origin + sym(k_var))
-        if abs(a) == 1:
-            inner.replace_dict({u: symbolic.symstr(a * (sym(d_var) - b * coord)), v: symbolic.symstr(coord)})
-        else:
-            inner.replace_dict({u: symbolic.symstr(coord), v: symbolic.symstr(b * (sym(d_var) - a * coord))})
-
-        here = symbolic.symstr(coord)
-        self._guard_body(inner, sdfg, f"({here}) >= ({p_lo}) and ({here}) <= ({p_hi})")
-        self._convert_inner_to_map(i_loop, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew_label(a, b, u, "j")))
-        for node, _ in i_loop.all_nodes_recursive():
-            if isinstance(node, nodes.MapEntry):
-                node.map.is_warp_tile = True
-
-    def _guard_body(self, loop: LoopRegion, sdfg: SDFG, condition: str) -> None:
-        """Move ``loop``'s body under a single-branch ConditionalBlock testing ``condition``."""
-        branch = ControlFlowRegion(f"{loop.label}_active", sdfg=sdfg)
-        # Snapshot before moving: ``add_node`` re-homes each block's ``parent_graph``, so the edge
-        # list has to be read off the loop while it still owns them.
-        start, blocks, edges = loop.start_block, list(loop.nodes()), list(loop.edges())
-        for blk in blocks:
-            branch.add_node(blk, is_start_block=blk is start)
-        for e in edges:
-            branch.add_edge(e.src, e.dst, e.data)
-        for blk in blocks:
-            loop.remove_node(blk)
-        guard = ConditionalBlock(f"{loop.label}_lane", sdfg=sdfg)
-        guard.add_branch(condition, branch)
-        loop.add_node(guard, is_start_block=True)
-
-    def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, hint: str) -> None:
-        """Lift the skewed inner ``p``-loop to a Map via ``ParallelizeLoops.parallelize_loop``,
-        bypassing the ``LoopToMap`` probe: independence of the ``p``-iterations at
-        fixed ``t`` is guaranteed by the legality proof (``tau.delta < 0`` for
-        every dependence => no intra-``t`` dependence). An exception here signals
-        a real upstream bug and is intentionally not swallowed.
-
-        ``hint`` names what the fresh Map is -- a wavefront front, a tile column -- on the Map
-        itself, since the lift keeps no record of the loop it consumed. Matched by iteration
-        variable: ``LoopToMap`` names the map after the body, not after the axis."""
-        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
-
-        itervar = inner.loop_variable
-        privatize_body_reductions(inner)
-        ParallelizeLoops().parallelize_loop(sdfg, inner, proven=True)
-        for node, _ in outer.all_nodes_recursive():
-            if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
-                node.specialization_hint = hint
-
-    def emit_positive_guard(self, outer: LoopRegion, deps: list[Dependence], guard_syms: list[sympy.Symbol]) -> None:
-        """Plant an ``abort()`` guard before ``outer`` that fires if any distance
-        component carrying an unannotated symbol is positive at runtime (soundness
-        needs it ``<= 0``). Mirrors ``BreakAntiDependence``'s positive guard."""
-        gset = dict.fromkeys(s.name for s in guard_syms)
-        exprs = []
-        seen: dict = {}
-        for dep in deps:
-            for comp in (dep.du, dep.dv):
-                cs = simplified(comp)
-                names = dict.fromkeys(s.name for s in free_symbols(cs))
-                if any(n in gset for n in names) and not cs.is_number:
-                    key = str(cs)
-                    if key not in seen:
-                        seen[key] = None
-                        exprs.append(cs)
-        if not exprs:
-            return
-        parts = " or ".join(f"(({symbolic.symstr(e)}) > 0)" for e in exprs)
-        # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the guard
-        # state and tasklet got a different label on every run of the SAME input -- different emitted C
-        # symbols and a different build hash. crc32 is a stable digest of the same text.
-        tag = zlib.crc32(parts.encode()) & 0xFFFFFFF
-        pre = outer.parent_graph.add_state_before(outer, label=f"_skew_guard_{tag:x}")
-        tutil.add_abort_guard(pre, f"_skew_guard_{tag:x}", parts)
+    """The tile-index bounds and grid of a ``bi x bj`` tiling of ``(u, w = v + shift + k*u)``."""
+
+    bounds: poly.SkewBounds
+    u_lo: sympy.Expr
+    u_hi: sympy.Expr
+    w_lo: sympy.Expr
+    n_i: sympy.Expr
+    n_j: sympy.Expr
+    bi: int
+    bj: int
+    k: int
+
+
+@dataclass
+class Plan:
+    body: Body
+    tau: tuple[int, int]
+    shifts: dict[int, int]
+    guard_params: list[str]
+    tiles: TilePlan | None
+    #: Per-statement ``p`` bounds of the element diagonal, when untiled.
+    fronts: dict[int, poly.SkewBounds]
 
 
 def privatize_body_reductions(loop: LoopRegion) -> int:
-    """Fold every top-level WCR map of a multi-block ``loop`` body into a transient scalar.
-
-    Such a body is lifted into a NestedSDFG that stays nested, and propagation copies an inner
-    ``MapExit -wcr-> A`` onto the NestedSDFG boundary. Seeding the scalar from ``A`` and writing it
-    back plain (``privatize_reduction_accumulator``) keeps the reduction inside the body.
-    """
+    """Fold every top-level WCR map of a multi-block ``loop`` body into a transient scalar, so the reduction
+    stays inside the NestedSDFG the lift nests the body into."""
     if len(loop.nodes()) == 1 and isinstance(loop.start_block, SDFGState):
         return 0
     count = 0
@@ -2009,26 +185,518 @@ def privatize_body_reductions(loop: LoopRegion) -> int:
     return count
 
 
-def bound_expr(terms: list[sympy.Expr], subs: dict[str, sympy.Expr], fn: str) -> str:
-    """Render bound terms into a loop-bound string: a single term verbatim, or
-    ``max(...)`` / ``min(...)`` (``fn``) of several. ``subs`` resolves the probe
-    names -- the real ``t`` / ``p`` symbols, and for the tiled lowering the two tile
-    counts the tile-index polyhedron carried as opaque parameters."""
-    rendered = [symbolic.symstr(substitute_by_name(t, subs)) for t in terms]
-    if len(rendered) == 1:
-        return rendered[0]
-    return f"{fn}(" + ", ".join(rendered) + ")"
+def names_read_outside(outer: LoopRegion, sdfg: SDFG) -> set[str]:
+    """The symbol names anything of ``sdfg`` outside ``outer`` reads."""
+    inside_blocks = set(outer.all_control_flow_blocks(recursive=True))
+    inside_edges = {id(e) for e in outer.all_interstate_edges(recursive=True)}
+    names: set[str] = set()
+    for state in sdfg.states():
+        if state not in inside_blocks:
+            names |= {str(s) for s in state.free_symbols}
+    for edge in sdfg.all_interstate_edges(recursive=True):
+        if id(edge) not in inside_edges:
+            names |= {str(s) for s in edge.data.free_symbols}
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        if region not in inside_blocks and region is not outer:
+            names |= {str(s) for code in region.get_meta_codeblocks() for s in code.get_free_symbols()}
+    return names
 
 
-def substitute_by_name(expr: sympy.Expr, subs: dict[str, sympy.Expr]) -> sympy.Expr:
-    """Substitute symbols in ``expr`` by NAME, so a probe symbol is matched whatever
-    assumptions its sympy.Expr carries."""
-    e = simplified(expr)
-    mp = {}
-    for s in free_symbols(e):
-        if s.name in subs:
-            mp[s] = subs[s.name]
-    return e.subs(mp)
+def copy_to_map(state: SDFGState, st: Statement) -> nodes.MapEntry:
+    """Rewrite a copy statement as the one-parameter map its model describes."""
+    e = st.edge
+    assert e is not None
+    src_ax, dst_ax, width = copy_axis(state, e)
+    src_sub, dst_sub = e.data.get_src_subset(e, state), e.data.get_dst_subset(e, state)
+
+    def indexed(sub, ax) -> str:
+        parts = []
+        for a, (lo, hi, _) in enumerate(ndrange_exprs(sub)):
+            parts.append(symbolic.symstr(lo + sym(st.var)) if a == ax else symbolic.symstr(lo))
+        return ", ".join(parts)
+
+    me, mx = state.add_map(f"{e.dst.data}_copy", {st.var: f"0:{symbolic.symstr(width)}"})
+    t = state.add_tasklet(f"{e.dst.data}_copy", {"__inp"}, {"__out"}, "__out = __inp")
+    state.add_memlet_path(e.src, me, t, dst_conn="__inp", memlet=Memlet(f"{e.src.data}[{indexed(src_sub, src_ax)}]"))
+    out = Memlet(f"{e.dst.data}[{indexed(dst_sub, dst_ax)}]", wcr=e.data.wcr)
+    state.add_memlet_path(t, mx, e.dst, src_conn="__out", memlet=out)
+    state.remove_edge(e)
+    st.kind, st.node, st.edge = "map", me, None
+    return me
+
+
+@properties.make_properties
+@xf.explicit_cf_compatible
+class WavefrontSkew(ppl.Pass):
+    """Skew genuine wavefront nests so every statement of the outer body runs as a parallel map per diagonal."""
+
+    CATEGORY: str = "Canonicalization"
+
+    target = properties.Property(
+        dtype=str, default="cpu", choices=["cpu", "gpu"], desc="Target the tiling and tile interior are lowered for."
+    )
+    tile_i = properties.Property(dtype=int, default=DEFAULT_TILE_SIZE, desc="CPU tile extent along u.")
+    tile_j = properties.Property(dtype=int, default=DEFAULT_TILE_SIZE, desc="CPU tile extent along w.")
+    gpu_tile_i = properties.Property(dtype=int, default=DEFAULT_GPU_TILE_SIZE, desc="GPU tile extent along u.")
+    gpu_tile_j = properties.Property(dtype=int, default=DEFAULT_GPU_TILE_SIZE, desc="GPU tile extent along w.")
+
+    def __init__(self, target: str = "cpu") -> None:
+        super().__init__()
+        self.target = target
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG | ppl.Modifies.Symbols | ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """Skew every eligible nest; the count, or ``None``."""
+        with symbolic.serialization_symbol_dtypes({}, inherit=True):
+            return self.skew_all(sdfg)
+
+    def skew_all(self, sdfg: SDFG) -> int | None:
+        skewed = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            occurrences = None
+            # Innermost first: an inner front is the wider one, and an outer nest holding a skewed diagonal stays.
+            for region in reversed(list(sd.all_control_flow_regions())):
+                if not (isinstance(region, LoopRegion) and region.loop_variable) or emitted_here(region):
+                    continue
+                parent = region.parent_graph
+                if parent is None or region not in parent.nodes():
+                    continue
+                if occurrences is None:
+                    occurrences = occurrence_index(sd)
+                if self.try_skew(region, sd, occurrences):
+                    skewed += 1
+                    occurrences = None
+        return skewed or None
+
+    def try_skew(self, outer: LoopRegion, sdfg: SDFG, occurrences: dict | None = None) -> bool:
+        """Skew ``outer`` if it is a genuine wavefront; ``True`` iff rewritten."""
+        if emitted_here(outer):
+            return False
+        plan = self.plan(outer, sdfg, occurrence_index(sdfg) if occurrences is None else occurrences)
+        if plan is None:
+            return False
+        self.commit(plan, sdfg)
+        return True
+
+    # ------------------------------------------------------------------------------------------------
+    # Analysis
+
+    def plan(self, outer: LoopRegion, sdfg: SDFG, occurrences: dict) -> Plan | None:
+        body = extract_body(outer, sdfg, occurrences)
+        if body is None:
+            return None
+        if is_time_step_loop(body):
+            return None  # a loop over kernel invocations stays sequential
+        for st in body.statements:
+            if isinstance(st.block, LoopRegion) and any(
+                isinstance(r, LoopRegion) and r.loop_variable and emitted_here(r)
+                for r in [st.block, *st.block.all_control_flow_regions(recursive=True)]
+            ):
+                return None
+        unsafe = body.assigned
+        if (free_names(body.u_lo) | free_names(body.u_hi)) & (unsafe | {body.u}):
+            return None
+        if any((free_names(st.lo) | free_names(st.hi)) & (unsafe | {st.var}) for st in body.statements):
+            return None
+        facts = SymbolResolver().facts_at(outer)
+        extents = [(body.u_lo, body.u_hi)] + [(st.lo, st.hi) for st in body.statements if st.kind == "loop"]
+        if any(symbolic.is_small(hi - lo, facts) for lo, hi in extents):
+            return None  # a front is at most as wide as the shorter axis
+        written = {acc.data for st in body.statements for acc in st.accesses if acc.write}
+        if written & control_flow_reads(outer):
+            return None
+
+        sdfg_facts = sdfg.facts()
+        deps = Dependences(body, sdfg_facts)
+        if not deps.complete or not all(deps.snapshot_safe(snap) for snap in body.snapshots):
+            return None
+        if deps.schedule_legal((1, 0), {}) or deps.outer_parallel():
+            return None  # an axis is already parallel: LoopToMap reaches it
+
+        found = self.pick_schedule(deps)
+        guard_params: list[str] = []
+        if found is None:
+            eligible = [
+                p for p in subset_params(body) if not provably(symbolic.Predicate.NONNEGATIVE, sym(p), sdfg_facts)
+            ]
+            if eligible:
+                deps = Dependences(body, sdfg_facts, [sym(p) for p in eligible])
+                found = self.pick_schedule(deps)
+                if found is not None:
+                    guard_params = list(eligible)
+                    for p in eligible:
+                        trial = [q for q in guard_params if q != p]
+                        trial_deps = Dependences(body, sdfg_facts, [sym(q) for q in trial])
+                        if self.pick_schedule(trial_deps) is not None:
+                            guard_params, deps = trial, trial_deps
+                    found = self.pick_schedule(deps)
+        if found is None:
+            return None
+        tau, shifts = found
+
+        tiles = self.plan_tiles(body, deps, shifts)
+        fronts: dict[int, poly.SkewBounds] = {}
+        if tiles is None:
+            for st in body.statements:
+                cons = statement_domain(body, st, shifts.get(st.order, 0), 0)
+                bounds = None if cons is None else skew_bounds(cons, tau)
+                if bounds is None:
+                    return None
+                fronts[st.order] = bounds
+        read_after = names_read_outside(outer, sdfg)
+        if ({body.u} | {st.var for st in body.statements} | body.assigned) & read_after:
+            return None
+        return Plan(body, tau, shifts, guard_params, tiles, fronts)
+
+    def pick_schedule(self, deps: Dependences) -> tuple[tuple[int, int], dict[int, int]] | None:
+        """The first legal ``tau``, under the alignment shifts and then without them."""
+        aligned = deps.alignment()
+        tried = [aligned] if not any(aligned.values()) else [aligned, {}]
+        for shifts in tried:
+            for tau in SKEW_CANDIDATES:
+                if deps.schedule_legal(tau, shifts):
+                    return tau, shifts
+        return None
+
+    def tile_extents(self) -> tuple[int, int]:
+        if self.target == "gpu":
+            return int(self.gpu_tile_i), int(self.gpu_tile_j)
+        return int(self.tile_i), int(self.tile_j)
+
+    def plan_tiles(self, body: Body, deps: Dependences, shifts: dict[int, int]) -> TilePlan | None:
+        """A rectangular tiling of ``(u, v + shift + k*u)`` for the smallest pre-skew ``k`` that makes every
+        dependence non-negative, or ``None``."""
+        bi, bj = self.tile_extents()
+        if bi < 1 or bj < 1:
+            return None
+        for k in range(MAX_PRESKEW + 1):
+            if not deps.permutable(shifts, k):
+                continue
+            boxes = []
+            for st in body.statements:
+                cons = statement_domain(body, st, shifts.get(st.order, 0), k)
+                box = None if cons is None else domain_bbox(cons)
+                if box is None:
+                    return None
+                boxes.append(box)
+            u_lo, u_hi = combine_bounds([b[0] for b in boxes], "min"), combine_bounds([b[1] for b in boxes], "max")
+            w_lo, w_hi = combine_bounds([b[2] for b in boxes], "min"), combine_bounds([b[3] for b in boxes], "max")
+            ti, tj = sym(TILE_I), sym(TILE_J)
+            tile_domain = [ti, sym(TILE_NI) - 1 - ti, tj, sym(TILE_NJ) - 1 - tj]
+            try:
+                bounds = poly.skew_bounds((TILE_I, TILE_J), [TILE_NI, TILE_NJ], tile_domain, (1, 1), PROBE_T, PROBE_P)
+            except ValueError:
+                return None
+            if bounds is None:
+                return None
+            n_i = symbolic.int_ceil(simplified(u_hi - u_lo + 1), bi)
+            n_j = symbolic.int_ceil(simplified(w_hi - w_lo + 1), bj)
+            return TilePlan(bounds, u_lo, u_hi, w_lo, n_i, n_j, bi, bj, k)
+        return None
+
+    # ------------------------------------------------------------------------------------------------
+    # Rewrite
+
+    def commit(self, plan: Plan, sdfg: SDFG) -> None:
+        body = plan.body
+        outer = body.outer
+        commit_snapshots(body)
+        for st in body.statements:
+            if st.kind == "copy":
+                assert isinstance(st.block, SDFGState)
+                copy_to_map(st.block, st)
+        if plan.guard_params:
+            self.emit_positive_guard(outer, plan.guard_params)
+        if plan.tiles is not None:
+            self.rewrite_tiled(plan, sdfg)
+        else:
+            self.rewrite_diagonal(plan, sdfg)
+
+    def fresh_names(self, sdfg: SDFG, count: int) -> tuple[str, list[str]]:
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
+        t_var = f"{SKEW_T_PREFIX}{nid}"
+        p_vars = [f"{SKEW_P_PREFIX}{nid}" if i == 0 else f"{SKEW_P_PREFIX}{nid}_{i}" for i in range(count)]
+        declare_iterators(t_var, *p_vars)
+        return t_var, p_vars
+
+    def rewrite_diagonal(self, plan: Plan, sdfg: SDFG) -> None:
+        """``outer`` becomes the diagonal ``t``; each statement becomes a parallel map over its front."""
+        body, (a, b) = plan.body, plan.tau
+        outer, u = body.outer, body.u
+        t_var, p_vars = self.fresh_names(sdfg, len(body.statements))
+        t_lo = combine(
+            [bound_str(plan.fronts[st.order].t_lo_terms, {PROBE_T: sym(t_var)}, "max") for st in body.statements], "min"
+        )
+        t_hi = combine(
+            [bound_str(plan.fronts[st.order].t_hi_terms, {PROBE_T: sym(t_var)}, "min") for st in body.statements], "max"
+        )
+        set_header(outer, t_var, t_lo, t_hi)
+        outer.pinned_sequential = True
+        skew = skew_label(a, b, u, "v")
+        outer.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew)
+        t = sym(t_var)
+        for st, p_var in zip(body.statements, p_vars):
+            fr = plan.fronts[st.order]
+            subs = {PROBE_T: t, PROBE_P: sym(p_var)}
+            p_lo, p_hi = bound_str(fr.p_lo_terms, subs, "max"), bound_str(fr.p_hi_terms, subs, "min")
+            p, shift = sym(p_var), plan.shifts.get(st.order, 0)
+            if abs(a) == 1:
+                u_expr, v_expr = a * (t - b * p), p - shift
+            else:
+                u_expr, v_expr = p, b * (t - a * p) - shift
+            repl = {u: symbolic.symstr(simplified(u_expr)), st.var: symbolic.symstr(simplified(v_expr))}
+            hint = WAVEFRONT_FRONT.format(skew=skew)
+            if st.kind == "loop":
+                loop = st.block
+                assert isinstance(loop, LoopRegion)
+                set_header(loop, p_var, p_lo, p_hi)
+                loop.replace_dict(repl)
+                self.lift(outer, loop, sdfg, hint)
+            else:
+                rewrite_map(st, p_var, p_lo, p_hi, repl, hint, sdfg)
+
+    def rewrite_tiled(self, plan: Plan, sdfg: SDFG) -> None:
+        """``outer`` becomes the tile diagonal over a parallel tile-column map over the tile rows; every statement
+        runs clipped to its tile, and on GPU along the tile's own diagonal."""
+        body, tp = plan.body, plan.tiles
+        assert tp is not None
+        outer, u = body.outer, body.u
+        t_var, (p_var,) = self.fresh_names(sdfg, 1)
+        subs = {PROBE_T: sym(t_var), PROBE_P: sym(p_var), TILE_NI: tp.n_i, TILE_NJ: tp.n_j}
+        tile = tile_label(tp.bi, tp.bj)
+        skew = skew_label(1, 1, u, "w")
+
+        p_loop = LoopRegion(
+            f"{outer.label}_tile_diag",
+            f"{p_var} <= ({bound_str(tp.bounds.p_hi_terms, subs, 'min')})",
+            p_var,
+            f"{p_var} = ({bound_str(tp.bounds.p_lo_terms, subs, 'max')})",
+            f"{p_var} = {p_var} + 1",
+        )
+        i_tile, j_tile = sym(t_var) - sym(p_var), sym(p_var)
+        i_lo = simplified(tp.u_lo + tp.bi * i_tile)
+        j_lo = simplified(tp.w_lo + tp.bj * j_tile)
+        i_loop = LoopRegion(
+            f"{outer.label}_tile_row",
+            f"{u} <= (min({symbolic.symstr(tp.u_hi)}, {symbolic.symstr(i_lo + tp.bi - 1)}))",
+            u,
+            f"{u} = ({symbolic.symstr(i_lo)})",
+            f"{u} = {u} + 1",
+        )
+        i_loop.pinned_sequential = True
+        i_loop.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
+        move_body(outer, i_loop)
+        p_loop.add_node(i_loop, is_start_block=True)
+        outer.add_node(p_loop, is_start_block=True, ensure_unique_name=True)
+
+        set_header(
+            outer, t_var, bound_str(tp.bounds.t_lo_terms, subs, "max"), bound_str(tp.bounds.t_hi_terms, subs, "min")
+        )
+        outer.pinned_sequential = True
+        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew, tile=tile)
+
+        for st in body.statements:
+            # ``w = v + shift + k*u`` in ``[j_lo, j_lo + bj - 1]``.
+            first = simplified(j_lo - plan.shifts.get(st.order, 0) - tp.k * sym(u))
+            lo = f"max({symbolic.symstr(st.lo)}, {symbolic.symstr(first)})"
+            hi = f"min({symbolic.symstr(st.hi)}, {symbolic.symstr(first + tp.bj - 1)})"
+            if st.kind == "loop":
+                loop = st.block
+                assert isinstance(loop, LoopRegion)
+                set_header(loop, st.var, lo, hi)
+                loop.pinned_sequential = True
+                loop.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
+            else:
+                assert st.node is not None and isinstance(st.block, SDFGState)
+                st.node.map.range = dace.subsets.Range([(as_expr(lo), as_expr(hi), 1)])
+                st.node.map.schedule = dace.ScheduleType.Sequential
+                propagate_memlets_state(sdfg, st.block)
+
+        if self.target == "gpu":
+            self.skew_tile_interior(plan, sdfg, i_loop, i_lo, j_lo)
+        self.lift(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
+
+    def skew_tile_interior(
+        self, plan: Plan, sdfg: SDFG, i_loop: LoopRegion, i_lo: sympy.Expr, j_lo: sympy.Expr
+    ) -> None:
+        """Run the tile's rows along its ``(1, 1)`` diagonal ``d = u + w``, each loop statement a guarded
+        constant-width map across the thread block; left sequential when a front is not renderable."""
+        body, tp = plan.body, plan.tiles
+        assert tp is not None
+        u = body.u
+        u_s, w_s = sym(DIM_U), sym(DIM_W)
+        d_lo = simplified(i_lo + j_lo)
+        d_hi = simplified(i_lo + j_lo + tp.bi - 1 + tp.bj - 1)
+        fronts = []
+        for st in body.statements:
+            cons = statement_domain(body, st, plan.shifts.get(st.order, 0), tp.k)
+            if cons is None:
+                return
+            cons = cons + [
+                u_s - i_lo,
+                simplified(i_lo + tp.bi - 1 - u_s),
+                w_s - j_lo,
+                simplified(j_lo + tp.bj - 1 - w_s),
+            ]
+            bounds = skew_bounds(cons, (1, 1), (d_lo, d_hi))
+            if bounds is None:
+                return
+            fronts.append(bounds)
+        nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
+        d_var = f"{SKEW_T_PREFIX}{nid}"
+        k_vars = [f"{SKEW_P_PREFIX}{nid}" if i == 0 else f"{SKEW_P_PREFIX}{nid}_{i}" for i in range(len(fronts))]
+        declare_iterators(d_var, *k_vars)
+        set_header(i_loop, d_var, symbolic.symstr(d_lo), symbolic.symstr(d_hi))
+        i_loop.pinned_sequential = True
+        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(1, 1, u, "w"))
+        d = sym(d_var)
+        hint = WAVEFRONT_FRONT.format(skew=skew_label(1, 1, u, "w"))
+        for st, bounds, k_var in zip(body.statements, fronts, k_vars):
+            subs = {PROBE_T: d, PROBE_P: sym(k_var)}
+            p_lo, p_hi = bound_str(bounds.p_lo_terms, subs, "max"), bound_str(bounds.p_hi_terms, subs, "min")
+            coord = simplified(j_lo + sym(k_var))
+            u_expr = simplified(d - coord)
+            v_expr = simplified(coord - plan.shifts.get(st.order, 0) - tp.k * u_expr)
+            repl = {u: symbolic.symstr(u_expr), st.var: symbolic.symstr(v_expr)}
+            here = symbolic.symstr(coord)
+            condition = f"({here}) >= ({p_lo}) and ({here}) <= ({p_hi})"
+            if st.kind == "loop":
+                loop = st.block
+                assert isinstance(loop, LoopRegion)
+                set_header(loop, k_var, "0", str(tp.bj - 1))
+                loop.replace_dict(repl)
+                guard_body(loop, sdfg, condition)
+                self.lift(i_loop, loop, sdfg, hint)
+            else:
+                rewrite_map(st, k_var, "0", str(tp.bj - 1), repl, hint, sdfg)
+                st.node.map.schedule = dace.ScheduleType.Default
+                guard_map_body(st, sdfg, condition)
+        for node, _ in i_loop.all_nodes_recursive():
+            if isinstance(node, nodes.MapEntry):
+                node.map.is_warp_tile = True
+
+    def lift(self, scope: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, hint: str) -> None:
+        """Lift ``loop`` to a map on the legality proof; ``hint`` names the fresh map."""
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+        itervar = loop.loop_variable
+        privatize_body_reductions(loop)
+        ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
+        for node, _ in scope.all_nodes_recursive():
+            if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
+                node.specialization_hint = hint
+
+    def emit_positive_guard(self, outer: LoopRegion, params: list[str]) -> None:
+        """Abort before ``outer`` when an offset the schedule assumed non-negative is negative."""
+        parts = " or ".join(f"(({p}) < 0)" for p in params)
+        tag = zlib.crc32(parts.encode()) & 0xFFFFFFF
+        pre = outer.parent_graph.add_state_before(outer, label=f"_skew_guard_{tag:x}")
+        tutil.add_abort_guard(pre, f"_skew_guard_{tag:x}", parts)
+
+
+def emitted_here(loop: LoopRegion) -> bool:
+    """Whether ``loop`` is a diagonal or tile row this pass emitted."""
+    if loop.loop_variable.startswith(SKEW_T_PREFIX):
+        return True
+    hint = loop.specialization_hint or ""
+    return any(hint.startswith(t.split("{")[0]) for t in (WAVEFRONT_TILE_INTERIOR, WAVEFRONT_DIAGONAL))
+
+
+def combine_bounds(bounds: list[sympy.Expr], fn: str) -> sympy.Expr:
+    unique = list(dict.fromkeys(simplified(b) for b in bounds))
+    if len(unique) == 1:
+        return unique[0]
+    return symbolic.pystr_to_symbolic(f"{fn}({', '.join(symbolic.symstr(b) for b in unique)})")
+
+
+def set_header(loop: LoopRegion, var: str, lo: str, hi: str) -> None:
+    loop.loop_variable = var
+    loop.init_statement = properties.CodeBlock(f"{var} = ({lo})")
+    loop.loop_condition = properties.CodeBlock(f"{var} <= ({hi})")
+    loop.update_statement = properties.CodeBlock(f"{var} = {var} + 1")
+
+
+def rewrite_map(st: Statement, p_var: str, p_lo: str, p_hi: str, repl: dict[str, str], hint: str, sdfg: SDFG) -> None:
+    """Re-index a map statement over its front ``p``: its parameter renamed, its body substituted."""
+    state, entry = st.block, st.node
+    assert isinstance(state, SDFGState) and entry is not None
+    entry.map.params = [p_var]
+    entry.map.range = dace.subsets.Range([(as_expr(p_lo), as_expr(p_hi), 1)])
+    scope = state.scope_subgraph(entry, include_entry=False, include_exit=False)
+    replace_in_subgraph(scope, repl)
+    exit_node = state.exit_node(entry)
+    for e in [*state.out_edges(entry), *state.in_edges(exit_node)]:
+        for k, v in repl.items():
+            e.data.replace({k: v})
+    entry.specialization_hint = hint
+    propagate_memlets_state(sdfg, state)
+
+
+def move_body(src: ControlFlowRegion, dst: ControlFlowRegion) -> None:
+    """Move every block and edge of ``src`` into ``dst``."""
+    start, blocks, edges = src.start_block, list(src.nodes()), list(src.edges())
+    for blk in blocks:
+        dst.add_node(blk, is_start_block=blk is start)
+    for e in edges:
+        dst.add_edge(e.src, e.dst, e.data)
+    for blk in blocks:
+        src.remove_node(blk)
+
+
+def guard_body(loop: LoopRegion, sdfg: SDFG, condition: str) -> None:
+    """Move ``loop``'s body under a single-branch ConditionalBlock testing ``condition``."""
+    branch = ControlFlowRegion(f"{loop.label}_active", sdfg=sdfg)
+    move_body(loop, branch)
+    guard = ConditionalBlock(f"{loop.label}_lane", sdfg=sdfg)
+    guard.add_branch(condition, branch)
+    loop.add_node(guard, is_start_block=True)
+
+
+def guard_map_body(st: Statement, sdfg: SDFG, condition: str) -> None:
+    """Nest a map statement's body and run it only under ``condition``."""
+    from dace.transformation.helpers import nest_state_subgraph
+
+    state, entry = st.block, st.node
+    assert isinstance(state, SDFGState) and entry is not None
+    inner = state.scope_subgraph(entry, include_entry=False, include_exit=False)
+    node = nest_state_subgraph(sdfg, state, inner, name=f"{entry.map.label}_lane")
+    nsdfg = node.sdfg
+    for name in sorted(free_names(condition)):
+        if name not in nsdfg.symbols:
+            nsdfg.add_symbol(name, sdfg.symbols.get(name, as_typeclass(dace.int64)))
+        node.symbol_mapping.setdefault(name, sym(name))
+    branch = ControlFlowRegion(f"{entry.map.label}_active", sdfg=nsdfg)
+    move_body(nsdfg, branch)
+    guard = ConditionalBlock(f"{entry.map.label}_lane", sdfg=nsdfg)
+    guard.add_branch(condition, branch)
+    nsdfg.add_node(guard, is_start_block=True)
+
+
+def commit_snapshots(body: Body) -> None:
+    """Redirect every snapshot read onto its live array and empty the copy states."""
+    for snap in body.snapshots:
+        for st in body.statements:
+            states = list(st.block.states()) if isinstance(st.block, LoopRegion) else [st.block]
+            for state in states:
+                for node in [n for n in state.data_nodes() if n.data == snap.snap]:
+                    reader = next(
+                        (n for n in state.data_nodes() if n.data == snap.live and state.in_degree(n) == 0), None
+                    ) or state.add_access(snap.live)
+                    for e in list(state.out_edges(node)):
+                        for tree_edge in state.memlet_tree(e).traverse_children(include_self=True):
+                            if tree_edge.edge.data.data == snap.snap:
+                                tree_edge.edge.data.data = snap.live
+                        state.add_edge(reader, e.src_conn, e.dst, e.dst_conn, e.data)
+                        state.remove_edge(e)
+                    if state.degree(node) == 0:
+                        state.remove_node(node)
+        for n in list(snap.state.nodes()):
+            snap.state.remove_node(n)
 
 
 __all__ = ["WavefrontSkew"]

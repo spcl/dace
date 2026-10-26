@@ -3979,6 +3979,23 @@ def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
 
 
+def convex_bound_terms(expr: sympy.Expr, upper: bool) -> list[sympy.Expr] | None:
+    """The terms whose conjunction ``x <= expr`` (``upper``) or ``x >= expr`` is: ``Min`` of an upper bound and
+    ``Max`` of a lower bound split into their arguments. ``None`` for the other extremum, a disjunction."""
+    keep, refuse = (sympy.Min, sympy.Max) if upper else (sympy.Max, sympy.Min)
+    if isinstance(expr, keep):
+        terms: list[sympy.Expr] = []
+        for arg in expr.args:
+            sub = convex_bound_terms(arg, upper)
+            if sub is None:
+                return None
+            terms += sub
+        return terms
+    if expr.has(refuse):
+        return None
+    return [expr]
+
+
 def extremum_union(func: type[sympy.Min] | type[sympy.Max], a: sympy.Expr, b: sympy.Expr, facts: Facts) -> sympy.Expr:
     """``func(a, b)`` without the arguments the facts prove are not the extremum. ``a``'s own arguments are taken as
     already folded (a bound this built), so only ``b``'s are proved against the kept ones: a union over many

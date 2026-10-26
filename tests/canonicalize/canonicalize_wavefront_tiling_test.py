@@ -19,13 +19,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.parallelization.wavefront.skew import (
-    SKEW_P_PREFIX,
-    SKEW_T_PREFIX,
-    Dependence,
-    WavefrontSkew,
-    tiling_legal,
-)
+from dace.transformation.passes.parallelization.wavefront.skew import SKEW_P_PREFIX, SKEW_T_PREFIX, WavefrontSkew
 
 N = dace.symbol("N")
 
@@ -56,8 +50,7 @@ def wavefront2d(a: dace.float64[N, N]):
 
 @dace.program
 def far_carry(a: dace.float64[N, N]):
-    """A wavefront whose ``u`` distance is 3: neither axis is parallel on its own, so the
-    pass skews, but the tiling is only legal once a tile is at least 3 rows tall."""
+    """A wavefront whose ``u`` distance is 3: neither axis is parallel on its own, so the pass skews."""
     for i in range(3, N):
         for j in range(1, N):
             a[i, j] = a[i, j] + a[i - 3, j] + a[i, j - 1]
@@ -65,8 +58,8 @@ def far_carry(a: dace.float64[N, N]):
 
 @dace.program
 def gauss_seidel_backward(a: dace.float64[N, N]):
-    """The steep ``tau = (2, 1)`` Gauss-Seidel nest. Its flow distance ``(-1, +1)`` is legal
-    element-wise but NOT once tiled -- the pair can straddle the ``v`` boundary alone."""
+    """The steep ``tau = (2, 1)`` Gauss-Seidel nest. Its distance ``(1, -1)`` is negative along ``v``, so
+    rectangular ``(u, v)`` tiles would run a producer after its consumer."""
     for i in range(1, N - 1):
         for j in range(1, N - 1):
             a[i, j] = (a[i, j - 1] + a[i - 1, j] + a[i - 1, j - 1] + a[i - 1, j + 1]) / 4.0
@@ -157,20 +150,19 @@ def test_tiled_wavefront_is_bit_exact_against_the_sequential_nest(prog):
     assert np.array_equal(got, ref), f"{prog.name}: max abs diff {np.max(np.abs(got - ref)):.3e}"
 
 
-def test_dependence_outrunning_the_tile_falls_back_to_the_untiled_lowering():
-    """``a[i - 3, j]`` reaches three rows back. With 2-row tiles the tile-index distance is
-    no longer a clamped sign, so the pass must keep the element-granularity diagonal (one
-    loop, one Map); with 4-row tiles the very same nest tiles. The pair is what makes this a
-    test of the guard rather than of the nest."""
-    small, _ = skewed(far_carry, bi=2, bj=64)
-    assert len(loops(small)) == 1 and loops(small)[0].loop_variable.startswith(SKEW_T_PREFIX), (
-        f"a distance longer than the tile must keep the untiled diagonal; got {[l.loop_variable for l in loops(small)]}"
-    )
-
-    big, fired = skewed(far_carry, bi=4, bj=64)
-    assert fired == 1 and len(loops(big)) == 3, (
-        f"non-vacuity: the same nest must tile once the tile is tall enough; got {[l.loop_variable for l in loops(big)]}"
-    )
+@pytest.mark.parametrize("bi", [2, 4])
+def test_a_dependence_reaching_past_the_tile_still_tiles_bit_exactly(bi):
+    """``a[i - 3, j]`` reaches three rows back, further than a 2-row tile. Every distance is non-negative along both
+    axes, so the tiles still run in diagonal order whatever their height, each in program order."""
+    sdfg, fired = skewed(far_carry, bi=bi, bj=64)
+    assert fired == 1 and len(loops(sdfg)) == 3, f"expected a tiling; got {[l.loop_variable for l in loops(sdfg)]}"
+    n = 40
+    a0 = np.random.default_rng(160).standard_normal((n, n))
+    ref = a0.copy()
+    far_carry.to_sdfg(simplify=True)(a=ref, N=n)
+    got = a0.copy()
+    sdfg(a=got, N=n)
+    assert np.array_equal(got, ref)
 
 
 @pytest.mark.parametrize("prog", ALL_SHAPES, ids=lambda p: p.name)
@@ -225,25 +217,18 @@ def test_both_targets_block_and_the_gpu_also_skews_the_tile(prog):
 
 
 def test_steep_gauss_seidel_diagonal_tiles_only_after_the_inner_preskew():
-    """``tau = (2, 1)`` with the flow distance ``(-1, +1)``: legal element-wise, illegal
-    tiled (the pair can straddle only the ``v`` boundary, giving the tile distance
-    ``(0, +1)`` and ``tau . (0, 1) = +1 > 0``). Skewing the inner axis first, ``w = v + u``,
-    maps every distance to ``(du, dv + du)``, all non-positive here, so ``(1, 1)`` tiles; the
-    pass emits that tiling, whose values the bit-exact test checks."""
-    p = dace.symbolic.pystr_to_symbolic
-    deps = [Dependence(p(du), p(dv), [], "flow") for du, dv in ((0, -1), (-1, 0), (-1, -1), (-1, 1))]
-    assert tiling_legal(deps, (1, 1), 64, 64) is False, "sanity: (1, 1) is not even legal element-wise here"
-    assert tiling_legal(deps, (2, 1), 64, 64) is False, "the straddling (0, +1) tile distance must refuse (2, 1)"
-    assert tiling_legal(deps[:2], (2, 1), 64, 64) is True, "non-vacuity: without (-1, +1) the same tau tiles"
-    preskewed = [Dependence(d.du, d.dv + d.du, [], "flow") for d in deps]
-    assert tiling_legal(preskewed, (1, 1), 64, 64) is True, "after w = v + u the nest is fully permutable"
-
+    """The distance ``(1, -1)`` makes rectangular ``(u, v)`` tiles illegal; over ``w = v + u`` every distance is
+    non-negative, so the pass tiles ``(u, w)``: the innermost loop's tile window moves with the tile row."""
     sdfg, fired = skewed(gauss_seidel_backward)
     assert fired == 1
     emitted = loops(sdfg)
-    assert len(emitted) == 3, f"expected T + intra-tile i + w; got {[l.loop_variable for l in emitted]}"
-    assert any(l.loop_variable.endswith("_skew") for l in emitted), (
-        f"the innermost loop runs the pre-skewed axis; got {[l.loop_variable for l in emitted]}"
+    assert len(emitted) == 3, f"expected T + intra-tile i + j; got {[l.loop_variable for l in emitted]}"
+    diag = [l for l in emitted if l.loop_variable.startswith(SKEW_T_PREFIX)][0]
+    row, inner = [l for l in emitted if l is not diag]
+    if any(isinstance(c, LoopRegion) for c in inner.all_control_flow_regions() if c is not inner):
+        row, inner = inner, row
+    assert row.loop_variable in inner.init_statement.as_string, (
+        f"the tile window of {inner.loop_variable} must follow the row: {inner.init_statement.as_string}"
     )
 
 

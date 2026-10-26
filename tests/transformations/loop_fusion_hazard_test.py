@@ -104,16 +104,13 @@ def assert_loop_fusion_preserves_meaning(build, what: str) -> int:
 
 
 def force_fuse(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> None:
-    """Apply `LoopFusion` to `(first, second)` bypassing the DOALL-deference guard, the same way
-    `allow_doall_fuse=True` does for `ReconstructWavefrontNest`. `apply_transformations_repeated` /
-    `apply_to` cannot forward it (it is a plain keyword of `can_be_applied`, not a `properties.Property`
-    -- `_can_be_applied_and_apply` only forwards entries that are in `cls.__properties__`), so this
-    drives the transformation instance directly."""
+    """Apply `LoopFusion` to `(first, second)` with the DOALL-deference guard (`defer_doall`) off."""
     instance = LoopFusion()
     instance.setup_match(
         sdfg, sdfg.cfg_id, -1, {LoopFusion.first: sdfg.node_id(first), LoopFusion.second: sdfg.node_id(second)}, 0
     )
-    assert instance.can_be_applied(sdfg, 0, sdfg, allow_doall_fuse=True), (
+    instance.defer_doall = False
+    assert instance.can_be_applied(sdfg, 0, sdfg), (
         "expected the dependence logic alone (DOALL guard aside) to judge this pair fusable"
     )
     instance.apply(sdfg, sdfg)
@@ -460,9 +457,8 @@ def test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard():
     `MapFusionVertical` would handle the fusion instead, matching `_wcr_shape`'s own structure. The gap
     only bites a caller that runs `LoopFusion` out of that order.
 
-    The forced-fuse check (bypassing the guard the same way `allow_doall_fuse=True` does for
-    `ReconstructWavefrontNest`) confirms `_fusion_legal`'s claim: fusing is value-preserving here, it is
-    simply left undone by policy.
+    The forced-fuse check (`defer_doall` off) confirms `_fusion_legal`'s claim: fusing is value-preserving
+    here, it is simply left undone by policy.
     """
     map_applied = _wcr_shape(reduction_is_consumed=False).apply_transformations_repeated(
         dftrans.MapFusionVertical, validate_all=True

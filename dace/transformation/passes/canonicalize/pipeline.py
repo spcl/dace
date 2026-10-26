@@ -141,7 +141,6 @@ from dace.transformation.passes.parallelization.contracts.guarded_scatter import
 from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
-from dace.transformation.passes.parallelization.wavefront.reconstruct_nest import ReconstructWavefrontNest
 from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
@@ -558,22 +557,18 @@ class _ThenIfChanged(ppl.Pass):
 # ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU.
 # ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
 #   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
-# ``reconstruct_wavefront_nest``: rebuild seidel_2d's Map+copy+Loop row body into the one loop
-#   ``WavefrontSkew`` needs; commits only where the skew then provably fires. ON for both.
 # ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
 #   folded it and lost TSVC s172's map); see the AB note at its wiring below.
 CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": True,
-    "reconstruct_wavefront_nest": True,
     "normalize_loop_and_map_origin": False,
 }
 GPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": False,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": False,
-    "reconstruct_wavefront_nest": True,
     "normalize_loop_and_map_origin": False,
 }
 TARGET_DEFAULTS: dict[str, dict[str, Any]] = {"cpu": CPU_DEFAULTS, "gpu": GPU_DEFAULTS}
@@ -895,7 +890,6 @@ def derive_parallelism(
     peel_limit: int,
     scatter_to_guarded_maps: bool,
     assume_parallel_guards: bool,
-    reconstruct_wavefront_nest: bool,
     lift_copy: bool,
     interchange_carry_with_map: bool,
     target: str,
@@ -989,8 +983,7 @@ def derive_parallelism(
             )
         ]
     # Wavefront: skew the nests every level left sequential, then map the exposed axis.
-    if reconstruct_wavefront_nest:
-        s += [(label, RevertNonReductionWCR()), *_inline_single_state(label), (label, ReconstructWavefrontNest())]
+    s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops()), (label, WavefrontSkew(target=target))]
@@ -1121,7 +1114,6 @@ def build_stages(
     interchange_carry_with_map: bool = True,
     scatter_to_guarded_maps: bool = True,
     privatize_scatter_reductions: bool = True,
-    reconstruct_wavefront_nest: bool = True,
     normalize_loop_and_map_origin: bool = False,
     assume_parallel_guards: bool = False,
     perfect_loop_nesting: bool = True,
@@ -1149,7 +1141,6 @@ def build_stages(
         peel_limit,
         scatter_to_guarded_maps,
         assume_parallel_guards,
-        reconstruct_wavefront_nest,
         lift_copy,
         interchange_carry_with_map,
         target,
@@ -1316,10 +1307,6 @@ class CanonicalizationPipeline(ppl.Pass):
                                        ``LoopRegion`` INTO the per-column Map so
                                        the scan runs sequential-per-thread.
                                        ``None`` (default) -> per-target preset.
-    :param reconstruct_wavefront_nest: Run ``ReconstructWavefrontNest`` right before
-                                       ``WavefrontSkew`` in the ``loop_fuse`` stage.
-                                       ``None`` (default) -> per-target preset (off on
-                                       both targets; see ``CPU_DEFAULTS``).
     :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` right before the
                                           ``loop_to_x`` stage. ``None`` (default) -> per-target
                                           preset (off on both targets; see ``CPU_DEFAULTS``).
@@ -1390,13 +1377,6 @@ class CanonicalizationPipeline(ppl.Pass):
         desc="Run PrivatizeScatterReduction to surface a data-dependent scatter reduction "
         "(azimint histogram) to an OpenMP array-section reduction clause (CPU-only; off for GPU).",
     )
-    reconstruct_wavefront_nest = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Run ReconstructWavefrontNest right before WavefrontSkew in the loop_fuse stage, rebuilding "
-        "an imperfect Map-plus-LoopRegion stencil body into the single loop WavefrontSkew requires. "
-        "On by default on both targets (see CPU_DEFAULTS).",
-    )
     normalize_loop_and_map_origin = properties.Property(
         dtype=bool,
         default=False,
@@ -1454,7 +1434,6 @@ class CanonicalizationPipeline(ppl.Pass):
         interchange_carry_with_map: bool | None = None,
         scatter_to_guarded_maps: bool | None = None,
         privatize_scatter_reductions: bool | None = None,
-        reconstruct_wavefront_nest: bool | None = None,
         normalize_loop_and_map_origin: bool | None = None,
         assume_parallel_guards: bool = False,
         perfect_loop_nesting: bool = True,
@@ -1482,9 +1461,6 @@ class CanonicalizationPipeline(ppl.Pass):
         )
         self.privatize_scatter_reductions = _resolve_target_default(
             target, "privatize_scatter_reductions", privatize_scatter_reductions, fallback=(target == "cpu")
-        )
-        self.reconstruct_wavefront_nest = _resolve_target_default(
-            target, "reconstruct_wavefront_nest", reconstruct_wavefront_nest, fallback=True
         )
         self.normalize_loop_and_map_origin = _resolve_target_default(
             target, "normalize_loop_and_map_origin", normalize_loop_and_map_origin, fallback=False
@@ -1517,7 +1493,6 @@ class CanonicalizationPipeline(ppl.Pass):
             interchange_carry_with_map=self.interchange_carry_with_map,
             scatter_to_guarded_maps=self.scatter_to_guarded_maps,
             privatize_scatter_reductions=self.privatize_scatter_reductions,
-            reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
             normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
             assume_parallel_guards=self.assume_parallel_guards,
             perfect_loop_nesting=self.perfect_loop_nesting,
@@ -1623,7 +1598,6 @@ def canonicalize(
     interchange_carry_with_map: bool | None = None,
     scatter_to_guarded_maps: bool | None = None,
     privatize_scatter_reductions: bool | None = None,
-    reconstruct_wavefront_nest: bool | None = None,
     normalize_loop_and_map_origin: bool | None = None,
     assume_parallel_guards: bool = False,
     perfect_loop_nesting: bool = True,
@@ -1668,11 +1642,6 @@ def canonicalize(
                                    clause so the accumulator is thread-privatised instead
                                    of hammered with a contended atomic; ``None`` (default)
                                    -> per-target preset (CPU=True, GPU=False).
-    :param reconstruct_wavefront_nest: Rebuild an imperfect Map-plus-LoopRegion stencil
-                                   body (``ReconstructWavefrontNest``) into the single
-                                   loop ``WavefrontSkew`` requires, right before it in the
-                                   ``loop_fuse`` stage; commits only on a proven skew.
-                                   ``None`` (default) -> per-target preset (on for both).
     :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
                                    0-based begin, keeping the stride (``NormalizeLoopAndMapOrigin``),
                                    right before the ``loop_to_x`` stage. ``None`` (default) ->
@@ -1727,7 +1696,6 @@ def canonicalize(
         interchange_carry_with_map,
         scatter_to_guarded_maps,
         privatize_scatter_reductions,
-        reconstruct_wavefront_nest,
         normalize_loop_and_map_origin,
         assume_parallel_guards,
         perfect_loop_nesting,
@@ -1777,7 +1745,6 @@ def canonicalize_under_authority(
     interchange_carry_with_map: bool | None,
     scatter_to_guarded_maps: bool | None,
     privatize_scatter_reductions: bool | None,
-    reconstruct_wavefront_nest: bool | None,
     normalize_loop_and_map_origin: bool | None,
     assume_parallel_guards: bool,
     perfect_loop_nesting: bool,
@@ -1798,7 +1765,6 @@ def canonicalize_under_authority(
         interchange_carry_with_map=interchange_carry_with_map,
         scatter_to_guarded_maps=scatter_to_guarded_maps,
         privatize_scatter_reductions=privatize_scatter_reductions,
-        reconstruct_wavefront_nest=reconstruct_wavefront_nest,
         normalize_loop_and_map_origin=normalize_loop_and_map_origin,
         assume_parallel_guards=assume_parallel_guards,
         perfect_loop_nesting=perfect_loop_nesting,
